@@ -58,3 +58,7 @@ path = "src/bin/remove_probe.rs"
 [[bin]]
 name = "sanitize-rewrite"
 path = "src/bin/sanitize_rewrite.rs"
+
+[[bin]]
+name = "worker-bench"
+path = "src/bin/worker_bench.rs"
