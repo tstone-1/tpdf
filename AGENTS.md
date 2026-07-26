@@ -444,14 +444,90 @@ the subset has no glyph to draw. This is the root cause of every mangled Acrobat
 edit, and it constrains the entire text-editing design. What that looks like in practice,
 and how PDFium handles it, is measured above under `set_text()`.
 
-### The text fixtures are generated, not committed
+### `lopdf`'s object collection is quadratic, but the algorithm is not
+
+`prune_objects()` and `renumber_objects()` both walk the graph through
+`traverse_objects()`, which accumulates seen ids in a `Vec` and calls `contains` before
+every push. Measured 2026-07-26, cost of collection over a plain save: 3.7 ms at 2,445
+objects, 83 ms at 7,758, **1,414 ms at 25,583** — a 3.3x larger graph costs 17x more.
+25,583 objects is a medium document.
+
+A mark-and-sweep over a `HashSet` (`route_lopdf_mark` in `sanitize_rewrite.rs`, about
+thirty lines) produces byte-identical output at a cost indistinguishable from not
+collecting at all. Renumbering is dropped with it — contiguous object numbers are cosmetic
+and cost a second quadratic pass — but then **`max_id` must be lowered by hand**, because
+`/Size` is written from it and sweeping does not touch it. Skip that and the file claims
+more objects than it has; `qpdf --check` rejects it and PDFium does not notice.
+
+So: use `lopdf` for the rewrite, write the sweep yourself. Do not reach for QPDF to solve
+a `Vec::contains`.
+
+### `lopdf` silently drops encryption on save
+
+Given an AES-256 file with an empty user password — one that opens in any reader with no
+prompt — `lopdf` decrypts on load and writes **plaintext** on save. No error, no warning,
+no flag. QPDF re-encrypts with the original parameters.
+
+Quietly removing a document's protection is its own security failure, and it is invisible
+in every check that looks at content rather than structure. Any save path must preserve
+encryption or refuse; `qpdf --is-encrypted` (exit 0 when encrypted, 2 when not) is the
+cheap assertion.
+
+### An object a prior revision overwrote is reachable by no parser
+
+Incremental update replaces object 5; the old object 5 stays at its old offset and the new
+cross-reference table points past it. Every parser resolves through the newest table, so
+the old bytes are handed to nothing — not to a graph walk, not to `qpdf --check`, not to
+PDFium. A byte scan finds them only if they were uncompressed, which for real content they
+will not be.
+
+The consequence for any verifier: **a file with more than one revision cannot be certified,
+only rewritten and then certified.** `%%EOF` count is the cheap test. Note this is a
+different failure from an object the update merely *dropped from the page* — that one is
+still in the cross-reference table and a graph walk does see it, as an orphan.
+
+### A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
+
+`qpdf in out` re-encodes stream data by default, so it fully decodes a stream that inflates
+to 1 GiB: **1.92 s for a 2,879-byte input**, at only 8.4 MB resident, because it streams
+rather than buffers. `lopdf` with `LoadOptions::max_decompressed_size` refuses in 0.3 ms.
+`qpdf --stream-data=preserve` finishes in under 10 ms — by copying bytes it never looked
+at, which is precisely what a sanitizing rewrite must not do.
+
+Two things follow. The bound belongs on the *rewriter*, not only on the verifier. And a
+resource limit expressed in memory would have caught none of this: the attack here is
+600x amplification in time.
+
+### PDFium accepting a file is not evidence the file is well formed
+
+PDFium is deliberately lenient — that is why it is the right renderer for real-world PDFs —
+so it will happily render a file whose `/Size` is wrong, and render it pixel-identically to
+a correct one. `qpdf --check` named the same defect immediately.
+
+Corollary for verification: a render comparison proves the *content* survived and nothing
+about the *structure*. `docs/PLAN.md` §6 requires re-parsing with an independent parser for
+this reason, and the requirement paid for itself the first time it ran, on a bug in tpdf's
+own sweep.
+
+### The test fixtures are generated, not committed
 
 `testdata/*.pdf` is gitignored. Regenerate with:
 
 ```
 uv run --with fonttools testdata/make_text_pdf.py testdata   # text-*.pdf, spike 0.3
+python3 testdata/make_hostile_pdf.py testdata                 # hostile-*.pdf, spike 0.4
 python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf # spike 0.1
 ```
+
+`make_hostile_pdf.py` also writes `hostile-manifest.json`, which records where each
+fixture's needle is and whether a collected rewrite is expected to remove it; the Rust
+harness reads that rather than hardcoding expectations. It shells out to `qpdf` for the
+encrypted fixture, and needs `--preserve-unreferenced` there — without it qpdf collects the
+orphan on the way in and the fixture arrives already sanitized.
+
+A fixture whose needle cannot be found in the fixture *itself* proves nothing about any
+rewrite, so `sanitize-rewrite` checks that first and says so. Two fixtures were vacuous on
+their first run and had to be redesigned.
 
 `make_text_pdf.py` embeds a **system** font, which is fine only because the output stays on
 the machine. Nothing it generates may be committed or redistributed.

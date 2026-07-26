@@ -54,3 +54,7 @@ path = "src/bin/text_roundtrip.rs"
 [[bin]]
 name = "remove-probe"
 path = "src/bin/remove_probe.rs"
+
+[[bin]]
+name = "sanitize-rewrite"
+path = "src/bin/sanitize_rewrite.rs"
