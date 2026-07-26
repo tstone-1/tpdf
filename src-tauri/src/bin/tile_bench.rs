@@ -33,6 +33,7 @@ use pdfium_render::prelude::*;
 enum Mode {
     Sweep,
     Single,
+    Encode,
 }
 
 struct Args {
@@ -80,6 +81,7 @@ fn parse_args() -> Result<Args, String> {
                 parsed.mode = match value.as_str() {
                     "sweep" => Mode::Sweep,
                     "single" => Mode::Single,
+                    "encode" => Mode::Encode,
                     other => return Err(format!("bad --mode {other}")),
                 }
             }
@@ -188,6 +190,7 @@ fn main() {
             let measured = match args.mode {
                 Mode::Sweep => sweep_page(&page, tile, scale),
                 Mode::Single => single_tile(&page, tile, scale),
+                Mode::Encode => encode_tile(&page, tile, scale),
             };
             match measured {
                 Ok((wall_ms, tiles, render_ms, bytes)) => samples.push(Sample {
@@ -210,6 +213,7 @@ fn main() {
     match args.mode {
         Mode::Sweep => report(&samples, args.rounds),
         Mode::Single => report_single(&samples, args.rounds),
+        Mode::Encode => report_encode(&samples),
     }
     println!();
     println!("peak rss      {:.0} MB", peak_rss_mb());
@@ -257,6 +261,62 @@ fn single_tile(
         render_ms,
         (w * h * 4) as usize,
     ))
+}
+
+/// Renders one centred tile and then PNG-encodes it, returning
+/// (encode ms, 1, render ms, encoded bytes).
+///
+/// This is the *server* half of the raw-vs-encoded question. Encoding buys a
+/// smaller payload and costs CPU on the render thread; the webview half (decode
+/// plus `createImageBitmap`) is measured separately in the GUI harness. If
+/// encoding alone already exceeds the frame budget, the GUI half is moot.
+fn encode_tile(
+    page: &PdfPage,
+    tile: i32,
+    scale: f32,
+) -> Result<(f64, usize, f64, usize), PdfiumError> {
+    let full_w = (page.width().value * scale).round() as i32;
+    let full_h = (page.height().value * scale).round() as i32;
+
+    let (w, h, x, y) = if tile == FULL_PAGE {
+        (full_w, full_h, 0, 0)
+    } else {
+        let w = tile.min(full_w);
+        let h = tile.min(full_h);
+        (w, h, (full_w - w) / 2, (full_h - h) / 2)
+    };
+
+    let mut bitmap = PdfBitmap::empty(w, h, PdfBitmapFormat::BGRA)?;
+    let config = PdfRenderConfig::new()
+        .set_target_width(full_w)
+        .set_target_height(full_h)
+        .set_origin(-x, -y);
+
+    let t = Instant::now();
+    page.render_into_bitmap_with_config(&mut bitmap, &config)?;
+    let render_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    let rgba = bitmap.as_rgba_bytes();
+
+    let t = Instant::now();
+    let mut encoded: Vec<u8> = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut encoded, w as u32, h as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        // Default compression. A faster preset would trade payload for CPU, but
+        // the point here is to find out whether the *cheapest useful* encode is
+        // already too expensive.
+        let mut writer = encoder
+            .write_header()
+            .map_err(|_| PdfiumError::ImageError)?;
+        writer
+            .write_image_data(&rgba)
+            .map_err(|_| PdfiumError::ImageError)?;
+    }
+    let encode_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    Ok((encode_ms, 1, render_ms, encoded.len()))
 }
 
 /// Renders one full page in tiles of the given size, returning
@@ -502,6 +562,54 @@ fn report_single(samples: &[Sample], rounds: usize) {
                 ratios.join("  ")
             );
         }
+    }
+}
+
+/// Reports encode mode: is PNG worth its CPU?
+///
+/// `wall_ms` carries encode time here, not total time -- see [`encode_tile`].
+/// The column to read is "encode as % of render": if encoding costs a large
+/// fraction of the render it is meant to accompany, it is competing with the
+/// thing that actually produces pixels.
+fn report_encode(samples: &[Sample]) {
+    println!(
+        "{:>8} {:>7} {:>10} {:>10} {:>9} {:>9} {:>12}",
+        "tile", "scale", "render ms", "encode ms", "raw KB", "png KB", "% of render"
+    );
+    println!("{}", "-".repeat(72));
+
+    let mut combos: Vec<(i32, u32)> = samples
+        .iter()
+        .map(|s| (s.tile, (s.scale * 1000.0) as u32))
+        .collect();
+    combos.sort_unstable();
+    combos.dedup();
+
+    for (tile, scale_milli) in &combos {
+        let mine: Vec<&Sample> = samples
+            .iter()
+            .filter(|s| s.tile == *tile && (s.scale * 1000.0) as u32 == *scale_milli)
+            .collect();
+        let Some(first) = mine.first() else { continue };
+
+        let encode = median_wall(samples, *tile, *scale_milli);
+        let mut renders: Vec<f64> = mine.iter().map(|s| s.render_ms).collect();
+        renders.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let render = renders[renders.len() / 2];
+
+        let px = if *tile == FULL_PAGE { 0 } else { *tile };
+        let raw_kb = (px as f64 * px as f64 * 4.0) / 1024.0;
+
+        println!(
+            "{:>8} {:>7.3} {:>10.1} {:>10.1} {:>9.0} {:>9.0} {:>11.0}%",
+            tile,
+            *scale_milli as f32 / 1000.0,
+            render,
+            encode,
+            raw_kb,
+            first.bytes as f64 / 1024.0,
+            encode / render * 100.0
+        );
     }
 }
 
