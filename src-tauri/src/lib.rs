@@ -136,6 +136,76 @@ fn autobench_path() -> Option<String> {
     std::env::var("TPDF_AUTOBENCH").ok()
 }
 
+/// Everything the scroll benchmark needs to run without a human (spike 0.8).
+///
+/// Read from the environment rather than compiled in, so a variant sweep --- a
+/// different scroll speed, a different tile size --- is a shell line rather than
+/// a rebuild. Defaults are the shape docs/PLAN.md section 4 arrived at: the
+/// fewest, largest tiles, and one screen of prefetch either way.
+#[derive(serde::Serialize)]
+struct ScrollBenchConfig {
+    path: String,
+    rounds: usize,
+    frames: usize,
+    warmup_frames: usize,
+    px_per_frame: f64,
+    tile_px: u32,
+    zooms: Vec<f64>,
+    layouts: Vec<String>,
+    cache_tiles: usize,
+    max_in_flight: usize,
+    prefetch_screens: f64,
+}
+
+/// Reads a `TPDF_`-prefixed environment variable, falling back to `default`.
+fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Reads a comma-separated list, falling back to `default`.
+fn env_list<T: std::str::FromStr>(name: &str, default: Vec<T>) -> Vec<T> {
+    let Ok(raw) = std::env::var(name) else {
+        return default;
+    };
+    let parsed: Vec<T> = raw
+        .split(',')
+        .filter_map(|item| item.trim().parse().ok())
+        .collect();
+    if parsed.is_empty() {
+        default
+    } else {
+        parsed
+    }
+}
+
+/// The scroll benchmark's configuration, or `None` if none was requested.
+#[tauri::command]
+fn scrollbench_config() -> Option<ScrollBenchConfig> {
+    let path = std::env::var("TPDF_SCROLLBENCH").ok()?;
+
+    Some(ScrollBenchConfig {
+        path,
+        rounds: env_or("TPDF_SCROLL_ROUNDS", 5),
+        frames: env_or("TPDF_SCROLL_FRAMES", 300),
+        warmup_frames: env_or("TPDF_SCROLL_WARMUP", 180),
+        // A brisk flick rather than a reading scroll: ~3600 css px/s at 120 Hz.
+        // The demanding case is the one the criterion is about.
+        px_per_frame: env_or("TPDF_SCROLL_PX", 30.0),
+        tile_px: env_or("TPDF_SCROLL_TILE", 1024),
+        zooms: env_list("TPDF_SCROLL_ZOOMS", vec![1.0, 4.0]),
+        layouts: env_list(
+            "TPDF_SCROLL_LAYOUTS",
+            vec!["tiles".to_string(), "viewport".to_string()],
+        ),
+        cache_tiles: env_or("TPDF_SCROLL_CACHE", 32),
+        max_in_flight: env_or("TPDF_SCROLL_INFLIGHT", 4),
+        prefetch_screens: env_or("TPDF_SCROLL_PREFETCH", 1.0),
+    })
+}
+
 /// Path to time a cold open of on startup, from `TPDF_STARTUP` (spike 0.2).
 #[tauri::command]
 fn startup_path() -> Option<String> {
@@ -189,10 +259,20 @@ fn spike_exit(app: tauri::AppHandle, code: i32) {
 /// no output at all --- indistinguishable from a slow run, and the harness's own
 /// timeout reports only that something took too long. Printing the marks that
 /// *were* reached says where it stopped.
-fn start_watchdog(seconds: u64) {
-    if std::env::var_os("TPDF_STARTUP").is_none() && std::env::var_os("TPDF_AUTOBENCH").is_none() {
+fn start_watchdog() {
+    // The scroll benchmark is frame-driven, which is exactly the thing WebKit
+    // stops doing when the window stops being visible, so it needs the watchdog
+    // more than the others do --- and it needs far longer, since it runs every
+    // variant in one launch rather than one launch per sample.
+    let seconds: u64 = if std::env::var_os("TPDF_SCROLLBENCH").is_some() {
+        env_or("TPDF_SCROLL_TIMEOUT", 900)
+    } else if std::env::var_os("TPDF_STARTUP").is_some()
+        || std::env::var_os("TPDF_AUTOBENCH").is_some()
+    {
+        30
+    } else {
         return;
-    }
+    };
 
     std::thread::Builder::new()
         .name("tpdf-watchdog".into())
@@ -232,7 +312,7 @@ fn start_eager_open(service: &RenderService) -> Option<EagerOpen> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     startup::mark_process_start();
-    start_watchdog(30);
+    start_watchdog();
     let mode = ShellMode::from_env();
 
     let mut context = tauri::generate_context!();
@@ -262,6 +342,16 @@ pub fn run() {
             }
             app.manage(service);
 
+            // A frame-rate measurement in an unfocused window measures the
+            // throttle, not the platform. The app is launched from a script, so
+            // nothing else would raise it, and the resulting cadence would look
+            // exactly like a ceiling WebKit had imposed on us.
+            if std::env::var_os("TPDF_SCROLLBENCH").is_some() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                }
+            }
+
             if mode != ShellMode::Config {
                 startup::mark("window build start");
                 tauri::WebviewWindowBuilder::new(
@@ -287,6 +377,7 @@ pub fn run() {
             process_elapsed_ms,
             autobench_path,
             startup_path,
+            scrollbench_config,
             startup_mark,
             startup_timeline,
             startup_pre_main_ms,

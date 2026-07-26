@@ -455,6 +455,56 @@ Route the address through `std::hint::black_box` and use `write_volatile`. More 
 a test whose failure mode is *not failing* needs its own assertion on how it failed, not
 just on the outcome.
 
+### A frame-rate pass means nothing without a coverage number beside it
+
+Spike 0.8 scrolled the A0 vector page at a flawless **60 fps, zero dropped frames, in every
+variant** — over a screen that was **0–4% sharp**, and at 400% zoom showed nothing at all
+for about a fifth of its frames. Both statements are true of the same run. The frame loop
+is decoupled from the renderer on purpose, so the thing a frame-rate test measures is the
+compositor, and a scroller that has given up entirely posts the best numbers in the table.
+
+So any smoothness measurement needs a second metric asserting something was *on screen* —
+here, the fraction of visible page area backed by a sharp tile, plus a second fraction
+counting the tier-1 placeholder, since "blurry" and "blank" are different failures. Same
+lesson as the crash test that compiled away and the sandbox that rendered `ok` with the
+wrong font: **assert on what was produced, never on the absence of a complaint.**
+
+The harness itself failed this way first, and more sharply. Clearing tier 2 *after* the
+warm-up — to guarantee the timed section scrolled over unrendered content — left the
+warm-up's four requests outstanding but invalidated, so against a one-second-per-tile page
+the in-flight limit was never released and the timed section could not issue a single
+request. It reported a perfect 60 fps over a document it had not asked for. The tell was
+`requested: 0`, which is why the counter is in the output at all.
+
+### WKWebView presents at 59 Hz on a 120 Hz display
+
+Measured 2026-07-26 on the M5 MacBook Pro, whose panel reports a `120.00Hz` mode: an idle
+`requestAnimationFrame` loop returns a **17.0 ms median interval**. Ruled out, each with
+its own control in the benchmark's header — mains power (re-measured on AC), a
+non-visible page (`document.visibilityState`), and an unfocused window
+(`document.hasFocus()`, with the app raising itself via `set_focus()` before the run).
+
+Two consequences. tpdf's scroll budget is **16.7 ms, not 8.3 ms**, so frame numbers here are
+against the easier of the two cadences this hardware can present at — and tpdf cannot scroll
+as smoothly as a native app on the same machine, whatever it does. It is the shell floor
+again, in the time domain.
+
+Never assume 60 Hz when deciding what a dropped frame is. Time an idle loop first and state
+every threshold as a multiple of what it returned; a threshold derived from an assumed
+cadence reports drops that are not drops, or misses the ones that are.
+
+### `performance.now()` is clamped to 1 ms — average, do not take a median
+
+The webview clamps the clock, which is visible in the integer-valued series spike 0.1 saw.
+For anything smaller than a millisecond this is fatal to the obvious statistic: our
+per-frame scroller work costs ~0.1–0.6 ms, so *every individual sample* reads as 0 or 1, and
+the median is only ever one of those two values. The **mean over hundreds of samples**
+recovers a usable figure from a clock that cannot resolve one, and a rate taken across the
+whole run (frames ÷ elapsed) is immune to the clamp entirely.
+
+Probe the resolution rather than assuming it — spin until the value changes — and print it,
+so no claim finer than the clock's step is made by accident.
+
 ### Never benchmark through `tauri dev` without `--release`
 
 `tauri dev` shells out to `cargo run` in the **dev profile**. PDFium arrives as a prebuilt

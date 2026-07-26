@@ -3,6 +3,7 @@
   import { fetchTile, type TileFormat } from "./lib/tiles";
   import { interleaved, type BenchResult } from "./lib/bench";
   import { runAutobenchIfRequested } from "./lib/autobench";
+  import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
 
   interface PageSize {
@@ -37,6 +38,7 @@
       // when done, so nothing below runs.
       if (await runStartupTimelineIfRequested()) return;
       if (await runAutobenchIfRequested()) return;
+      if (await runScrollBenchIfRequested()) return;
 
       const elapsed = await invoke<number>("process_elapsed_ms");
       const scriptStart =
