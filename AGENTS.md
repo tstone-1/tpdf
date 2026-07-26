@@ -84,6 +84,11 @@ This constraint is load-bearing in a second way: because in-process PDFium is se
 behind a global mutex (see Known traps), worker processes are also the *only* route to
 parallel rendering. Security and performance want the same architecture.
 
+`docs/THREAT-MODEL.md` is the worked-out version: what is being defended, the trust
+boundaries, each threat against the evidence that it is handled, the sandbox profile in
+full, and the residual risks in one list. Every claim there is either measured with the
+spike named, or marked untested --- keep it that way when adding to it.
+
 ---
 
 ## Stack
@@ -341,6 +346,65 @@ to kill and reap, 4.8 ms to respawn.
 
 Always read a limit back after setting it. A limit the kernel accepts and never enforces is
 worse than none, because it reads in the source as a bound that exists.
+
+### Polling a child's footprint bounds a leak, not a burst
+
+The substitute for the missing memory rlimit is supervision: the parent samples the worker's
+`ri_phys_footprint` through `proc_pid_rusage` and kills it over budget. A sample costs
+0.33 µs, so the poll interval trades overshoot against essentially nothing, and the obvious
+reading is that a tight interval solves it. Measured 2026-07-26
+(`worker-bench --mode footprint`), against a child allocating at ~22 GB/s and a 128 MB
+budget: 1 ms polling overshoots 16 MB, 5 ms overshoots 22 MB.
+
+The result that matters is the one that is not an overshoot at all. **At 20 ms and above,
+most runs never saw the event** --- the child took its whole 512 MB burst and exited between
+two samples, so supervision never engaged and reported nothing. A burst smaller than
+interval × growth rate is invisible to any polling scheme, whatever the interval. Bounding
+the *inputs* --- decompressed stream size, tile dimensions, pages per request --- is the
+layer that catches those, and it is not optional.
+
+Two smaller traps in measuring this. Neither the median nor the worst *observed* overshoot
+is the bound; both depend on where the crossing falls between two samples, so a budget must
+be set from interval × rate. And a zero interval is not free supervision --- it burns a core,
+and the low overshoot it appears to buy is partly the child being starved of the CPU it was
+allocating with.
+
+Use footprint, not RSS: a footprint excludes clean file-backed pages, so a worker with a
+337 MB document mapped is not charged for it, and an RSS bound would kill a worker for
+reading its own input.
+
+### `proc_pid_rusage` takes the struct's address, not a pointer to it
+
+`rusage_info_t` is itself `void *`, so the declared `int proc_pid_rusage(int, int,
+rusage_info_t *)` reads as taking a pointer to a pointer and does not. Every caller in the
+SDK writes `(rusage_info_t *)&info`, passing the struct's own address.
+
+Passing the address of a pointer instead **type-checks cleanly in Rust, returns 0, and has
+the kernel write the whole struct over whatever follows that pointer on the stack.** The
+only symptom was a footprint that read as zero for every child, which looks exactly like a
+permissions problem and sends you off to check entitlements. Note also that `RUSAGE_INFO_V0`
+is the oldest flavour carrying `ri_phys_footprint`, so it is the one least likely to shift
+under a macOS update.
+
+### The vendored PDFium has no JavaScript engine and no XFA --- verify it, do not assume it
+
+`bblanchon/pdfium-binaries` ships a build with **zero `v8::` symbols**, no real
+`CJS_Runtime` (only `CJS_RuntimeStub`, whose `ExecuteScript` disassembles to three
+instructions that zero the output and return), and **zero `CXFA_` symbols**. So "document
+JavaScript is disabled by default" understates the position: there is no engine to disable,
+and the XFA refusal is a property of the binary rather than a policy that can be forgotten.
+
+Both are properties of *that build*, not of PDFium, so they must be re-checked after every
+bump --- `worker-bench --mode engine` does it. Note it cannot be tested behaviourally: a
+document whose JavaScript does nothing looks exactly like one whose JavaScript never ran, so
+the absence of an effect is not evidence of the absence of an engine. The symbol table is
+the only thing that discriminates, which is why the check needs its own controls --- one
+that the file really is PDFium, one that its local symbols survived stripping. Without the
+second, every absence is "not verified", not "not present".
+
+What this does *not* buy: `pdfium-render` calls `FPDFDOC_InitFormFillEnvironment` on every
+document open, so the form-fill machinery is reachable parsing surface even with nothing
+behind it.
 
 ### A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
 

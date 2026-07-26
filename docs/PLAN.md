@@ -166,8 +166,44 @@ cannot be talked into writing one.
 But `RLIMIT_CPU` is a *process-lifetime* budget, not a per-request one. Measured: under a
 3 s limit, one 1.72 s render succeeds and the next dies 1.30 s in, at a cumulative 3.0 s.
 So it bounds a worker's total life, and per-render bounds have to come from the parent's
-deadline-and-kill. Memory bounding needs a different mechanism entirely — a Mach task
-limit, self-monitoring, or accepting the OS.
+deadline-and-kill.
+
+### Bounding memory without a kernel limit — measured 2026-07-26
+
+The gap left above is closed as far as it can be, and the shape of what remains is the
+interesting part. `worker-bench --mode footprint` has the parent sample the worker's
+`ri_phys_footprint` through `proc_pid_rusage` and kill it over budget. A sample costs
+**0.33 µs**, so the poll interval is a pure trade of overshoot against nothing. Against a
+child taking memory as fast as the allocator hands it over — about 22 GB/s, far faster than
+any document — and a 128 MB budget, five interleaved rounds:
+
+| poll | overshoot, median | worst seen | what the interval bounds | poll costs | bursts missed |
+|---|---|---|---|---|---|
+| 0 ms | 0.0 MB | 0.0 MB | — | 100% of a core | 0/5 |
+| 1 ms | 16.4 MB | 18.3 MB | 22 MB | 0.033% of a core | 0/5 |
+| 5 ms | 22.4 MB | 88.7 MB | 113 MB | 0.007% of a core | 0/5 |
+| 20 ms | 225.8 MB | 225.8 MB | 280 MB | 0.002% of a core | 4/5 |
+| 50 ms | 368.7 MB | 368.7 MB | 483 MB | 0.001% of a core | 4/5 |
+
+Every worker the parent caught, it killed. **The last column is the result that matters:**
+at 20 ms and above, most runs never saw the event at all — the child took its full 512 MB
+burst and exited between two samples. Polling bounds a sustained leak; it does not bound a
+burst. So supervision cannot be the only memory defence, and bounding the *inputs* —
+decompressed stream size, tile dimensions, pages per request — is not optional.
+
+Three smaller things worth carrying. Neither the median nor the worst *observed* overshoot
+is the bound — both depend on where the crossing happens to fall between two samples, so a
+budget has to be set from interval × growth rate. A zero interval is not free supervision;
+it burns a core, and its low overshoot is partly bought by starving the child. And a
+footprint excludes clean file-backed pages, which is exactly why it is the right number: a
+worker with a 337 MB document mapped is not consuming 337 MB of anything scarce, and a
+bound on RSS would kill it for reading its input. A worker at rest is **2.2 MB**, +0.3 MB
+to open the 775-page document, +1.0 MB after ten 1024² tiles.
+
+A pool of N workers is therefore budgeted at (per-worker budget + bounded overshoot) × N.
+That overshoot term is the price of having no kernel limit, and it should vanish on
+Windows, where a job object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY` is a real bound needing
+no polling at all.
 
 **The worker can be denied the filesystem and the network and still render correctly — but
 only under a profile that had to be found by bisection.** With `sandbox_init`, file reads,
@@ -1021,7 +1057,7 @@ that includes deliberately hostile files:
 | ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
 | ~~**Sanitized full rewrite**~~ | **Passed 2026-07-26** (§6). A collected `lopdf` rewrite matches QPDF on every fixture, so QPDF is not required — but `lopdf`'s own collection is quadratic and the sweep has to be ours, and "every stream must decode" would refuse most scanned documents |
 | ~~**Incremental save**~~ | **Passed 2026-07-26** (§5). Twelve fixtures, four independent readers, each asked for pixels or text rather than for acceptance. The update section is under a kilobyte whatever the document weighs, encryption and its ciphertext survive, and on disk the append beats a full rewrite 8.2× at 337 MB — but not at all below a few MB, where one `fsync` dominates both. Signatures stay cryptographically intact and stop being trusted, at every DocMDP level |
-| Threat model | Written, with the sandbox policy it implies |
+| ~~**Threat model**~~ | **Written 2026-07-26** — `docs/THREAT-MODEL.md`, with the sandbox policy it implies. Two claims were promoted from policy to build property on the way: the vendored PDFium has no V8 and no XFA compiled in, so document JavaScript cannot run rather than being switched off. Memory bounding is answered as far as macOS allows and the residue is named — polling bounds a leak, not a burst |
 
 **Exit criterion:** first compositor presentation on a typical document under 300 ms
 *warm*, no dropped frames on sustained scroll, and a documented verdict on each spike. A
