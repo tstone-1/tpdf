@@ -107,14 +107,43 @@ Retrofitting a process boundary later is a rewrite, so it is Phase 0 work.
 The first draft called the custom protocol a zero-copy fast path. It is not — it is
 merely *much better than base64 over `invoke`*, which carries a ~33% size penalty plus a
 main-thread JSON parse and is why most Tauri PDF viewers feel sluggish. A custom scheme
-still crosses the boundary with allocation, copying and per-request dispatch, and at
-hundreds of small tiles per screen that overhead can dominate. **Transfer format,
-granularity and protocol are three separate open questions for Phase 0** (§10).
+still crosses the boundary with allocation, copying and per-request dispatch. That was
+argued as a reason to prefer many small tiles; §4 measures the opposite, so per-request
+dispatch is charged far fewer times than the first draft assumed.
 
 One audit correction worth recording: `createImageBitmap()` *can* consume raw pixels ---
 via `new ImageData(new Uint8ClampedArray(buf), w, h)` --- so an uncompressed path is
-available and does not force PNG encode/decode. Whether raw or encoded wins is an
-empirical question, not a design one.
+available and does not force PNG encode/decode.
+
+### Transfer format: send raw pixels, measured 2026-07-26
+
+`tile-bench --mode encode` renders a centred tile and PNG-encodes it. The result kills
+encoding for this workload, because its cost and its benefit are anti-correlated:
+
+| corpus | tile | render | PNG encode | raw | PNG |
+|---|---|---|---|---|---|
+| text, 4× | 1024² | 0.9 ms | 1.0 ms (**110%**) | 4096 KB | 397 KB |
+| text, 4× | 2048² | 3.9 ms | 4.3 ms (**111%**) | 16384 KB | 1895 KB |
+| vector, 1× | 1024² | 6431.7 ms | 4.0 ms (0%) | 4096 KB | **4097 KB** |
+
+On a cheap page, encoding **roughly doubles the cost of producing a tile** — it buys a
+5–10× smaller payload for 100% more CPU on the scarcest resource in the system. On an
+expensive page, encoding is free relative to the render but compresses **nothing**: dense
+vector content is noise-like, and PNG returns the input plus a kilobyte of headers.
+
+So encoding costs most where it helps most, and helps least where it is affordable. Raw it
+is. A 4 MB payload over a localhost protocol handler is a memcpy; the compression was
+never buying back an actual bottleneck.
+
+Two caveats stated honestly. This is PNG at default compression — a faster preset trades
+payload for CPU and would move the text-page row, though not the vector one, since no
+codec compresses noise. And this measures only the server half; the webview decode half is
+the remaining piece of spike 0.1. It cannot rescue encoding, only add to its cost.
+
+**Design consequence:** if encoding is ever reintroduced (for a remote or bandwidth-bound
+transport), it must not run on the render thread. At ~100% of render time it would halve
+that thread's throughput, and the render thread is already serialized behind PDFium's
+global mutex.
 
 ---
 
@@ -588,9 +617,10 @@ that it presented several genuinely unresolved questions as settled architecture
 
 1. **Can PDFium round-trip a text object faithfully?** Phase 0. Gates both surgical
    redaction and text editing.
-2. **Transfer format and protocol** — raw vs encoded, custom protocol vs alternatives.
-   *Granularity is now answered:* 1024²–2048², measured 2026-07-26 (§4). The remaining
-   half of spike 0.1 is the GUI transfer A/B.
+2. **Protocol** — custom scheme vs alternatives. *Granularity and format are now
+   answered:* 1024²–2048² tiles (§4) sent as raw pixels (§3), both measured 2026-07-26.
+   The remaining piece of spike 0.1 is the webview decode half, which can only add to
+   encoding's cost, not overturn it.
 3. **Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
    path? Affects the dependency set.
 4. **Worker process count and IPC cost** — does multi-process rendering actually meet the
