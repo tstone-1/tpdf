@@ -276,26 +276,43 @@ Measure with interleaved variants (A,B,A,B across rounds, compared pairwise with
 round). Round 0 is a consistent warm-up outlier on cheap pages --- 0.895 against a 0.207
 steady state in one text-page series --- and vanishes once renders take seconds.
 
-### macOS charges ~300 ms of signature validation per binary identity, before `main`
+### Startup has three regimes, and two of them are the OS, not us
 
-Measured 2026-07-26 on the M5 MacBook Pro. First launch of a freshly built bundle spends
-**444 ms before `main` runs**; the same binary relaunched spends **4.2 ms**. That gap is not
-dyld and not cold I/O --- copying the bundle to a new path (same bytes, same warm page
-cache, only the file identity is new) reproduces it at 299 ms, and relaunching *that* copy
-costs 4.8 ms. It is the OS validating a code signature it has not seen before.
+Measured 2026-07-26 on the M5 MacBook Pro, release bundle, 775-page document, first page
+presented (`scripts/startup_bench.py`):
 
-Three consequences, and the first is the one that bites:
+| regime | to first page | pre-`main` |
+|---|---|---|
+| warm | 374 ms | 4.2 ms |
+| cold page cache (`--purge`) | 1562 ms | 217 ms |
+| cold + never-seen binary | ~1.8 s | 444 ms |
 
-- **A cold-start budget cannot cover it,** because it is spent before any of our code runs.
-  Startup targets must be stated as warm, with first-launch-after-install reported
-  separately and never claimed to hit the same number.
+Two separate OS costs are hiding in there, and they are additive:
+
+**Paging the frameworks.** `main` to the Tauri setup callback is 142 ms warm and **951 ms
+cold**. That single interval is the whole cold penalty. Nothing of ours runs in it; it is
+Tauri and WebKit being read off disk. Cold start is therefore mostly a function of how much
+framework code is *linked*, not of what the app does.
+
+**Validating an unseen code signature, ~300 ms, charged per binary identity.** First launch
+of a fresh build spends 444 ms before `main`; relaunching the same binary spends 4.2 ms.
+Copying the bundle to a new path --- same bytes, same warm page cache, only the file
+identity is new --- reproduces it at 299 ms, and relaunching *that* copy costs 4.8 ms.
+
+Consequences worth keeping:
+
+- **A cold-start budget cannot cover the signature cost,** because it is spent before any of
+  our code runs. State startup targets as warm and report the other two regimes separately.
 - **It recurs on every update,** not just on install --- a new build is a new identity.
-- **It makes "first run after build" a useless benchmark sample.** During development every
-  rebuild pays it, so the first run of a measurement series is systematically ~300 ms slow
-  and has nothing to do with the change being measured. Discard it or report it separately.
+- **It makes "first run after build" a useless benchmark sample.** Every rebuild pays it, so
+  the first run of a series is systematically ~300 ms slow for reasons unrelated to the
+  change being measured. Discard it or report it separately.
+- **Do not read a cold number as an I/O problem to cache away.** Page geometry enumeration
+  costs 86.5 ms cold against 85.9 ms warm --- identical, i.e. pure CPU. Compare the two
+  columns before concluding anything about where time goes.
 
-A true cold-page-cache measurement of an *already known* binary is a different number again
-and needs `sudo purge`; `scripts/startup_bench.py --purge` does it where sudo is available.
+Note `--purge` needs root, so an unattended cold run needs sudo credentials arranged for
+`purge` on the machine doing the measuring.
 
 ### PDFium parses a document lazily --- but enumerating pages is not lazy
 

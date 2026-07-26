@@ -307,21 +307,58 @@ scrollbar estimating from the pages it has seen and correcting as it learns.
 
 **Binding Pdfium is free** (0.8 ms), so there is nothing to gain from deferring it.
 
-#### Cold start is a different problem than it looks
+#### Cold start is 1.56 s, and it is not the PDF layer's fault either
 
-First-ever launch of a freshly built bundle: **1030 ms**, of which **444 ms is spent before
-`main`**. That is not dyld and not cold I/O. Copying the bundle to a new path — same bytes,
-same warm page cache, only the file identity is new — reproduces it at 299 ms, and
-relaunching that same copy costs 4.8 ms. It is the OS validating a code signature it has
-not seen before.
+Measured with the page cache evicted before every run (`scripts/startup_bench.py --purge`,
+6 runs, median; spread 1534–1585 ms). Same document and preview as the warm table:
 
-So the cost is charged **per binary identity, once**: on install and on every update, not on
-every launch. A 300 ms budget cannot cover it, because it is spent before tpdf runs at all.
-Two consequences: the target must be stated as *warm* start, and first-launch-after-update
-is a distinct, unavoidable, ~300 ms-worse experience that the UI should not be surprised by.
+| milestone | cold ms | Δ | warm Δ |
+|---|---|---|---|
+| main entry | 217.4 | 217.4 | 4.2 |
+| tauri setup | 1168.4 | **951.1** | 141.9 |
+| pdfium bound | 1172.3 | 3.9 | 0.8 |
+| webview script start | 1397.4 | 225.1 | 47.6 |
+| app mounted | 1410.4 | 13.0 | 47.0 |
+| document parsed | 1429.7 | 2.3 | 0.6 |
+| document open complete | 1516.2 | **86.5** | 85.9 |
+| first tile rendered | 1524.6 | 8.4 | 7.2 |
+| first preview bitmap ready | 1531.4 | 6.8 | 8.2 |
+| first page presented | **1562.4** | 31.0 | 26.6 |
 
-A true cold-page-cache measurement of an already-known binary still needs `sudo purge` and
-has not been taken; `scripts/startup_bench.py --purge` does it when run with sudo available.
+**One interval accounts for the entire cold penalty.** `main` to the Tauri setup callback
+goes from 142 ms warm to 951 ms cold — 809 ms of paging Tauri and WebKit off disk. Together
+with 217 ms of pre-`main` paging and 225 ms to reach the first line of webview script,
+**1.17 s of the 1.56 s is spent before the frontend can execute anything at all.**
+
+Two secondary results are worth having:
+
+- **Page geometry enumeration is 86.5 ms cold against 85.9 ms warm** — identical, so it is
+  pure CPU, not I/O. It cannot be cached away or prefetched. The only fix is not doing it,
+  which is what the lazy-geometry change below does.
+- **Binding the ~10 MB Pdfium dylib costs 3.9 ms cold.** The dependency that looks heaviest
+  is not a startup cost at all, warm or cold.
+
+#### First launch after install or update is a third, separate number
+
+Distinct from cold cache. First-ever launch of a freshly built bundle spends **444 ms before
+`main`**; the same binary relaunched with a warm cache spends 4.2 ms. That gap is not paging:
+copying the bundle to a new path — same bytes, same warm cache, only the file identity is
+new — reproduces it at 299 ms, and relaunching *that* copy costs 4.8 ms. It is the OS
+validating a code signature it has not seen before.
+
+The two effects are roughly additive, which the numbers bear out: 217 ms of cold paging plus
+~230 ms of first-time validation is the 444 ms actually observed on the first run after a
+build. So there are three startup regimes, not two, and they should be reported as such:
+
+| regime | to first page | when the user meets it |
+|---|---|---|
+| warm | 374 ms | every ordinary launch |
+| cold cache | 1562 ms | first launch after boot |
+| cold + new identity | ~1.8 s (444 ms pre-`main` observed) | first launch after install or update |
+
+The signature cost is charged **per binary identity, once**, and is spent before tpdf runs
+at all — no budget can cover it. Hence the target is stated as *warm*, with the other two
+regimes measured and reported rather than quietly folded in.
 
 #### One document blows the budget by 36×
 
@@ -741,12 +778,16 @@ that it presented several genuinely unresolved questions as settled architecture
    rendering, so the scheme is not a zero-copy fast path — but encoding is worse in both
    directions, and on the startup path the whole transfer-and-decode of a 16.6 MB tile is
    8.2 ms against a 374 ms budget. Not where the time goes.
-3. **How much of the 237 ms shell cost is reducible?** Now the dominant term in startup
-   (§4): 142 ms from `main` to the Tauri setup callback, and 95 ms more before the webview
-   has mounted a Svelte component. Neither has been attributed further. If most of the
-   142 ms is WebKit framework initialization it is a floor, and 300 ms warm needs the page
-   to paint before the framework finishes booting — which is an architecture, not a tuning
-   pass. Measure before choosing.
+3. **How much of the shell cost is reducible?** The dominant term in startup by a wide
+   margin (§4), and the only one large enough to decide whether the target is reachable:
+   142 ms warm from `main` to the Tauri setup callback, 951 ms cold, plus 95 ms warm before
+   a Svelte component is mounted. Neither has been attributed further than "Tauri and
+   WebKit". The cold/warm ratio says most of it is paging framework code off disk, which
+   points at how much is *linked* rather than at anything tpdf executes — so the levers
+   worth testing are lazy framework loading and a smaller initial webview payload, not
+   micro-optimisation. If the floor turns out to be high, 300 ms warm requires painting the
+   first page before the framework finishes booting, which is an architecture rather than a
+   tuning pass. Measure before choosing.
 4. **Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
    path? Affects the dependency set.
 5. **Worker process count and IPC cost** — does multi-process rendering actually meet the
