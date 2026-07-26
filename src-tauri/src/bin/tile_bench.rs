@@ -9,14 +9,31 @@
 //! pairwise within a round, because wall clock on these machines drifts several
 //! percent over minutes -- more than most differences worth acting on.
 //!
+//! Two modes, because the two questions need different experiments:
+//!
+//! * `--mode sweep` (default) renders the whole page in tiles and compares total
+//!   cost across tile sizes. Right for an ordinary page; quadratically wrong for
+//!   a traversal-bound one, where it degenerates into rendering the page once
+//!   per tile.
+//! * `--mode single` renders exactly ONE centred tile at each size, plus the
+//!   full page in one bitmap. That isolates the thing that actually matters --
+//!   whether asking for a small region costs proportionally less than asking for
+//!   the whole page -- in a handful of renders instead of thousands.
+//!
 //! Usage:
 //!   tile-bench <file.pdf> [--page N] [--rounds N] [--scales 1,2,4]
-//!              [--tiles 256,512,1024,2048]
+//!              [--tiles 256,512,1024,2048] [--mode sweep|single]
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use pdfium_render::prelude::*;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Sweep,
+    Single,
+}
 
 struct Args {
     file: PathBuf,
@@ -24,11 +41,14 @@ struct Args {
     rounds: usize,
     scales: Vec<f32>,
     tiles: Vec<i32>,
+    mode: Mode,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
-    let file = args.next().ok_or("usage: tile-bench <file.pdf> [options]")?;
+    let file = args
+        .next()
+        .ok_or("usage: tile-bench <file.pdf> [options]")?;
 
     let mut parsed = Args {
         file: PathBuf::from(file),
@@ -36,12 +56,11 @@ fn parse_args() -> Result<Args, String> {
         rounds: 5,
         scales: vec![1.0, 2.0, 4.0],
         tiles: vec![256, 512, 1024, 2048],
+        mode: Mode::Sweep,
     };
 
     while let Some(flag) = args.next() {
-        let value = args
-            .next()
-            .ok_or_else(|| format!("{flag} needs a value"))?;
+        let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
             "--page" => parsed.page = value.parse().map_err(|_| "bad --page")?,
             "--rounds" => parsed.rounds = value.parse().map_err(|_| "bad --rounds")?,
@@ -56,6 +75,13 @@ fn parse_args() -> Result<Args, String> {
                     .split(',')
                     .map(|s| s.parse().map_err(|_| "bad --tiles"))
                     .collect::<Result<_, _>>()?
+            }
+            "--mode" => {
+                parsed.mode = match value.as_str() {
+                    "sweep" => Mode::Sweep,
+                    "single" => Mode::Single,
+                    other => return Err(format!("bad --mode {other}")),
+                }
             }
             other => return Err(format!("unknown flag {other}")),
         }
@@ -141,9 +167,16 @@ fn main() {
     println!("rss after open {:.0} MB", peak_rss_mb());
     println!();
 
+    // In single mode the full page is just another variant, carried as tile
+    // size FULL_PAGE so it interleaves with the real tiles rather than being
+    // measured in a separate block. Interleaving is the whole point.
+    let mut sizes = args.tiles.clone();
+    if args.mode == Mode::Single {
+        sizes.push(FULL_PAGE);
+    }
+
     // Interleave every (tile, scale) combination within each round.
-    let combos: Vec<(i32, f32)> = args
-        .tiles
+    let combos: Vec<(i32, f32)> = sizes
         .iter()
         .flat_map(|t| args.scales.iter().map(move |s| (*t, *s)))
         .collect();
@@ -152,7 +185,11 @@ fn main() {
 
     for round in 0..args.rounds {
         for &(tile, scale) in &combos {
-            match sweep_page(&page, tile, scale) {
+            let measured = match args.mode {
+                Mode::Sweep => sweep_page(&page, tile, scale),
+                Mode::Single => single_tile(&page, tile, scale),
+            };
+            match measured {
                 Ok((wall_ms, tiles, render_ms, bytes)) => samples.push(Sample {
                     tile,
                     scale,
@@ -170,9 +207,56 @@ fn main() {
         }
     }
 
-    report(&samples, args.rounds);
+    match args.mode {
+        Mode::Sweep => report(&samples, args.rounds),
+        Mode::Single => report_single(&samples, args.rounds),
+    }
     println!();
     println!("peak rss      {:.0} MB", peak_rss_mb());
+}
+
+/// Sentinel tile size meaning "the whole page in one bitmap".
+const FULL_PAGE: i32 = -1;
+
+/// Renders exactly one tile, taken from the centre of the page, returning the
+/// same shape as [`sweep_page`].
+///
+/// The centre is deliberate: a corner tile of a sparse page can be empty, which
+/// would measure nothing. The centre of a dense page is representative of what a
+/// reader actually looks at.
+fn single_tile(
+    page: &PdfPage,
+    tile: i32,
+    scale: f32,
+) -> Result<(f64, usize, f64, usize), PdfiumError> {
+    let full_w = (page.width().value * scale).round() as i32;
+    let full_h = (page.height().value * scale).round() as i32;
+
+    let (w, h, x, y) = if tile == FULL_PAGE {
+        (full_w, full_h, 0, 0)
+    } else {
+        let w = tile.min(full_w);
+        let h = tile.min(full_h);
+        (w, h, (full_w - w) / 2, (full_h - h) / 2)
+    };
+
+    let wall = Instant::now();
+    let mut bitmap = PdfBitmap::empty(w, h, PdfBitmapFormat::BGRA)?;
+    let config = PdfRenderConfig::new()
+        .set_target_width(full_w)
+        .set_target_height(full_h)
+        .set_origin(-x, -y);
+
+    let t = Instant::now();
+    page.render_into_bitmap_with_config(&mut bitmap, &config)?;
+    let render_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    Ok((
+        wall.elapsed().as_secs_f64() * 1000.0,
+        1,
+        render_ms,
+        (w * h * 4) as usize,
+    ))
 }
 
 /// Renders one full page in tiles of the given size, returning
@@ -257,10 +341,14 @@ fn report(samples: &[Sample], rounds: usize) {
                 .collect();
             let Some(first) = mine.first() else { continue };
             let med = median_wall(samples, tile, *scale_milli);
-            let ratio = if baseline > 0.0 { med / baseline } else { f64::NAN };
+            let ratio = if baseline > 0.0 {
+                med / baseline
+            } else {
+                f64::NAN
+            };
 
             println!(
-                "{:>6} {:>6.1} {:>10.1} {:>7} {:>11.2} {:>10.1} {:>9.3}",
+                "{:>6} {:>7.3} {:>10.1} {:>7} {:>11.2} {:>10.1} {:>9.3}",
                 tile,
                 scale,
                 med,
@@ -283,17 +371,17 @@ fn report(samples: &[Sample], rounds: usize) {
         }
         let ratios: Vec<String> = (0..rounds)
             .filter_map(|round| {
-                let a = samples
-                    .iter()
-                    .find(|s| s.tile == 512 && (s.scale * 1000.0) as u32 == *scale_milli && s.round == round)?;
-                let b = samples
-                    .iter()
-                    .find(|s| s.tile == *tile && (s.scale * 1000.0) as u32 == *scale_milli && s.round == round)?;
+                let a = samples.iter().find(|s| {
+                    s.tile == 512 && (s.scale * 1000.0) as u32 == *scale_milli && s.round == round
+                })?;
+                let b = samples.iter().find(|s| {
+                    s.tile == *tile && (s.scale * 1000.0) as u32 == *scale_milli && s.round == round
+                })?;
                 Some(format!("{:.3}", b.wall_ms / a.wall_ms))
             })
             .collect();
         println!(
-            "  tile={:<5} scale={:<4.1} {}",
+            "  tile={:<5} scale={:<6.3} {}",
             tile,
             *scale_milli as f32 / 1000.0,
             ratios.join("  ")
@@ -315,11 +403,105 @@ fn report(samples: &[Sample], rounds: usize) {
         let wall: f64 = mine.iter().map(|s| s.wall_ms).sum();
         let render: f64 = mine.iter().map(|s| s.render_ms).sum();
         println!(
-            "  tile={:<5} scale={:<4.1} {:.1}%",
+            "  tile={:<5} scale={:<6.3} {:.1}%",
             tile,
             *scale_milli as f32 / 1000.0,
             render / wall * 100.0
         );
+    }
+}
+
+/// Reports single-tile mode: what does asking for a region cost, relative to
+/// asking for the whole page?
+///
+/// The number to read is the last column. A renderer whose cost tracked the
+/// requested area would show a tile costing its pixel fraction of the page. A
+/// renderer that re-traverses the display list per request shows ~1.0 regardless
+/// of tile size -- meaning tiling buys bounded memory and nothing else.
+fn report_single(samples: &[Sample], rounds: usize) {
+    let mut scales: Vec<u32> = samples.iter().map(|s| (s.scale * 1000.0) as u32).collect();
+    scales.sort_unstable();
+    scales.dedup();
+
+    println!(
+        "{:>8} {:>6} {:>10} {:>10} {:>10} {:>12}",
+        "tile", "scale", "median ms", "Mpixel", "ms/Mpixel", "vs full page"
+    );
+    println!("{}", "-".repeat(62));
+
+    for scale_milli in &scales {
+        let scale = *scale_milli as f32 / 1000.0;
+        let full = median_wall(samples, FULL_PAGE, *scale_milli);
+
+        let mut sizes: Vec<i32> = samples
+            .iter()
+            .filter(|s| (s.scale * 1000.0) as u32 == *scale_milli)
+            .map(|s| s.tile)
+            .collect();
+        sizes.sort_unstable();
+        sizes.dedup();
+
+        for tile in sizes {
+            let Some(first) = samples
+                .iter()
+                .find(|s| s.tile == tile && (s.scale * 1000.0) as u32 == *scale_milli)
+            else {
+                continue;
+            };
+            let med = median_wall(samples, tile, *scale_milli);
+            let mpixel = first.bytes as f64 / 4.0 / 1_000_000.0;
+            let label = if tile == FULL_PAGE {
+                "full".to_string()
+            } else {
+                tile.to_string()
+            };
+
+            println!(
+                "{:>8} {:>7.3} {:>10.1} {:>10.2} {:>10.1} {:>12.3}",
+                label,
+                scale,
+                med,
+                mpixel,
+                med / mpixel,
+                if full > 0.0 { med / full } else { f64::NAN }
+            );
+        }
+        println!();
+    }
+
+    println!("per-round ratio vs full page (same scale, same round):");
+    for scale_milli in &scales {
+        let mut sizes: Vec<i32> = samples
+            .iter()
+            .filter(|s| (s.scale * 1000.0) as u32 == *scale_milli && s.tile != FULL_PAGE)
+            .map(|s| s.tile)
+            .collect();
+        sizes.sort_unstable();
+        sizes.dedup();
+
+        for tile in sizes {
+            let ratios: Vec<String> = (0..rounds)
+                .filter_map(|round| {
+                    let full = samples.iter().find(|s| {
+                        s.tile == FULL_PAGE
+                            && (s.scale * 1000.0) as u32 == *scale_milli
+                            && s.round == round
+                    })?;
+                    let mine = samples.iter().find(|s| {
+                        s.tile == tile
+                            && (s.scale * 1000.0) as u32 == *scale_milli
+                            && s.round == round
+                    })?;
+                    Some(format!("{:.3}", mine.wall_ms / full.wall_ms))
+                })
+                .collect();
+            println!(
+                "  tile={:<5} scale={:<6.3} {}",
+                tile,
+                *scale_milli as f32 / 1000.0,
+                ratios.join("  ")
+            );
+        }
     }
 }
 

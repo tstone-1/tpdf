@@ -112,7 +112,10 @@ fn ok(tile: Tile) -> Response<Vec<u8>> {
         // The webview origin differs from the custom scheme's, so responses
         // must opt in explicitly or fetch() rejects them.
         .header("Access-Control-Allow-Origin", "*")
-        .header("Access-Control-Expose-Headers", "X-Tile-Width, X-Tile-Height, X-Render-Us, X-Encode-Us")
+        .header(
+            "Access-Control-Expose-Headers",
+            "X-Tile-Width, X-Tile-Height, X-Render-Us, X-Encode-Us",
+        )
         // Raw tiles carry no dimensions in-band; the frontend needs them to
         // build an ImageData without guessing.
         .header("X-Tile-Width", tile.width.to_string())

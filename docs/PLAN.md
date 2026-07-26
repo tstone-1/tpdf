@@ -123,15 +123,57 @@ empirical question, not a design one.
 ### Tiling
 
 Pages render in tiles at the current zoom; only visible tiles plus one screen of prefetch
-are rendered. Tile size is **unknown** — 512² is a starting guess to be measured against
-per-request overhead (§3), not a decision.
+are rendered.
 
-Note what tiling does and does not buy. It bounds *output bitmap* memory, which is what
-stops a 400% zoom on an A0 drawing allocating gigabytes. It does **not** bound PDFium's
-parsing, display-list traversal, transparency-group allocation, pattern evaluation or
-image decoding — a single 512² tile of a dense CAD page can still traverse most of the
-page's objects. Phase 0 measures CPU time and peak native allocation per tile, not just
-frame rate.
+**Tile size: measured, 2026-07-26. 512² was the wrong guess — use 1024² or larger.**
+Spike 0.1 (`src-tauri/src/bin/tile_bench.rs`, `--mode single`) rendered one centred tile
+at each size plus the whole page, interleaved across rounds. Ratios were stable to within
+1% across rounds on both corpora, so these differences are real, not clock drift.
+
+The decision metric is *time to fill a viewport*, not time to render a page. For a
+1920×1080 viewport on the A0 vector page at 1×:
+
+| tile | tiles needed | time to fill |
+|---|---|---|
+| 256² | 40 | 39.3 s |
+| 512² | 12 | 28.1 s |
+| 1024² | 4 | 26.2 s |
+| 2048² | 1 | 17.9 s |
+
+Larger wins, by more than 2×. On the text page the same comparison is flat (~3.5–4 ms at
+any tile size), so nothing is given up. The bet is asymmetric: tile size barely matters on
+easy pages and matters enormously on hard ones.
+
+### The fixed per-render cost, and why it drives the architecture
+
+Tiling bounds *output bitmap* memory — the A0 page at 2× is a 128 MB bitmap, and that is
+what tiling stops. It was an open question whether tiling also bounds PDFium's traversal.
+Measured answer: **partly, and with a hard floor.**
+
+PDFium *does* cull spatially — a 256² tile of the A0 page costs 4.3% of a full-page
+render while covering 0.8% of its area. But cost does not approach zero as the request
+shrinks. Rendering that page to a 150 px-wide thumbnail (0.03 Mpixel, 1/270th of the
+page's pixels at 1×) still takes **1.52 s**, and a 256² tile still takes 0.98 s. Fitting
+the two: roughly **1 s of fixed cost per render call**, plus an area-proportional term.
+
+That floor is per *render call*, not per document or page open — the bench holds one
+`PdfPage` across every measurement. PDFium rebuilds substantial per-page state on every
+render. Four consequences, all load-bearing:
+
+1. **Tile count multiplies a constant.** Every extra tile on a complex page costs ~1 s
+   before drawing anything. Hence "fewest, largest tiles", above.
+2. **The tier-1 placeholder is not free.** §4's promise that the user "never sees a white
+   rectangle" fails on exactly the pages where it matters most — the cheap thumbnail of
+   this page costs 1.5 s. Tier 1 must be rendered once at document open, in a worker, off
+   the critical path, and the UI must degrade honestly while it is absent.
+3. **A single such page starves the process.** 22.8 s at 1×, 48.4 s at 2× for a full
+   render, holding PDFium's global mutex throughout. This is the strongest empirical
+   argument for worker processes; see §3.
+4. **Progressive rendering is mandatory, not an optimization.** A 1 s floor per call means
+   cancellation has to work *inside* a render, which is what the `IFSDK_PAUSE` path is
+   for.
+
+Peak RSS: 211 MB for one A0 page, 70 MB for the 775-page text document.
 
 ### Two-tier cache
 
@@ -546,8 +588,9 @@ that it presented several genuinely unresolved questions as settled architecture
 
 1. **Can PDFium round-trip a text object faithfully?** Phase 0. Gates both surgical
    redaction and text editing.
-2. **Transfer format, granularity, and protocol** — raw vs encoded, tile vs strip vs page,
-   custom protocol vs alternatives. Three independent questions, all empirical.
+2. **Transfer format and protocol** — raw vs encoded, custom protocol vs alternatives.
+   *Granularity is now answered:* 1024²–2048², measured 2026-07-26 (§4). The remaining
+   half of spike 0.1 is the GUI transfer A/B.
 3. **Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
    path? Affects the dependency set.
 4. **Worker process count and IPC cost** — does multi-process rendering actually meet the
