@@ -542,6 +542,92 @@ Consequences worth keeping:
 Note `--purge` needs root, so an unattended cold run needs sudo credentials arranged for
 `purge` on the machine doing the measuring.
 
+### The shell floor is ~250 ms, and no lever on our side moves it
+
+Measured 2026-07-26 with interleaved variants (`scripts/startup_bench.py --variant`), three
+runs of 8 rounds. Of a 368 ms warm start, the first line of application code runs at
+~247 ms, and that interval is seven Tauri/WebKit intervals of which **none is ours**: 4 ms
+dyld, 30 ms `Builder::build()`, 25 ms `App::run` prologue, 78 ms
+`WebviewWindowBuilder::build()`, 58 ms HTML load, 48 ms to the first completed IPC.
+
+The two obvious levers were tested and neither is one:
+
+- **Deleting the entire frontend framework is worth nothing.** A variant doing identical
+  work in one inline script --- no module graph, no Svelte, no `@tauri-apps/api` --- measured
+  −8.4, +9.9 and −0.2 ms across the three runs. See the next entry for why.
+- **Creating the window in the setup hook rather than from `tauri.conf.json` is ±1 ms.**
+  The cost is the WKWebView, not when it is asked for.
+
+Two things *were* reducible, and both were defaults rather than requirements:
+
+- **The 86 ms page-geometry walk**, which is ours. Two routes exist --- collect lazily, or
+  collect during the shell's boot before the webview can ask --- and they are
+  **alternatives, not complements**: both delete the same 86 ms, so doing both measures the
+  same as doing either. Lazy is the better one; it needs no path known at launch.
+- **Tauri's default macOS menu, ~16 ms.** Split across `Builder::build()` (39.7 → 32.9) and
+  the `App::run` prologue (94.0 → 87.8), so looking in one place would have missed most of
+  it. An empty menu is not shippable --- Cmd-Q, Cmd-W and clipboard shortcuts live there ---
+  so the lesson is to build the menu the app needs instead of accepting the default.
+
+Together they take 368 ms to **276 ms**. Note the menu effect is clean against the
+low-variance `lazy` variant (negative in 7/7 rounds) and reads as −9 ms with a range
+spanning zero against the noisier baseline: when two pairings disagree, believe the one
+with the tighter distribution rather than averaging them.
+
+The consequence to carry: tpdf's own startup budget is about **50 ms**, of which ~45 is
+already spent. There is no headroom elsewhere to absorb a regression, and anything below
+the floor requires presenting the first page without the webview at all.
+
+### A webview's first custom-protocol request costs ~45 ms, whichever request it is
+
+The reason the payload experiment above came out flat, and the more useful half of it. The
+framework build spends 48 ms between its first script and its mount --- and its first IPC
+then costs **0.0 ms**. The no-framework build has nothing to fetch, is fully loaded 39 ms
+earlier, and its first IPC costs **43.9 ms**.
+
+Same toll, different door. It is charged once, to whichever request over a Tauri custom
+scheme happens to be first --- an asset fetch or an `invoke`, it does not matter. So a
+smaller bundle does not avoid it, it only moves which line of the timeline shows it, and
+"module load and framework mount: 47 ms" is a misreading of an interval that is mostly not
+either of those things.
+
+Corollary for reading any startup table: an interval named after what the application is
+doing may be dominated by a fixed cost the platform charges inside it. Attribute by
+substituting the work, not by naming the interval.
+
+### Tauri creates config windows *before* the setup hook, hiding the webview's cost
+
+`tauri::Builder::build()` does not run the setup hook; `App::run` does, and the internal
+`setup` creates every window listed in `tauri.conf.json` *before* calling ours. A mark at
+the top of the setup hook is therefore already after WKWebView creation, and no mark can be
+placed between the two --- which is why 142 ms sat unattributed for a full spike.
+
+To time it: take `tauri::generate_context!()` as `mut`, `context.config_mut().app.windows.clear()`,
+and build the window inside the hook with `WebviewWindowBuilder`. Note `build()` returns
+once the webview exists and has been told what to load, not once it has loaded it.
+
+### A page whose window is not visible is suspended --- so a JS watchdog cannot fire either
+
+WebKit suspends a page when its window is not visible, and behind a **lock screen** or on a
+display that has gone dark, every window qualifies. The suspension stops
+`requestAnimationFrame` **and `setTimeout`**. So a startup run that ends on a presentation
+callback does not time out, does not error, and produces no output at all --- it stops dead
+after the last milestone before presentation and looks exactly like a slow machine. A
+JavaScript watchdog is useless here: it is suspended alongside the thing it was watching.
+
+An hour went into this, on a machine that had simply idled and locked mid-benchmark. Three
+guards now, and the third is the one that diagnosed it:
+
+- `startup_bench.py` checks `CGSSessionScreenIsLocked` (via `ioreg -n Root -d1 -a`) and
+  refuses to start.
+- It holds `caffeinate -du` for its own lifetime. **`-d` alone is not enough** --- it
+  prevents a display going idle and will not turn one back on that is already off.
+- The app carries a **Rust-side** watchdog that prints the marks it did reach and exits 2.
+
+The general rule is the same one the crash-test entry states from the other direction: a
+harness must be able to fail. If the only mechanism that could report a failure lives on
+the same side as the failure, it will not report it.
+
 ### PDFium parses a document lazily --- but enumerating pages is not lazy
 
 Opening the 775-page text corpus with `FPDF_LoadDocument` takes **0.6 ms**. Collecting every

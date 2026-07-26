@@ -12,6 +12,8 @@
   interface DocumentInfo {
     id: number;
     pages: PageSize[];
+    page_count: number;
+    lazy_geometry: boolean;
     open_ms: number;
     at_ms: number;
   }
@@ -57,7 +59,7 @@
     try {
       doc = await invoke<DocumentInfo>("open_document", { path });
       note(
-        `opened ${doc.pages.length} pages in ${doc.open_ms.toFixed(1)} ms ` +
+        `opened ${doc.page_count} pages in ${doc.open_ms.toFixed(1)} ms ` +
           `(at ${doc.at_ms.toFixed(0)} ms into process)`,
       );
       await drawFirstPage();

@@ -75,7 +75,12 @@ pub struct PageSize {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct DocumentInfo {
     pub id: u32,
+    /// Geometry of every page, or only of page 1 when the open was lazy.
     pub pages: Vec<PageSize>,
+    /// Pages in the document, which is known even when their sizes are not.
+    pub page_count: usize,
+    /// Whether `pages` is the whole table or only its first entry.
+    pub lazy_geometry: bool,
     /// Time spent in `load_pdf_from_file`, i.e. parse and cross-reference repair.
     pub open_ms: f64,
     /// Milliseconds since process start when the open completed.
@@ -87,6 +92,8 @@ type Reply<T> = Box<dyn FnOnce(Result<T, String>) + Send>;
 enum Job {
     Open {
         path: PathBuf,
+        /// Collect only page 1's size instead of the whole table.
+        lazy_geometry: bool,
         reply: Reply<DocumentInfo>,
     },
     Tile {
@@ -138,8 +145,12 @@ impl RenderService {
 
                 for job in rx {
                     match job {
-                        Job::Open { path, reply } => {
-                            reply(open_document(pdfium, &path, &mut docs));
+                        Job::Open {
+                            path,
+                            lazy_geometry,
+                            reply,
+                        } => {
+                            reply(open_document(pdfium, &path, lazy_geometry, &mut docs));
                         }
                         Job::Tile { request, reply } => {
                             reply(render_tile(&docs, &request));
@@ -153,8 +164,20 @@ impl RenderService {
     }
 
     /// Opens a document, invoking `reply` on the render thread when done.
-    pub fn open(&self, path: PathBuf, reply: Reply<DocumentInfo>) {
-        if self.tx.send(Job::Open { path, reply }).is_err() {
+    ///
+    /// `lazy_geometry` skips collecting every page's size, which spike 0.2
+    /// measured at 86 ms on a 775-page document --- the largest avoidable item
+    /// in the startup budget. See PLAN §4.
+    pub fn open(&self, path: PathBuf, lazy_geometry: bool, reply: Reply<DocumentInfo>) {
+        if self
+            .tx
+            .send(Job::Open {
+                path,
+                lazy_geometry,
+                reply,
+            })
+            .is_err()
+        {
             // Render thread is gone; nothing left to reply with.
         }
     }
@@ -192,6 +215,7 @@ fn bind_pdfium(library_dir: &Path) -> Result<&'static Pdfium, String> {
 fn open_document(
     pdfium: &'static Pdfium,
     path: &Path,
+    lazy_geometry: bool,
     docs: &mut Vec<PdfDocument<'static>>,
 ) -> Result<DocumentInfo, String> {
     let t0 = Instant::now();
@@ -201,14 +225,23 @@ fn open_document(
     let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
     mark("document parsed");
 
-    let pages = doc
-        .pages()
-        .iter()
-        .map(|page| PageSize {
-            width_pt: page.width().value,
-            height_pt: page.height().value,
-        })
-        .collect();
+    let size_of = |page: &PdfPage<'_>| PageSize {
+        width_pt: page.width().value,
+        height_pt: page.height().value,
+    };
+
+    let page_count = doc.pages().len() as usize;
+    // Lazy geometry loads exactly one page, because the first page's size is
+    // what the viewer needs to lay out its first frame. The scroller estimates
+    // the rest from it and corrects as pages arrive (PLAN §4).
+    let pages: Vec<PageSize> = if lazy_geometry {
+        doc.pages()
+            .get(0)
+            .map(|page| vec![size_of(&page)])
+            .unwrap_or_default()
+    } else {
+        doc.pages().iter().map(|page| size_of(&page)).collect()
+    };
 
     let id = docs.len() as u32;
     docs.push(doc);
@@ -219,6 +252,8 @@ fn open_document(
     Ok(DocumentInfo {
         id,
         pages,
+        page_count,
+        lazy_geometry,
         open_ms,
         at_ms: since_process_start_ms(),
     })

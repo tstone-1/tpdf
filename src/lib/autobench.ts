@@ -70,16 +70,17 @@ export async function runAutobenchIfRequested(): Promise<boolean> {
   const log = (line = "") => lines.push(line);
 
   try {
-    const info = await invoke<{ id: number; pages: { width_pt: number; height_pt: number }[] }>(
-      "open_document",
-      { path },
-    );
+    const info = await invoke<{
+      id: number;
+      pages: { width_pt: number; height_pt: number }[];
+      page_count: number;
+    }>("open_document", { path });
 
     const page = info.pages[0];
     if (!page) throw new Error("document has no pages");
 
     log(`file          ${path}`);
-    log(`pages         ${info.pages.length}`);
+    log(`pages         ${info.page_count}`);
     log(`page 0        ${page.width_pt.toFixed(0)} x ${page.height_pt.toFixed(0)} pt`);
     log();
 
