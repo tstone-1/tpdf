@@ -165,13 +165,13 @@ export async function runAutobenchIfRequested(): Promise<boolean> {
       log(`  ${pad(variant.label, 11)} ${series}`);
     }
 
-    await invoke("autobench_report", { text: lines.join("\n") });
-    await invoke("autobench_done", { code: 0 });
+    await invoke("spike_print", { text: lines.join("\n") });
+    await invoke("spike_exit", { code: 0 });
   } catch (error) {
-    await invoke("autobench_report", {
+    await invoke("spike_print", {
       text: `[ERROR] autobench: ${error instanceof Error ? error.message : String(error)}`,
     });
-    await invoke("autobench_done", { code: 1 });
+    await invoke("spike_exit", { code: 1 });
   }
 
   return true;

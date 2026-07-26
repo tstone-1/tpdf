@@ -244,6 +244,13 @@ Also note `tauri dev` runs a bare `cargo run`, which fails with "could not deter
 binary to run" as soon as the crate has more than one bin. `default-run = "tpdf"` in
 `[package]` fixes it.
 
+**Startup timing is worse still: `--release` is not enough, it needs a bundle.** Under
+`tauri dev` the frontend is served by a Vite dev server over HTTP, so a startup measurement
+describes Vite's module graph, not the app. Build with
+`npm run tauri build -- --bundles app` and run the executable inside the `.app` directly
+(`target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf`) --- that keeps stdout and the
+environment, which `open -a` does not.
+
 ### PDFium pays a large fixed cost *per render call*, not per page open
 
 Measured 2026-07-26 (`src-tauri/src/bin/tile_bench.rs --mode single`). On a complex page
@@ -268,6 +275,39 @@ request shrinks, which has three consequences worth stating plainly:
 Measure with interleaved variants (A,B,A,B across rounds, compared pairwise within a
 round). Round 0 is a consistent warm-up outlier on cheap pages --- 0.895 against a 0.207
 steady state in one text-page series --- and vanishes once renders take seconds.
+
+### macOS charges ~300 ms of signature validation per binary identity, before `main`
+
+Measured 2026-07-26 on the M5 MacBook Pro. First launch of a freshly built bundle spends
+**444 ms before `main` runs**; the same binary relaunched spends **4.2 ms**. That gap is not
+dyld and not cold I/O --- copying the bundle to a new path (same bytes, same warm page
+cache, only the file identity is new) reproduces it at 299 ms, and relaunching *that* copy
+costs 4.8 ms. It is the OS validating a code signature it has not seen before.
+
+Three consequences, and the first is the one that bites:
+
+- **A cold-start budget cannot cover it,** because it is spent before any of our code runs.
+  Startup targets must be stated as warm, with first-launch-after-install reported
+  separately and never claimed to hit the same number.
+- **It recurs on every update,** not just on install --- a new build is a new identity.
+- **It makes "first run after build" a useless benchmark sample.** During development every
+  rebuild pays it, so the first run of a measurement series is systematically ~300 ms slow
+  and has nothing to do with the change being measured. Discard it or report it separately.
+
+A true cold-page-cache measurement of an *already known* binary is a different number again
+and needs `sudo purge`; `scripts/startup_bench.py --purge` does it where sudo is available.
+
+### PDFium parses a document lazily --- but enumerating pages is not lazy
+
+Opening the 775-page text corpus with `FPDF_LoadDocument` takes **0.6 ms**. Collecting every
+page's size afterwards takes **86 ms**. On a *one-page* document it still takes 52 ms, so
+this is not per-page geometry arithmetic --- it is a fixed cost plus a real page load each
+time.
+
+The trap is that "open the document and read the page table" looks like one cheap operation
+and is two very different ones. Anything that wants full document geometry up front ---
+a virtual scroller sizing its scrollbar is the obvious one --- is putting 50-90 ms on the
+critical path to buy exactness it could have estimated. Load geometry lazily and correct.
 
 ### PDFium rendering *is* interruptible --- via the progressive API
 

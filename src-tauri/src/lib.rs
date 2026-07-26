@@ -5,6 +5,7 @@
 
 mod protocol;
 mod render;
+mod startup;
 
 use std::path::PathBuf;
 
@@ -49,11 +50,11 @@ async fn open_document(
     rx.recv().map_err(|_| "render thread stopped".to_string())?
 }
 
-/// Milliseconds since process start, so the frontend can place its own marks on
+/// Milliseconds since process exec, so the frontend can place its own marks on
 /// the same timeline as the Rust side (spike 0.2).
 #[tauri::command]
 fn process_elapsed_ms() -> f64 {
-    render::since_process_start_ms()
+    startup::since_process_start_ms()
 }
 
 /// Path to auto-benchmark on startup, from `TPDF_AUTOBENCH`.
@@ -67,27 +68,59 @@ fn autobench_path() -> Option<String> {
     std::env::var("TPDF_AUTOBENCH").ok()
 }
 
-/// Prints frontend benchmark output on the process's stdout.
+/// Path to time a cold open of on startup, from `TPDF_STARTUP` (spike 0.2).
+#[tauri::command]
+fn startup_path() -> Option<String> {
+    std::env::var("TPDF_STARTUP").ok()
+}
+
+/// Records a webview-observed milestone on the process timeline.
+///
+/// `at_ms` is required rather than stamped here: every mark the webview cares
+/// about happened before it could tell us, so stamping on arrival would measure
+/// the IPC call instead of the event.
+#[tauri::command]
+fn startup_mark(name: String, at_ms: f64) {
+    startup::mark_at(&name, at_ms);
+}
+
+/// The full startup timeline, Rust and webview marks merged.
+#[tauri::command]
+fn startup_timeline() -> Vec<(String, f64)> {
+    startup::timeline()
+}
+
+/// Whether the pre-`main` interval could be measured on this platform.
+///
+/// The frontend needs to know, because a timeline that silently starts at
+/// `main` would report a startup budget that excludes dyld.
+#[tauri::command]
+fn startup_pre_main_ms() -> Option<f64> {
+    startup::pre_main_ms()
+}
+
+/// Prints spike output on the process's stdout.
 ///
 /// Webview `console.log` does not reliably reach the terminal across platforms,
 /// and the results need to land somewhere a script can read.
 #[tauri::command]
-fn autobench_report(text: String) {
+fn spike_print(text: String) {
     println!("{text}");
 }
 
-/// Ends an auto-benchmark run.
+/// Ends an automated spike run.
 #[tauri::command]
-fn autobench_done(app: tauri::AppHandle, code: i32) {
+fn spike_exit(app: tauri::AppHandle, code: i32) {
     app.exit(code);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    render::mark_process_start();
+    startup::mark_process_start();
 
     tauri::Builder::default()
         .setup(|app| {
+            startup::mark("tauri setup");
             let dir = pdfium_library_dir(app.handle());
             app.manage(RenderService::start(dir));
             Ok(())
@@ -100,8 +133,12 @@ pub fn run() {
             open_document,
             process_elapsed_ms,
             autobench_path,
-            autobench_report,
-            autobench_done
+            startup_path,
+            startup_mark,
+            startup_timeline,
+            startup_pre_main_ms,
+            spike_print,
+            spike_exit
         ])
         .run(tauri::generate_context!())
         .expect("error while running tpdf");
