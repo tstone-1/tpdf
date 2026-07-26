@@ -33,12 +33,16 @@
 //! * `timeout`   --- can a runaway render be cancelled by killing the worker
 //! * `limits`    --- does `setrlimit` actually bound a worker on this platform
 //! * `authority` --- can the worker be denied files and network and still render
+//! * `footprint` --- if the kernel will not bound memory, can the parent
+//! * `engine`    --- what the bound Pdfium build is capable of at all
 //!
 //! Usage:
-//!   worker-bench <file.pdf> [--mode latency|parallel|crash|timeout|limits|authority]
-//!                [--rounds N] [--reps N] [--pages N] [--workers 1,2,4,8]
-//!                [--page N] [--scale F] [--tile N] [--lib DIR]
-//!                [--profiles 'none;targeted;worker;(version 1)...']
+//!   worker-bench <file.pdf>
+//!       [--mode latency|parallel|crash|timeout|limits|authority|footprint|engine]
+//!       [--rounds N] [--reps N] [--pages N] [--workers 1,2,4,8]
+//!       [--page N] [--scale F] [--tile N] [--lib DIR]
+//!       [--profiles 'none;targeted;worker;(version 1)...']
+//!       [--budget-mb N] [--poll-ms 0,1,5,20]
 //!
 //! `--profiles` is semicolon-separated and takes either a built-in name or raw
 //! SBPL beginning with `(`, so a policy can be bisected from the shell without a
@@ -105,6 +109,18 @@ mod imp {
         Probe,
         /// Die on purpose, so supervision can be measured.
         Crash { how: String },
+        /// Allocate without bound, so a memory budget can be measured.
+        ///
+        /// Stands in for a decompression bomb or a pathological page: the
+        /// worker is not misbehaving, it is doing exactly what the document
+        /// asked for, and nothing inside it knows when to stop.
+        Balloon {
+            /// How much to take per allocation.
+            chunk_kb: usize,
+            /// A ceiling so a supervision bug cannot push the machine into
+            /// swap. Reaching it means the parent failed.
+            cap_mb: usize,
+        },
         /// Answer immediately; used to time a warm round trip with no work in it.
         Ping,
     }
@@ -475,6 +491,43 @@ mod imp {
         }
     }
 
+    /// A process's physical footprint in bytes, or `None` if it is gone.
+    ///
+    /// `ri_phys_footprint` is the number Activity Monitor shows as Memory and
+    /// the one jetsam bounds: dirty plus compressed pages, excluding clean
+    /// file-backed mappings. That last exclusion is why it, and not resident
+    /// size, is the number a budget should be written in --- a worker with a
+    /// 300 MB document mapped is not using 300 MB of anything scarce, and a
+    /// bound on RSS would kill it for reading its own input.
+    ///
+    /// `RUSAGE_INFO_V0` is the oldest flavour carrying the field, so it is the
+    /// one least likely to shift under a macOS update.
+    #[cfg(target_os = "macos")]
+    fn phys_footprint(pid: u32) -> Option<u64> {
+        // SAFETY: every field is an integer, so an all-zero value is valid.
+        let mut info: libc::rusage_info_v0 = unsafe { std::mem::zeroed() };
+        // `rusage_info_t` is itself `void *`, so the declared `*mut
+        // rusage_info_t` reads as a pointer to a pointer and is not one --- the
+        // struct's own address goes here, exactly as every caller in the SDK
+        // writes it. Passing the address of a pointer instead type-checks
+        // cleanly, returns 0, and has the kernel write the whole struct over
+        // whatever follows that pointer on the stack. It did, and the only
+        // symptom was a footprint that read as zero.
+        let rc = unsafe {
+            libc::proc_pid_rusage(
+                pid as libc::c_int,
+                libc::RUSAGE_INFO_V0,
+                std::ptr::addr_of_mut!(info).cast::<libc::rusage_info_t>(),
+            )
+        };
+        (rc == 0).then_some(info.ri_phys_footprint)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn phys_footprint(_pid: u32) -> Option<u64> {
+        None
+    }
+
     /// Applies memory and CPU-time limits to this process.
     ///
     /// `RLIMIT_AS` and `RLIMIT_DATA` are both attempted, because they are not
@@ -712,6 +765,42 @@ mod imp {
                         _ => std::process::exit(9),
                     }
                 }
+                Request::Balloon { chunk_kb, cap_mb } => {
+                    // Acknowledge first. The parent has to be free to poll while
+                    // this runs, and a worker that is busy taking memory is not
+                    // going to answer anything again.
+                    reply(
+                        &mut writer,
+                        &Response {
+                            ok: true,
+                            ..Default::default()
+                        },
+                        &[],
+                    );
+                    let chunk = chunk_kb.max(1) * 1024;
+                    let cap = cap_mb * 1024 * 1024;
+                    let mut held: Vec<Vec<u8>> = Vec::new();
+                    let mut taken = 0usize;
+                    while taken < cap {
+                        let mut block = vec![0u8; chunk];
+                        // Touch every page. An allocation nothing has written to
+                        // is not resident and does not count against the
+                        // footprint, so a balloon that only reserved address
+                        // space would be invisible to the very number being
+                        // tested --- which is the honest shape of the threat
+                        // anyway: bombs materialise their bytes.
+                        let mut offset = 0;
+                        while offset < block.len() {
+                            // SAFETY: `offset` is within the block.
+                            unsafe { block.as_mut_ptr().add(offset).write_volatile(1) };
+                            offset += 4096;
+                        }
+                        taken += block.len();
+                        held.push(block);
+                    }
+                    eprintln!("[worker] balloon hit its {cap_mb} MB cap unnoticed");
+                    std::process::exit(BALLOON_CAPPED);
+                }
             };
             reply(&mut writer, &response, payload);
         }
@@ -916,6 +1005,8 @@ mod imp {
         Timeout,
         Limits,
         Authority,
+        Footprint,
+        Engine,
     }
 
     struct Args {
@@ -932,6 +1023,10 @@ mod imp {
         /// Sandbox profiles to compare in `authority` mode. A name, raw SBPL, or
         /// `none`.
         profiles: Vec<String>,
+        /// The footprint a worker may reach before the parent kills it.
+        budget_mb: u64,
+        /// Polling intervals to compare in `footprint` mode, in milliseconds.
+        poll_ms: Vec<u64>,
     }
 
     impl Args {
@@ -990,6 +1085,8 @@ mod imp {
                 "strict".into(),
                 "worker".into(),
             ],
+            budget_mb: 512,
+            poll_ms: vec![0, 1, 5, 20],
         };
         while let Some(flag) = it.next() {
             let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -1002,6 +1099,8 @@ mod imp {
                         "timeout" => Mode::Timeout,
                         "limits" => Mode::Limits,
                         "authority" => Mode::Authority,
+                        "footprint" => Mode::Footprint,
+                        "engine" => Mode::Engine,
                         other => return Err(format!("bad --mode {other}")),
                     }
                 }
@@ -1019,6 +1118,13 @@ mod imp {
                 "--tile" => args.tile = value.parse().map_err(|_| "bad --tile")?,
                 "--lib" => args.library_dir = Some(PathBuf::from(value)),
                 "--profiles" => args.profiles = value.split(';').map(str::to_string).collect(),
+                "--budget-mb" => args.budget_mb = value.parse().map_err(|_| "bad --budget-mb")?,
+                "--poll-ms" => {
+                    args.poll_ms = value
+                        .split(',')
+                        .map(|s| s.parse().map_err(|_| "bad --poll-ms"))
+                        .collect::<Result<_, _>>()?
+                }
                 other => return Err(format!("unknown flag {other}")),
             }
         }
@@ -1086,6 +1192,8 @@ mod imp {
             Mode::Timeout => mode_timeout(&args, &spec),
             Mode::Limits => mode_limits(&args, &spec),
             Mode::Authority => mode_authority(&args, &spec),
+            Mode::Footprint => mode_footprint(&args, &spec),
+            Mode::Engine => mode_engine(&args, &spec),
         };
 
         if let Err(e) = result {
@@ -1744,6 +1852,437 @@ mod imp {
              is not something the render path has to work around --- but a document \
              whose fonts are NOT embedded sends Pdfium to the system font files, which \
              is a path. Run this against a base-14 fixture, not only an embedded one."
+        );
+        Ok(())
+    }
+
+    // --------------------------------------------------------- mode: engine
+
+    /// Does `haystack` contain `needle` anywhere?
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// What the bound Pdfium build is *capable* of, read out of the binary.
+    ///
+    /// "Document JavaScript is disabled by default" is the single most
+    /// load-bearing sentence in the threat model, and as a statement about
+    /// configuration it is weak --- a default can be changed, and a call that
+    /// enables it is one line. As a statement about the build it is much
+    /// stronger, and it is checkable: a Pdfium without V8 linked cannot run a
+    /// script whatever it is asked to do.
+    ///
+    /// This cannot be tested behaviourally. A document whose JavaScript does
+    /// nothing looks exactly like a document whose JavaScript was never run, so
+    /// the absence of an effect is not evidence of the absence of an engine.
+    /// The symbol table is the only thing that discriminates.
+    fn mode_engine(args: &Args, _spec: &Spawn) -> Result<(), String> {
+        let dir = args
+            .library_dir
+            .clone()
+            .ok_or("--lib DIR is required: this mode reads the library, it does not bind it")?;
+        let path = ["libpdfium.dylib", "pdfium.dll", "libpdfium.so"]
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|p| p.exists())
+            .ok_or_else(|| format!("no Pdfium library in {}", dir.display()))?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{} ({} bytes)", path.display(), bytes.len());
+        println!();
+
+        // Two controls, because a scan that cannot fail proves nothing. The
+        // first says the file really is Pdfium; the second says its local
+        // symbols survived, without which every absence below is "not
+        // verified" rather than "not present" --- the same rule §6 applies to a
+        // carrier a redaction verifier cannot decode.
+        let is_pdfium = contains(&bytes, b"FPDF_LoadDocument");
+        let has_locals = contains(&bytes, b"CPDF_Document");
+        println!("  control: exported Pdfium symbols  {}", yes_no(is_pdfium));
+        println!("  control: local C++ symbols kept   {}", yes_no(has_locals));
+        if !is_pdfium {
+            println!("\n[FAIL] this is not a Pdfium library; nothing below means anything.");
+            return Ok(());
+        }
+        if !has_locals {
+            println!(
+                "\n[NOT VERIFIED] the binary is stripped of local symbols, so the absence \
+                 of a JavaScript engine or of XFA cannot be established this way."
+            );
+            return Ok(());
+        }
+
+        let v8 = contains(&bytes, b"_ZN2v8") || contains(&bytes, b"v8::");
+        let real_js = contains(&bytes, b"_ZN11CJS_Runtime");
+        let stub_js = contains(&bytes, b"CJS_RuntimeStub");
+        let xfa = contains(&bytes, b"CXFA_");
+        println!();
+        println!("  V8 engine linked                  {}", yes_no(v8));
+        println!("  CJS_Runtime (real JS bridge)      {}", yes_no(real_js));
+        println!("  CJS_RuntimeStub (no-op bridge)    {}", yes_no(stub_js));
+        println!("  XFA implementation (CXFA_*)       {}", yes_no(xfa));
+        println!();
+
+        let js_absent = !v8 && !real_js && stub_js;
+        println!(
+            "document JavaScript: {}",
+            if js_absent {
+                "[OK] cannot run --- there is no engine to run it, only the stub"
+            } else if v8 || real_js {
+                "[FAIL] AN ENGINE IS PRESENT; policy is now the only thing stopping it"
+            } else {
+                "[NOT VERIFIED] neither an engine nor the stub was found"
+            }
+        );
+        println!(
+            "XFA forms:           {}",
+            if xfa {
+                "[FAIL] PRESENT; §6's XFA refusal is a policy, not a property"
+            } else {
+                "[OK] not built in"
+            }
+        );
+        println!();
+        println!(
+            "note this is a property of the vendored build, not of Pdfium, so it has to be \
+             re-checked after every bump --- and it says nothing about the code paths that \
+             ARE present. `FPDFDOC_InitFormFillEnvironment` runs on every document open in \
+             pdfium-render, so the form-fill machinery is reachable surface even with no \
+             engine behind it."
+        );
+        Ok(())
+    }
+
+    fn yes_no(flag: bool) -> &'static str {
+        if flag {
+            "yes"
+        } else {
+            "no"
+        }
+    }
+
+    // ------------------------------------------------------ mode: footprint
+
+    /// One supervised runaway.
+    struct BalloonRow {
+        round: usize,
+        poll_ms: u64,
+        /// `false` when the child finished its whole burst and exited between
+        /// two samples, so the parent never saw it cross at all.
+        caught: bool,
+        detect_ms: f64,
+        peak_mb: f64,
+        overshoot_mb: f64,
+        growth_mb_s: f64,
+        kill_ms: f64,
+        epitaph: String,
+    }
+
+    fn median(values: &[f64]) -> f64 {
+        if values.is_empty() {
+            return f64::NAN;
+        }
+        let mut sorted = values.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = sorted.len() / 2;
+        if sorted.len() % 2 == 0 {
+            (sorted[mid - 1] + sorted[mid]) / 2.0
+        } else {
+            sorted[mid]
+        }
+    }
+
+    const MB: f64 = 1024.0 * 1024.0;
+
+    /// What a ballooning worker exits with when it reaches its own ceiling ---
+    /// i.e. when supervision failed to stop it.
+    const BALLOON_CAPPED: i32 = 11;
+
+    /// If the kernel will not bound a worker's memory, can the parent?
+    ///
+    /// `limits` mode established that macOS refuses `RLIMIT_AS`, `RLIMIT_DATA`
+    /// and `RLIMIT_RSS` outright, which leaves the worker's memory unbounded by
+    /// anything --- a real gap, since a decompression bomb or a pathological
+    /// page is a plausible document rather than an exotic one. The remaining
+    /// mechanism is supervision: the parent samples the child's footprint and
+    /// kills it over budget.
+    ///
+    /// Whether that is a *bound* depends on a number, not on an argument. A
+    /// poll interval buys overshoot at the rate the child can take memory, so
+    /// the question this mode answers is how much a worker can take between two
+    /// samples, and it answers it against a child allocating as fast as the
+    /// machine allows --- faster than any document would, which is the point.
+    fn mode_footprint(args: &Args, spec: &Spawn) -> Result<(), String> {
+        let me = std::process::id();
+        if phys_footprint(me).is_none() {
+            println!(
+                "proc_pid_rusage is unavailable here, so this mode measures nothing. \
+                 Windows would use a job object with JOB_OBJECT_LIMIT_PROCESS_MEMORY, \
+                 which is a real kernel bound and needs no polling at all."
+            );
+            return Ok(());
+        }
+
+        // What a sample costs, because the poll interval is only choosable if
+        // sampling itself is free.
+        let probes = 2000;
+        let t0 = Instant::now();
+        for _ in 0..probes {
+            std::hint::black_box(phys_footprint(me));
+        }
+        let per_sample_us = t0.elapsed().as_secs_f64() * 1e6 / f64::from(probes);
+        println!("one proc_pid_rusage sample: {per_sample_us:.2} us (over {probes} calls)");
+        println!();
+
+        // Ground the budget. A threshold picked without knowing what honest
+        // work costs is not a limit, it is a coin toss.
+        {
+            let mut worker = Worker::spawn(spec)?;
+            let pid = worker.child.id();
+            worker.call(&Request::Ping)?;
+            let at_rest = phys_footprint(pid).unwrap_or(0);
+            worker.call(&Request::Open)?;
+            let after_open = phys_footprint(pid).unwrap_or(0);
+            for _ in 0..args.reps {
+                worker.call(&args.tile_request(args.page, true))?;
+            }
+            let after_tiles = phys_footprint(pid).unwrap_or(0);
+            println!("what legitimate work costs a worker:");
+            println!(
+                "  at rest, Pdfium bound        {:>8.1} MB",
+                at_rest as f64 / MB
+            );
+            println!(
+                "  document open                {:>8.1} MB   (+{:.1})",
+                after_open as f64 / MB,
+                (after_open - at_rest) as f64 / MB
+            );
+            println!(
+                "  after {} tiles of {}x{}     {:>8.1} MB   (+{:.1})",
+                args.reps,
+                args.tile,
+                args.tile,
+                after_tiles as f64 / MB,
+                (after_tiles - after_open) as f64 / MB
+            );
+            println!(
+                "  budget for the runs below    {:>8.1} MB",
+                args.budget_mb as f64
+            );
+            println!(
+                "  (the tile mapping is not in any of these: a footprint excludes clean \
+                 file-backed pages, so both the mapped document and the shared tile \
+                 buffer are invisible here. Both are the parent's allocations and are \
+                 bounded where they are made.)"
+            );
+            println!();
+            let _ = worker.child.kill();
+            let _ = worker.child.wait();
+        }
+
+        let budget = args.budget_mb * 1024 * 1024;
+        let cap_mb = (args.budget_mb * 4) as usize;
+        let deadline = Duration::from_secs(10);
+        let mut rows: Vec<BalloonRow> = Vec::new();
+
+        // Intervals interleaved inside rounds, so a thermal or scheduling drift
+        // over the run hits every interval equally instead of the last one.
+        for round in 0..args.rounds {
+            for &poll_ms in &args.poll_ms {
+                let mut worker = Worker::spawn(spec)?;
+                let pid = worker.child.id();
+                worker.call(&Request::Open)?;
+                let ack = worker.call(&Request::Balloon {
+                    chunk_kb: 1024,
+                    cap_mb,
+                })?;
+                if !ack.ok {
+                    return Err(ack.error);
+                }
+
+                let started = Instant::now();
+                let first = phys_footprint(pid).unwrap_or(0);
+                let mut peak = first;
+                let mut crossed = None;
+                let mut gone = None;
+                loop {
+                    if let Some(now) = phys_footprint(pid) {
+                        peak = peak.max(now);
+                        if now >= budget {
+                            crossed = Some((started.elapsed(), now));
+                            break;
+                        }
+                    }
+                    // A burst is bounded: the child may take everything it wants
+                    // and exit before the next sample, in which case supervision
+                    // did not overshoot, it never engaged. That is a different
+                    // outcome and averaging it in as "0 MB overshoot" would read
+                    // as the best result rather than the worst.
+                    if let Ok(Some(status)) = worker.child.try_wait() {
+                        gone = Some((started.elapsed(), status));
+                        break;
+                    }
+                    if started.elapsed() > deadline {
+                        break;
+                    }
+                    if poll_ms > 0 {
+                        std::thread::sleep(Duration::from_millis(poll_ms));
+                    }
+                }
+
+                // The exit code matters: BALLOON_CAPPED means the child really
+                // did take everything it asked for and the parent simply never
+                // looked while it was happening. Any other code means it died
+                // for an unrelated reason, and a "miss" that is really an early
+                // death would read as the worst result while proving nothing.
+                let (kill_ms, epitaph) = match gone {
+                    Some((_, status)) => (
+                        0.0,
+                        match status.code() {
+                            Some(BALLOON_CAPPED) => {
+                                format!("took all {cap_mb} MB and exited, unnoticed")
+                            }
+                            Some(code) => format!("[FAIL] exited with code {code}, not the cap"),
+                            None => format!("[FAIL] {}", status),
+                        },
+                    ),
+                    None => {
+                        let t_kill = Instant::now();
+                        let _ = worker.child.kill();
+                        let epitaph = worker.epitaph();
+                        (t_kill.elapsed().as_secs_f64() * 1000.0, epitaph)
+                    }
+                };
+
+                let caught = crossed.is_some();
+                let (detect, at) = crossed.unwrap_or_else(|| {
+                    (
+                        gone.map_or_else(|| started.elapsed(), |(at, _)| at),
+                        peak.max(first),
+                    )
+                });
+                rows.push(BalloonRow {
+                    round,
+                    poll_ms,
+                    caught,
+                    detect_ms: detect.as_secs_f64() * 1000.0,
+                    peak_mb: peak as f64 / MB,
+                    overshoot_mb: (at.saturating_sub(budget)) as f64 / MB,
+                    growth_mb_s: (at.saturating_sub(first)) as f64
+                        / MB
+                        / detect.as_secs_f64().max(1e-9),
+                    kill_ms,
+                    epitaph,
+                });
+            }
+        }
+
+        println!(
+            "runaway worker against a {} MB budget, bursting to at most {cap_mb} MB, \
+             {} rounds interleaved:",
+            args.budget_mb, args.rounds
+        );
+        println!(
+            "{:>5}  {:>7}  {:>11}  {:>10}  {:>11}  {:>12}  {:>10}  child",
+            "round", "poll", "detected", "peak", "overshoot", "growth", "kill+reap"
+        );
+        for r in &rows {
+            println!(
+                "{:>5}  {:>5}ms  {:>9.2}ms  {:>7.1}MB  {:>8.1}MB  {:>7.0}MB/s  {:>8.2}ms  {}",
+                r.round,
+                r.poll_ms,
+                r.detect_ms,
+                r.peak_mb,
+                r.overshoot_mb,
+                r.growth_mb_s,
+                r.kill_ms,
+                r.epitaph
+            );
+        }
+        println!();
+
+        // Median overshoot understates the bound and worst observed understates
+        // it too, because both depend on where the crossing happens to fall
+        // between two samples. What the interval actually guarantees is
+        // interval x growth rate, so that is printed alongside and is the number
+        // a budget has to be set from.
+        println!("by poll interval --- medians, worst seen, and what the interval bounds:");
+        for &poll_ms in &args.poll_ms {
+            // Missed rows are excluded from every statistic and counted
+            // separately. A miss is not a small overshoot.
+            let pick = |f: fn(&BalloonRow) -> f64| {
+                median(
+                    &rows
+                        .iter()
+                        .filter(|r| r.poll_ms == poll_ms && r.caught)
+                        .map(f)
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let attempts = rows.iter().filter(|r| r.poll_ms == poll_ms).count();
+            let missed = rows
+                .iter()
+                .filter(|r| r.poll_ms == poll_ms && !r.caught)
+                .count();
+            if missed == attempts {
+                println!(
+                    "  poll {poll_ms:>2} ms   never saw the burst at all: {missed}/{attempts} \
+                     runs finished between two samples"
+                );
+                continue;
+            }
+            let worst = rows
+                .iter()
+                .filter(|r| r.poll_ms == poll_ms && r.caught)
+                .map(|r| r.overshoot_mb)
+                .fold(0.0f64, f64::max);
+            let growth = pick(|r| r.growth_mb_s);
+            let cpu = if poll_ms == 0 {
+                100.0
+            } else {
+                per_sample_us / (poll_ms as f64 * 1000.0) * 100.0
+            };
+            println!(
+                "  poll {poll_ms:>2} ms   overshoot {:>6.1} MB median, {worst:>6.1} MB worst, \
+                 {:>6.0} MB bounded   growth {growth:>6.0} MB/s   kill+reap {:>5.2} ms   \
+                 poll costs {cpu:>6.3}% of a core   missed {missed}/{attempts}",
+                pick(|r| r.overshoot_mb),
+                growth * poll_ms as f64 / 1000.0,
+                pick(|r| r.kill_ms),
+            );
+        }
+        println!();
+
+        let caught: Vec<&BalloonRow> = rows.iter().filter(|r| r.caught).collect();
+        let killed = caught.iter().all(|r| r.epitaph.contains("signal 9"));
+        let missed = rows.len() - caught.len();
+        println!(
+            "every worker the parent caught was killed by it: {}",
+            if killed { "[OK] yes" } else { "[FAIL] no" }
+        );
+        println!(
+            "bursts that completed between two samples: {missed} of {} {}",
+            rows.len(),
+            if missed == 0 {
+                "[OK]"
+            } else {
+                "--- supervision never engaged on those"
+            }
+        );
+        if rows.iter().any(|r| r.epitaph.contains("[FAIL]")) {
+            println!(
+                "[FAIL] a child died for a reason other than its cap, so at least one \
+                 'missed' row proves nothing"
+            );
+        }
+        println!();
+        println!(
+            "the child here takes memory as fast as the allocator hands it over, which no \
+             document does, so the growth rate is a ceiling. Two things follow. A pool of \
+             N workers must be budgeted at (per-worker budget + bounded overshoot) x N, \
+             and the overshoot term is exactly the price of having no kernel limit. And a \
+             poll interval of zero is not free supervision --- it burns a core, and the \
+             lower overshoot it shows here is partly bought by starving the child of the \
+             CPU it was allocating with."
         );
         Ok(())
     }
