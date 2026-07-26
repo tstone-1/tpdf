@@ -529,6 +529,38 @@ can **forbid** page, annotation or form changes outright. Every edit command mus
 classified as incrementally representable, full-rewrite-required, or forbidden on a signed
 document. Do not claim "signatures survive".
 
+Spike 0.6 measured how far that goes, and it is further than "some edits are forbidden".
+Against pyhanko, on an approval signature and on DocMDP levels 1, 2 and 3, an appended
+update leaves the signature `intact=yes valid=yes` every time --- and the difference
+analysis rejects the change every time, at every level, including an **annotation-only**
+edit to a level-3 certified document, which the specification explicitly permits. Cutting
+the edit down to its irreducible minimum does not clear it: extending an `/Annots` array
+that is its own object, so the page dictionary is never touched, narrows the complaint to
+two objects and still fails. pyhanko says why in its own log --- *"StandardDiffPolicy was
+not designed to support DocMDP level 3 (MDPPerm.ANNOTATE)"*.
+
+So DocMDP is not the discriminator it looks like. **"The spec permits this edit" and "a
+validator will accept it" are different claims**, and only the second one is what a user
+sees. Treat any signed document as edit-hostile regardless of its permission level, offer
+to save a copy, and never let the UI imply the signature will be fine.
+
+### Whether `/Annots` is an indirect array decides how large an annotation edit is
+
+A page can carry `/Annots [5 0 R]` written inline in its dictionary, or `/Annots 12 0 R`
+pointing at an array object. Both are common. They are not interchangeable for incremental
+editing: extending the array *object* touches one object and leaves the page dictionary
+untouched, while extending an inline array means rewriting the page dictionary itself.
+
+On a signed document that difference is the whole game --- the page dictionary is a signed
+structural object, so rewriting it is a change no difference analysis can justify, and
+`.Root.Pages.Kids[0]` shows up by name in the rejection. Prefer the array object; when the
+producer inlined it, know the edit is bigger than it looks.
+
+The same shape applies to `/Contents`, and there it has a second trap: `/Resources` is an
+*inheritable* attribute. A page that does not carry one takes its parent's, so "create an
+empty `/Resources` on the page" does not add a resource, it removes every inherited one.
+The page then renders blank while every check that counts pages still passes.
+
 ### Embedded fonts are subsetted
 
 An embedded font contains only the glyphs already used. Typing a character that is not in
@@ -564,6 +596,35 @@ Quietly removing a document's protection is its own security failure, and it is 
 in every check that looks at content rather than structure. Any save path must preserve
 encryption or refuse; `qpdf --is-encrypted` (exit 0 when encrypted, 2 when not) is the
 cheap assertion.
+
+### An incremental save is cheap on disk, not in memory --- and its cost is the parse
+
+Measured 2026-07-26 across a 0.9 KB to 337 MB sweep (`incremental-save --mode speed`). In
+memory, a full `lopdf` rewrite of a 337 MB scan costs **12.4 ms** against an incremental
+append's **12.3 ms** --- no advantage at all, because the rewrite is essentially a large
+`memcpy` and this machine has the bandwidth. Reading only that table would kill incremental
+save as pointless.
+
+Landing the save on disk reverses it: **29 ms against 239 ms, 8.2×**, because the append
+writes 723 bytes to a file that already exists and the rewrite writes 336,623,496 and
+renames. Below a few megabytes the ratio is 1.0× --- both are dominated by a single
+`F_FULLFSYNC`, about 3 ms. The rewrite also needs room for two copies of the document,
+which no timing shows.
+
+Two things worth carrying:
+
+- **Benchmark a save by writing it, not by serialising it.** The interesting cost of a
+  save is I/O, and an in-memory harness measures precisely the part that does not matter.
+- **`sync_all` is `F_FULLFSYNC` on macOS, a device-wide barrier.** Staging a 337 MB fixture
+  with `fs::write` and then timing an append's flush charges the append for the staging: it
+  measured *slower* than the full rewrite until the setup was made durable outside the
+  timer. Any fsync benchmark on macOS must account for what else is dirty.
+
+What remains of the append's cost is almost entirely **parsing** --- 5.7 ms of the 29 ms at
+337 MB --- which every edit must pay to know what it is editing. Note also that
+`IncrementalDocument::create_from` takes the previous bytes by value and `save_to` writes
+them through before appending, so the obvious use of the API copies the whole document
+twice for no reason. Sink the prefix, or append to the file in place.
 
 ### An object a prior revision overwrote is reachable by no parser
 
@@ -609,7 +670,17 @@ own sweep.
 uv run --with fonttools testdata/make_text_pdf.py testdata   # text-*.pdf, spike 0.3
 python3 testdata/make_hostile_pdf.py testdata                 # hostile-*.pdf, spike 0.4
 python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf # spike 0.1
+uv run --with pyhanko --with cryptography \
+    testdata/make_incremental_pdf.py testdata                 # incr-*.pdf, spike 0.6
 ```
+
+`make_incremental_pdf.py` writes about **550 MB** — the scan fixtures exist so that
+"appending to a 300 MB file is near-instant" can be tested at 300 MB, and they are
+uncompressed on purpose so nothing downstream can make them cheap. An existing scan of the
+right name is reused rather than rewritten. The signed fixtures need `pyhanko`, which is a
+*test oracle* and not a dependency of tpdf: it both writes the signatures and is the only
+implementation here that can validate them (`testdata/check_signature.py`). Without it
+those five fixtures are skipped and the rest still build.
 
 `make_hostile_pdf.py` also writes `hostile-manifest.json`, which records where each
 fixture's needle is and whether a collected rewrite is expected to remove it; the Rust

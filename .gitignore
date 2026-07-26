@@ -33,4 +33,5 @@ scratch/
 testdata/*.pdf
 testdata/*.txt
 testdata/hostile-manifest.json
+testdata/incr-manifest.json
 testdata/__pycache__/

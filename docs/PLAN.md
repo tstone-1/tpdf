@@ -569,6 +569,78 @@ survive" was wrong and is retracted: incremental save preserves a prior revision
 cryptographic integrity, which is **not** the same as the signature remaining valid and
 trusted, and a certification signature may forbid the edit outright.
 
+### Incremental save — measured 2026-07-26
+
+Spike 0.6 (`src-tauri/src/bin/incremental_save.rs`) writes an update section with `lopdf`
+and puts it to four independent parsers — PDFium, QPDF 12.3, poppler, and CoreGraphics,
+i.e. what Preview and Quick Look use. Each is asked for something falsifiable rather than
+for acceptance: QPDF for a structural check, poppler for the text of the edited page,
+CoreGraphics and PDFium for its pixels. **Twelve fixtures pass on all four**, including a
+document whose page dictionary lives inside an `/ObjStm` behind a cross-reference stream,
+and one that already had two revisions.
+
+The update section is 500–800 bytes regardless of document size, the original bytes are
+preserved exactly, and `/Prev` chains to the previous `startxref` in every case. The
+appended cross-reference keeps the previous revision's *form* — a table stays a table, a
+stream stays a stream — which is required and is not automatic.
+
+**The speed claim is true, but only once the file is on disk.** In memory a full rewrite
+of a 336 MB scan costs 12.4 ms against the append's 12.3 ms, because `lopdf`'s rewrite is
+essentially a copy and the machine has the bandwidth for it. The distinction only appears
+when the save actually lands:
+
+| fixture | size | append | rewrite | ratio | bytes written |
+|---|---|---|---|---|---|
+| text-base14 | 0.9 KB | 3.02 ms | 3.16 ms | 1.0× | 672 vs 847 |
+| text-heavy | 1.4 MB | 4.77 ms | 6.85 ms | 1.4× | 812 vs 1,344,570 |
+| scan, 5 pages | 42 MB | 5.60 ms | 26.7 ms | 4.8× | 708 vs 42,078,102 |
+| scan, 20 pages | 168 MB | 13.6 ms | 96.3 ms | 7.1× | 714 vs 168,311,790 |
+| scan, 40 pages | 337 MB | 29.1 ms | 239 ms | 8.2× | 723 vs 336,623,496 |
+
+Three things follow. **Below a few megabytes there is no reason to prefer either** — both
+are dominated by one `F_FULLFSYNC`, about 3 ms on this machine. **The append's remaining
+cost is parsing**, not writing: 5.7 ms of the 29 ms at 337 MB is `lopdf` reading the
+document, which any edit must pay to know what it is editing. And **the rewrite needs room
+for two copies** of the document while it runs, which the ratio does not show at all.
+
+**Encryption is preserved, including the ciphertext.** The trap from §6 — `lopdf` silently
+writing plaintext on a full rewrite — does not recur on the incremental path: the appended
+objects are encrypted with the original key, verified by searching the update section for
+a known needle in the clear. A document behind a real user password is refused without
+one; a document with an *empty* user password is edited without prompting, which is
+correct, because it opens unprompted in every reader.
+
+**Signatures: the cryptography survives and the trust does not.** Measured against pyhanko
+on an approval signature and on DocMDP levels 1, 2 and 3:
+
+- `intact=yes valid=yes` after every append. The signed bytes are untouched, so the CMS
+  digest still verifies. This is the kernel of truth in the retracted claim.
+- Coverage drops from `ENTIRE_FILE` to `ENTIRE_REVISION` and the modification level is
+  `OTHER` in every single case. Every validator will report the document as changed after
+  signing.
+- The difference analysis rejects **every** edit at **every** level, including an
+  annotation-only edit to a level-3 certified document, which the specification permits.
+
+That last one is not a defect in the append. Reducing the edit to its minimum — extending
+an `/Annots` array that is its own object, so the page dictionary is never rewritten —
+narrows the complaint to two objects and does not clear it, and pyhanko says why in its
+own log: *"StandardDiffPolicy was not designed to support DocMDP level 3
+(MDPPerm.ANNOTATE)."* So "DocMDP 3 permits annotations" is a statement about the format,
+not about what validators do with it.
+
+The design consequence is that **the three-mode classification needs a fourth answer, and
+"Forbidden" is too narrow a name for it.** A signed document cannot be edited *and* keep
+its signature trusted, whatever the DocMDP level says, so the UI must say that plainly and
+offer to save a copy rather than implying the signature will be fine. What the append does
+buy is real and worth keeping: the signed revision survives byte for byte inside the new
+file, so a validator can still show exactly what was signed.
+
+One document-shape dependency worth carrying into Phase 2: **whether `/Annots` is an
+indirect array decides whether adding an annotation rewrites the page dictionary.** When
+it is written inline there is no way to add an annotation without replacing a signed
+structural object. Prefer extending the array object; when the producer inlined it, know
+that the edit is larger than it looks.
+
 ### External modification
 
 The first draft keyed recovery on a file hash and had no story for live races. If another
@@ -948,7 +1020,7 @@ that includes deliberately hostile files:
 | Startup | The five timestamps of §4, cold and warm |
 | ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
 | ~~**Sanitized full rewrite**~~ | **Passed 2026-07-26** (§6). A collected `lopdf` rewrite matches QPDF on every fixture, so QPDF is not required — but `lopdf`'s own collection is quadratic and the sweep has to be ours, and "every stream must decode" would refuse most scanned documents |
-| Incremental save | A real appended update section that other readers accept |
+| ~~**Incremental save**~~ | **Passed 2026-07-26** (§5). Twelve fixtures, four independent readers, each asked for pixels or text rather than for acceptance. The update section is under a kilobyte whatever the document weighs, encryption and its ciphertext survive, and on disk the append beats a full rewrite 8.2× at 337 MB — but not at all below a few MB, where one `fsync` dominates both. Signatures stay cryptographically intact and stop being trusted, at every DocMDP level |
 | Threat model | Written, with the sandbox policy it implies |
 
 **Exit criterion:** first compositor presentation on a typical document under 300 ms
