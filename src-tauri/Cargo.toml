@@ -62,3 +62,7 @@ path = "src/bin/sanitize_rewrite.rs"
 [[bin]]
 name = "worker-bench"
 path = "src/bin/worker_bench.rs"
+
+[[bin]]
+name = "incremental-save"
+path = "src/bin/incremental_save.rs"
