@@ -548,6 +548,75 @@ Two viable routes, to be decided by a dedicated spike (§9), not asserted now:
 
 Until a hostile corpus proves round-trip fidelity for A, B is the shipped behaviour.
 
+### Text-object round trip — measured 2026-07-26
+
+Spike 0.3, the gating one. Harness `src-tauri/src/bin/text_roundtrip.rs`, corpus
+`testdata/make_text_pdf.py`: four single-page A4 fixtures, each with four text lines and
+four unrelated non-text objects, differing only in how the text is encoded —
+
+| fixture | font |
+|---|---|
+| `text-base14` | Helvetica, not embedded |
+| `text-truetype` | embedded subsetted TrueType simple font, WinAnsiEncoding |
+| `text-cid` | embedded subsetted CIDFontType2 under Type0 / Identity-H |
+| `text-marked` | as `text-truetype`, plus carriers holding a second copy of the text |
+
+Two routes, each asked to replace one text object and (separately) to delete it. The
+measurement is **collateral damage**: device pixels differing from the untouched baseline
+*outside* the edited object's own bounds, at 2x.
+
+**The spike passes. Both routes changed zero pixels outside the target, on every fixture,
+for both operations.** Surgical operator rewriting is feasible, so partial-text redaction
+route A is not hand-waving and in-place text editing stays on the roadmap.
+
+Four things it also established, each of which changes something:
+
+**1. Zero pixel damage is not fidelity.** PDFium's `FPDFPage_GenerateContent()` did not
+splice the one edited object — it rewrote every operator on the page. `Td` became `Tm`,
+`Tj` became `TJ`, each text run was wrapped in `q`/`Q` with explicit `rg`, `RG` and `0 Tr`,
+an ExtGState `/FXE1 gs` appeared, `/F1` was renamed `/FXF1` — and the marked-content span
+was **discarded entirely, `/ActualText` with it**. The page rendered identically. So a
+single unrelated edit destroys tagged structure, accessibility text and optional-content
+membership while every pixel-based check passes. Surgical rewriting preserved all of it.
+This is why §6's route A matters and why a visual regression test cannot be the only gate.
+
+**2. `set_text()` fails silently on a subsetted font.** Asked for `QUARZ ÜBERPRÜFT` — whose
+`Q`, `U`, `Z`, `Ü`, `P`, `F`, `T` are absent from the subset — PDFium returned success
+every time, and:
+
+- **Identity-H:** every missing character was encoded as **glyph 0**, `.notdef`. Renders
+  `□□AR□ □BER□R□□T`. Extraction returns neither the old text nor the new.
+- **TrueType simple:** correct WinAnsi codes were written for glyphs that do not exist,
+  rendering `ARBERRT` — jammed together, because the missing codes carry zero advance —
+  while text extraction returns `QUARZ ÜBERPRÜFT` in full. **Displayed text and extracted
+  text disagree**, which is the worse of the two failures: a search hit on text nobody can
+  see.
+
+Route B refused instead: *"'Q' is not drawn by this object, so its code is unknown"*. That
+is the behaviour §7 point 6 demands, and it comes free from working in code space — a
+route that re-emits Unicode cannot detect the condition at all.
+
+**3. A byte-level leak scan cannot verify a CID document,** and proved it by getting the
+answer wrong. The harness's scanner reported the `text-cid` fixture *clean* while
+extraction showed the needle still present, because Identity-H stores glyph ids and the
+secret is never in the file as its own bytes. It now reports **not verified** on any
+document containing a Type0 font rather than passing it. Generalisation worth carrying into
+Phase 3: a verifier must decode each carrier in the carrier's own encoding, and "grep found
+nothing" is not evidence.
+
+**4. `/ActualText` survives surgical removal.** Deleting the show operator left the
+marked-content property dictionary — and its verbatim copy of the line — in the content
+stream. PDFium's regeneration happened to drop it, but as a side effect of destroying all
+marked content, not as sanitation. Neither is a redaction. Confirms the §6 position that
+redaction is whole-graph sanitation and not a page edit, with `/ActualText` as the cheapest
+demonstration.
+
+Ordinal mapping between PDFium's text objects and the content stream's show operators held
+4:4 on all four fixtures, which is what let route B address the target at all. That is the
+easy case and is not guaranteed — a `TJ` split across objects, or a Form XObject
+contributing objects from another stream, breaks it. The harness checks the counts agree
+and warns when they do not; real files need a stronger correspondence than ordinal.
+
 ### Flatten to image
 
 The safe fallback for content that cannot be surgically redacted (partial vector path
@@ -689,7 +758,7 @@ that includes deliberately hostile files:
 | Render pipeline | Tiles over the custom protocol; raw vs encoded transfer; tile size; CPU and peak allocation per tile on a dense CAD page; frame rate at 100% and 400% |
 | Process architecture | Worker isolation, supervision, restart, resource limits, and the real IPC latency cost |
 | Startup | The five timestamps of §4, cold and warm |
-| **Text-object round trip** | Edit one existing text object and reproduce it faithfully. If this fails, surgical redaction and text editing are both off the table |
+| ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
 | **Sanitized full rewrite** | GC'd reachable-graph rewrite, verified by an independent parser |
 | Incremental save | A real appended update section that other readers accept |
 | Threat model | Written, with the sandbox policy it implies |
@@ -771,8 +840,15 @@ Phase 1 even though implementation lands later. Localization as it becomes bindi
 Each needs a measurement or a decision. The first draft listed five; the audit was right
 that it presented several genuinely unresolved questions as settled architecture.
 
-1. **Can PDFium round-trip a text object faithfully?** Phase 0. Gates both surgical
-   redaction and text editing.
+1. ~~**Can PDFium round-trip a text object faithfully?**~~ **Answered 2026-07-26** (§6).
+   Both PDFium mutation and surgical `lopdf` operator rewriting reproduce the rest of the
+   page with zero collateral pixels, so surgical redaction and text editing both stay on
+   the roadmap. But *only* the surgical route is faithful in the sense that matters:
+   PDFium's regeneration rewrites every operator on the page and discards marked content,
+   and its `set_text()` silently emits `.notdef` — or codes for glyphs that do not exist —
+   when a character is outside the font's subset. Route A of §6 is therefore the committed
+   direction for anything precision-critical, and PDFium mutation is not usable for
+   redaction at all.
 2. ~~**Protocol** — custom scheme vs alternatives.~~ **Answered 2026-07-26.** 1024²–2048²
    tiles (§4), sent as raw pixels (§3), over the custom scheme. Delivery costs 240–293% of
    rendering, so the scheme is not a zero-copy fast path — but encoding is worse in both

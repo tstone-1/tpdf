@@ -46,3 +46,11 @@ libc = "0.2"
 [[bin]]
 name = "tile-bench"
 path = "src/bin/tile_bench.rs"
+
+[[bin]]
+name = "text-roundtrip"
+path = "src/bin/text_roundtrip.rs"
+
+[[bin]]
+name = "remove-probe"
+path = "src/bin/remove_probe.rs"
