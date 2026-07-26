@@ -5,6 +5,9 @@ description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
 rust-version = "1.85"
+# The benchmark bins make `cargo run` ambiguous, and `tauri dev` shells out to a
+# bare `cargo run`.
+default-run = "tpdf"
 
 [lib]
 # The `_lib` suffix keeps the lib name distinct from the bin name on Windows.

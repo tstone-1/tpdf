@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { fetchTile, type TileFormat } from "./lib/tiles";
   import { interleaved, type BenchResult } from "./lib/bench";
+  import { runAutobenchIfRequested } from "./lib/autobench";
 
   interface PageSize {
     width_pt: number;
@@ -29,9 +30,14 @@
 
   $effect(() => {
     void (async () => {
+      // Headless transfer benchmark, if TPDF_AUTOBENCH is set. Exits the
+      // process when done, so nothing below runs.
+      if (await runAutobenchIfRequested()) return;
+
       const elapsed = await invoke<number>("process_elapsed_ms");
-      const scriptStart = (window as unknown as Record<string, number>)
-        .__tpdfWebviewScriptStart;
+      const scriptStart =
+        (window as unknown as Record<string, number | undefined>)
+          .__tpdfWebviewScriptStart ?? 0;
       startup = {
         "webview script start (ms into process)": elapsed - performance.now() + scriptStart,
         "app mounted (ms into process)": elapsed,
