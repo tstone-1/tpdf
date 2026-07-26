@@ -194,6 +194,29 @@ argument for the mandatory post-save verification pass described in `docs/PLAN.m
 Note also that `FPDFPage_RemoveObject` is marked Experimental API upstream. Pin the
 PDFium build and re-test object removal after any bump.
 
+Confirmed still true on chromium/7881 by spike 0.3: saving after `set_text()` without
+regeneration changes exactly zero pixels and leaves the original string in the stream.
+
+### Destroying an object removed from a page segfaults
+
+`fpdf_edit.h` says `FPDFPage_RemoveObject` transfers ownership to the caller and that
+`FPDFPageObj_Destroy()` frees it. `pdfium-render`'s `Drop` does exactly that, and it
+**segfaults inside `FPDFPageObj_Destroy`** --- for text and path objects alike, and whether
+the destroy happens immediately, after `regenerate_content()`, or after the save. The fault
+is a bad vtable dereference, i.e. the handle is already dead.
+
+`std::mem::forget` on the returned object is the only safe route through this binding; the
+memory is reclaimed when the document closes. Removal is redaction's primitive, so this is
+not an edge case --- it is on the main path.
+
+`src-tauri/src/bin/remove_probe.rs` is the minimal repro, kept as a standing regression:
+case `c` (leak) must pass, and if case `a` (destroy) ever starts passing, the upstream bug
+is fixed and the `forget` can go. Re-run it after any `pdfium-render` or PDFium bump.
+
+Beware the shape of this bug when diagnosing it: piping the run through `tail` reports
+`tail`'s exit status, so a segfaulting binary looks like a clean exit. Check `$?` on the
+program itself.
+
 ### PDFium mutations regenerate page content wholesale
 
 PDFium's page-object edit path does not splice content streams; it regenerates them.
@@ -201,12 +224,61 @@ Consequence: **any page-object edit reflows the entire content stream**, so byte
 diffs of a page are meaningless, round-tripping a page through PDFium is not lossless,
 and "the file changed" is not a usable edit-detection signal.
 
+Measured in spike 0.3, editing one text object on a four-line page: `Td` became `Tm`, `Tj`
+became `TJ`, every run was wrapped in `q`/`Q` with explicit `rg`, `RG` and `0 Tr`, an
+ExtGState `/FXE1 gs` was introduced, `/F1` was renamed `/FXF1` --- and the marked-content
+span around the target was **discarded, `/ActualText` with it**. Every other text object on
+the page was rewritten too, though none had been touched.
+
+The page rendered **pixel-identical** through all of that. So the rule worth carrying:
+**a clean visual diff is not evidence of a faithful edit.** Tagged structure, accessibility
+text, optional-content membership and marked-content property lists can all be gone while
+every pixel matches. Anything that must survive an edit needs its own assertion.
+
 This is a property of PDFium, **not of PDF**. Surgical operator-level rewriting is
 entirely possible --- tokenize the stream, remove or replace selected operators, re-encode
 --- and `lopdf` exposes decoded page content as a sequence of operations for exactly this.
+Spike 0.3 did it, and it preserved everything PDFium's regeneration destroyed.
 What is genuinely hard is mapping a PDFium page object back to the exact operator range
 that produced it while preserving graphics and text state. Where surgical precision is
 required (redaction), go through a content-stream interpreter, not through PDFium.
+
+### `set_text()` silently draws `.notdef` when a glyph is outside the subset
+
+`PdfPageTextObject::set_text()` takes a Unicode string and re-encodes it into the object's
+font. When the font is embedded and subsetted --- i.e. almost always --- characters absent
+from the subset have no glyph, and PDFium **returns success anyway**. Measured in spike
+0.3, replacing text with `QUARZ ÜBERPRÜFT` where seven of its characters are absent:
+
+- **Type0 / Identity-H:** every missing character encoded as **glyph 0**, `.notdef`.
+  Renders as boxes; text extraction returns neither the old string nor the new one.
+- **TrueType simple font:** the correct WinAnsi *codes* were written for glyphs that do not
+  exist. Renders as jammed-together fragments (the missing codes carry zero advance) while
+  **text extraction returns the requested string in full**. Displayed text and extracted
+  text disagree --- a search hit on text nobody can see.
+
+Both are silent. Neither is detectable from the return value, and the second is not
+detectable from a pixel diff either.
+
+Working in **code space** rather than Unicode makes the condition visible: build the
+character-to-code table from the object's existing operand and its extracted text, and a
+character with no entry is exactly a character with no glyph. Refuse and report it (see
+`docs/PLAN.md` §7 point 6) rather than emitting something. Silent substitution is what
+makes the competition untrustworthy; this is where tpdf would acquire the same habit.
+
+### A byte scan cannot verify a document with a Type0 font
+
+Under Identity-H the content stream carries **glyph ids, not text**, so a secret drawn on
+the page is never present in the file as its own bytes. A `strings`- or `grep`-shaped leak
+check therefore reports *clean* on exactly the documents most modern producers emit.
+
+This is not hypothetical: spike 0.3's own leak scanner did it, calling the CID fixture
+clean while text extraction proved the needle was still there. It now reports **not
+verified** whenever the document contains a Type0 font.
+
+The general rule, and it is the same one `docs/PLAN.md` §6 states for redaction: a verifier
+must decode each carrier **in that carrier's own encoding**, and a carrier it cannot decode
+makes the result "not verified", never "clean". "Grep found nothing" is not evidence.
 
 ### PDFium is serialized behind a global mutex --- threads buy nothing
 
@@ -369,7 +441,27 @@ document. Do not claim "signatures survive".
 
 An embedded font contains only the glyphs already used. Typing a character that is not in
 the subset has no glyph to draw. This is the root cause of every mangled Acrobat text
-edit, and it constrains the entire text-editing design.
+edit, and it constrains the entire text-editing design. What that looks like in practice,
+and how PDFium handles it, is measured above under `set_text()`.
+
+### The text fixtures are generated, not committed
+
+`testdata/*.pdf` is gitignored. Regenerate with:
+
+```
+uv run --with fonttools testdata/make_text_pdf.py testdata   # text-*.pdf, spike 0.3
+python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf # spike 0.1
+```
+
+`make_text_pdf.py` embeds a **system** font, which is fine only because the output stays on
+the machine. Nothing it generates may be committed or redistributed.
+
+Its default font is deliberately a **serif** face, and changing that breaks the fixture in
+a way that is invisible. PDFium's font mapper aliases Helvetica to Arial, so embedding
+Arial made the substituted `base14` render **bit-identical** to the embedded ones --- three
+fixtures that cannot distinguish "used the embedded subset" from "silently substituted",
+which is the one thing they exist to test. Caught only because three different fixtures
+hashed the same. If a fixture's baselines ever match across fonts, suspect that first.
 
 ---
 
