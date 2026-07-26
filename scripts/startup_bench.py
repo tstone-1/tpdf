@@ -88,8 +88,14 @@ def main() -> int:
     rest = runs[1:]
 
     print()
-    label = "cold" if args.purge else "run 1"
-    header = f"{'milestone':<30} {label:>9} {'warm med':>9} {'min':>9} {'max':>9} {'delta':>9}"
+    # Under --purge every run is cold, so there is no warm steady state to
+    # contrast run 1 against -- calling the median "warm" there would invert
+    # what the table says.
+    first_label, rest_label = ("cold 1", "cold med") if args.purge else ("run 1", "warm med")
+    header = (
+        f"{'milestone':<30} {first_label:>9} {rest_label:>9} "
+        f"{'min':>9} {'max':>9} {'delta':>9}"
+    )
     print(header)
     print("-" * len(header))
 
@@ -108,9 +114,11 @@ def main() -> int:
 
     print()
     totals = [run[-1][1] for run in rest]
-    print(f"first page presented: {label} {runs[0][-1][1]:.1f} ms, "
-          f"warm median {statistics.median(totals):.1f} ms over {len(totals)} runs")
-    print(f"target is 300 ms cold.")
+    print(
+        f"first page presented: {first_label} {runs[0][-1][1]:.1f} ms, "
+        f"{rest_label} {statistics.median(totals):.1f} ms over {len(totals)} runs"
+    )
+    print("target is 300 ms warm (see docs/PLAN.md section 4).")
     return 0
 
 
