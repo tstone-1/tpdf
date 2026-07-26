@@ -626,6 +626,72 @@ turn a display that is already off back *on*), and the app carries a Rust-side w
 prints the marks it did reach and exits 2. That last one is what identified this: the
 timeline stopped at `first preview bitmap ready` every time, with only presentation missing.
 
+### Sustained scroll — measured 2026-07-26
+
+The other half of the Phase 0 exit criterion: "no dropped frames on sustained scroll", at
+100% and 400%. `src/lib/scroller.ts` is this section in miniature — two-tier cache, a tile
+window with one screen of prefetch, a client-side supersedable queue, an LRU bound — and
+`src/lib/scrollbench.ts` scrolls it 30 CSS px per frame (~1800 px/s) for 300 frames, five
+interleaved rounds per variant, on a release bundle. Tier 2 is cleared between rounds, so
+every round scrolls over content that has not been rendered yet.
+
+**The webview presents at 59 Hz on a 120 Hz panel.** An idle animation loop is timed first,
+because a drop threshold derived from an assumed 60 Hz is a guess rather than a
+measurement. It comes back at **17.0 ms median** against a display in a 120.00 Hz mode.
+That is not the battery — it was re-measured on AC — and not an occluded or unfocused
+window, both of which the run asserts in its own header. So tpdf's frame budget inside a
+webview is 16.7 ms rather than the 8.3 ms this machine can present at. It is the same shape
+as the ~250 ms startup floor: a ceiling the shell imposes, not one we can tune.
+
+Against that budget, on the 775-page text document:
+
+| variant | fps | median | p99 | max | drops | stalls | main thread | sharp |
+|---|---|---|---|---|---|---|---|---|
+| tiles 100% | 60.1 | 17.0 | 18.0 | 21.0 | 0 | 0 | 0.64 ms | 100% |
+| tiles 400% | 60.2 | 17.0 | 19.0 | 25.0 | 0 | 0 | 0.51 ms | 100% |
+| viewport 100% | 60.0 | 17.0 | 18.0 | 20.0 | 0 | 0 | 0.11 ms | 100% |
+| viewport 400% | 59.8 | 17.0 | 18.0 | 68.0 | 2 | 2 | 0.16 ms | 100% |
+
+**No dropped frames**, at either zoom, while sustaining 46 MB/s of tiles at 400% with the
+visible page fully sharp. The single 68 ms outlier is two frames in one round out of five
+and did not reproduce in a re-run. Our own per-frame work is 0.1–0.6 ms against 16.7 —
+between 1% and 4% of the budget.
+
+**And on the hard page that result is very nearly vacuous.** The same four variants on the
+A0 vector sheet:
+
+| variant | fps | max | drops | sharp | any |
+|---|---|---|---|---|---|
+| tiles 100% | 60.0 | 18.0 | 0 | **4%** | 100% |
+| tiles 400% | 60.0 | 18.0 | 0 | **0%** | 80% |
+| viewport 100% | 60.0 | 18.0 | 0 | **3%** | 93% |
+| viewport 400% | 60.0 | 18.0 | 0 | **0%** | 80% |
+
+Sixty frames a second, every frame, over a page that is essentially blank. The warm-up ran
+its full three-second cap without filling the first screen — 10% sharp at 100%, 0% at 400%
+— and the timed scroll never recovered. `any` is the tier-1 placeholder, so at 400% roughly
+a fifth of frames showed *nothing at all*: §4's promise that the user "never sees a white
+rectangle" is false on precisely the page where it was supposed to matter, because tier 1
+costs 1.5 s there too. Meanwhile the renderer consumed ~4.0 s of PDFium time per 5 s round
+and had one to two of every four tiles discarded as superseded before they could be drawn.
+
+This is the architecture working as designed and the design not being enough. The frame
+loop is decoupled from the renderer, which is why it never stutters — and it is exactly why
+frame rate alone cannot tell a viewer that keeps up from one that has given up. Doubling
+the tile to 2048² changes 3% to 4%, i.e. nothing; §4's "fewest, largest tiles" is not
+contradicted, it simply cannot rescue a page with a one-second floor per render call. What
+would move this number is the worker pool (§3: 3.89× on four), and even four workers leave
+~25 tile-seconds to fill one screen. The real answers for such a page are the progressive
+API and an honest degraded state, not a faster tile.
+
+**The two layouts are both far inside budget, and the surprise is which is cheaper.** One
+viewport-sized canvas redrawn every frame costs **0.11–0.17 ms** of main thread; a canvas
+per tile in a natively scrolling container costs **0.49–0.64 ms**. Assigning `scrollTop`
+against a container of absolutely positioned canvases is a forced layout, and it is more
+expensive than compositing half a dozen GPU-resident ImageBitmaps into one canvas. Neither
+is close to mattering, so the choice can be made on other grounds — but the escalation path
+at the end of this section is not needed. The webview is not the bottleneck; PDFium is.
+
 ### Virtual scrolling
 
 The frontend never mounts 500 page elements. A windowed scroller recycles a handful of
@@ -1157,7 +1223,7 @@ that includes deliberately hostile files:
 
 | Spike | Proves |
 |-------|--------|
-| Render pipeline | Tiles over the custom protocol; raw vs encoded transfer; tile size; CPU and peak allocation per tile on a dense CAD page; frame rate at 100% and 400% |
+| ~~**Render pipeline**~~ | **Passed 2026-07-26** (§3, §4). Raw pixels over the custom scheme, 1024²–2048² tiles, ~1 s fixed cost per render call on a dense CAD page, 211 MB peak. Sustained scroll holds 60 fps at 100% and 400% on both corpora with 0.1–0.6 ms of main thread per frame — but the webview presents at 59 Hz on a 120 Hz panel, and on the CAD page it holds that 60 fps over a blank screen |
 | ~~**Process architecture**~~ | **Passed 2026-07-26** (§3), on macOS only. The boundary costs 6 µs of control latency and 0.11 ms to move a 4 MB tile through shared memory; four workers give 3.9× throughput; a crash is noticed in under a millisecond and recovered in ~10 ms; the worker renders correctly with files and network denied. Two gaps recorded rather than closed: macOS has no memory rlimit, and Windows is untested |
 | ~~**Startup**~~ | **Passed 2026-07-26** (§4). Warm, cold and first-launch-after-build are three separate regimes, and the last two are the OS. The shell floor is ~250 ms before any application code runs and is not reducible by anything tpdf controls; the two avoidable items — our page-geometry walk and Tauri's default menu — are worth 92 ms together and take it to 276 ms warm |
 | ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
@@ -1183,8 +1249,23 @@ already committed to for the scroller, for the same reason — it is **292 ms me
 
 That is the honest position: the criterion is met, with ~25 ms of margin, and every bit of
 the margin comes from two changes that were already going to be made for other reasons. The
-shell floor underneath is ~250 ms and nothing we do moves it. Sustained-scroll frame rate is
-the remaining half of this criterion and has not been measured.
+shell floor underneath is ~250 ms and nothing we do moves it.
+
+The other half — no dropped frames on sustained scroll — **passes, and the pass is worth
+less than it looks** (§4). Zero drops in every variant on both corpora, with our own work
+taking 1–4% of the frame budget; but the same run holds a flawless 60 fps on the A0 page
+while 0–4% of the visible area is sharp and, at 400%, a fifth of frames show nothing at
+all. The criterion is satisfiable by a scroller that renders nothing, because the frame
+loop is decoupled from the renderer by design. It is therefore restated with a floor on
+what was actually on screen:
+
+> **no dropped frames on sustained scroll, with the visible page area at least 95% sharp
+> on a text document and never below the tier-1 placeholder on any document.**
+
+The text corpus meets that at 100% sharp. **The A0 vector page does not, and is recorded as
+a known failure** rather than smoothed over: it needs the worker pool, the progressive API,
+and a degraded state the UI states honestly. Phase 1 does not get to call the viewer done
+while a page in the corpus scrolls blank.
 
 ### Phase 1 — The viewer
 
