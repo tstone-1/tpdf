@@ -227,6 +227,31 @@ An earlier version of this file claimed PDFium was unsafe only "per document han
 that multiple handles would render in parallel. That was wrong; it was caught in the
 2026-07-26 plan audit before any code depended on it.
 
+### PDFium pays a large fixed cost *per render call*, not per page open
+
+Measured 2026-07-26 (`src-tauri/src/bin/tile_bench.rs --mode single`). On a complex page
+--- an A0 sheet with ~200k path segments --- every render call pays roughly **1 second**
+before any area-proportional work, and this is charged per *call* even when the same
+`PdfPage` object is held across all of them. Rendering that page to a 150 px-wide
+thumbnail (1/270th of its 1x pixels) still costs **1.52 s**; a single 256x256 tile costs
+0.98 s; the full page costs 22.8 s at 1x and 48.4 s at 2x.
+
+PDFium does cull spatially --- a 256² tile costs 4.3% of the full page while covering 0.8%
+of its area --- so tiling is not futile. But the cost does not approach zero as the
+request shrinks, which has three consequences worth stating plainly:
+
+- **Small tiles are a trap.** Tile count multiplies the constant. Covering a 1920x1080
+  viewport of that page takes 39 s in 256² tiles and 18 s in one 2048² tile. Prefer the
+  fewest, largest tiles the memory budget allows; 1024²--2048², not 512².
+- **A cheap low-resolution placeholder is not cheap** on the pages that most need one.
+  Render it once at document open, off the critical path.
+- **Any "just re-render it smaller" fallback does not help.** Scale is the wrong lever;
+  spatial extent is the only one that moves the number.
+
+Measure with interleaved variants (A,B,A,B across rounds, compared pairwise within a
+round). Round 0 is a consistent warm-up outlier on cheap pages --- 0.895 against a 0.207
+steady state in one text-page series --- and vanishes once renders take seconds.
+
 ### PDFium rendering *is* interruptible --- via the progressive API
 
 `FPDF_RenderPageBitmap()` cannot be cancelled once entered. But

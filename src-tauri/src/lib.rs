@@ -46,8 +46,7 @@ async fn open_document(
             let _ = tx.send(result);
         }),
     );
-    rx.recv()
-        .map_err(|_| "render thread stopped".to_string())?
+    rx.recv().map_err(|_| "render thread stopped".to_string())?
 }
 
 /// Milliseconds since process start, so the frontend can place its own marks on
