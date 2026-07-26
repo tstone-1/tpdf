@@ -1,0 +1,30 @@
+# Node
+node_modules/
+dist/
+.vite/
+
+# Rust / Tauri
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# PDFium binaries (downloaded at build time, not vendored)
+vendor/pdfium/
+
+# Local agent overrides (per shared-memory policy)
+AGENTS.local.md
+
+# Test corpus - may contain confidential customer documents
+testdata/private/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs / scratch
+*.log
+scratch/
