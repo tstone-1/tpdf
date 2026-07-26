@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>tpdf</title>
+    <script>
+      // Stamped as early as the document can run script, so the startup
+      // measurement (spike 0.2) has a webview-side origin that is not
+      // contaminated by module loading or framework boot.
+      window.__tpdfWebviewScriptStart = performance.now();
+      window.__tpdfNavigationStart = performance.timeOrigin;
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
