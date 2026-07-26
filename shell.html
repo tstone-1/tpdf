@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>tpdf shell floor</title>
+    <script>
+      // Stamped exactly as index.html stamps it, so the two variants' first
+      // webview-side mark means the same thing.
+      window.__tpdfWebviewScriptStart = performance.now();
+    </script>
+  </head>
+  <body style="margin: 0; background: #111">
+    <div id="app"></div>
+    <script>
+      /*
+       * The shell floor (spike 0.7).
+       *
+       * This page does exactly what src/lib/startup.ts does --- calibrate the
+       * clock, open the document, render the visible region of page 1, wait for
+       * the compositor --- with no framework underneath it: no module graph, no
+       * Svelte, no @tauri-apps/api. The difference against the baseline variant
+       * is therefore the frontend payload's cost and nothing else.
+       *
+       * Deliberately a classic inline script rather than a module. A module
+       * would be a second request over the custom scheme before any of this
+       * could run, which is a large part of the thing being measured.
+       *
+       * It duplicates logic that lives in src/lib/ on purpose. Importing it
+       * would import the payload.
+       */
+      (async () => {
+        const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
+        const lines = [];
+        const log = (line = "") => lines.push(line);
+        const pad = (text, width, right) =>
+          right ? String(text).padStart(width) : String(text).padEnd(width);
+
+        try {
+          const path = await invoke("startup_path");
+          // The first IPC of a launch is much dearer than the rest. Stamped
+          // here, marked below once there is a mapping to place it on.
+          const firstIpcReturned = performance.now();
+          if (!path) throw new Error("TPDF_STARTUP is not set");
+
+          // NTP-style calibration, same method and sample count as
+          // src/lib/clock.ts. See its comment for why the naive version is
+          // wrong by most of a round trip.
+          let bestRoundTrip = Infinity;
+          let offsetMs = 0;
+          for (let i = 0; i < 9; i++) {
+            const before = performance.now();
+            const elapsed = await invoke("process_elapsed_ms");
+            const after = performance.now();
+            if (after - before < bestRoundTrip) {
+              bestRoundTrip = after - before;
+              offsetMs = elapsed - (before + after) / 2;
+            }
+          }
+          const calibrated = performance.now();
+          const mark = (name, perfNow) =>
+            invoke("startup_mark", { name, atMs: perfNow + offsetMs });
+
+          await mark("webview script start", window.__tpdfWebviewScriptStart);
+          await mark("first ipc returned", firstIpcReturned);
+          await mark("clock calibrated", calibrated);
+
+          const paint = performance
+            .getEntriesByType("paint")
+            .find((e) => e.name === "first-contentful-paint");
+          if (paint) await mark("webview first paint", paint.startTime);
+
+          await mark("document open requested", performance.now());
+          const info = await invoke("open_document", { path });
+          const page = info.pages[0];
+          if (!page) throw new Error("document has no pages");
+
+          const dpr = window.devicePixelRatio || 1;
+          const viewportWidth = Math.round(window.innerWidth * dpr);
+          const viewportHeight = Math.round(window.innerHeight * dpr);
+          const scale = viewportWidth / page.width_pt;
+          const fullHeight = Math.round(page.height_pt * scale);
+
+          const MAX_TILE = 4096;
+          const width = Math.min(viewportWidth, MAX_TILE);
+          const height = Math.min(viewportHeight, fullHeight, MAX_TILE);
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          canvas.style.cssText =
+            "position:fixed;inset:0;width:" +
+            width / dpr +
+            "px;height:" +
+            height / dpr +
+            "px;z-index:9999";
+          document.body.appendChild(canvas);
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("no 2d context");
+
+          const url =
+            "tile://localhost/" +
+            [info.id, 0, Math.round(scale * 1000), 0, 0, width, height].join("/") +
+            "?fmt=raw";
+          const response = await fetch(url);
+          if (!response.ok) throw new Error("tile: " + (await response.text()));
+          const buffer = await response.arrayBuffer();
+          const tileWidth = Number(response.headers.get("X-Tile-Width") || width);
+          const tileHeight = Number(response.headers.get("X-Tile-Height") || height);
+          const bitmap = await createImageBitmap(
+            new ImageData(new Uint8ClampedArray(buffer), tileWidth, tileHeight),
+          );
+          await mark("first preview bitmap ready", performance.now());
+
+          context.drawImage(bitmap, 0, 0);
+          bitmap.close();
+
+          // A single requestAnimationFrame fires before its frame is painted;
+          // the second callback runs once the previous frame is committed.
+          const presented = await new Promise((resolve, reject) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now())));
+            // An occluded webview, or one whose display has slept, stops firing
+            // requestAnimationFrame and the run hangs with no output. Fail
+            // instead. setTimeout keeps running.
+            setTimeout(
+              () => reject(new Error("no frame presented in 10 s -- is the display asleep?")),
+              10000,
+            );
+          });
+          await mark("first page presented", presented);
+
+          // Read late: loadEventEnd is zero until the load event has fired, and
+          // the question these answer is whether the interval after the first
+          // script belongs to a module graph or to the page still loading.
+          const navigation = performance.getEntriesByType("navigation")[0];
+          if (navigation) {
+            if (navigation.responseEnd > 0) await mark("html received", navigation.responseEnd);
+            if (navigation.domContentLoadedEventEnd > 0) {
+              await mark("dom content loaded", navigation.domContentLoadedEventEnd);
+            }
+            if (navigation.loadEventEnd > 0) await mark("window load", navigation.loadEventEnd);
+          }
+
+          const preMain = await invoke("startup_pre_main_ms");
+          const marks = await invoke("startup_timeline");
+
+          log("file            " + path);
+          log("variant         shell floor (no module graph, no framework)");
+          log("pages           " + info.page_count + (info.lazy_geometry ? " (lazy geometry)" : ""));
+          log(
+            "preview         " +
+              width +
+              " x " +
+              height +
+              " device px at " +
+              scale.toFixed(3) +
+              "x (dpr " +
+              dpr +
+              ")",
+          );
+          log(
+            "clock mapping   +/- " +
+              (bestRoundTrip / 2).toFixed(2) +
+              " ms (best ipc round trip " +
+              bestRoundTrip.toFixed(2) +
+              " ms)",
+          );
+          log(
+            preMain === null
+              ? "timeline origin main entry -- pre-main interval NOT measurable on this platform"
+              : "timeline origin process exec (" + preMain.toFixed(1) + " ms of it before main)",
+          );
+          log();
+          log([pad("milestone", 30), pad("ms", 9, true), pad("delta", 9, true)].join(" "));
+          log("-".repeat(50));
+          let previous = 0;
+          for (const [name, at] of marks) {
+            log(
+              [pad(name, 30), pad(at.toFixed(1), 9, true), pad((at - previous).toFixed(1), 9, true)].join(
+                " ",
+              ),
+            );
+            previous = at;
+          }
+          log();
+          log("TIMELINE-JSON " + JSON.stringify({ preMainMs: preMain, marks }));
+
+          await invoke("spike_print", { text: lines.join("\n") });
+          await invoke("spike_exit", { code: 0 });
+        } catch (error) {
+          await invoke("spike_print", {
+            text: "[ERROR] shell floor: " + (error && error.message ? error.message : String(error)),
+          });
+          await invoke("spike_exit", { code: 1 });
+        }
+      })();
+    </script>
+  </body>
+</html>

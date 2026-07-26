@@ -31,7 +31,10 @@ interface PageSize {
 
 interface DocumentInfo {
   id: number;
+  /** Every page's size, or only page 1's when the open was lazy. */
   pages: PageSize[];
+  page_count: number;
+  lazy_geometry: boolean;
   open_ms: number;
   at_ms: number;
 }
@@ -54,10 +57,18 @@ function pad(text: string, width: number, right = false): string {
  * upper bound: the true present happened somewhere between the two callbacks.
  */
 function afterPresentation(): Promise<number> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => resolve(performance.now()));
     });
+    // A webview whose window is occluded or whose display has slept stops
+    // firing requestAnimationFrame entirely, and the run then hangs with no
+    // output rather than failing. That is the worst shape a measurement can
+    // fail in, so it is turned into an error. setTimeout keeps running.
+    setTimeout(
+      () => reject(new Error("no frame presented in 10 s -- is the display asleep?")),
+      10_000,
+    );
   });
 }
 
@@ -70,12 +81,54 @@ function firstContentfulPaint(): number | null {
 }
 
 /**
+ * Milestones the webview recorded for itself, read late.
+ *
+ * Read at the end of the run rather than when they happen: `loadEventEnd` is
+ * zero until the load event has fired, and the interesting question is whether
+ * the interval after the first script is our module graph or the page still
+ * loading. Reading late gets both, with historical timestamps either way.
+ *
+ * The module entry is looked up by suffix rather than by name because Vite
+ * hashes it.
+ */
+export function navigationMarks(): [string, number][] {
+  const marks: [string, number][] = [];
+  const [navigation] = performance.getEntriesByType(
+    "navigation",
+  ) as PerformanceNavigationTiming[];
+
+  if (navigation) {
+    if (navigation.responseEnd > 0) marks.push(["html received", navigation.responseEnd]);
+    if (navigation.domContentLoadedEventEnd > 0) {
+      marks.push(["dom content loaded", navigation.domContentLoadedEventEnd]);
+    }
+    if (navigation.loadEventEnd > 0) marks.push(["window load", navigation.loadEventEnd]);
+  }
+
+  const script = (performance.getEntriesByType("resource") as PerformanceResourceTiming[])
+    .filter((entry) => entry.name.endsWith(".js"))
+    .sort((a, b) => a.responseEnd - b.responseEnd)
+    .pop();
+  if (script) {
+    marks.push(["module requested", script.startTime]);
+    marks.push(["module received", script.responseEnd]);
+  }
+
+  return marks;
+}
+
+/**
  * Runs the startup timeline if `TPDF_STARTUP` is set, then exits the process.
  *
  * Returns false when no run was requested, so the normal spike UI carries on.
  */
 export async function runStartupTimelineIfRequested(): Promise<boolean> {
   const path = await invoke<string | null>("startup_path");
+  // Stamped rather than marked: the mapping that turns it into a process
+  // timestamp does not exist yet. The first IPC of a launch is much dearer than
+  // the rest, and it is charged to whichever variant happens to make it first,
+  // so it needs its own line rather than hiding inside framework boot.
+  const firstIpcReturned = performance.now();
   if (!path) return false;
 
   const lines: string[] = [];
@@ -83,6 +136,7 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
 
   try {
     const clock = await calibrateProcessClock();
+    const calibrated = performance.now();
     const globals = window as unknown as Record<string, number | undefined>;
 
     /** Records a webview-observed milestone, converted onto the process timeline. */
@@ -97,6 +151,9 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
 
     const appMounted = globals.__tpdfAppMounted;
     if (appMounted !== undefined) await mark("app mounted", appMounted);
+
+    await mark("first ipc returned", firstIpcReturned);
+    await mark("clock calibrated", calibrated);
 
     await mark("document open requested", performance.now());
     const info = await invoke<DocumentInfo>("open_document", { path });
@@ -140,11 +197,14 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
     tile.bitmap.close();
     await mark("first page presented", await afterPresentation());
 
+    for (const [name, at] of navigationMarks()) await mark(name, at);
+
     const preMain = await invoke<number | null>("startup_pre_main_ms");
     const marks = await invoke<[string, number][]>("startup_timeline");
 
     log(`file            ${path}`);
-    log(`pages           ${info.pages.length}`);
+    log(`variant         ${info.lazy_geometry ? "lazy geometry" : "full geometry"}`);
+    log(`pages           ${info.page_count}`);
     log(`page 1          ${page.width_pt.toFixed(0)} x ${page.height_pt.toFixed(0)} pt`);
     log(`preview         ${width} x ${height} device px at ${scale.toFixed(3)}x (dpr ${dpr})`);
     log(

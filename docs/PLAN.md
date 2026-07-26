@@ -494,6 +494,101 @@ The signature cost is charged **per binary identity, once**, and is spent before
 at all — no budget can cover it. Hence the target is stated as *warm*, with the other two
 regimes measured and reported rather than quietly folded in.
 
+#### Where the shell cost actually is — measured 2026-07-26
+
+The tables above left 358 ms of the 374 attributed only to "Tauri and WebKit", which is
+not an attribution. §10 q3 asked how much of it is reducible and named two candidate
+levers: lazy framework loading, and a smaller initial webview payload. Both were guesses.
+
+Finer marks were added on the Rust side (`context built`, `app built`, `event loop ready`,
+and an explicitly timed window build) and on the webview side (`first ipc returned`,
+`clock calibrated`, plus the navigation-timing milestones), and five variants were run
+**interleaved** — one launch of each per round, compared pairwise within a round, since
+wall clock drifts more over a few minutes than most of the differences being looked for.
+
+The 142 ms from `main` to the setup hook splits three ways. Tauri creates the windows
+listed in `tauri.conf.json` *before* calling the setup hook, so webview creation was inside
+that interval and no mark could be placed between them; clearing the config windows and
+building the window inside the hook instead separates them:
+
+| interval | warm ms | what is in it |
+|---|---|---|
+| exec → `main` | 4.4 | dyld, framework linking |
+| → context built | 0.2 | embedded config, asset table |
+| → app built | 29.9 | `Builder::build()` |
+| → tauri setup | 25.2 | `App::run` prologue |
+| → window built | 77.6 | `WebviewWindowBuilder::build()` — the WKWebView |
+| → webview script start | 57.8 | HTML load, first inline script |
+| → first ipc returned | 48.0 | see below |
+
+**Not one of those seven intervals is ours.** The first line of application code runs at
+~247 ms, and everything before it is the shell reaching the point where it can be asked
+for anything.
+
+The variants, against a 367.6 ms baseline (three independent runs of 8 rounds; the columns
+are the median of within-round differences, so drift cannot be attributed to a variant):
+
+| variant | what it changes | run 1 | run 2 | run 3 |
+|---|---|---|---|---|
+| `manual` | window built in the setup hook, not from config | +1.3 | — | −0.2 |
+| `blank` | same work, no framework at all | −8.4 | +9.9 | −0.2 |
+| `lazy` | page geometry for page 1 only | −82.8 | −85.7 | −75.0 |
+| `eager` | document opened during shell boot | −77.3 | −85.5 | −74.1 |
+| `lazy` + `eager` | both | −76.6 | −84.3 | — |
+| `no-menu` | Tauri's default macOS menu replaced by an empty one | — | — | −9.0 |
+| `lazy` + `no-menu` | both | — | — | −92.5 |
+
+**The frontend payload is worth nothing measurable.** `blank` is a page that opens the
+document, renders the tile and waits for the compositor using raw `__TAURI_INTERNALS__`
+calls in one inline script — no module graph, no Svelte, no `@tauri-apps/api`. Deleting
+the entire framework moved startup by −8 ms in one run and +10 ms in the other, i.e. by
+nothing.
+
+The reason is worth having, because it is not "the framework is fast". The baseline spends
+47 ms between its first script and its mount, and its *first IPC then costs 0.0 ms*. The
+blank page has no module to fetch, is fully loaded 39 ms earlier — and its first IPC costs
+**43.9 ms**. Both pay the same toll through different doors: **the webview's first request
+over a Tauri custom protocol costs ~45 ms**, and whichever request happens to be first pays
+it. A smaller payload does not avoid it; it only changes which line of the table it lands
+on. The lever named in q3 does not exist.
+
+Nor does the other one. Moving window creation out of the config and into the setup hook
+changes the total by +1.3 ms — the cost is the WKWebView, not when it is asked for.
+
+**What was reducible was ours.** Collecting every page's geometry — 86 ms on the 775-page
+document, and the one item §4 already called self-inflicted — is worth 83–86 ms, and
+removing it is what takes a 374 ms warm start to **290 ms**. There are two ways to remove
+it and they are alternatives rather than complements, which the `applied` row shows: doing
+it lazily and doing it during the shell's boot both delete the same 86 ms, so doing both
+buys nothing over doing either. Lazy is the better of the two — it is a smaller change, it
+holds for a document opened later in the session, and it does not depend on knowing the
+path before the window exists.
+
+**One shell cost is ours to choose, and it is the default menu.** Tauri installs a full
+macOS application menu unless given one. Replacing it with an empty `Menu::new` is worth
+**16 ms** — measured against `lazy` pairwise, negative in all seven rounds, −7.7 to −41.9 —
+and it does not sit where it looks like it should: `Builder::build()` drops 39.7 → 32.9 and
+the `App::run` prologue drops 94.0 → 87.8, so it is split across both. Against the noisier
+baseline the same variant reads −9.0 with a range spanning zero, which is the same effect
+buried in a wider distribution; the low-variance pairing is the one to believe.
+
+An empty menu is not shippable — Cmd-Q, Cmd-W and clipboard shortcuts come from it — so the
+finding is not "ship without a menu" but **"build the menu tpdf needs rather than accepting
+the default"**, and expect around 10–16 ms for it.
+
+Three things follow for the architecture:
+
+- **The shell floor is ~250 ms warm on this machine**, and the only route below it is to
+  present the first page without waiting for the webview at all — the native-surface
+  escalation at the end of §4, which is an architecture, not a tuning pass. Nothing short
+  of that touches it.
+- **The budget available to tpdf is ~50 ms**, and the current spend is about 45: 1 ms to
+  open lazily, 7 to render the tile, 10 to transfer and decode, 26 for the compositor. That
+  is the number to defend, and it means a regression of 50 ms in our own code is a missed
+  target with no headroom anywhere else to absorb it.
+- **The best measured configuration is 276 ms warm** (`lazy` + `no-menu`, median of 8,
+  250–285), against 368 for the shipped shape.
+
 #### One document blows the budget by 36×
 
 The A0 vector page (~200k path segments) reaches first presentation in **10.9 s**, of which
@@ -519,6 +614,17 @@ the two callbacks.
 
 Startup must not be measured under `tauri dev` — the frontend is served by a Vite dev server
 over HTTP there, so the numbers describe Vite. All of the above is a release bundle.
+
+The run cannot time itself out, and finding that out cost an hour. WebKit suspends a page
+whose window is not visible — behind a lock screen, or on a display that has gone dark,
+every window qualifies — and the suspension stops `requestAnimationFrame` *and*
+`setTimeout`. A JavaScript watchdog is therefore suspended alongside the thing it was
+watching, and the launch sits in its event loop producing no output at all, which reads
+exactly like a slow machine. Three things guard it now: `startup_bench.py` refuses to start
+when the session is locked, holds `caffeinate -du` for its own lifetime (`-d` alone will not
+turn a display that is already off back *on*), and the app carries a Rust-side watchdog that
+prints the marks it did reach and exits 2. That last one is what identified this: the
+timeline stopped at `first preview bitmap ready` every time, with only presentation missing.
 
 ### Virtual scrolling
 
@@ -1053,7 +1159,7 @@ that includes deliberately hostile files:
 |-------|--------|
 | Render pipeline | Tiles over the custom protocol; raw vs encoded transfer; tile size; CPU and peak allocation per tile on a dense CAD page; frame rate at 100% and 400% |
 | ~~**Process architecture**~~ | **Passed 2026-07-26** (§3), on macOS only. The boundary costs 6 µs of control latency and 0.11 ms to move a 4 MB tile through shared memory; four workers give 3.9× throughput; a crash is noticed in under a millisecond and recovered in ~10 ms; the worker renders correctly with files and network denied. Two gaps recorded rather than closed: macOS has no memory rlimit, and Windows is untested |
-| Startup | The five timestamps of §4, cold and warm |
+| ~~**Startup**~~ | **Passed 2026-07-26** (§4). Warm, cold and first-launch-after-build are three separate regimes, and the last two are the OS. The shell floor is ~250 ms before any application code runs and is not reducible by anything tpdf controls; the two avoidable items — our page-geometry walk and Tauri's default menu — are worth 92 ms together and take it to 276 ms warm |
 | ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
 | ~~**Sanitized full rewrite**~~ | **Passed 2026-07-26** (§6). A collected `lopdf` rewrite matches QPDF on every fixture, so QPDF is not required — but `lopdf`'s own collection is quadratic and the sweep has to be ours, and "every stream must decode" would refuse most scanned documents |
 | ~~**Incremental save**~~ | **Passed 2026-07-26** (§5). Twelve fixtures, four independent readers, each asked for pixels or text rather than for acceptance. The update section is under a kilobyte whatever the document weighs, encryption and its ciphertext survive, and on disk the append beats a full rewrite 8.2× at 337 MB — but not at all below a few MB, where one `fsync` dominates both. Signatures stay cryptographically intact and stop being trusted, at every DocMDP level |
@@ -1066,9 +1172,19 @@ until this completes.
 
 The criterion was "under 300 ms cold" until the startup measurement showed cold start
 carries ~300 ms of one-time code-signature validation before `main` runs (§4). Restating it
-as warm is not moving the goalposts to make it passable — warm is currently **374 ms** and
-therefore still failing. It is stating a bound tpdf can actually influence. First launch
-after install or update is separately reported and never claimed to hit 300 ms.
+as warm is not moving the goalposts to make it passable — it is stating a bound tpdf can
+actually influence. First launch after install or update is separately reported and never
+claimed to hit 300 ms.
+
+Warm was **374 ms** and failing. With page geometry collected lazily — the change §4 had
+already committed to for the scroller, for the same reason — it is **292 ms median, 284 to
+300**. Replacing Tauri's default macOS menu as well takes it to **276 ms median, 250 to
+285**, which clears the target on every launch of the run rather than only at the median.
+
+That is the honest position: the criterion is met, with ~25 ms of margin, and every bit of
+the margin comes from two changes that were already going to be made for other reasons. The
+shell floor underneath is ~250 ms and nothing we do moves it. Sustained-scroll frame rate is
+the remaining half of this criterion and has not been measured.
 
 ### Phase 1 — The viewer
 
@@ -1150,16 +1266,19 @@ that it presented several genuinely unresolved questions as settled architecture
    rendering, so the scheme is not a zero-copy fast path — but encoding is worse in both
    directions, and on the startup path the whole transfer-and-decode of a 16.6 MB tile is
    8.2 ms against a 374 ms budget. Not where the time goes.
-3. **How much of the shell cost is reducible?** The dominant term in startup by a wide
-   margin (§4), and the only one large enough to decide whether the target is reachable:
-   142 ms warm from `main` to the Tauri setup callback, 951 ms cold, plus 95 ms warm before
-   a Svelte component is mounted. Neither has been attributed further than "Tauri and
-   WebKit". The cold/warm ratio says most of it is paging framework code off disk, which
-   points at how much is *linked* rather than at anything tpdf executes — so the levers
-   worth testing are lazy framework loading and a smaller initial webview payload, not
-   micro-optimisation. If the floor turns out to be high, 300 ms warm requires painting the
-   first page before the framework finishes booting, which is an architecture rather than a
-   tuning pass. Measure before choosing.
+3. ~~**How much of the shell cost is reducible?**~~ **Answered 2026-07-26** (§4). Almost
+   none of it, and neither lever this question proposed exists. A smaller initial payload
+   buys nothing: a variant that does the same work with no module graph, no Svelte and no
+   `@tauri-apps/api` measured −8 ms in one run and +10 ms in another, because the ~45 ms
+   both pay is the webview's *first request over a custom protocol* and not the framework —
+   whichever request is first pays it. Building the window in the setup hook rather than
+   from the config is −0.2 ms, so the cost is the WKWebView itself. The shell floor is
+   ~250 ms warm before the first line of application code runs, leaving tpdf about 50 ms,
+   of which it currently spends 45. Two things *were* reducible: the 86 ms page-geometry
+   walk, which is ours, and Tauri's default macOS menu at ~16 ms, which is a default rather
+   than a requirement. Together they take 368 ms warm to **276 ms**. Below the floor there
+   is only the native-surface escalation at the end of §4 — an architecture, not a tuning
+   pass.
 4. ~~**Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
    path?~~ **Answered 2026-07-26** (§6). `lopdf` is enough: on eleven hostile fixtures a
    collected `lopdf` rewrite reaches the same verdict as QPDF on every one, and the

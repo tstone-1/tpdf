@@ -14,5 +14,16 @@ export default defineConfig({
   build: {
     target: "safari15",
     sourcemap: true,
+    rollupOptions: {
+      // Relative to the Vite root, so no `node:path` and no `__dirname` --
+      // there are no Node type declarations in this project.
+      input: {
+        // The app.
+        index: "index.html",
+        // The shell floor (spike 0.7): the same startup work with no framework
+        // under it, so the payload's cost can be measured rather than assumed.
+        shell: "shell.html",
+      },
+    },
   },
 });
