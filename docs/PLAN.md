@@ -661,18 +661,108 @@ Verification is therefore **carrier-based**:
 2. After apply, reopen the written file from disk and prove each manifest entry was
    removed or replaced.
 3. Traverse the complete reachable object graph; every stream is decoded with **bounded**
-   limits. Any undecodable, unsupported-filter, encrypted or limit-exceeded carrier is a
-   hard failure.
+   limits. An encrypted, limit-exceeded or unrecognised-filter carrier is a hard failure.
+   A carrier in a *recognised image* filter is not — it is an image, and it is checked by
+   step 4 rather than by a byte scan. Spike 0.4 measured why the distinction is necessary
+   rather than fussy: without it, one `/DCTDecode` stream refuses the whole document, and
+   that is every scanned page in existence.
 4. Render the redacted regions and OCR them, confirming no legible text survives.
 5. Re-parse with an independent parser (QPDF), so a single library's blind spot cannot
    certify itself.
-6. Confirm one logical revision, no trailing bytes, no unreachable objects.
+6. Confirm one logical revision, no trailing bytes, no unreachable objects. The revision
+   count is not bookkeeping: spike 0.4 showed an object a prior revision overwrote is
+   reachable by no parser at all, so a multi-revision file cannot be certified by any of
+   the checks above — only rewritten, and then certified.
 7. String search across decoded content, as a cheap additional smoke test only.
 
 "Verified" means *every required check completed and passed*. If any check could not run,
 the result is "not verified" and tpdf says so. Given the PDFium `GenerateContent` trap in
 `AGENTS.md` — where a removed object silently survives into the file while the in-memory
 API reports it gone — this pass is not belt-and-braces, it is load-bearing.
+
+### Sanitized full rewrite — measured 2026-07-26
+
+Spike 0.4. Harness `src-tauri/src/bin/sanitize_rewrite.rs`, corpus
+`testdata/make_hostile_pdf.py`: eleven fixtures, each hiding a distinct needle in a
+different carrier, with `hostile-manifest.json` recording for each one whether a
+reachability sweep is *expected* to clear it. Six routes, from a byte copy (the control)
+through `lopdf` with and without collection to QPDF.
+
+**The rewrite works, and `lopdf` is enough for it.** On every fixture, a collected `lopdf`
+rewrite reaches exactly the same verdict as QPDF: the four unreachable-object classes go —
+plain orphan, mutual-reference cycle, orphan inside an `/ObjStm`, orphan inside an
+encrypted file — the four reachable ones stay, bytes past `%%EOF` disappear because the
+file is written rather than patched, and all 775 pages of the bench document survive with
+zero changed pixels. Open question 4 is answered: **QPDF is not required for the rewrite.**
+
+Six things it established that change something:
+
+**1. `lopdf`'s own collection is quadratic; the algorithm is not.** `prune_objects` and
+`renumber_objects` both walk the graph via `traverse_objects`, which records what it has
+seen in a `Vec` and calls `contains` before each push. Cost of collection over a plain
+save, three rounds interleaved, warm:
+
+| objects | plain save | `prune_objects` + renumber | our mark-and-sweep | QPDF |
+|---|---|---|---|---|
+| 2,445 | 4.6 ms | 8.3 ms | 3.6 ms | 14.1 ms |
+| 7,758 | 12.5 ms | 95.2 ms | 10.5 ms | 34.6 ms |
+| 25,583 | 66.6 ms | 1,480 ms | 70.3 ms | 175 ms |
+
+A 3.3x larger graph costs 17x more to collect — and 25,583 objects is not a large document.
+A mark-and-sweep over a hash set, thirty lines in the harness, is **indistinguishable from
+not collecting at all** and produces byte-identical results. Renumbering is dropped with
+it: contiguous object numbers are cosmetic and cost a second quadratic pass. So the shape
+of the answer is *use `lopdf`, write the sweep ourselves* — not *take QPDF*.
+
+**2. A superseded object is invisible to every parser.** The `stale` fixture carries two
+secrets from a prior revision. The one the update *dropped from the page* is still in the
+cross-reference table, so a graph walk sees it — and `lopdf` without collection duly leaked
+it. The one the update *overwrote* is not: its bytes sit at their old offset with nothing
+pointing at them, and no parser will ever hand them to a verifier. Only a byte scan finds
+it, and only because the fixture leaves it uncompressed; compressed, nothing in the harness
+could see it at all. Hence a rule this spike adds to §6's verification list: **more than one
+revision in a file is a blind spot, not a detail.** The check is `%%EOF` count, and a file
+with two of them cannot be certified — only rewritten and then certified.
+
+**3. Taken literally, "every stream must decode or it is a hard failure" refuses almost
+every scanned document.** The `filters` fixture draws ordinary page content through
+`/ASCIIHexDecode` and an image through `/RunLengthDecode`. `lopdf` implements neither —
+it supports Flate, LZW and ASCII85 and returns `Unimplemented` for the rest — so all six
+routes report *not verified*, including QPDF's own output. The realistic cases are worse:
+`/DCTDecode`, `/CCITTFaxDecode`, `/JBIG2Decode` and `/JPXDecode` are what scanners emit,
+and every one of them lands in the same branch. This is the concrete form of open question
+9, and the refusal rate under the naive rule is not "some documents", it is "most of them".
+The rule needs splitting: a carrier whose encoding we understand but cannot decode is a
+hard failure; an *image* carrier is not undecodable, it is an image, and belongs to the
+render-and-OCR check rather than the byte scan. A filter we do not recognise at all remains
+a refusal.
+
+**4. `lopdf` silently drops encryption.** Handed an AES-256 file with an empty user
+password — one that opens in any reader without a prompt — `lopdf` decrypts it on load and
+writes plaintext on save, with no error and no warning. QPDF re-encrypts with the original
+parameters. Removing a document's protection while claiming to sanitize it is its own
+security failure, so the save path has to preserve encryption or refuse, never quietly
+downgrade.
+
+**5. A decompression bomb costs QPDF nearly two seconds of CPU for a 2.9 KB input.** QPDF's
+default re-encodes stream data, which means fully decoding the `bomb` fixture's 1 GiB:
+1.92 s, though only 8.4 MB resident, because it streams rather than buffers. `lopdf` with
+`max_decompressed_size` refuses in 0.3 ms. `qpdf --stream-data=preserve` finishes in under
+10 ms — but it does that by copying bytes it has not looked at, which is exactly what a
+sanitizing rewrite must not do. The bound therefore belongs on the *rewriter*, not only on
+the verifier, and hostile-input limits are a property of the rewrite path.
+
+**6. A renderer that accepts a file has not checked it.** The independent-parser
+requirement (point 5 above) earned its place on its first run: our own mark-and-sweep left
+`/Size` claiming more objects than the file contained, because sweeping does not touch
+`max_id`. PDFium rendered all six outputs of that fixture pixel-identically and raised
+nothing; `qpdf --check` named it immediately. `lopdf`'s *own* plain save produced the same
+defect on the encrypted fixture. PDFium is deliberately lenient about malformed files — that
+is why it is the right renderer — which is precisely why it cannot be the structural check.
+
+QPDF keeps a place for two things it does better, neither of them collection: it preserves
+encryption, and `--object-streams=generate` shrank the 6.1 MB bench output to 1.46 MB.
+Whether that is worth a C++ dependency is a Phase 3 decision, not a Phase 0 one.
 
 ---
 
@@ -759,7 +849,7 @@ that includes deliberately hostile files:
 | Process architecture | Worker isolation, supervision, restart, resource limits, and the real IPC latency cost |
 | Startup | The five timestamps of §4, cold and warm |
 | ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
-| **Sanitized full rewrite** | GC'd reachable-graph rewrite, verified by an independent parser |
+| ~~**Sanitized full rewrite**~~ | **Passed 2026-07-26** (§6). A collected `lopdf` rewrite matches QPDF on every fixture, so QPDF is not required — but `lopdf`'s own collection is quadratic and the sweep has to be ours, and "every stream must decode" would refuse most scanned documents |
 | Incremental save | A real appended update section that other readers accept |
 | Threat model | Written, with the sandbox policy it implies |
 
@@ -864,8 +954,16 @@ that it presented several genuinely unresolved questions as settled architecture
    micro-optimisation. If the floor turns out to be high, 300 ms warm requires painting the
    first page before the framework finishes booting, which is an architecture rather than a
    tuning pass. Measure before choosing.
-4. **Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
-   path? Affects the dependency set.
+4. ~~**Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
+   path?~~ **Answered 2026-07-26** (§6). `lopdf` is enough: on eleven hostile fixtures a
+   collected `lopdf` rewrite reaches the same verdict as QPDF on every one, and the
+   dependency set does not have to grow for this. Two conditions attach. Its
+   `prune_objects` and `renumber_objects` are quadratic — 1.48 s to collect a 25,583-object
+   graph against 70 ms for a mark-and-sweep that produces the same bytes — so the sweep is
+   ours to write, which is thirty lines. And it silently drops encryption on save, so the
+   save path must preserve it or refuse. QPDF stays worth having for two things collection
+   is not: preserving encryption, and object streams, which shrank a 6.1 MB output to
+   1.46 MB.
 5. **Worker process count and IPC cost** — does multi-process rendering actually meet the
    latency target, given the boundary crossing it adds?
 6. **Are extracted font subsets browser-loadable,** and does their licensing permit
@@ -879,5 +977,10 @@ that it presented several genuinely unresolved questions as settled architecture
    every change is correct but slow. Likely: frontend while editing, PDFium on commit,
    with a visual regression test asserting they agree.
 9. **Can redaction ever certify a document containing constructs the sanitizer does not
-   understand?** Current answer is no, by design — but the refusal rate on a real corpus
-   determines whether that is usable or merely principled.
+   understand?** Current answer is no, by design — and spike 0.4 measured what that costs
+   (§6). Under the rule as written, one stream in an unimplemented filter makes the whole
+   document unverifiable, and `/DCTDecode`, `/CCITTFaxDecode`, `/JBIG2Decode` and
+   `/JPXDecode` all qualify. The refusal rate on scanned documents would be close to total,
+   so the rule has to distinguish a carrier we cannot decode from a carrier that is an image
+   and belongs to a different check. What remains open is where that line sits on a real
+   corpus, and it needs one — the fixtures only prove the failure mode exists.

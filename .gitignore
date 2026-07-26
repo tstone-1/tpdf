@@ -29,6 +29,8 @@ Thumbs.db
 *.log
 scratch/
 
-# Generated test corpus (regenerate with testdata/make_vector_pdf.py)
+# Generated test corpus (regenerate with the testdata/make_*.py scripts)
 testdata/*.pdf
 testdata/*.txt
+testdata/hostile-manifest.json
+testdata/__pycache__/
