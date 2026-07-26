@@ -1,0 +1,45 @@
+[package]
+name = "tpdf"
+version = "26.7.0"
+description = "Fast, lightweight PDF viewer and editor"
+authors = ["tstone-1"]
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name on Windows.
+# See https://github.com/rust-lang/cargo/issues/8519
+name = "tpdf_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# PDF rendering and text extraction. Provisional until the Phase 0 spikes pass
+# -- see AGENTS.md. Note `thread_safe` is a default feature and serializes every
+# Pdfium call behind one global mutex; it is left ON deliberately, because the
+# alternative is undefined behaviour, not speed. Parallelism comes from worker
+# processes (spike 0.5), never from threads.
+pdfium-render = "0.9"
+
+# Low-level PDF object graph and content-stream operators.
+lopdf = "0.44"
+
+parking_lot = "0.12"
+anyhow = "1"
+
+# Tile encoding, for the encoded-vs-raw transfer A/B in spike 0.1.
+png = "0.17"
+
+# getrusage, for peak RSS in the tile bench. Pdfium allocates natively, so a
+# Rust allocator hook would report almost nothing.
+libc = "0.2"
+
+[[bin]]
+name = "tile-bench"
+path = "src/bin/tile_bench.rs"
