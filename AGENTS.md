@@ -227,6 +227,23 @@ An earlier version of this file claimed PDFium was unsafe only "per document han
 that multiple handles would render in parallel. That was wrong; it was caught in the
 2026-07-26 plan audit before any code depended on it.
 
+### Never benchmark through `tauri dev` without `--release`
+
+`tauri dev` shells out to `cargo run` in the **dev profile**. PDFium arrives as a prebuilt
+optimized dylib, so it is barely affected --- but every line of our own Rust is
+unoptimized. The result is not uniformly slow, it is *selectively* slow, which is worse:
+ratios between our code and PDFium's are inverted rather than merely inflated.
+
+Concretely, 2026-07-26: PNG encoding of a 1024² tile measured **67 ms** under `tauri dev`
+and **1.41 ms** under `tauri dev -- --release`, a 48x difference, while the PDFium render
+alongside it moved only 1.39 -> 1.36 ms. Read naively, the debug run said encoding cost
+4813% of rendering; the truth was 91%. A conclusion had already been drafted from the
+first table.
+
+Also note `tauri dev` runs a bare `cargo run`, which fails with "could not determine which
+binary to run" as soon as the crate has more than one bin. `default-run = "tpdf"` in
+`[package]` fixes it.
+
 ### PDFium pays a large fixed cost *per render call*, not per page open
 
 Measured 2026-07-26 (`src-tauri/src/bin/tile_bench.rs --mode single`). On a complex page

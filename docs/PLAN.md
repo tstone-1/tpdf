@@ -135,10 +135,43 @@ So encoding costs most where it helps most, and helps least where it is affordab
 is. A 4 MB payload over a localhost protocol handler is a memcpy; the compression was
 never buying back an actual bottleneck.
 
-Two caveats stated honestly. This is PNG at default compression — a faster preset trades
+One caveat stated honestly: this is PNG at default compression. A faster preset trades
 payload for CPU and would move the text-page row, though not the vector one, since no
-codec compresses noise. And this measures only the server half; the webview decode half is
-the remaining piece of spike 0.1. It cannot rescue encoding, only add to its cost.
+codec compresses noise.
+
+### Delivery costs more than production — measured 2026-07-26
+
+The webview half runs inside a real webview via `TPDF_AUTOBENCH=<file.pdf> npm run tauri
+dev -- --release`, which opens the document, measures, prints on stdout and exits. Text
+page, tile centred, six interleaved rounds:
+
+| variant | render | encode | transfer | decode | **end to end** | KB |
+|---|---|---|---|---|---|---|
+| raw 1024² | 1.36 | — | 3.00 | 1.00 | **5.4 ms** | 4096 |
+| png 1024² | 1.55 | 1.41 | 4.00 | 6.00 | **13.0 ms** | 824 |
+| raw 1224×1584 | 2.29 | — | 5.00 | 0.50 | **7.8 ms** | 7574 |
+| png 1224×1584 | 2.67 | 2.50 | 6.00 | 10.00 | **21.2 ms** | 1430 |
+
+Raw wins end to end by **2.4–2.7×**, confirming the server-side result from the other
+direction. The 2048² variants clamp to 1224×1584 — the page at 2× is smaller than the
+requested tile.
+
+The more consequential finding is the ratio in the raw rows: **delivery costs 240–293% of
+rendering.** Moving 4 MB across the custom-scheme boundary takes 3 ms — about 1.3 GB/s,
+which is well short of memcpy and confirms §3's correction that a custom protocol is not a
+zero-copy fast path. Per megabyte, larger tiles are again cheaper (1.00 ms/MB at 1024²
+versus 0.74 ms/MB at 1224×1584), so the same "fewest, largest tiles" conclusion holds for
+delivery as for rendering.
+
+Scaled up, this is a real constraint: repainting a 1920×1080 viewport at 2× device pixel
+ratio is 33 MB of raw pixels, so ~33 ms of delivery — two frames, for a full repaint such
+as a zoom step. Scrolling only delivers the newly exposed strip and is far cheaper, but a
+zoom change is not. Whether that needs shared memory, WebGL texture upload or simply
+tolerating a two-frame zoom is now a quantified open question rather than a guess.
+
+Measurement caveat: webview `performance.now()` is clamped to 1 ms here, visible in the
+integer-valued per-round series. The 2.4× conclusion is far larger than that granularity,
+but sub-millisecond claims from this harness are not supportable.
 
 **Design consequence:** if encoding is ever reintroduced (for a remote or bandwidth-bound
 transport), it must not run on the render thread. At ~100% of render time it would halve

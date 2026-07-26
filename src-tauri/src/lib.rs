@@ -56,6 +56,32 @@ fn process_elapsed_ms() -> f64 {
     render::since_process_start_ms()
 }
 
+/// Path to auto-benchmark on startup, from `TPDF_AUTOBENCH`.
+///
+/// The webview half of spike 0.1 has to run inside a real webview, but a
+/// measurement that needs someone to click a button is a measurement that does
+/// not get repeated. With this set, the app opens the document, runs the
+/// transfer benchmark and exits, so the whole thing is one shell command.
+#[tauri::command]
+fn autobench_path() -> Option<String> {
+    std::env::var("TPDF_AUTOBENCH").ok()
+}
+
+/// Prints frontend benchmark output on the process's stdout.
+///
+/// Webview `console.log` does not reliably reach the terminal across platforms,
+/// and the results need to land somewhere a script can read.
+#[tauri::command]
+fn autobench_report(text: String) {
+    println!("{text}");
+}
+
+/// Ends an auto-benchmark run.
+#[tauri::command]
+fn autobench_done(app: tauri::AppHandle, code: i32) {
+    app.exit(code);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     render::mark_process_start();
@@ -70,7 +96,13 @@ pub fn run() {
             let service = ctx.app_handle().state::<RenderService>();
             protocol::handle(&service, request, responder);
         })
-        .invoke_handler(tauri::generate_handler![open_document, process_elapsed_ms])
+        .invoke_handler(tauri::generate_handler![
+            open_document,
+            process_elapsed_ms,
+            autobench_path,
+            autobench_report,
+            autobench_done
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tpdf");
 }
