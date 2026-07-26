@@ -17,21 +17,7 @@ use std::time::Instant;
 
 use pdfium_render::prelude::*;
 
-/// Wall-clock origin for the whole process, stamped as early as `main` can.
-static PROCESS_START: OnceLock<Instant> = OnceLock::new();
-
-/// Stamps the process start marker. Call first thing in `main`.
-pub fn mark_process_start() {
-    let _ = PROCESS_START.set(Instant::now());
-}
-
-/// Milliseconds since process start, for the startup timeline (spike 0.2).
-pub fn since_process_start_ms() -> f64 {
-    PROCESS_START
-        .get()
-        .map(|t| t.elapsed().as_secs_f64() * 1000.0)
-        .unwrap_or(f64::NAN)
-}
+use crate::startup::{mark, since_process_start_ms};
 
 /// Pixel format of a returned tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -122,7 +108,13 @@ impl RenderService {
             .name("tpdf-render".into())
             .spawn(move || {
                 let pdfium = match bind_pdfium(&library_dir) {
-                    Ok(p) => p,
+                    Ok(p) => {
+                        // Loading and binding the Pdfium dylib is a fixed cost
+                        // paid before any document can be opened, so it needs
+                        // its own line in the startup budget.
+                        mark("pdfium bound");
+                        p
+                    }
                     Err(e) => {
                         // Drain the queue, failing every job with the bind error,
                         // so callers get a diagnosable message instead of a hang.
@@ -201,6 +193,7 @@ fn open_document(
         .load_pdf_from_file(path, None)
         .map_err(|e| format!("could not open {}: {e}", path.display()))?;
     let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    mark("document parsed");
 
     let pages = doc
         .pages()
@@ -213,6 +206,9 @@ fn open_document(
 
     let id = docs.len() as u32;
     docs.push(doc);
+    // Distinct from `document parsed`: collecting page geometry walks every
+    // page object, which on a long document is its own measurable cost.
+    mark("document open complete");
 
     Ok(DocumentInfo {
         id,
@@ -263,6 +259,7 @@ fn render_tile(docs: &[PdfDocument<'static>], req: &TileRequest) -> Result<Tile,
         TileFormat::Png => encode_png(&rgba, req.width as u32, req.height as u32)?,
     };
     let encode_us = t1.elapsed().as_micros() as u64;
+    mark("first tile rendered");
 
     Ok(Tile {
         bytes,

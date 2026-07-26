@@ -3,6 +3,7 @@
   import { fetchTile, type TileFormat } from "./lib/tiles";
   import { interleaved, type BenchResult } from "./lib/bench";
   import { runAutobenchIfRequested } from "./lib/autobench";
+  import { runStartupTimelineIfRequested } from "./lib/startup";
 
   interface PageSize {
     width_pt: number;
@@ -30,8 +31,9 @@
 
   $effect(() => {
     void (async () => {
-      // Headless transfer benchmark, if TPDF_AUTOBENCH is set. Exits the
-      // process when done, so nothing below runs.
+      // Automated spike runs, if their env var is set. Each exits the process
+      // when done, so nothing below runs.
+      if (await runStartupTimelineIfRequested()) return;
       if (await runAutobenchIfRequested()) return;
 
       const elapsed = await invoke<number>("process_elapsed_ms");

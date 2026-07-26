@@ -262,29 +262,108 @@ wrong, and the progressive API is precisely the mechanism.)
 Backstop for the genuinely pathological: a per-tile CPU budget, and worker process
 termination and restart when it is exceeded. Process isolation makes that cheap and safe.
 
-### Startup path
+### Startup path — measured 2026-07-26
 
-Target: **cold start to first page painted under 300 ms** — but the first draft stated
-that without defining the boundary, which makes it unfalsifiable. Instrument five
-timestamps and report them separately:
+Target: **cold start to first page painted under 300 ms** — stated in the first draft
+without defining the boundary, which made it unfalsifiable. Five timestamps were
+instrumented (`src-tauri/src/startup.rs`, `src/lib/startup.ts`), the timeline's origin is
+the kernel's process-creation time rather than `main`, and the run is automated so cold and
+warm are the same measurement repeated (`scripts/startup_bench.py`).
 
-1. Process launch
-2. Document open complete (includes password prompt, cross-reference repair)
-3. First preview bitmap ready in the worker
-4. Webview ready
-5. First compositor presentation ← *this* is the 300 ms target
+Measured on the M5 MacBook Pro against a release bundle, opening the 775-page text corpus
+and painting the region the 1200×900 window actually shows — 2400×1726 device pixels at
+DPR 2, one tile, raw transfer, per §3 and §4. Median of 7 warm runs; spread was 361–387 ms:
 
-Cold and warm cache distributions are reported separately, with the filesystem and process
-cache state defined per platform. Rust receives the file path and starts rendering before
-the webview finishes booting, but the webview is still on the critical path — it must
-exist before anything can be painted. Claiming otherwise was optimistic.
+| milestone | warm ms | Δ | what happens in the interval |
+|---|---|---|---|
+| main entry | 4.2 | 4.2 | exec, dyld, framework linking |
+| tauri setup | 146.1 | **141.9** | Tauri runtime + WebKit initialization |
+| pdfium bound | 146.9 | 0.8 | loading and binding the Pdfium dylib |
+| webview script start | 194.4 | 47.6 | webview creation, HTML load |
+| app mounted | 241.4 | 47.0 | JS module load, Svelte mount |
+| document open requested | 245.4 | 4.0 | IPC |
+| document parsed | 246.0 | **0.6** | `FPDF_LoadDocument` on 775 pages |
+| document open complete | 332.0 | **85.9** | collecting page geometry |
+| first tile rendered | 339.2 | 7.2 | Pdfium |
+| first preview bitmap ready | 347.4 | 8.2 | transfer + decode, 16.6 MB |
+| first page presented | 374.1 | 26.6 | compositor |
+
+**Warm start is 374 ms — 25% over a target that was supposed to be the cold one.**
+
+Three things follow, and none of them were in the first draft.
+
+**The PDF work is a rounding error.** Parse, render, transfer and decode together are
+~16 ms of 374. The other 358 ms is shell: 142 ms of Tauri/WebKit init, 95 ms of webview and
+JS boot, 86 ms of page enumeration, 27 ms of compositing. Optimising the PDF path for
+startup would be optimising the wrong 4%.
+
+**Page geometry enumeration is the one large self-inflicted cost.** Parsing a 775-page
+document takes 0.6 ms — Pdfium's cross-reference handling is lazy and excellent. Walking it
+to collect every page's size takes 86 ms, and on the *one-page* vector document it still
+takes 52 ms, so this is per-page loading plus a fixed cost, not geometry arithmetic. The
+virtual scroller (below) wants the full table up front precisely so the scrollbar is correct
+on the first frame. It cannot have it on the critical path. Geometry must be lazy, with the
+scrollbar estimating from the pages it has seen and correcting as it learns.
+
+**Binding Pdfium is free** (0.8 ms), so there is nothing to gain from deferring it.
+
+#### Cold start is a different problem than it looks
+
+First-ever launch of a freshly built bundle: **1030 ms**, of which **444 ms is spent before
+`main`**. That is not dyld and not cold I/O. Copying the bundle to a new path — same bytes,
+same warm page cache, only the file identity is new — reproduces it at 299 ms, and
+relaunching that same copy costs 4.8 ms. It is the OS validating a code signature it has
+not seen before.
+
+So the cost is charged **per binary identity, once**: on install and on every update, not on
+every launch. A 300 ms budget cannot cover it, because it is spent before tpdf runs at all.
+Two consequences: the target must be stated as *warm* start, and first-launch-after-update
+is a distinct, unavoidable, ~300 ms-worse experience that the UI should not be surprised by.
+
+A true cold-page-cache measurement of an already-known binary still needs `sudo purge` and
+has not been taken; `scripts/startup_bench.py --purge` does it when run with sudo available.
+
+#### One document blows the budget by 36×
+
+The A0 vector page (~200k path segments) reaches first presentation in **10.9 s**, of which
+10.6 s is a single Pdfium render call for the visible half of the page. Everything else in
+the table is unchanged. §4's fixed-cost finding already said tiling cannot rescue this, and
+this confirms it lands squarely on the startup path.
+
+The target therefore cannot be stated as a property of all documents. It holds for typical
+ones; for the rest, the requirement is that the app is *responsive* and honest — chrome up,
+scrollbar correct, a visible "still rendering" state, and the progressive API yielding so
+nothing else is starved. That is a design requirement, not a caveat.
+
+#### Method notes
+
+Rust and webview clocks have different origins, so the mapping is calibrated NTP-style
+(`src/lib/clock.ts`): bracket an IPC call with local readings, assume the remote timestamp
+falls at the midpoint, keep the sample with the shortest round trip. Uncertainty is reported
+with every run. Webview `performance.now()` is clamped to 1 ms here, which floors it.
+
+"Presented" is a double `requestAnimationFrame`, since the first fires *before* its frame is
+painted. That makes the last number an upper bound: the true present is somewhere between
+the two callbacks.
+
+Startup must not be measured under `tauri dev` — the frontend is served by a Vite dev server
+over HTTP there, so the numbers describe Vite. All of the above is a release bundle.
 
 ### Virtual scrolling
 
 The frontend never mounts 500 page elements. A windowed scroller recycles a handful of
-page containers, with geometry computed up front from the page size table so the scrollbar
-is correct from the first frame. Accessibility constrains this design (§8) and must be
-settled before it is built, not after.
+page containers. Accessibility constrains this design (§8) and must be settled before it is
+built, not after.
+
+The first draft had geometry "computed up front from the page size table so the scrollbar is
+correct from the first frame". The startup measurement above kills that: building the table
+costs 86 ms on a 775-page document and is the single largest avoidable item in the budget.
+Geometry is therefore lazy — the scroller estimates total height from the pages it has
+loaded and corrects as it learns more. A scrollbar that settles within the first few hundred
+milliseconds is a far better trade than one that is exact but arrives 86 ms late, and page
+sizes within a document are overwhelmingly uniform, so the estimate is usually exact
+immediately. Documents with mixed page sizes are where it visibly adjusts, and that is the
+case to design the correction behaviour around.
 
 ### If the webview is not fast enough
 
@@ -578,9 +657,16 @@ that includes deliberately hostile files:
 | Incremental save | A real appended update section that other readers accept |
 | Threat model | Written, with the sandbox policy it implies |
 
-**Exit criterion:** first compositor presentation under 300 ms, no dropped frames on
-sustained scroll, and a documented verdict on each spike. A failed spike changes the
-stack, which is why `AGENTS.md` marks the PDF layer provisional until this completes.
+**Exit criterion:** first compositor presentation on a typical document under 300 ms
+*warm*, no dropped frames on sustained scroll, and a documented verdict on each spike. A
+failed spike changes the stack, which is why `AGENTS.md` marks the PDF layer provisional
+until this completes.
+
+The criterion was "under 300 ms cold" until the startup measurement showed cold start
+carries ~300 ms of one-time code-signature validation before `main` runs (§4). Restating it
+as warm is not moving the goalposts to make it passable — warm is currently **374 ms** and
+therefore still failing. It is stating a bound tpdf can actually influence. First launch
+after install or update is separately reported and never claimed to hit 300 ms.
 
 ### Phase 1 — The viewer
 
@@ -650,24 +736,31 @@ that it presented several genuinely unresolved questions as settled architecture
 
 1. **Can PDFium round-trip a text object faithfully?** Phase 0. Gates both surgical
    redaction and text editing.
-2. **Protocol** — custom scheme vs alternatives. *Granularity and format are now
-   answered:* 1024²–2048² tiles (§4) sent as raw pixels (§3), both measured 2026-07-26.
-   The remaining piece of spike 0.1 is the webview decode half, which can only add to
-   encoding's cost, not overturn it.
-3. **Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
+2. ~~**Protocol** — custom scheme vs alternatives.~~ **Answered 2026-07-26.** 1024²–2048²
+   tiles (§4), sent as raw pixels (§3), over the custom scheme. Delivery costs 240–293% of
+   rendering, so the scheme is not a zero-copy fast path — but encoding is worse in both
+   directions, and on the startup path the whole transfer-and-decode of a 16.6 MB tile is
+   8.2 ms against a 374 ms budget. Not where the time goes.
+3. **How much of the 237 ms shell cost is reducible?** Now the dominant term in startup
+   (§4): 142 ms from `main` to the Tauri setup callback, and 95 ms more before the webview
+   has mounted a Svelte component. Neither has been attributed further. If most of the
+   142 ms is WebKit framework initialization it is a floor, and 300 ms warm needs the page
+   to paint before the framework finishes booting — which is an architecture, not a tuning
+   pass. Measure before choosing.
+4. **Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
    path? Affects the dependency set.
-4. **Worker process count and IPC cost** — does multi-process rendering actually meet the
+5. **Worker process count and IPC cost** — does multi-process rendering actually meet the
    latency target, given the boundary crossing it adds?
-5. **Are extracted font subsets browser-loadable,** and does their licensing permit
+6. **Are extracted font subsets browser-loadable,** and does their licensing permit
    re-serving them? Gates the §7 `@font-face` approach.
-6. **PDFium binary distribution.** Prebuilt from `bblanchon/pdfium-binaries`, dynamically
+7. **PDFium binary distribution.** Prebuilt from `bblanchon/pdfium-binaries`, dynamically
    linked and bundled, is pragmatic; static linking means building PDFium. Bundling has
    macOS notarization and signing implications that bit `screenpick`'s release path and
    need settling early. ~10 MB per platform, so ~25 MB total against Acrobat's gigabyte.
-7. **Where the annotation overlay lives.** Frontend drawing gives 60 fps manipulation but
+8. **Where the annotation overlay lives.** Frontend drawing gives 60 fps manipulation but
    means two rendering paths that can diverge visually; round-tripping through PDFium on
    every change is correct but slow. Likely: frontend while editing, PDFium on commit,
    with a visual regression test asserting they agree.
-8. **Can redaction ever certify a document containing constructs the sanitizer does not
+9. **Can redaction ever certify a document containing constructs the sanitizer does not
    understand?** Current answer is no, by design — but the refusal rate on a real corpus
    determines whether that is usable or merely principled.
