@@ -4,6 +4,12 @@ Status: **planning**, pre-Phase-0. Nothing is built yet. This document records t
 and the reasoning behind it, so that decisions can be revisited on their merits rather
 than re-argued from scratch.
 
+Revised 2026-07-26 after an independent audit (Codex, cold read). The audit found the
+first draft's thread-safety model factually wrong, its redaction verifier over-claiming,
+its edit journal underspecified, and its security boundary missing entirely. Those are
+fixed below; the audit's own errors are noted where relevant so they are not
+reintroduced.
+
 Durable constraints (licensing, versioning, quality gates, known traps) live in
 [`AGENTS.md`](../AGENTS.md) and are not repeated here.
 
@@ -43,8 +49,9 @@ These are the tie-breakers when a decision is otherwise balanced.
    surfaces actions on what is selected, where it is selected.
 3. **Local operations get no spinner.** If something local is slow enough to need a
    progress indicator, that is a bug to fix, not a UI to design.
-4. **Destructive operations are explicit, reviewable, and verified.** Redaction in
-   particular: mark, review, apply, verify.
+4. **Never claim more than was proved.** Applies to redaction above all: an unverifiable
+   result is reported as unverified, never as clean. Silent font substitution, silent
+   over-redaction, and silent truncation are the same defect in different clothes.
 5. **Measure, do not assert.** Any performance claim comes with interleaved A/B numbers
    on real documents. Wall clock on these machines drifts several percent over minutes,
    which is larger than most changes worth making --- so alternate A,B,A,B over several
@@ -54,396 +61,507 @@ These are the tie-breakers when a decision is otherwise balanced.
 
 ## 3. System shape
 
+Three processes, not one. This is the central architectural decision and it is forced
+from two independent directions at once.
+
 ```
-+-------------------------------------------------------------+
-|  Webview (Svelte 5)                                          |
-|                                                              |
-|  Command palette | Virtual page scroller | Overlay layers    |
-|                    (canvas tiles)          (annotations,     |
-|                                             text edit, marks)|
-+---------------------- Tauri IPC -----------+-----------------+
-|  commands (JSON, small)                    | custom protocol |
-|                                            | (bytes, large)  |
-+-------------------------------------------------------------+
-|  Rust core                                                   |
-|                                                              |
-|  +-------------+  +--------------+  +---------------------+  |
-|  | Render pool |  | Edit journal |  | Document services   |  |
-|  | (tiles,     |  | (commands,   |  | text index, search, |  |
-|  |  cancellable)|  |  undo/redo) |  | outline, fonts      |  |
-|  +------+------+  +------+-------+  +----------+----------+  |
-|         |                |                     |             |
-|  +------+----------------+---------------------+----------+  |
-|  |  PDFium (pdfium-render)   |   lopdf (object graph)     |  |
-|  +---------------------------+----------------------------+  |
-+-------------------------------------------------------------+
++---------------------------------------------------------------+
+|  UI process (Tauri 2 + Svelte 5)                              |
+|    command palette | virtual scroller | canvas | overlays     |
++------------------------ IPC ----------------+-----------------+
+|  commands (JSON, small)                     | custom protocol |
+|                                             | (bytes, large)  |
++---------------------------------------------------------------+
+|  Coordinator (Rust, trusted)                                  |
+|    edit journal | working document | search index | cache      |
+|    worker supervision, restart, resource limits                |
++---------------------------------------------------------------+
+                |                              |
+     +----------v---------+        +-----------v----------+
+     | Render worker(s)   |        | Surgery worker       |
+     | PDFium, sandboxed  |        | lopdf / QPDF, sandboxed
+     | no fs, no network  |        | bounded decoding     |
+     +--------------------+        +----------------------+
 ```
 
-Two distinct channels cross the IPC boundary, and keeping them separate is the single
-most important implementation detail:
+**Why processes, not threads.** Two constraints land on the same answer:
+
+- **Security.** PDFium is native C++ parsing attacker-controlled input. A malformed file
+  should cost a worker, not the application and not the user's home directory. Chrome
+  sandboxes PDFium for this reason.
+- **Parallelism.** `pdfium-render` serializes *every* PDFium call behind one global mutex
+  (`thread_safe`, on by default), and upstream recommends parallel processes over threads.
+  In-process parallel rendering is therefore not merely awkward, it does not exist.
+
+The first draft proposed "N document handles over one shared buffer, rendered in
+parallel". That does not work, and it is recorded in `AGENTS.md` as a corrected error.
+
+Retrofitting a process boundary later is a rewrite, so it is Phase 0 work.
+
+### The two IPC channels
 
 - **Commands** carry small JSON: open a document, apply an edit, run a search. Ordinary
   Tauri `invoke`.
-- **Pixels** never touch JSON. Bitmaps go through a Tauri **custom URI protocol**, which
-  is served by the webview's native network stack --- no base64, no serialization. The
-  frontend requests `tile://<doc>/<page>/<zoom>/<x>/<y>`, gets raw bytes, and turns them
-  into an `ImageBitmap`.
+- **Pixels** never touch JSON. Tiles go over a Tauri **custom URI protocol**.
 
-Base64-over-`invoke` is the default way people wire this up and it is the reason most
-Tauri PDF viewers feel sluggish. It is roughly a 33% size penalty on top of JSON
-string encoding and a main-thread parse. Avoid entirely.
+The first draft called the custom protocol a zero-copy fast path. It is not — it is
+merely *much better than base64 over `invoke`*, which carries a ~33% size penalty plus a
+main-thread JSON parse and is why most Tauri PDF viewers feel sluggish. A custom scheme
+still crosses the boundary with allocation, copying and per-request dispatch, and at
+hundreds of small tiles per screen that overhead can dominate. **Transfer format,
+granularity and protocol are three separate open questions for Phase 0** (§10).
+
+One audit correction worth recording: `createImageBitmap()` *can* consume raw pixels ---
+via `new ImageData(new Uint8ClampedArray(buf), w, h)` --- so an uncompressed path is
+available and does not force PNG encode/decode. Whether raw or encoded wins is an
+empirical question, not a design one.
 
 ---
 
 ## 4. Render pipeline
 
-This is where "fast" is won or lost.
-
 ### Tiling
 
-Pages render in tiles (starting point 512x512 device pixels) at the current zoom. Only
-visible tiles plus one screen of prefetch in the scroll direction are rendered. Without
-this, a 400% zoom on an A0 drawing allocates a bitmap measured in gigabytes.
+Pages render in tiles at the current zoom; only visible tiles plus one screen of prefetch
+are rendered. Tile size is **unknown** — 512² is a starting guess to be measured against
+per-request overhead (§3), not a decision.
+
+Note what tiling does and does not buy. It bounds *output bitmap* memory, which is what
+stops a 400% zoom on an A0 drawing allocating gigabytes. It does **not** bound PDFium's
+parsing, display-list traversal, transparency-group allocation, pattern evaluation or
+image decoding — a single 512² tile of a dense CAD page can still traverse most of the
+page's objects. Phase 0 measures CPU time and peak native allocation per tile, not just
+frame rate.
 
 ### Two-tier cache
 
 - **Tier 1, permanent:** every page gets a cheap low-resolution bitmap (~150 px wide),
-  rendered once, kept for the session. Doubles as the thumbnail. Total cost for a
-  500-page document is a few megabytes.
-- **Tier 2, transient:** sharp tiles at the current zoom, LRU-evicted against a memory
-  budget.
+  rendered once, kept for the session. Doubles as the thumbnail.
+- **Tier 2, transient:** sharp tiles at the current zoom, LRU-evicted against a budget.
 
-While a sharp tile is in flight, the tier-1 bitmap is upscaled into its place. The user
-sees a blurry page sharpen, never a white rectangle. This one mechanism accounts for most
-of the perceived speed difference against Acrobat.
+While a sharp tile is in flight, tier 1 is upscaled into its place. The user sees a blurry
+page sharpen, never a white rectangle. This one mechanism accounts for most of the
+perceived speed difference against Acrobat.
 
-### Cancellable render queue
+### Supersedable, interruptible render queue
 
-Tiles are rendered by a Rust worker pool. Every request carries a generation counter;
-when the viewport moves, in-flight work for tiles now off-screen is cancelled rather than
-completed and discarded. Fast scrolling in Acrobat stutters precisely because it does not
-do this --- it finishes rendering pages you have already scrolled past.
+Requests carry a generation counter; when the viewport moves, queued work for tiles now
+off-screen is dropped and completed-but-stale results are discarded.
 
-PDFium is not thread-safe on a single document handle (see `AGENTS.md`). Two candidate
-designs, to be settled by measurement in Phase 0:
+For work already started, `FPDF_RenderPageBitmap()` cannot be abandoned once entered —
+but `FPDF_RenderPageBitmap_Start()` accepts an `IFSDK_PAUSE` callback whose
+`NeedToPauseNow()` is polled during rendering, with `FPDF_RenderPage_Continue()` to
+resume. Anything not a small bounded tile uses the progressive API, so a pathological page
+yields instead of blocking. (The audit asserted PDFium rendering is uncancellable; that is
+wrong, and the progressive API is precisely the mechanism.)
 
-- **A:** one dedicated render thread per open document, work queue, no locking.
-- **B:** N document handles opened over one shared memory-mapped buffer, rendered in
-  parallel.
-
-B should scale better on multi-core and costs more memory. Measure both.
+Backstop for the genuinely pathological: a per-tile CPU budget, and worker process
+termination and restart when it is exceeded. Process isolation makes that cheap and safe.
 
 ### Startup path
 
-Target: **cold start to first page painted under 300 ms.**
+Target: **cold start to first page painted under 300 ms** — but the first draft stated
+that without defining the boundary, which makes it unfalsifiable. Instrument five
+timestamps and report them separately:
 
-The critical insight is that the JS framework must not be on the critical path. On
-launch, Rust receives the file path (Tauri single-instance plus macOS file-association
-`open-url` / Windows argv), opens the document, and begins rendering page 1 *before* the
-webview has finished booting. By the time Svelte mounts, the first tile is already
-waiting.
+1. Process launch
+2. Document open complete (includes password prompt, cross-reference repair)
+3. First preview bitmap ready in the worker
+4. Webview ready
+5. First compositor presentation ← *this* is the 300 ms target
+
+Cold and warm cache distributions are reported separately, with the filesystem and process
+cache state defined per platform. Rust receives the file path and starts rendering before
+the webview finishes booting, but the webview is still on the critical path — it must
+exist before anything can be painted. Claiming otherwise was optimistic.
 
 ### Virtual scrolling
 
-The frontend never mounts 500 page elements. A windowed scroller keeps a handful of page
-containers alive and recycles them, with page geometry computed up front from the page
-size table so the scrollbar is correct from the first frame.
+The frontend never mounts 500 page elements. A windowed scroller recycles a handful of
+page containers, with geometry computed up front from the page size table so the scrollbar
+is correct from the first frame. Accessibility constrains this design (§8) and must be
+settled before it is built, not after.
 
 ### If the webview is not fast enough
 
-Phase 0 exists to find this out with numbers rather than after months of work. The
-escalation path, in order:
-
-1. `OffscreenCanvas` in a worker, so decode and paint leave the main thread.
-2. WebGL/WebGPU compositing of tiles instead of 2D canvas `drawImage`.
-3. A native `wgpu` surface rendered underneath the webview, with the webview reduced to
-   chrome and overlays. This is a real architectural cost --- hit testing, coordinate
-   mapping, and window layering all get harder --- so it is a fallback, not a plan.
+Escalation path, in order: `OffscreenCanvas` in a worker → WebGL/WebGPU tile compositing →
+a native `wgpu` surface under the webview with the webview reduced to chrome. The last is
+a real architectural cost (hit testing, coordinate mapping, window layering) and is a
+fallback, not a plan.
 
 ---
 
-## 5. Document model: an edit journal
+## 5. Document model
 
-The naive approach is to mutate the PDFium document directly on every edit. It makes
-undo/redo painful, couples the UI to a C++ library's mutation semantics, and turns every
-save of a large file into a full rewrite.
+The first draft proposed an immutable baseline plus an append-only command journal, with
+undo as a pointer into the log. The audit correctly identified that this is a *journal*,
+not a document model, and that it breaks in several places. Revised design:
 
-Instead: **the loaded PDF is an immutable baseline, and every edit is a command in an
-append-only log.**
+### Three layers
 
-```rust
-enum EditCommand {
-    AddAnnotation { page: PageId, annot: Annotation },
-    ModifyAnnotation { id: AnnotId, delta: AnnotationDelta },
-    DeleteAnnotation { id: AnnotId },
-    MovePage { from: usize, to: usize },
-    RotatePage { page: PageId, degrees: i32 },
-    DeletePage { page: PageId },
-    InsertPages { at: usize, source: PageSource },
-    SetFormField { field: FieldId, value: FieldValue },
-    ReplaceTextRun { run: TextRunId, text: String },
-    MarkRedaction { page: PageId, region: Region },
-    ApplyRedactions { marks: Vec<RedactionMarkId> },   // barrier, see section 6
-}
-```
+1. **Baseline** — the file as loaded. Immutable.
+2. **Working document** — a materialized, deterministically derived view of baseline +
+   applied commands. This is what renders, searches, hit-tests and reports page geometry.
+3. **Journal** — the command log, for undo/redo, recovery and save.
 
-What this buys:
+The working document is necessary because the first draft's "annotations render as an
+overlay" only covers annotations. Page deletion, reordering, rotation, crop, form values
+and text replacement all change rendering, extraction, search and geometry *immediately*,
+long before save. An overlay cannot express them.
 
-- **Undo/redo is a pointer into the log.** No inverse operations to hand-write, no
-  divergence between what the UI shows and what the document holds.
-- **Annotations render as an overlay layer**, drawn by us on top of the page bitmap
-  rather than baked into it. Dragging a highlight is a frontend operation at 60 fps; the
-  page bitmap never re-renders.
-- **Crash recovery.** The log is persisted next to the session, keyed by file hash.
-  Reopening a file after a crash offers to replay unsaved edits.
-- **Incremental save.** On save, the log is applied and written as a PDF incremental
-  update --- an appended section rather than a rewrite. Saving a 300 MB scanned document
-  becomes near-instant instead of a coffee break, and existing digital signatures on the
-  original survive.
+### Stable identity
 
-The log is also the natural seam for a future "what changed?" review view, and for
-collaboration if that ever becomes interesting.
+Commands address **stable entity IDs**, never indices. `MovePage { from: 3, to: 7 }` is
+invalid by construction — indices shift under other commands and the same journal replays
+differently. Page order is expressed as operations over page IDs.
+
+Required, and absent from the first draft:
+
+- **Preconditions** on every command, checked at apply and at replay.
+- **Tombstones** for deleted entities, so a later command targeting one fails explicitly
+  rather than silently corrupting state.
+- **Dependency invalidation** — `AddAnnotation(page)` followed by `DeletePage(page)` must
+  define what happens to the annotation, and undoing the deletion must resurrect both page
+  and annotation exactly.
+- **Deterministic replay plus periodic snapshots**, since undo-by-pointer only works if
+  the derived state can be rebuilt identically.
+- Explicit handling of **shared state**: form fields whose value is shared across multiple
+  widgets, and resources referenced by more than one page.
+
+### Save, and rebasing after save
+
+On save the journal is applied and written out. Afterwards **every PDF object identity has
+changed** and the baseline digest is different, so the first draft's crash-recovery key no
+longer matches its own file. Save therefore rebases: new baseline, regenerated stable-ID
+mapping, compacted journal, updated recovery record.
+
+### Save modes
+
+Each command is classified into one of three modes, and the strictest one present wins:
+
+| Mode | Meaning |
+|------|---------|
+| Incremental | Appendable as a PDF update section. Fast on large files; prior revision stays verifiable |
+| Full rewrite | Requires complete reserialization (all redaction, structural sanitation) |
+| Forbidden | Prohibited by a DocMDP certification signature on the document |
+
+Incremental save remains genuinely valuable — appending to a 300 MB scan is near-instant
+where a rewrite is not. But the first draft's claim that "existing digital signatures
+survive" was wrong and is retracted: incremental save preserves a prior revision's
+cryptographic integrity, which is **not** the same as the signature remaining valid and
+trusted, and a certification signature may forbid the edit outright.
+
+### External modification
+
+The first draft keyed recovery on a file hash and had no story for live races. If another
+process replaces the file while tpdf holds unsaved commands, saving would overwrite it or
+replay commands against a different object graph. Required: retain file identity plus
+size, mtime and baseline digest; recheck immediately before save; write to a temporary
+file and atomically replace; on a changed baseline, require reload, save-as, or explicit
+reconciliation.
 
 ---
 
 ## 6. Redaction
 
-Treated as a first-class subsystem, because a redaction that leaves recoverable content
-is worse than no redaction --- it is a confident lie.
+The highest-stakes subsystem. A redaction that leaks is worse than none, because it is a
+confident lie. The audit was hardest on this section and largely right.
 
 ### Workflow: mark, review, apply, verify
 
-Redaction is irreversible, so it is a two-phase operation as in Acrobat, but with a
-verification step Acrobat does not offer.
+1. **Mark.** Drag regions, select text, or pattern-search (emails, order numbers, a word
+   list) and mark all hits. Marks are journal commands rendered as an overlay; nothing is
+   destroyed and everything is undoable.
+2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
+   to catch an over- or under-selection.
+3. **Apply.** Destructive, full-rewrite, journal truncated at that point.
+4. **Verify.** Mandatory. Reports *verified*, or *not verified* with specifics — never a
+   bare success.
 
-1. **Mark.** The user drags regions, or selects text, or runs a pattern search (email
-   addresses, order numbers, a supplied word list) and marks all hits. Marks are stored
-   as `MarkRedaction` commands in the edit journal and rendered as an overlay. Nothing is
-   destroyed yet; marks are fully undoable.
-2. **Review.** A dedicated view lists every mark with its page, extracted text, and a
-   thumbnail. This is the last chance to catch an over- or under-selection.
-3. **Apply.** Destructive. Content is removed, the file is fully rewritten, and the
-   journal is truncated at this point --- you cannot undo past an applied redaction once
-   saved.
-4. **Verify.** Automatic, mandatory, and reported to the user.
+### Redaction is whole-graph sanitation
 
-### What "apply" must remove
+The first draft treated redaction as page-object surgery plus a metadata sweep. That is
+not enough. The leaks are almost never in the obvious place.
 
-Visible page content is the easy part and the part everyone gets right. The leaks are
-elsewhere.
+Carriers that must be handled, expanded after the audit:
 
-| Carrier | Treatment |
-|---------|-----------|
-| Text objects fully inside the region | Remove the page object |
-| Text objects partially inside | Split: emit new text object(s) for the surviving substring, preserving font, size, text matrix, char/word spacing, and colour; remove the original |
-| Images intersecting | Map the region through the inverse image matrix, blank those pixels, re-encode, replace. Remove outright if fully covered |
-| Vector paths intersecting | Remove if the bounding box is contained. Partial intersection falls back to region rasterization (see below) |
-| Annotations overlapping | Remove, including their appearance streams and popup notes |
-| Form fields overlapping | Remove the field, its value, and its appearance stream |
-| Document metadata | Scrub XMP, DocInfo, and custom properties |
-| Structure tree | `/Alt`, `/ActualText`, and `/E` entries frequently duplicate the visible text verbatim. Must be scrubbed |
-| Optional content groups | Hidden layers may carry the same content. Enumerate and scrub |
-| Embedded files and attachments | Enumerate; warn, and offer removal |
-| Document JavaScript | Can contain literal strings. Warn |
-| Outline/bookmark titles | Often copy heading text. Scrub matches |
-| Page labels | Same |
-| Incremental update history | **Forced full rewrite.** No incremental section, no retained original objects |
-| Embedded font subsets | A subset may retain glyph outlines used only by redacted text. Low risk, but re-subsetting is the correct fix. Deferred past v1, documented as a known limitation |
+| Class | Carriers |
+|-------|----------|
+| Page content | Text, path and image objects; **nested Form XObjects**; transparency groups; tiling patterns; soft masks and image masks; alternate images; Type 3 font glyph procedures |
+| Shadow text | Invisible OCR text layers; `/ActualText`, `/Alt` and `/E` in the structure tree; marked-content property lists |
+| Annotations | Appearance streams, popup notes, **replies**, rich-text `/RC`, author/subject fields |
+| Forms | Field values *and* default values, including widgets outside the redacted rectangle; AcroForm calculation and tab order; **XFA packets** |
+| Document level | XMP and DocInfo metadata; outlines; page labels; page thumbnails; Names trees; `/OpenAction`, page actions, annotation actions; PieceInfo and application-private dictionaries |
+| Attached content | Embedded files, associated files, portfolios/collections, RichMedia, sound, movie and 3D assets |
+| Structural residue | Unreachable and orphaned objects that a serializer would preserve |
 
-The last two rows are where naive implementations leak. Saving a redaction incrementally
-leaves the original page content verbatim in the file, one `strings` invocation away.
+Two rules that fall out of this and were missing entirely:
 
-### Region rasterization fallback
+- **Clone-on-write for shared resources.** An image XObject or pattern may be referenced
+  by many pages. Editing it in place to redact one page silently alters every other page
+  that shares it. Always clone, then edit the clone.
+- **Deny by default.** Any object or stream type the sanitizer does not understand is a
+  verification failure, not a shrug. Unknown constructs cannot be certified.
 
-Partial vector-path intersection has no clean answer: removing the whole path
-over-redacts and visibly damages the page; clipping it correctly is hard.
+**XFA is out of scope.** It is a dead Adobe extension, it can carry a complete second copy
+of the document's data, and sanitizing it properly is a project of its own. An XFA
+document is refused for redaction with a clear message rather than silently
+under-redacted.
 
-The escape hatch is to rasterize --- render the affected region (or the whole page) at
-high DPI, replace the content with the resulting image, and optionally re-OCR the
-non-redacted parts to restore searchability. This is lossy but unconditionally safe, and
-many organizations mandate exactly this for outgoing documents. Offer it as an explicit
-"flatten to image" mode alongside surgical redaction, and choose it automatically when
-surgical redaction cannot be proven complete.
+### Partial-text redaction: the honest position
 
-### The verification pass
+The first draft promised to split a partially-intersecting text object and re-emit the
+surviving substring "preserving font, matrix, char/word spacing and colour". The audit is
+right that this was hand-waving, and the reason is specific: `pdfium-render`'s
+`set_text()` re-emits Unicode, which is **not** the same as preserving original glyph
+codes, and PDFium exposes no getters for the original text-state (character and word
+spacing, rise, horizontal scaling, writing mode, kerning within `TJ` arrays,
+marked-content association).
 
-After writing the redacted file, tpdf reopens it from disk --- not from memory --- and:
+Two viable routes, to be decided by a dedicated spike (§9), not asserted now:
 
-1. Re-extracts all text from every page and asserts no redacted string appears.
-2. Decompresses every object stream via `lopdf` and scans the raw bytes for the redacted
-   strings, which catches content that is present but not reachable through normal text
-   extraction.
-3. Walks metadata, structure tree, outlines, optional content groups, annotations, and
-   embedded files for the same strings.
-4. Confirms the file contains no incremental update section carrying pre-redaction
-   objects.
+- **A — operator rewriting.** Tokenize the content stream with `lopdf`, locate the
+  text-showing operators covering the region, split the `TJ` array at glyph boundaries and
+  re-emit with original codes and adjustments intact. Correct, and entirely our own code.
+- **B — over-redaction.** Remove the whole text-showing operation containing any redacted
+  glyph. Trivially safe, visibly destructive — it eats neighbouring words on the line.
 
-The result is reported plainly: verified clean, or a specific list of what was found and
-where. Given the PDFium `GenerateContent` trap in `AGENTS.md` --- where a removed object
-silently survives into the saved file while the in-memory API reports it gone --- this
-pass is not belt-and-braces, it is the only thing standing between a plausible-looking
-redaction and a leak.
+Until a hostile corpus proves round-trip fidelity for A, B is the shipped behaviour.
+
+### Flatten to image
+
+The safe fallback for content that cannot be surgically redacted (partial vector path
+intersections, unknown constructs). The first draft called it "unconditionally safe",
+which it is not as described — replacing a page's `/Contents` with a raster leaves
+annotations, widgets, thumbnails, structure data, XObjects and unreachable originals
+untouched, and OCR run over a *pre-redaction* image reinstates the secret as invisible
+text.
+
+Correct form: build a **new page tree from sanitized raster pixels**, discard the original
+object graph, copy only an explicit allowlist of metadata, and if OCR is applied, run it
+only on already-redacted pixels with the redacted regions masked out.
+
+### The full rewrite
+
+A non-incremental save is necessary but not sufficient — a serializer can rewrite a file
+while retaining unreachable objects, unused resources and copied streams, and an in-place
+overwrite can leave trailing bytes past the new `%%EOF`.
+
+Required: write a fresh temporary file from a **garbage-collected reachable object graph**,
+explicitly not sourced from the original bytes; assert exactly one logical revision and no
+trailing data; then atomically replace the target. This is the strongest argument for
+QPDF, whose structural rewriting does exactly this GC and is Apache-2.0.
+
+Stated plainly in the UI: this sanitizes the PDF file. It does not sanitize other copies,
+backups, or recoverable filesystem sectors.
+
+### Verification
+
+The first draft verified by extracting text and scanning decompressed object streams for
+the redacted strings. The audit's central objection is correct and disqualifying: **PDF
+text is not stored as Unicode.** It is font-specific character codes, hex strings,
+fragmented `TJ` operands, ligatures and custom CMaps — so a plaintext substring may never
+appear in the file *even before redaction*, and the check would pass vacuously. In the
+other direction, a legitimate remaining occurrence of a common word elsewhere would fail
+it. String search is a smoke test, not a proof.
+
+Verification is therefore **carrier-based**:
+
+1. Build a manifest of every content carrier intersecting each redaction region before
+   apply.
+2. After apply, reopen the written file from disk and prove each manifest entry was
+   removed or replaced.
+3. Traverse the complete reachable object graph; every stream is decoded with **bounded**
+   limits. Any undecodable, unsupported-filter, encrypted or limit-exceeded carrier is a
+   hard failure.
+4. Render the redacted regions and OCR them, confirming no legible text survives.
+5. Re-parse with an independent parser (QPDF), so a single library's blind spot cannot
+   certify itself.
+6. Confirm one logical revision, no trailing bytes, no unreachable objects.
+7. String search across decoded content, as a cheap additional smoke test only.
+
+"Verified" means *every required check completed and passed*. If any check could not run,
+the result is "not verified" and tpdf says so. Given the PDFium `GenerateContent` trap in
+`AGENTS.md` — where a removed object silently survives into the file while the in-memory
+API reports it gone — this pass is not belt-and-braces, it is load-bearing.
 
 ---
 
 ## 7. In-place text editing
 
-The hardest subsystem, deliberately scheduled last, but designed for from day one so the
-architecture does not preclude it.
+Deliberately last, designed for from day one.
 
 ### Why it is hard
 
-Embedded fonts are **subsetted**: the font programme inside the PDF contains only the
-glyphs the document already uses. Type a character that is not in the subset and there is
-no glyph to draw. Recovering requires locating the same font on the system, extracting
-the missing glyphs, re-embedding an extended subset, and re-justifying the line with
-correct metrics. When Acrobat mangles an edit, this is why.
+Embedded fonts are **subsetted**: the font programme in the PDF contains only the glyphs
+already used. Type a character outside the subset and there is no glyph to draw.
+Recovering requires locating the same font on the system, extracting the missing glyphs,
+re-embedding an extended subset, and re-justifying with correct metrics. When Acrobat
+mangles an edit, this is why.
 
-### The approach
+### Approach
 
-1. **Extract glyph runs** with per-character position, font reference, size, text matrix,
-   and colour. PDFium provides this through the `FPDFText_*` API.
-2. **Group glyphs into lines and blocks** using spacing and baseline heuristics. This
-   step is where edit quality actually lives, and it is entirely our own code --- no
-   library does it well.
-3. **Serve the embedded font to the webview.** Extract the font programme from the PDF
-   and expose it over the same custom protocol as tiles, registered as an `@font-face`.
-   The edit overlay then renders in the document's *actual* font, because it is the same
-   font file. This is the trick that makes the editing experience look correct, and it is
-   the main reason to build the text layer in the webview rather than natively.
-4. **Edit in an overlay** positioned exactly over the glyph run, with the underlying page
-   region suppressed.
-5. **Commit** by rewriting the text-showing operators for that block and regenerating the
-   content stream.
-6. **Handle missing glyphs honestly.** If a typed character is outside the subset:
-   attempt system font matching and glyph re-embedding; if that fails, substitute a
-   metric-compatible font and **tell the user visibly** which characters were substituted.
-   Silent substitution is what makes competitors untrustworthy.
+1. **Extract glyph runs** with per-character position, font, size, matrix and colour
+   (`FPDFText_*`).
+2. **Group glyphs into lines and blocks** by spacing and baseline heuristics. Edit quality
+   lives here, and it is entirely our own code.
+3. **Serve the embedded font to the webview** as an `@font-face` over the tile protocol,
+   so the edit overlay renders in the document's *actual* font. This is the trick that
+   makes editing look correct, and the main reason the text layer lives in the webview.
+   Two caveats the first draft ignored: extracted subsets are frequently **not
+   browser-loadable** without repair (CFF bare fonts, broken `cmap`, missing tables), and
+   an embedded font's licensing bits may not permit re-serving it. Both are Phase 5
+   feasibility questions, with a rasterized-preview fallback.
+4. **Edit in an overlay** over the glyph run, with the underlying region suppressed.
+5. **Commit** via operator rewriting (§6 route A) — the same machinery surgical redaction
+   needs, which is why that spike comes first.
+6. **Handle missing glyphs honestly.** Attempt system font matching and glyph
+   re-embedding; failing that, substitute a metric-compatible font and **show the user
+   which characters were substituted**. Silent substitution is what makes competitors
+   untrustworthy.
 
 ### Scoping
 
-- **v1 of the feature:** edit existing text where glyphs exist in the subset, plus system
-  font matching with a clear warning when they do not. Single-line and
-  within-block reflow.
-- **Later:** full paragraph reflow across lines, font size and style changes, adding new
-  text blocks with arbitrary fonts.
+- **First cut:** edit existing text where glyphs exist in the subset, plus system font
+  matching with a visible warning where they do not. Within-block reflow.
+- **Later:** paragraph reflow across lines, size and style changes, new text blocks in
+  arbitrary fonts.
 
 ---
 
 ## 8. UX
 
-The interaction model is borrowed from code editors, not office suites, because the
-stated pain is discovery.
+Interaction borrowed from code editors, not office suites, because the stated pain is
+discovery.
 
-- **Command palette on Cmd/Ctrl+K.** The primary way to reach any command. Fuzzy search,
-  recently used first, shows the keybinding for whatever it finds so it teaches shortcuts
-  as a side effect. Available from Phase 1 --- it is the thesis, not a garnish.
+- **Command palette on Cmd/Ctrl+K.** The primary route to any command. Fuzzy search,
+  recents first, and it displays each command's keybinding so it teaches shortcuts as a
+  side effect. Phase 1 — it is the thesis, not a garnish.
 - **Contextual actions, not modes.** Select text and highlight/copy/redact/comment appear
-  at the selection. Select an image and extract/replace/delete appear there. There is no
-  state in which the wrong click does nothing.
-- **One thin toolbar** holding only the handful of controls used constantly: page
-  navigation, zoom, search, and a sidebar toggle. Everything else lives in the palette or
-  in context.
-- **Keyboard-first,** with every command bindable, and navigation keys that will feel
-  familiar to Sumatra users.
-- **No modal dialogs for routine work.** Inline, dismissible, non-blocking.
-- **Sidebar** with thumbnails, outline, annotation list, and search results as tabs.
-- Dark and light themes, following the system.
+  at the selection; select an image and extract/replace/delete appear there.
+- **One thin toolbar** — page navigation, zoom, search, sidebar toggle. Everything else in
+  the palette or in context.
+- **Keyboard-first,** every command bindable, Sumatra-familiar navigation.
+- **No modal dialogs for routine work.**
+- **Sidebar** with thumbnails, outline, annotations and search results as tabs.
+- Dark and light themes following the system.
+
+**Accessibility is an architectural constraint, not a later pass.** A canvas-rendered,
+virtualized page list is inaccessible by default: there is no DOM text to read, and
+recycling containers destroys focus. The screen-reader text representation, focus model
+and command surface must be designed alongside the virtual scroller in Phase 1 — bolting
+them on afterwards means rewriting it.
 
 ---
 
 ## 9. Roadmap
 
-Each phase has an exit criterion. A phase is not done when the code is written; it is
-done when the criterion is met.
+A phase is done when its exit criterion is met, not when the code is written.
 
-### Phase 0 — Spike (1-2 days)
+### Phase 0 — Feasibility spikes
 
-Prove the render pipeline before committing to it.
+The first draft's Phase 0 tested only rendering, which cannot validate the architecture it
+was meant to de-risk. Expanded to prove every load-bearing assumption, each on a corpus
+that includes deliberately hostile files:
 
-Build the thinnest possible Tauri 2 + PDFium + custom-protocol + tiled-canvas path.
-Benchmark on real documents: a 500-page text-heavy report, a heavy vector CAD drawing,
-and a 300 MB scanned scan.
+| Spike | Proves |
+|-------|--------|
+| Render pipeline | Tiles over the custom protocol; raw vs encoded transfer; tile size; CPU and peak allocation per tile on a dense CAD page; frame rate at 100% and 400% |
+| Process architecture | Worker isolation, supervision, restart, resource limits, and the real IPC latency cost |
+| Startup | The five timestamps of §4, cold and warm |
+| **Text-object round trip** | Edit one existing text object and reproduce it faithfully. If this fails, surgical redaction and text editing are both off the table |
+| **Sanitized full rewrite** | GC'd reachable-graph rewrite, verified by an independent parser |
+| Incremental save | A real appended update section that other readers accept |
+| Threat model | Written, with the sandbox policy it implies |
 
-Measure, with interleaved A/B and pairwise comparison:
-
-- Cold start to first page painted.
-- Sustained scroll frame rate at 100% and 400% zoom.
-- Tile latency after a zoom change.
-- Memory ceiling on the 500-page document.
-- Render thread design A vs B (section 4).
-
-**Exit criterion:** under 300 ms to first paint and no dropped frames on sustained
-scroll, or a decision to escalate down the fallback list in section 4. Record the numbers
-and the thread-safety conclusion in `AGENTS.md`.
+**Exit criterion:** first compositor presentation under 300 ms, no dropped frames on
+sustained scroll, and a documented verdict on each spike. A failed spike changes the
+stack, which is why `AGENTS.md` marks the PDF layer provisional until this completes.
 
 ### Phase 1 — The viewer
 
-Beat SumatraPDF on capability without losing to it on speed.
+Open, scroll, zoom, rotate view, search-as-you-type, text selection and copy, thumbnails,
+outline, print, file associations, session restore, dark mode, command palette,
+accessibility architecture.
 
-Open, scroll, zoom (fit width/page/selection), rotate view, search-as-you-type across the
-whole document, text selection and copy, thumbnails sidebar, outline/TOC, print, file
-associations, session and scroll-position restore, dark mode, command palette.
+Two items here are quietly large and should not be estimated as viewer polish: **search
+across a large multilingual document** with malformed encodings and custom CMaps, and
+**cross-platform printing**.
 
-**Exit criterion:** tpdf becomes the daily default for reading. If it is not, it is not
+**Exit criterion:** tpdf is the daily default for reading. If it is not, it is not
 finished.
 
 ### Phase 2 — Editing foundation
 
-Edit journal, undo/redo, incremental save, crash recovery.
+Working document, stable-ID entity graph, journal with preconditions and tombstones,
+undo/redo, snapshots, save-mode classification, incremental save, rebase-after-save, crash
+recovery, external-modification handling.
 
 Page operations: reorder by dragging thumbnails, rotate, delete, insert, extract, split,
-merge, crop.
+merge, crop. Annotations: highlight, underline, strikeout, notes, ink, shapes, text boxes,
+stamps — as real PDF annotation objects.
 
-Annotations: highlight, underline, strikeout, sticky notes, freehand ink, shapes, text
-boxes, stamps --- as real PDF annotation objects, interoperable with Acrobat and Preview.
-
-**Exit criterion:** a document can be marked up, saved, reopened in Acrobat, and look
-right.
+**Exit criterion:** a document can be marked up, saved, reopened in Acrobat and Preview,
+and look right.
 
 ### Phase 3 — Redaction
 
-The full subsystem in section 6, including the verification pass and the rasterization
-fallback. Scheduled ahead of forms because it is the higher-value capability here and the
-one with no acceptable off-the-shelf answer.
+The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
+carrier-based verification, flatten-to-image, XFA refusal.
 
-**Exit criterion:** verification passes on a corpus of deliberately nasty documents ---
-text in structure trees, hidden layers, embedded attachments, prior incremental updates.
+**Exit criterion:** verification passes on a corpus of deliberately nasty documents —
+nested XObjects, shared resources, invisible OCR layers, structure-tree duplicates, hidden
+OCG content, embedded attachments, prior incremental revisions — and correctly *refuses to
+certify* the ones it cannot fully decode.
 
-### Phase 4 — Forms and signatures
+### Phase 4 — Forms and visual signatures
 
-AcroForm field filling with saved state, appearance stream regeneration, signature image
-placement, and optionally cryptographic signing. XFA is explicitly out of scope; it is a
-dead Adobe extension and a rabbit hole.
+AcroForm filling with saved state, appearance stream regeneration, field inheritance,
+shared widgets, form JavaScript policy (disabled by default), signature *image* placement.
+
+Explicitly **not** cryptographic signing. XFA out of scope.
 
 ### Phase 5 — Text editing
 
-Section 7, scoped as described there.
+§7, scoped as described there. Depends on the Phase 0 text round-trip spike and the
+operator-rewriting machinery built in Phase 3.
 
-### Cross-cutting, not a phase
+### Phase 6 — Cryptographic signing
 
-OCR (Tesseract, for scanned documents, feeding both search and redaction), accessibility,
-and localization. Slotted in as they become the binding constraint.
+A separate subsystem, not an extension of Phase 4: trust stores, certificate selection,
+timestamping, revocation, long-term validation, and DocMDP enforcement. PDFium's signature
+API is read-only, so this needs its own crypto stack.
+
+### Cross-cutting
+
+OCR (feeding search, selection and redaction verification) has interfaces defined in
+Phase 1 even though implementation lands later. Localization as it becomes binding.
 
 ---
 
 ## 10. Open questions
 
-Recorded rather than guessed at. Each needs either a measurement or a decision.
+Each needs a measurement or a decision. The first draft listed five; the audit was right
+that it presented several genuinely unresolved questions as settled architecture.
 
-1. **PDFium binary distribution.** Prebuilt binaries from `bblanchon/pdfium-binaries`
-   dynamically linked and bundled is the pragmatic path; static linking means building
-   PDFium, which is painful. Dynamic bundling has implications for macOS notarization and
-   signing that need to be worked out early, since it bit `screenpick`'s release path.
-   Roughly 10 MB per platform, giving a total app size around 25 MB against Acrobat's
-   gigabyte-plus.
-2. **Render thread design A vs B** (section 4). Phase 0 decides.
-3. **Where the annotation overlay lives.** Drawing annotations in the frontend gives
-   60 fps manipulation but means two rendering code paths (ours for editing, PDFium's for
-   the saved file), which risks visual divergence. The alternative is round-tripping
-   through PDFium on every change, which is correct but slow. Likely answer: frontend
-   overlay while editing, PDFium render on commit, with a visual regression test that the
-   two agree.
-4. **Tile size.** 512 is a starting guess, not a result. Measure.
-5. **Whether a document ever needs more than one PDFium instance** for concurrent
-   open documents, or whether one pool serves all.
+1. **Can PDFium round-trip a text object faithfully?** Phase 0. Gates both surgical
+   redaction and text editing.
+2. **Transfer format, granularity, and protocol** — raw vs encoded, tile vs strip vs page,
+   custom protocol vs alternatives. Three independent questions, all empirical.
+3. **Can `lopdf` safely rewrite a hostile corpus,** or is QPDF required for the rewrite
+   path? Affects the dependency set.
+4. **Worker process count and IPC cost** — does multi-process rendering actually meet the
+   latency target, given the boundary crossing it adds?
+5. **Are extracted font subsets browser-loadable,** and does their licensing permit
+   re-serving them? Gates the §7 `@font-face` approach.
+6. **PDFium binary distribution.** Prebuilt from `bblanchon/pdfium-binaries`, dynamically
+   linked and bundled, is pragmatic; static linking means building PDFium. Bundling has
+   macOS notarization and signing implications that bit `screenpick`'s release path and
+   need settling early. ~10 MB per platform, so ~25 MB total against Acrobat's gigabyte.
+7. **Where the annotation overlay lives.** Frontend drawing gives 60 fps manipulation but
+   means two rendering paths that can diverge visually; round-tripping through PDFium on
+   every change is correct but slow. Likely: frontend while editing, PDFium on commit,
+   with a visual regression test asserting they agree.
+8. **Can redaction ever certify a document containing constructs the sanitizer does not
+   understand?** Current answer is no, by design — but the refusal rate on a real corpus
+   determines whether that is usable or merely principled.

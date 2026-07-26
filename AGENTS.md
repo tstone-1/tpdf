@@ -61,35 +61,71 @@ decision rather than adding it.
 
 Redaction removes content. It does not draw a black rectangle over it. Any implementation
 that leaves the underlying bytes recoverable is a defect, not a limitation --- see
-`docs/PLAN.md` for the full subsystem design and the mandatory verification pass.
+`docs/PLAN.md` §6 for the full subsystem design.
+
+Corollary, and the harder half: **tpdf must never claim a redaction is clean unless it
+can prove it.** A verification that cannot decode a carrier has not verified anything. If
+any check cannot complete, the result is "not verified", never "clean".
+
+### Every PDF is hostile input
+
+PDFium is native C++ parsing attacker-controlled files, and PDF is a format with
+JavaScript, launch actions, embedded executables, recursive object graphs and
+decompression bombs in it. Chrome sandboxes PDFium in a separate process for exactly this
+reason, and so must tpdf.
+
+Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
+network authority, under resource and time limits, restartable on crash. Document
+JavaScript and launch actions are **disabled by default**. All `lopdf` stream decoding is
+bounded. This is a Phase 0 concern, not a hardening pass to be done later --- retrofitting
+a process boundary is an architectural rewrite.
+
+This constraint is load-bearing in a second way: because in-process PDFium is serialized
+behind a global mutex (see Known traps), worker processes are also the *only* route to
+parallel rendering. Security and performance want the same architecture.
 
 ---
 
 ## Stack
 
-| Layer | Choice |
-|-------|--------|
-| Shell | Tauri 2 |
-| Frontend | Svelte 5 (runes), TypeScript `strict: true`, Vite |
-| Backend | Rust |
-| PDF rendering + page objects | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) |
-| PDF object-model surgery | [`lopdf`](https://docs.rs/lopdf) (MIT) |
-| Platforms | macOS + Windows |
+The **shell is settled**; the **PDF layer is provisional until Phase 0 proves it** (see
+`docs/PLAN.md` §9).
+
+| Layer | Choice | Status |
+|-------|--------|--------|
+| Shell | Tauri 2 | Settled |
+| Frontend | Svelte 5 (runes), TypeScript `strict: true`, Vite | Settled |
+| Backend | Rust | Settled |
+| Platforms | macOS + Windows | Settled |
+| Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | Provisional |
+| Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | Provisional |
+| Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate |
 
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
-heavy work while the webview does the UI. See `docs/PLAN.md` for the render-pipeline
-design that makes a webview viable, and for the fallback if it is not.
+heavy work while the webview does the UI.
 
-### Why two PDF libraries
+### What each library is, and is not
 
-They do different jobs and both are needed:
+Be precise about this. The 2026-07-26 audit found the earlier framing implied a complete
+editing stack where there is none.
 
-- **PDFium** renders, and exposes page objects (text, path, image) for editing. It is
+- **PDFium is a renderer and text extractor** with a limited object-mutation API. It is
   what Chrome ships, so it is correct on the long tail of malformed real-world PDFs in a
-  way no younger library is.
-- **lopdf** manipulates the PDF object graph directly --- metadata, embedded files,
-  optional content groups, the structure tree, cross-reference tables. PDFium has no API
-  for most of this, and redaction requires it.
+  way no younger library is. It does **not** provide semantic content-stream editing,
+  structural sanitation, signature creation, paragraph layout, or font-subset extension.
+- **lopdf is a low-level syntax layer.** It gives the object graph and decoded content
+  operators; PDF *semantics* are left entirely to us.
+- **QPDF** is the strongest candidate for the redaction rewrite path specifically, because
+  it does hardened structural rewriting with garbage collection of unreachable objects ---
+  precisely the guarantee a full rewrite needs and neither of the other two offers.
+
+The honest consequence: **tpdf is building most of an editor engine itself.** These
+libraries remove the rendering and parsing problem, not the editing problem. Plan
+schedules accordingly.
+
+Apache PDFBox was evaluated and rejected --- it is the best reference implementation for
+forms and signing, but it is Java, and a JVM in a Tauri app defeats the entire premise.
+It remains useful as a *behavioural oracle* to test against.
 
 Pure-Rust renderers were considered and are not yet ready to be the primary engine.
 
@@ -158,28 +194,77 @@ argument for the mandatory post-save verification pass described in `docs/PLAN.m
 Note also that `FPDFPage_RemoveObject` is marked Experimental API upstream. Pin the
 PDFium build and re-test object removal after any bump.
 
-### PDFium: content streams are rewritten wholesale, not spliced
+### PDFium mutations regenerate page content wholesale
 
-There is no way to surgically cut one object out of a content stream --- object
-boundaries are not cleanly delimited and some stream content belongs to no object. The
-correct approach is to regenerate the whole stream. Consequence: **any page-object edit
-reflows the entire content stream**, so byte-level diffs of a page are meaningless, and
-round-tripping a page through PDFium is not lossless. Do not use "the file changed" as an
-edit-detection signal.
+PDFium's page-object edit path does not splice content streams; it regenerates them.
+Consequence: **any page-object edit reflows the entire content stream**, so byte-level
+diffs of a page are meaningless, round-tripping a page through PDFium is not lossless,
+and "the file changed" is not a usable edit-detection signal.
 
-### PDFium: not thread-safe per document
+This is a property of PDFium, **not of PDF**. Surgical operator-level rewriting is
+entirely possible --- tokenize the stream, remove or replace selected operators, re-encode
+--- and `lopdf` exposes decoded page content as a sequence of operations for exactly this.
+What is genuinely hard is mapping a PDFium page object back to the exact operator range
+that produced it while preserving graphics and text state. Where surgical precision is
+required (redaction), go through a content-stream interpreter, not through PDFium.
 
-A single `FPDF_Document` handle cannot be used from multiple threads concurrently. Tiled
-parallel rendering therefore needs either a dedicated render thread per document with a
-work queue, or several document handles opened over the same shared memory buffer. Decide
-this in the Phase 0 spike and record the result here.
+### PDFium is serialized behind a global mutex --- threads buy nothing
 
-### Redaction conflicts with incremental save
+Upstream PDFium makes **no thread-safety guarantee at all**, and its authors recommend
+parallel *processing*, not multi-threading. `pdfium-render`'s `thread_safe` feature is
+**on by default** and achieves safety by locking every single PDFium call behind one
+mutex. Multiple `FPDF_Document` handles in one process therefore render strictly
+sequentially --- opening more handles buys crash-safety, not parallelism.
 
-Incremental save appends an update section and leaves the original bytes intact --- which
-is exactly what redaction must not do. Applying a redaction is a **full-rewrite barrier**:
-it forces a complete save with no incremental section and no retained original objects.
-See `docs/PLAN.md`.
+Consequences, which drive the whole architecture:
+
+- In-process parallel tile rendering is not achievable. Parallelism requires **separate
+  worker processes**.
+- One pathological page (huge CAD drawing, transparency groups, Type 3 fonts) holds the
+  mutex and starves every other render in the process.
+
+An earlier version of this file claimed PDFium was unsafe only "per document handle" and
+that multiple handles would render in parallel. That was wrong; it was caught in the
+2026-07-26 plan audit before any code depended on it.
+
+### PDFium rendering *is* interruptible --- via the progressive API
+
+`FPDF_RenderPageBitmap()` cannot be cancelled once entered. But
+`FPDF_RenderPageBitmap_Start()` takes an `IFSDK_PAUSE` callback whose `NeedToPauseNow()`
+is polled during rendering; returning non-zero suspends the render, and
+`FPDF_RenderPage_Continue()` resumes it. This is the mechanism for both cancellation and
+for not holding the mutex through a long render. Use the progressive API for anything
+that is not a small, bounded tile.
+
+### PDFium cannot create digital signatures
+
+`fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a
+cryptographic signature requires a separate crypto stack, trust store, certificate
+selection, timestamping and revocation handling. Placing a signature *image* and
+*cryptographically signing* are unrelated problems; do not let the roadmap conflate them.
+
+### Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
+
+Incremental save appends an update section and leaves the original bytes intact, which is
+exactly what redaction must not do. So applying a redaction is a **full-rewrite barrier**.
+
+But a non-incremental save is still not proof of sanitation. A serializer can happily
+rewrite a file while carrying over unreachable objects, unused resources, embedded
+originals and copied streams; and overwriting a file in place can leave trailing bytes
+past the new `%%EOF`. Redaction must write a **fresh file from a garbage-collected
+reachable object graph**, then atomically replace the target. See `docs/PLAN.md` §6.
+
+Scope note to state honestly in the UI: this sanitizes the PDF, not previous copies,
+backups, or recoverable filesystem sectors.
+
+### Digital signatures constrain what may be edited at all
+
+Incremental save preserves a prior revision's cryptographic integrity, but that is not the
+same as the signature remaining *valid and trusted* --- the document is still reported as
+modified after signing. Worse, a certification signature with a DocMDP permission entry
+can **forbid** page, annotation or form changes outright. Every edit command must be
+classified as incrementally representable, full-rewrite-required, or forbidden on a signed
+document. Do not claim "signatures survive".
 
 ### Embedded fonts are subsetted
 
