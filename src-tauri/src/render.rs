@@ -5,10 +5,16 @@
 //! Pdfium call behind one global mutex, so extra threads buy nothing but
 //! contention, and `PdfDocument` is not `Send`. See AGENTS.md.
 //!
-//! Phase 0 note: this is an in-process service. Spike 0.5 replaces it with
-//! supervised worker processes, which is what actually delivers parallelism and
-//! the security boundary. The channel interface here is deliberately shaped so
-//! that swap does not change callers.
+//! Phase 0 note: this is an in-process service. Supervised worker processes
+//! replace it, which is what actually delivers parallelism and the security
+//! boundary. The channel interface here is deliberately shaped so that swap does
+//! not change callers.
+//!
+//! Spike 0.5 measured the replacement and it is cheap: 6 µs per control round
+//! trip, 0.11 ms to move a 4 MB tile through shared memory, 3.9x throughput on
+//! four workers. See `bin/worker_bench.rs` and PLAN §3. The two things that
+//! change for callers are that the document must be handed over as mapped bytes
+//! rather than a path, and that a reply can now fail because the worker died.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};

@@ -299,6 +299,98 @@ An earlier version of this file claimed PDFium was unsafe only "per document han
 that multiple handles would render in parallel. That was wrong; it was caught in the
 2026-07-26 plan audit before any code depended on it.
 
+Spike 0.5 measured what worker processes actually buy: near-linear speedup to the
+**performance**-core count (3.89x on four, on a 4P+6E machine), then about 0.4x per further
+worker. Size the pool from performance cores, not `hw.ncpu`.
+
+### A worker process is nearly free; the webview boundary is not
+
+Measured 2026-07-26 (`worker-bench --mode latency`). A control round trip to a worker ---
+write a JSON line, wake it, read a JSON line --- is **6 µs**. Moving a 4 MB tile out of it
+costs **0.11 ms through shared memory** and 0.61 ms down a pipe. The shared-memory figure
+is indistinguishable from the in-process residual, and one worker matches the in-process
+baseline for throughput exactly.
+
+Two things make it that cheap, and both are worth keeping:
+
+- **PDFium renders straight into the shared mapping** via `PdfBitmap::from_bytes`, so
+  there is no copy on the worker side at all. `as_rgba_bytes()` would allocate and copy a
+  second 4 MB; the BGRA-to-RGBA swizzle is 0.27 ms and is better done in place.
+- **The mapping is an unlinked temp file passed by descriptor**, `dup2`'d to a fixed fd
+  before `exec`, not a `shm_open` name. A descriptor has no name to guess and survives a
+  policy that denies opening files --- which is what lets the worker be sandboxed at all.
+  Note `dup` both sources to fresh descriptors before `dup2`ing them down: the parent's own
+  mapping files typically land on exactly the fd numbers being targeted.
+
+Put next to §3's other measurement --- 3.0 ms to hand the same 4 MB to the webview --- the
+process boundary costs about 1/27th of the UI boundary. Isolation is not where the time
+goes.
+
+### macOS has no memory rlimit, and `RLIMIT_CPU` is a lifetime budget
+
+Measured 2026-07-26, and confirmed independently through Python's `resource` module:
+`setrlimit` on macOS refuses `RLIMIT_AS`, `RLIMIT_DATA` and `RLIMIT_RSS` outright with
+`EINVAL`. There is no address-space or heap bound available this way at all. `RLIMIT_CPU`,
+`RLIMIT_NOFILE` and `RLIMIT_FSIZE` are accepted and do fire.
+
+The subtler half: `RLIMIT_CPU` counts CPU consumed over the **process lifetime**, not per
+request. Under a 3 s limit a 1.72 s render succeeds and the next one dies 1.30 s in, at a
+cumulative 3.0 s (SIGXCPU, signal 24). So it bounds how long a worker may live, and a
+per-render bound has to come from the parent's own deadline and kill --- measured at 1.2 ms
+to kill and reap, 4.8 ms to respawn.
+
+Always read a limit back after setting it. A limit the kernel accepts and never enforces is
+worse than none, because it reads in the source as a bound that exists.
+
+### A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
+
+A worker under `sandbox_init` with files and network denied still opens the document (it
+arrives as a mapped descriptor, never a path) and still renders. On a document with
+**embedded** fonts the output is pixel-identical to an unsandboxed render. On a **base-14**
+document it is not: PDFium returns success and draws a different face, with almost exactly
+the same amount of ink --- so it is a substitution, not a blank page, and nothing in the
+return value says so.
+
+The repair that looks right is wrong. Denying `file-read*` and allowing `file-read*` back
+on `/System/Library/Fonts` still renders differently, because what the font lookup needs is
+**metadata** reads across the filesystem, not data reads from the font directories. What
+works, verified pixel-identical on base-14, TrueType, CID and a 775-page corpus:
+
+```
+(version 1)
+(allow default)
+(deny network*)
+(deny file-write*)
+(deny file-read*)
+(allow file-read-metadata)
+(allow file-read-data (subpath "/System/Library/Fonts") (subpath "/Library/Fonts"))
+```
+
+The residual is that a hostile document can learn which paths exist; it cannot read one,
+write one, or open a socket.
+
+The general rule, and it is the third time this shape has appeared: **verify a sandbox by
+comparing pixels, never by checking that the render returned `ok`.** Same silent
+substitution as `set_text()` drawing `.notdef`, arriving from a completely different
+direction.
+
+Bisect an SBPL profile rather than reasoning about it --- `worker-bench --profiles` accepts
+raw SBPL so a policy can be narrowed from the shell. Note also that `sandbox_init` denials
+do not appear in the unified log without an explicit report clause, so "no log entries" is
+not evidence that nothing was denied.
+
+### A crash test that compiles away proves containment of a crash that never happened
+
+`worker-bench --mode crash` originally faulted with `null_mut::<u8>().write(1)`. That is UB
+the optimizer is entitled to delete, and in release it did: the process exited normally
+through the fallthrough arm, the parent reported clean containment, and the run looked like
+a pass. The tell was the epitaph --- "exited with code 9" where a segfault should have said
+"killed by signal 11".
+
+Route the address through `std::hint::black_box` and use `write_volatile`. More generally:
+a test whose failure mode is *not failing* needs its own assertion on how it failed, not
+just on the outcome.
+
 ### Never benchmark through `tauri dev` without `--release`
 
 `tauri dev` shells out to `cargo run` in the **dev profile**. PDFium arrives as a prebuilt

@@ -98,6 +98,101 @@ parallel". That does not work, and it is recorded in `AGENTS.md` as a corrected 
 
 Retrofitting a process boundary later is a rewrite, so it is Phase 0 work.
 
+### Worker processes — measured 2026-07-26
+
+`worker-bench` builds the shape above and measures it. The binary is both halves: the
+parent spawns copies of itself through `current_exe()`, which is what works inside a
+signed `.app`. Three commitments were tested rather than assumed, and all three hold.
+
+**The boundary is free.** A bare control round trip — write a JSON line, wake the worker,
+read a JSON line — is **6 µs**. Delivering a 1024² tile costs, per variant, on a 775-page
+text document at 1.5×, five interleaved rounds of twenty renders each:
+
+| variant | end to end | render | swizzle | parent reads it | transport |
+|---|---|---|---|---|---|
+| in-process | 2.54 ms | 1.39 | 0.27 | 0.77 | 0.11 |
+| worker, pipe | 3.07 ms | 1.35 | 0.27 | 0.84 | 0.62 |
+| worker, shared memory | 2.57 ms | 1.35 | 0.27 | 0.83 | 0.12 |
+
+Every variant folds all 4 MB in the parent, timed separately, so none can look cheap by
+never reading what it received. Net of that, **moving a 4 MB tile out of a worker costs
+0.11 ms through shared memory and 0.61 ms through a pipe** — and the shared-memory figure
+is indistinguishable from the in-process residual, i.e. from zero. PDFium renders straight
+into the shared mapping through `PdfBitmap::from_bytes`, so there is no copy on the worker
+side at all; the pipe carries only the JSON line.
+
+Worth stating against §3's other number: handing the same 4 MB to the *webview* costs
+3.0 ms. **The webview boundary is ~27× more expensive than the process boundary.** The
+architecture pays almost nothing for isolation, and quite a lot for the UI layer.
+
+**Parallelism is real, and it stops at the performance cores.** 96 pages, best of four
+interleaved rounds, on a 4P + 6E machine:
+
+| workers | pages/s | speedup |
+|---|---|---|
+| in-process baseline | 384 | 1.00× |
+| 1 | 402 | 1.05× |
+| 2 | 787 | 2.05× |
+| 3 | 1161 | 3.02× |
+| 4 | 1495 | 3.89× |
+| 6 | 1775 | 4.62× |
+| 8 | 2052 | 5.34× |
+| 10 | 2237 | 5.83× |
+
+Near-linear to four, then each further worker buys about 0.4×. So the default pool size is
+the **performance**-core count, not `hw.ncpu`; the efficiency cores are worth having for
+background work (thumbnails, search indexing) and not for latency-critical tiles. One
+worker matches the in-process baseline, confirming the boundary costs nothing at this
+granularity.
+
+**Crashes are contained and cheap to recover from.** A worker killed by SIGABRT, by
+SIGSEGV, or exiting non-zero is noticed by the parent within **0.1–0.6 ms** — as an EOF on
+the control channel, which is why the channel is line-delimited — and respawning it,
+reopening the 775-page document and rendering the first tile takes **8.5–12.9 ms** total.
+The parent is unaffected in every case.
+
+**A runaway render costs one process.** The 250 ms deadline test on the A0 CAD page:
+kill-to-reaped **1.2 ms**, respawn-to-ready **4.8 ms**. Note what this does *not* give —
+the killed work cannot be resumed, so this is the blunt fallback. PDFium's progressive API
+(`IFSDK_PAUSE`) is the cooperative route and is still unexercised.
+
+**Resource limits are half-available on macOS, and the missing half is the important one.**
+`setrlimit` refuses `RLIMIT_AS`, `RLIMIT_DATA` and `RLIMIT_RSS` outright with `EINVAL`
+(verified independently through Python's `resource` module), so **there is no memory bound
+via rlimits at all**. `RLIMIT_CPU` works: SIGXCPU fires and kills the worker. `RLIMIT_NOFILE`
+and `RLIMIT_FSIZE 0` are accepted and cost nothing — a worker that cannot create a file
+cannot be talked into writing one.
+
+But `RLIMIT_CPU` is a *process-lifetime* budget, not a per-request one. Measured: under a
+3 s limit, one 1.72 s render succeeds and the next dies 1.30 s in, at a cumulative 3.0 s.
+So it bounds a worker's total life, and per-render bounds have to come from the parent's
+deadline-and-kill. Memory bounding needs a different mechanism entirely — a Mach task
+limit, self-monitoring, or accepting the OS.
+
+**The worker can be denied the filesystem and the network and still render correctly — but
+only under a profile that had to be found by bisection.** With `sandbox_init`, file reads,
+file writes and socket binds are all denied, and the document still opens, because it
+arrives as a mapped descriptor and never as a path.
+
+The trap is what "still renders" means. On a document with **embedded** fonts, a
+deny-everything profile is pixel-identical to an unsandboxed worker. On a **base-14**
+document it is not: PDFium returns success and produces different pixels, with almost the
+same amount of ink — a silently substituted face, not a blank page. The obvious repair is
+wrong too: denying `file-read*` and allowing `file-read*` back on `/System/Library/Fonts`
+still renders differently. What restores it is allowing `file-read-metadata` *globally* and
+`file-read-data` only under the font directories, which is what `PROFILE_WORKER` in the
+harness does, verified pixel-identical on base-14, TrueType, CID and the 775-page corpus.
+
+Two things follow. The residual authority is that a hostile document can learn which paths
+exist; it cannot read one, write one, or open a socket. And a sandbox has to be verified by
+**comparing pixels**, never by checking that the render returned `ok` — this is the same
+silent-substitution failure mode §6 found in `set_text()`, arriving from a completely
+different direction.
+
+Windows is untested. Job objects, restricted tokens and named section objects share no
+mechanism with any of this, and it needs its own spike before the shape can be called
+cross-platform.
+
 ### The two IPC channels
 
 - **Commands** carry small JSON: open a document, apply an edit, run a search. Ordinary
@@ -260,7 +355,10 @@ yields instead of blocking. (The audit asserted PDFium rendering is uncancellabl
 wrong, and the progressive API is precisely the mechanism.)
 
 Backstop for the genuinely pathological: a per-tile CPU budget, and worker process
-termination and restart when it is exceeded. Process isolation makes that cheap and safe.
+termination and restart when it is exceeded. Process isolation makes that cheap and safe —
+measured at 1.2 ms to kill and reap and 4.8 ms to respawn (§3). Note the budget has to be
+enforced by the parent's deadline, not by `RLIMIT_CPU`, which is a process-lifetime budget
+rather than a per-request one.
 
 ### Startup path — measured 2026-07-26
 
@@ -846,7 +944,7 @@ that includes deliberately hostile files:
 | Spike | Proves |
 |-------|--------|
 | Render pipeline | Tiles over the custom protocol; raw vs encoded transfer; tile size; CPU and peak allocation per tile on a dense CAD page; frame rate at 100% and 400% |
-| Process architecture | Worker isolation, supervision, restart, resource limits, and the real IPC latency cost |
+| ~~**Process architecture**~~ | **Passed 2026-07-26** (§3), on macOS only. The boundary costs 6 µs of control latency and 0.11 ms to move a 4 MB tile through shared memory; four workers give 3.9× throughput; a crash is noticed in under a millisecond and recovered in ~10 ms; the worker renders correctly with files and network denied. Two gaps recorded rather than closed: macOS has no memory rlimit, and Windows is untested |
 | Startup | The five timestamps of §4, cold and warm |
 | ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
 | ~~**Sanitized full rewrite**~~ | **Passed 2026-07-26** (§6). A collected `lopdf` rewrite matches QPDF on every fixture, so QPDF is not required — but `lopdf`'s own collection is quadratic and the sweep has to be ours, and "every stream must decode" would refuse most scanned documents |
@@ -964,8 +1062,16 @@ that it presented several genuinely unresolved questions as settled architecture
    save path must preserve it or refuse. QPDF stays worth having for two things collection
    is not: preserving encryption, and object streams, which shrank a 6.1 MB output to
    1.46 MB.
-5. **Worker process count and IPC cost** — does multi-process rendering actually meet the
-   latency target, given the boundary crossing it adds?
+5. ~~**Worker process count and IPC cost** — does multi-process rendering actually meet the
+   latency target, given the boundary crossing it adds?~~ **Answered 2026-07-26** (§3). The
+   boundary crossing is not a cost worth reasoning about: 6 µs for a control round trip and
+   0.11 ms to move a 4 MB tile, against 3.0 ms to hand the same tile to the webview. One
+   worker matches the in-process baseline exactly. **Process count should default to the
+   performance-core count** — speedup is near-linear to 4 on a 4P+6E machine (3.89×) and
+   then buys ~0.4× per further worker, so the efficiency cores belong to background work
+   rather than to latency-critical tiles. What remains open is not the cost but the
+   *policy*: how many workers a document should get, whether a second document shares the
+   pool, and whether a worker is recycled or retired after a page that took seconds.
 6. **Are extracted font subsets browser-loadable,** and does their licensing permit
    re-serving them? Gates the §7 `@font-face` approach.
 7. **PDFium binary distribution.** Prebuilt from `bblanchon/pdfium-binaries`, dynamically
