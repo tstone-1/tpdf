@@ -52,8 +52,13 @@ export interface Quad {
  * on a complex one (`text-probe --mode extract`), so the cache is about avoiding
  * an IPC round trip during a drag, not about avoiding PDFium. It is unbounded:
  * a page's characters are a few hundred kilobytes at worst and a reader visits
- * tens of pages, not thousands. Search over a whole document will need a bound
- * and does not have one yet.
+ * tens of pages, not thousands.
+ *
+ * Search does not change that --- the matching happens in Rust and only the hits
+ * cross, so a whole-document scan never touches this. What can still grow it is
+ * a reader stepping through hits on a thousand different pages, since each jump
+ * loads the page it lands on to know where to scroll. That wants a bound and
+ * does not have one.
  */
 export class TextCache {
   private readonly doc: number;

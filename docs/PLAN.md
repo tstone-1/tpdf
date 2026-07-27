@@ -1626,6 +1626,85 @@ Not done, and not pretended otherwise: word and line selection by double- and tr
 selection across a column boundary in reading order rather than index order, and any
 handling of rotated or vertical text.
 
+#### Find in document — 2026-07-27
+
+Search reads the text layer above rather than PDFium's, and that is the decision worth
+recording. `FPDFText_FindStart` exists, it is what Chrome's Ctrl-F uses, and it would have
+been shorter — but it searches PDFium's *own* extracted string and answers in positions
+into it. That is a second extraction with a second index space, sitting beside the one
+`text.rs` exists to be the only one of. The rule that file opens with is that three
+features reading three different extractions disagree in ways no test catches, each being
+self-consistent; taking the shorter route would have made search the second of the three,
+in the same session that argued against it.
+
+So `src-tauri/src/search.rs` matches over the character codes, and a hit is a range of the
+same indices the boxes are keyed by. Highlighting one is the selection code with a
+different colour, and there is no mapping between index spaces left to get wrong.
+
+The cost of that is that Unicode-aware matching is ours. The fold does what a reader
+expects Ctrl-F to do and nothing more: case ignored (`to_lowercase`, so `Ä` matches `ä`),
+runs of whitespace collapsed to one so a phrase spanning a line break still matches, soft
+hyphens dropped. Because folding can change a character's length — `İ` lowercases to two
+characters — the folded sequence carries the source index of each character, and a match
+translates back through that map rather than by arithmetic.
+
+What it deliberately does not do: normalise ligatures, strip accents, or rejoin a word a
+hyphen broke across two lines. Each is a real feature and each makes the highlight cover
+characters the query did not contain; none is guessed at. A query of only whitespace is
+refused rather than run, because the fold has already destroyed the only distinction such
+a query could be drawing.
+
+**One page per request, sequentially.** The render thread is FIFO and shared with tiles, so
+a single job that scanned the document would hold it and every tile behind it would wait.
+At page granularity a search interleaves, and cancellation is not asking for the next page
+— there is nothing to withdraw. A generation counter drops replies belonging to a query
+that has been superseded.
+
+**What it costs.** A whole-document scan of the 775-page corpus for a word that is not in
+it — the worst case, since nothing can stop early — takes **843 ms**, about 1.1 ms per
+page. That is the extraction measured above, not the matching. The first hit appears in the
+time it takes to reach the page it is on, which for a search from where the reader is
+standing is the first request.
+
+**Checked, then broken on purpose.** Thirteen unit tests over the fold and the index
+mapping, plus five viewer checks in a real webview. The load-bearing one is that a match's
+index range *covers the characters searched for*, re-extracted independently rather than
+read out of the viewer's cache — every other search assertion passes just as well when the
+indices are off by one. The negative control is the same needle with letters glued to the
+front, and it scans all 775 pages to say so.
+
+Eleven mutations, one at a time, each with its expected victim written down first: eight in
+Rust, three in the front end. All eleven went red; ten did so through the check predicted
+for them. Note the needle is chosen so its first hit is *not* at index 0 — 0 is exactly the
+value an implementation that had lost track of its indices would return, so a check anchored
+there could not tell the two apart.
+
+The eleventh is the interesting one. Deleting the generation guard — so a superseded scan
+keeps appending into the query that replaced it — was predicted to fail the negative
+control, and instead failed *"case is ignored"*, which times out. Following that through is
+what found a real weakness: the negative control waited for the scan to stop **running**,
+and an older scan finishing clears that flag, so the check was reading its answer at a
+moment when neither scan had put anything in the list. It now waits for the page count to be
+reached. The mutation was caught either way; the wrong prediction is what produced the fix.
+
+The harness itself failed twice first, both times in the family this repository keeps
+rediscovering — a test that cannot distinguish its own silence from a pass.
+
+- It restored each file by **moving** the backup over it, which carries the backup's *older*
+  mtime, so cargo compared timestamps, concluded nothing had changed, and ran the suite
+  against the previous mutated binary. Every mutation in the loop was written with a fresh
+  timestamp, so those results stand; it was the run confirming the tree was clean afterwards
+  that reported a failure not present in the tree.
+- It parsed failure lines with a regex expecting two spaces between the name and the detail
+  — and names are padded to 40 characters, so a name of exactly 41 (*"searches forward from
+  the page being read"*) is followed by one. That mutation was reported as a **survivor**
+  while the summary line in the same output said 28 of 29 passed. The two numbers disagreed
+  and nothing was comparing them; they are compared now.
+
+Not done: whole-word and case-sensitive options, regular expressions, a results sidebar,
+search within a selection, and matching across a page boundary. Nor is there a bound on the
+front-end text cache, which a reader stepping through hits on a thousand pages would find.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

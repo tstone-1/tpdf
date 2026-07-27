@@ -628,6 +628,33 @@ one as a broken run, distinct from a surviving mutation. **A harness that reads 
 evidence needs to distinguish absence from silence** --- the same failure as the leak scanner
 that could not decode a Type0 font, one level up.
 
+### Restoring a mutated file by *moving* a backup over it tests the mutated binary
+
+The harness driving the `search.rs` mutations copied the file, mutated it, ran the tests,
+and put the backup back with `shutil.move`. A move carries the backup's metadata --- so the
+restored file's mtime was the moment the *copy* was taken, older than the artifact cargo had
+just built from the mutated source. Cargo compared timestamps, concluded nothing had
+changed, and ran the suite against the mutation. The confirmation run afterwards reported a
+failing test that was not in the tree, on a file whose contents were provably correct.
+
+The mutations themselves were unaffected --- each was written with `open(path, "w")`, which
+stamps the current time, so every one of those runs did rebuild. It is only the restore that
+went backwards in time, which is the half nobody thinks to check.
+
+Two rules, and the second matters more: **restore by writing the bytes back, never by moving
+a file over them**, and **verify the restore by re-running the suite and requiring green**.
+A harness that can leave the tree in a state its own results do not describe is worse than
+no harness, because the next real failure reads as another restore artifact.
+
+The same harness then failed a second way, which is worth the sentence because the mechanism
+is so ordinary. It found failure lines with a regex expecting **two** spaces between the
+check's name and its detail — and the names are printed with `padEnd(40)`, so a name of
+exactly 41 characters is followed by one space and matched nothing. That mutation was
+reported as a **survivor** while the summary line in the same output said 28 of 29 checks
+passed. Two numbers in one buffer disagreeing, and nothing comparing them. **When a harness
+can derive the same fact two ways — a parsed detail and a printed total — make it check that
+they agree**, because the parse is the half that breaks silently.
+
 ### A test whose precondition is already satisfied never runs
 
 The sharpest instance of the shape above, and the fourth in this project. `viewercheck.ts`
@@ -1114,6 +1141,14 @@ rectangles and copies text from a few characters further along, on one document 
 twenty. `src/text.rs` therefore sends **one Unicode scalar per index** and no string at all,
 and the frontend builds a string from the range it selected. Same rule as `set_text()`
 drawing `.notdef`: work in the code space the document uses, never in a re-encoding of it.
+
+**This is also why search does not call `FPDFText_FindStart`.** PDFium's search API is what
+Chrome's Ctrl-F uses and would have been far shorter --- but it matches against that same
+extracted string and answers in positions into it: a second index space carrying the same
+divergence, which then has to be mapped back onto the boxes. Matching over the codes instead
+(`src/search.rs`) makes a hit a range of the indices the boxes are already keyed by, so there
+is no mapping left to get wrong. The shorter route is not cheaper; it is the same work with
+the failure moved somewhere no test would look.
 
 ### A dense page of uniform lines cannot detect a y-flip
 

@@ -12,6 +12,7 @@ pub mod progressive;
 mod protocol;
 mod queue;
 mod render;
+pub mod search;
 mod startup;
 pub mod text;
 
@@ -149,6 +150,30 @@ async fn page_text(
     service.text(
         doc,
         page,
+        Box::new(move |result| {
+            let _ = tx.send(result);
+        }),
+    );
+    rx.recv().map_err(|_| "render thread stopped".to_string())?
+}
+
+/// Finds a query in one page, returning character ranges.
+///
+/// One page per call, because the render thread is FIFO and a whole-document
+/// scan would sit in front of every tile --- see `RenderService::search`. The
+/// caller walks the document and stops when it wants to cancel.
+#[tauri::command]
+async fn search_page(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    page: u32,
+    query: String,
+) -> Result<search::PageMatches, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    service.search(
+        doc,
+        page,
+        query,
         Box::new(move |result| {
             let _ = tx.send(result);
         }),
@@ -441,6 +466,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_document,
             page_text,
+            search_page,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,

@@ -193,9 +193,9 @@ entry for `/usr/sbin/purge`.
 ### Checking the viewer
 
 The reading surface is asserted rather than eyeballed. This opens a document in a real
-webview, dispatches real wheel and key events at it, and checks sixteen behaviours ---
-fit-width, scrolling, End and Home, the zoom ladder, a pinch, resize, and that the frame
-loop idles when there is nothing to do:
+webview, dispatches real wheel and key events at it, and checks twenty-nine behaviours ---
+fit-width, scrolling, End and Home, the zoom ladder, a pinch, resize, text selection and
+copy, find-in-document, and that the frame loop idles when there is nothing to do:
 
 ```
 scripts/viewer_check.py \
@@ -216,12 +216,18 @@ itself over what you are doing, so the run can sit in the background while you w
 `scroll_bench.py` is the exception and calls `set_focus()` on purpose --- an unfocused window
 is throttled, and a frame-rate benchmark would then be measuring the throttle.
 
-It also checks text selection, and the load-bearing assertion there is that the dragged text
-is a **substring** of the whole page's text --- everything else about selection passes even
-when the character indices and the character boxes belong to different coordinate systems.
+Two of its assertions carry the weight, and both tie a position to specific content rather
+than checking that something happened. For **selection**, text dragged near the top of the
+page must come from earlier in the page's text than text dragged further down --- a substring
+check was tried first and cannot fail, since a selection is a contiguous range of indices
+whatever the boxes claim. For **search**, a match's index range must cover the characters
+searched for, re-extracted independently; every other search assertion passes just as well
+when the indices are off by one.
 
-Run it on `testdata/vector-heavy.pdf` too. That fixture is one page, so the jump control
-reports `[SKIP]` with its reason --- which is the expected output there, not a problem.
+Run it on `testdata/vector-heavy.pdf` too. That fixture is one page with no extractable
+text, so eleven checks report `[SKIP]` with their reason --- which is the expected output
+there, not a problem. The one search check it does run is the useful one for that document:
+that the viewer says there is no text to search rather than reporting no matches.
 
 ---
 

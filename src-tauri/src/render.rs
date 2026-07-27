@@ -45,6 +45,7 @@ use pdfium_render::prelude::*;
 
 use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
 use crate::queue::{Claim, SharedQueue};
+use crate::search::{self, PageMatches};
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::{self, PageText};
 
@@ -142,6 +143,12 @@ enum Job {
         page: u32,
         reply: Reply<PageText>,
     },
+    Search {
+        doc: u32,
+        page: u32,
+        query: String,
+        reply: Reply<PageMatches>,
+    },
 }
 
 /// Handle to the render thread. Cheap to clone.
@@ -183,6 +190,7 @@ impl RenderService {
                                 Job::Open { reply, .. } => reply(Err(e.clone())),
                                 Job::Tile { reply, .. } => reply(Err(e.clone())),
                                 Job::Text { reply, .. } => reply(Err(e.clone())),
+                                Job::Search { reply, .. } => reply(Err(e.clone())),
                             }
                         }
                         return;
@@ -206,6 +214,14 @@ impl RenderService {
                         }
                         Job::Text { doc, page, reply } => {
                             reply(run_text(&docs, doc, page));
+                        }
+                        Job::Search {
+                            doc,
+                            page,
+                            query,
+                            reply,
+                        } => {
+                            reply(run_search(&docs, doc, page, &query));
                         }
                     }
                 }
@@ -259,6 +275,28 @@ impl RenderService {
     /// with the worker pool or not at all.
     pub fn text(&self, doc: u32, page: u32, reply: Reply<PageText>) {
         if self.tx.send(Job::Text { doc, page, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
+    /// Searches one page, invoking `reply` on the render thread.
+    ///
+    /// One page per job, rather than one job for the document, and that is the
+    /// whole design: the render thread is FIFO, so a job that scanned 775 pages
+    /// would hold it for a second and a half and every tile behind it would
+    /// wait. At page granularity a search interleaves with rendering, and the
+    /// caller stops asking to cancel it --- there is nothing to withdraw.
+    pub fn search(&self, doc: u32, page: u32, query: String, reply: Reply<PageMatches>) {
+        if self
+            .tx
+            .send(Job::Search {
+                doc,
+                page,
+                query,
+                reply,
+            })
+            .is_err()
+        {
             // Render thread is gone; nothing left to reply with.
         }
     }
@@ -448,4 +486,24 @@ fn run_text(docs: &[RawDocument], doc: u32, page: u32) -> Result<PageText, Strin
         .get(doc as usize)
         .ok_or_else(|| format!("no such document: {doc}"))?;
     text::extract(&document.page(page)?)
+}
+
+/// Searches one page on the render thread.
+///
+/// Extraction happens here and the characters are dropped again: only the
+/// matches cross to the frontend. A 775-page document's text is tens of
+/// megabytes as JSON and the frontend needs it only for the pages it draws, so
+/// shipping it in order to search it would be the expensive half of a cheap
+/// operation.
+fn run_search(
+    docs: &[RawDocument],
+    doc: u32,
+    page: u32,
+    query: &str,
+) -> Result<PageMatches, String> {
+    Ok(search::search_page(
+        &run_text(docs, doc, page)?,
+        page,
+        query,
+    ))
 }

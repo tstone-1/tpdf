@@ -26,8 +26,68 @@
   let error = $state<string | null>(null);
   let opening = $state(false);
   let status = $state<ViewerStatus | null>(null);
+  let query = $state("");
+  let findField = $state<HTMLInputElement | null>(null);
 
   let viewer: Viewer | null = null;
+  let findTimer = 0;
+
+  /**
+   * How long typing has to pause before a scan starts, in milliseconds.
+   *
+   * Every keystroke supersedes the scan before it, so the cost of typing
+   * without this is bounded by the pages each attempt got through --- but on a
+   * 775-page document that is still a queue of page requests in front of the
+   * tiles for no result anyone will read.
+   */
+  const FIND_DEBOUNCE_MS = 150;
+
+  function onFindInput() {
+    clearTimeout(findTimer);
+    const wanted = query;
+    findTimer = setTimeout(() => viewer?.search(wanted), FIND_DEBOUNCE_MS);
+  }
+
+  function onFindKey(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      // Enter before the debounce has fired should search, not step through the
+      // nothing it has found so far.
+      clearTimeout(findTimer);
+      if (status && status.search.query !== query) viewer?.search(query);
+      else if (event.shiftKey) viewer?.prevMatch();
+      else viewer?.nextMatch();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      clearTimeout(findTimer);
+      query = "";
+      viewer?.clearSearch();
+      viewer?.focus();
+    }
+  }
+
+  /** Cmd-F from anywhere puts the caret in the find field. */
+  function onWindowKey(event: KeyboardEvent) {
+    if (!(event.metaKey || event.ctrlKey) || event.key !== "f") return;
+    if (!title) return;
+    event.preventDefault();
+    findField?.focus();
+    findField?.select();
+  }
+
+  /** What the find field's counter says. */
+  const findLabel = $derived.by(() => {
+    const search = status?.search;
+    if (!search || !search.query) return "";
+    if (search.textless) {
+      // Distinct from "no matches" on purpose: the query was never tested
+      // against anything, and saying so is the difference between a working
+      // search and a broken one from the reader's side.
+      return search.running ? "no text yet" : "no text to search";
+    }
+    if (search.total === 0) return search.running ? "searching" : "no matches";
+    return `${search.index} of ${search.total}${search.running ? "+" : ""}`;
+  });
 
   $effect(() => {
     void (async () => {
@@ -73,6 +133,7 @@
       await new Promise(requestAnimationFrame);
       if (!surface) throw new Error("no surface to mount into");
 
+      query = "";
       viewer = new Viewer(surface, {
         doc: doc.id,
         pageCount: doc.page_count,
@@ -111,11 +172,25 @@
   });
 </script>
 
+<svelte:window onkeydown={onWindowKey} />
+
 <main>
   <header>
     <button onclick={pickAndOpen} disabled={opening}>Open</button>
     <span class="title">{title}</span>
     <span class="spacer"></span>
+    {#if title}
+      <input
+        class="find"
+        type="search"
+        placeholder="Find"
+        bind:value={query}
+        bind:this={findField}
+        oninput={onFindInput}
+        onkeydown={onFindKey}
+      />
+      {#if findLabel}<span class="stat">{findLabel}</span>{/if}
+    {/if}
     {#if status}
       {#if degraded}
         <span class="degraded"
@@ -168,6 +243,11 @@
   }
   .title {
     font-weight: 600;
+  }
+  .find {
+    font: inherit;
+    width: 14ch;
+    padding: 0.15rem 0.5rem;
   }
   .spacer {
     flex: 1;
