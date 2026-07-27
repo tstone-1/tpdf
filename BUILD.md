@@ -193,9 +193,10 @@ entry for `/usr/sbin/purge`.
 ### Checking the viewer
 
 The reading surface is asserted rather than eyeballed. This opens a document in a real
-webview, dispatches real wheel and key events at it, and checks twenty-nine behaviours ---
+webview, dispatches real wheel and key events at it, and checks thirty-six behaviours ---
 fit-width, scrolling, End and Home, the zoom ladder, a pinch, resize, text selection and
-copy, find-in-document, and that the frame loop idles when there is nothing to do:
+copy, find-in-document, the command palette, and that the frame loop idles when there is
+nothing to do:
 
 ```
 scripts/viewer_check.py \
@@ -228,6 +229,10 @@ Run it on `testdata/vector-heavy.pdf` too. That fixture is one page with no extr
 text, so eleven checks report `[SKIP]` with their reason --- which is the expected output
 there, not a problem. The one search check it does run is the useful one for that document:
 that the viewer says there is no text to search rather than reporting no matches.
+
+What it does **not** cover: the command list `App.svelte` registers, and the Cmd-K that
+opens the palette. The check builds its own registry, so it proves the palette works and
+not that the application's commands are wired to it.
 
 ---
 

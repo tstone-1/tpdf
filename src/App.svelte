@@ -6,6 +6,8 @@
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
+  import { CommandRegistry } from "./lib/commands";
+  import { Palette } from "./lib/palette";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
 
   interface PageSize {
@@ -30,7 +32,124 @@
   let findField = $state<HTMLInputElement | null>(null);
 
   let viewer: Viewer | null = null;
+  let palette: Palette | null = null;
   let findTimer = 0;
+
+  /**
+   * Every command the application has, in one place.
+   *
+   * Built once and outliving any document, so the palette works before a file
+   * is open --- "Open document" is the command someone reaches for first. The
+   * rest guard on `viewer`, which is read at call time rather than captured, so
+   * closing and opening a document does not need the registry rebuilt.
+   *
+   * The `keys` strings are labels the palette displays; the bindings themselves
+   * live in `viewer.ts`'s key handler and in `onWindowKey` below. Nothing checks
+   * that the two agree, which is a real gap and a small one --- a wrong label
+   * teaches a wrong shortcut, it does not break a command.
+   */
+  const commands = new CommandRegistry();
+  const withDocument = () => viewer !== null;
+
+  commands.register(
+    { id: "file.open", title: "Open document", keys: "⌘O", run: () => void pickAndOpen() },
+    {
+      id: "find.open",
+      title: "Find in document",
+      keys: "⌘F",
+      enabled: withDocument,
+      run: () => focusFind(),
+    },
+    {
+      id: "find.next",
+      title: "Find next",
+      keys: "⌘G",
+      enabled: withDocument,
+      run: () => viewer?.nextMatch(),
+    },
+    {
+      id: "find.previous",
+      title: "Find previous",
+      keys: "⇧⌘G",
+      enabled: withDocument,
+      run: () => viewer?.prevMatch(),
+    },
+    {
+      id: "view.zoomIn",
+      title: "Zoom in",
+      keys: "⌘+",
+      enabled: withDocument,
+      run: () => viewer?.zoomStep(1),
+    },
+    {
+      id: "view.zoomOut",
+      title: "Zoom out",
+      keys: "⌘−",
+      enabled: withDocument,
+      run: () => viewer?.zoomStep(-1),
+    },
+    {
+      id: "view.fitWidth",
+      title: "Fit width",
+      keys: "⌘0",
+      enabled: withDocument,
+      run: () => viewer?.fitWidth(),
+    },
+    {
+      id: "nav.nextPage",
+      title: "Next page",
+      keys: "n",
+      enabled: withDocument,
+      run: () => viewer?.nextPage(),
+    },
+    {
+      id: "nav.previousPage",
+      title: "Previous page",
+      keys: "p",
+      enabled: withDocument,
+      run: () => viewer?.previousPage(),
+    },
+    {
+      id: "nav.firstPage",
+      title: "Go to start",
+      keys: "Home",
+      enabled: withDocument,
+      run: () => viewer?.goToStart(),
+    },
+    {
+      id: "nav.lastPage",
+      title: "Go to end",
+      keys: "End",
+      enabled: withDocument,
+      run: () => viewer?.goToEnd(),
+    },
+    {
+      id: "edit.selectAll",
+      title: "Select all on page",
+      keys: "⌘A",
+      enabled: withDocument,
+      run: () => viewer?.selectPage(),
+    },
+    {
+      id: "edit.copy",
+      title: "Copy selection",
+      keys: "⌘C",
+      enabled: withDocument,
+      run: () => void viewer?.copySelection(),
+    },
+    {
+      id: "edit.clearSelection",
+      title: "Clear selection",
+      keys: "Esc",
+      enabled: withDocument,
+      run: () => viewer?.clearSelection(),
+    },
+  );
+
+  function focusFind() {
+    findField?.focus();
+    findField?.select();
+  }
 
   /**
    * How long typing has to pause before a scan starts, in milliseconds.
@@ -66,13 +185,19 @@
     }
   }
 
-  /** Cmd-F from anywhere puts the caret in the find field. */
+  /** The two shortcuts that belong to the window rather than to the surface. */
   function onWindowKey(event: KeyboardEvent) {
-    if (!(event.metaKey || event.ctrlKey) || event.key !== "f") return;
-    if (!title) return;
-    event.preventDefault();
-    findField?.focus();
-    findField?.select();
+    if (!(event.metaKey || event.ctrlKey)) return;
+    if (event.key === "k") {
+      event.preventDefault();
+      // Toggling rather than reopening: Cmd-K on an open palette is a request
+      // to get rid of it, not to clear the query someone is halfway through.
+      if (palette?.isOpen) palette.close();
+      else palette?.open();
+    } else if (event.key === "f" && title) {
+      event.preventDefault();
+      focusFind();
+    }
   }
 
   /** What the find field's counter says. */
@@ -97,6 +222,10 @@
       if (await runAutobenchIfRequested()) return;
       if (await runScrollBenchIfRequested()) return;
       if (await runViewerCheckIfRequested()) return;
+
+      // After the spike entry points, which exit the process: none of them mount
+      // the shell, and a palette attached to `document.body` would outlive it.
+      palette = new Palette(commands);
 
       await getCurrentWebview().onDragDropEvent((event) => {
         if (event.payload.type !== "drop") return;

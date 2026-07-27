@@ -85,6 +85,23 @@ experience.
   A whole-document scan of the 775-page corpus for a word that is not in it --- the worst
   case --- takes **843 ms**, about 1.1 ms per page, essentially all of it extraction. A
   document with no extractable text says so rather than reporting no matches.
+- **A command palette on Cmd-K**, and a command registry under it. `docs/PLAN.md` §8 calls
+  the palette "the thesis, not a garnish": the complaint about Acrobat is unreachable
+  capability, not missing capability, so a palette only helps if every command is in it ---
+  which means commands have to be data rather than branches of a key handler. That handler
+  had reached fifteen branches. Fourteen commands are registered today and the next feature
+  registers rather than growing the chain.
+
+  Ranking is subsequence matching scored like a code editor's --- word starts, then
+  consecutive runs, then position --- so `fw` finds "Fit width". It returns the matched
+  positions and the palette bolds them, because a highlight that disagreed with the ranking
+  would be worse than none. Each row shows its keybinding, so the palette teaches shortcuts
+  instead of replacing them. Recents break ties and cannot beat a better match.
+- **Front-end unit tests, and a seventh quality gate.** `vitest`, over the command ranking
+  --- the first front-end logic with an answer that can be *wrong* rather than merely ugly.
+  The plan had said `npm run test` would land when there was something for it to check.
+  Fourteen mutations against the new code, all caught; one branch was deleted rather than
+  tested, because nothing could make it fail.
 - `src-tauri/src/bin/text_probe.rs` --- checks the page-space to device-space flip against
   **pixels**, per character, and carries a control that fails the run if the wrong convention
   would also pass. On the four small fixtures: 100% against 4.1--4.8%. On the dense corpus the

@@ -1705,6 +1705,57 @@ Not done: whole-word and case-sensitive options, regular expressions, a results 
 search within a selection, and matching across a page boundary. Nor is there a bound on the
 front-end text cache, which a reader stepping through hits on a thousand pages would find.
 
+#### The command palette, and the registry under it — 2026-07-27
+
+§8 calls this "the thesis, not a garnish", and the argument is worth restating because it
+decides the shape rather than the styling: the complaint about Acrobat is not that it lacks
+capability, it is that the capability is unreachable. A palette only answers that if
+*every* command is in it — which means commands have to exist as data somewhere, rather
+than as branches of a key handler. That handler had reached fifteen branches, and anything
+added to it is something the palette cannot see.
+
+So `src/lib/commands.ts` is the registry and the key handler becomes one of its callers.
+Fourteen commands are registered today; the next feature registers rather than growing the
+`if` chain.
+
+**Ranking is subsequence matching, scored the way a code editor scores it** — word starts
+first, then consecutive runs, then position — so `fw` finds "Fit width" and `zi` finds
+"Zoom in". It returns the matched *positions*, not just a score, because the palette bolds
+them and a highlight that disagreed with the ranking would be worse than none. Recents
+break ties and deliberately cannot beat a better match: the tie-break bonus is smaller than
+a single word-start match, so typing something specific always wins over history.
+
+**It is plain DOM rather than a Svelte component**, for the same reason `viewer.ts` is:
+`viewercheck.ts` mounts these classes directly and dispatches real events at them, and a
+component that only exists inside `App.svelte` is one the check cannot reach.
+
+**The front end has unit tests now, and a gate.** The plan previously noted that
+`npm run test` did not exist and would land when there was something for it to check;
+ranking is that — pure logic with an answer that can be *wrong* rather than merely ugly.
+Twenty tests, `vitest`, and `scripts/gates.py` grew a seventh gate. Behaviour needing a
+document and a window stays in the viewer check, which is not a gate because it needs a
+built bundle and a generated fixture.
+
+Fourteen mutations: eleven against the ranking, three against the palette, each with its
+expected victim written down first. All fourteen were caught. Two results worth keeping:
+
+- **A branch was deleted rather than tested.** `startsWord` also treated a capital after a
+  lower-case letter as a word start, for titles like `zoomIn`. No mutation of that clause
+  could fail anything, because every title is a human-readable label in sentence case. It
+  went the way of `Selection.isEmpty` and `queue.rs`'s zero guard.
+- **A branch that no test can name directly is not the same as an untested branch.** The
+  `index === 0` case of `startsWord` cannot be isolated by a score comparison — there is no
+  title where position 0 is *not* a word start to compare against. It is pinned by the
+  ordering test that recency must not beat a better match, which fails without it, and that
+  is recorded next to the line so the next reader does not "fix" it.
+
+Not done, and unchecked rather than merely unfinished: **Cmd-K itself and the command list
+`App.svelte` registers are covered by nothing.** The check builds its own registry, so what
+it proves is that the palette works, not that the application's commands are wired to it.
+Also absent: user-rebindable keys, commands that take an argument (go to page *n*),
+persisted recents, and any verification that a command's displayed keybinding matches the
+handler that implements it — a wrong label there teaches a wrong shortcut.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,
