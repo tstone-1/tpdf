@@ -1,9 +1,12 @@
 //! The render service: the single owner of Pdfium and of every open document.
 //!
 //! Everything Pdfium touches happens on one dedicated thread. This is not a
-//! stylistic choice --- `pdfium-render`'s `thread_safe` feature serializes every
-//! Pdfium call behind one global mutex, so extra threads buy nothing but
-//! contention, and `PdfDocument` is not `Send`. See AGENTS.md.
+//! stylistic choice, but the reason is not the one this comment used to give.
+//! `pdfium-render`'s `thread_safe` feature does **not** serialize Pdfium calls
+//! --- there is no mutex anywhere in the crate's native path, and concurrent
+//! renders from two threads segfault on a complex page while merely appearing
+//! to work on a simple one. The single thread is what keeps that undefined
+//! behaviour off the table. Measured by `bin/thread_probe.rs`; see AGENTS.md.
 //!
 //! Phase 0 note: this is an in-process service. Supervised worker processes
 //! replace it, which is what actually delivers parallelism and the security

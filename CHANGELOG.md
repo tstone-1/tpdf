@@ -52,6 +52,19 @@ needs the worker pool and the progressive render API.
   checklist in `BUILD.md` cannot drift from what actually gates.
 - `BUILD.md` and this changelog.
 
+### Changed
+
+- **Corrected a load-bearing architectural claim.** `AGENTS.md`, `docs/PLAN.md`,
+  `docs/THREAT-MODEL.md`, `render.rs`, `Cargo.toml` and `worker_bench.rs` all stated that
+  `pdfium-render`'s `thread_safe` feature serializes every PDFium call behind one global
+  mutex, and that multiple document handles therefore render sequentially but safely. It
+  does not, and they do not. There is no mutex in the crate's native path; the feature
+  only makes `Pdfium` `Send + Sync`. Two threads rendering the A0 page **segfault**, while
+  four threads on a simple document returned pixel-correct tiles six times out of six at a
+  3.85x speedup — then crashed on the next round. `src/bin/thread_probe.rs` is the
+  measurement. The conclusion (render in worker processes) is unchanged; its justification
+  is now that threads are undefined behaviour rather than merely futile.
+
 ### Fixed
 
 - The PDFium install path assumed the macOS archive layout. Windows ships the loadable

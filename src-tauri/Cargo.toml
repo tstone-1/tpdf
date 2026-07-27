@@ -24,10 +24,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # PDF rendering and text extraction. Provisional until the Phase 0 spikes pass
-# -- see AGENTS.md. Note `thread_safe` is a default feature and serializes every
-# Pdfium call behind one global mutex; it is left ON deliberately, because the
-# alternative is undefined behaviour, not speed. Parallelism comes from worker
-# processes (spike 0.5), never from threads.
+# -- see AGENTS.md. `thread_safe` is a default feature and is left ON, but note it
+# does NOT serialize calls behind a mutex despite what the crate README says: it
+# only makes `Pdfium` Send + Sync and awaits the global bindings. Concurrent
+# renders are undefined behaviour and crash (bin/thread_probe.rs). Parallelism
+# comes from worker processes (spike 0.5), never from threads.
 pdfium-render = "0.9"
 
 # Low-level PDF object graph and content-stream operators.
@@ -66,3 +67,7 @@ path = "src/bin/worker_bench.rs"
 [[bin]]
 name = "incremental-save"
 path = "src/bin/incremental_save.rs"
+
+[[bin]]
+name = "thread-probe"
+path = "src/bin/thread_probe.rs"
