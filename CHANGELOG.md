@@ -88,11 +88,27 @@ experience.
   same number the benchmark reports.
 - **A functional check of the viewer** (`src/lib/viewercheck.ts`, `scripts/viewer_check.py`).
   Opens a document in a real webview, dispatches real wheel and key events at the viewer's
-  own root, and asserts sixteen behaviours. Two of them are controls: idling is asserted in
-  both directions, and every coverage recovery is preceded by an assertion that the tiles
-  were actually discarded first --- without which "covers the last page" passed instantly on
-  coverage the first screen had already established, while its own detail line read
-  `page 1/775`. Six deliberate mutations, one at a time, and every one was noticed.
+  own root, and asserts twenty behaviours. Three of them are controls: idling is asserted in
+  both directions, every coverage recovery is preceded by an assertion that the tiles were
+  actually discarded first, and a zero-length drag must select nothing.
+
+  Without the second of those, "covers the last page" passed instantly on coverage the first
+  screen had already established, while its own detail line read `page 1/775`. Eleven
+  deliberate mutations across two passes, one at a time. Nine were caught; one was an
+  identity that tested nothing; one found a guard --- `Selection.isEmpty` --- that no mutation
+  could break, now deleted.
+
+  The selection assertion is the second attempt at one. The first checked that the dragged
+  text was a **substring** of the page's text, which cannot fail: a selection is a contiguous
+  range of character indices, so its string is a substring however wrong the boxes are.
+  Inverting the y-flip in `text.rs` passed all twenty checks and returned real words from the
+  wrong part of the page. What discriminates is ordering --- text dragged near the top of the
+  page must come from earlier in the page's text than text dragged further down.
+
+  It does not take focus. The window has to stay visible, because WebKit suspends an occluded
+  page, but raising it over whatever someone is doing every time a check runs is its own bug.
+  `scroll_bench.py` still focuses on purpose: an unfocused window is throttled, and a
+  frame-rate benchmark would be measuring the throttle.
 - **Cancellable rendering** (`src-tauri/src/progressive.rs`). PDFium's progressive API,
   driven on raw `FPDF_DOCUMENT` / `FPDF_PAGE` / `FPDF_BITMAP` handles, because
   `pdfium-render` keeps every handle accessor `pub(crate)` and the safe wrapper therefore

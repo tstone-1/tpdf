@@ -325,7 +325,7 @@ async function run(path: string): Promise<void> {
     () => `zoom=${viewer.currentZoom.toFixed(3)}, ${pct()}`,
   );
 
-  await selectionChecks(root, viewer);
+  await selectionChecks(root, viewer, doc);
 
   viewer.destroy();
   check("destroys cleanly", viewer.idle, "frame loop stopped");
@@ -334,30 +334,53 @@ async function run(path: string): Promise<void> {
 /**
  * Text selection, on whatever the current page happens to be.
  *
- * The load-bearing assertion is the substring one. Everything else here could
- * pass with the character indices and the character boxes belonging to
- * different coordinate systems --- a drag would still select *something*, and it
- * would still be the wrong something. Requiring the dragged text to appear
- * inside the whole page's text ties the geometry to the codes, and it is the one
- * check that fails if the y-flip in `text.rs` is ever inverted.
+ * The load-bearing assertion is the **ordering** one: text dragged near the top
+ * of the page must come from earlier in the page's text than text dragged near
+ * the bottom. That is the only check here that ties a screen position to
+ * specific characters, and so the only one that can see a coordinate error.
+ *
+ * It replaced a substring check --- "the dragged text appears in the whole
+ * page's text" --- which sounded like it tested the same thing and could not
+ * fail. A selection is a contiguous range of character *indices*, so its text is
+ * a substring of the page's text no matter where the boxes claim the characters
+ * are. Inverting the y-flip in `text.rs` passed all twenty checks, and the drag
+ * even returned real words; it was simply the wrong words. Nothing about a
+ * property that holds by construction can be evidence of anything.
  */
-async function selectionChecks(root: HTMLElement, viewer: Viewer): Promise<void> {
+async function selectionChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  doc: DocumentInfo,
+): Promise<void> {
   key(root, "Home");
   await settle(() => viewer.idle);
 
-  // Select-all first, so there is a known whole to compare a drag against.
+  // Select-all first, for a known whole to locate the drags within. The
+  // character count comes from a second, independent extraction rather than
+  // from the viewer's own cache, so "selects the page's text" cannot be
+  // satisfied by the viewer agreeing with itself.
+  const extracted = await invoke<{ codes: number[] }>("page_text", {
+    doc: doc.id,
+    page: 0,
+  }).catch(() => null);
+
+  if (extracted && extracted.codes.length === 0) {
+    // A scan, or the A0 sheet. "Selected 0 of 0" is a true statement and a
+    // misleading [OK] beside a check named for selecting text.
+    skip("Cmd-A selects the page's text", "the page has no extractable text");
+    skip("a drag selects text from where it was dragged", "the page has no extractable text");
+    return;
+  }
+
   key(root, "a", true);
   const ok = await eventually(
     "Cmd-A selects the page's text",
-    () => viewer.selectedText.length > 0,
-    () => `${viewer.selectedText.length} characters`,
+    () => [...viewer.selectedText].length === (extracted?.codes.length ?? -1),
+    () =>
+      `${[...viewer.selectedText].length} code points, extraction says ${
+        extracted?.codes.length ?? "unavailable"
+      }`,
   );
-  if (!ok) {
-    skip("a drag selects a run of that text", "the page has no extractable text");
-    skip("dragging nowhere selects nothing", "the page has no extractable text");
-    skip("Escape clears the selection", "the page has no extractable text");
-    return;
-  }
   const whole = viewer.selectedText;
 
   key(root, "Escape");
@@ -366,29 +389,51 @@ async function selectionChecks(root: HTMLElement, viewer: Viewer): Promise<void>
   // A degenerate drag, as the control: press and release without moving. If
   // this selected something, every assertion below would pass on a selection
   // model that simply always selects.
-  drag(root, [MID_X, MID_Y], [MID_X, MID_Y]);
+  drag(root, [MID_X, HIGH_Y], [MID_X, HIGH_Y]);
   check(
     "dragging nowhere selects nothing",
     viewer.selectedText === "",
     `selected ${viewer.selectedText.length} characters`,
   );
 
-  drag(root, [MID_X, MID_Y], [MID_X + 260, MID_Y]);
-  const dragged = viewer.selectedText;
+  if (!ok || !whole) {
+    skip("a drag selects text from where it was dragged", "the page has no extractable text");
+    return;
+  }
+
+  drag(root, [MID_X, HIGH_Y], [MID_X + 240, HIGH_Y]);
+  const high = viewer.selectedText;
+  const highAt = whole.indexOf(high);
+
+  drag(root, [MID_X, LOW_Y], [MID_X + 240, LOW_Y]);
+  const low = viewer.selectedText;
+  const lowAt = whole.indexOf(low);
+
+  const located = high.length > 0 && low.length > 0 && highAt >= 0 && lowAt >= 0;
   check(
-    "a drag selects a run of that text",
-    dragged.length > 0 && whole.includes(dragged),
-    dragged.length === 0
-      ? "selected nothing"
-      : whole.includes(dragged)
-        ? `"${preview(dragged)}" appears in the page text`
-        : `"${preview(dragged)}" is NOT in the page text -- boxes and codes disagree`,
+    "a drag selects text from where it was dragged",
+    located && highAt < lowAt,
+    !located
+      ? `selected ${high.length} and ${low.length} characters, not both located`
+      : `y=${HIGH_Y} gave "${preview(high)}" at ${highAt}; ` +
+        `y=${LOW_Y} gave "${preview(low)}" at ${lowAt}` +
+        (highAt < lowAt ? "" : " -- the page reads bottom to top, which it does not"),
   );
 }
 
-/** Where the selection drags start: inside the page, below the top margin. */
+/** Where the selection drags run, in viewport CSS pixels. */
 const MID_X = 300;
-const MID_Y = 300;
+/** Near the top of the page, below its margin. */
+const HIGH_Y = 140;
+/**
+ * Further down the same page.
+ *
+ * Both must land on the page that `Home` put at the top of the viewport, and
+ * both must land on *text* --- a drag into a margin still selects the nearest
+ * character, but which one is then a question about the margin rather than
+ * about the mapping.
+ */
+const LOW_Y = 620;
 
 /** A short, single-line form of a string, for a detail column. */
 function preview(text: string): string {

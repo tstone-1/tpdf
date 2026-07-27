@@ -8,6 +8,14 @@
  * so the focus precedes the anchor. Those are much easier to get wrong than to
  * test, and testing them should not require a webview.
  *
+ * There is no `isEmpty`. There was, and every call site guarded on it before
+ * doing anything --- and a mutation making it return `false` unconditionally
+ * changed no observable behaviour at all, because an anchor equal to the focus
+ * already yields an empty range, which yields no text, no quads and no count.
+ * Unreachable defence reads as load-bearing and can quietly become wrong, so it
+ * went the way of `queue.rs`'s zero guard. A caller that needs the question
+ * answered can ask whether the selected text is empty, which is pinned.
+ *
  * The pages *between* the ends are deliberately not enumerated. A selection from
  * page 3 to page 700 has no business materialising 697 page ranges, and the two
  * things anyone asks --- what does page N contribute, and what is the whole
@@ -37,11 +45,6 @@ export class Selection {
   constructor(at: Caret) {
     this.anchor = at;
     this.focus = at;
-  }
-
-  /** Whether anything is selected. A bare click selects nothing. */
-  get isEmpty(): boolean {
-    return this.anchor.page === this.focus.page && this.anchor.index === this.focus.index;
   }
 
   /** The two ends in reading order, whichever direction the drag went. */

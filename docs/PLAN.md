@@ -1599,12 +1599,28 @@ Escape to clear, Cmd-C to copy — and the copy waits for any page whose text ha
 because a drag can reach the clipboard before the extraction does and silently copying the
 part that happened to be loaded is a bug found in someone else's document.
 
-The check gained four assertions, and the load-bearing one is that **the dragged text is a
-substring of the whole page's text**. Everything else about selection passes with the
-character indices and the character boxes belonging to different coordinate systems — a drag
-still selects *something*. That one check ties the geometry to the codes, and it is what
-fails if the flip in `text.rs` is ever inverted. Its control is a zero-length drag, which
-must select nothing.
+The check gained four assertions, and the load-bearing one is that **text dragged near the top
+of the page comes from earlier in the page's text than text dragged further down**. It is the
+only one that ties a screen position to specific characters, and so the only one that can see
+a coordinate error. Its control is a zero-length drag, which must select nothing.
+
+It is the second attempt. The first asserted that the dragged text was a **substring** of the
+whole page's text, which sounds like the same claim and cannot fail: a selection is a
+contiguous range of character *indices* and its string is built from them, so it is a
+substring however wrong the boxes are. Inverting the y-flip in `text.rs` — precisely the
+defect it was written to catch — passed all twenty checks and returned real words from the
+wrong part of the page. The ordering check catches it, and says so in its own words: *"the
+page reads bottom to top, which it does not"*.
+
+Five mutations, one at a time. Four were caught. The fifth deleted `Selection.isEmpty`'s
+meaning by making it always return `false`, and **nothing noticed** — because every call site
+already handled an empty range correctly, so the guard changed no behaviour at all. It went
+the way of `queue.rs`'s zero guard: deleted rather than kept, since unreachable defence reads
+as load-bearing and can quietly become wrong.
+
+The mutation harness needed a control of its own first. It looked for `[FAIL]` lines, and a
+run that never produced a report has none either — so two results read as "nothing went red"
+when the truth was "nothing ran". It now requires the summary line.
 
 Not done, and not pretended otherwise: word and line selection by double- and triple-click,
 selection across a column boundary in reading order rather than index order, and any

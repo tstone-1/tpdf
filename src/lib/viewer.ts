@@ -505,7 +505,7 @@ export class Viewer {
 
   /** Characters selected, or 0. Cheap enough to compute every frame. */
   private selectedCount(): number {
-    if (!this.selection || this.selection.isEmpty) return 0;
+    if (!this.selection) return 0;
     let total = 0;
     for (const page of this.selection.pages()) {
       const range = this.selection.rangeOn(page);
@@ -610,7 +610,7 @@ export class Viewer {
    */
   async copySelection(): Promise<string | null> {
     const selection = this.selection;
-    if (!selection || selection.isEmpty) return null;
+    if (!selection) return null;
 
     if (!selection.isComplete(this.text)) {
       await Promise.all(selection.pages().map((page) => this.text.load(page)));
@@ -633,7 +633,7 @@ export class Viewer {
 
     const dpr = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
-    if (!this.selection || this.selection.isEmpty) return;
+    if (!this.selection) return;
 
     // Multiply keeps the glyphs legible underneath, which a flat fill over the
     // tile would not: the text is already painted into the pixels.

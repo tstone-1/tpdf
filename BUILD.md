@@ -211,6 +211,11 @@ than timing it --- but it does require an unlocked screen, for the reason `scrol
 does: WebKit suspends a page whose window is not visible, so behind a lock screen the check
 does not fail, it stops. Both scripts share that guard (`scripts/webview_guard.py`).
 
+**It does not take focus.** The window appears and has to stay visible, but it will not raise
+itself over what you are doing, so the run can sit in the background while you work.
+`scroll_bench.py` is the exception and calls `set_focus()` on purpose --- an unfocused window
+is throttled, and a frame-rate benchmark would then be measuring the throttle.
+
 It also checks text selection, and the load-bearing assertion there is that the dragged text
 is a **substring** of the whole page's text --- everything else about selection passes even
 when the character indices and the character boxes belong to different coordinate systems.
