@@ -9,10 +9,14 @@ guard that has nothing to do with the viewer: WebKit suspends a page whose
 window is not visible, so behind a lock screen the check does not fail, it
 stops -- and a check that cannot report its own failure is worse than none.
 
-Unlike the benchmarks this does *not* require a release bundle. It asserts
-behaviour rather than timing it, and nothing it looks at changes between
-profiles, so a `tauri dev -- --release` binary is a legitimate target and a
-debug one is only slower.
+It does not require a *release* build -- it asserts behaviour rather than timing
+it, so a debug binary is only slower -- but it does require a **bundle**. A raw
+`cargo build` executable opens a window and never runs a line of JavaScript,
+because WKWebView needs the bundle identity; the failure is a blank window, no
+error, and no output at all. Build with `npm run tauri build -- --bundles app`
+and point this at `target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf`.
+(The earlier wording here said only "does not require a release bundle", which
+is true and cost an afternoon.)
 """
 
 import argparse

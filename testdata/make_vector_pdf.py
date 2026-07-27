@@ -9,7 +9,15 @@ measuring, and it needs a page that actually exhibits it.
 
 Deterministic: fixed seed, so benchmark runs are comparable across machines.
 
-Usage: python3 make_vector_pdf.py <out.pdf> [segments]
+With a page count above one, every page shares the *same* content stream object.
+That is not a shortcut to keep the file small -- it is the point. Pdfium re-parses
+a page on every FPDF_LoadPage (44 ms on this content) and rebuilds per-page state
+on every render call (~1 s), so N pages pointing at one stream cost N times as
+much to draw while the file stays a few megabytes. It is the cheapest way to get
+a document whose *background* work outlives a moment, which is what the thumbnail
+strip's yield has to be tested against.
+
+Usage: python3 make_vector_pdf.py <out.pdf> [segments] [pages]
 """
 
 import random
@@ -51,18 +59,24 @@ def content_stream(segments: int) -> bytes:
     return zlib.compress("\n".join(out).encode("ascii"), 6)
 
 
-def build(path: str, segments: int) -> None:
+def build(path: str, segments: int, pages: int = 1) -> None:
     stream = content_stream(segments)
+
+    # 1 catalog, 2 page tree, 3 content stream, then one object per page.
+    first_page = 4
+    kids = " ".join("%d 0 R" % (first_page + i) for i in range(pages))
+    page_object = (
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {WIDTH} {HEIGHT}] "
+        f"/Contents 3 0 R /Resources << >> >>"
+    ).encode("ascii")
 
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {WIDTH} {HEIGHT}] "
-        f"/Contents 4 0 R /Resources << >> >>".encode("ascii"),
+        ("<< /Type /Pages /Kids [%s] /Count %d >>" % (kids, pages)).encode("ascii"),
         b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream)
         + stream
         + b"\nendstream",
-    ]
+    ] + [page_object] * pages
 
     body = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
     offsets = []
@@ -87,5 +101,6 @@ def build(path: str, segments: int) -> None:
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "vector-heavy.pdf"
     count = int(sys.argv[2]) if len(sys.argv) > 2 else 200_000
-    build(out, count)
-    print(f"[OK] wrote {out}")
+    pages = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+    build(out, count, pages)
+    print(f"[OK] wrote {out} ({pages} page{'' if pages == 1 else 's'})")

@@ -98,6 +98,7 @@ redistributed --- `make_text_pdf.py` embeds a system font.
 uv run --with fonttools testdata/make_text_pdf.py testdata
 python3 testdata/make_hostile_pdf.py testdata
 python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf
+python3 testdata/make_vector_pdf.py testdata/vector-multi.pdf 200000 12
 uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testdata
 python3 testdata/make_outline_pdf.py testdata
 ```
@@ -205,8 +206,8 @@ entry for `/usr/sbin/purge`.
 The reading surface is asserted rather than eyeballed. This opens a document in a real
 webview, dispatches real wheel and key events at it, and checks fit-width, scrolling, End
 and Home, the zoom ladder, a pinch, resize, text selection and copy, find-in-document, the
-command palette, the screen-reader text layer, the outline sidebar, and that the frame loop
-idles when there is nothing to do:
+command palette, the screen-reader text layer, the outline sidebar, the page-thumbnail
+strip, and that the frame loop idles when there is nothing to do:
 
 ```
 scripts/viewer_check.py \
@@ -259,20 +260,27 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all four corpora. Every run reports the same **53 check names**; what differs is how
+Run all five corpora. Every run reports the same **63 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 43 | 10 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 51 | 2 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 52 | 1 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 29 | 24 | one page, no extractable text |
+| `text-heavy.pdf` | 52 | 11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 58 | 5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 58 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 34 | 29 | one page, no extractable text |
+| `vector-multi.pdf` | 41 | 22 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
 
 `vector-heavy` skipping most of them is the expected output there, not a problem. The one
 search check it does run is the useful one for that document: that the viewer says there is
 no text to search rather than reporting no matches.
+
+`vector-multi` earns its place with three checks and nothing else: a thumbnail costs about a
+millisecond on a text page and a second and a half on an A0 sheet, so it is the only corpus
+where the page strip can still be rendering when the viewer asks for a tile. On every other
+document those three report `[SKIP] the thumbnail finished before the viewer asked for
+anything` --- which is the honest answer, and is why they are not written as a pass.
 
 What it does **not** cover: the command list `App.svelte` registers, and the Cmd-K that
 opens the palette. The check builds its own registry, so it proves the palette works and

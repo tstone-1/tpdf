@@ -346,6 +346,17 @@ export class Viewer {
   }
 
   /**
+   * A page's tier-1 placeholder, for the page strip to borrow.
+   *
+   * The strip renders at the same 150 px, so a page the viewer has already
+   * prepared costs it nothing --- which on the A0 sheet is the difference
+   * between showing the page being read immediately and 1.5 s of blank row.
+   */
+  placeholderFor(page: number): ImageBitmap | null {
+    return this.scroller.placeholderFor(page);
+  }
+
+  /**
    * Starts the frame loop if it is not already running.
    *
    * Every state change goes through here. It is idempotent on purpose: callers

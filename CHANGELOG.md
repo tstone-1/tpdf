@@ -139,6 +139,28 @@ experience.
   before the fixes they prompted: a roving tabindex that did not follow real focus, an
   arrival highlighting the entry *before* the one clicked, and a fixture whose lines were
   all identical.
+- **Page thumbnails in the sidebar** (`src/lib/thumbnails.ts`), as its second tab. The first
+  feature that competes with the reader for the renderer: a 150 px thumbnail of the A0 sheet
+  costs **1.52 s**, PDFium charges that per render *call*, and the render service is one FIFO
+  thread. So the strip keeps at most one request outstanding and **withdraws it whenever the
+  viewer has work** --- through the same progressive-API cancellation a stale tile uses, which
+  returns in 0.25--24 ms. The viewer waits tens of milliseconds for a thumbnail instead of a
+  second and a half, and the withdrawn page is asked for again once things settle.
+
+  A hidden strip renders nothing at all. Rows exist only for the visible window plus an
+  overscan, so `aria-setsize` and `aria-posinset` are load-bearing rather than decorative.
+  Tier 1 is *read* --- the placeholder and the thumbnail are the same bitmap, so the page
+  being read appears instantly --- and deliberately not written, since tier 1 is permanent
+  and one entry per page is 98 MB on the 775-page corpus.
+
+  Twelve mutations, all caught by the check each was aimed at --- after two of the new
+  checks turned out to be wrong in ways only mutation could show.
+  One could be **switched off by the defect it was aimed at**: it skipped when every row was
+  built, so deleting windowing made it report itself inapplicable rather than fail. The other
+  was bounded the wrong way round --- "some thumbnail was borrowed" passes *harder* when a
+  missing in-flight guard borrows the same page on every scroll, which is what it was doing.
+  A new twelve-page fixture, `vector-multi.pdf`, is the only document where a thumbnail is
+  slow enough to collide with the viewer at all; elsewhere those checks skip and say so.
 - **Front-end unit tests, and a seventh quality gate.** `vitest`, over command ranking and
   line splitting --- the first front-end logic with an answer that can be *wrong* rather than
   merely ugly.

@@ -31,6 +31,7 @@ import { CommandRegistry } from "./commands";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { Sidebar } from "./sidebar";
+import { OVERSCAN, rowHeightFor } from "./thumbnails";
 import { Viewer, type ViewerStatus } from "./viewer";
 
 /** Size of the surface the check mounts, in CSS pixels. */
@@ -242,18 +243,37 @@ async function run(path: string): Promise<void> {
   // Mounted outside the viewer's root, and wired through `onPosition` exactly
   // as `App.svelte` wires it --- so what is checked below is the connection the
   // application has, not a second one written for the check.
+  //
+  // Given a real height, beside the viewer rather than on top of it. A zero-size
+  // panel was enough for the outline, and is not for the page strip: the strip
+  // builds the rows its panel can show, so in a box of no height it would build
+  // one row and every assertion about windowing would pass on nothing.
   const panel = document.createElement("div");
-  panel.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;";
+  panel.style.cssText =
+    `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
   const sidebar = new Sidebar(panel, {
     onNavigate: (target, top) => viewer.goToDestination(target, top),
+    pages: {
+      doc: doc.id,
+      pageCount: doc.page_count,
+      page,
+      tier1: { placeholderFor: (at) => viewer.placeholderFor(at) },
+      onNavigate: (at) => viewer.goToPage(at),
+    },
   });
 
   const viewer = new Viewer(root, {
     doc: doc.id,
     pageCount: doc.page_count,
     page,
-    onStatus: (next) => (seen.status = next),
+    onStatus: (next) => {
+      seen.status = next;
+      // The wiring the yield depends on, taken from `App.svelte` rather than
+      // invented here: without this line the strip never learns the viewer is
+      // busy and the check below would be testing a mechanism nothing drives.
+      sidebar.setViewerBusy(next.pending > 0);
+    },
     onPosition: (at, top) => sidebar.setPosition(at, top),
   });
 
@@ -377,6 +397,7 @@ async function run(path: string): Promise<void> {
   await paletteChecks(viewer);
   await accessibilityChecks(root, viewer, doc, seen);
   await outlineChecks(viewer, sidebar, doc);
+  await thumbnailChecks(root, viewer, sidebar, doc, page);
 
   sidebar.destroy();
   panel.remove();
@@ -1289,6 +1310,303 @@ function refusalCheck(viewer: Viewer, sidebar: Sidebar, rows: Row[]): void {
       viewer.offset === before,
     `"${preview(refused.title)}" disabled=${element?.getAttribute("aria-disabled")}, ` +
       `offset ${before.toFixed(0)} -> ${viewer.offset.toFixed(0)}`,
+  );
+}
+
+/**
+ * The page strip, and the rule that keeps it out of the viewer's way.
+ *
+ * Most of this is ordinary --- rows exist, a row goes to its page --- and one
+ * check is the reason the strip is written the way it is: **it withdraws its
+ * work the moment the viewer needs the renderer.** A thumbnail is a Pdfium
+ * render call, 1.5 s of one on the A0 sheet, on the single thread that also
+ * draws the page in front of the reader.
+ *
+ * That check cannot be written without a control, and the control is not the
+ * usual "were we already there". It is *was there anything to withdraw*: on the
+ * text corpus a thumbnail takes about a millisecond, so a strip asked to yield
+ * has almost certainly finished already, and "nothing is outstanding" would be
+ * true of a strip that had never heard of the viewer. So the run first waits to
+ * catch a request in flight, and says so and skips when it cannot --- which is
+ * the honest answer for a document whose thumbnails are too cheap to collide
+ * with anything. `vector-multi.pdf` exists to be the document where it can.
+ */
+async function thumbnailChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  sidebar: Sidebar,
+  doc: DocumentInfo,
+  page: PageSize,
+): Promise<void> {
+  const strip = sidebar.thumbnails;
+  if (!strip) {
+    check("the sidebar has a tab for pages", false, "no strip was built");
+    return;
+  }
+
+  const tabs = panelTabs();
+  check(
+    "the sidebar has a tab for pages",
+    tabs.length === 2 && tabs.filter((t) => t.getAttribute("aria-selected") === "true").length === 1,
+    `${tabs.length} tabs (${tabs.map((t) => t.textContent).join(", ")}), ` +
+      `${tabs.filter((t) => t.getAttribute("aria-selected") === "true").length} selected`,
+  );
+
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  sidebar.selectTab("pages");
+  check(
+    "showing the pages tab hides the outline",
+    sidebar.tab === "pages" && !panelShown("outline") && panelShown("pages"),
+    `outline shown=${panelShown("outline")}, pages shown=${panelShown("pages")}`,
+  );
+
+  await eventually(
+    "a thumbnail arrives for the page being read",
+    () => strip.rendered.includes(0),
+    () => `rendered pages: ${strip.rendered.slice(0, 8).join(", ") || "none"}`,
+  );
+
+  // The page on screen already has a tier-1 placeholder, which is the same
+  // 150 px bitmap at the same scale. Rendering it again would be a second
+  // second-and-a-half on the A0 sheet for a picture we already have.
+  //
+  // Bounded above as well as below, and the upper bound is the half that found
+  // a defect: a borrow completes in a microtask, so without a guard the same
+  // page is borrowed again on every scroll, resize and position change that
+  // lands in between. It read as twelve borrows on a twelve-page document with
+  // seven rows on screen --- true, useless, and invisible to "more than zero".
+  check(
+    "the page already rendered is not rendered twice",
+    strip.borrowCount > 0 && strip.borrowCount <= strip.rendered.length,
+    `${strip.borrowCount} thumbnails borrowed from the viewer's tier 1, ` +
+      `${strip.rendered.length} drawn`,
+  );
+
+  const mounted = strip.mounted;
+  const windowName = "the strip builds only the rows on screen";
+  // The most rows a panel this tall could want, from the row height and the
+  // overscan --- not from what the strip actually built. Two earlier versions
+  // of this were wrong in opposite directions, and the second is the one worth
+  // remembering: written as `mounted.length < pageCount`, with the skip taken
+  // when it is not, a mutation that builds *every* row does not fail the check,
+  // it makes the check report itself inapplicable. An assertion whose
+  // precondition the defect can switch off is not an assertion.
+  const maxRows = Math.ceil(HEIGHT / rowHeightFor(page)) + 1 + 2 * OVERSCAN;
+  if (doc.page_count <= maxRows) {
+    skip(windowName, `all ${doc.page_count} rows fit in a ${HEIGHT} px panel`);
+  } else {
+    check(
+      windowName,
+      mounted.length > 0 && mounted.length <= maxRows,
+      `${mounted.length} rows built of ${doc.page_count} pages, at most ` +
+        `${maxRows} can be on screen`,
+    );
+  }
+
+  // Windowing is invisible to a screen reader unless each row says where it
+  // sits in the whole document; without this it is told the document has as
+  // many pages as happen to be mounted.
+  const rows = mounted
+    .map((page) => strip.elementFor(page))
+    .filter((element) => element !== null);
+  check(
+    "a row says where it is in the whole document",
+    rows.length === mounted.length &&
+      rows.every(
+        (element, at) =>
+          element.getAttribute("aria-setsize") === String(doc.page_count) &&
+          element.getAttribute("aria-posinset") === String(mounted[at]! + 1),
+      ),
+    `${rows.length} rows, setsize=${rows[0]?.getAttribute("aria-setsize")} ` +
+      `of ${doc.page_count}, first posinset=${rows[0]?.getAttribute("aria-posinset")}`,
+  );
+
+  await navigateFromStrip(viewer, strip, doc);
+  await yieldChecks(root, viewer, sidebar, doc.page_count, strip);
+}
+
+/** Every tab button in the sidebar, in order. */
+function panelTabs(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('.tpdf-sidebar [role="tab"]')];
+}
+
+/** Whether a panel is displayed. */
+function panelShown(tab: string): boolean {
+  const panel = document.getElementById(`tpdf-panel-${tab}`);
+  return !!panel && getComputedStyle(panel).display !== "none";
+}
+
+/** Activating a row moves the viewer, asserted against not being there already. */
+async function navigateFromStrip(
+  viewer: Viewer,
+  strip: { mounted: number[]; elementFor(page: number): HTMLElement | null },
+  doc: DocumentInfo,
+): Promise<void> {
+  const name = "activating a row goes to its page";
+  if (doc.page_count < 2) {
+    skip(name, "the document has one page");
+    return;
+  }
+
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  const here = viewer.position.page;
+  // The furthest *built* row that is not the one we are on. Written as "the
+  // last page", it skipped on every document long enough for windowing to
+  // matter --- which is every document this check is interesting on.
+  const target = strip.mounted.filter((page) => page !== here).pop();
+  const element = target === undefined ? null : strip.elementFor(target);
+  if (target === undefined || !element) {
+    skip(name, `no row other than page ${here + 1} is currently built`);
+    return;
+  }
+
+  element.focus();
+  key(element, "Enter");
+  await settle(() => viewer.position.page === target);
+  check(
+    name,
+    viewer.position.page === target,
+    `from page ${here + 1} to ${viewer.position.page + 1}, wanted ${target + 1}`,
+  );
+}
+
+/**
+ * The yield, and the hidden strip --- both with the same control.
+ *
+ * Neither can be tested on a document whose thumbnails finish faster than a
+ * frame: "nothing is outstanding" is then true for reasons that have nothing to
+ * do with the mechanism. So both wait to catch a request in flight first, and
+ * both skip with that reason when they cannot.
+ */
+async function yieldChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  sidebar: Sidebar,
+  pageCount: number,
+  strip: {
+    outstanding: boolean;
+    yieldCount: number;
+    rendered: number[];
+  },
+): Promise<void> {
+  const yields = "the strip withdraws its work when the viewer needs the renderer";
+  const quiet = "a hidden strip asks for nothing";
+  const resumes = "and starts again when it is shown";
+
+  /** Waits to catch a thumbnail in flight, which every check here needs. */
+  const caught = async (): Promise<boolean> => {
+    const deadline = performance.now() + 3000;
+    while (!strip.outstanding && performance.now() < deadline) await frame();
+    return strip.outstanding;
+  };
+
+  const why = "no thumbnail stayed in flight long enough to collide with anything";
+  if (!(await caught())) {
+    skip(yields, why);
+    skip(quiet, why);
+    skip(resumes, why);
+    return;
+  }
+
+  // Three outcomes, not two, and the third is why this is written out rather
+  // than folded into one boolean. A thumbnail that *finished* before the viewer
+  // asked for anything leaves nothing outstanding --- which reads exactly like a
+  // successful withdrawal and is no evidence at all. On the text corpus a
+  // thumbnail takes about a millisecond, so that is the common case there, and
+  // an earlier version of this check reported it as a failure. It is neither.
+  const before = strip.yieldCount;
+  // No `await` between the test and the press: the fetch can only settle in a
+  // microtask, so this is the one place the two are known to be simultaneous.
+  const inFlight = strip.outstanding;
+  // A zoom step throws away every tier-2 tile, so the viewer wants a screenful
+  // immediately. This is the collision the whole design is about.
+  key(root, "+", true);
+  await frame();
+  await frame();
+
+  if (!inFlight) {
+    skip(yields, `${why} — it settled between catching it and the zoom`);
+  } else if (strip.yieldCount > before) {
+    check(
+      yields,
+      !strip.outstanding,
+      `withdrew ${strip.yieldCount - before} request(s) within two frames of ` +
+        `the viewer wanting tiles; outstanding=${strip.outstanding}`,
+    );
+  } else if (strip.outstanding) {
+    check(
+      yields,
+      false,
+      "the thumbnail is still rendering with the viewer waiting behind it",
+    );
+  } else {
+    skip(yields, "the thumbnail finished before the viewer asked for anything");
+  }
+
+  // And the other half. Hiding the whole panel rather than switching tabs:
+  // they are the same thing to the strip, and the panel is what a reader
+  // closes.
+  //
+  // Not written as "catch a request and watch it disappear", which is what the
+  // check above does and what this one did first: it skipped on every corpus,
+  // because by the time the zoom had settled the few rows on screen were all
+  // drawn and there was nothing left in flight to catch. The property does not
+  // need a request in flight --- it needs *work remaining*, which is a fact
+  // about the document rather than about timing.
+  key(root, "0", true);
+  await settle(() => viewer.idle);
+
+  // Somewhere the strip has not drawn yet. "Any page without a thumbnail" is
+  // not enough --- the strip only renders the rows in its own window, so on the
+  // 775-page corpus it had 763 pages left and nothing to do, and the control
+  // below failed for exactly the right reason. What has to move is the window.
+  const already = new Set(strip.rendered);
+  let far = -1;
+  for (let page = pageCount - 1; page >= 0; page--) {
+    if (!already.has(page)) {
+      far = page;
+      break;
+    }
+  }
+  if (far < 0) {
+    const done = "every page of this document already has a thumbnail";
+    skip(quiet, done);
+    skip(resumes, done);
+    return;
+  }
+
+  sidebar.setVisible(false);
+  const stopped = !strip.outstanding;
+  // Moved while hidden, so the strip's window lands on undrawn rows the moment
+  // it is shown again. It follows the reader either way; doing it here is what
+  // makes "it starts again" a claim about being shown rather than about the
+  // scroll that happened to accompany it.
+  viewer.goToPage(far);
+  await settle(() => viewer.idle);
+
+  const drawn = strip.rendered.length;
+  // Long enough that a strip still working would have finished something: a
+  // thumbnail costs about a millisecond on a text page and a second and a half
+  // on the A0 sheet, and this waits three seconds.
+  const until = performance.now() + 3000;
+  while (performance.now() < until) await frame();
+
+  check(
+    quiet,
+    stopped && strip.rendered.length === drawn,
+    `withdrew on hide=${stopped}, ${drawn} of ${pageCount} thumbnails before ` +
+      `and ${strip.rendered.length} after three seconds hidden on page ${far + 1}`,
+  );
+
+  // The control, and it is the half that makes the check above mean anything:
+  // a strip with nothing left to draw would also draw nothing while hidden.
+  sidebar.setVisible(true);
+  await eventually(
+    resumes,
+    () => strip.rendered.length > drawn,
+    () => `${drawn} thumbnails while hidden, ${strip.rendered.length} after`,
   );
 }
 
