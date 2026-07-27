@@ -1309,6 +1309,44 @@ across a large multilingual document** with malformed encodings and custom CMaps
 **Exit criterion:** tpdf is the daily default for reading. If it is not, it is not
 finished.
 
+#### Cancellable rendering — done 2026-07-27
+
+The carried-forward A0 failure is a latency problem: a tile takes seconds, the render is
+uninterruptible, and so the renderer stays busy on a tile the viewport left long ago.
+`src/progressive.rs` removes the "uninterruptible" half. It owns `FPDF_DOCUMENT`,
+`FPDF_PAGE` and `FPDF_BITMAP` directly, because `pdfium-render` keeps every handle
+accessor `pub(crate)` and the progressive functions take raw handles — so the safe wrapper
+cannot reach them at all.
+
+`bin/progressive_probe.rs` measured it on the A0 sheet, one 1024² tile at 1x:
+
+| question | answer |
+|---|---|
+| does pausing change the pixels? | no — byte-identical to the safe path, sliced or not |
+| how often can it be interrupted? | 268 times in a 6.4 s render, **and 268 whatever slice is asked for** |
+| what does that bound? | 24 ms mean between polls, 66 ms worst observed |
+| what does cancelling cost to notice? | 0.25–24 ms, against a 6.3 s render |
+| what does slicing cost? | 1–2%, inside the round-to-round noise |
+
+The one that changes a design assumption is the second. The poll points are wherever
+PDFium's own work divides, so the slice picks *which* of them we stop at and cannot create
+more. Latency budgets have to be written against PDFium's spacing, not against a number we
+choose.
+
+Three things are known and not yet done, and the next increment is the first of them:
+
+- **Nothing supersedes anything yet.** The mechanism exists; `render.rs` still runs one
+  uninterrupted render per request off a queue. Wiring cancellation in needs a generation
+  from the frontend saying which tiles the viewport still wants, and it has to be measured
+  against §8's coverage floor rather than against frame rate — the failure being fixed is
+  one that already posts a perfect 60 fps.
+- **A cancelled tile is a real partial composite**, not an untouched buffer, but whether it
+  is worth showing is unmeasured: the A0 fixture saturates every similarity metric tried
+  (see `AGENTS.md`). That needs a realistic drawing, not a stress fixture.
+- **Form-field appearances are not drawn.** The safe path follows its render with
+  `FPDF_FFLDraw`; the progressive path does not, so documents with interactive widgets will
+  differ until that pass exists.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

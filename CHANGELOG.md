@@ -45,6 +45,16 @@ needs the worker pool and the progressive render API.
 
 ### Added
 
+- **Cancellable rendering** (`src-tauri/src/progressive.rs`). PDFium's progressive API,
+  driven on raw `FPDF_DOCUMENT` / `FPDF_PAGE` / `FPDF_BITMAP` handles, because
+  `pdfium-render` keeps every handle accessor `pub(crate)` and the safe wrapper therefore
+  cannot reach it. A render can now be abandoned from another thread in 0.25--24 ms where
+  it previously ran to completion over 6.3 s. Uncancelled output is byte-identical to the
+  existing path. Not yet wired into the viewer --- see `docs/PLAN.md` §Phase 1.
+- `src-tauri/src/bin/progressive_probe.rs` --- measures the above: pixel identity against
+  the safe path, poll frequency and the latency it bounds, and what a cancelled bitmap
+  actually contains. Its `identity` mode fails a run in which nothing paused, so a passing
+  result cannot be one that never exercised pausing.
 - `scripts/fetch_pdfium.py` --- installs the pinned PDFium build (`chromium/7881`),
   verifying its SHA256 before extracting and refusing a V8 asset. A clean clone could not
   previously build: `vendor/pdfium/` is gitignored and nothing fetched it.

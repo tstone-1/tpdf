@@ -802,6 +802,66 @@ on anything the safe API produced.** Cancellable rendering therefore means ownin
 bindings trait. The safe wrapper is all-or-nothing: use it and you cannot cancel. This
 points the same way as the worker design, whose processes want raw handles regardless.
 
+`src/progressive.rs` is that ownership, and `bin/progressive_probe.rs` measured it. An
+uncancelled progressive render is **byte-identical** to `render_into_bitmap_with_config`
+on every fixture tried, sliced or not --- which is also what asserts the flags, clear
+colour and placement, since `pdfium-render` re-exports the handle *types* out of its
+private `bindgen` module but not the `FPDF_ANNOT` / `FPDF_REVERSE_BYTE_ORDER` /
+`FPDFBitmap_BGRA` constants, so those had to be restated by value. One documented gap: the
+safe path also calls `FPDF_FFLDraw` to overlay interactive form-field appearances, and the
+progressive path does not.
+
+### PDFium decides how often it can be interrupted, and the slice does not change it
+
+Measured 2026-07-27 on the A0 sheet, one 1024² tile at 1x, a 6.4 s render
+(`progressive-probe --mode poll`). PDFium polled `NeedToPauseNow` **268 times, and exactly
+268 times in every variant** --- with no slice, with a 16 ms slice, and with a 0 ms slice
+that asks it to stop at the first opportunity. The polls are wherever PDFium's own work
+divides; a slice only chooses *which* of them we pause at.
+
+So the granularity is not a tuning parameter. Mean gap 24 ms, worst observed **66 ms**, and
+asking for a 1 ms slice cannot beat that --- the number says how long PDFium goes without
+asking, not how long we are willing to wait. Any latency budget has to be written against
+the poll spacing, and any claim of finer control is a claim about a knob that does nothing.
+
+What it buys is nonetheless decisive: cancellation from another thread returned in
+**0.25--24 ms against a 6.3 s render**, and slicing costs about 1--2%, which is inside the
+round-to-round noise. Note the cancelling thread sets an `AtomicBool` and touches no PDFium
+state --- that is the only reason a second thread is involved at all.
+
+Two traps in testing this. A **cheap page offers no interruption points**: the text corpus
+renders a tile in 1.5 ms with `polls: 1`, so a cancellation test there passes by never
+being exercised, which is why the probe fails a run whose sliced variant never actually
+paused. And a cancelled render leaves a **genuine partial composite** in the caller's
+bitmap rather than an untouched buffer --- PDFium composites as it goes --- so the buffer
+is not safe to reuse on the assumption that a cancelled render wrote nothing.
+
+### Three similarity metrics in a row, each unable to see its own failure
+
+Characterising a cancelled tile went through three metrics before one behaved, and all
+three failures are the same shape as the crash test that compiled away:
+
+- **"Fraction of pixels with ink"** --- defined as *not opaque white* --- reports an
+  untouched, all-zero buffer as **100% ink**. It cannot distinguish "PDFium drew the whole
+  tile" from "nothing ever wrote here", which is precisely the distinction it was added to
+  make. Fixed by reporting the all-white and all-zero fractions separately.
+- **Exact pixel match** reports **0.00%** for a partial that is visibly most of the way
+  there, because the A0 fixture is antialiased random linework covering every pixel and no
+  pixel is ever exactly right until the last stroke lands.
+- **Mean absolute channel error** reads **45.1, 44.4, 44.2, 45.3** for cancellations at
+  0.5, 1.5, 3.0 and 5.0 s of a 6.3 s render. It does not converge, because the distance
+  between two dense random-colour images is roughly constant whatever fraction is drawn.
+
+The fixture saturates all three, which is a property of a fixture built to be a
+pathological *renderer* stress test and never intended as a *perceptual* one. What can
+still be proven on it: the partial is not the untouched buffer, not the cleared buffer, and
+not the finished tile, and an early cancellation differs from a late one. Whether a partial
+tile is worth putting on screen is **not measured** and needs a realistic drawing.
+
+The rule that survives all three: **a similarity number is not evidence until you have
+shown what it reads on the failure you are trying to exclude.** Dumping the tiles and
+looking at them took two minutes and settled what an hour of metrics could not.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a
