@@ -70,7 +70,7 @@ enum Mode {
 
 struct Args {
     file: PathBuf,
-    page: u16,
+    page: u32,
     scale: f32,
     tile: u16,
     mode: Mode,
@@ -744,7 +744,7 @@ fn parse_args() -> Args {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
     let mut file = None;
-    let mut page = 0u16;
+    let mut page = 0u32;
     let mut scale = 1.0f32;
     let mut tile = 1024u16;
     let mut mode = Mode::Identity;

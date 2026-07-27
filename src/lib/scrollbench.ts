@@ -43,6 +43,7 @@ interface ScrollBenchConfig {
   cache_tiles: number;
   max_in_flight: number;
   prefetch_screens: number;
+  cancels: number[];
 }
 
 interface DocumentInfo {
@@ -79,20 +80,47 @@ interface Round {
   wallMs: number;
   delivered: number;
   discarded: number;
+  /** Withdrawn before the renderer finished them. */
+  abandoned: number;
   requested: number;
   megabytes: number;
   renderMs: number;
   decodeMs: number;
 }
 
+/** How long a variant may take to drain before the next one starts anyway. */
+const SETTLE_FRAMES = 900;
+
 function nextFrame(): Promise<number> {
   return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+/**
+ * Waits for a variant's outstanding requests to leave the shared renderer.
+ *
+ * Every variant queues into the same single render thread, and a backlog
+ * outlives the round that created it: on the A0 corpus, whichever variant ran
+ * first reached full tier-1 coverage and whichever ran second reached 75%,
+ * whatever the variants actually were. Swapping them swapped the result, which
+ * is how it was found. Bounded rather than unbounded, and it reports what it
+ * gave up on, because a variant that withdraws nothing can genuinely take four
+ * seconds a tile to finish draining.
+ */
+async function settle(variant: Variant, frames: number): Promise<number> {
+  for (let frame = 0; frame < frames; frame++) {
+    if (variant.scroller.outstanding === 0) return frame;
+    await nextFrame();
+  }
+  return frames;
 }
 
 function quantile(values: number[], q: number): number {
   if (values.length === 0) return NaN;
   const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))));
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.round(q * (sorted.length - 1))),
+  );
   return sorted[index] ?? NaN;
 }
 
@@ -224,6 +252,7 @@ async function scrollRound(
     wallMs: previous - wallStart,
     delivered: scroller.stats.delivered,
     discarded: scroller.stats.discarded,
+    abandoned: scroller.stats.abandoned,
     requested: scroller.stats.requested,
     megabytes: scroller.stats.bytes / (1024 * 1024),
     renderMs: scroller.stats.renderMs,
@@ -243,29 +272,37 @@ function buildVariants(
 
   for (const layout of config.layouts) {
     for (const zoom of config.zooms) {
-      const host = document.createElement("div");
-      host.style.display = "none";
-      stage.appendChild(host);
+      for (const cancel of config.cancels) {
+        const host = document.createElement("div");
+        host.style.display = "none";
+        stage.appendChild(host);
 
-      variants.push({
-        label: `${layout}/${zoom.toFixed(0)}x`,
-        layout: layout as Layout,
-        zoom,
-        host,
-        scroller: new Scroller(host, {
-          doc: doc.id,
-          pageCount: doc.page_count,
-          page,
-          zoom,
+        variants.push({
+          // Only labelled when there is more than one to tell apart, so the
+          // ordinary single-variant run keeps its established row names.
+          label:
+            config.cancels.length > 1
+              ? `${layout}/${zoom.toFixed(0)}x/${cancel ? "cancel" : "plain"}`
+              : `${layout}/${zoom.toFixed(0)}x`,
           layout: layout as Layout,
-          tilePx: config.tile_px,
-          dpr: window.devicePixelRatio,
-          viewport,
-          prefetchScreens: config.prefetch_screens,
-          cacheTiles: config.cache_tiles,
-          maxInFlight: config.max_in_flight,
-        }),
-      });
+          zoom,
+          host,
+          scroller: new Scroller(host, {
+            doc: doc.id,
+            pageCount: doc.page_count,
+            page,
+            zoom,
+            layout: layout as Layout,
+            tilePx: config.tile_px,
+            dpr: window.devicePixelRatio,
+            viewport,
+            prefetchScreens: config.prefetch_screens,
+            cacheTiles: config.cache_tiles,
+            maxInFlight: config.max_in_flight,
+            cancel: cancel !== 0,
+          }),
+        });
+      }
     }
   }
 
@@ -287,12 +324,25 @@ function report(
 
   log(`file            ${config.path}`);
   log(`pages           ${doc.page_count}`);
-  log(`page 1          ${page.width_pt.toFixed(0)} x ${page.height_pt.toFixed(0)} pt`);
-  log(`viewport        ${viewport.width} x ${viewport.height} css px @ dpr ${window.devicePixelRatio}`);
-  log(`tile            ${config.tile_px}² device px, ${config.cache_tiles} resident, ${config.max_in_flight} in flight`);
-  log(`scroll          ${config.px_per_frame} css px/frame, ${config.frames} frames x ${config.rounds} rounds`);
+  log(
+    `page 1          ${page.width_pt.toFixed(0)} x ${page.height_pt.toFixed(0)} pt`,
+  );
+  log(
+    `viewport        ${viewport.width} x ${viewport.height} css px @ dpr ${window.devicePixelRatio}`,
+  );
+  log(
+    `tile            ${config.tile_px}² device px, ${config.cache_tiles} resident, ${config.max_in_flight} in flight`,
+  );
+  log(
+    `withdrawal      ${config.cancels.map((c) => (c ? "on" : "off")).join(", ")}`,
+  );
+  log(
+    `scroll          ${config.px_per_frame} css px/frame, ${config.frames} frames x ${config.rounds} rounds`,
+  );
   log();
-  log(`clock step      ${resolutionMs.toFixed(3)} ms  (no claim below this is supportable)`);
+  log(
+    `clock step      ${resolutionMs.toFixed(3)} ms  (no claim below this is supportable)`,
+  );
   // Both are controls on the cadence below. WebKit throttles a page whose
   // window is not visible and can slow one that is not focused, either of
   // which would read as a platform ceiling rather than as a benchmark that was
@@ -306,7 +356,9 @@ function report(
       `(${(1000 / quantile(idle, 0.5)).toFixed(0)} Hz), ` +
       `min ${Math.min(...idle).toFixed(2)}, max ${Math.max(...idle).toFixed(2)}`,
   );
-  log(`drop threshold  > ${(baselineMs * 1.5).toFixed(2)} ms; stall > ${(baselineMs * 2.5).toFixed(2)} ms`);
+  log(
+    `drop threshold  > ${(baselineMs * 1.5).toFixed(2)} ms; stall > ${(baselineMs * 2.5).toFixed(2)} ms`,
+  );
   log();
 
   const header = [
@@ -324,6 +376,7 @@ function report(
     pad("any", 6, true),
     pad("tiles", 7, true),
     pad("cut", 6, true),
+    pad("abd", 6, true),
     pad("MB/s", 7, true),
   ].join(" ");
   log(header);
@@ -358,10 +411,41 @@ function report(
         // recovers a usable figure from a clock that cannot resolve one.
         pad(mean(callbacks).toFixed(2), 8, true),
         pad(Math.max(...callbacks).toFixed(2), 7, true),
-        pad(`${(mean(mine.map((r) => r.coverage)) * 100).toFixed(0)}%`, 7, true),
-        pad(`${(mean(mine.map((r) => r.anyCoverage)) * 100).toFixed(0)}%`, 6, true),
-        pad((mine.reduce((sum, r) => sum + r.delivered, 0) / mine.length).toFixed(0), 7, true),
-        pad((mine.reduce((sum, r) => sum + r.discarded, 0) / mine.length).toFixed(0), 6, true),
+        pad(
+          `${(mean(mine.map((r) => r.coverage)) * 100).toFixed(0)}%`,
+          7,
+          true,
+        ),
+        pad(
+          `${(mean(mine.map((r) => r.anyCoverage)) * 100).toFixed(0)}%`,
+          6,
+          true,
+        ),
+        pad(
+          (mine.reduce((sum, r) => sum + r.delivered, 0) / mine.length).toFixed(
+            0,
+          ),
+          7,
+          true,
+        ),
+        pad(
+          (mine.reduce((sum, r) => sum + r.discarded, 0) / mine.length).toFixed(
+            0,
+          ),
+          6,
+          true,
+        ),
+        // `cut` is work that was paid for and thrown away; `abd` is work that
+        // was withdrawn before it finished. The second rising as the first
+        // falls is the whole point of the queue being cancellable, and neither
+        // number alone shows it.
+        pad(
+          (mine.reduce((sum, r) => sum + r.abandoned, 0) / mine.length).toFixed(
+            0,
+          ),
+          6,
+          true,
+        ),
         pad(((megabytes / wallMs) * 1000).toFixed(0), 7, true),
       ].join(" "),
     );
@@ -373,7 +457,12 @@ function report(
     const series = rounds
       .filter((r) => r.label === label)
       .sort((a, b) => a.round - b.round)
-      .map((r) => r.intervals.filter((ms) => ms > baselineMs * 1.5).length.toString().padStart(3))
+      .map((r) =>
+        r.intervals
+          .filter((ms) => ms > baselineMs * 1.5)
+          .length.toString()
+          .padStart(3),
+      )
       .join(" ");
     log(`  ${pad(label, 16)} ${series}`);
   }
@@ -400,7 +489,9 @@ function report(
         // from a state no user would have waited through, and its frame times
         // describe a scroller that is still catching up rather than one that
         // is keeping up.
-        (mean(mine.map((r) => r.warmupCoverage)) < 0.999 ? "   (never filled)" : ""),
+        (mean(mine.map((r) => r.warmupCoverage)) < 0.999
+          ? "   (never filled)"
+          : ""),
     );
   }
 }
@@ -420,7 +511,9 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
   try {
     const resolutionMs = clockResolutionMs();
 
-    const doc = await invoke<DocumentInfo>("open_document", { path: config.path });
+    const doc = await invoke<DocumentInfo>("open_document", {
+      path: config.path,
+    });
     const page = doc.pages[0];
     if (!page) throw new Error("document has no pages");
 
@@ -437,15 +530,31 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
     const variants = buildVariants(stage, config, doc, page, viewport);
     const rounds: Round[] = [];
 
+    let unsettled = 0;
     for (let round = 0; round < config.rounds; round++) {
       for (const variant of variants) {
         for (const other of variants) other.host.style.display = "none";
         variant.host.style.display = "block";
         rounds.push(await scrollRound(variant, config, round));
+        // After the round, not before: the backlog to drain is the one this
+        // round just created, and draining it here is what makes the next
+        // variant's numbers its own.
+        if ((await settle(variant, SETTLE_FRAMES)) >= SETTLE_FRAMES)
+          unsettled++;
       }
     }
 
-    report(config, doc, page, viewport, baselineMs, idle, resolutionMs, rounds, log);
+    report(
+      config,
+      doc,
+      page,
+      viewport,
+      baselineMs,
+      idle,
+      resolutionMs,
+      rounds,
+      log,
+    );
 
     await invoke("spike_print", { text: lines.join("\n") });
     await invoke("spike_exit", { code: 0 });

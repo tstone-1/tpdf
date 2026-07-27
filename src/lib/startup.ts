@@ -22,7 +22,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { calibrateProcessClock } from "./clock";
-import { fetchTile } from "./tiles";
+import { fetchRequiredTile } from "./tiles";
 
 interface PageSize {
   width_pt: number;
@@ -181,7 +181,7 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
     const context = canvas.getContext("2d");
     if (!context) throw new Error("no 2d context");
 
-    const tile = await fetchTile({
+    const tile = await fetchRequiredTile({
       doc: info.id,
       page: 0,
       scale,

@@ -156,6 +156,9 @@ struct ScrollBenchConfig {
     cache_tiles: usize,
     max_in_flight: usize,
     prefetch_screens: f64,
+    /// Whether stale requests are withdrawn, as a variant dimension so the two
+    /// behaviours can be interleaved rather than compared across runs.
+    cancels: Vec<u8>,
 }
 
 /// Reads a `TPDF_`-prefixed environment variable, falling back to `default`.
@@ -204,6 +207,9 @@ fn scrollbench_config() -> Option<ScrollBenchConfig> {
         cache_tiles: env_or("TPDF_SCROLL_CACHE", 32),
         max_in_flight: env_or("TPDF_SCROLL_INFLIGHT", 4),
         prefetch_screens: env_or("TPDF_SCROLL_PREFETCH", 1.0),
+        // One value by default, so an ordinary run is not twice the size. Pass
+        // `0,1` to measure what withdrawal is worth.
+        cancels: env_list("TPDF_SCROLL_CANCEL", vec![1]),
     })
 }
 

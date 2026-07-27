@@ -1283,7 +1283,9 @@ pre-release and single-machine; when it arrives it should call `gates.py`.
 Three things are carried forward rather than resolved, and none of them should be
 rediscovered:
 
-- **The A0 vector page scrolls blank.** Owned by Phase 1, per the criterion above.
+- **The A0 vector page scrolls blank.** Owned by Phase 1, per the criterion above. Still
+  open after cancellable rendering landed: withdrawal stops the renderer wasting seconds on
+  tiles nobody will see, and leaves the coverage unchanged at 6%.
 - **Windows is entirely unverified** --- no build, no gate run, no measurement --- and the
   tree does not currently compile there. `sanitize_rewrite.rs` and `tile_bench.rs` call
   `libc::getrusage` with no `cfg` gate; PDFium's loadable library is at `bin/pdfium.dll`
@@ -1349,19 +1351,61 @@ silently stopped working. It was caught by the probe's rule that a sliced render
 all still passed because a render that never pauses is byte-identical to one that never
 had to.
 
-Three things are known and not yet done, and the next increment is the first of them:
+Two things are known and not yet done:
 
-- **Nothing supersedes anything yet.** The mechanism exists; `render.rs` still runs one
-  uninterrupted render per request off a queue. Wiring cancellation in needs a generation
-  from the frontend saying which tiles the viewport still wants, and it has to be measured
-  against §8's coverage floor rather than against frame rate — the failure being fixed is
-  one that already posts a perfect 60 fps.
 - **A cancelled tile is a real partial composite**, not an untouched buffer, but whether it
   is worth showing is unmeasured: the A0 fixture saturates every similarity metric tried
   (see `AGENTS.md`). That needs a realistic drawing, not a stress fixture.
 - **Form-field appearances are not drawn.** The safe path follows its render with
   `FPDF_FFLDraw`; the progressive path does not, so documents with interactive widgets will
   differ until that pass exists.
+
+#### Withdrawing a stale tile — done 2026-07-27, and it does not fix the A0 page
+
+`render.rs` now runs on the raw handles, with the page cache, and every request carries an
+id it can be withdrawn by. A withdrawal that arrives before the render starts drops the
+whole thing; one that arrives after abandons it through the progressive API. Only the
+client can know a tile has stopped being wanted — the window is its state — so this is an
+explicit withdrawal rather than an epoch. An epoch would have to either cancel still-wanted
+long renders on every window change, which finishes nothing on a hard page, or leave stale
+ones running, which is the behaviour being fixed.
+
+Measured against the coverage floor, not the frame rate, with withdrawal as an interleaved
+variant so both behaviours are in one run. Four rounds, 300 frames, brisk 30 css px/frame
+scroll, and every number below reproduced within a tile when the two variants were run in
+the opposite order:
+
+| corpus | zoom | variant | sharp | tiles kept | tiles wasted | withdrawn |
+|---|---|---|---|---|---|---|
+| text-heavy | 1x | plain | 100% | 49 | 0 | 0 |
+| text-heavy | 1x | withdraw | 100% | 49 | 0 | 0 |
+| text-heavy | 4x | plain | 100% | 67 | 0 | 0 |
+| text-heavy | 4x | withdraw | 100% | 66 | 0 | 0 |
+| vector-heavy | 1x | plain | 11% | 3 | 0 | 0 |
+| vector-heavy | 1x | withdraw | 9% | 1 | 0 | 12 |
+| vector-heavy | 4x | plain | 6% | 1 | 5 | 0 |
+| vector-heavy | 4x | withdraw | 6% | 1 | 0 | 19 |
+
+Read the text rows first: withdrawal is **inert** where the queue never goes stale. Nothing
+is withdrawn, coverage and render time are unchanged, and the mechanism costs nothing when
+it has nothing to do. That is the control, and it is the row that says this is safe to
+leave switched on.
+
+The vector rows are the honest result: **withdrawal stops the waste and buys no coverage.**
+At 400% it turns five finished-then-discarded tiles into zero — the renderer no longer
+spends about four seconds producing tiles that are thrown away on arrival — and the visible
+area is 6% sharp either way. It cannot do better, because there is nothing useful to spend
+the freed time on: every other tile of that page also costs a second, and the criterion
+needs a screenful. **The A0 page still fails §8's floor, and closing it is the worker pool,
+not the queue discipline.**
+
+The 1x row is worse than that and worth stating rather than averaging away: withdrawal cost
+two delivered tiles and two points of coverage. The predicate is "not wanted *now*", and the
+harness's scroll reverses at both ends of the document, so a tile that leaves the window
+comes back into it about eighty frames later — by which time the render that would have
+served it has been thrown away. Real reading reverses too. A withdrawal predicate that
+accounted for scroll direction, or a grace period before withdrawing, would not have paid
+that; neither is implemented, and neither should be guessed at without measuring.
 
 ### Phase 2 — Editing foundation
 
