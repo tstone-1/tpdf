@@ -120,6 +120,12 @@ Two of them are worth understanding rather than just running:
   targets, which is where `--all-targets` clippy findings surface. Coverage is currently
   the request queue and the `tile://` URL parser --- the parts a change can silently
   break --- and not rendering, which the spike probes assert instead.
+- **Wrap a batch of benchmark runs in `caffeinate -du`.** `scroll_bench.py` holds one for
+  its own lifetime, but the gaps between runs --- and any headless bench running alongside
+  it --- are unprotected, and a session that locks mid-batch fails the next frame-rate run
+  outright. A locked macOS session cannot be unlocked from a script by design, so this is
+  preventable and not recoverable.
+
 - **The `pdfium` gate is a pin check, not a build step.** It fails if `vendor/pdfium` is
   missing or is not the pinned build --- which is the difference between a benchmark that
   means something and one that does not.

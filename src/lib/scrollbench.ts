@@ -73,6 +73,15 @@ interface Round {
   coverage: number;
   /** Mean fraction backed by anything, tier-1 placeholder included. */
   anyCoverage: number;
+  /**
+   * Worst single frame's `any` coverage.
+   *
+   * The criterion says the page is *never* below its tier-1 placeholder, which
+   * is a claim about the minimum. A mean that rounds to 100% is consistent with
+   * a frame that showed nothing, so reporting only the mean would let the
+   * criterion be declared met by a statistic that cannot test it.
+   */
+  anyFloor: number;
   /** Frames the warm-up took, and what it had reached when it stopped. */
   warmupFrames: number;
   warmupCoverage: number;
@@ -247,6 +256,7 @@ async function scrollRound(
     callbacks,
     coverage: mean(coverages),
     anyCoverage: mean(anyCoverages),
+    anyFloor: Math.min(...anyCoverages),
     warmupFrames,
     warmupCoverage: warmupCoverage.sharp,
     wallMs: previous - wallStart,
@@ -374,6 +384,7 @@ function report(
     pad("cb max", 7, true),
     pad("sharp", 7, true),
     pad("any", 6, true),
+    pad("floor", 6, true),
     pad("tiles", 7, true),
     pad("cut", 6, true),
     pad("abd", 6, true),
@@ -418,6 +429,14 @@ function report(
         ),
         pad(
           `${(mean(mine.map((r) => r.anyCoverage)) * 100).toFixed(0)}%`,
+          6,
+          true,
+        ),
+        // The worst frame of the worst round, not the mean of the minima: one
+        // blank frame anywhere fails the criterion, and averaging them would
+        // hide it behind the rounds that were fine.
+        pad(
+          `${(Math.min(...mine.map((r) => r.anyFloor)) * 100).toFixed(0)}%`,
           6,
           true,
         ),

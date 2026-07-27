@@ -368,9 +368,16 @@ that was caught in the 2026-07-26 audit. Both errors came from trusting a depend
 prose over its behaviour. The rule that would have caught either: **a claim about a
 library's concurrency is a measurement, not a citation.**
 
-Spike 0.5 measured what worker processes actually buy: near-linear speedup to the
-**performance**-core count (3.89x on four, on a 4P+6E machine), then about 0.4x per further
-worker. Size the pool from performance cores, not `hw.ncpu`.
+What worker processes buy depends on the *shape* of the work, and there is no single
+scaling factor to quote. One tile from each of many pages of the text corpus: **3.89x on
+four** workers, then about 0.4x per further worker (spike 0.5). Six tiles of one A0 page,
+which is what a viewport actually asks for: **2.56x on four, 3.22x on six, and nothing at
+eight** (2026-07-27, `worker-bench --mode parallel --grid 3`). Same machine, same tile size.
+
+So "size the pool from performance cores, not `hw.ncpu`" was drawn from the first workload
+and does not survive the second --- the plateau there is at six on a 4P+6E machine. Measure
+the workload you have; a speedup measured across documents does not predict one measured
+across tiles, and the difference is large enough to change an architectural decision.
 
 ### A worker process is nearly free; the webview boundary is not
 
@@ -577,6 +584,52 @@ a pass. The tell was the epitaph --- "exited with code 9" where a segfault shoul
 Route the address through `std::hint::black_box` and use `write_volatile`. More generally:
 a test whose failure mode is *not failing* needs its own assertion on how it failed, not
 just on the outcome.
+
+### A locked macOS session cannot be unlocked from a script, so it must be prevented
+
+WebKit suspends a page whose window is not visible, and a locked screen occludes every
+window --- so a frame-rate benchmark behind one does not run slowly, it does not run at all.
+`scripts/scroll_bench.py` already refuses to start in that state rather than hanging.
+
+There is no supported way to unlock the session programmatically; the only mechanisms are a
+typed password, Touch ID or a paired watch, all of which need a person. The workaround that
+exists in the wild --- storing the login password and having `osascript` type it at the lock
+screen --- puts that password in a file readable by anything running as the user, and is not
+worth the convenience.
+
+So the only lever is prevention, and the trap is that per-run prevention is not enough.
+`scroll_bench.py` holds `caffeinate -du` for **its own lifetime**: the gaps between runs are
+unprotected, and a long headless bench running alongside it holds nothing at all. That is
+how a session locked mid-batch here. Wrap the whole batch:
+
+```sh
+caffeinate -du bash -c '<run> ; <run> ; <run>'
+```
+
+`-u` as well as `-d`, because `-d` only stops a display going idle and will not turn one
+back on that is already off.
+
+### A mean cannot test a claim about a minimum
+
+`docs/PLAN.md` §9 requires that the visible page area is **never** below its tier-1
+placeholder. The scroll benchmark reported the mean coverage across frames, it printed
+`100%`, and that was very nearly written up as the criterion being met.
+
+It is not evidence. A mean that rounds to 100% over 300 frames is entirely consistent with
+one frame that showed nothing --- which is precisely and only the thing the criterion
+forbids. The statistic could not express the failure, so it could not test for it, and a
+pass read off it would have been an assertion wearing a number.
+
+The fix is a `floor` column: the worst single frame, of the worst round, not the mean of the
+per-round minima --- averaging minima hides the bad round behind the good ones exactly as
+averaging frames hid the bad frame. It reads 100% on both corpora, so the conclusion did not
+change; what changed is that there is now something behind it.
+
+**Match the statistic to the quantifier.** "Never" and "always" need a min or a max; "95% of
+the area" needs a mean; a tail requirement needs a percentile. A number that cannot go bad
+when the property does is decoration, and it is the same failure as the crash test that
+compiled away and the leak scanner that could not decode its carrier --- three different
+subjects, one shape.
 
 ### A frame-rate pass means nothing without a coverage number beside it
 
