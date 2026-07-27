@@ -682,17 +682,32 @@ loop is decoupled from the renderer, which is why it never stutters — and it i
 frame rate alone cannot tell a viewer that keeps up from one that has given up. Doubling
 the tile to 2048² changes 3% to 4%, i.e. nothing; §4's "fewest, largest tiles" is not
 contradicted, it simply cannot rescue a page with a one-second floor per render call. What
-would move this number is the worker pool (§3: 3.89× on four), and even four workers leave
-~25 tile-seconds to fill one screen. The real answers for such a page are the progressive
-API and an honest degraded state, not a faster tile.
+would move this number is the worker pool — but by less than §3's 3.89× suggested, and it
+was measured directly on 2026-07-27 rather than extrapolated. Six tiles covering one
+screenful of this page at 2× cost **8.19 s in-process and 2.55 s on six worker processes**,
+a 3.2× ceiling that is reached at six workers and does not improve at eight
+(`worker-bench --mode parallel --grid 3`). So the pool takes a screenful from eight seconds
+to two and a half, which is a real improvement and still not a scroll. The real answers for
+such a page are the progressive API and an honest degraded state, not a faster tile.
 
 **The two layouts are both far inside budget, and the surprise is which is cheaper.** One
 viewport-sized canvas redrawn every frame costs **0.11–0.17 ms** of main thread; a canvas
 per tile in a natively scrolling container costs **0.49–0.64 ms**. Assigning `scrollTop`
 against a container of absolutely positioned canvases is a forced layout, and it is more
 expensive than compositing half a dozen GPU-resident ImageBitmaps into one canvas. Neither
-is close to mattering, so the choice can be made on other grounds — but the escalation path
-at the end of this section is not needed. The webview is not the bottleneck; PDFium is.
+is close to mattering, so the escalation path at the end of this section is not needed. The
+webview is not the bottleneck; PDFium is.
+
+That said "the choice can be made on other grounds" — and by 2026-07-27 there were grounds.
+Across roughly 3,300 timed frames on the text corpus, the per-tile-canvas layout dropped
+**three frames and stalled once**; the single-canvas layout dropped **none** in the same
+runs, at identical 100% coverage. Both are rare enough that no single run separates them,
+which is why it took several. A dropped frame is the thing the criterion is actually about,
+so the cheaper layout is also the one that misses less, and `viewport` should be the default
+rather than the fallback. The drops are consistent with where the cost sits: `tiles` pays
+its main-thread time creating a canvas and appending it to the DOM as each tile *arrives*,
+which is layer-tree work partly outside our own callback and therefore outside the number
+above.
 
 ### Virtual scrolling
 
@@ -1264,10 +1279,17 @@ what was actually on screen:
 > **no dropped frames on sustained scroll, with the visible page area at least 95% sharp
 > on a text document and never below the tier-1 placeholder on any document.**
 
-The text corpus meets that at 100% sharp. **The A0 vector page does not, and is recorded as
-a known failure** rather than smoothed over: it needs the worker pool, the progressive API,
-and a degraded state the UI states honestly. Phase 1 does not get to call the viewer done
-while a page in the corpus scrolls blank.
+The text corpus meets that at 100% sharp. **The A0 vector page did not, and was recorded as
+a known failure** rather than smoothed over.
+
+It was closed on 2026-07-27, by cancellable rendering and stale-request withdrawal rather
+than by the worker pool — see Phase 1 below for the measurement, and read the closure
+narrowly. What the criterion asks of that page is that it never falls below its tier-1
+placeholder, and it does not: the worst single frame of the worst round shows 100% of the
+visible page area backed by something, in all four layout-and-zoom variants, with no dropped
+frames. What it is *not* is legible. Sharp coverage while scrolling that page is 6–10%, so
+the honest description of a pass here is "a blurry page that never blinks out", and the
+degraded state the UI owes the user is still owed.
 
 #### Closed 2026-07-27
 
@@ -1283,9 +1305,9 @@ pre-release and single-machine; when it arrives it should call `gates.py`.
 Three things are carried forward rather than resolved, and none of them should be
 rediscovered:
 
-- **The A0 vector page scrolls blank.** Owned by Phase 1, per the criterion above. Still
-  open after cancellable rendering landed: withdrawal stops the renderer wasting seconds on
-  tiles nobody will see, and leaves the coverage unchanged at 6%.
+- ~~**The A0 vector page scrolls blank.**~~ Closed 2026-07-27 against the criterion as
+  written — it never drops below its tier-1 placeholder — and not against what anyone would
+  call a good experience, since it stays 6–10% sharp while moving. See Phase 1.
 - **Windows is entirely unverified** --- no build, no gate run, no measurement --- and the
   tree does not currently compile there. `sanitize_rewrite.rs` and `tile_bench.rs` call
   `libc::getrusage` with no `cfg` gate; PDFium's loadable library is at `bin/pdfium.dll`
@@ -1406,6 +1428,61 @@ comes back into it about eighty frames later — by which time the render that w
 served it has been thrown away. Real reading reverses too. A withdrawal predicate that
 accounted for scroll direction, or a grace period before withdrawing, would not have paid
 that; neither is implemented, and neither should be guessed at without measuring.
+
+#### The coverage floor, measured properly — 2026-07-27
+
+With withdrawal in place, §9's restated criterion was checked on both corpora, all four
+layout-and-zoom variants, three to four rounds of 300 frames each:
+
+| corpus | sharp | any (mean) | floor (worst frame) | drops |
+|---|---|---|---|---|
+| text-heavy | 100% | 100% | **100%** | 0–2 per 1,200 frames |
+| vector-heavy | 6–10% | 100% | **100%** | 0 |
+
+The `floor` column had to be added to answer the question at all. "Never below the tier-1
+placeholder" is a claim about a **minimum**, and the report showed a mean that rounds to
+100% — which is equally consistent with a frame that showed nothing. A statistic that cannot
+express the failure cannot test for it, and reading the mean would have declared the
+criterion met without evidence either way. It is the worst frame of the worst round, not the
+mean of the per-round minima, because one blank frame anywhere is the failure.
+
+Two caveats that belong next to the pass. The floor is measured over the *timed* section,
+which begins after a warm-up in which the page has been open for about three seconds; on
+the A0 sheet the tier-1 placeholder itself costs 1.5 s to render, so there is a window after
+opening in which the screen is grey and this measurement says nothing about it. And a page
+held still on that document reaches 56% sharp at 100% zoom and 92% at 400% within the
+warm-up, so the 6–10% figure is the cost of *movement*, not a ceiling on the page.
+
+#### What the worker pool is actually for — measured 2026-07-27
+
+The pool was next on the list because it was the thing expected to fix the A0 page. Measured
+before being built, it does not. Six 1024² tiles at 2×, one screenful in the scroll
+benchmark's own geometry (`worker-bench --mode parallel --grid 3 --pages 6`):
+
+| workers | wall | vs in-process |
+|---|---|---|
+| in-process, 1 thread | 8.19 s | — |
+| 1 | 8.12 s | 1.01× |
+| 2 | 4.58 s | 1.79× |
+| 4 | 3.19 s | 2.56× |
+| 6 | 2.55 s | 3.22× |
+| 8 | 2.55 s | 3.21× |
+
+So a screenful goes from eight seconds to two and a half, and stops improving at six
+workers. That is worth having and it is not a scroll.
+
+It also corrects §3, which measured 3.89× on four workers and concluded that a pool should
+be sized from the performance-core count. That was one tile from each of many pages of the
+*text* corpus; across tiles of one expensive page the same machine gives 2.56× on four and
+plateaus at six. The shape of the work changes both the speedup and where it stops, so
+neither number is "the" scaling factor — and the bench could not ask the second question at
+all until `--grid` was added, because its work list walked pages and the A0 fixture has one.
+
+The consequence for the roadmap: **the pool's justification is `docs/THREAT-MODEL.md`, not
+the coverage floor.** Parsing hostile input in a sandboxed, restartable, resource-bounded
+process is the reason to build it, and that reason was always sufficient on its own. It
+should not be scheduled as a rendering-performance fix, because measured as one it buys a
+3.2× that leaves the hard page just as unscrollable.
 
 ### Phase 2 — Editing foundation
 

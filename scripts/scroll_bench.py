@@ -86,7 +86,16 @@ def main() -> int:
         print(
             "[FAIL] the screen is locked, so every window is occluded and WebKit\n"
             "       suspends the page. requestAnimationFrame never fires and the\n"
-            "       run cannot even time itself out. Unlock and re-run.",
+            "       run cannot even time itself out. Unlock and re-run.\n"
+            "\n"
+            "       There is no way to unlock a macOS session from a script, by\n"
+            "       design, so this can only be prevented rather than recovered\n"
+            "       from. This script holds `caffeinate -du` for its own lifetime,\n"
+            "       which covers one run and not the gap before it -- a long\n"
+            "       headless bench alongside it does not hold one. Wrap a whole\n"
+            "       batch instead:\n"
+            "\n"
+            "           caffeinate -du bash -c '<run> ; <run> ; <run>'",
             file=sys.stderr,
         )
         return 1

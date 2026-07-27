@@ -1020,6 +1020,8 @@ mod imp {
         page: u16,
         scale: f32,
         tile: u16,
+        /// Tiles across, when the work list walks one page instead of many.
+        grid: Option<usize>,
         library_dir: Option<PathBuf>,
         /// Sandbox profiles to compare in `authority` mode. A name, raw SBPL, or
         /// `none`.
@@ -1031,6 +1033,50 @@ mod imp {
     }
 
     impl Args {
+        /// The `index`-th unit of work.
+        ///
+        /// Two shapes, because they answer different questions. Without
+        /// `--grid` the work list is one tile from each of `--pages` pages,
+        /// which is what spike 0.5 measured --- and it can only be run on a
+        /// document that has that many pages. With `--grid N` it is instead a
+        /// walk across an N-wide grid of tiles on a *single* page, which is the
+        /// shape a viewport actually asks for and the only shape a one-page
+        /// document can be asked for at all.
+        fn work(&self, index: usize) -> TileSpec {
+            let Some(cols) = self.grid else {
+                return self.tile_spec(index as u16);
+            };
+            TileSpec {
+                page: self.page,
+                scale: self.scale,
+                x: (index % cols) as i32 * self.tile as i32,
+                y: (index / cols) as i32 * self.tile as i32,
+                width: self.tile,
+                height: self.tile,
+            }
+        }
+
+        /// The `index`-th unit of work, as a request to a worker.
+        fn work_request(&self, index: usize, shm_only: bool) -> Request {
+            let TileSpec {
+                page,
+                scale,
+                x,
+                y,
+                width,
+                height,
+            } = self.work(index);
+            Request::Tile {
+                page,
+                scale,
+                x,
+                y,
+                width,
+                height,
+                shm_only,
+            }
+        }
+
         /// The tile this run renders, for a given page.
         fn tile_spec(&self, page: u16) -> TileSpec {
             TileSpec {
@@ -1079,6 +1125,7 @@ mod imp {
             page: 0,
             scale: 1.5,
             tile: 1024,
+            grid: None,
             library_dir: None,
             profiles: vec![
                 "none".into(),
@@ -1117,6 +1164,7 @@ mod imp {
                 "--page" => args.page = value.parse().map_err(|_| "bad --page")?,
                 "--scale" => args.scale = value.parse().map_err(|_| "bad --scale")?,
                 "--tile" => args.tile = value.parse().map_err(|_| "bad --tile")?,
+                "--grid" => args.grid = Some(value.parse().map_err(|_| "bad --grid")?),
                 "--lib" => args.library_dir = Some(PathBuf::from(value)),
                 "--profiles" => args.profiles = value.split(';').map(str::to_string).collect(),
                 "--budget-mb" => args.budget_mb = value.parse().map_err(|_| "bad --budget-mb")?,
@@ -1397,10 +1445,17 @@ mod imp {
     /// only the first understates Pdfium; reporting only the second promises a
     /// throughput no coordinator can absorb.
     fn mode_parallel(args: &Args, spec: &Spawn) -> Result<(), String> {
-        println!(
-            "rendering {} pages to {}x{} tiles at {}x, {} rounds interleaved\n",
-            args.pages, args.tile, args.tile, args.scale, args.rounds
-        );
+        match args.grid {
+            Some(cols) => println!(
+                "rendering {} tiles of page {} in a {cols}-wide grid, {}x{} at {}x, \
+                 {} rounds interleaved\n",
+                args.pages, args.page, args.tile, args.tile, args.scale, args.rounds
+            ),
+            None => println!(
+                "rendering {} pages to {}x{} tiles at {}x, {} rounds interleaved\n",
+                args.pages, args.tile, args.tile, args.scale, args.rounds
+            ),
+        }
 
         let n = args.tile as usize * args.tile as usize * 4;
         let pdfium = bind(&args.library_dir)?;
@@ -1410,7 +1465,7 @@ mod imp {
         let mut local = vec![0u8; TILE_CAPACITY];
         // The first render of a document pays one-off costs that would otherwise
         // be charged entirely to whichever variant ran first.
-        render_into(&doc, args.tile_spec(0), &mut local)?;
+        render_into(&doc, args.work(0), &mut local)?;
 
         // Workers are spawned once and reused across every round, so process
         // startup is never inside a timed section.
@@ -1423,7 +1478,7 @@ mod imp {
                 if !opened.ok {
                     return Err(opened.error);
                 }
-                w.call(&args.tile_request(0, true))?;
+                w.call(&args.work_request(0, true))?;
                 pool.push(w);
             }
             pools.push((k, pool));
@@ -1440,8 +1495,8 @@ mod imp {
             for _ in 0..args.rounds {
                 let t0 = Instant::now();
                 let mut sink = 0u64;
-                for page in 0..args.pages {
-                    render_into(&doc, args.tile_spec(page as u16), &mut local)?;
+                for index in 0..args.pages {
+                    render_into(&doc, args.work(index), &mut local)?;
                     if fold {
                         sink = sink.wrapping_add(checksum(&local[..n]));
                     }
@@ -1517,11 +1572,11 @@ mod imp {
                 handles.push(scope.spawn(move || -> Result<u64, String> {
                     let mut acc = 0u64;
                     loop {
-                        let page = next.fetch_add(1, Ordering::Relaxed);
-                        if page >= total {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        if index >= total {
                             return Ok(acc);
                         }
-                        let response = worker.call(&args.tile_request(page as u16, true))?;
+                        let response = worker.call(&args.work_request(index, true))?;
                         if !response.ok {
                             return Err(response.error);
                         }

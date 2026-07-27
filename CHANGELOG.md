@@ -40,8 +40,14 @@ in `docs/PLAN.md`; the traps each one paid for are in `AGENTS.md`.
 
 Known failure, recorded rather than smoothed over: the A0 vector page sustains 60 fps
 over a screen that is 0--4% sharp. Frame rate cannot distinguish a viewer that keeps up
-from one that has given up, so the criterion now carries a coverage floor. Closing it
-needs the worker pool and the progressive render API.
+from one that has given up, so the criterion now carries a coverage floor.
+
+Closed in Phase 1 on 2026-07-27 --- by the progressive render API and stale-request
+withdrawal, and **not** by the worker pool, which was measured before being built and
+takes a screenful of that page from 8.19 s to 2.55 s rather than to anything scrollable.
+Read the closure narrowly: the page never falls below its tier-1 placeholder, which is
+what the criterion asks, and it stays 6--10% sharp while moving, which is not a good
+experience.
 
 ### Added
 
@@ -91,6 +97,20 @@ needs the worker pool and the progressive render API.
 
 ### Changed
 
+- **Corrected the worker-pool scaling claim.** `AGENTS.md` and `docs/PLAN.md` §3 said to
+  size the pool from the performance-core count, on the strength of 3.89x across four
+  workers. That was one tile from each of many pages of the text corpus; across six tiles
+  of one A0 page --- what a viewport actually asks for --- the same machine gives 2.56x on
+  four, 3.22x on six and nothing at eight. `worker-bench` grew a `--grid` work list to be
+  able to ask, since its old one walked pages and the A0 fixture has one.
+- **The scroll benchmark reports a coverage floor**, the worst single frame of the worst
+  round, beside the mean it already reported. "Never below the tier-1 placeholder" is a
+  claim about a minimum, and a mean that rounds to 100% is equally consistent with a frame
+  that showed nothing --- so the criterion could not be tested by the number that was being
+  read for it.
+- **The single-canvas scroll layout should be the default, not the fallback.** Over ~3,300
+  timed frames it dropped no frames where the canvas-per-tile layout dropped three and
+  stalled once, at identical coverage, and its per-frame cost is 3--4x lower.
 - **Corrected a load-bearing architectural claim.** `AGENTS.md`, `docs/PLAN.md`,
   `docs/THREAT-MODEL.md`, `render.rs`, `Cargo.toml` and `worker_bench.rs` all stated that
   `pdfium-render`'s `thread_safe` feature serializes every PDFium call behind one global
