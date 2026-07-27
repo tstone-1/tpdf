@@ -1067,6 +1067,73 @@ The rule that survives all three: **a similarity number is not evidence until yo
 shown what it reads on the failure you are trying to exclude.** Dumping the tiles and
 looking at them took two minutes and settled what an hour of metrics could not.
 
+### `FPDFText_GetText` drops characters, so it cannot be indexed alongside boxes
+
+It extracts UCS-2 and, in its own documentation, "ignores characters without UCS-2
+representations". Every other text API --- `FPDFText_GetCharBox`, `GetUnicode`,
+`GetCharIndexAtPos`, the search functions --- is keyed by *character index*. So the string it
+returns and the indices everything else speaks are two different sequences, and they diverge
+exactly on the documents nobody tests with: CJK, symbol fonts, anything astral.
+
+The symptom is not a crash or an error. It is a selection that highlights the right
+rectangles and copies text from a few characters further along, on one document out of
+twenty. `src/text.rs` therefore sends **one Unicode scalar per index** and no string at all,
+and the frontend builds a string from the range it selected. Same rule as `set_text()`
+drawing `.notdef`: work in the code space the document uses, never in a re-encoding of it.
+
+### A dense page of uniform lines cannot detect a y-flip
+
+Character boxes come in page space (y up, origin bottom-left) and everything downstream wants
+device space (y down, origin top-left). Getting that flip wrong is the classic failure here,
+and it does not look like a bug --- the highlight is still made of tidy rectangles, just on
+the wrong lines.
+
+`bin/text-probe --mode align` checks it against pixels: render the page, and for each drawable
+character ask whether its mapped box covers ink. On the four small fixtures the correct
+convention scores **100%** and the flipped one **4.1--4.8%**. On `text-heavy.pdf` the correct
+one still scores 100% --- and **the flipped one scores 69.9%**, because a page of evenly
+spaced identical lines has ink almost everywhere a mirrored box could land.
+
+So the corpus most likely to be reached for is the one where the check is blind, and the
+probe fails the run and says so rather than printing the 100%. The general form: **a control
+that discriminates on one input may not on another, and "the check passed" is only meaningful
+alongside "the check could have failed here".**
+
+Two smaller notes from building it. A whole-page ink bounding box is not an oracle --- the
+text fixtures draw a frame, so the ink box is far bigger than the characters and *neither*
+convention matched it; per-character is both stricter and indifferent to other content. And
+whitespace has a box and no ink, so it has to be excluded or it puts a floor on the failure
+rate that has nothing to do with the mapping.
+
+### `evict_page` can dangle a live `RawPage`, and the borrow checker allows it
+
+`RawDocument::evict_page` takes `&self` --- it has to, since the cache is behind a `RefCell`
+--- and closes the `FPDF_PAGE`. `RawPage` also borrows `&self`. Two shared borrows coexist
+happily, so this compiles:
+
+```rust
+let page = document.page(0)?;
+document.evict_page(0);       // closes the handle `page` holds
+let _ = page.width_pt();      // use after close, and rustc is fine with it
+```
+
+`RawPage` has no `Drop`, so `drop(page)` does not end anything either --- and clippy rejects
+it as a no-op, which is how this surfaced. Scope the borrow instead. It bit while writing
+`text-probe --mode extract`, whose whole method is load, extract, evict, load again.
+
+### A timer that starts after the setup measures the wrong thing, and reports it
+
+`text-probe --mode extract` compares extracting from a cached page against an uncached one.
+Written with `document.page()` before `Instant::now()`, both columns measured extraction
+alone: they came out identical on the text corpus (1.43 vs 1.43 ms, which reads as "the page
+cache does nothing") and reported the A0 sheet's *uncached* case at **0.116 ms**, against a
+page load independently measured at 44 ms.
+
+Moving the load inside the timer gives 1.42 / 1.64 ms and 0.12 / **43.2 ms**. The tell was
+available before the fix: a column named for a cost that is 44 ms cannot read 0.1 ms. **When
+an A/B shows no difference, check that the variable is inside the measurement before
+concluding it does not matter.**
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a

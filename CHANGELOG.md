@@ -51,6 +51,26 @@ experience.
 
 ### Added
 
+- **A text layer** (`src-tauri/src/text.rs`), which selection, search and the accessibility
+  tree will all read --- one extraction rather than three that disagree. It carries one
+  Unicode scalar per PDFium character index and no string: `FPDFText_GetText` extracts UCS-2
+  and drops characters it cannot represent, so its string and the indices the boxes are keyed
+  by diverge on exactly the documents nobody tests with.
+
+  Extraction costs **1.42 ms** on a 2,725-character page with the page already loaded, and
+  **43.2 ms** on the A0 sheet where almost all of it is `FPDF_LoadPage`. That sheet has zero
+  extractable characters, which search will have to say out loud rather than return nothing.
+- **Text selection and copy.** Drag to select, across pages; Cmd-A for the page, Escape to
+  clear, Cmd-C to copy. Highlights are drawn on an overlay canvas above the tiles, so the
+  class that owns the tile cache does not also have to know what a selection is. A copy waits
+  for any page whose text has not arrived --- a fast drag can reach the clipboard before the
+  extraction does, and silently copying the loaded part is a bug found in someone else's
+  document.
+- `src-tauri/src/bin/text_probe.rs` --- checks the page-space to device-space flip against
+  **pixels**, per character, and carries a control that fails the run if the wrong convention
+  would also pass. On the four small fixtures: 100% against 4.1--4.8%. On the dense corpus the
+  wrong convention scores **69.9%**, so that page cannot tell the conventions apart and the
+  probe says so instead of reporting the 100%.
 - **A viewer a person can drive** (`src/lib/viewer.ts`). Open a PDF from the file dialog or
   by dropping it on the window, then scroll it with a trackpad, a wheel, the arrow and page
   keys, Home and End, or the scrollbar; zoom by the Cmd-`+`/`-` ladder, a pinch, or Cmd-0

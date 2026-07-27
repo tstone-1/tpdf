@@ -74,5 +74,9 @@ name = "thread-probe"
 path = "src/bin/thread_probe.rs"
 
 [[bin]]
+name = "text-probe"
+path = "src/bin/text_probe.rs"
+
+[[bin]]
 name = "progressive-probe"
 path = "src/bin/progressive_probe.rs"

@@ -112,6 +112,37 @@ function wheel(root: HTMLElement, deltaY: number, zoomGesture = false): void {
   );
 }
 
+/** Dispatches a pointer event the way a trackpad or mouse would. */
+function pointer(
+  root: HTMLElement,
+  type: "pointerdown" | "pointermove" | "pointerup",
+  x: number,
+  y: number,
+): void {
+  root.dispatchEvent(
+    new PointerEvent(type, {
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: type === "pointerup" ? 0 : 1,
+      pointerId: 1,
+      isPrimary: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+/** Drags from one point to another, in a few steps as a real drag would. */
+function drag(root: HTMLElement, from: [number, number], to: [number, number]): void {
+  pointer(root, "pointerdown", from[0], from[1]);
+  for (let step = 1; step <= 4; step++) {
+    const t = step / 4;
+    pointer(root, "pointermove", from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t);
+  }
+  pointer(root, "pointerup", to[0], to[1]);
+}
+
 /** Dispatches a keydown the way the window would. */
 function key(root: HTMLElement, k: string, accel = false): void {
   root.dispatchEvent(
@@ -294,6 +325,73 @@ async function run(path: string): Promise<void> {
     () => `zoom=${viewer.currentZoom.toFixed(3)}, ${pct()}`,
   );
 
+  await selectionChecks(root, viewer);
+
   viewer.destroy();
   check("destroys cleanly", viewer.idle, "frame loop stopped");
+}
+
+/**
+ * Text selection, on whatever the current page happens to be.
+ *
+ * The load-bearing assertion is the substring one. Everything else here could
+ * pass with the character indices and the character boxes belonging to
+ * different coordinate systems --- a drag would still select *something*, and it
+ * would still be the wrong something. Requiring the dragged text to appear
+ * inside the whole page's text ties the geometry to the codes, and it is the one
+ * check that fails if the y-flip in `text.rs` is ever inverted.
+ */
+async function selectionChecks(root: HTMLElement, viewer: Viewer): Promise<void> {
+  key(root, "Home");
+  await settle(() => viewer.idle);
+
+  // Select-all first, so there is a known whole to compare a drag against.
+  key(root, "a", true);
+  const ok = await eventually(
+    "Cmd-A selects the page's text",
+    () => viewer.selectedText.length > 0,
+    () => `${viewer.selectedText.length} characters`,
+  );
+  if (!ok) {
+    skip("a drag selects a run of that text", "the page has no extractable text");
+    skip("dragging nowhere selects nothing", "the page has no extractable text");
+    skip("Escape clears the selection", "the page has no extractable text");
+    return;
+  }
+  const whole = viewer.selectedText;
+
+  key(root, "Escape");
+  check("Escape clears the selection", viewer.selectedText === "", "nothing selected");
+
+  // A degenerate drag, as the control: press and release without moving. If
+  // this selected something, every assertion below would pass on a selection
+  // model that simply always selects.
+  drag(root, [MID_X, MID_Y], [MID_X, MID_Y]);
+  check(
+    "dragging nowhere selects nothing",
+    viewer.selectedText === "",
+    `selected ${viewer.selectedText.length} characters`,
+  );
+
+  drag(root, [MID_X, MID_Y], [MID_X + 260, MID_Y]);
+  const dragged = viewer.selectedText;
+  check(
+    "a drag selects a run of that text",
+    dragged.length > 0 && whole.includes(dragged),
+    dragged.length === 0
+      ? "selected nothing"
+      : whole.includes(dragged)
+        ? `"${preview(dragged)}" appears in the page text`
+        : `"${preview(dragged)}" is NOT in the page text -- boxes and codes disagree`,
+  );
+}
+
+/** Where the selection drags start: inside the page, below the top margin. */
+const MID_X = 300;
+const MID_Y = 300;
+
+/** A short, single-line form of a string, for a detail column. */
+function preview(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > 40 ? `${flat.slice(0, 40)}...` : flat;
 }
