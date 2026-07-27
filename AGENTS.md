@@ -93,8 +93,8 @@ spike named, or marked untested --- keep it that way when adding to it.
 
 ## Stack
 
-The **shell is settled**; the **PDF layer is provisional until Phase 0 proves it** (see
-`docs/PLAN.md` §9).
+The **shell is settled**, and since 2026-07-27 so is the **PDF layer** --- Phase 0 proved
+each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` §9).
 
 | Layer | Choice | Status |
 |-------|--------|--------|
@@ -102,9 +102,13 @@ The **shell is settled**; the **PDF layer is provisional until Phase 0 proves it
 | Frontend | Svelte 5 (runes), TypeScript `strict: true`, Vite | Settled |
 | Backend | Rust | Settled |
 | Platforms | macOS + Windows | Settled |
-| Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | Provisional |
-| Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | Provisional |
-| Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate |
+| Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | **Settled** --- renders, extracts and sandboxes correctly; not usable for redaction (spikes 0.1, 0.3, 0.5) |
+| Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | **Settled** --- surgical rewriting and sanitation both work, with our own mark-and-sweep and an encryption guard (spikes 0.3, 0.4, 0.6) |
+| Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite; still wanted for preserving encryption and for object streams |
+
+The PDFium pin is `chromium/7881`, installed by `scripts/fetch_pdfium.py` and verified by
+digest. Every measurement in this file was taken against that build, so bumping it
+invalidates them until the two checks in `BUILD.md` are re-run.
 
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
@@ -159,24 +163,37 @@ release time.
 
 ## Quality gates
 
-`BUILD.md` will carry the release checklist. It must state every CI gating command
-**verbatim, with flags** --- a checklist weaker than the gate it exists to satisfy buys
-false confidence and goes red after the release is cut.
+`scripts/gates.py` runs them all, and **is** the gate list rather than a description of
+one. `BUILD.md` names that one command and deliberately does not repeat the commands
+underneath it.
 
-Planned gates (to be mirrored exactly in `.github/workflows/ci.yml`):
+That is a deviation from the portfolio rule, which says a release checklist must state
+every gating command verbatim with its flags. The rule exists because a hand-copied
+command quietly loses a `--locked` or an `--all-targets` and then tests something weaker
+than the real gate. Keeping the commands in exactly one executable place satisfies the
+intent without the copy that has to be re-verified. Ask the script, not a document:
 
 ```
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test --locked
-npm run check          # svelte-check + tsc
-npm run lint
-npm run test
+scripts/gates.py --list
 ```
 
-Note `--all-targets` (covers test code), `-D warnings`, and `--locked` (catches an
-uncommitted `Cargo.lock` after a `cargo update`). Dropping any of those silently tests
-something weaker than CI does.
+Currently: a PDFium pin check, `cargo fmt --check`, `cargo clippy --all-targets -- -D
+warnings`, `cargo test --locked`, `npm run check`, `npm run build`. `--all-targets` covers
+test code, `-D warnings` makes lints fatal, and `--locked` catches a `Cargo.lock` that was
+not committed after a `cargo update`; dropping any of them silently weakens the gate.
+
+Two honest notes. `cargo test --locked` runs **no tests** --- it is a gate for the lockfile
+and for compiling the test targets. And the earlier plan listed `npm run lint` and
+`npm run test`, which do not exist; adding an ESLint config and a test runner with nothing
+to lint or test is scaffolding, and they land when there is something for them to check.
+
+**There is no remote CI, deliberately** --- pre-release, one machine, and a workflow would
+add a second place for the gate list to live while catching nothing `scripts/gates.py`
+does not catch first. When it is added (the natural trigger is the repo going public, or a
+second contributor) the workflow should *invoke* `scripts/gates.py` rather than re-list the
+commands in YAML.
+
+**Windows is unverified.** Every gate run and every measurement here is macOS arm64.
 
 ---
 
@@ -405,6 +422,36 @@ second, every absence is "not verified", not "not present".
 What this does *not* buy: `pdfium-render` calls `FPDFDOC_InitFormFillEnvironment` on every
 document open, so the form-fill machinery is reachable parsing surface even with nothing
 behind it.
+
+### The no-V8 property is one word in a URL, so the fetch asserts it
+
+`bblanchon/pdfium-binaries` publishes **both** variants of every release:
+`pdfium-mac-arm64.tgz` (3.5 MB) and `pdfium-v8-mac-arm64.tgz` (13.4 MB), and the same pair
+for every platform. The entry above --- and `docs/THREAT-MODEL.md`'s promotion of "document
+JavaScript is disabled" to "there is no engine to disable" --- is a property of the *asset
+that was fetched*, not of PDFium. Downloading the other one silently reinstates a
+JavaScript engine, and nothing downstream would notice: the symbol scan is the only check
+that discriminates, and it is not run on every build.
+
+So `scripts/fetch_pdfium.py` refuses a V8 asset by name and verifies a pinned SHA256
+before extracting anything. A digest alone would not have caught it --- a V8 build pinned
+to its own digest passes a digest check perfectly.
+
+The pin is `chromium/7881`. The fetched mac-arm64 archive is byte-identical to the install
+every Phase 0 measurement was taken on (dylib sha256 `1bc45b15…`), which is what makes the
+script a reproduction of the tested binary rather than merely a download of a similar one.
+
+### PDFium ships its loadable library in a different directory on Windows
+
+macOS gets `lib/libpdfium.dylib`. Windows gets the runtime DLL at **`bin/pdfium.dll`**,
+and `lib/` holds only the import library `pdfium.dll.lib`. Found 2026-07-27 by a
+cross-platform install test that was only meant to check a digest.
+
+`pdfium_library_dir()` in `src-tauri/src/lib.rs` joins `vendor/pdfium/lib` unconditionally,
+so on Windows it resolves to a directory containing nothing loadable. **This is an open
+defect**, not a fixed one --- it is recorded here rather than repaired because no Windows
+build has ever run, and a blind fix would be another untested claim. `scripts/fetch_pdfium.py`
+already knows both layouts.
 
 ### A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
 

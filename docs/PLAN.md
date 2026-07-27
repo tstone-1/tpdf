@@ -1267,6 +1267,33 @@ a known failure** rather than smoothed over: it needs the worker pool, the progr
 and a degraded state the UI states honestly. Phase 1 does not get to call the viewer done
 while a page in the corpus scrolls blank.
 
+#### Closed 2026-07-27
+
+The phase is closed and the PDF layer is marked settled in `AGENTS.md`. Closing it meant
+making the evidence reproducible, which it was not: `vendor/pdfium/` is gitignored and
+nothing fetched it, so a clean clone could not run a single spike, and the pin that every
+measurement above depends on existed only as an untracked file on one machine.
+`scripts/fetch_pdfium.py` now installs `chromium/7881` by verified digest, and
+`scripts/gates.py` holds the quality gates as one executable list rather than a checklist
+to be kept in step by hand. There is deliberately no remote CI while the project is
+pre-release and single-machine; when it arrives it should call `gates.py`.
+
+Three things are carried forward rather than resolved, and none of them should be
+rediscovered:
+
+- **The A0 vector page scrolls blank.** Owned by Phase 1, per the criterion above.
+- **Windows is entirely unverified** --- no build, no gate run, no measurement --- and the
+  tree does not currently compile there. `sanitize_rewrite.rs` and `tile_bench.rs` call
+  `libc::getrusage` with no `cfg` gate; PDFium's loadable library is at `bin/pdfium.dll`
+  rather than `lib/libpdfium.dylib`, which `pdfium_library_dir()` does not know; and the
+  worker sandbox is `sandbox_init` SBPL, so the containment argument in
+  `docs/THREAT-MODEL.md` is macOS-specific and needs its own answer there. `BUILD.md`
+  keeps the list.
+- **There are no tests.** `cargo test --locked` gates the lockfile and compiles the test
+  targets; it runs nothing. The spike harnesses assert their own results, which is why
+  Phase 0 conclusions are trustworthy, but none of that is a regression suite. Phase 1
+  starts the first one that a change can break.
+
 ### Phase 1 — The viewer
 
 Open, scroll, zoom, rotate view, search-as-you-type, text selection and copy, thumbnails,

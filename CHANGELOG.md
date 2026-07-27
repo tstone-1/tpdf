@@ -1,0 +1,60 @@
+# Changelog
+
+All notable changes to tpdf are recorded here.
+
+Versioning is CalVer `YY.M.MICRO` --- see [`BUILD.md`](BUILD.md).
+
+Nothing has shipped yet. Phase 0 is a feasibility investigation, and what it produced is
+measurements and a verdict on each load-bearing assumption, not a viewer. The entries
+below are what exists in the tree, so that the first release has a history rather than a
+single "initial release" line.
+
+## [26.7.0] - Unreleased
+
+### Phase 0 --- feasibility spikes
+
+All seven spikes have documented verdicts and the exit criterion is met. The evidence is
+in `docs/PLAN.md`; the traps each one paid for are in `AGENTS.md`.
+
+- **Render pipeline.** Raw pixels over the Tauri custom scheme, 1024²--2048² tiles.
+  PDFium charges ~1 s per *render call* on a dense A0 page regardless of how small the
+  request is, so small tiles multiply a constant rather than dividing the work.
+- **Process architecture.** A worker boundary costs 6 µs of control latency and 0.11 ms
+  to move a 4 MB tile through shared memory, against 3.0 ms to hand the same tile to the
+  webview. Four workers give 3.9× throughput on a 4P+6E machine. macOS only.
+- **Startup.** Warm, cold, and first-launch-after-build are three regimes; the last two
+  are the OS. The shell floor is ~250 ms before any application code runs. Warm start is
+  276 ms with lazy page geometry and a non-default menu, against a 300 ms target.
+- **Text-object round trip.** Both routes reproduce the page with zero collateral pixels,
+  but only surgical `lopdf` operator rewriting preserves marked content, and only it
+  detects an out-of-subset character instead of silently drawing `.notdef`.
+- **Sanitized full rewrite.** A collected `lopdf` rewrite matches QPDF on every hostile
+  fixture, so QPDF is not required --- but `lopdf`'s own collection is quadratic and the
+  mark-and-sweep has to be ours.
+- **Incremental save.** The update section stays under a kilobyte whatever the document
+  weighs, and beats a full rewrite 8.2× on disk at 337 MB. Signatures stay
+  cryptographically intact and stop being trusted, at every DocMDP level.
+- **Threat model.** `docs/THREAT-MODEL.md`, with the sandbox profile it implies. The
+  vendored PDFium has no V8 and no XFA compiled in, so document JavaScript cannot run
+  rather than being switched off.
+
+Known failure, recorded rather than smoothed over: the A0 vector page sustains 60 fps
+over a screen that is 0--4% sharp. Frame rate cannot distinguish a viewer that keeps up
+from one that has given up, so the criterion now carries a coverage floor. Closing it
+needs the worker pool and the progressive render API.
+
+### Added
+
+- `scripts/fetch_pdfium.py` --- installs the pinned PDFium build (`chromium/7881`),
+  verifying its SHA256 before extracting and refusing a V8 asset. A clean clone could not
+  previously build: `vendor/pdfium/` is gitignored and nothing fetched it.
+- `scripts/gates.py` --- runs every quality gate and *is* the definition of them, so the
+  checklist in `BUILD.md` cannot drift from what actually gates.
+- `BUILD.md` and this changelog.
+
+### Fixed
+
+- The PDFium install path assumed the macOS archive layout. Windows ships the loadable
+  DLL at `bin/pdfium.dll` and only an import library in `lib/`. The fetch script now knows
+  both; `pdfium_library_dir()` in `src-tauri/src/lib.rs` still does not, and is recorded
+  as a known Windows defect.
