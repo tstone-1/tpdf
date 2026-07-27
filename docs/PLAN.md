@@ -1756,6 +1756,63 @@ Also absent: user-rebindable keys, commands that take an argument (go to page *n
 persisted recents, and any verification that a command's displayed keybinding matches the
 handler that implements it — a wrong label there teaches a wrong shortcut.
 
+#### The accessibility tree — 2026-07-27
+
+§8 states this as an architectural constraint and the virtual-scrolling section repeats it:
+*"Accessibility constrains this design and must be settled before it is built, not after."*
+It is done now, before thumbnails and an outline are built on the same scroller, because
+every feature added to that scroller first is more that would have to be rewritten.
+
+The default state of what we had built is worse than "unstyled": a canvas-rendered,
+virtualized page list has **no DOM text at all**, so a screen reader finds an empty
+scrolling region. `src/lib/a11y.ts` maintains a parallel, visually hidden DOM of the
+visible pages' text, and two properties in it are the whole point:
+
+- **Elements are keyed by page and never recycled.** A page that stays on screen keeps the
+  *same* element across every frame, so a reading cursor or the keyboard focus inside it
+  survives a scroll. Reusing a container for a different page — the obvious optimisation,
+  and what a windowed list normally does — moves the cursor to different text underneath
+  the user with no indication.
+- **Text is split into lines**, from the same character geometry the selection uses. One
+  2,700-character blob per page is present and unusable; moving by line is most of how a
+  document is read.
+
+The tiles and the selection overlay are `aria-hidden`, so the text is not doubled by a
+large empty region, and the page number is announced through a polite `role="status"`.
+
+**What it is not.** It is not pdf.js's approach of positioning invisible text spans over
+the glyphs, which additionally buys native selection and hit-testing — tpdf already does
+selection on the canvas against real character boxes, so a second selectable copy of every
+page would be a liability rather than a feature. And **it is not verified against a screen
+reader**: what the check asserts is that the text is present, is the page's own, is in
+reading order, and survives scrolling. Whether VoiceOver announces it *well* needs a person,
+and no claim is made about it.
+
+Six checks in the viewer check and seven unit tests on the line splitting. Eight mutations,
+all caught. Counting the check names across the two corpora also turned up two that had been
+*vanishing* rather than skipping on a document with no text — 43 names in one run against 41
+in the other — and both were controls, which is the case where a silent disappearance costs
+the most. Two of them found real defects in the *checking*, both of the same shape — a
+text comparison cannot see a property that is not about text:
+
+- **`textContent` concatenates block elements with nothing between them.** The first
+  comparison against an independent extraction failed at 2,562 characters against 2,618 —
+  one missing separator per line, on a 56-line page. The content was identical and only the
+  structure differed, which is precisely what the check was flattening away. It now joins
+  the blocks.
+- **`display:none` and `visibility:hidden` remove an element from the accessibility tree,
+  and every text assertion still passes.** The layer could be completely inert while
+  reading correct. There is now a check that the container is 1×1 but neither hidden that
+  way — visually gone, still in the tree.
+
+Not done, and the first of these is a real limitation rather than a missing nicety:
+**reading order is derived from geometry, not from the document's own tagged structure.**
+A tagged PDF carries a `/StructTree` that says what is a heading, a table cell, an
+alternative text, and in what order it should be read; we infer lines from character boxes,
+which is what an untagged document forces and is strictly worse for one that is tagged.
+Also absent: headings and table semantics, a document language attribute, visible keyboard
+navigation between pages, and any high-contrast handling.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

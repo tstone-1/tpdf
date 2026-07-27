@@ -332,6 +332,7 @@ async function run(path: string): Promise<void> {
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
   await paletteChecks(viewer);
+  await accessibilityChecks(root, viewer, doc, seen);
 
   viewer.destroy();
   check("destroys cleanly", viewer.idle, "frame loop stopped");
@@ -373,7 +374,14 @@ async function selectionChecks(
   if (extracted && extracted.codes.length === 0) {
     // A scan, or the A0 sheet. "Selected 0 of 0" is a true statement and a
     // misleading [OK] beside a check named for selecting text.
+    // All four, not just the two that need text to succeed. The other two are
+    // *controls* --- Escape clearing a selection, a zero-length drag selecting
+    // nothing --- and a control that quietly disappears on some inputs is
+    // indistinguishable from one that ran. Found by counting the names in the
+    // two runs and getting 43 and 41.
     skip("Cmd-A selects the page's text", "the page has no extractable text");
+    skip("Escape clears the selection", "there is no text to select and clear");
+    skip("dragging nowhere selects nothing", "there is no text a drag could select");
     skip("a drag selects text from where it was dragged", "the page has no extractable text");
     return;
   }
@@ -683,6 +691,159 @@ async function stepToAnotherPage(
     `${target} presses from page ${before + 1} to page ${seen.status?.page}, ` +
       `match ${target + 1} is on page ${goal.page + 1}`,
   );
+}
+
+/**
+ * What a screen reader would find.
+ *
+ * Four claims, and only the first is the obvious one. That the text is *there*;
+ * that it is the page's own text and not some other page's; that a page which
+ * stays on screen keeps the **same element**, so a reading cursor survives a
+ * scroll; and that the canvas is out of the tree so the text is not doubled by a
+ * large empty region.
+ *
+ * The third is the one the architecture exists for --- `docs/PLAN.md` §8 says
+ * recycling containers destroys focus --- and it is asserted by putting real
+ * focus in the element and checking it is still there afterwards, with a control
+ * that the page was still visible. "The element is still in the DOM" would pass
+ * on a rebuilt element that had thrown the cursor away.
+ *
+ * What is **not** checked, and is not claimed: that any of this is *pleasant* to
+ * listen to. That needs a screen reader and a person.
+ */
+async function accessibilityChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  key(root, "Home");
+  await settle(() => viewer.idle);
+  await eventually(
+    "the visible page reaches the accessibility tree",
+    () => viewer.accessibleText.elementFor(0) !== null,
+    () => `pages present: ${viewer.accessibleText.present.join(", ") || "none"}`,
+  );
+
+  const extracted = await invoke<{ codes: number[] }>("page_text", {
+    doc: doc.id,
+    page: 0,
+  }).catch(() => null);
+  const spoken = spokenText(viewer.accessibleText.elementFor(0));
+
+  if (!extracted || extracted.codes.length === 0) {
+    check(
+      "a page with no text says so rather than falling silent",
+      spoken.includes("no extractable text"),
+      `reads "${preview(spoken)}"`,
+    );
+    skip("the text read out is the page's own text", "the page has no extractable text");
+  } else {
+    skip("a page with no text says so rather than falling silent", "this page has text");
+    // Compared against an independent extraction, not against the viewer's
+    // cache, so the layer cannot be confirmed by agreeing with itself.
+    const expected = flatten(String.fromCodePoint(...extracted.codes));
+    check(
+      "the text read out is the page's own text",
+      spoken === expected,
+      spoken === expected
+        ? `${spoken.length} characters match the extraction`
+        : `reads ${spoken.length} characters, extraction has ${expected.length}: ` +
+          `"${preview(spoken)}" vs "${preview(expected)}"`,
+    );
+  }
+
+  // Hidden visually, present in the tree. `display:none` and
+  // `visibility:hidden` both remove an element from the accessibility tree, so
+  // either would make the whole layer do nothing while every other check here
+  // still passed --- textContent reads the same from a hidden element.
+  const host = viewer.accessibleText.elementFor(0)?.parentElement ?? null;
+  const style = host ? getComputedStyle(host) : null;
+  const box = host?.getBoundingClientRect();
+  check(
+    "the text is hidden visually but not from the tree",
+    !!style &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      !!box &&
+      box.width <= 2 &&
+      box.height <= 2,
+    `display=${style?.display}, visibility=${style?.visibility}, ` +
+      `box=${box?.width.toFixed(0)}x${box?.height.toFixed(0)}`,
+  );
+
+  check(
+    "the canvas is hidden from the accessibility tree",
+    [...root.querySelectorAll("canvas, div")].every(
+      (element) =>
+        !(element instanceof HTMLCanvasElement) ||
+        element.closest("[aria-hidden='true']") !== null,
+    ),
+    `${root.querySelectorAll("canvas").length} canvases, all inside aria-hidden`,
+  );
+
+  // Focus survives a scroll that keeps the page on screen. The control is the
+  // `if` below: on a document where a small scroll leaves the page, this proves
+  // nothing and says so.
+  const article = viewer.accessibleText.elementFor(0);
+  article?.focus();
+  const focused = document.activeElement === article;
+  wheel(root, 60);
+  await frame();
+  const stillVisible = viewer.accessibleText.present.includes(0);
+
+  if (!focused) {
+    skip("focus in the text survives a scroll", "the element never took focus");
+  } else if (!stillVisible) {
+    skip("focus in the text survives a scroll", "the scroll left the page entirely");
+  } else {
+    check(
+      "focus in the text survives a scroll",
+      document.activeElement === article &&
+        viewer.accessibleText.elementFor(0) === article,
+      `same element=${viewer.accessibleText.elementFor(0) === article}, ` +
+        `still focused=${document.activeElement === article}`,
+    );
+  }
+
+  // And the other half: a page that leaves the screen leaves the tree, or a long
+  // document would accumulate every page it had ever shown.
+  const before = viewer.accessibleText.present.includes(0);
+  key(root, "End");
+  await settle(() => viewer.idle);
+  const last = (seen.status?.page ?? 1) - 1;
+  if (!before || doc.page_count < 2) {
+    skip("a page that leaves the screen leaves the tree", "the document has one screen");
+  } else {
+    await eventually(
+      "a page that leaves the screen leaves the tree",
+      () =>
+        !viewer.accessibleText.present.includes(0) &&
+        viewer.accessibleText.present.includes(last),
+      () => `after End: pages ${viewer.accessibleText.present.join(", ") || "none"}`,
+    );
+  }
+}
+
+/**
+ * What the page's blocks say, joined the way they are announced.
+ *
+ * Not `textContent`, which concatenates block elements with **nothing** between
+ * them --- so a page of 56 lines read that way is 56 characters short of the
+ * extraction it is being compared against, and the check reports a content
+ * mismatch when the content is identical and only the separators are structural.
+ * Joining the blocks is what makes the comparison about the text.
+ */
+function spokenText(article: HTMLElement | null): string {
+  if (!article) return "";
+  return flatten(
+    [...article.querySelectorAll("p")].map((p) => p.textContent ?? "").join(" "),
+  );
+}
+
+/** Collapses whitespace, so a line break is not a difference in content. */
+function flatten(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /**

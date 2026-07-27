@@ -193,10 +193,10 @@ entry for `/usr/sbin/purge`.
 ### Checking the viewer
 
 The reading surface is asserted rather than eyeballed. This opens a document in a real
-webview, dispatches real wheel and key events at it, and checks thirty-six behaviours ---
+webview, dispatches real wheel and key events at it, and checks forty-three behaviours ---
 fit-width, scrolling, End and Home, the zoom ladder, a pinch, resize, text selection and
-copy, find-in-document, the command palette, and that the frame loop idles when there is
-nothing to do:
+copy, find-in-document, the command palette, the screen-reader text layer, and that the
+frame loop idles when there is nothing to do:
 
 ```
 scripts/viewer_check.py \

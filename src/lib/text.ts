@@ -195,6 +195,45 @@ export function runsFor(text: PageText, from: number, to: number): Quad[] {
   return runs;
 }
 
+/**
+ * Splits a page's characters into lines, as index ranges.
+ *
+ * The same vertical-overlap rule {@link runsFor} uses, applied to the whole page
+ * instead of to a selection --- a screen reader given one 2,700-character blob
+ * per page has no way to move by line, which is most of how a document is read.
+ *
+ * Ranges are half-open, contiguous and in index order, so concatenating their
+ * text reproduces the page. Characters with no box --- the trailing space of a
+ * line, typically --- extend the run they follow rather than starting one, which
+ * is what keeps the ranges contiguous.
+ */
+export function linesOf(text: PageText): { from: number; to: number }[] {
+  const lines: { from: number; to: number }[] = [];
+  let current: Quad | null = null;
+
+  for (let index = 0; index < text.codes.length; index++) {
+    const quad = charQuad(text, index);
+    const last = lines[lines.length - 1];
+
+    if (!isPlaced(quad)) {
+      if (last) last.to = index + 1;
+      else lines.push({ from: index, to: index + 1 });
+      continue;
+    }
+
+    if (current && last && overlapsVertically(current, quad)) {
+      current.top = Math.min(current.top, quad.top);
+      current.bottom = Math.max(current.bottom, quad.bottom);
+      last.to = index + 1;
+      continue;
+    }
+    current = { ...quad };
+    lines.push({ from: index, to: index + 1 });
+  }
+
+  return lines;
+}
+
 /** Whether two boxes share most of their vertical extent, i.e. are on a line. */
 function overlapsVertically(a: Quad, b: Quad): boolean {
   const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);

@@ -97,10 +97,27 @@ experience.
   positions and the palette bolds them, because a highlight that disagreed with the ranking
   would be worse than none. Each row shows its keybinding, so the palette teaches shortcuts
   instead of replacing them. Recents break ties and cannot beat a better match.
-- **Front-end unit tests, and a seventh quality gate.** `vitest`, over the command ranking
-  --- the first front-end logic with an answer that can be *wrong* rather than merely ugly.
+- **A screen-reader text layer** (`src/lib/a11y.ts`). `docs/PLAN.md` §8 states accessibility
+  as an architectural constraint rather than a later pass, and this lands before thumbnails
+  and an outline are built on the same scroller --- everything added first is more that would
+  have to be rewritten.
+
+  A canvas-rendered, virtualized page list has **no DOM text at all**, so a screen reader
+  finds an empty scrolling region. This maintains a parallel, visually hidden DOM of the
+  visible pages' text, split into lines from the same character geometry the selection uses.
+  Elements are keyed by page and **never recycled**: a page that stays on screen keeps the
+  same element, so a reading cursor inside it survives a scroll. The tiles and the selection
+  overlay are `aria-hidden`, and the page number is announced through a polite `role=status`.
+
+  Not verified against a screen reader, and not claimed to be: the checks assert that the
+  text is present, is the page's own, and survives scrolling. Reading order also comes from
+  geometry rather than from a tagged PDF's `/StructTree`, which is strictly worse for a
+  document that has one.
+- **Front-end unit tests, and a seventh quality gate.** `vitest`, over command ranking and
+  line splitting --- the first front-end logic with an answer that can be *wrong* rather than
+  merely ugly.
   The plan had said `npm run test` would land when there was something for it to check.
-  Fourteen mutations against the new code, all caught; one branch was deleted rather than
+  Twenty-two mutations against the new code, all caught; one branch was deleted rather than
   tested, because nothing could make it fail.
 - `src-tauri/src/bin/text_probe.rs` --- checks the page-space to device-space flip against
   **pixels**, per character, and carries a control that fails the run if the wrong convention
