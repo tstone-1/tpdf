@@ -120,8 +120,15 @@ export interface RunStats {
   evicted: number;
 }
 
-/** Device-pixel width of a tier-1 page placeholder. */
-const TIER1_WIDTH = 150;
+/**
+ * Device-pixel width of a tier-1 page placeholder.
+ *
+ * Exported because the page strip renders at exactly this width: §4 says the
+ * placeholder "doubles as the thumbnail", and it only does while the two are
+ * the same bitmap. A strip that picked its own width would render every page a
+ * second time.
+ */
+export const TIER1_WIDTH = 150;
 
 /** CSS pixels between pages. */
 const PAGE_GAP = 16;
@@ -301,6 +308,21 @@ export class Scroller {
     return (
       this.inFlight.size + this.arrived.length + this.arrivedPlaceholders.length
     );
+  }
+
+  /**
+   * A page's tier-1 bitmap, or `null` if it has not been rendered.
+   *
+   * Read-only, and deliberately: the page strip borrows from this cache and does
+   * not add to it. Tier 1 is permanent for the session, so letting the strip
+   * fill it would grow it to one bitmap per page --- 98 MB on the 775-page
+   * corpus, for pages nobody has looked at.
+   *
+   * The bitmap belongs to the scroller and is closed when the document is; a
+   * caller that wants to keep it must copy it.
+   */
+  placeholderFor(page: number): ImageBitmap | null {
+    return this.placeholders.get(page) ?? null;
   }
 
   /** Tiles per page, so a run can report its working set. */

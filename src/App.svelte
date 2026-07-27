@@ -8,7 +8,7 @@
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
   import { CommandRegistry } from "./lib/commands";
   import { Palette } from "./lib/palette";
-  import { Sidebar } from "./lib/sidebar";
+  import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Outline } from "./lib/outline";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
 
@@ -156,10 +156,25 @@
       // binding rather than two commands sharing one, which would show the
       // same shortcut twice in the palette and teach that it does two things.
       id: "view.toggleSidebar",
-      title: "Toggle outline sidebar",
+      title: "Toggle sidebar",
       keys: "⌘\\",
       enabled: withDocument,
       run: () => toggleSidebar(),
+    },
+    {
+      // Two commands rather than one "switch tab", because the palette is how a
+      // command is *found*: someone looking for thumbnails types "thumb", and a
+      // command called "Switch sidebar tab" is not what they would type.
+      id: "view.showOutline",
+      title: "Show outline",
+      enabled: withDocument,
+      run: () => showTab("outline"),
+    },
+    {
+      id: "view.showThumbnails",
+      title: "Show page thumbnails",
+      enabled: withDocument,
+      run: () => showTab("pages"),
     },
   );
 
@@ -167,7 +182,13 @@
     sidebarShown = !sidebarShown;
     // The viewer's own ResizeObserver notices the width it just lost or got
     // back, so nothing here has to tell it.
-    if (sidebar) sidebar.element.style.display = sidebarShown ? "flex" : "none";
+    sidebar?.setVisible(sidebarShown);
+  }
+
+  /** Opens the sidebar if it is closed, on the tab asked for. */
+  function showTab(tab: Tab) {
+    if (!sidebarShown) toggleSidebar();
+    sidebar?.selectTab(tab);
   }
 
   function focusFind() {
@@ -297,14 +318,32 @@
           viewer?.goToDestination(target, top);
           viewer?.focus();
         },
+        pages: {
+          doc: doc.id,
+          pageCount: doc.page_count,
+          page,
+          // The viewer is created below, so the strip reaches it lazily rather
+          // than being handed a reference that does not exist yet.
+          tier1: { placeholderFor: (at) => viewer?.placeholderFor(at) ?? null },
+          onNavigate: (at) => {
+            viewer?.goToPage(at);
+            viewer?.focus();
+          },
+        },
       });
-      sidebar.element.style.display = sidebarShown ? "flex" : "none";
+      sidebar.setVisible(sidebarShown);
 
       viewer = new Viewer(surface, {
         doc: doc.id,
         pageCount: doc.page_count,
         page,
-        onStatus: (next) => (status = next),
+        onStatus: (next) => {
+          status = next;
+          // What keeps thumbnails out of the way of the page: the strip stops
+          // asking, and withdraws what it asked for, whenever the viewer has
+          // work outstanding. See `thumbnails.ts`.
+          sidebar?.setViewerBusy(next.pending > 0);
+        },
         onPosition: (at, top) => sidebar?.setPosition(at, top),
       });
       viewer.focus();

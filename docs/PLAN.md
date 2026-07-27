@@ -373,7 +373,10 @@ Peak RSS: 211 MB for one A0 page, 70 MB for the 775-page text document.
 ### Two-tier cache
 
 - **Tier 1, permanent:** every page gets a cheap low-resolution bitmap (~150 px wide),
-  rendered once, kept for the session. Doubles as the thumbnail.
+  rendered once, kept for the session. Doubles as the thumbnail — the sidebar's page strip
+  renders at exactly this width and borrows from this cache rather than rendering again.
+  It does not *add* to it: permanent plus one entry per page is 98 MB on the 775-page
+  corpus, for pages nobody has opened.
 - **Tier 2, transient:** sharp tiles at the current zoom, LRU-evicted against a budget.
 
 While a sharp tile is in flight, tier 1 is upscaled into its place. The user sees a blurry
@@ -1912,12 +1915,85 @@ only fixture with the pair has them at 240 and 440. It now takes the highest and
 any shared page. That check is the y-flip discriminator, so a silent skip there was the
 expensive kind.
 
-All four corpora pass and every run reports the same 53 check names: `outline-simple` 51/51,
+At that point all four corpora passed and every run reported the same 53 check names --- the
+strip below adds a fifth corpus and ten more names: `outline-simple` 51/51,
 `outline-hostile` 52/52, `text-heavy` 43/43, `vector-heavy` 29/29, the differences being
 skips with their reasons.
 
-Also not done: thumbnails, a resizable panel, persisted collapse state, "reveal current
-section in outline" as a command, and search results as a second tab.
+Also not done: a resizable panel, persisted collapse state, "reveal current section in
+outline" as a command, and search results as a second tab.
+
+#### Page thumbnails, and what a second consumer of one renderer costs — 2026-07-27
+
+The sidebar's second tab. What makes it worth writing up is not the strip, which is a
+windowed list of small pictures; it is that **it is the first feature that competes with
+the reader for the renderer.** Everything before it was work the reader had asked for.
+
+§4 measured the price of a thumbnail and it is not small: a 150 px render of the A0 sheet
+costs **1.52 s**, because PDFium charges about a second of fixed cost per render call
+whatever is being asked for. The render service is one FIFO thread — concurrent PDFium is
+undefined behaviour — so a strip that asked for a document's thumbnails would put seconds
+of work in front of every tile someone is waiting for.
+
+Two rules, and together they are the design:
+
+- **At most one thumbnail is outstanding.** A queue of ten buys no throughput on a serial
+  renderer and costs the only thing that matters here, which is the ability to get out of
+  the way.
+- **It yields.** The viewer already reports its outstanding work every frame; while that is
+  above zero the strip asks for nothing and withdraws what it has asked for. The withdrawal
+  goes through the same progressive-API cancellation as a stale tile and returns in
+  0.25–24 ms against a render that would have run for a second and a half.
+
+So the viewer waits **tens of milliseconds** for a thumbnail rather than the second and a
+half a naive strip would cost it, and the page whose thumbnail was withdrawn is simply
+asked for again when things settle.
+
+**Tier 1 is read, not written.** §4 says the placeholder "doubles as the thumbnail" and it
+does — same 150 px, same scale — so the strip asks the viewer first and draws for free any
+page it has already prepared. That is why opening the strip shows the page being read
+immediately even on the A0 sheet. The reverse is deliberately not wired: tier 1 is
+permanent for the session, so donating every thumbnail into it would grow it to one bitmap
+per page, 98 MB on the 775-page corpus, for pages nobody has looked at.
+
+**Only the visible rows exist.** The outline can afford a real element per row because the
+walk is bounded at 10,000 entries; a page strip is bounded by the document. Rows are built
+for the window plus an overscan and destroyed when they leave, which makes `aria-setsize`
+and `aria-posinset` load-bearing rather than decorative.
+
+**It needed a fixture that does not exist elsewhere.** Three new checks assert the yield,
+and on every corpus but one they report `[SKIP] the thumbnail finished before the viewer
+asked for anything` — because a thumbnail costs about a millisecond on a text page. That
+skip is the honest answer and reporting it as a pass would have been the familiar failure.
+`vector-multi.pdf` is twelve A0 pages sharing one content stream, and it is the only
+document where the collision can happen at all. Twelve, not three: the check suite visits
+page 1 and the last page, so on a short document the viewer has already made a placeholder
+for every page and the strip borrows all of them without rendering anything.
+
+Twelve mutations, one at a time — seven against the pure geometry, five against the strip
+through the real webview — and every one was caught by the check it was aimed at, after
+**two of those checks turned out to be wrong.** Both were found this way rather than by
+reading them, and one of them before it was ever run:
+
+- **A check the defect could switch off.** "The strip builds only the rows on screen"
+  skipped when every row was built, on the reasoning that a document whose rows all fit
+  needs no windowing — so the mutation that deletes windowing makes it report itself
+  inapplicable instead of failing. It now bounds `mounted` by what the panel height and
+  row height say *could* be on screen, which the defect does not control. A skip is a third
+  outcome, and a defect that reaches it is as invisible as one that passes.
+- **A bound written the wrong way round.** "The page already rendered is not rendered
+  twice" asserted that some thumbnail was borrowed rather than re-rendered. A borrow
+  completes in a microtask, so without an in-flight set the same page is borrowed again on
+  every scroll and resize in between — twelve borrows on a twelve-page document with seven
+  rows on screen. The defect makes `borrowCount > 0` pass *harder*; the upper bound
+  `borrowCount <= renderedCount` is what sees it.
+
+All five corpora now report the same **63 check names**: `outline-simple` 58/58,
+`outline-hostile` 58/58, `text-heavy` 52/52, `vector-heavy` 34/34, `vector-multi` 41/41,
+the differences being skips with their reasons.
+
+Not done: reordering pages by dragging a thumbnail (that is Phase 2, and needs the
+editing model), a resizable panel, and any persistence of which tab was open.
 
 #### The check could not run, and the reason was not what it looked like
 

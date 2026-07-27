@@ -1,11 +1,18 @@
 /**
- * The sidebar, and the outline in it.
+ * The sidebar: the outline, and a strip of page thumbnails.
  *
- * `docs/PLAN.md` §8 wants tabs here eventually --- thumbnails, annotations,
- * search results --- and only the outline exists today. The panel is
- * nonetheless a container with a header rather than a bare list, because the
- * alternative is that the *second* tab is the one that has to introduce the
- * chrome, and by then something else is already positioned against its absence.
+ * `docs/PLAN.md` §8 wants four tabs here --- thumbnails, outline, annotations,
+ * search results --- and two of them exist. The chrome was built with the first
+ * one for exactly this reason: the *second* tab is otherwise the one that has to
+ * introduce it, by which point something else is positioned against its absence.
+ *
+ * ## The two tabs are not equals, and the code says so
+ *
+ * An outline is read once, bounded at 10,000 entries, and costs nothing to
+ * produce. A thumbnail is a Pdfium render call --- 1.5 s each on the A0 sheet ---
+ * on the single thread that also draws the page in front of the reader. So the
+ * strip is told when it is hidden and told when the viewer is busy, and stops in
+ * both cases; the outline needs neither. See `thumbnails.ts`.
  *
  * ## It is a tree, and that has to be true for a screen reader too
  *
@@ -45,6 +52,7 @@ import {
   type Outline,
   type Row,
 } from "./outline";
+import { Thumbnails, type ThumbnailOptions } from "./thumbnails";
 
 /** Indent per level, in CSS pixels. */
 const INDENT = 14;
@@ -52,17 +60,33 @@ const INDENT = 14;
 /** Panel width, in CSS pixels. Not resizable yet. */
 const WIDTH = 260;
 
+/** Which panel is showing. */
+export type Tab = "outline" | "pages";
+
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
   onNavigate: (page: number, top: number | null) => void;
+  /**
+   * What the page strip needs, or absent for no strip at all.
+   *
+   * Optional because the sidebar outlives no document while the strip is about
+   * one: everything it needs --- the document id, the page count, the geometry,
+   * the cache to borrow from --- arrives with the file being opened.
+   */
+  pages?: ThumbnailOptions;
 }
 
 export class Sidebar {
   private readonly host: HTMLElement;
   private readonly opts: SidebarOptions;
-  private readonly heading: HTMLElement;
+  private readonly tablist: HTMLElement;
+  private readonly tabs = new Map<Tab, HTMLButtonElement>();
+  private readonly panels = new Map<Tab, HTMLElement>();
   private readonly notice: HTMLElement;
   private readonly tree: HTMLElement;
+  private readonly strip: Thumbnails | null = null;
+  private showing: Tab = "outline";
+  private visibleNow = true;
 
   private outline: Outline | null = null;
   /** Whether an answer has arrived, as distinct from an empty one having. */
@@ -91,18 +115,20 @@ export class Sidebar {
 
     this.host = document.createElement("aside");
     this.host.className = "tpdf-sidebar";
-    this.host.setAttribute("aria-label", "Outline");
+    this.host.setAttribute("aria-label", "Sidebar");
     this.host.style.cssText =
       "display:flex;flex-direction:column;height:100%;box-sizing:border-box;" +
       `flex:none;width:${WIDTH}px;` +
       "border-right:1px solid color-mix(in srgb, currentColor 15%, transparent);" +
       "font:13px/1.5 system-ui,-apple-system,sans-serif;overflow:hidden;";
 
-    this.heading = document.createElement("div");
-    this.heading.style.cssText =
-      "flex:none;padding:0.4rem 0.7rem;font-weight:600;opacity:0.7;" +
+    this.tablist = document.createElement("div");
+    this.tablist.setAttribute("role", "tablist");
+    this.tablist.setAttribute("aria-label", "Sidebar");
+    this.tablist.style.cssText =
+      "flex:none;display:flex;gap:0.2rem;padding:0.3rem 0.4rem;" +
       "border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);";
-    this.heading.textContent = "Outline";
+    this.tablist.addEventListener("keydown", this.onTabKey);
 
     // A live region rather than static text: it appears after the tree has been
     // read, and a reader who has already moved on should still hear that the
@@ -128,13 +154,116 @@ export class Sidebar {
       if (id !== undefined) this.focus(id);
     });
 
-    this.host.append(this.heading, this.notice, this.tree);
+    const outlinePanel = this.panel("outline", "Outline");
+    outlinePanel.append(this.notice, this.tree);
+    this.host.append(this.tablist, outlinePanel);
+
+    const pagesPanel = this.panel("pages", "Pages");
+    this.host.appendChild(pagesPanel);
+    if (opts.pages) this.strip = new Thumbnails(pagesPanel, opts.pages);
+
     root.appendChild(this.host);
+    this.selectTab("outline");
+  }
+
+  /** Builds one tab and its panel, wired to each other by id. */
+  private panel(tab: Tab, label: string): HTMLElement {
+    const button = document.createElement("button");
+    button.setAttribute("role", "tab");
+    button.id = `tpdf-tab-${tab}`;
+    button.setAttribute("aria-controls", `tpdf-panel-${tab}`);
+    button.textContent = label;
+    button.style.cssText =
+      "font:inherit;flex:1;padding:0.15rem 0.4rem;border:0;background:none;" +
+      "color:inherit;cursor:default;border-radius:4px;";
+    button.addEventListener("click", () => this.selectTab(tab));
+    this.tablist.appendChild(button);
+    this.tabs.set(tab, button);
+
+    const element = document.createElement("div");
+    element.setAttribute("role", "tabpanel");
+    element.id = `tpdf-panel-${tab}`;
+    element.setAttribute("aria-labelledby", button.id);
+    element.style.cssText = "flex:1;min-height:0;display:flex;flex-direction:column;";
+    this.panels.set(tab, element);
+    return element;
   }
 
   destroy(): void {
+    this.strip?.destroy();
     this.host.remove();
   }
+
+  /** Which panel is showing. */
+  get tab(): Tab {
+    return this.showing;
+  }
+
+  /** Whether the panel itself is on screen. */
+  get shown(): boolean {
+    return this.visibleNow;
+  }
+
+  /**
+   * Shows or hides the whole panel.
+   *
+   * Not the caller's job to also tell the strip: a hidden panel and a hidden tab
+   * are the same thing to it, and splitting the two across two call sites is how
+   * one of them ends up forgotten and a strip renders behind a closed sidebar.
+   */
+  setVisible(shown: boolean): void {
+    this.visibleNow = shown;
+    this.host.style.display = shown ? "flex" : "none";
+    this.strip?.setActive(shown && this.showing === "pages");
+  }
+
+  /** The page strip, or `null` when the sidebar was built without one. */
+  get thumbnails(): Thumbnails | null {
+    return this.strip;
+  }
+
+  /**
+   * Shows one panel and hides the other.
+   *
+   * The strip is told, and that is not cosmetic: a hidden strip that carried on
+   * rendering would spend the render thread on pictures nobody can see, in
+   * front of the tiles for the page they are actually reading.
+   */
+  selectTab(tab: Tab): void {
+    this.showing = tab;
+    for (const [name, button] of this.tabs) {
+      const on = name === tab;
+      button.setAttribute("aria-selected", String(on));
+      // A tablist is one tab stop, like the tree inside it.
+      button.tabIndex = on ? 0 : -1;
+      button.style.background = on
+        ? "color-mix(in srgb, currentColor 12%, transparent)"
+        : "";
+      button.style.fontWeight = on ? "600" : "400";
+      const panel = this.panels.get(name);
+      if (panel) panel.style.display = on ? "flex" : "none";
+    }
+    this.strip?.setActive(this.visibleNow && tab === "pages");
+  }
+
+  /** Tells the page strip whether the viewer has work outstanding. */
+  setViewerBusy(busy: boolean): void {
+    this.strip?.setViewerBusy(busy);
+  }
+
+  private readonly onTabKey = (event: KeyboardEvent): void => {
+    const order: Tab[] = [...this.tabs.keys()];
+    const at = order.indexOf(this.showing);
+    let next = at;
+    if (event.key === "ArrowRight") next = (at + 1) % order.length;
+    else if (event.key === "ArrowLeft") next = (at + order.length - 1) % order.length;
+    else return;
+    event.preventDefault();
+    const tab = order[next];
+    if (!tab) return;
+    this.selectTab(tab);
+    this.tabs.get(tab)?.focus();
+  };
 
   /** The panel element, so a caller can show or hide it. */
   get element(): HTMLElement {
@@ -190,6 +319,9 @@ export class Sidebar {
    * the DOM unless that id moved.
    */
   setPosition(page: number, top: number): void {
+    // Before the outline guard, and not inside it: the page strip has to follow
+    // the reader on a document with no outline at all, which is most of them.
+    this.strip?.setCurrentPage(page);
     if (!this.outline) return;
     // Rounded, because the answer cannot change on a sub-point movement and
     // the scroll offset is a float that changes on every frame of a trackpad

@@ -618,6 +618,54 @@ code under test controls", it is decoration however relevant it sounds. Related 
 test above that probed the wrong direction, but worse --- that one could fail on some input,
 this one on none.
 
+### A defect that switches off a check's precondition is not caught by that check
+
+The sharpest form yet of "a test whose precondition is already satisfied never runs", and
+worse, because here it is the **defect itself** that arranges the precondition.
+
+The page strip builds only the rows its panel can show. The check for it read: if the strip
+built every row, skip --- *all the rows fit in the panel* --- otherwise assert it built some.
+Perfectly sensible, and then the mutation that deletes windowing entirely, so that `layout`
+builds every row in the document, makes the check report `[SKIP]`. It does not go red.
+Nothing goes red.
+
+The fault is that the skip condition was derived from the same quantity being asserted. The
+repair is to derive it from something the defect does not control --- here the panel height
+and the row height, which give the most rows that *could* be on screen --- and then assert
+against that bound rather than against the strip's own output.
+
+**Ask what a check does when the thing it checks is broken, not only when it is absent.** A
+skip is a third outcome, and a defect that reaches it is as invisible as one that passes.
+
+Worth recording how it surfaced, because it is the cheap half of the procedure: it was found
+while **writing down which check each mutation should turn red**, before running any of them.
+The check had already been written, reviewed and run green on five corpora. Stating the
+prediction is what exposed that there was no prediction to make.
+
+Two earlier versions of the same check were wrong in the other direction, which is worth the
+sentence because the pair brackets the mistake. The first estimated the row height at 60 px
+and skipped on the twelve-page document whose rows are 186 px --- so the only fixture that
+could exercise windowing declared itself inapplicable. The second asked the strip how many
+rows it had built, which is exactly the quantity the defect controls.
+
+### An "already have it" cache needs an in-flight set, not just the cache
+
+The strip borrows a page's bitmap from the viewer's tier-1 cache when it has one, and copies
+it with `createImageBitmap` --- which completes in a microtask, not immediately. The guard
+was "is this page in `bitmaps`", and between starting the copy and finishing it the page is
+in neither the cache nor the outstanding-request slot. Every scroll, resize and position
+change in that window starts the *same* borrow again.
+
+It read as twelve borrows on a twelve-page document with seven rows on screen. Every one of
+them succeeded and the pictures were correct, so the only symptom was a number in a detail
+column that looked slightly too round. What pins it is `borrowCount <= renderedCount` --- the
+*upper* bound. The check said `borrowCount > 0` first, which is the obvious way round, and
+under this defect that passes **harder**: more duplicates make it more true.
+
+**A "do we already have it" test is not a "is one already on the way" test**, and any cache
+filled asynchronously needs both. Same shape as the request queue's `queued`/`inflight`
+split, arriving from a direction that did not look like a queue.
+
 ### A mutation harness needs the same control as the thing it is testing
 
 The script driving those mutations rebuilt the app, ran the check, and looked for `[FAIL]`
@@ -1525,6 +1573,7 @@ own sweep.
 uv run --with fonttools testdata/make_text_pdf.py testdata   # text-*.pdf, spike 0.3
 python3 testdata/make_hostile_pdf.py testdata                 # hostile-*.pdf, spike 0.4
 python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf # spike 0.1
+python3 testdata/make_vector_pdf.py testdata/vector-multi.pdf 200000 12  # Phase 1
 uv run --with pyhanko --with cryptography \
     testdata/make_incremental_pdf.py testdata                 # incr-*.pdf, spike 0.6
 python3 testdata/make_outline_pdf.py testdata                 # outline-*.pdf, Phase 1
@@ -1571,6 +1620,19 @@ depends on a library's parsing.
 Its hostile fixture is also verified by an independent oracle: `qpdf --check` reports
 *"loop detected in /Outlines tree"* against it. A fixture built to be cyclic that no other
 implementation agrees is cyclic is a fixture that might simply be wrong.
+
+`vector-multi.pdf` is twelve A0 pages sharing **one** content stream object, which is the
+point rather than a shortcut: PDFium re-parses a page on every `FPDF_LoadPage` and rebuilds
+per-page state on every render call, so twelve pages pointing at one stream cost twelve
+times as much to draw while the file stays under 3 MB. It exists because the page strip's
+yield needs a document whose *background* work outlives a moment, and the single-page
+`vector-heavy` cannot provide one.
+
+Its page count is load-bearing and was raised from three. The check suite visits page 1 and
+the last page, so on a short document the viewer has already made a tier-1 placeholder for
+every page and the strip borrows all of them --- rendering nothing, and giving the yield
+check nothing to catch. **A fixture built to exercise a slow path has to be long enough that
+the rest of the run does not warm it.**
 
 ---
 
