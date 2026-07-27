@@ -71,3 +71,7 @@ path = "src/bin/incremental_save.rs"
 [[bin]]
 name = "thread-probe"
 path = "src/bin/thread_probe.rs"
+
+[[bin]]
+name = "progressive-probe"
+path = "src/bin/progressive_probe.rs"

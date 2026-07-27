@@ -3,6 +3,7 @@
 //! This is not the application. It exists to answer the feasibility questions in
 //! docs/PLAN.md section 9 with numbers, and is expected to be thrown away.
 
+pub mod progressive;
 mod protocol;
 mod render;
 mod startup;

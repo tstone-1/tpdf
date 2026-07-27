@@ -42,10 +42,37 @@ and `docs/PLAN.md` was taken against. Bumping it means editing `TAG` and the who
 table in `scripts/fetch_pdfium.py` together, then re-running the two checks that a digest
 cannot stand in for:
 
+Run these from the repository root, after generating the fixtures below. Each exits
+non-zero on failure.
+
 ```
-cargo run --release --bin remove_probe                  # the object-destroy segfault
-cargo run --release --bin worker_bench -- --mode engine # the V8 and XFA symbol scan
+# The FPDFPageObj_Destroy ownership segfault. Case `c` (leak) must pass; if case
+# `a` (destroy) ever stops crashing, the upstream bug is fixed.
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin remove-probe -- \
+    testdata/text-truetype.pdf c
+
+# The V8 and XFA symbol scan. This mode reads the library rather than binding it,
+# so --lib is required even though every other mode defaults it.
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin worker-bench -- \
+    testdata/text-heavy.pdf --mode engine --lib vendor/pdfium/lib
+
+# Progressive rendering still agrees with the safe path, byte for byte. Slow:
+# roughly 20 s, because the point is the page that takes seconds to render.
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin progressive-probe -- \
+    testdata/vector-heavy.pdf --mode identity --slices 0
 ```
+
+Two notes on why these are written out in full. The binary names are **hyphenated**, and
+`--bin remove_probe` fails as "no such target", which reads like a missing binary rather
+than a wrong name. And `remove-probe` with no case argument defaults to case `a`, whose
+whole purpose is to segfault --- so the obvious invocation of the regression check crashes
+by design and looks like the bump broke something.
+
+The third check is why the progressive path restates `FPDF_ANNOT`,
+`FPDF_REVERSE_BYTE_ORDER` and `FPDFBitmap_BGRA` by value: `pdfium-render` does not
+re-export them, and a bump that changed any of them would silently alter every tile. The
+run compares progressive output byte-for-byte against the safe path, so it fails if one
+does.
 
 ### Test fixtures
 
