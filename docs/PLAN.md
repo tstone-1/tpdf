@@ -1484,6 +1484,62 @@ process is the reason to build it, and that reason was always sufficient on its 
 should not be scheduled as a rendering-performance fix, because measured as one it buys a
 3.2× that leaves the hard page just as unscrollable.
 
+#### A viewer a person can drive — 2026-07-27
+
+Everything above was measured through a harness that supplies its own scroll offset. This
+is the other caller: `src/lib/viewer.ts` owns input, a frame loop and the zoom, and drives
+the same `Scroller` the benchmark drives. Keeping the split is deliberate — the class that
+knows *what a frame costs* should not also be the class that knows *where the finger went*,
+or the benchmark becomes a special case inside the viewer.
+
+`viewport` is the default layout, which is the verdict §4 already reached and had not yet
+applied. Lazy page geometry is now the default too, for the same reason: it is what takes
+warm startup from 374 ms to inside the target, and shipping the opposite default meant the
+exit criterion was met by a variant nobody ran.
+
+**The frame loop idles.** The benchmark runs 300 frames back to back because that is what
+it is measuring; a viewer that did the same would hold a core awake for as long as it was
+open. The loop therefore runs only while the scroll is moving or the scroller has work that
+has not reached the screen, and stops itself otherwise. That makes every input path
+responsible for waking it, which is a real hazard — a path that changes state without waking
+leaves the screen stale until some unrelated event, and looks exactly like a rendering bug.
+
+**The degraded state is no longer owed.** §9 closed the A0 page against "never below the
+tier-1 placeholder" and recorded that the honest description was "a blurry page that never
+blinks out", with the UI owing the user an account of it. The status line now carries one,
+and it distinguishes the two failures rather than averaging them: `any` is whether there is
+a page at all (*preparing page*), `sharp` is whether it can be read (*sharpening*). Both
+numbers come out of the scroller's own coverage measurement, so what a reader is told is the
+same number the benchmark reports, not an estimate of it.
+
+**It is checked, not demonstrated.** `src/lib/viewercheck.ts` opens a document in a real
+webview, dispatches real `WheelEvent`s and `KeyboardEvent`s at the viewer's root, and
+asserts sixteen behaviours — fit-width, wheel and key scrolling, End and Home, the zoom
+ladder, a pinch, resize, and that the loop idles. Two checks carry their own control,
+because the alternative is a check satisfied by nothing happening: idling is asserted in
+both directions, and every coverage recovery is preceded by an assertion that the tiles were
+actually thrown away first.
+
+That second control is not theoretical. Written without it, "covers the last page" waited
+for full coverage that the *first* screen had already established, returned before the jump
+had rendered anything, and passed — while its own detail line read `page 1/775`. It is the
+fourth time in this project that a green result came from a test that never ran.
+
+Six deliberate mutations, one at a time, and every one was noticed. Two of them were noticed
+by a *different* check than the one aimed at, which is worth recording as a result rather
+than tidied away: one mutation was a no-op (it assigned a field the line above had already
+set, so it tested nothing), and one deleted zoom invalidation entirely, so the check that
+caught it was the control rather than the recovery. A mutation that changes nothing looks
+exactly like a check that cannot fail.
+
+Warm startup is **276 ms median, 267–293**, unchanged and inside the 300 ms target, with the
+Tauri dialog plugin now linked in. That is a cross-time comparison rather than an interleaved
+one, so it says the criterion still holds; it is not evidence about what the plugin cost.
+
+What this is not, and should not be mistaken for: there is no text selection, no search, no
+thumbnails, no outline, no accessibility tree, and no command palette. The exit criterion for
+this phase is that tpdf is the daily default for reading, and it is not.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

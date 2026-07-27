@@ -114,6 +114,11 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
+`tauri-plugin-dialog` (Apache-2.0 OR MIT) is the only plugin linked, for the file-open
+dialog; it pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT). Checked against the
+licensing constraint above rather than assumed --- every dependency added has to be, because
+one copyleft crate anywhere in the tree removes the option of making this repository public.
+
 ### What each library is, and is not
 
 Be precise about this. The 2026-07-26 audit found the earlier framing implied a complete
@@ -572,6 +577,44 @@ Two smaller notes from doing it. Mutate one thing at a time: a double mutation s
 test failing that a single one did not, which is how the redundant guard was found rather
 than misread as covered. And expect a mutation to trip *more* tests than the one aimed at
 --- that is a coverage overlap, not a problem, but the aimed-at test must be among them.
+
+**A mutation that changes nothing looks exactly like a test that cannot fail.** Doing this
+again on the viewer (2026-07-27, six mutations), one of them replaced
+`this.scroller.setZoom(next)` with `setZoom(this.zoom)` --- and the line above had already
+assigned `this.zoom = next`, so it was an identity. Nothing went red, which reads precisely
+like a missing assertion, and the first instinct was to go and strengthen a check that was
+already fine. Before concluding a test is decoration, confirm the mutation was one: print
+the diff, or pick a mutation whose effect is impossible to miss.
+
+**Aim at the control, not only at the assertion.** A second mutation there deleted the zoom
+invalidation entirely. The check it was aimed at --- "recovers coverage after a zoom" ---
+stayed green, correctly: coverage never dropped, so there was nothing to recover. What went
+red was the *control* beside it, "a zoom step discards what it invalidates". Both outcomes
+are the suite working; predicting the wrong one is a fact about the prediction. Write down
+which check should notice, and treat a different check noticing as a result worth reading
+rather than a miss to be tidied away.
+
+### A test whose precondition is already satisfied never runs
+
+The sharpest instance of the shape above, and the fourth in this project. `viewercheck.ts`
+pressed **End** on a 775-page document and then waited for full sharp coverage before
+declaring "covers the last page". It passed instantly --- because the *first* screen was
+already fully covered, so the predicate was true before the jump had rendered a single tile.
+Its own detail line said so: `sharp=100.0% on page 1/775`.
+
+The fix is a control that asserts the **drop** before the recovery: one frame after the jump,
+coverage must be *below* threshold. With that in place the same check reads
+`sharp=100.0% on page 775/775`.
+
+The general rule: **an assertion that something recovered is worth nothing unless something
+was first shown to have broken.** Any test of the form "do X, then wait for the good state"
+needs to establish that the good state was not already there --- and the seam is invisible,
+because a check that returns immediately and a check that waited both print `[OK]`.
+
+Note the control is not always applicable, and that has to be visible too. On a one-page A0
+sheet **End** moves 488 px and the tiles on screen stay valid, which is correct behaviour;
+the check reports `[SKIP]` with the reason rather than silently vanishing, because a control
+that disappears on some inputs is indistinguishable from one that ran.
 
 ### A crash test that compiles away proves containment of a crash that never happened
 

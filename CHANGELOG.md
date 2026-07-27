@@ -51,6 +51,28 @@ experience.
 
 ### Added
 
+- **A viewer a person can drive** (`src/lib/viewer.ts`). Open a PDF from the file dialog or
+  by dropping it on the window, then scroll it with a trackpad, a wheel, the arrow and page
+  keys, Home and End, or the scrollbar; zoom by the Cmd-`+`/`-` ladder, a pinch, or Cmd-0
+  for fit-width, which then tracks the window. It drives the same `Scroller` the benchmark
+  drives, deliberately: the class that knows what a frame costs is not also the class that
+  knows where the finger went.
+
+  **The frame loop idles.** It runs only while the scroll is moving or the scroller has work
+  that has not reached the screen. A viewer that ran the benchmark's fixed loop would hold a
+  core awake for as long as it was open.
+
+  **The status line reports the degraded state** `docs/PLAN.md` §9 recorded as owed --- and
+  reports the two failures separately, since "no page yet" and "a blurry page" are different
+  things. Both numbers are the scroller's own coverage measurement, so a reader is told the
+  same number the benchmark reports.
+- **A functional check of the viewer** (`src/lib/viewercheck.ts`, `scripts/viewer_check.py`).
+  Opens a document in a real webview, dispatches real wheel and key events at the viewer's
+  own root, and asserts sixteen behaviours. Two of them are controls: idling is asserted in
+  both directions, and every coverage recovery is preceded by an assertion that the tiles
+  were actually discarded first --- without which "covers the last page" passed instantly on
+  coverage the first screen had already established, while its own detail line read
+  `page 1/775`. Six deliberate mutations, one at a time, and every one was noticed.
 - **Cancellable rendering** (`src-tauri/src/progressive.rs`). PDFium's progressive API,
   driven on raw `FPDF_DOCUMENT` / `FPDF_PAGE` / `FPDF_BITMAP` handles, because
   `pdfium-render` keeps every handle accessor `pub(crate)` and the safe wrapper therefore
@@ -97,6 +119,20 @@ experience.
 
 ### Changed
 
+- **Lazy page geometry is the default**, with `TPDF_EAGER_GEOMETRY` to restore the walk.
+  Enumerating every page of a 775-page document costs 86 ms on the critical path to buy a
+  scrollbar exactness the scroller estimates anyway; it is what takes warm startup from
+  374 ms to inside the 300 ms target, and shipping the opposite default meant the Phase 0
+  exit criterion was met by a variant nobody ran. Warm start measures **276 ms median,
+  267--293**, with the dialog plugin now linked in.
+- **The single-canvas `viewport` layout is what the viewer uses**, applying the verdict
+  §4 reached and had not yet acted on.
+- The app's window is the document, not the spike harness: the manual A/B benchmark button
+  and its `src/lib/bench.ts` are gone, superseded by the automated `autobench` path that
+  every published transfer measurement was actually taken with.
+- `scroll_bench.py` and `viewer_check.py` share their lock-screen and display guards
+  (`scripts/webview_guard.py`) rather than carrying two copies of a long message that only
+  matters at the moment someone is working out why nothing happened.
 - **Corrected the worker-pool scaling claim.** `AGENTS.md` and `docs/PLAN.md` §3 said to
   size the pool from the performance-core count, on the strength of 3.89x across four
   workers. That was one tile from each of many pages of the text corpus; across six tiles

@@ -1,7 +1,12 @@
-//! tpdf --- Phase 0 spike harness.
+//! tpdf --- the application shell, and the harness that proved it could exist.
 //!
-//! This is not the application. It exists to answer the feasibility questions in
-//! docs/PLAN.md section 9 with numbers, and is expected to be thrown away.
+//! It began as the second of those: everything here was written to answer the
+//! feasibility questions in docs/PLAN.md section 9 with numbers. Phase 0 closed
+//! and the viewer now runs on the same pieces, so the file is no longer
+//! throwaway --- but the spike entry points are still here, still reachable by
+//! their `TPDF_*` environment variables, and are still how every number in
+//! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
+//! caller is a shell command in `BUILD.md`.
 
 pub mod progressive;
 mod protocol;
@@ -64,9 +69,15 @@ impl ShellMode {
 /// blocks only if it beat the render thread to the finish.
 struct EagerOpen(Mutex<Option<Receiver<Result<DocumentInfo, String>>>>);
 
-/// Whether page geometry should be collected for the whole document up front.
+/// Whether page geometry should be collected lazily rather than up front.
+///
+/// Lazy is the default, and it is the reason the Phase 0 startup criterion is
+/// met: enumerating every page of the 775-page corpus costs 86 ms on the
+/// critical path to buy a scrollbar exactness the scroller estimates anyway
+/// (docs/PLAN.md §4). `TPDF_EAGER_GEOMETRY` restores the walk, so the variant
+/// that measurement compared against is still reachable.
 fn lazy_geometry() -> bool {
-    std::env::var_os("TPDF_LAZY_GEOMETRY").is_some()
+    std::env::var_os("TPDF_EAGER_GEOMETRY").is_none()
 }
 
 /// Locates the Pdfium dynamic library.
@@ -214,6 +225,17 @@ fn scrollbench_config() -> Option<ScrollBenchConfig> {
     })
 }
 
+/// Path to run the viewer's functional check against, from `TPDF_VIEWERCHECK`.
+///
+/// Unlike the benchmarks either side of it this one asserts rather than
+/// measures --- see `src/lib/viewercheck.ts` --- and it needs a real webview for
+/// the same reason they do: the frame loop, the input handlers and the layout it
+/// checks do not exist anywhere else.
+#[tauri::command]
+fn viewercheck_path() -> Option<String> {
+    std::env::var("TPDF_VIEWERCHECK").ok()
+}
+
 /// Path to time a cold open of on startup, from `TPDF_STARTUP` (spike 0.2).
 #[tauri::command]
 fn startup_path() -> Option<String> {
@@ -274,6 +296,10 @@ fn start_watchdog() {
     // variant in one launch rather than one launch per sample.
     let seconds: u64 = if std::env::var_os("TPDF_SCROLLBENCH").is_some() {
         env_or("TPDF_SCROLL_TIMEOUT", 900)
+    } else if std::env::var_os("TPDF_VIEWERCHECK").is_some() {
+        // Frame-driven like the scroll benchmark, and so exposed to the same
+        // suspension, but it waits on renders rather than counting frames.
+        env_or("TPDF_VIEWERCHECK_TIMEOUT", 300)
     } else if std::env::var_os("TPDF_STARTUP").is_some()
         || std::env::var_os("TPDF_AUTOBENCH").is_some()
     {
@@ -331,7 +357,7 @@ pub fn run() {
         context.config_mut().app.windows.clear();
     }
 
-    let mut builder = tauri::Builder::default();
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
     if std::env::var_os("TPDF_EMPTY_MENU").is_some() {
         // Tauri installs a full default application menu on macOS. Building it
         // means constructing every item and submenu through AppKit, which is
@@ -354,7 +380,9 @@ pub fn run() {
             // throttle, not the platform. The app is launched from a script, so
             // nothing else would raise it, and the resulting cadence would look
             // exactly like a ceiling WebKit had imposed on us.
-            if std::env::var_os("TPDF_SCROLLBENCH").is_some() {
+            if std::env::var_os("TPDF_SCROLLBENCH").is_some()
+                || std::env::var_os("TPDF_VIEWERCHECK").is_some()
+            {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_focus();
                 }
@@ -384,6 +412,7 @@ pub fn run() {
             open_document,
             process_elapsed_ms,
             autobench_path,
+            viewercheck_path,
             startup_path,
             scrollbench_config,
             startup_mark,

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { fetchRequiredTile, type TileFormat } from "./lib/tiles";
-  import { interleaved, type BenchResult } from "./lib/bench";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { runAutobenchIfRequested } from "./lib/autobench";
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
+  import { runViewerCheckIfRequested } from "./lib/viewercheck";
+  import { Viewer, type ViewerStatus } from "./lib/viewer";
 
   interface PageSize {
     width_pt: number;
@@ -19,18 +21,13 @@
     at_ms: number;
   }
 
-  let path = $state("");
-  let doc = $state<DocumentInfo | null>(null);
+  let surface = $state<HTMLDivElement | null>(null);
+  let title = $state("");
   let error = $state<string | null>(null);
-  let busy = $state(false);
-  let log = $state<string[]>([]);
-  let bench = $state<BenchResult | null>(null);
-  let canvas = $state<HTMLCanvasElement | null>(null);
+  let opening = $state(false);
+  let status = $state<ViewerStatus | null>(null);
 
-  // Startup timeline (spike 0.2). The webview-side origin is stamped in
-  // index.html before any module loads, so framework boot is not hidden inside
-  // the first measurable interval.
-  let startup = $state<Record<string, number>>({});
+  let viewer: Viewer | null = null;
 
   $effect(() => {
     void (async () => {
@@ -39,232 +36,158 @@
       if (await runStartupTimelineIfRequested()) return;
       if (await runAutobenchIfRequested()) return;
       if (await runScrollBenchIfRequested()) return;
+      if (await runViewerCheckIfRequested()) return;
 
-      const elapsed = await invoke<number>("process_elapsed_ms");
-      const scriptStart =
-        (window as unknown as Record<string, number | undefined>)
-          .__tpdfWebviewScriptStart ?? 0;
-      startup = {
-        "webview script start (ms into process)": elapsed - performance.now() + scriptStart,
-        "app mounted (ms into process)": elapsed,
-      };
+      await getCurrentWebview().onDragDropEvent((event) => {
+        if (event.payload.type !== "drop") return;
+        const [path] = event.payload.paths;
+        if (path) void openPath(path);
+      });
     })();
   });
 
-  function note(line: string) {
-    log = [...log, line];
+  async function pickAndOpen() {
+    const chosen = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (typeof chosen === "string") await openPath(chosen);
   }
 
-  async function open() {
+  async function openPath(path: string) {
     error = null;
-    busy = true;
+    opening = true;
     try {
-      doc = await invoke<DocumentInfo>("open_document", { path });
-      note(
-        `opened ${doc.page_count} pages in ${doc.open_ms.toFixed(1)} ms ` +
-          `(at ${doc.at_ms.toFixed(0)} ms into process)`,
-      );
-      await drawFirstPage();
+      const doc = await invoke<DocumentInfo>("open_document", { path });
+      const page = doc.pages[0];
+      if (!page) throw new Error("document reports no pages");
+
+      viewer?.destroy();
+      viewer = null;
+      status = null;
+      title = path.split("/").pop() ?? path;
+
+      // The host element does not exist until the viewer section is in the
+      // DOM, and it is not while the empty-state placeholder is showing.
+      await new Promise(requestAnimationFrame);
+      if (!surface) throw new Error("no surface to mount into");
+
+      viewer = new Viewer(surface, {
+        doc: doc.id,
+        pageCount: doc.page_count,
+        page,
+        onStatus: (next) => (status = next),
+      });
+      viewer.focus();
     } catch (e) {
       error = String(e);
+      title = "";
     } finally {
-      busy = false;
+      opening = false;
     }
-  }
-
-  /** Renders page 0 at fit-width into the canvas, tile by tile. */
-  async function drawFirstPage() {
-    if (!doc || !canvas) return;
-    const page = doc.pages[0];
-    if (!page) return;
-
-    const scale = 1.5;
-    const width = Math.round(page.width_pt * scale);
-    const height = Math.round(page.height_pt * scale);
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const t0 = performance.now();
-    const tile = 512;
-    for (let y = 0; y < height; y += tile) {
-      for (let x = 0; x < width; x += tile) {
-        const w = Math.min(tile, width - x);
-        const h = Math.min(tile, height - y);
-        const result = await fetchRequiredTile({
-          doc: doc.id,
-          page: 0,
-          scale,
-          x,
-          y,
-          width: w,
-          height: h,
-          format: "raw",
-        });
-        ctx.drawImage(result.bitmap, x, y);
-        result.bitmap.close();
-      }
-    }
-    note(`first page painted in ${(performance.now() - t0).toFixed(1)} ms`);
   }
 
   /**
-   * Interleaved A/B of the two transfer formats at two tile sizes.
-   * Renders a full page per sample so the comparison is over realistic work.
+   * What the surface is doing, when it is not simply showing the document.
+   *
+   * docs/PLAN.md section 9 records that closing the A0 vector page against
+   * "never below the tier-1 placeholder" left the user owed a degraded state:
+   * that page is legitimately blurry for seconds at a time, and a viewer that
+   * says nothing about it is indistinguishable from one that is broken. The two
+   * failures are different and are reported as different --- `any` is whether
+   * there is a page at all, `sharp` is whether it can be read.
+   *
+   * The thresholds are just short of 1 rather than at it because coverage is a
+   * ratio of areas: a tile boundary that lands a rounding step inside the
+   * viewport leaves a fraction of a percent uncovered on a page that is fully
+   * rendered, and a status line that flickers on that is worse than none.
    */
-  async function runBench() {
-    if (!doc) return;
-    busy = true;
-    bench = null;
-    try {
-      const page = doc.pages[0];
-      if (!page) return;
-      const scale = 2.0;
-      const width = Math.round(page.width_pt * scale);
-      const height = Math.round(page.height_pt * scale);
-
-      const sweep = (format: TileFormat, tile: number) => async () => {
-        let bytes = 0;
-        let renderUs = 0;
-        let decodeMs = 0;
-        let count = 0;
-        for (let y = 0; y < height; y += tile) {
-          for (let x = 0; x < width; x += tile) {
-            const result = await fetchRequiredTile({
-              doc: doc!.id,
-              page: 0,
-              scale,
-              x,
-              y,
-              width: Math.min(tile, width - x),
-              height: Math.min(tile, height - y),
-              format,
-            });
-            bytes += result.bytes;
-            renderUs += result.renderUs;
-            decodeMs += result.decodeMs;
-            count++;
-            result.bitmap.close();
-          }
-        }
-        return { bytes, renderUs, decodeMs, tiles: count };
-      };
-
-      bench = await interleaved(
-        {
-          "raw/512": sweep("raw", 512),
-          "png/512": sweep("png", 512),
-          "raw/1024": sweep("raw", 1024),
-          "png/1024": sweep("png", 1024),
-        },
-        5,
-      );
-      note("benchmark complete");
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
+  const degraded = $derived.by(() => {
+    if (!status) return null;
+    if (status.any < 0.999) return "preparing page";
+    if (status.sharp < 0.999) return "sharpening";
+    return status.pending > 0 ? "loading ahead" : null;
+  });
 </script>
 
 <main>
-  <h1>tpdf — Phase 0 spike</h1>
-
-  <section class="controls">
-    <input
-      bind:value={path}
-      placeholder="/absolute/path/to/file.pdf"
-      spellcheck="false"
-      onkeydown={(e) => e.key === "Enter" && open()}
-    />
-    <button onclick={open} disabled={busy || !path}>Open</button>
-    <button onclick={runBench} disabled={busy || !doc}>Run A/B benchmark</button>
-  </section>
+  <header>
+    <button onclick={pickAndOpen} disabled={opening}>Open</button>
+    <span class="title">{title}</span>
+    <span class="spacer"></span>
+    {#if status}
+      {#if degraded}
+        <span class="degraded"
+          >{degraded} — {Math.round(status.sharp * 100)}% sharp</span
+        >
+      {/if}
+      <span class="stat">{status.page} / {status.pageCount}</span>
+      <span class="stat">{Math.round(status.zoom * 100)}%</span>
+    {/if}
+  </header>
 
   {#if error}
     <pre class="error">{error}</pre>
   {/if}
 
-  <section class="timeline">
-    <h2>Startup</h2>
-    <table>
-      <tbody>
-        {#each Object.entries(startup) as [label, value] (label)}
-          <tr><td>{label}</td><td class="num">{value.toFixed(1)}</td></tr>
-        {/each}
-      </tbody>
-    </table>
-  </section>
-
-  {#if bench}
-    <section>
-      <h2>Interleaved A/B — 5 rounds, full page at 2.0x</h2>
-      <table>
-        <thead>
-          <tr><th>variant</th><th>median ms</th><th>min</th><th>max</th><th>tiles</th><th>KB</th><th>render ms</th><th>decode ms</th></tr>
-        </thead>
-        <tbody>
-          {#each bench.stats as s (s.variant)}
-            <tr>
-              <td>{s.variant}</td>
-              <td class="num">{s.median.toFixed(1)}</td>
-              <td class="num">{s.min.toFixed(1)}</td>
-              <td class="num">{s.max.toFixed(1)}</td>
-              <td class="num">{(s.counters.tiles ?? 0).toFixed(0)}</td>
-              <td class="num">{((s.counters.bytes ?? 0) / 1024).toFixed(0)}</td>
-              <td class="num">{((s.counters.renderUs ?? 0) / 1000).toFixed(1)}</td>
-              <td class="num">{(s.counters.decodeMs ?? 0).toFixed(1)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-
-      <h3>Pairwise vs {bench.pairwise[0]?.a ?? "baseline"} (per round; &lt;1 is faster)</h3>
-      <table>
-        <tbody>
-          {#each bench.pairwise as p (p.b)}
-            <tr>
-              <td>{p.b}</td>
-              <td class="num">{p.medianRatio.toFixed(3)}</td>
-              <td class="ratios">{p.ratios.map((r) => r.toFixed(3)).join("  ")}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </section>
+  {#if title}
+    <div class="surface" bind:this={surface}></div>
+  {:else}
+    <div class="empty"><p>Open a PDF, or drop one here.</p></div>
   {/if}
-
-  <section>
-    <h2>Log</h2>
-    <pre>{log.join("\n")}</pre>
-  </section>
-
-  <section>
-    <h2>Page 1</h2>
-    <canvas bind:this={canvas}></canvas>
-  </section>
 </main>
 
 <style>
-  main {
-    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-    padding: 1.5rem;
-    max-width: 1100px;
-    margin: 0 auto;
+  :global(body) {
+    margin: 0;
+    background: Canvas;
+    color: CanvasText;
+    color-scheme: light dark;
   }
-  h1 { font-size: 1.1rem; }
-  h2 { font-size: 0.95rem; margin-top: 1.5rem; }
-  h3 { font-size: 0.85rem; font-weight: 600; }
-  .controls { display: flex; gap: 0.5rem; margin: 1rem 0; }
-  input { flex: 1; padding: 0.4rem 0.6rem; font: inherit; }
-  button { padding: 0.4rem 0.9rem; font: inherit; }
-  table { border-collapse: collapse; width: 100%; }
-  td, th { padding: 0.15rem 0.5rem; text-align: left; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .ratios { opacity: 0.6; }
-  .error { color: #c0392b; white-space: pre-wrap; }
-  pre { white-space: pre-wrap; }
-  canvas { max-width: 100%; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+  main {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    font: 13px/1.5 system-ui, -apple-system, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.4rem 0.7rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    flex: none;
+  }
+  button {
+    font: inherit;
+    padding: 0.2rem 0.8rem;
+  }
+  .title {
+    font-weight: 600;
+  }
+  .spacer {
+    flex: 1;
+  }
+  .stat,
+  .degraded {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.65;
+  }
+  .surface {
+    flex: 1;
+    min-height: 0;
+  }
+  .empty {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    opacity: 0.5;
+  }
+  .error {
+    margin: 0;
+    padding: 0.5rem 0.7rem;
+    color: #c0392b;
+    white-space: pre-wrap;
+  }
 </style>

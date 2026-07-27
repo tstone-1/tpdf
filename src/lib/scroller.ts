@@ -4,13 +4,21 @@
  * This is the design in docs/PLAN.md section 4 reduced to the parts that can
  * affect a frame: a two-tier cache, a tile window with one screen of prefetch,
  * a client-side supersedable queue, and an LRU bound on how many tiles are
- * resident. It is not the viewer --- there is no selection, no accessibility
- * tree, no zoom animation --- because the question it exists to answer is
+ * resident. It is still not the whole viewer --- there is no selection and no
+ * accessibility tree --- because the question it was written to answer is
  * whether the webview can composite this at the display's cadence, and every
  * one of those would only add cost to the thing being measured.
  *
+ * It has two callers now, and the split is deliberate. This class knows a
+ * scroll offset and a frame; `viewer.ts` knows where the offset comes from and
+ * whether a frame is worth running. That is what lets the benchmark drive it at
+ * a fixed cadence over a fixed distance while a reader drives it from a
+ * trackpad, without either one being a special case inside the other.
+ *
  * Two layouts are implemented rather than one, because who does the
- * compositing is the actual open question:
+ * compositing was the actual open question. It has an answer --- `viewport`,
+ * measured in section 4 --- and `tiles` is kept because it is the control that
+ * answer was measured against:
  *
  *  - `tiles`: a canvas per tile, positioned in a natively scrolling container.
  *    Pixels are drawn once, on arrival; scrolling is then the compositor's
@@ -231,25 +239,30 @@ export class Scroller {
 
   // Page geometry, in device pixels and in CSS pixels. Both are derived from
   // the device-pixel size so the two can never disagree by a rounding step.
-  private readonly pageWidthDev: number;
-  private readonly pageHeightDev: number;
-  private readonly pageWidthCss: number;
-  private readonly pageHeightCss: number;
-  private readonly cols: number;
-  private readonly rows: number;
+  private pageWidthDev = 0;
+  private pageHeightDev = 0;
+  private pageWidthCss = 0;
+  private pageHeightCss = 0;
+  private cols = 0;
+  private rows = 0;
 
   constructor(host: HTMLElement, opts: ScrollerOptions) {
     this.host = host;
     this.opts = opts;
 
-    this.pageWidthDev = Math.round(opts.page.width_pt * opts.zoom * opts.dpr);
-    this.pageHeightDev = Math.round(opts.page.height_pt * opts.zoom * opts.dpr);
-    this.pageWidthCss = this.pageWidthDev / opts.dpr;
-    this.pageHeightCss = this.pageHeightDev / opts.dpr;
-    this.cols = Math.ceil(this.pageWidthDev / opts.tilePx);
-    this.rows = Math.ceil(this.pageHeightDev / opts.tilePx);
-
+    this.computeGeometry();
     this.mount();
+  }
+
+  /** Derives page and tile geometry from the current zoom. */
+  private computeGeometry(): void {
+    const { page, zoom, dpr, tilePx } = this.opts;
+    this.pageWidthDev = Math.round(page.width_pt * zoom * dpr);
+    this.pageHeightDev = Math.round(page.height_pt * zoom * dpr);
+    this.pageWidthCss = this.pageWidthDev / dpr;
+    this.pageHeightCss = this.pageHeightDev / dpr;
+    this.cols = Math.ceil(this.pageWidthDev / tilePx);
+    this.rows = Math.ceil(this.pageHeightDev / tilePx);
   }
 
   /** Total scrollable height in CSS pixels. */
@@ -275,9 +288,89 @@ export class Scroller {
     return this.inFlight.size;
   }
 
+  /**
+   * Work asked for and not yet on screen.
+   *
+   * The viewer's frame loop idles when this reaches zero, so it counts tiles
+   * that have landed but not been drained as well as requests still out. A
+   * reply and the frame that draws it are one frame apart --- stopping between
+   * the two would leave the pixels in a buffer nobody looks at again, and the
+   * screen would stay blank until the next scroll happened to restart the loop.
+   */
+  get pendingWork(): number {
+    return (
+      this.inFlight.size + this.arrived.length + this.arrivedPlaceholders.length
+    );
+  }
+
   /** Tiles per page, so a run can report its working set. */
   get tilesPerPage(): number {
     return this.cols * this.rows;
+  }
+
+  /**
+   * Changes the zoom, keeping tier 1 and dropping tier 2.
+   *
+   * Every tier-2 tile was rendered at a scale, so none of them survives. Tier-1
+   * placeholders are rendered at a fixed 150 px and only stretched by CSS, so
+   * all of them do --- which is what stops a zoom step on the A0 sheet going
+   * grey for the 1.5 s its placeholder costs to produce again.
+   */
+  setZoom(zoom: number): void {
+    if (zoom === this.opts.zoom) return;
+    this.opts.zoom = zoom;
+    // Before the geometry moves: `clearTiles` withdraws by a predicate that
+    // asks the window which tiles it still wants, and the window it should be
+    // asking is the one those tiles were requested for.
+    this.clearTiles();
+    this.computeGeometry();
+    this.relayout();
+  }
+
+  /**
+   * Changes the viewport size, keeping both tiers.
+   *
+   * Nothing inside a tile depends on the viewport --- only where it is drawn
+   * does --- so a resize re-places tiles rather than re-rendering them. It does
+   * move the window, so the next frame requests whatever the new one uncovers.
+   */
+  resize(viewport: { width: number; height: number }): void {
+    this.opts.viewport = viewport;
+    this.host.style.width = `${viewport.width}px`;
+    this.host.style.height = `${viewport.height}px`;
+
+    if (this.surface) {
+      this.surface.width = Math.round(viewport.width * this.opts.dpr);
+      this.surface.height = Math.round(viewport.height * this.opts.dpr);
+      this.surface.style.width = `${viewport.width}px`;
+      this.surface.style.height = `${viewport.height}px`;
+    }
+    this.relayout();
+  }
+
+  /**
+   * Re-places everything whose position depends on the zoom or the viewport.
+   *
+   * Only the `tiles` layout mounts anything; the `viewport` layout repaints
+   * from cache every frame and so needs nothing but the new geometry.
+   */
+  private relayout(): void {
+    if (this.spacer) this.spacer.style.height = `${this.documentHeight}px`;
+
+    const left = this.pageLeftCss();
+    for (const [page, canvas] of this.placeholderCanvases) {
+      canvas.style.left = `${left}px`;
+      canvas.style.top = `${this.pageTop(page)}px`;
+      canvas.style.width = `${this.pageWidthCss}px`;
+      canvas.style.height = `${this.pageHeightCss}px`;
+    }
+    for (const entry of this.tiles.values()) {
+      if (!entry.canvas) continue;
+      entry.canvas.style.left = `${left + entry.rect.x / this.opts.dpr}px`;
+      entry.canvas.style.top = `${
+        this.pageTop(entry.key.page) + entry.rect.y / this.opts.dpr
+      }px`;
+    }
   }
 
   /**
@@ -408,6 +501,20 @@ export class Scroller {
     // `alpha: false` lets the compositor skip blending a layer that covers its
     // own bounds completely, which is what this one does.
     this.surfaceCtx = surface.getContext("2d", { alpha: false });
+  }
+
+  /** Zero-based index of the page occupying a scroll offset. */
+  pageAt(css: number): number {
+    const pitch = this.pageHeightCss + PAGE_GAP;
+    return Math.max(
+      0,
+      Math.min(this.opts.pageCount - 1, Math.floor(css / pitch)),
+    );
+  }
+
+  /** Scroll offset that puts a page's top edge at the top of the viewport. */
+  pageTopOf(page: number): number {
+    return this.pageTop(page);
   }
 
   /** CSS-pixel top of a page in the scrolled document. */
