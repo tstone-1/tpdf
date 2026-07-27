@@ -405,9 +405,14 @@ pub fn run() {
             // throttle, not the platform. The app is launched from a script, so
             // nothing else would raise it, and the resulting cadence would look
             // exactly like a ceiling WebKit had imposed on us.
-            if std::env::var_os("TPDF_SCROLLBENCH").is_some()
-                || std::env::var_os("TPDF_VIEWERCHECK").is_some()
-            {
+            //
+            // Only the benchmark. The viewer *check* deliberately does not do
+            // this: it asserts behaviour rather than timing it, so an unfocused
+            // window costs it nothing --- and raising a window over whatever
+            // someone is doing, every time a check runs, is its own bug. The
+            // window still has to be *visible*, because WebKit suspends an
+            // occluded page, but visible and focused are different things.
+            if std::env::var_os("TPDF_SCROLLBENCH").is_some() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_focus();
                 }

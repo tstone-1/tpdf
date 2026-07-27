@@ -594,6 +594,40 @@ are the suite working; predicting the wrong one is a fact about the prediction. 
 which check should notice, and treat a different check noticing as a result worth reading
 rather than a miss to be tidied away.
 
+### A property that holds by construction cannot test the thing it resembles
+
+The viewer check asserted that text dragged out of the page appears in the page's own text:
+`whole.includes(dragged)`. That reads like a check on the *geometry* --- if the character
+boxes and the character indices disagreed, surely the drag would return the wrong words.
+
+It cannot fail. A selection is a contiguous range of character **indices**, and the string it
+produces is built from those indices, so it is a substring of the page's text whatever the
+boxes claim. Inverting the y-flip in `text.rs` --- the exact defect the check was written to
+catch --- passed all twenty checks, and the drag returned real words. They were simply the
+wrong words, from the wrong part of the page.
+
+What discriminates is an assertion that ties a **screen position** to **specific characters**:
+text dragged near the top of the page must come from earlier in the page's text than text
+dragged further down. Under the flip that inverts, and the check goes red.
+
+The general form, and it is subtler than the usual "the test never ran": **before trusting an
+assertion, ask what would have to be true for it to fail.** If the answer is "nothing the
+code under test controls", it is decoration however relevant it sounds. Related to the query-key
+test above that probed the wrong direction, but worse --- that one could fail on some input,
+this one on none.
+
+### A mutation harness needs the same control as the thing it is testing
+
+The script driving those mutations rebuilt the app, ran the check, and looked for `[FAIL]`
+lines. A run that never produced a report --- a crash, a timeout, a lock screen --- has no
+`[FAIL]` lines either, so it printed *"nothing went red at all"*, which is exactly what a
+mutation nothing noticed looks like. Two of five results were unreadable for that reason.
+
+It now requires the summary line (`N/M checks passed`) to be present and reports a missing
+one as a broken run, distinct from a surviving mutation. **A harness that reads absence as
+evidence needs to distinguish absence from silence** --- the same failure as the leak scanner
+that could not decode a Type0 font, one level up.
+
 ### A test whose precondition is already satisfied never runs
 
 The sharpest instance of the shape above, and the fourth in this project. `viewercheck.ts`
