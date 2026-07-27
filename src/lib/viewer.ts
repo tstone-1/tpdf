@@ -29,6 +29,7 @@
  * line reports is the same number the benchmark reports, not an estimate of it.
  */
 
+import { AccessibleText } from "./a11y";
 import { Scroller, type PageSize } from "./scroller";
 import { Search, type Match } from "./search";
 import { Selection } from "./selection";
@@ -158,6 +159,7 @@ export class Viewer {
   private readonly track: HTMLDivElement;
   private readonly thumb: HTMLDivElement;
   private readonly text: TextCache;
+  private readonly a11y: AccessibleText;
 
   private readonly searcher: Search;
   /**
@@ -223,10 +225,15 @@ export class Viewer {
     root.style.outline = "none";
 
     this.text = new TextCache(opts.doc);
+    this.a11y = new AccessibleText(root, opts.pageCount);
     this.searcher = new Search(opts.doc, opts.pageCount, () => this.onSearchProgress());
 
     this.surfaceHost = document.createElement("div");
     this.surfaceHost.style.cssText = "position:absolute;left:0;top:0;";
+    // The tiles carry no text a screen reader can reach, and the parallel DOM in
+    // `a11y.ts` carries all of it -- so leaving the canvases in the tree would
+    // offer a reader a large, empty region to get lost in.
+    this.surfaceHost.setAttribute("aria-hidden", "true");
     root.appendChild(this.surfaceHost);
 
     // Above the tiles and transparent to the pointer. A separate layer rather
@@ -235,6 +242,7 @@ export class Viewer {
     this.overlay = document.createElement("canvas");
     this.overlay.style.cssText =
       "position:absolute;left:0;top:0;pointer-events:none;";
+    this.overlay.setAttribute("aria-hidden", "true");
     root.appendChild(this.overlay);
     this.overlayCtx = this.overlay.getContext("2d");
 
@@ -284,6 +292,7 @@ export class Viewer {
 
   destroy(): void {
     this.stop();
+    this.a11y.destroy();
     this.searcher.cancel();
     this.observer.disconnect();
     this.root.removeEventListener("wheel", this.onWheel);
@@ -349,6 +358,7 @@ export class Viewer {
   private readonly tick = (): void => {
     const stats = this.scroller.frame(this.scrollTop);
     this.prefetchText();
+    this.syncAccessibleText();
     this.paintOverlay();
     this.paintThumb();
     this.report(stats);
@@ -883,6 +893,23 @@ export class Viewer {
         );
       }
     }
+  }
+
+  /**
+   * Keeps the screen-reader text in step with what is on screen.
+   *
+   * Runs every frame and is nearly free when nothing changed --- a page already
+   * present is not touched, which is the property that keeps a reading cursor
+   * alive across a scroll. See `a11y.ts`.
+   */
+  private syncAccessibleText(): void {
+    this.a11y.sync(this.scroller.visiblePages(), (page) => this.text.peek(page));
+    this.a11y.announce(this.currentPage());
+  }
+
+  /** The screen-reader text layer. For the check harness. */
+  get accessibleText(): AccessibleText {
+    return this.a11y;
   }
 
   /** Asks for a page's text once, waking the loop when it lands. */

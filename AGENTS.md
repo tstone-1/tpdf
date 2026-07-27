@@ -630,6 +630,26 @@ one as a broken run, distinct from a surviving mutation. **A harness that reads 
 evidence needs to distinguish absence from silence** --- the same failure as the leak scanner
 that could not decode a Type0 font, one level up.
 
+### A text comparison cannot see a property that is not about text
+
+Two defects in the *checks* for the screen-reader layer, found within minutes of each other,
+same shape both times.
+
+**`textContent` concatenates block elements with nothing between them.** Comparing a page's
+accessible text against an independent extraction failed at 2,562 characters against 2,618
+--- exactly one missing separator per line on a 56-line page. The content was identical; the
+comparison had flattened away the block structure that carried the line breaks, and then
+reported the absence of that structure as a content mismatch. Join the blocks (or read
+`innerText`, which respects layout) when the thing being compared is what a reader hears.
+
+**`display:none` and `visibility:hidden` remove an element from the accessibility tree, and
+every text assertion still passes.** A screen-reader layer hidden either way is completely
+inert while reading perfectly correct through `textContent`. The visually-hidden idiom has
+to be the clipping form (`width:1px;height:1px;clip-path:inset(50%)`) precisely because
+those two are not equivalent to it, and that is worth its own assertion: the container must
+be 1x1 *and* neither `display:none` nor `visibility:hidden`. Without it the whole layer is
+one CSS edit away from doing nothing, with no check able to notice.
+
 ### Restoring a mutated file by *moving* a backup over it tests the mutated binary
 
 The harness driving the `search.rs` mutations copied the file, mutated it, ran the tests,
