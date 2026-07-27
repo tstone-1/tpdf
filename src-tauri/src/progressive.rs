@@ -354,7 +354,7 @@ impl Drop for RawBitmap<'_> {
 /// A flag any thread may set to abandon a render in flight.
 ///
 /// Cheap to clone; every clone refers to the same flag.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CancelToken(Arc<AtomicBool>);
 
 impl CancelToken {

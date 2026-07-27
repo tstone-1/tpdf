@@ -183,10 +183,11 @@ warnings`, `cargo test --locked`, `npm run check`, `npm run build`. `--all-targe
 test code, `-D warnings` makes lints fatal, and `--locked` catches a `Cargo.lock` that was
 not committed after a `cargo update`; dropping any of them silently weakens the gate.
 
-Two honest notes. `cargo test --locked` runs **no tests** --- it is a gate for the lockfile
-and for compiling the test targets. And the earlier plan listed `npm run lint` and
-`npm run test`, which do not exist; adding an ESLint config and a test runner with nothing
-to lint or test is scaffolding, and they land when there is something for them to check.
+One honest note. The earlier plan listed `npm run lint` and `npm run test`, which do not
+exist; adding an ESLint config and a test runner with nothing to lint or test is
+scaffolding, and they land when there is something for them to check. `cargo test` now runs
+real tests --- the request queue and the `tile://` parser --- and remains a lockfile gate
+besides.
 
 **There is no remote CI, deliberately** --- pre-release, one machine, and a workflow would
 add a second place for the gate list to live while catching nothing `scripts/gates.py`
@@ -535,6 +536,35 @@ Bisect an SBPL profile rather than reasoning about it --- `worker-bench --profil
 raw SBPL so a policy can be narrowed from the shell. Note also that `sandbox_init` denials
 do not appear in the unified log without an explicit report clause, so "no log entries" is
 not evidence that nothing was denied.
+
+### Break the code on purpose, or the test suite is decoration
+
+The first tests in this repo (the request queue and the `tile://` parser) were written, run,
+and passed. That proves nothing on its own --- a test that cannot fail passes exactly like
+one that can. Each was then checked by deliberately mutating the code it covers and
+confirming the *expected* test went red. Two of the twenty-six were wrong, and neither would
+have been found any other way:
+
+- **A guard no mutation could fail.** `Queue::withdraw` opened with `if rid == 0 { return }`.
+  Deleting it broke nothing, because `enqueue` and `claim` already keep zero out of both
+  tables, so the early return was unreachable defence. It was deleted rather than kept:
+  a check nothing pins is a check that can silently become wrong. The two guards that *are*
+  load-bearing were each confirmed to fail a test on their own.
+- **A test that probed the wrong direction.** "A query key is matched whole" asserted that
+  `fmt` is not found in `xfmt`. Mutating `==` to `starts_with` **passed** --- the hazard for
+  a prefix match is a key that *extends* the sought one (`fmtx`), not one that precedes it.
+  The test asserted the mistake it happened to think of, not the mistake the code could
+  make.
+
+The procedure is cheap --- copy the file, apply one edit, run, restore --- and it is the
+only thing that distinguishes a suite from a comfort blanket. **Write down which mutation
+each test is supposed to catch, then make that mutation.** If nothing goes red, either the
+test or the code is wrong, and both are worth knowing about.
+
+Two smaller notes from doing it. Mutate one thing at a time: a double mutation showed a
+test failing that a single one did not, which is how the redundant guard was found rather
+than misread as covered. And expect a mutation to trip *more* tests than the one aimed at
+--- that is a coverage overlap, not a problem, but the aimed-at test must be among them.
 
 ### A crash test that compiles away proves containment of a crash that never happened
 
