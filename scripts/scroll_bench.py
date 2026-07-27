@@ -27,35 +27,7 @@ import os
 import subprocess
 import sys
 
-
-def hold_display_awake() -> "subprocess.Popen[bytes] | None":
-    """Keeps the display awake and on for as long as this process lives.
-
-    `-u` as well as `-d`: `-d` only prevents the display going idle, and a
-    display that is already off stays off. `-u` declares user activity, which
-    turns it back on. The assertion is released when this process exits.
-    """
-    if sys.platform != "darwin":
-        return None
-    try:
-        return subprocess.Popen(
-            ["caffeinate", "-du", "-w", str(os.getpid())],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except OSError:
-        print("[WARN] caffeinate not available; a sleeping display will hang the run", file=sys.stderr)
-        return None
-
-
-def screen_is_locked() -> bool:
-    """Whether the login session is locked, which makes every window invisible."""
-    if sys.platform != "darwin":
-        return False
-    result = subprocess.run(["ioreg", "-n", "Root", "-d1", "-a"], capture_output=True, text=True)
-    marker = "<key>CGSSessionScreenIsLocked</key>"
-    index = result.stdout.find(marker)
-    return index >= 0 and "<true/>" in result.stdout[index : index + 120]
+from webview_guard import require_visible_session
 
 
 def main() -> int:
@@ -82,25 +54,9 @@ def main() -> int:
         )
         return 1
 
-    if screen_is_locked():
-        print(
-            "[FAIL] the screen is locked, so every window is occluded and WebKit\n"
-            "       suspends the page. requestAnimationFrame never fires and the\n"
-            "       run cannot even time itself out. Unlock and re-run.\n"
-            "\n"
-            "       There is no way to unlock a macOS session from a script, by\n"
-            "       design, so this can only be prevented rather than recovered\n"
-            "       from. This script holds `caffeinate -du` for its own lifetime,\n"
-            "       which covers one run and not the gap before it -- a long\n"
-            "       headless bench alongside it does not hold one. Wrap a whole\n"
-            "       batch instead:\n"
-            "\n"
-            "           caffeinate -du bash -c '<run> ; <run> ; <run>'",
-            file=sys.stderr,
-        )
+    if not require_visible_session():
         return 1
 
-    hold_display_awake()
 
     env = dict(os.environ, TPDF_SCROLLBENCH=args.pdf)
     for assignment in args.set:

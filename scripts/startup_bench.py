@@ -7,7 +7,11 @@ being measured is what a launch costs -- so aggregation has to happen out here.
 Usage:
     scripts/startup_bench.py <app-binary> <file.pdf> [--runs N] [--purge]
     scripts/startup_bench.py <app-binary> <file.pdf> \
-        --variant baseline --variant "lazy:TPDF_LAZY_GEOMETRY=1" ...
+        --variant baseline --variant "eager:TPDF_EAGER_GEOMETRY=1" ...
+
+Lazy page geometry became the default on 2026-07-27, so the variant that used to
+be the improvement is now the baseline and `TPDF_EAGER_GEOMETRY` restores the
+86 ms whole-document walk it replaced.
 
 The first run is reported separately from the rest. It is the closest thing to a
 cold start available without evicting the page cache, and mixing it into a

@@ -43,6 +43,7 @@ png = "0.17"
 # getrusage, for peak RSS in the tile bench. Pdfium allocates natively, so a
 # Rust allocator hook would report almost nothing.
 libc = "0.2"
+tauri-plugin-dialog = "2.7.2"
 
 [[bin]]
 name = "tile-bench"

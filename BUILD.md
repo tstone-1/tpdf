@@ -184,6 +184,30 @@ Run the executable inside the `.app` directly --- that keeps stdout and the envi
 which `open -a` does not. `--purge` gives a genuinely cold page cache and needs a sudoers
 entry for `/usr/sbin/purge`.
 
+### Checking the viewer
+
+The reading surface is asserted rather than eyeballed. This opens a document in a real
+webview, dispatches real wheel and key events at it, and checks sixteen behaviours ---
+fit-width, scrolling, End and Home, the zoom ladder, a pinch, resize, and that the frame
+loop idles when there is nothing to do:
+
+```
+scripts/viewer_check.py \
+    src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf testdata/text-heavy.pdf
+```
+
+It is **not** a `gates.py` gate: it needs a built bundle and a generated fixture, neither of
+which a gate run has. Run it before a release, and after any change to `viewer.ts`,
+`scroller.ts` or the tile protocol.
+
+Unlike the benchmarks it does not require a release bundle --- it asserts behaviour rather
+than timing it --- but it does require an unlocked screen, for the reason `scroll_bench.py`
+does: WebKit suspends a page whose window is not visible, so behind a lock screen the check
+does not fail, it stops. Both scripts share that guard (`scripts/webview_guard.py`).
+
+Run it on `testdata/vector-heavy.pdf` too. That fixture is one page, so the jump control
+reports `[SKIP]` with its reason --- which is the expected output there, not a problem.
+
 ---
 
 ## Cutting a release
@@ -202,7 +226,8 @@ starts at 0 and increments within the month.
 3. `cargo check --manifest-path src-tauri/Cargo.toml` to refresh `Cargo.lock`.
 4. In `CHANGELOG.md`, replace `Unreleased` with the release date.
 5. `scripts/gates.py` --- all gates pass.
-6. `npm run tauri build` and smoke-test the bundle.
+6. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
+   it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`.
 7. Commit as `Release vYY.M.MICRO: <summary>`.
 
 Verify the bump landed everywhere:
