@@ -261,18 +261,18 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **63 check names**; what differs is how
+Run all six corpora. Every run reports the same **75 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 52 | 11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 58 | 5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 58 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 34 | 29 | one page, no extractable text |
-| `vector-multi.pdf` | 41 | 22 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 52 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 65 | 10 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 70 | 5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 70 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 44 | 31 | one page, no extractable text |
+| `vector-multi.pdf` | 51 | 24 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 64 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
 
 `vector-heavy` skipping most of them is the expected output there, not a problem. The one
 search check it does run is the useful one for that document: that the viewer says there is
@@ -286,11 +286,21 @@ is the probe, per rotation:
 
 ```
 for page in 0 1 2 3; do
-    src-tauri/target/release/text-probe testdata/rotated.pdf --page $page --mode align
+    for view in 0 1 2 3; do
+        src-tauri/target/release/text-probe testdata/rotated.pdf \
+            --page $page --mode align --view-turns $view
+    done
 done
 src-tauri/target/release/outline-probe testdata/rotated-90.pdf --mode check \
     --manifest testdata/rotated-manifest.json
 ```
+
+`--view-turns` rotates the *view* on top of the page's own `/Rotate`, which is what Cmd-R
+does. All sixteen combinations should report 100% of character boxes on ink with every wrong
+turn under the control ceiling; anything else means the render and the boxes have stopped
+agreeing, and the pattern of which combinations go red says which half. Dropping the
+placement's dimension swap fails only the odd view turns; ignoring the rotation in the render
+fails all twelve rotated ones.
 
 `vector-multi` earns its place with three checks and nothing else: a thumbnail costs about a
 millisecond on a text page and a second and a half on an A0 sheet, so it is the only corpus

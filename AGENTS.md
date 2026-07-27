@@ -1349,6 +1349,92 @@ is easy to believe otherwise: this fixes the *whole-page* case only. A rotated *
 an upright page --- a sideways table header --- is still split character by character, as it
 was before.
 
+### PDFium's render rotation composes with `/Rotate`, and wants the turned size
+
+`FPDF_RenderPageBitmap_Start` takes a rotation argument, and it is the right mechanism for
+rotating the *view*: PDFium's display matrix applies the page's own `/Rotate` first and this
+on top, so "turn it a quarter clockwise" means the same thing on a scanned page as on an
+upright one. Two things about it are easy to get wrong in the same direction.
+
+The `size_x`/`size_y` arguments are the **displayed** dimensions, so a quarter turn swaps
+them. PDFium fits the page into the rect it is given and rotates inside it; passing the
+upright size squeezes a landscape page into a portrait box rather than turning it. The
+symptom is a page that is recognisably the right content at the wrong proportions, which
+reads as a tiling bug.
+
+And the text side does *not* go through the same call. `FPDFText_GetCharBox` knows nothing
+about a view rotation --- it is not a property of the document --- so the boxes have to be
+turned in our own code. That gives two implementations of one idea, which is what the
+composition rule is for: turning a device-space box by `v` after `to_device(p, …)` must equal
+`to_device((p + v) % 4, …)` of the raw box. `text.rs` asserts it for all sixteen
+combinations, and it is the only thing tying the frontend's turn to the mapping that was
+verified against pixels.
+
+Note the two are separately capable of being wrong, in ways that hide each other. A view
+that turns its boxes and not its render, or its render and not its boxes, still selects text
+in tidy rectangles --- the wrong ones. `text-probe --mode align --view-turns N` renders with
+the rotation and maps with it, so it catches either half; mutating each was worth doing,
+because dropping the dimension swap goes red only on odd turns and reading the rotation as
+zero goes red on all three.
+
+### Two rotation tables, disagreeing at every turn but zero
+
+A rotated page has two reading directions and they are not the same table. **Across** the
+lines, the first line is at the low end of the axis at no rotation and at three quarter
+turns --- because one quarter turn sends the page's y to the display's x *decreasing*, and
+three send it to x increasing. **Along** a line, reading runs in the increasing direction at
+no rotation and at *one* quarter turn.
+
+Written as one table --- which is the obvious mistake, since both are "is it rotated" --- a
+check that drags two lines out of a rotated page went red on two corpora and passed on
+neither. Derive each from where the page's top-left corner ends up; do not derive the second
+from the first.
+
+### PDFium's character order is not the page's line order
+
+A check asserted that text dragged from nearer the start of a page has a lower character
+index. On `text-heavy` that is true. On `rotated-90.pdf` it is not: dragging out `Line 03`
+gives index 405 and `Line 10` gives 90, so the extraction runs the other way --- and the
+check went red against a rotation that `text-probe --mode align` had already confirmed
+correct at 100% of character boxes.
+
+That is a claim about PDFium and the document, not about the code under test. What is ours,
+and what the check now says, is that **the same two lines come back**: sample two lines
+before the rotation and the same two after, from wherever the rotation should have put them.
+It assumes nothing about extraction order, and a rotation applied backwards still returns the
+other line.
+
+Compare exactly, though, and it fails for a reason that is not a defect: rotating refits the
+page to the window, so the zoom changes and the drag endpoints land a character further in or
+out. `"ine 03 charlie delta ech"` against `"Line 03 charlie delta ec"` is the same line.
+Compare the core of the shorter string --- that tolerates an edge and not a line.
+
+### A check that derives its inputs from the thing it is testing cannot fail
+
+The fourth instance of this shape in this project, and the most disguised. "The same lines
+come back out of a rotated page" computed its drag positions from the viewer's own turned
+character boxes, then asked the viewer's caret which characters were there. Delete the line
+that tells the text layer about the rotation and it is wrong **consistently**: the sample and
+the caret agree, the same lines come back, and the check passes over a selection ninety
+degrees out from the page on screen. It survived that mutation.
+
+What catches it is a direct assertion on the wiring rather than on the geometry --- the text
+layer must *report* the turned rotation and the swapped page width, checked against a second
+fetch from the backend. Cheap, and unsatisfiable by self-consistency.
+
+Two smaller ones found the same way, both gaps rather than wrong answers:
+
+- **Nothing in a viewer check looks at a pixel.** Drop the rotation on its way into the tile
+  URL and the boxes still turn, the layout still turns, and the page underneath is upright.
+  The check for it fetches one tile at two rotations and asserts they differ --- with the
+  control beside it that the *same* rotation twice is byte-identical, or "they differ" is
+  satisfied by a renderer that is merely non-deterministic.
+- **The viewer and the scroller each keep a rotation, and either can be wrong alone.**
+  Checking the zoom covers the viewer's; a scroller laying every page out upright survived
+  it completely, producing a narrow page inside a correctly refitted window. The scroller's
+  own laid-out page box has to be asserted separately, and its aspect is the thing to assert:
+  the mutation's detail line read `aspect 0.773 then 0.773`.
+
 ### A dense page of uniform lines cannot detect a y-flip
 
 Character boxes come in page space (y up, origin bottom-left) and everything downstream wants

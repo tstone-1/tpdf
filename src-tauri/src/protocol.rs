@@ -123,11 +123,24 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
         None => 0,
     };
 
+    // Refused rather than reduced modulo four. A caller asking for five
+    // quarter-turns has computed something wrong, and quietly rendering the one
+    // turn it happens to mean would hide that in the one place --- a rotated
+    // view --- where nobody would think to look for it.
+    let turns = match query.and_then(|q| param(q, "turns")) {
+        Some(raw) => match raw.parse::<u8>() {
+            Ok(turns) if turns < 4 => turns,
+            _ => return Err(format!("turns must be 0, 1, 2 or 3: {raw:?}")),
+        },
+        None => 0,
+    };
+
     Ok(TileRequest {
         rid,
         doc: field("doc", doc)? as u32,
         page: page_index as u32,
         scale: scale_thousandths as f32 / 1000.0,
+        turns,
         x: field("x", x)? as i32,
         y: field("y", y)? as i32,
         width: width as u16,
@@ -319,6 +332,33 @@ mod tests {
         assert_eq!(ok(PATH, Some("xfmt=png")).format, TileFormat::Raw);
         assert_eq!(ok(PATH, Some("ridx=42")).rid, 0);
         assert_eq!(ok(PATH, Some("grid=42")).rid, 0);
+        assert_eq!(ok(PATH, Some("turnsx=2")).turns, 0);
+        assert_eq!(ok(PATH, Some("returns=2")).turns, 0);
+    }
+
+    #[test]
+    fn an_absent_rotation_means_the_page_is_upright() {
+        assert_eq!(ok(PATH, None).turns, 0);
+        assert_eq!(ok(PATH, Some("fmt=raw&rid=1")).turns, 0);
+    }
+
+    #[test]
+    fn every_quarter_turn_is_read_from_the_query() {
+        for turns in 0..4u8 {
+            assert_eq!(ok(PATH, Some(&format!("turns={turns}"))).turns, turns);
+        }
+        assert_eq!(ok(PATH, Some("rid=7&turns=3&fmt=png")).turns, 3);
+    }
+
+    #[test]
+    fn a_rotation_outside_a_quarter_turn_is_refused_rather_than_wrapped() {
+        // `turns=4` is the interesting one: it means "no rotation" under a
+        // modulo and "the caller's arithmetic is wrong" otherwise, and the
+        // render it would produce looks perfectly ordinary either way.
+        assert!(parse(PATH, Some("turns=4")).is_err());
+        assert!(parse(PATH, Some("turns=-1")).is_err());
+        assert!(parse(PATH, Some("turns=cw")).is_err());
+        assert!(parse(PATH, Some("turns=")).is_err());
     }
 
     #[test]

@@ -12,7 +12,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { linesOf, linesRunSideways, textOf, type PageText } from "./text";
+import {
+  linesOf,
+  linesRunSideways,
+  textOf,
+  turnedView,
+  turnQuad,
+  type PageText,
+} from "./text";
 
 /** Builds a page from `(character, [left, top, right, bottom])` pairs. */
 function page(
@@ -191,5 +198,132 @@ describe("linesOf on a rotated page", () => {
 
   it("treats a three-quarter turn as sideways", () => {
     expect(linesRunSideways({ ...turned(), quarter_turns: 3 })).toBe(true);
+  });
+});
+
+describe("turnQuad", () => {
+  // A 100x200 page, and a box near its top-left: 10..30 across, 20..60 down.
+  // Asymmetric in both axes on purpose --- a square box in the middle maps to
+  // something plausible under every turn and can distinguish none of them.
+  const page = { width: 100, height: 200 };
+  const box = { left: 10, top: 20, right: 30, bottom: 60 };
+
+  it("leaves an unrotated box alone", () => {
+    expect(turnQuad(box, 0, page.width, page.height)).toEqual(box);
+  });
+
+  it("sends the top-left corner clockwise round the page", () => {
+    // The load-bearing one. A box in the top-left must appear top-right,
+    // bottom-right and bottom-left in turn, and this is the only assertion here
+    // that can tell a quarter turn from a three-quarter one --- both swap the
+    // page's dimensions identically.
+    const corners = [1, 2, 3].map((turns) => {
+      const [width, height] =
+        turns % 2 === 1 ? [page.height, page.width] : [page.width, page.height];
+      const turned = turnQuad(box, turns, page.width, page.height);
+      return [turned.left < width / 2, turned.top < height / 2];
+    });
+    expect(corners).toEqual([
+      [false, true], // top-right
+      [false, false], // bottom-right
+      [true, false], // bottom-left
+    ]);
+  });
+
+  it("swaps the box's own proportions on a quarter turn", () => {
+    // 20 wide by 40 tall becomes 40 wide by 20 tall. Without this, a turn that
+    // put the corner in the right place but transposed the extents would pass
+    // the check above.
+    const turned = turnQuad(box, 1, page.width, page.height);
+    expect(turned.right - turned.left).toBe(40);
+    expect(turned.bottom - turned.top).toBe(20);
+  });
+
+  it("never returns a box inside out", () => {
+    // A highlight with a negative width simply does not draw, which reads as
+    // "selection is broken" rather than as a coordinate bug.
+    for (const turns of [0, 1, 2, 3]) {
+      const turned = turnQuad(box, turns, page.width, page.height);
+      expect(turned.left).toBeLessThanOrEqual(turned.right);
+      expect(turned.top).toBeLessThanOrEqual(turned.bottom);
+    }
+  });
+
+  it("comes back to where it started after four turns", () => {
+    // Composition rather than a table: four quarter turns are the identity, and
+    // getting there requires every intermediate step to be self-consistent.
+    let quad = box;
+    let [width, height] = [page.width, page.height];
+    for (let step = 0; step < 4; step++) {
+      quad = turnQuad(quad, 1, width, height);
+      [width, height] = [height, width];
+    }
+    expect(quad).toEqual(box);
+  });
+
+  it("treats a rotation beyond a full turn as the turn it means", () => {
+    expect(turnQuad(box, 4, page.width, page.height)).toEqual(box);
+    expect(turnQuad(box, -1, page.width, page.height)).toEqual(
+      turnQuad(box, 3, page.width, page.height),
+    );
+  });
+});
+
+describe("turnedView", () => {
+  /** Two lines of two characters on a 100x100 page, reading left to right. */
+  function twoShortLines(): PageText {
+    return page([
+      ["a", [10, 10, 20, 20]],
+      ["b", [20, 10, 30, 20]],
+      ["c", [10, 40, 20, 50]],
+      ["d", [20, 40, 30, 50]],
+    ]);
+  }
+
+  it("swaps the page's dimensions on a quarter turn", () => {
+    const text: PageText = { ...twoShortLines(), width_pt: 100, height_pt: 200 };
+    const turned = turnedView(text, 1);
+    expect(turned.width_pt).toBe(200);
+    expect(turned.height_pt).toBe(100);
+    expect(turnedView(text, 2).width_pt).toBe(100);
+  });
+
+  it("accumulates onto the page's own rotation", () => {
+    // What keeps `linesRunSideways` right: an upright page looked at sideways
+    // reads down the screen exactly as a /Rotate 90 page does.
+    const upright = twoShortLines();
+    expect(linesRunSideways(upright)).toBe(false);
+    expect(linesRunSideways(turnedView(upright, 1))).toBe(true);
+
+    const scanned: PageText = { ...upright, quarter_turns: 1 };
+    expect(linesRunSideways(turnedView(scanned, 1))).toBe(false);
+    expect(turnedView(scanned, 3).quarter_turns).toBe(0);
+  });
+
+  it("keeps the same characters on the same lines", () => {
+    // A rotation is an isometry, so the grouping cannot change --- which is why
+    // a screen reader still hears a rotated page in its own order. The check
+    // that matters is that this holds after the *axis* has swapped too, i.e.
+    // that both halves of the turn were applied and not just one.
+    const upright = twoShortLines();
+    for (const turns of [1, 2, 3]) {
+      expect(linesOf(turnedView(upright, turns))).toEqual(linesOf(upright));
+    }
+  });
+
+  it("leaves a character PDFium gave no box alone", () => {
+    // Four zeroes means "no box". Turning it would invent one in a corner, and
+    // `isPlaced` would then believe it --- putting a phantom character into a
+    // line, and into the text a screen reader reads.
+    const text = page([
+      ["a", [10, 10, 20, 20]],
+      [" ", null],
+    ]);
+    expect(turnedView(text, 1).boxes.slice(4)).toEqual([0, 0, 0, 0]);
+  });
+
+  it("returns the page itself when nothing is rotated", () => {
+    const text = twoShortLines();
+    expect(turnedView(text, 0)).toBe(text);
   });
 });

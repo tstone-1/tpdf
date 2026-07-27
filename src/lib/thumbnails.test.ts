@@ -119,4 +119,22 @@ describe("rowHeightFor", () => {
   it("does not divide by a zero page width", () => {
     expect(Number.isFinite(rowHeightFor({ width_pt: 0, height_pt: 792 }))).toBe(true);
   });
+
+  it("measures the page as the view shows it, not as the file has it", () => {
+    // A portrait page rotated a quarter turn is a landscape row, and a strip
+    // that sized its rows from the file would leave a gap under every one of
+    // them --- while the borrowed bitmap, which *is* rotated, overflowed.
+    const portrait = { width_pt: 612, height_pt: 792 };
+    const landscape = { width_pt: 792, height_pt: 612 };
+    expect(rowHeightFor(portrait, 1)).toBe(rowHeightFor(landscape, 0));
+    expect(rowHeightFor(portrait, 3)).toBe(rowHeightFor(landscape, 0));
+  });
+
+  it("is unchanged by a half turn", () => {
+    // The control for the test above: a defect that swapped the dimensions on
+    // *every* non-zero rotation would pass it, and fails here.
+    const portrait = { width_pt: 612, height_pt: 792 };
+    expect(rowHeightFor(portrait, 2)).toBe(rowHeightFor(portrait, 0));
+    expect(rowHeightFor(portrait, 4)).toBe(rowHeightFor(portrait, 0));
+  });
 });

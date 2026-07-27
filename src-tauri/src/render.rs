@@ -70,6 +70,12 @@ pub struct TileRequest {
     pub page: u32,
     /// Device pixels per PDF point.
     pub scale: f32,
+    /// Quarter-turns clockwise the view is rotated by, 0 to 3.
+    ///
+    /// A property of how the reader is looking at the document, not of the
+    /// document --- rotating the view never touches the file. It composes on top
+    /// of the page's own `/Rotate`.
+    pub turns: u8,
     /// Tile origin in device pixels, relative to the scaled page's top-left.
     pub x: i32,
     pub y: i32,
@@ -439,6 +445,7 @@ fn render_tile(
 
     let spec = TileSpec {
         scale: req.scale,
+        turns: req.turns,
         x: req.x,
         y: req.y,
         width: req.width,

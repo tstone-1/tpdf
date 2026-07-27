@@ -676,6 +676,7 @@ fn render(
 ) -> Result<(Vec<u8>, Progress), String> {
     let spec = progressive::TileSpec {
         scale: args.scale,
+        turns: 0,
         x,
         y,
         width: args.tile,

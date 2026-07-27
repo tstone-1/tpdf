@@ -53,6 +53,13 @@ export interface ScrollerOptions {
   page: PageSize;
   /** CSS pixels per PDF point. 1.0 is "100%" for this spike's purposes. */
   zoom: number;
+  /**
+   * Quarter-turns clockwise the view is rotated by, 0 to 3.
+   *
+   * A property of the view, never of the document: rotating changes what the
+   * renderer is asked for and how the page is laid out, and writes nothing.
+   */
+  turns: number;
   layout: Layout;
   /** Tile edge in device pixels. Section 4 measured 1024-2048 as the range. */
   tilePx: number;
@@ -218,6 +225,7 @@ export class Scroller {
   private readonly arrivedPlaceholders: {
     page: number;
     bitmap: ImageBitmap;
+    generation: number;
   }[] = [];
 
   private scrollTop = 0;
@@ -232,6 +240,17 @@ export class Scroller {
    * silently instead.
    */
   private generation = 0;
+  /**
+   * Bumped when tier 1 is dropped, which only a rotation does.
+   *
+   * Separate from `generation` because the two invalidate opposite halves:
+   * tier-1 requests are precisely the ones that survive a tier-2 clear, so a
+   * single counter could not express "keep the placeholders, drop the tiles"
+   * and "drop the placeholders" at once. Without it, a placeholder render that
+   * was already finishing when the view turned is adopted sideways --- and
+   * stays, because tier 1 is permanent.
+   */
+  private placeholderGeneration = 0;
 
   readonly stats: RunStats = {
     requested: 0,
@@ -261,9 +280,18 @@ export class Scroller {
     this.mount();
   }
 
-  /** Derives page and tile geometry from the current zoom. */
+  /** The page's size in points as displayed, i.e. after the view rotation. */
+  private displayedPage(): PageSize {
+    const { page, turns } = this.opts;
+    return turns % 2 === 0
+      ? page
+      : { width_pt: page.height_pt, height_pt: page.width_pt };
+  }
+
+  /** Derives page and tile geometry from the current zoom and rotation. */
   private computeGeometry(): void {
-    const { page, zoom, dpr, tilePx } = this.opts;
+    const { zoom, dpr, tilePx } = this.opts;
+    const page = this.displayedPage();
     this.pageWidthDev = Math.round(page.width_pt * zoom * dpr);
     this.pageHeightDev = Math.round(page.height_pt * zoom * dpr);
     this.pageWidthCss = this.pageWidthDev / dpr;
@@ -325,6 +353,17 @@ export class Scroller {
     return this.placeholders.get(page) ?? null;
   }
 
+  /**
+   * A page's size on screen, in CSS pixels.
+   *
+   * The geometry the scroller actually laid out, rather than what it was asked
+   * for --- so a caller can check that a rotation reached this class and not
+   * only the one above it. The two are separately capable of being wrong.
+   */
+  get pageBoxCss(): { width: number; height: number } {
+    return { width: this.pageWidthCss, height: this.pageHeightCss };
+  }
+
   /** Tiles per page, so a run can report its working set. */
   get tilesPerPage(): number {
     return this.cols * this.rows;
@@ -347,6 +386,50 @@ export class Scroller {
     this.clearTiles();
     this.computeGeometry();
     this.relayout();
+  }
+
+  /**
+   * Rotates the view, dropping **both** tiers.
+   *
+   * Unlike a zoom step, which keeps tier 1 because a 150 px placeholder only
+   * gets stretched: a placeholder is a rendered bitmap and a rotated one is a
+   * different picture. Keeping it would leave the page sideways underneath its
+   * own sharp tiles until every tile landed.
+   *
+   * So a rotation on the A0 sheet goes grey for the 1.5 s its placeholder costs
+   * to produce again, and there is no way around that short of rotating the
+   * bitmap ourselves --- which is a real option (a quarter turn is lossless) and
+   * is not taken here because nothing has measured whether it is worth the code.
+   */
+  setTurns(turns: number): void {
+    const next = ((turns % 4) + 4) % 4;
+    if (next === this.opts.turns) return;
+
+    // Before the geometry moves, for the same reason `setZoom` clears first:
+    // `clearTiles` withdraws by asking the window which tiles it still wants,
+    // and that has to be the window they were requested for.
+    this.clearTiles();
+    this.dropPlaceholders();
+    this.opts.turns = next;
+    this.computeGeometry();
+    this.relayout();
+  }
+
+  /** Forgets every tier-1 placeholder, and any request still out for one. */
+  private dropPlaceholders(): void {
+    for (const bitmap of this.placeholders.values()) bitmap.close();
+    this.placeholders.clear();
+    for (const canvas of this.placeholderCanvases.values()) canvas.remove();
+    this.placeholderCanvases.clear();
+    for (const { bitmap } of this.arrivedPlaceholders.splice(0)) bitmap.close();
+    // `survivesClear` is exactly the placeholder requests, which is what
+    // `clearTiles` deliberately spares --- so this is the other half of it, and
+    // the two together withdraw everything outstanding.
+    this.withdraw((outstanding) => outstanding.survivesClear);
+    // A withdrawal can lose the race with a render that was already finishing.
+    // The generation bump is what stops that reply being adopted as a
+    // placeholder for the orientation it is no longer in.
+    this.placeholderGeneration++;
   }
 
   /**
@@ -481,7 +564,11 @@ export class Scroller {
       this.adopt(arrival);
     }
 
-    for (const { page, bitmap } of this.arrivedPlaceholders.splice(0)) {
+    for (const { page, bitmap, generation } of this.arrivedPlaceholders.splice(0)) {
+      if (generation !== this.placeholderGeneration) {
+        bitmap.close();
+        continue;
+      }
       this.placeholders.set(page, bitmap);
       if (this.opts.layout === "tiles") this.mountPlaceholder(page, bitmap);
     }
@@ -554,6 +641,17 @@ export class Scroller {
   /** Scroll offset that puts a page's top edge at the top of the viewport. */
   pageTopOf(page: number): number {
     return this.pageTop(page);
+  }
+
+  /**
+   * Distance from one page's top to the next, in CSS pixels.
+   *
+   * Exposed so a caller can express a position as a fraction through a page and
+   * restore it after the geometry changes underneath it, which is what rotating
+   * the view does.
+   */
+  get pagePitchCss(): number {
+    return this.pageHeightCss + PAGE_GAP;
   }
 
   /** CSS-pixel top of a page in the scrolled document. */
@@ -682,6 +780,7 @@ export class Scroller {
       doc: this.opts.doc,
       page: key.page,
       scale: this.opts.zoom * this.opts.dpr,
+      turns: this.opts.turns,
       x: rect.x,
       y: rect.y,
       width: rect.width,
@@ -773,9 +872,11 @@ export class Scroller {
     const id = `p${page}`;
     if (this.placeholders.has(page) || this.inFlight.has(id)) return;
 
-    const scale = TIER1_WIDTH / this.opts.page.width_pt;
-    const height = Math.round(this.opts.page.height_pt * scale);
+    const displayed = this.displayedPage();
+    const scale = TIER1_WIDTH / displayed.width_pt;
+    const height = Math.round(displayed.height_pt * scale);
     const rid = nextRequestId();
+    const generation = this.placeholderGeneration;
     // Withdrawable like any other request, and for the same reason: a
     // placeholder is permanent once it lands, but a page that has left the band
     // is not one the renderer should be spending 1.5 s on while the visible
@@ -794,6 +895,7 @@ export class Scroller {
       doc: this.opts.doc,
       page,
       scale,
+      turns: this.opts.turns,
       x: 0,
       y: 0,
       width: TIER1_WIDTH,
@@ -810,7 +912,11 @@ export class Scroller {
         this.stats.bytes += result.bytes;
         this.stats.renderMs += result.renderUs / 1000;
         this.stats.decodeMs += result.decodeMs;
-        this.arrivedPlaceholders.push({ page, bitmap: result.bitmap });
+        this.arrivedPlaceholders.push({
+          page,
+          bitmap: result.bitmap,
+          generation,
+        });
       })
       .catch(() => {
         this.inFlight.delete(id);

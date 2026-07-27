@@ -18,13 +18,18 @@
 //!   fails if *that* also matches, because a check both conventions pass is a
 //!   check that cannot discriminate between them.
 //!
+//!   `--view-turns` rotates the *view* on top of the page's own `/Rotate`, which
+//!   is what the reader's rotate command does. The render is asked for the
+//!   rotation and the boxes are turned to match, so this is the whole rotated
+//!   stack against pixels rather than the arithmetic against itself.
+//!
 //! * `--mode extract` --- what a page's text costs, cached page and uncached,
 //!   interleaved. Selection wants it for the visible page, search wants it for
 //!   every page, and those are very different budgets.
 //!
 //! Usage:
 //!   text-probe <file.pdf> [--page N] [--scale F] [--mode align|extract]
-//!              [--rounds N] [--lib DIR]
+//!              [--view-turns 0|1|2|3] [--rounds N] [--lib DIR]
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -43,6 +48,8 @@ struct Args {
     page: u32,
     scale: f32,
     mode: Mode,
+    /// Quarter-turns clockwise the *view* is rotated by, on top of `/Rotate`.
+    view_turns: u8,
     rounds: usize,
     library: PathBuf,
 }
@@ -67,6 +74,7 @@ fn parse_args() -> Result<Args, String> {
         page: 0,
         scale: 2.0,
         mode: Mode::Align,
+        view_turns: 0,
         rounds: 5,
         library: PathBuf::from("vendor/pdfium/lib"),
     };
@@ -77,6 +85,12 @@ fn parse_args() -> Result<Args, String> {
             "--page" => parsed.page = value()?.parse().map_err(|_| "bad --page")?,
             "--scale" => parsed.scale = value()?.parse().map_err(|_| "bad --scale")?,
             "--rounds" => parsed.rounds = value()?.parse().map_err(|_| "bad --rounds")?,
+            "--view-turns" => {
+                parsed.view_turns = match value()?.parse::<u8>() {
+                    Ok(turns) if turns < 4 => turns,
+                    _ => return Err("--view-turns must be 0, 1, 2 or 3".into()),
+                }
+            }
             "--lib" => parsed.library = PathBuf::from(value()?),
             "--mode" => {
                 parsed.mode = match value()?.as_str() {
@@ -246,7 +260,7 @@ const CONTROL_CEILING: f32 = 0.50;
 fn remapped(page: &RawPage<'_>, turns: u8) -> Result<text::PageText, String> {
     let text_page = text::RawTextPage::load(page)?;
     let count = text_page.count();
-    let (width_pt, height_pt) = (page.width_pt(), page.height_pt());
+    let (width_pt, height_pt) = displayed(page, turns);
 
     let mut codes = Vec::with_capacity(count as usize);
     let mut boxes = Vec::with_capacity(count as usize * 4);
@@ -270,15 +284,65 @@ fn remapped(page: &RawPage<'_>, turns: u8) -> Result<text::PageText, String> {
     })
 }
 
+/// The page's displayed size under a total of `turns` quarter-turns.
+///
+/// `page.width_pt()` is already the size under the page's own `/Rotate`, so a
+/// total that differs from it in parity swaps the two.
+fn displayed(page: &RawPage<'_>, turns: u8) -> (f32, f32) {
+    let (width, height) = (page.width_pt(), page.height_pt());
+    if (turns % 2) == (page.quarter_turns() % 2) {
+        (width, height)
+    } else {
+        (height, width)
+    }
+}
+
+/// The extracted text as the *viewer* sees it after rotating the view.
+///
+/// This is the frontend's path, deliberately: `text::extract` places the boxes
+/// on the page as the document says it is displayed, and `turn_device` turns
+/// that result again by however much the reader has rotated the view. The
+/// controls below are derived the other way --- straight from the raw boxes ---
+/// so agreement between them is evidence rather than an identity.
+fn viewed(extracted: &text::PageText, view_turns: u8) -> text::PageText {
+    let (width, height) = (extracted.width_pt, extracted.height_pt);
+    let boxes = extracted
+        .boxes
+        .chunks_exact(4)
+        .flat_map(|quad| {
+            if quad.iter().all(|value| *value == 0.0) {
+                [0.0; 4]
+            } else {
+                text::turn_device(
+                    view_turns,
+                    width,
+                    height,
+                    [quad[0], quad[1], quad[2], quad[3]],
+                )
+            }
+        })
+        .collect();
+
+    let swapped = view_turns % 2 == 1;
+    text::PageText {
+        codes: extracted.codes.clone(),
+        boxes,
+        width_pt: if swapped { height } else { width },
+        height_pt: if swapped { width } else { height },
+        quarter_turns: (extracted.quarter_turns + view_turns) % 4,
+        extract_ms: 0.0,
+    }
+}
+
 fn align(
     args: &Args,
     document: &RawDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     let page = document.page(args.page)?;
-    let extracted = text::extract(&page)?;
+    let raw = text::extract(&page)?;
 
-    if extracted.is_empty() {
+    if raw.is_empty() {
         return Err(format!(
             "page {} has no extractable characters, so this proves nothing about \
              the mapping -- run it on a text document",
@@ -286,11 +350,17 @@ fn align(
         ));
     }
 
+    // The whole point of the view turn is that it goes through the same two
+    // pieces the viewer uses --- the render is asked for the rotation, and the
+    // boxes are turned to match. At `--view-turns 0` this is the identity and
+    // the check is exactly what it was before.
+    let extracted = viewed(&raw, args.view_turns);
+
     let width = (extracted.width_pt * args.scale).round() as u16;
     let height = (extracted.height_pt * args.scale).round() as u16;
     let mut buffer = vec![0u8; width as usize * height as usize * 4];
     let mut bitmap = RawBitmap::borrowed(bindings, &mut buffer, width, height)?;
-    let placement = Placement::tile(&page, args.scale, 0, 0);
+    let placement = Placement::tile(&page, args.scale, args.view_turns, 0, 0);
     let progress = progressive::render(
         &mut bitmap,
         &page,
@@ -314,6 +384,12 @@ fn align(
         args.scale,
         width,
         height,
+    );
+    println!(
+        "page is /Rotate {}, view rotated {} -> displayed as /Rotate {}",
+        page.quarter_turns() as u32 * 90,
+        args.view_turns as u32 * 90,
+        extracted.quarter_turns as u32 * 90,
     );
     println!();
 
@@ -345,7 +421,12 @@ fn align(
     // handled rotation at all, the check above read 0.0% on every rotated page
     // -- so it does catch the defect; what this adds is the evidence that it
     // could have, on the page in front of it.
-    let turns = page.quarter_turns();
+    // The controls are the three turns the page is *not* displayed at, each
+    // derived from the raw boxes rather than from the mapping under test. With
+    // a view rotation this covers the new arithmetic too: getting the view turn
+    // wrong lands on one of these three, so a run where they all stay low is one
+    // where the composition could have been caught being wrong.
+    let turns = extracted.quarter_turns;
     let mut turn_discriminates = true;
     for other in 0..4u8 {
         if other == turns {
@@ -355,14 +436,13 @@ fn align(
         let ok = rate <= CONTROL_CEILING;
         turn_discriminates &= ok;
         println!(
-            "{} reading /Rotate as {:>3} does not   {:.1}%, must stay under {:.0}%",
+            "{} displaying it as /Rotate {:>3} does not {:.1}%, must stay under {:.0}%",
             if ok { "[OK]  " } else { "[FAIL]" },
             other as u32 * 90,
             rate * 100.0,
             CONTROL_CEILING * 100.0,
         );
     }
-    println!("       this page is /Rotate {}", turns as u32 * 90);
 
     Ok(agrees && discriminates && turn_discriminates)
 }

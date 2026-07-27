@@ -2069,6 +2069,68 @@ than keep.
 All six corpora report the same **63 check names**: `outline-simple` 59/59, `outline-hostile`
 58/58, `rotated-90` 52/52, `text-heavy` 52/52, `vector-multi` 41/41, `vector-heavy` 34/34.
 
+#### Rotating the view — done 2026-07-27
+
+The Phase 1 item the coordinate work above was opened for. **Cmd-R** turns the view a quarter
+clockwise and **Cmd-L** the other way, both also in the palette; the document is never
+touched, and rotating *pages* stays where it belongs, with the operations that write.
+
+PDFium's own render call takes a rotation and composes it with the page's `/Rotate`, so the
+renderer's half is one argument threaded from the tile URL down to
+`FPDF_RenderPageBitmap_Start` — plus the dimension swap it needs, since `size_x`/`size_y` are
+the displayed size and a quarter turn exchanges them. The text half cannot go the same way:
+character boxes are a property of the document and know nothing about how someone is looking
+at it, so the boxes are turned in our own code, once, where the cache hands them out.
+
+That leaves two implementations of one idea, and the rule that ties them is the reason it is
+safe: turning a device box by `v` after `to_device(p, …)` must equal `to_device((p + v) % 4,
+…)` of the raw box. `text.rs` asserts it over all sixteen combinations, against the mapping
+that was already verified against pixels — so the frontend's turn inherits that verification
+rather than asking to be trusted.
+
+**What rotating costs, and what it deliberately does not try to avoid.** Both cache tiers go.
+A zoom step keeps tier 1 because a 150 px placeholder is only stretched; a rotated placeholder
+is a different picture, and keeping it would leave the page sideways under its own sharp
+tiles. So a rotation on the A0 sheet goes grey for the ~1.5 s its placeholder costs to
+produce again. Turning the bitmap ourselves is a real option and a lossless one at ninety
+degrees; nothing has measured whether it is worth the code, so it is not in.
+
+**Two things a rotated view cannot answer, stated rather than approximated.** An outline
+destination carries a vertical offset down an upright page: at a quarter turn that axis is the
+screen's horizontal one, and at a half turn it counts upwards while the reader scrolls down.
+Both `goToDestination` and the position report therefore fall back to page granularity while
+the view is rotated — which is exactly what `/Fit` means, and what `outline.rs` already
+returns for a destination it cannot place. Coarse and right, rather than fine and wrong.
+
+Twelve new checks in the viewer harness and fourteen mutations, all caught by the check aimed
+at them: five against the Rust arithmetic and the wire format, nine against the frontend.
+Three of those checks were written *because* a mutation survived, and each is a different way
+of the same mistake — a check that cannot fail:
+
+- **"The same lines come back" derived its drag positions from the very boxes it was
+  testing.** Delete the line that tells the text layer about the rotation and it is wrong
+  consistently: the sample and the caret agree, the same lines come back, and the selection
+  is ninety degrees out from the page on screen. What catches it is a direct assertion that
+  the text layer *reports* the turned rotation, checked against a second fetch from the
+  backend.
+- **Nothing in the harness looked at a pixel**, so dropping the rotation on its way into the
+  tile URL passed everything. One tile fetched at two rotations must differ — with the
+  control that the same rotation twice is byte-identical, or "they differ" is satisfied by a
+  renderer that is merely non-deterministic.
+- **The viewer and the scroller each keep a rotation.** The zoom check covers the viewer's;
+  a scroller laying every page out upright survived it entirely, producing a narrow page
+  inside a correctly refitted window. Its detail line, once the scroller's own page box was
+  asserted, read `aspect 0.773 then 0.773`.
+
+The other two red results were the harness's own: a missing wiring line it shared with
+`App.svelte`, and a rotation table I had written as one when it is two — across the lines and
+along a line disagree at every turn but zero. The second went red on two corpora and passed
+on neither, which is the check working.
+
+All six corpora now report the same **75 check names**: `outline-simple` 70/70,
+`outline-hostile` 70/70, `rotated-90` 64/64, `text-heavy` 65/65, `vector-multi` 51/51,
+`vector-heavy` 44/44.
+
 #### The check could not run, and the reason was not what it looked like
 
 Not a feature, but it cost more of this increment than the feature did, and the repairs
