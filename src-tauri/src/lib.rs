@@ -14,6 +14,7 @@ mod protocol;
 mod queue;
 mod render;
 pub mod search;
+pub mod session;
 mod startup;
 pub mod text;
 
@@ -81,6 +82,22 @@ struct EagerOpen(Mutex<Option<Receiver<Result<DocumentInfo, String>>>>);
 /// that measurement compared against is still reachable.
 fn lazy_geometry() -> bool {
     std::env::var_os("TPDF_EAGER_GEOMETRY").is_none()
+}
+
+/// Where the remembered places are kept.
+///
+/// `TPDF_SESSION_FILE` overrides it, and every automated run sets it. Without
+/// that the session check would read and overwrite whatever the person using
+/// this machine was last reading --- and a check that can destroy the state it
+/// is checking is not one that can be run twice.
+fn session_file(app: &tauri::AppHandle) -> PathBuf {
+    if let Some(override_path) = std::env::var_os("TPDF_SESSION_FILE") {
+        return PathBuf::from(override_path);
+    }
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("session.json")
 }
 
 /// Locates the Pdfium dynamic library.
@@ -202,6 +219,35 @@ async fn document_outline(
     rx.recv().map_err(|_| "render thread stopped".to_string())?
 }
 
+/// Reads the remembered places, most recently read first.
+///
+/// Synchronous on purpose: it is asked for during startup, where the whole
+/// application budget is ~50 ms, and reading a few kilobytes costs microseconds
+/// against the round trip that would be needed to hand it back later.
+#[tauri::command]
+fn session_load(app: tauri::AppHandle) -> session::Session {
+    session::Session::load(&session_file(&app))
+}
+
+/// Records where a document was left.
+///
+/// Read-modify-write on every call rather than holding the session in managed
+/// state: the file is the record, and a second window --- or a crash that skips
+/// whatever teardown would have flushed it --- must not be able to roll back a
+/// place already written.
+///
+/// Returns `Result` so a failure to write is *visible* to the caller. Nothing
+/// currently acts on it, and the frontend deliberately does not surface it: a
+/// dialog because the position could not be saved would be worse than the lost
+/// position.
+#[tauri::command]
+fn session_remember(app: tauri::AppHandle, place: session::Place) -> Result<(), String> {
+    let path = session_file(&app);
+    let mut session = session::Session::load(&path);
+    session.remember(place);
+    session.save(&path).map_err(|e| e.to_string())
+}
+
 /// Milliseconds since process exec, so the frontend can place its own marks on
 /// the same timeline as the Rust side (spike 0.2).
 #[tauri::command]
@@ -234,6 +280,18 @@ fn spike_env(key: &str) -> Option<String> {
 #[tauri::command]
 fn autobench_path() -> Option<String> {
     spike_env("TPDF_AUTOBENCH")
+}
+
+/// What the session check should do this launch, from `TPDF_SESSIONCHECK`.
+///
+/// Unlike the other spike entry points this one does *not* replace the
+/// application: session restore happens during the real boot, so a check that
+/// bypassed it would be checking a second implementation. The mode says which
+/// half of a two-launch run this is; the app boots normally either way and the
+/// check observes it. See `src/lib/sessioncheck.ts`.
+#[tauri::command]
+fn sessioncheck_mode() -> Option<String> {
+    spike_env("TPDF_SESSIONCHECK")
 }
 
 /// Everything the scroll benchmark needs to run without a human (spike 0.8).
@@ -363,10 +421,26 @@ fn spike_print(text: String) {
     println!("{text}");
 }
 
-/// Ends an automated spike run.
+/// Ends an automated spike run, with the code the run asked for.
+///
+/// **`AppHandle::exit` does not set the process's exit code.** It ends the event
+/// loop, `App::run` then returns normally, `run()` returns, `main` returns unit
+/// --- and the process exits 0 whatever was asked for. Every automated run here
+/// therefore reported success for its whole existence, including
+/// `scripts/viewer_check.py`, whose `return completed.returncode` could not fail.
+/// Found 2026-07-27 by a session-check phase that printed `[FAIL]` and `0/1
+/// checks passed` above a harness verdict of `[OK]`.
+///
+/// `process::exit` skips destructors, which is right here rather than merely
+/// acceptable: the render thread owns PDFium handles and a spike that has
+/// printed its results has nothing left to tear down. Stdout is flushed first
+/// because that is the entire product of the run.
 #[tauri::command]
-fn spike_exit(app: tauri::AppHandle, code: i32) {
-    app.exit(code);
+fn spike_exit(code: i32) {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    std::process::exit(code);
 }
 
 /// Kills the process if an automated spike run has not finished in time.
@@ -387,6 +461,9 @@ fn start_watchdog() {
         // Frame-driven like the scroll benchmark, and so exposed to the same
         // suspension, but it waits on renders rather than counting frames.
         env_or("TPDF_VIEWERCHECK_TIMEOUT", 300)
+    } else if std::env::var_os("TPDF_SESSIONCHECK").is_some() {
+        // Opens a document and waits for one screen, twice per two-launch run.
+        env_or("TPDF_SESSIONCHECK_TIMEOUT", 120)
     } else if std::env::var_os("TPDF_STARTUP").is_some()
         || std::env::var_os("TPDF_AUTOBENCH").is_some()
     {
@@ -534,9 +611,12 @@ pub fn run() {
             page_text,
             search_page,
             document_outline,
+            session_load,
+            session_remember,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,
+            sessioncheck_mode,
             startup_path,
             scrollbench_config,
             startup_mark,

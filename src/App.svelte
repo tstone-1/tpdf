@@ -10,6 +10,8 @@
   import { Palette } from "./lib/palette";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Outline } from "./lib/outline";
+  import { clampPlace, loadSession, SessionWriter, type Session } from "./lib/session";
+  import { runSessionCheckIfRequested } from "./lib/sessioncheck";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
 
   interface PageSize {
@@ -41,6 +43,15 @@
   let findTimer = 0;
   /** Document the sidebar belongs to, so a late outline for an old one is dropped. */
   let openDoc = -1;
+
+  /** Path of the open document, which is what a remembered place is keyed on. */
+  let openPathName = "";
+  /** Its page count, so a place can record what the document had when written. */
+  let openPageCount = 0;
+  /** Places read at launch. Read once: the file is ours and nothing else writes it. */
+  let session: Session = { places: [] };
+  /** Collapses a scroll's worth of positions into at most one write per second. */
+  const places = new SessionWriter();
 
   /**
    * Every command the application has, in one place.
@@ -203,6 +214,30 @@
     // The viewer's own ResizeObserver notices the width it just lost or got
     // back, so nothing here has to tell it.
     sidebar?.setVisible(sidebarShown);
+    notePlace();
+  }
+
+  /**
+   * Records where the reader is, for the next launch.
+   *
+   * Called from both `onStatus` and `onPosition` because neither is enough on
+   * its own: the status fires when something a reader would notice changed and
+   * so misses scrolling *within* a page, and the position fires every frame and
+   * carries no zoom or rotation. The writer collapses the overlap.
+   */
+  function notePlace() {
+    if (!viewer || !openPathName) return;
+    const where = viewer.position;
+    places.note({
+      path: openPathName,
+      page: where.page,
+      top_pt: where.top,
+      zoom: viewer.currentZoom,
+      fitting: viewer.isFitting,
+      turns: viewer.rotation,
+      sidebar: sidebarShown,
+      page_count: openPageCount,
+    });
   }
 
   /** Opens the sidebar if it is closed, on the tab asked for. */
@@ -324,6 +359,33 @@
         const [path] = event.payload.paths;
         if (path) void openPath(path);
       });
+
+      // A last chance to record the position for a reader who quits inside the
+      // writer's interval. Best effort by construction --- the write is an async
+      // IPC call and the process need not outlive it --- which is why the
+      // interval is a second rather than something that leans on this.
+      window.addEventListener("pagehide", () => places.flush());
+
+      // Reopening the last document is the whole of the feature: a reader that
+      // starts empty every morning is not the one someone reaches for. It runs
+      // after the spike entry points above, all of which exit the process, so no
+      // measurement ever opens a document it was not pointed at.
+      session = await loadSession();
+      const resume = session.places[0];
+      if (resume) await openPath(resume.path, true);
+
+      // After the restore, not instead of it: what this checks is what the boot
+      // above just did. Unlike the other harnesses it does not replace the
+      // application --- see `sessioncheck.ts` for why it cannot.
+      await runSessionCheckIfRequested({
+        open: (path) => openPath(path),
+        viewer: () => viewer,
+        root: () => surface,
+        path: () => openPathName,
+        sidebarShown: () => sidebarShown,
+        toggleSidebar,
+        flush: () => places.flush(),
+      });
     })();
   });
 
@@ -336,7 +398,16 @@
     if (typeof chosen === "string") await openPath(chosen);
   }
 
-  async function openPath(path: string) {
+  /**
+   * Opens a document, putting the reader back where they left it.
+   *
+   * `resuming` is set only by the launch restore, and changes one thing: a
+   * document that no longer opens is not an error to report. Someone who chose
+   * a file and cannot have it needs to be told; someone who launched the app and
+   * whose last document has since been deleted or unmounted needs an empty
+   * window, not a dialog about a file they did not ask for.
+   */
+  async function openPath(path: string, resuming = false) {
     error = null;
     opening = true;
     try {
@@ -344,12 +415,23 @@
       const page = doc.pages[0];
       if (!page) throw new Error("document reports no pages");
 
+      // Whatever the outgoing document was owed, before its path is replaced.
+      places.flush();
       viewer?.destroy();
       viewer = null;
       sidebar?.destroy();
       sidebar = null;
       status = null;
       title = path.split("/").pop() ?? path;
+      openPathName = path;
+      openPageCount = doc.page_count;
+
+      // Fitted to the document as it is now, not as it was: the file may have
+      // been rebuilt shorter since, and a viewer scrolled past its own last page
+      // is a worse answer than the wrong page.
+      const remembered = session.places.find((kept) => kept.path === path);
+      const resume = remembered ? clampPlace(remembered, doc.page_count) : null;
+      sidebarShown = resume ? resume.sidebar : sidebarShown;
 
       // The host element does not exist until the viewer section is in the
       // DOM, and it is not while the empty-state placeholder is showing.
@@ -391,9 +473,17 @@
           // strip follows however the rotation was reached --- the palette, the
           // keyboard, or anything later that rotates without going via here.
           sidebar?.setTurns(next.turns);
+          notePlace();
         },
-        onPosition: (at, top) => sidebar?.setPosition(at, top),
+        onPosition: (at, top) => {
+          sidebar?.setPosition(at, top);
+          notePlace();
+        },
       });
+      // Before the first paint, so the reader sees their page rather than page
+      // one and then a jump --- and before `focus`, which does not move the view
+      // but would make the jump look like something they did.
+      if (resume) viewer.restore(resume);
       viewer.focus();
 
       // After the viewer, deliberately not awaited, and deliberately not asked
@@ -422,8 +512,12 @@
           if (openDoc === wanted) sidebar?.setOutline(null);
         });
     } catch (e) {
-      error = String(e);
+      openPathName = "";
+      openPageCount = 0;
       title = "";
+      // A document that was open last time and is not there now is not a
+      // failure the reader caused, so the window simply comes up empty.
+      if (!resuming) error = String(e);
     } finally {
       opening = false;
     }

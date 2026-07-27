@@ -759,6 +759,71 @@ Route the address through `std::hint::black_box` and use `write_volatile`. More 
 a test whose failure mode is *not failing* needs its own assertion on how it failed, not
 just on the outcome.
 
+### `AppHandle::exit` does not set the process's exit code
+
+`app.exit(1)` ends the event loop; `App::run` then returns normally, `run()` returns, `main`
+returns unit, and **the process exits 0**. So every automated run in this repository
+reported success for its entire existence, whatever it printed --- including
+`scripts/viewer_check.py`, whose closing `return completed.returncode` could not fail.
+
+Nothing caught it because nothing looked. The mutation harnesses parse `[FAIL]` lines out
+of the transcript rather than reading `$?`, which is why the mutation results they produced
+were nonetheless correct; and a human reading a transcript sees the failures directly. The
+exit code was the one consumer with no second opinion, and it was wrong for months.
+
+What surfaced it was a run printing `[FAIL]` and `0/1 checks passed` immediately above its
+own harness verdict of `[OK] session restore verified` --- two numbers in one buffer
+disagreeing, with nothing comparing them. That is the same defect as the `search.rs`
+harness whose regex silently matched nothing, one level up, and the same repair applies:
+**when a harness can derive the same fact two ways, make it check that they agree**, and
+treat a disagreement as a broken run rather than as either answer.
+
+`spike_exit` now flushes and calls `std::process::exit(code)` directly. Verify a fix like
+this in **both** directions --- a failing run must exit non-zero *and* a passing one must
+exit zero. Only one of those was ever in doubt, and checking just it would have been happy
+with `exit(1)` unconditionally.
+
+### A test for an atomic write must plant the intermediate it is meant to prove
+
+`Session::save` writes a scratch file and renames it over the target, so that a crash
+mid-write leaves the previous session rather than a truncated one. The obvious test --- save,
+then assert no scratch file is left behind --- **passes identically for a save that writes
+the target directly**, because a direct write produces the right bytes and leaves no scratch
+file of its own to find. Every other test in the module passes too: they all read the
+result, and the result is the same.
+
+What discriminates is planting a stale scratch file *first*, as a write that died would have
+left, and asserting it is gone afterwards. Only a save that renames over it removes it.
+
+The general form, and it is the one this repository keeps rediscovering: **when the property
+is "how the result was produced", no assertion about the result can test it.** Find the
+intermediate state the mechanism must pass through and assert on that. Same shape as the
+crash test whose failure mode was not failing, and as the leak scanner that could not decode
+its own carrier.
+
+It was found by writing the mutation down before running it --- "the save writes the target
+directly, with no rename" had no check to name, which is the cheap half of the procedure
+doing its job for the second time in this project.
+
+### A control can be contaminated by the phase that ran before it
+
+The session check launches the app four times, two of them controls: "the app does not open
+in the remembered state by itself", and "nothing opens when nothing is remembered". Both
+were pointed at one scratch session file, on the reasoning that both wanted it empty.
+
+It is not empty by the time the second one runs. The *first* control opens a document ---
+that is what it is for --- and the app dutifully remembers it. So the second control
+launched with a document to restore, restored it, and failed.
+
+The standing rule about interleaving covers this ("before trusting an A/B, ask what each
+variant leaves behind that the next one can find"), and it did not fire, because this did
+not look like an A/B at all --- it is a control, and a control is exactly the thing assumed
+to be inert. **A phase that writes state needs its own copy of that state, not a shared one
+that happens to start empty.** The two controls now get a file each.
+
+Worth noting the failure was legible only because the control existed: a check that had
+merely asserted "the remembered state comes back" would have passed the whole run.
+
 ### A locked macOS session cannot be unlocked from a script, so it must be prevented
 
 WebKit suspends a page whose window is not visible, and a locked screen occludes every

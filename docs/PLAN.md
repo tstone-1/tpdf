@@ -2167,6 +2167,98 @@ Two repairs, both kept regardless of what the next cause turns out to be:
 It did not fix this and is kept because occlusion is a real WebKit behaviour with the same
 symptom; it is opt-in so the default stays polite.
 
+#### Session restore — done 2026-07-27
+
+A reader that opens on an empty window every morning is not the one anybody reaches for, so
+this is scope rather than polish: the phase's exit criterion is "tpdf is the daily default
+for reading", and forgetting the document is a direct answer to it.
+
+`src-tauri/src/session.rs` keeps one *place* per document — path, page, offset down it,
+zoom, whether the zoom was fitting, rotation, sidebar — most recently read first, bounded at
+32 and written through a temp file and a rename. `src/lib/session.ts` decides when to write.
+Launching with nothing on the command line reopens the top entry; opening a document you
+have read before puts you back where you were in it.
+
+Three decisions are worth the words, because each looks like an omission.
+
+**A malformed session file is an empty session, never an error.** Refusing to start because
+a convenience file did not parse trades the whole application for the feature. Every path
+through `Session::load` returns a session.
+
+**A field out of range is repaired, not refused** — the opposite of what `protocol.rs` does
+with a `turns` query parameter, and the difference is who is calling. A tile request is a
+live instruction from code we wrote, so a value it could not have produced is a bug worth
+surfacing. A session file has been sitting on disk across upgrades and possibly a text
+editor, and rejecting it would discard every *other* document's place over one bad number.
+
+**A remembered page is clamped to the document as it is now.** A path is not an identity:
+the file may have been rebuilt shorter since it was read, and a viewer scrolled past its own
+last page is a worse answer than the wrong page.
+
+Writes are throttled to one a second and **chained through a single promise**. Not for
+throughput — because `invoke` resolves out of order under load, so two writes issued a second
+apart can land in the other order and the older place overwrites the newer. The same hazard,
+from a different direction, as the shuffled check transcript above.
+
+**The check needed a shape nothing else here uses.** Every other harness replaces the
+application: it opens a document, does its work, exits, and `App.svelte` never boots. That
+cannot work for a property *of* the boot. A check that drove `session.ts` directly would be
+a second implementation agreeing with the first — the self-consistency trap that the
+rotation increment was caught by twice. So `scripts/session_check.py` launches the real app
+four times and observes it, and the two launches that assert nothing about restoring are the
+ones that make the other two mean anything:
+
+| phase | session | argument | asserts |
+|---|---|---|---|
+| `record` | fresh | a document | drives to page 7, one quarter turn, a fixed zoom, sidebar open — then writes it |
+| `control` | empty | a document | that state is **not** where the app opens by itself |
+| `verify` | recorded | none | it came up in that state, told only by the file |
+| `control` | empty | none | nothing opens when nothing is remembered |
+
+The first control fails if *any* of the four fields already matches, not only if all four do
+— a restore that got only the rotation right would otherwise hide behind a default that
+happened to share the page. Between the phases the script reads the written `session.json`
+itself, because writing a place and reading one back are different halves and a run that
+only did the second would find nothing to restore and report that somewhere else.
+
+Sixteen mutations, all caught; **fifteen by the check aimed at them**. The sixteenth is a
+result rather than a miss: switching off recording entirely was predicted to fail *"recorded
+page"*, and failed *"no session file was written"* instead — with nothing ever recorded there
+is no file to compare fields in, so the guard before them fires first. Both messages exist
+and say different things, which is what was wanted; the prediction was simply too specific.
+
+**Two defects surfaced by building it, and the first is not in this feature at all.**
+
+**`AppHandle::exit` does not set the process's exit code.** It ends the event loop, `App::run`
+returns normally, `main` returns unit, and the process exits 0 whatever was asked for. So
+every automated run in this repository has reported success for its entire existence,
+including `scripts/viewer_check.py`, whose closing `return completed.returncode` could not
+fail. The mutation harnesses parse `[FAIL]` lines out of the transcript rather than reading
+`$?`, which is why the results they produced were nonetheless right — the exit code was the
+one consumer with no second opinion. `spike_exit` now flushes and calls `std::process::exit`,
+verified in both directions, because a fix checked only against a failing run would have been
+satisfied by exiting 1 unconditionally.
+
+What surfaced it: this check's own harness printed `[OK] session restore verified` directly
+beneath a phase whose last line read `0/1 checks passed`. Two numbers in one buffer
+disagreeing, with nothing comparing them.
+
+**A control contaminated by the phase before it.** Both controls were pointed at one scratch
+session file, since both wanted it empty — but the first control *opens a document*, which is
+what it is for, and the app remembers it. The second then launched with something to restore,
+restored it, and failed. The standing rule about what one variant leaves behind for the next
+covers this exactly and did not fire, because a control is the thing assumed to be inert.
+
+**What the per-frame hook costs is not measured, and is not claimed.** Positions are noted
+from `onPosition`, which fires every frame the loop is awake. The marginal work is one object
+literal and a seven-field comparison — `viewer.position` was already being computed by the
+tick regardless — but that is a description, not a number. What was run is a *regression
+check*, not an A/B: `scroll_bench.py` on the text corpus still reports 60.0 fps in every
+variant, a 100% coverage floor, and a per-frame callback mean of 0.14–0.66 ms, which is the
+same range as before. Comparing that against a previously recorded run is not evidence of the
+hook's cost — the interleaving rule exists precisely because wall clock drifts between runs —
+so it says the criteria still hold and nothing more.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

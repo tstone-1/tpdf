@@ -329,7 +329,43 @@ experience.
   a rotation, so a scroller laying every page out upright survived a check that only measured
   the zoom.
 
+- **Session restore.** tpdf reopens the document you were reading, on the page you were on,
+  at the zoom and rotation you had, with the sidebar as you left it --- and opening a document
+  you have read before puts you back where you were in it. One place per document, 32 of
+  them, kept in `session.json` in the app config directory and written through a temp file
+  and a rename so a crash mid-write leaves the previous session rather than a truncated file.
+
+  **A malformed session file is an empty session, never an error**, and a field out of range
+  is repaired rather than refused --- the opposite of what the tile protocol does with a bad
+  parameter, because a file that has sat on disk across upgrades is not a live instruction,
+  and rejecting it would discard every other document's place over one bad number. A
+  remembered page is clamped to what the document has *now*: a path is not an identity, and
+  the file may have been rebuilt shorter since.
+
+  Positions are written at most once a second, and chained through one promise --- not for
+  throughput, but because `invoke` resolves out of order under load and two writes a second
+  apart can otherwise land in the other order, the older place overwriting the newer.
+
+  Checked by `scripts/session_check.py` across **four launches of the real app**, because
+  restoring is part of the boot and a harness that replaced the application --- which is what
+  every other one here does --- would be checking a second implementation. Two of the four
+  assert nothing about restoring: that the app does *not* open in the remembered state by
+  itself, and that nothing opens when nothing is remembered. Without the first, "restored to
+  page 7" is satisfied by an app that happens to open there.
+
 ### Fixed
+
+- **Every automated check reported success through its exit code, whatever it printed.**
+  `AppHandle::exit(code)` ends Tauri's event loop; `App::run` then returns normally, `run()`
+  returns, `main` returns unit, and the process exits **0** regardless. So
+  `scripts/viewer_check.py`'s closing `return completed.returncode` could not fail, and had
+  not been able to since it was written. The mutation harnesses read `[FAIL]` lines out of
+  the transcript rather than `$?`, which is why their results were nonetheless correct --- the
+  exit code was the one consumer with nothing to cross-check it.
+
+  `spike_exit` now flushes stdout and calls `std::process::exit(code)`. Verified in **both**
+  directions: a failing run exits 1 and a passing one exits 0, because a fix tested only
+  against failure would be satisfied by exiting 1 unconditionally.
 
 - **Character boxes and outline destinations on a page carrying `/Rotate`.** PDFium reports
   the page size *after* rotation and renders to match, but reports character boxes and

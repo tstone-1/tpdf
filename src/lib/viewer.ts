@@ -550,9 +550,7 @@ export class Viewer {
     const through =
       before > 0 ? (this.scrollTop - this.scroller.pageTopOf(page)) / before : 0;
 
-    this.turns = next;
-    this.text.setTurns(next);
-    this.scroller.setTurns(next);
+    this.applyTurns(next);
     // A rotation changes the page's aspect, so a view that was fitted to the
     // width is no longer fitted to anything. Refitting is what makes the
     // command feel like turning a sheet of paper rather than cropping one.
@@ -572,6 +570,62 @@ export class Viewer {
     // rotation is an isometry, so the same characters are still selected and
     // `runsFor` draws their highlight in the new orientation because the boxes
     // it reads have turned with the view.
+    this.wake();
+  }
+
+  /**
+   * Turns the view, and everything keyed to its orientation.
+   *
+   * Three consumers, and each is separately capable of being wrong while the
+   * other two are right --- a scroller laying pages out upright inside a
+   * correctly turned window, a text layer selecting the page's other axis. The
+   * viewer check asserts all three.
+   */
+  private applyTurns(next: number): void {
+    this.turns = next;
+    this.text.setTurns(next);
+    this.scroller.setTurns(next);
+  }
+
+  /** Whether the zoom is following the window width rather than a fixed stop. */
+  get isFitting(): boolean {
+    return this.fitting;
+  }
+
+  /**
+   * Puts the view back where a previous session left it.
+   *
+   * Order is the whole of it. A rotation changes a page's proportions and a
+   * zoom changes how long the document is, so both have to land before the
+   * scroll offset is computed --- the same offset means a different place after
+   * either. `rotateBy` solves the opposite problem, preserving a reader's place
+   * *across* a turn; here there is no place to preserve yet.
+   *
+   * The offset is applied only to an upright view, for the reason `position`
+   * records: a rotated view reports no offset because the axis it would be
+   * measured down is not the one being scrolled, so there is nothing to restore
+   * and landing on the page is the honest interpretation.
+   */
+  restore(place: {
+    page: number;
+    top_pt: number;
+    zoom: number;
+    fitting: boolean;
+    turns: number;
+  }): void {
+    this.applyTurns(((place.turns % 4) + 4) % 4);
+
+    this.fitting = place.fitting;
+    if (place.fitting) {
+      this.zoom = this.fitWidthZoom(this.viewportSize().width);
+      this.scroller.setZoom(this.zoom);
+    } else {
+      this.setZoom(place.zoom);
+    }
+
+    const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
+    const offset = this.turns === 0 ? Math.max(0, place.top_pt) : 0;
+    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
     this.wake();
   }
 
