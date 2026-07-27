@@ -148,6 +148,19 @@ impl RawDocument {
         })
     }
 
+    /// The bindings this document was opened through.
+    pub fn bindings(&self) -> Bindings {
+        self.bindings
+    }
+
+    /// The raw `FPDF_DOCUMENT`.
+    ///
+    /// Valid for the borrow, and only for the thread the document was opened
+    /// on --- concurrent PDFium is undefined behaviour, see the module docs.
+    pub fn handle(&self) -> FPDF_DOCUMENT {
+        self.handle
+    }
+
     /// How many pages the document has.
     ///
     /// Unlike collecting page *geometry*, this is cheap --- it reads the page

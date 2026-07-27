@@ -28,7 +28,9 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { CommandRegistry } from "./commands";
+import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
+import { Sidebar } from "./sidebar";
 import { Viewer, type ViewerStatus } from "./viewer";
 
 /** Size of the surface the check mounts, in CSS pixels. */
@@ -53,8 +55,40 @@ type Outcome = "ok" | "fail" | "skip";
 
 const results: { name: string; outcome: Outcome; detail: string }[] = [];
 
+const LABEL: Record<Outcome, string> = {
+  ok: "[OK]  ",
+  fail: "[FAIL]",
+  skip: "[SKIP]",
+};
+
+/**
+ * Lines already handed to the process, in order.
+ *
+ * Each result is printed as it is recorded rather than in one block at the end,
+ * because a run that never reaches the end prints *nothing* otherwise --- and
+ * an empty transcript is exactly what a passing run looks like from outside the
+ * webview. This cost an afternoon: a check that stopped partway was
+ * indistinguishable from one that had not started, and the only fact available
+ * was that the process was alive. Now the last line printed names where it got
+ * to.
+ *
+ * Chained rather than awaited at the call site so `check` stays synchronous:
+ * `invoke` resolves out of order under load, and a transcript whose lines are
+ * shuffled is worse than one that arrives late.
+ */
+let printing: Promise<unknown> = Promise.resolve();
+
+function emit(line: string): void {
+  printing = printing.then(() => invoke("spike_print", { text: line }));
+}
+
+function record(name: string, outcome: Outcome, detail: string): void {
+  results.push({ name, outcome, detail });
+  emit(`${LABEL[outcome]} ${name.padEnd(40)} ${detail}`);
+}
+
 function check(name: string, ok: boolean, detail: string): void {
-  results.push({ name, outcome: ok ? "ok" : "fail", detail });
+  record(name, ok ? "ok" : "fail", detail);
 }
 
 /**
@@ -65,7 +99,7 @@ function check(name: string, ok: boolean, detail: string): void {
  * to know whether it did.
  */
 function skip(name: string, why: string): void {
-  results.push({ name, outcome: "skip", detail: `not applicable — ${why}` });
+  record(name, "skip", `not applicable — ${why}`);
 }
 
 function frame(): Promise<void> {
@@ -175,20 +209,18 @@ export async function runViewerCheckIfRequested(): Promise<boolean> {
     check("run completed", false, String(e));
   }
 
-  const label = { ok: "[OK]  ", fail: "[FAIL]", skip: "[SKIP]" };
   const failed = results.filter((r) => r.outcome === "fail").length;
   const skipped = results.filter((r) => r.outcome === "skip").length;
   const ran = results.length - skipped;
 
-  const lines = results.map(
-    (r) => `${label[r.outcome]} ${r.name.padEnd(40)} ${r.detail}`,
-  );
-  lines.push(
-    "",
-    `${ran - failed}/${ran} checks passed` +
+  emit(
+    "\n" +
+      `${ran - failed}/${ran} checks passed` +
       (skipped ? `, ${skipped} not applicable to this document` : ""),
   );
-  await invoke("spike_print", { text: lines.join("\n") });
+  // The lines went out one at a time as they were recorded; this is where the
+  // last of them is known to have landed.
+  await printing;
   await invoke("spike_exit", { code: failed === 0 ? 0 : 1 });
   return true;
 }
@@ -207,11 +239,22 @@ async function run(path: string): Promise<void> {
   const covered = () => sharp() >= 0.999;
   const pct = () => `sharp=${(sharp() * 100).toFixed(1)}%`;
 
+  // Mounted outside the viewer's root, and wired through `onPosition` exactly
+  // as `App.svelte` wires it --- so what is checked below is the connection the
+  // application has, not a second one written for the check.
+  const panel = document.createElement("div");
+  panel.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;";
+  document.body.appendChild(panel);
+  const sidebar = new Sidebar(panel, {
+    onNavigate: (target, top) => viewer.goToDestination(target, top),
+  });
+
   const viewer = new Viewer(root, {
     doc: doc.id,
     pageCount: doc.page_count,
     page,
     onStatus: (next) => (seen.status = next),
+    onPosition: (at, top) => sidebar.setPosition(at, top),
   });
 
   // The constructor sizes itself against a root the layout has not reached, so
@@ -333,7 +376,10 @@ async function run(path: string): Promise<void> {
   await searchChecks(root, viewer, doc, seen);
   await paletteChecks(viewer);
   await accessibilityChecks(root, viewer, doc, seen);
+  await outlineChecks(viewer, sidebar, doc);
 
+  sidebar.destroy();
+  panel.remove();
   viewer.destroy();
   check("destroys cleanly", viewer.idle, "frame loop stopped");
 }
@@ -957,6 +1003,293 @@ async function paletteChecks(viewer: Viewer): Promise<void> {
   }
 
   palette.destroy();
+}
+
+/**
+ * The outline, and the sidebar showing it.
+ *
+ * Most of the corpus has no outline at all, so nearly everything here is
+ * conditional --- and each condition is a `skip` with its reason rather than a
+ * silently absent row. A check that vanishes on some documents cannot be told
+ * apart from one that ran, which this file has already been caught doing once.
+ *
+ * Two assertions are the load-bearing ones and both carry their own control:
+ *
+ * - **Activating a row moves the viewer**, asserted against *not having been on
+ *   that page already*. The target is chosen to be a page the viewer is not on.
+ * - **A destination's y is respected**, asserted by comparing two entries on the
+ *   *same* page. That is what can see a y-flip: both land on the right page
+ *   either way, and only the distance from its top edge inverts. Comparing an
+ *   entry against a different page's would pass under the flip.
+ */
+async function outlineChecks(
+  viewer: Viewer,
+  sidebar: Sidebar,
+  doc: DocumentInfo,
+): Promise<void> {
+  let outline: Outline;
+  try {
+    outline = await invoke<Outline>("document_outline", { doc: doc.id });
+  } catch (e) {
+    check("reads the document's outline", false, String(e));
+    return;
+  }
+
+  check(
+    "reads the document's outline",
+    outline.total === countItems(outline),
+    `${outline.total} entries in ${outline.walk_ms.toFixed(2)} ms`,
+  );
+
+  sidebar.setOutline(outline);
+  const rows = allRows(outline.items);
+
+  if (rows.length === 0) {
+    // Listed one by one rather than collapsed into a single "no outline" line:
+    // the count of checks has to be the same whichever document is used, or a
+    // check that silently stopped existing looks exactly like one that passed.
+    const why = "the document has no outline";
+    for (const name of [
+      "the sidebar draws a row per entry",
+      "the rows are a tree, not a list",
+      "the whole tree is one tab stop",
+      "collapsing a row hides its children",
+      "expanding it again brings them back",
+      "activating a row goes to its page",
+      "a destination's y is measured from the page top",
+      "scrolling moves the highlight to the right entry",
+      "a refused action is drawn but does nothing",
+    ]) {
+      skip(name, why);
+    }
+    return;
+  }
+
+  // Top-level rows plus the children of whatever the producer left open.
+  const shown = sidebar.visible.length;
+  check(
+    "the sidebar draws a row per entry",
+    shown > 0 && shown <= rows.length,
+    `${shown} rows drawn of ${rows.length} entries`,
+  );
+
+  const treeitems = document.querySelectorAll('.tpdf-sidebar [role="treeitem"]');
+  check(
+    "the rows are a tree, not a list",
+    treeitems.length === shown &&
+      [...treeitems].every((row) => row.hasAttribute("aria-level")),
+    `${treeitems.length} treeitems, all levelled=${[...treeitems].every((r) => r.hasAttribute("aria-level"))}`,
+  );
+
+  const tabbable = [...treeitems].filter(
+    (row) => row instanceof HTMLElement && row.tabIndex === 0,
+  );
+  check(
+    "the whole tree is one tab stop",
+    tabbable.length === 1,
+    `${tabbable.length} of ${treeitems.length} rows are tabbable`,
+  );
+
+  // Collapsing, with the control built in: a parent whose children are shown
+  // now and gone afterwards. A parent that was already collapsed would satisfy
+  // "the children are absent" without anything having happened.
+  const parent = findExpandedParent(sidebar);
+  if (!parent) {
+    const why = "no row in this outline has visible children";
+    skip("collapsing a row hides its children", why);
+    skip("expanding it again brings them back", why);
+  } else {
+    const before = sidebar.visible.length;
+    sidebar.elementFor(parent)?.focus();
+    key(sidebar.elementFor(parent)!, "ArrowLeft");
+    const after = sidebar.visible.length;
+    check(
+      "collapsing a row hides its children",
+      after < before,
+      `${before} rows -> ${after} after collapsing "${parent}"`,
+    );
+    key(sidebar.elementFor(parent)!, "ArrowRight");
+    check(
+      "expanding it again brings them back",
+      sidebar.visible.length === before,
+      `${after} rows -> ${sidebar.visible.length}`,
+    );
+  }
+
+  // Navigation. The target is deliberately a page the viewer is not on.
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  const here = viewer.position.page;
+  const elsewhere = rows.find(
+    (row) => isNavigable(row.target) && row.target.page !== here,
+  );
+  if (!elsewhere || !isNavigable(elsewhere.target)) {
+    skip(
+      "activating a row goes to its page",
+      `every entry points at page ${here + 1}, which is where we are`,
+    );
+  } else {
+    sidebar.reveal(elsewhere.id);
+    const element = sidebar.elementFor(elsewhere.id);
+    if (!element) {
+      check("activating a row goes to its page", false, `no row for ${elsewhere.id}`);
+    } else {
+      element.focus();
+      key(element, "Enter");
+      await frame();
+      check(
+        "activating a row goes to its page",
+        viewer.position.page === elsewhere.target.page,
+        `"${preview(elsewhere.title)}" from page ${here + 1} to ` +
+          `${viewer.position.page + 1}, wanted ${elsewhere.target.page + 1}`,
+      );
+    }
+  }
+
+  await destinationOffsetCheck(viewer, sidebar, rows);
+  await highlightCheck(viewer, sidebar, rows);
+  refusalCheck(viewer, sidebar, rows);
+}
+
+/** Total entries in the tree, counted independently of the walk's own tally. */
+function countItems(outline: Outline): number {
+  return allRows(outline.items).length;
+}
+
+/** A visible row that currently shows children, or `null`. */
+function findExpandedParent(sidebar: Sidebar): string | null {
+  const rows = document.querySelectorAll<HTMLElement>(
+    '.tpdf-sidebar [role="treeitem"][aria-expanded="true"]',
+  );
+  for (const row of rows) {
+    const id = row.dataset.id;
+    if (id && sidebar.elementFor(id)) return id;
+  }
+  return null;
+}
+
+/**
+ * Two entries on one page: the lower one must land further down.
+ *
+ * This is the only check here a y-flip fails. Both entries resolve to the same
+ * page under either convention, so page-level assertions are blind to it; what
+ * inverts is which of the two is nearer the top.
+ */
+async function destinationOffsetCheck(
+  viewer: Viewer,
+  sidebar: Sidebar,
+  rows: Row[],
+): Promise<void> {
+  const name = "a destination's y is measured from the page top";
+  const byPage = new Map<number, Row[]>();
+  for (const row of rows) {
+    if (!isNavigable(row.target)) continue;
+    const list = byPage.get(row.target.page) ?? [];
+    list.push(row);
+    byPage.set(row.target.page, list);
+  }
+
+  for (const [, group] of byPage) {
+    const tops = group
+      .map((row) => (isNavigable(row.target) ? row.target : null))
+      .filter((target) => target !== null)
+      .sort((a, b) => (a.top_pt ?? 0) - (b.top_pt ?? 0));
+    // The highest and lowest on the page, whatever they are. Written first as
+    // "one at the very top and one below 50 pt", which skipped on the only
+    // fixture that has the pair --- its two entries sit at 240 and 440 pt, so
+    // neither is at the top and the check reported itself inapplicable.
+    const high = tops[0];
+    const low = tops[tops.length - 1];
+    if (!high || !low || (low.top_pt ?? 0) - (high.top_pt ?? 0) < 50) continue;
+
+    sidebar.reveal(group[0]!.id);
+    viewer.goToDestination(high.page, high.top_pt);
+    await frame();
+    const upper = viewer.offset;
+    viewer.goToDestination(low.page, low.top_pt);
+    await frame();
+    const lower = viewer.offset;
+
+    // A page at the very end of the document clamps both to `maxOffset`, which
+    // would pass this by accident in one direction and fail it in the other.
+    if (upper >= viewer.maxOffset - 1) {
+      skip(name, "the shared page is the last one and both jumps clamp");
+      return;
+    }
+    check(
+      name,
+      lower > upper,
+      `page ${high.page + 1}: y=${high.top_pt ?? 0} lands at ${upper.toFixed(0)}, ` +
+        `y=${low.top_pt} at ${lower.toFixed(0)}`,
+    );
+    return;
+  }
+
+  skip(name, "no page in this outline has two entries at different heights");
+}
+
+/** Scrolling to an entry's page must move the highlight onto that entry. */
+async function highlightCheck(
+  viewer: Viewer,
+  sidebar: Sidebar,
+  rows: Row[],
+): Promise<void> {
+  const name = "scrolling moves the highlight to the right entry";
+  const targets = rows.filter((row) => isNavigable(row.target));
+  const first = targets[0];
+  const later = targets.find(
+    (row) =>
+      isNavigable(row.target) &&
+      isNavigable(first!.target) &&
+      row.target.page > first!.target.page,
+  );
+  if (!first || !later || !isNavigable(later.target)) {
+    skip(name, "this outline has no two entries on different pages");
+    return;
+  }
+
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  const before = sidebar.currentRow;
+
+  viewer.goToDestination(later.target.page, later.target.top_pt);
+  await settle(() => viewer.idle);
+  // The control: if the highlight was already on the target row, arriving there
+  // proves nothing about whether it follows the scroll.
+  if (before === later.id) {
+    skip(name, `the highlight was already on "${preview(later.title)}"`);
+    return;
+  }
+  check(
+    name,
+    sidebar.currentRow === later.id,
+    `"${before}" -> "${sidebar.currentRow}", wanted "${later.id}" ` +
+      `(${preview(later.title)})`,
+  );
+}
+
+/** An entry carrying a refused action is drawn, marked, and inert. */
+function refusalCheck(viewer: Viewer, sidebar: Sidebar, rows: Row[]): void {
+  const name = "a refused action is drawn but does nothing";
+  const refused = rows.find((row) => row.target.kind === "refused");
+  if (!refused) {
+    skip(name, "this outline has no /Launch, /URI or /GoToR entry");
+    return;
+  }
+
+  sidebar.reveal(refused.id);
+  const element = sidebar.elementFor(refused.id);
+  const before = viewer.offset;
+  element?.focus();
+  if (element) key(element, "Enter");
+  check(
+    name,
+    element !== null &&
+      element.getAttribute("aria-disabled") === "true" &&
+      viewer.offset === before,
+    `"${preview(refused.title)}" disabled=${element?.getAttribute("aria-disabled")}, ` +
+      `offset ${before.toFixed(0)} -> ${viewer.offset.toFixed(0)}`,
+  );
 }
 
 /**

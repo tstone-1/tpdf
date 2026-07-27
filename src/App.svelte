@@ -8,6 +8,8 @@
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
   import { CommandRegistry } from "./lib/commands";
   import { Palette } from "./lib/palette";
+  import { Sidebar } from "./lib/sidebar";
+  import type { Outline } from "./lib/outline";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
 
   interface PageSize {
@@ -24,16 +26,21 @@
   }
 
   let surface = $state<HTMLDivElement | null>(null);
+  let sidebarHost = $state<HTMLDivElement | null>(null);
   let title = $state("");
   let error = $state<string | null>(null);
   let opening = $state(false);
   let status = $state<ViewerStatus | null>(null);
   let query = $state("");
   let findField = $state<HTMLInputElement | null>(null);
+  let sidebarShown = $state(false);
 
   let viewer: Viewer | null = null;
   let palette: Palette | null = null;
+  let sidebar: Sidebar | null = null;
   let findTimer = 0;
+  /** Document the sidebar belongs to, so a late outline for an old one is dropped. */
+  let openDoc = -1;
 
   /**
    * Every command the application has, in one place.
@@ -144,7 +151,24 @@
       enabled: withDocument,
       run: () => viewer?.clearSelection(),
     },
+    {
+      // Named for both things a reader might type. One command with one
+      // binding rather than two commands sharing one, which would show the
+      // same shortcut twice in the palette and teach that it does two things.
+      id: "view.toggleSidebar",
+      title: "Toggle outline sidebar",
+      keys: "⌘\\",
+      enabled: withDocument,
+      run: () => toggleSidebar(),
+    },
   );
+
+  function toggleSidebar() {
+    sidebarShown = !sidebarShown;
+    // The viewer's own ResizeObserver notices the width it just lost or got
+    // back, so nothing here has to tell it.
+    if (sidebar) sidebar.element.style.display = sidebarShown ? "flex" : "none";
+  }
 
   function focusFind() {
     findField?.focus();
@@ -197,6 +221,9 @@
     } else if (event.key === "f" && title) {
       event.preventDefault();
       focusFind();
+    } else if (event.key === "\\" && title) {
+      event.preventDefault();
+      toggleSidebar();
     }
   }
 
@@ -254,22 +281,48 @@
 
       viewer?.destroy();
       viewer = null;
+      sidebar?.destroy();
+      sidebar = null;
       status = null;
       title = path.split("/").pop() ?? path;
 
       // The host element does not exist until the viewer section is in the
       // DOM, and it is not while the empty-state placeholder is showing.
       await new Promise(requestAnimationFrame);
-      if (!surface) throw new Error("no surface to mount into");
+      if (!surface || !sidebarHost) throw new Error("no surface to mount into");
 
       query = "";
+      sidebar = new Sidebar(sidebarHost, {
+        onNavigate: (target, top) => {
+          viewer?.goToDestination(target, top);
+          viewer?.focus();
+        },
+      });
+      sidebar.element.style.display = sidebarShown ? "flex" : "none";
+
       viewer = new Viewer(surface, {
         doc: doc.id,
         pageCount: doc.page_count,
         page,
         onStatus: (next) => (status = next),
+        onPosition: (at, top) => sidebar?.setPosition(at, top),
       });
       viewer.focus();
+
+      // After the viewer, and deliberately not awaited: the outline shares the
+      // render thread with tiles, and a document that opens instantly should
+      // not wait for its table of contents. It arrives when it arrives.
+      const wanted = doc.id;
+      openDoc = wanted;
+      void invoke<Outline>("document_outline", { doc: wanted })
+        .then((result) => {
+          // Another document may have been opened while this was in flight, in
+          // which case this outline belongs to a file nobody is looking at.
+          if (openDoc === wanted) sidebar?.setOutline(result);
+        })
+        .catch(() => {
+          if (openDoc === wanted) sidebar?.setOutline(null);
+        });
     } catch (e) {
       error = String(e);
       title = "";
@@ -339,7 +392,10 @@
   {/if}
 
   {#if title}
-    <div class="surface" bind:this={surface}></div>
+    <div class="body">
+      <div class="panel" bind:this={sidebarHost}></div>
+      <div class="surface" bind:this={surface}></div>
+    </div>
   {:else}
     <div class="empty"><p>Open a PDF, or drop one here.</p></div>
   {/if}
@@ -386,8 +442,20 @@
     font-variant-numeric: tabular-nums;
     opacity: 0.65;
   }
+  .body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .panel {
+    /* `Sidebar` creates the real panel and owns its width and visibility, so
+       the host must not be a box of its own --- an empty one would reserve
+       space while the sidebar is hidden. */
+    display: contents;
+  }
   .surface {
     flex: 1;
+    min-width: 0;
     min-height: 0;
   }
   .empty {

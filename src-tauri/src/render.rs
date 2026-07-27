@@ -43,6 +43,7 @@ use std::time::Instant;
 
 use pdfium_render::prelude::*;
 
+use crate::outline::{self, Outline};
 use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
 use crate::queue::{Claim, SharedQueue};
 use crate::search::{self, PageMatches};
@@ -149,6 +150,10 @@ enum Job {
         query: String,
         reply: Reply<PageMatches>,
     },
+    Outline {
+        doc: u32,
+        reply: Reply<Outline>,
+    },
 }
 
 /// Handle to the render thread. Cheap to clone.
@@ -191,6 +196,7 @@ impl RenderService {
                                 Job::Tile { reply, .. } => reply(Err(e.clone())),
                                 Job::Text { reply, .. } => reply(Err(e.clone())),
                                 Job::Search { reply, .. } => reply(Err(e.clone())),
+                                Job::Outline { reply, .. } => reply(Err(e.clone())),
                             }
                         }
                         return;
@@ -222,6 +228,9 @@ impl RenderService {
                             reply,
                         } => {
                             reply(run_search(&docs, doc, page, &query));
+                        }
+                        Job::Outline { doc, reply } => {
+                            reply(run_outline(&docs, doc));
                         }
                     }
                 }
@@ -297,6 +306,19 @@ impl RenderService {
             })
             .is_err()
         {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
+    /// Reads a document's outline, invoking `reply` on the render thread.
+    ///
+    /// One job for the whole tree rather than one per level, which is the
+    /// opposite of the choice `search` makes and for the opposite reason: the
+    /// walk is bounded at 10,000 entries and touches no page content, so it
+    /// finishes in single-digit milliseconds, and a per-level protocol would
+    /// hand the caller a cycle to terminate rather than a tree.
+    pub fn outline(&self, doc: u32, reply: Reply<Outline>) {
+        if self.tx.send(Job::Outline { doc, reply }).is_err() {
             // Render thread is gone; nothing left to reply with.
         }
     }
@@ -506,4 +528,12 @@ fn run_search(
         page,
         query,
     ))
+}
+
+/// Walks a document's outline on the render thread.
+fn run_outline(docs: &[RawDocument], doc: u32) -> Result<Outline, String> {
+    let document = docs
+        .get(doc as usize)
+        .ok_or_else(|| format!("no such document: {doc}"))?;
+    Ok(outline::read(document))
 }

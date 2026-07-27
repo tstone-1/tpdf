@@ -113,6 +113,32 @@ experience.
   text is present, is the page's own, and survives scrolling. Reading order also comes from
   geometry rather than from a tagged PDF's `/StructTree`, which is strictly worse for a
   document that has one.
+- **The document outline, and a sidebar** (`src-tauri/src/outline.rs`, `src/lib/outline.ts`,
+  `src/lib/sidebar.ts`). Cmd-`\` shows a real `role=tree` --- one tab stop with a roving
+  tabindex, arrow keys to move, collapse and expand, and the entry the reader is currently
+  inside highlighted as they scroll. Clicking one goes to the destination's *position* on
+  the page, not merely to the page.
+
+  This is the first feature whose input is openly hostile, and not by inference: PDFium's
+  own documentation for `FPDFBookmark_GetNextSibling` says the caller must handle circular
+  references. The walk carries a visited set, a depth limit and an item budget, each
+  catching what the others cannot, and reports whatever any of them cut rather than showing
+  a truncated table of contents as a complete one. 44 entries of a deliberately malformed
+  outline --- two cycles, a 200-level chain, a 50,000-character title --- walk in **1.6 ms**;
+  an ordinary one in **0.17 ms**.
+
+  Building that fixture found a real defect: **`FPDFBookmark_GetDest` follows the bookmark's
+  action without checking its type**, so a `/GoToR` meaning "open other.pdf at page 1" comes
+  back as an ordinary destination and resolves against the open document. Reading the action
+  first removes the fallback's opportunity to fire. `/Launch`, `/URI`, `/GoToR` and
+  `/EmbeddedGoTo` entries are shown, marked and explained rather than dropped or silently
+  inert.
+
+  17 mutations, all caught --- one only after the test it aimed at was rewritten, having
+  been unable to fail. Nine viewer checks cover the sidebar itself, three of which went red
+  before the fixes they prompted: a roving tabindex that did not follow real focus, an
+  arrival highlighting the entry *before* the one clicked, and a fixture whose lines were
+  all identical.
 - **Front-end unit tests, and a seventh quality gate.** `vitest`, over command ranking and
   line splitting --- the first front-end logic with an answer that can be *wrong* rather than
   merely ugly.
@@ -249,6 +275,26 @@ experience.
 
 ### Fixed
 
+- **The viewer check printed nothing unless it reached the end.** Every result was buffered
+  and emitted in one block, so a run that stopped midway was indistinguishable from one that
+  never started --- which is exactly what happened when an occluded window suspended the
+  page, and is why that took an afternoon to identify rather than a minute. Results now
+  print as they are recorded, chained through one promise so the transcript cannot arrive
+  out of order.
+- **The watchdog says when a page was never executed at all.** Every spike entry point
+  begins by asking Rust for its path, which records a `webview alive` mark; a timeout
+  without one now prints that the page never ran a line of JavaScript, and why, instead of a
+  mark list that has to be interpreted. It fires on a raw `cargo build` binary --- which
+  runs no webview content at all, WKWebView needing the bundle identity --- and stays quiet
+  on a bundled one.
+- **`TPDF_RAISE=1`** raises the window for a check that has nowhere visible to put one.
+  WebKit suspends a page whose window is fully covered, and an unlocked screen is not a
+  visible window. Opt-in: raising a window over someone's work on every run is its own bug.
+- **The sidebar's roving tabindex now follows focus that arrives from outside it** --- a Tab
+  into the tree or a programmatic focus previously left every arrow key aimed elsewhere.
+- **An outline destination no longer highlights the entry before the one clicked.** The air
+  left above a heading on arrival is measured in points rather than CSS pixels, with a
+  matching tolerance in the highlight.
 - **A zero-length render slice ran to completion instead of pausing immediately.** The
   pause deadline used 0 as its "no deadline" sentinel, and `Instant` on Apple Silicon ticks
   at 41.67 ns --- so arming a zero slice right after taking the origin produced a genuinely
