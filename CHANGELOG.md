@@ -66,6 +66,25 @@ experience.
   for any page whose text has not arrived --- a fast drag can reach the clipboard before the
   extraction does, and silently copying the loaded part is a bug found in someone else's
   document.
+- **Find in document.** Cmd-F, search-as-you-type, Enter and Cmd-G to step through hits,
+  Shift for backwards, Escape to drop it. Every hit on a visible page is highlighted and the
+  current one differently. The scan starts at the page being read and wraps, so a reader on
+  page 700 is shown the next hit rather than the first one in the document.
+
+  Matching is in Rust over the **same character codes selection reads**, not through
+  `FPDFText_FindStart` --- PDFium's search would have been shorter and answers in positions
+  into its own extracted string, which is a second index space beside the one the text layer
+  exists to be the only one of. A hit is therefore a range of the indices the boxes are keyed
+  by, and highlighting one is the selection code with a different colour.
+
+  Case is ignored, runs of whitespace collapse so a phrase spanning a line break still
+  matches, and soft hyphens are dropped. Ligatures, accents and hyphen-broken words are
+  deliberately **not** normalised: each would make the highlight cover characters the query
+  did not contain.
+
+  A whole-document scan of the 775-page corpus for a word that is not in it --- the worst
+  case --- takes **843 ms**, about 1.1 ms per page, essentially all of it extraction. A
+  document with no extractable text says so rather than reporting no matches.
 - `src-tauri/src/bin/text_probe.rs` --- checks the page-space to device-space flip against
   **pixels**, per character, and carries a control that fails the run if the wrong convention
   would also pass. On the four small fixtures: 100% against 4.1--4.8%. On the dense corpus the

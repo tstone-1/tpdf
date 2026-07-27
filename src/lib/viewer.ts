@@ -30,8 +30,30 @@
  */
 
 import { Scroller, type PageSize } from "./scroller";
+import { Search, type Match } from "./search";
 import { Selection } from "./selection";
-import { caretAt, TextCache, type Caret } from "./text";
+import { caretAt, runsFor, TextCache, type Caret } from "./text";
+
+/** What the search box should be showing. */
+export interface SearchStatus {
+  /** The query being scanned for, or "". */
+  query: string;
+  /** Matches found so far. */
+  total: number;
+  /** One-based position of the current match, or 0 when there is none. */
+  index: number;
+  /** Pages scanned so far, out of the document's page count. */
+  scanned: number;
+  /** Whether a scan is still running. */
+  running: boolean;
+  /**
+   * Whether every page scanned so far had no extractable text.
+   *
+   * "No matches" and "nothing to match against" are different answers and are
+   * reported as different: a scan of a scanned document never tested the query.
+   */
+  textless: boolean;
+}
 
 /** What the surface is currently showing, for a status line to render. */
 export interface ViewerStatus {
@@ -48,6 +70,8 @@ export interface ViewerStatus {
   pending: number;
   /** Characters currently selected, so a status line can say so. */
   selected: number;
+  /** State of the find-in-document scan. */
+  search: SearchStatus;
 }
 
 export interface ViewerOptions {
@@ -89,6 +113,17 @@ const PAGE_OVERLAP = 0.9;
 const FIT_MARGIN = 24;
 
 /**
+ * Overlay fills, all painted with `multiply` so the glyphs stay legible.
+ *
+ * The current match is a different hue rather than a darker shade of the same
+ * one: on a page with many hits, "which of these am I on" has to survive being
+ * read at a glance and next to a highlight of the other colour.
+ */
+const SELECTION_FILL = "rgba(80, 140, 255, 0.35)";
+const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
+const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
+
+/**
  * Captures a pointer, tolerating one that does not exist.
  *
  * `setPointerCapture` throws `NotFoundError` for an id the browser has no active
@@ -123,6 +158,16 @@ export class Viewer {
   private readonly track: HTMLDivElement;
   private readonly thumb: HTMLDivElement;
   private readonly text: TextCache;
+
+  private readonly searcher: Search;
+  /**
+   * Index into `searcher.matches` of the match the viewport is on, or -1.
+   *
+   * Kept here rather than in {@link Search}, which only accumulates: which hit
+   * a reader is looking at is a property of the surface, and the scan has to be
+   * able to finish without moving anyone.
+   */
+  private currentMatch = -1;
 
   private selection: Selection | null = null;
   /** Whether a pointer is currently extending the selection. */
@@ -178,6 +223,7 @@ export class Viewer {
     root.style.outline = "none";
 
     this.text = new TextCache(opts.doc);
+    this.searcher = new Search(opts.doc, opts.pageCount, () => this.onSearchProgress());
 
     this.surfaceHost = document.createElement("div");
     this.surfaceHost.style.cssText = "position:absolute;left:0;top:0;";
@@ -238,6 +284,7 @@ export class Viewer {
 
   destroy(): void {
     this.stop();
+    this.searcher.cancel();
     this.observer.disconnect();
     this.root.removeEventListener("wheel", this.onWheel);
     this.root.removeEventListener("keydown", this.onKeyDown);
@@ -302,7 +349,7 @@ export class Viewer {
   private readonly tick = (): void => {
     const stats = this.scroller.frame(this.scrollTop);
     this.prefetchText();
-    this.paintSelection();
+    this.paintOverlay();
     this.paintThumb();
     this.report(stats);
 
@@ -339,6 +386,7 @@ export class Viewer {
       any: stats.any,
       pending: this.scroller.pendingWork,
       selected: this.selectedCount(),
+      search: this.searchStatus(),
     };
     const summary = [
       status.page,
@@ -347,6 +395,12 @@ export class Viewer {
       Math.round(status.any * 100),
       status.pending > 0,
       status.selected,
+      status.search.query,
+      status.search.total,
+      status.search.index,
+      status.search.scanned,
+      status.search.running,
+      status.search.textless,
     ].join("/");
     if (summary === this.lastStatus) return;
     this.lastStatus = summary;
@@ -480,6 +534,11 @@ export class Viewer {
       void this.copySelection();
     } else if (accel && event.key === "a") {
       this.selectPage();
+    } else if (accel && (event.key === "g" || event.key === "G")) {
+      // Cmd-G and Cmd-Shift-G, which is what find-next is on this platform.
+      // `key` carries the shifted form, so both spellings have to be listed.
+      if (event.shiftKey) this.prevMatch();
+      else this.nextMatch();
     } else if (event.key === "Escape") {
       this.clearSelection();
     } else if (event.key === "n") {
@@ -627,18 +686,25 @@ export class Viewer {
     return this.selection ? this.selection.text(this.text) : "";
   }
 
-  private paintSelection(): void {
+  /** Draws the search highlights and the selection, in that order. */
+  private paintOverlay(): void {
     const ctx = this.overlayCtx;
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
-    if (!this.selection) return;
 
     // Multiply keeps the glyphs legible underneath, which a flat fill over the
     // tile would not: the text is already painted into the pixels.
     ctx.globalCompositeOperation = "multiply";
-    ctx.fillStyle = "rgba(80, 140, 255, 0.35)";
+    this.paintMatches(ctx, dpr);
+    this.paintSelection(ctx, dpr);
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  private paintSelection(ctx: CanvasRenderingContext2D, dpr: number): void {
+    if (!this.selection) return;
+    ctx.fillStyle = SELECTION_FILL;
 
     for (const page of this.scroller.visiblePages()) {
       const origin = this.scroller.pageOrigin(page);
@@ -653,7 +719,145 @@ export class Viewer {
         );
       }
     }
-    ctx.globalCompositeOperation = "source-over";
+  }
+
+  // --- Find in document ----------------------------------------------------
+
+  private searchStatus(): SearchStatus {
+    return {
+      query: this.searcher.query,
+      total: this.searcher.matches.length,
+      index: this.currentMatch < 0 ? 0 : this.currentMatch + 1,
+      scanned: this.searcher.scanned,
+      running: this.searcher.running,
+      textless: this.searcher.textless,
+    };
+  }
+
+  /**
+   * Starts a scan for `query`, replacing any scan in progress.
+   *
+   * It begins at the page being read and wraps, so the first hit a reader is
+   * shown is the next one after where they are rather than the first one in the
+   * document --- which on a 775-page manual is the difference between a useful
+   * search and a jump to the beginning.
+   */
+  search(query: string): void {
+    this.currentMatch = -1;
+    void this.searcher.run(query, this.currentPage());
+    this.wake();
+  }
+
+  /** Drops the query and its results. */
+  clearSearch(): void {
+    this.currentMatch = -1;
+    this.searcher.clear();
+    this.wake();
+  }
+
+  /** Moves to the next match, wrapping at the end. */
+  nextMatch(): void {
+    void this.goToMatch(this.currentMatch + 1);
+  }
+
+  /** Moves to the previous match, wrapping at the start. */
+  prevMatch(): void {
+    void this.goToMatch(this.currentMatch - 1);
+  }
+
+  /** Matches found so far. For the check harness. */
+  get searchMatches(): readonly Match[] {
+    return this.searcher.matches;
+  }
+
+  /** Whether a scan is still running. For the check harness. */
+  get searching(): boolean {
+    return this.searcher.running;
+  }
+
+  /** Wall time of the last completed scan, in ms. For the check harness. */
+  get searchElapsedMs(): number {
+    return this.searcher.elapsedMs;
+  }
+
+  /**
+   * Called for every page the scan finishes.
+   *
+   * The first match found is jumped to, and only the first: a scan that kept
+   * moving the viewport as it went would drag a reader through the document
+   * while they were trying to read the hit they were already shown.
+   */
+  private onSearchProgress(): void {
+    if (this.currentMatch < 0 && this.searcher.matches.length > 0) {
+      void this.goToMatch(0);
+    }
+    this.wake();
+  }
+
+  /**
+   * Scrolls the match at `index` into view, wrapping the index into range.
+   *
+   * The page's text has to be loaded to know where on the page the match is,
+   * and on a page the reader has never visited it will not be --- so this is
+   * async, and the scroll happens when the answer arrives rather than being
+   * approximated from the page top.
+   */
+  private async goToMatch(index: number): Promise<void> {
+    const count = this.searcher.matches.length;
+    if (count === 0) return;
+
+    const wrapped = ((index % count) + count) % count;
+    const match = this.searcher.matches[wrapped];
+    if (!match) return;
+    this.currentMatch = wrapped;
+    this.wake();
+
+    const text = await this.text.load(match.page);
+    if (!text) return;
+    const [first] = runsFor(text, match.start, match.end);
+    const top =
+      this.scroller.pageTopOf(match.page) + (first ? first.top * this.zoom : 0);
+    // A third down rather than at the top edge: a hit flush against the top of
+    // the viewport has no context above it and reads as though the line before
+    // it is missing.
+    this.scrollTo(top - this.viewportSize().height / 3);
+    this.wake();
+  }
+
+  /**
+   * Paints every match on a visible page, and the current one differently.
+   *
+   * A linear scan of every match each frame, which on a common word in a long
+   * document is tens of thousands of comparisons --- cheap enough to measure as
+   * nothing next to the rest of a frame, and the alternative is a page-keyed
+   * index that has to be kept in step with a list that is still growing.
+   */
+  private paintMatches(ctx: CanvasRenderingContext2D, dpr: number): void {
+    const matches = this.searcher.matches;
+    if (matches.length === 0) return;
+
+    const visible = new Set(this.scroller.visiblePages());
+    for (let index = 0; index < matches.length; index++) {
+      const match = matches[index];
+      if (!match || !visible.has(match.page)) continue;
+      // Not requested if missing: `prefetchText` already asks for every visible
+      // page, and asking again from the paint path would queue an extraction
+      // per frame for a page whose reply has not landed yet.
+      const text = this.text.peek(match.page);
+      if (!text) continue;
+
+      ctx.fillStyle =
+        index === this.currentMatch ? CURRENT_MATCH_FILL : MATCH_FILL;
+      const origin = this.scroller.pageOrigin(match.page);
+      for (const quad of runsFor(text, match.start, match.end)) {
+        ctx.fillRect(
+          (origin.left + quad.left * this.zoom) * dpr,
+          (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,
+          (quad.right - quad.left) * this.zoom * dpr,
+          (quad.bottom - quad.top) * this.zoom * dpr,
+        );
+      }
+    }
   }
 
   /** Asks for a page's text once, waking the loop when it lands. */

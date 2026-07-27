@@ -19,6 +19,8 @@
  *    while work is outstanding".
  *  - **coverage after a zoom** is asserted against a *drop* first. Recovering
  *    to 100% proves nothing if the zoom never invalidated anything.
+ *  - **search** is asserted against a query that is not in the document, and its
+ *    jump is asserted against not having been on the target page already.
  *
  * Run it with `TPDF_VIEWERCHECK=<file.pdf>`; it prints a table and exits
  * non-zero on the first failure.
@@ -326,6 +328,7 @@ async function run(path: string): Promise<void> {
   );
 
   await selectionChecks(root, viewer, doc);
+  await searchChecks(root, viewer, doc, seen);
 
   viewer.destroy();
   check("destroys cleanly", viewer.idle, "frame loop stopped");
@@ -434,6 +437,269 @@ const HIGH_Y = 140;
  * about the mapping.
  */
 const LOW_Y = 620;
+
+/**
+ * Find in document.
+ *
+ * The load-bearing assertion, and the counterpart to the ordering check above,
+ * is that the characters a match *covers* are the characters that were searched
+ * for. Everything else about search --- that it finds something, that it counts
+ * hits, that Cmd-G moves --- passes just as well when the returned indices are
+ * off by one, or in a different index space from the boxes, and an off-by-one
+ * highlight is exactly the bug this whole layer was designed to make impossible.
+ *
+ * The needle is taken from the document rather than hardcoded, so this runs
+ * against any fixture; the negative control is that needle with letters glued to
+ * the front, which cannot be in a document that the real one was drawn from.
+ */
+async function searchChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  key(root, "Home");
+  await settle(() => viewer.idle);
+
+  const first = await invoke<{ codes: number[] }>("page_text", {
+    doc: doc.id,
+    page: 0,
+  }).catch(() => null);
+  const needle = first ? pickNeedle(first.codes) : null;
+
+  // A document with no extractable text still has something to check, and it is
+  // the one thing that matters for it: that the viewer says so instead of
+  // reporting no matches for a query it never tested against anything.
+  const probe = needle ?? "the";
+  viewer.search(probe);
+  await settle(() => (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  check(
+    "tells no text apart from no matches",
+    seen.status?.search.textless === (first?.codes.length === 0),
+    `document reports textless=${seen.status?.search.textless}, page 1 has ` +
+      `${first?.codes.length ?? "unknown"} characters`,
+  );
+
+  if (!needle) {
+    skip("finds a word taken from the document", "page 1 has no extractable text");
+    skip("a match covers the characters searched for", "page 1 has no extractable text");
+    skip("case is ignored", "page 1 has no extractable text");
+    skip("a word that is not there is not found", "page 1 has no extractable text");
+    skip("searches forward from the page being read", "page 1 has no extractable text");
+    skip("finds something from the end of the document", "page 1 has no extractable text");
+    skip("counts more than the matches on one page", "page 1 has no extractable text");
+    skip("Cmd-G moves to a match on another page", "page 1 has no extractable text");
+    return;
+  }
+
+  viewer.search(needle);
+  const found = await eventually(
+    "finds a word taken from the document",
+    () => viewer.searchMatches.length > 0,
+    () => `"${needle}" -> ${viewer.searchMatches.length} matches so far`,
+  );
+
+  const firstHit = viewer.searchMatches[0];
+  if (found && firstHit) {
+    // The assertion that ties an index range to specific content. The text is
+    // re-extracted here rather than read out of the viewer's cache, so a match
+    // cannot be confirmed by the viewer agreeing with itself.
+    const page = await invoke<{ codes: number[] }>("page_text", {
+      doc: doc.id,
+      page: firstHit.page,
+    }).catch(() => null);
+    const covered = page
+      ? String.fromCodePoint(...page.codes.slice(firstHit.start, firstHit.end))
+      : "";
+    check(
+      "a match covers the characters searched for",
+      covered.toLowerCase() === needle.toLowerCase(),
+      `page ${firstHit.page} [${firstHit.start}, ${firstHit.end}) is "${preview(covered)}", ` +
+        `searched for "${needle}"`,
+    );
+  } else {
+    skip("a match covers the characters searched for", "nothing was found to check");
+  }
+
+  // Same first match, not merely some match: both scans start from the same
+  // page and walk the same way, so anything other than the identical hit means
+  // the two queries did not match the same text.
+  viewer.search(needle.toUpperCase());
+  await eventually(
+    "case is ignored",
+    () => {
+      const upper = viewer.searchMatches[0];
+      return (
+        !!upper &&
+        !!firstHit &&
+        upper.page === firstHit.page &&
+        upper.start === firstHit.start &&
+        upper.end === firstHit.end
+      );
+    },
+    () => {
+      const upper = viewer.searchMatches[0];
+      return (
+        `"${needle.toUpperCase()}" first hit ${upper ? `${upper.page}:${upper.start}` : "none"}, ` +
+        `"${needle}" first hit ${firstHit ? `${firstHit.page}:${firstHit.start}` : "none"}`
+      );
+    },
+  );
+
+  // The negative control. Without it, every check above is satisfied by a search
+  // that returns matches for anything at all.
+  const absent = `qxzj${needle}`;
+  viewer.search(absent);
+  // Waiting for `scanned` to reach the page count rather than for the scan to
+  // stop running. They are the same thing only while cancellation works: a
+  // mutation that removed the generation guard let an *older* scan finish and
+  // clear the running flag, and this check then read its result at a moment when
+  // neither scan had put anything in the list. It passed, for a reason that had
+  // nothing to do with the query being absent.
+  await settle(() => (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  check(
+    "a word that is not there is not found",
+    viewer.searchMatches.length === 0,
+    `"${absent}" -> ${viewer.searchMatches.length} matches over ` +
+      `${seen.status?.search.scanned ?? 0} pages in ` +
+      `${viewer.searchElapsedMs.toFixed(0)} ms`,
+  );
+
+  await searchesFromHere(root, viewer, seen, needle, doc.page_count);
+  await stepToAnotherPage(root, viewer, seen, needle, doc.page_count);
+}
+
+/**
+ * The scan starts at the page being read, not at page 1.
+ *
+ * A reader on page 700 who searches for a common word wants the next one, not a
+ * jump to the beginning of the document. Nothing else here would notice if that
+ * were wrong: every other search check runs from `Home`, where "starts at the
+ * current page" and "starts at page 1" are the same thing.
+ */
+async function searchesFromHere(
+  root: HTMLElement,
+  viewer: Viewer,
+  seen: { status: ViewerStatus | null },
+  needle: string,
+  pageCount: number,
+): Promise<void> {
+  const name = "searches forward from the page being read";
+  if (pageCount < 2) {
+    skip(name, "the document has one page");
+    return;
+  }
+
+  key(root, "End");
+  await settle(() => viewer.idle);
+  const from = (seen.status?.page ?? 1) - 1;
+  if (from === 0) {
+    skip(name, "the whole document fits on one screen");
+    return;
+  }
+
+  viewer.search(needle);
+  const found = await eventually(
+    "finds something from the end of the document",
+    () => viewer.searchMatches.length > 0,
+    () => `${viewer.searchMatches.length} matches so far`,
+  );
+  const first = viewer.searchMatches[0];
+  check(
+    name,
+    found && !!first && first.page >= from,
+    `reading page ${from + 1}, first hit on page ${first ? first.page + 1 : "none"}` +
+      (first && first.page < from ? " -- the scan restarted at the beginning" : ""),
+  );
+}
+
+/**
+ * Steps through matches with Cmd-G until one is on a different page.
+ *
+ * The check is that the viewport followed, and it needs the control beside it:
+ * "the viewport is on the match's page" is trivially true if the match was on
+ * the page already, which is how a jump check on a 775-page document once passed
+ * without the jump having rendered anything. So the target is the first match
+ * on a page other than the one being read, the precondition that we are *not*
+ * there is asserted first, and a document that cannot offer one is skipped with
+ * its reason printed rather than silently dropped.
+ */
+async function stepToAnotherPage(
+  root: HTMLElement,
+  viewer: Viewer,
+  seen: { status: ViewerStatus | null },
+  needle: string,
+  pageCount: number,
+): Promise<void> {
+  const name = "Cmd-G moves to a match on another page";
+  const spread = "counts more than the matches on one page";
+  if (pageCount < 2) {
+    skip(spread, "the document has one page");
+    skip(name, "the document has one page");
+    return;
+  }
+
+  key(root, "Home");
+  await settle(() => viewer.idle);
+  viewer.search(needle);
+  await eventually(
+    spread,
+    () => viewer.searchMatches.some((m) => m.page !== viewer.searchMatches[0]?.page),
+    () =>
+      `${viewer.searchMatches.length} matches across ` +
+      `${new Set(viewer.searchMatches.map((m) => m.page)).size} pages`,
+  );
+
+  const start = viewer.searchMatches[0]?.page ?? 0;
+  const target = viewer.searchMatches.findIndex((m) => m.page !== start);
+  if (target < 0) {
+    skip(name, `every match is on page ${start + 1}`);
+    return;
+  }
+
+  const goal = viewer.searchMatches[target];
+  const before = (seen.status?.page ?? 0) - 1;
+  if (!goal || before === goal.page) {
+    skip(name, `already on page ${goal ? goal.page + 1 : "?"} before stepping`);
+    return;
+  }
+
+  // One press per step, each awaited: `goToMatch` has to load the target page's
+  // text before it knows where to scroll, so pressing faster than that races the
+  // reply it is waiting for.
+  for (let step = 0; step < target; step++) {
+    const at = seen.status?.search.index ?? 0;
+    key(root, "g", true);
+    await settle(() => (seen.status?.search.index ?? 0) !== at);
+  }
+  await settle(() => seen.status?.page === goal.page + 1);
+
+  check(
+    name,
+    seen.status?.page === goal.page + 1,
+    `${target} presses from page ${before + 1} to page ${seen.status?.page}, ` +
+      `match ${target + 1} is on page ${goal.page + 1}`,
+  );
+}
+
+/**
+ * A word from a page's characters, long enough to be worth searching for.
+ *
+ * Taken from the document so the check is not tied to one fixture's vocabulary.
+ * Letters only: a needle containing a space would exercise the whitespace fold,
+ * which is a different claim and has its own test in `search.rs`.
+ *
+ * Deliberately **not** the page's first word. The check downstream asserts that
+ * a match's index range covers the characters searched for, and a first match at
+ * index 0 is the one value an implementation that had lost track of its indices
+ * would be most likely to return anyway.
+ */
+function pickNeedle(codes: number[]): string | null {
+  const words = String.fromCodePoint(...codes.slice(0, 4096)).match(/[A-Za-z]{5,}/g);
+  if (!words?.length) return null;
+  const lead = words[0]?.toLowerCase();
+  return words.find((word) => word.toLowerCase() !== lead) ?? words[0] ?? null;
+}
 
 /** A short, single-line form of a string, for a detail column. */
 function preview(text: string): string {
