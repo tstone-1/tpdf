@@ -523,20 +523,40 @@ pub struct Placement {
     pub start_x: i32,
     /// Top edge of the scaled page in bitmap coordinates, usually negative.
     pub start_y: i32,
-    /// Width of the whole scaled page in device pixels.
+    /// Width of the whole scaled page in device pixels, as displayed.
     pub size_x: i32,
-    /// Height of the whole scaled page in device pixels.
+    /// Height of the whole scaled page in device pixels, as displayed.
     pub size_y: i32,
+    /// Quarter-turns clockwise to display the page by, 0 to 3.
+    ///
+    /// This is the *view* rotation and composes on top of the page's own
+    /// `/Rotate`: PDFium's display matrix applies the page's rotation first and
+    /// then this, which is what makes "rotate the view" mean the same thing on a
+    /// scanned page as on an upright one.
+    pub turns: u8,
 }
 
 impl Placement {
-    /// The placement for a tile at `(x, y)` of a page scaled by `scale`.
-    pub fn tile(page: &RawPage<'_>, scale: f32, x: i32, y: i32) -> Self {
+    /// The placement for a tile at `(x, y)` of a page scaled by `scale` and
+    /// displayed under `turns` quarter-turns clockwise.
+    ///
+    /// `size_x`/`size_y` are the *displayed* dimensions, so a quarter turn swaps
+    /// them: PDFium fits the page into the rect it is given and rotates inside
+    /// it, so passing the upright size would squeeze a landscape page into a
+    /// portrait box rather than turning it.
+    pub fn tile(page: &RawPage<'_>, scale: f32, turns: u8, x: i32, y: i32) -> Self {
+        let width = (page.width_pt() * scale).round() as i32;
+        let height = (page.height_pt() * scale).round() as i32;
+        let (size_x, size_y) = match turns % 2 {
+            0 => (width, height),
+            _ => (height, width),
+        };
         Self {
             start_x: -x,
             start_y: -y,
-            size_x: (page.width_pt() * scale).round() as i32,
-            size_y: (page.height_pt() * scale).round() as i32,
+            size_x,
+            size_y,
+            turns: turns % 4,
         }
     }
 }
@@ -641,7 +661,7 @@ pub fn render(
             placement.start_y,
             placement.size_x,
             placement.size_y,
-            0, // no rotation; the caller bakes orientation into `placement`
+            placement.turns as c_int,
             RENDER_FLAGS,
             pause_ptr,
         )
@@ -685,6 +705,8 @@ pub fn render(
 pub struct TileSpec {
     /// Device pixels per PDF point.
     pub scale: f32,
+    /// Quarter-turns clockwise to display the page by, 0 to 3.
+    pub turns: u8,
     /// Tile origin in device pixels, relative to the scaled page's top-left.
     pub x: i32,
     /// See [`TileSpec::x`].
@@ -707,13 +729,14 @@ pub fn render_tile(
 ) -> Result<(Vec<u8>, Progress), String> {
     let TileSpec {
         scale,
+        turns,
         x,
         y,
         width,
         height,
     } = spec;
     let mut buffer = vec![0u8; width as usize * height as usize * 4];
-    let placement = Placement::tile(page, scale, x, y);
+    let placement = Placement::tile(page, scale, turns, x, y);
 
     let progress = {
         let mut bitmap = RawBitmap::borrowed(bindings, &mut buffer, width, height)?;

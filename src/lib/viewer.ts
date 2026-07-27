@@ -34,7 +34,7 @@ import { DESTINATION_MARGIN_PT } from "./outline";
 import { Scroller, type PageSize } from "./scroller";
 import { Search, type Match } from "./search";
 import { Selection } from "./selection";
-import { caretAt, runsFor, TextCache, type Caret } from "./text";
+import { caretAt, runsFor, TextCache, type Caret, type PageText } from "./text";
 
 /** What the search box should be showing. */
 export interface SearchStatus {
@@ -64,6 +64,8 @@ export interface ViewerStatus {
   pageCount: number;
   /** CSS pixels per PDF point. */
   zoom: number;
+  /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
+  turns: number;
   /** Fraction of the visible page area backed by a sharp tile. */
   sharp: number;
   /** Fraction backed by anything at all, tier-1 placeholder included. */
@@ -195,6 +197,8 @@ export class Viewer {
   private readonly scroller: Scroller;
   private scrollTop = 0;
   private zoom = 1;
+  /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
+  private turns = 0;
   /**
    * Whether the zoom is still tracking the window width.
    *
@@ -272,6 +276,7 @@ export class Viewer {
       pageCount: opts.pageCount,
       page: opts.page,
       zoom: this.zoom,
+      turns: 0,
       // Measured verdict, docs/PLAN.md section 4: over ~3,300 timed frames the
       // per-tile-canvas layout dropped three frames and stalled once, while
       // this one dropped none at identical coverage and 3--4x lower per-frame
@@ -414,6 +419,7 @@ export class Viewer {
       page: this.currentPage() + 1,
       pageCount: this.opts.pageCount,
       zoom: this.zoom,
+      turns: this.turns,
       sharp: stats.sharp,
       any: stats.any,
       pending: this.scroller.pendingWork,
@@ -423,6 +429,7 @@ export class Viewer {
     const summary = [
       status.page,
       status.zoom,
+      status.turns,
       Math.round(status.sharp * 100),
       Math.round(status.any * 100),
       status.pending > 0,
@@ -446,9 +453,17 @@ export class Viewer {
     };
   }
 
+  /** The page's size in points as displayed, i.e. after the view rotation. */
+  private displayedPage(): { width_pt: number; height_pt: number } {
+    const { page } = this.opts;
+    return this.turns % 2 === 0
+      ? page
+      : { width_pt: page.height_pt, height_pt: page.width_pt };
+  }
+
   /** The zoom at which the page fills the viewport's width. */
   private fitWidthZoom(width: number): number {
-    return Math.max(0.05, (width - FIT_MARGIN * 2) / this.opts.page.width_pt);
+    return Math.max(0.05, (width - FIT_MARGIN * 2) / this.displayedPage().width_pt);
   }
 
   private scrollBy(delta: number): void {
@@ -502,6 +517,64 @@ export class Viewer {
     this.wake();
   }
 
+  /** Quarter-turns clockwise the view is currently rotated by. */
+  get rotation(): number {
+    return this.turns;
+  }
+
+  /** A page's size on screen, as the scroller laid it out. */
+  get pageBoxCss(): { width: number; height: number } {
+    return this.scroller.pageBoxCss;
+  }
+
+  /**
+   * Rotates the view by `delta` quarter-turns, keeping the reader on their page.
+   *
+   * A landscape page turned upright is a different length, so the scroll offset
+   * that was three pages down is now somewhere else entirely --- and on a long
+   * document "somewhere else" is far enough that the reader has simply lost
+   * their place. The page is preserved rather than the offset, and the fraction
+   * *through* that page with it, which is the closest thing to "the same place"
+   * that survives a change of proportions.
+   *
+   * Rotating never touches the document. It is a property of the view, and the
+   * page's own `/Rotate` is left exactly as the file has it --- changing that is
+   * a page operation, and belongs with the ones that write.
+   */
+  rotateBy(delta: number): void {
+    const next = ((this.turns + delta) % 4 + 4) % 4;
+    if (next === this.turns) return;
+
+    const page = this.currentPage();
+    const before = this.scroller.pagePitchCss;
+    const through =
+      before > 0 ? (this.scrollTop - this.scroller.pageTopOf(page)) / before : 0;
+
+    this.turns = next;
+    this.text.setTurns(next);
+    this.scroller.setTurns(next);
+    // A rotation changes the page's aspect, so a view that was fitted to the
+    // width is no longer fitted to anything. Refitting is what makes the
+    // command feel like turning a sheet of paper rather than cropping one.
+    if (this.fitting) {
+      this.zoom = this.fitWidthZoom(this.viewportSize().width);
+      this.scroller.setZoom(this.zoom);
+    }
+
+    this.scrollTop = Math.max(
+      0,
+      Math.min(
+        this.scroller.pageTopOf(page) + through * this.scroller.pagePitchCss,
+        this.scroller.maxScroll,
+      ),
+    );
+    // The selection is a range of character indices and survives untouched: a
+    // rotation is an isometry, so the same characters are still selected and
+    // `runsFor` draws their highlight in the new orientation because the boxes
+    // it reads have turned with the view.
+    this.wake();
+  }
+
   /**
    * Where the top of the viewport is: a page, and points down it.
    *
@@ -509,9 +582,16 @@ export class Viewer {
    * They answer different questions: "which page am I on" is about what fills
    * the screen, and "which section am I in" is about the heading above me,
    * which sits at the top.
+   *
+   * A rotated view reports the page and no offset, for the same reason
+   * {@link goToDestination} ignores one: the destinations this is compared
+   * against are measured down an upright page, and under a quarter turn that is
+   * not the axis being scrolled. Outline highlighting falls back to page
+   * granularity, which is coarse and right, rather than fine and wrong.
    */
   get position(): { page: number; top: number } {
     const page = this.scroller.pageAt(this.scrollTop);
+    if (this.turns !== 0) return { page, top: 0 };
     const top = (this.scrollTop - this.scroller.pageTopOf(page)) / this.zoom;
     return { page, top: Math.max(0, top) };
   }
@@ -526,9 +606,16 @@ export class Viewer {
   goToDestination(page: number, top: number | null): void {
     const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
     const base = this.scroller.pageTopOf(clamped);
+    // A rotated view has no vertical offset within a page to scroll to: at a
+    // quarter turn the destination's axis is the screen's horizontal one, and at
+    // a half turn it counts upwards from the bottom while the reader still
+    // scrolls down. Rather than place a heading somewhere plausible and wrong,
+    // this lands on the page --- which is exactly what `/Fit` means, and what
+    // `outline.rs` already returns for a destination it cannot place.
+    const offset = this.turns === 0 ? (top ?? 0) : 0;
     // A little air above, for the same reason `goToMatch` leaves a third of a
     // screen: a heading flush against the top edge reads as cut off.
-    this.scrollTo(base + ((top ?? 0) - DESTINATION_MARGIN_PT) * this.zoom);
+    this.scrollTo(base + (offset - DESTINATION_MARGIN_PT) * this.zoom);
   }
 
   /** Scrolls so page `page` (zero-based) starts at the top of the viewport. */
@@ -604,6 +691,12 @@ export class Viewer {
       this.zoomStep(-1);
     } else if (accel && event.key === "0") {
       this.fitWidth();
+    } else if (accel && (event.key === "r" || event.key === "R")) {
+      // Preview's bindings. Acrobat puts these on Shift-Cmd-+/-, which on this
+      // keyboard is the same `key` as Cmd-+ and would collide with zoom.
+      this.rotateBy(1);
+    } else if (accel && (event.key === "l" || event.key === "L")) {
+      this.rotateBy(-1);
     } else if (event.key === "ArrowDown") {
       this.scrollBy(ARROW_STEP);
     } else if (event.key === "ArrowUp") {
@@ -669,6 +762,27 @@ export class Viewer {
    * therefore does nothing until it does, rather than anchoring at character
    * zero and selecting the whole page on the first move.
    */
+  /**
+   * Where a point in a page lands in the window, in CSS pixels from its corner.
+   *
+   * The inverse of what {@link caretFrom} does with a pointer event, and it
+   * exists for the check harness: a check that wants to drag across a *specific*
+   * part of a page has to know where that part is on screen, and picking a fixed
+   * screen row instead makes the check a statement about the fixture's margins.
+   */
+  screenPoint(page: number, x: number, y: number): { x: number; y: number } {
+    const origin = this.scroller.pageOrigin(page);
+    return {
+      x: origin.left + x * this.zoom,
+      y: origin.top + y * this.zoom - this.scrollTop,
+    };
+  }
+
+  /** A page's text as the view shows it, or `null` if it has not arrived. */
+  textOn(page: number): PageText | null {
+    return this.text.peek(page);
+  }
+
   private caretFrom(event: PointerEvent): Caret | null {
     const bounds = this.root.getBoundingClientRect();
     const docY = event.clientY - bounds.top + this.scrollTop;

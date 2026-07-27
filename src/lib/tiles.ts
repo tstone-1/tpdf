@@ -20,6 +20,14 @@ export interface TileRequest {
   page: number;
   /** Device pixels per PDF point. */
   scale: number;
+  /**
+   * Quarter-turns clockwise the view is rotated by, 0 to 3.
+   *
+   * Omitted means upright. The server refuses anything outside that range
+   * rather than reducing it modulo four, so a caller whose arithmetic has gone
+   * wrong gets an error instead of a plausible page.
+   */
+  turns?: number;
   x: number;
   y: number;
   width: number;
@@ -59,7 +67,8 @@ export function tileUrl(req: TileRequest): string {
   const scale = Math.round(req.scale * 1000);
   const path = [req.doc, req.page, scale, req.x, req.y, req.width, req.height].join("/");
   const rid = req.rid ? `&rid=${req.rid}` : "";
-  return `tile://localhost/${path}?fmt=${req.format}${rid}`;
+  const turns = req.turns ? `&turns=${req.turns}` : "";
+  return `tile://localhost/${path}?fmt=${req.format}${rid}${turns}`;
 }
 
 let lastRequestId = 0;

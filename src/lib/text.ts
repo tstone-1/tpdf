@@ -46,6 +46,80 @@ export function linesRunSideways(text: PageText): boolean {
   return text.quarter_turns % 2 === 1;
 }
 
+/**
+ * The same page seen through a view rotated `turns` quarter-turns clockwise.
+ *
+ * Rotating the view is not an operation on the document --- the file is
+ * untouched --- so the boxes are turned here rather than re-extracted, and a
+ * rotation costs no round trip.
+ *
+ * `quarter_turns` accumulates, which is what keeps {@link linesRunSideways}
+ * right: an upright page looked at sideways reads down the screen exactly as a
+ * `/Rotate 90` page does, and the line-grouping axis has to follow the view
+ * rather than the document. Note the *ranges* {@link linesOf} returns are
+ * unchanged by this --- a rotation is an isometry, so the grouping is invariant
+ * --- which is why a screen reader still hears the page in its own order.
+ *
+ * The mirror of `text::turn_device` in Rust, where the composition rule the two
+ * of them share is asserted against the already-verified page mapping.
+ */
+export function turnedView(text: PageText, turns: number): PageText {
+  const quarters = ((turns % 4) + 4) % 4;
+  if (quarters === 0) return text;
+
+  const { width_pt: width, height_pt: height } = text;
+  const boxes = new Array<number>(text.boxes.length);
+  for (let at = 0; at < text.boxes.length; at += 4) {
+    const quad = {
+      left: text.boxes[at] ?? 0,
+      top: text.boxes[at + 1] ?? 0,
+      right: text.boxes[at + 2] ?? 0,
+      bottom: text.boxes[at + 3] ?? 0,
+    };
+    // Four zeroes means "PDFium gave this character no box", and turning that
+    // would invent one in a corner --- which `isPlaced` would then believe.
+    const turned = isPlaced(quad) ? turnQuad(quad, quarters, width, height) : quad;
+    boxes[at] = turned.left;
+    boxes[at + 1] = turned.top;
+    boxes[at + 2] = turned.right;
+    boxes[at + 3] = turned.bottom;
+  }
+
+  const sideways = quarters % 2 === 1;
+  return {
+    codes: text.codes,
+    boxes,
+    width_pt: sideways ? height : width,
+    height_pt: sideways ? width : height,
+    quarter_turns: (text.quarter_turns + quarters) % 4,
+    extract_ms: text.extract_ms,
+  };
+}
+
+/**
+ * Turns one device-space box by `turns` quarter-turns clockwise.
+ *
+ * `width`/`height` are the page's displayed size *before* the turn; a quarter
+ * turn swaps them, so the caller's page box swaps with it.
+ */
+export function turnQuad(quad: Quad, turns: number, width: number, height: number): Quad {
+  switch (((turns % 4) + 4) % 4) {
+    case 1:
+      return { left: height - quad.bottom, top: quad.left, right: height - quad.top, bottom: quad.right };
+    case 2:
+      return {
+        left: width - quad.right,
+        top: height - quad.bottom,
+        right: width - quad.left,
+        bottom: height - quad.top,
+      };
+    case 3:
+      return { left: quad.top, top: width - quad.right, right: quad.bottom, bottom: width - quad.left };
+    default:
+      return quad;
+  }
+}
+
 /** A position between two characters, which is what a caret is. */
 export interface Caret {
   page: number;
@@ -80,14 +154,48 @@ export class TextCache {
   private readonly doc: number;
   private readonly pages = new Map<number, PageText>();
   private readonly pending = new Map<number, Promise<PageText | null>>();
+  /**
+   * Pages already turned into the current view, so a drag does not re-turn a
+   * few thousand boxes on every pointer move. Dropped whole when the view
+   * rotates, which is the only thing that can invalidate it.
+   */
+  private readonly turned = new Map<number, PageText>();
+  private turns = 0;
 
   constructor(doc: number) {
     this.doc = doc;
   }
 
+  /**
+   * Rotates the view every reader of this cache sees.
+   *
+   * Everything downstream --- the caret, the highlight runs, the accessibility
+   * lines --- works in the space the pointer and the tiles are in, so the turn
+   * belongs here rather than at each of those call sites. What is cached is the
+   * document's own text; what is handed out is the view of it.
+   */
+  setTurns(turns: number): void {
+    const next = ((turns % 4) + 4) % 4;
+    if (next === this.turns) return;
+    this.turns = next;
+    this.turned.clear();
+  }
+
   /** A page's text if it has already arrived, without asking for it. */
   peek(page: number): PageText | null {
-    return this.pages.get(page) ?? null;
+    return this.view(page, this.pages.get(page));
+  }
+
+  /** The cached view of a page, turning and memoising it on first use. */
+  private view(page: number, text: PageText | undefined): PageText | null {
+    if (!text) return null;
+    if (this.turns === 0) return text;
+
+    const already = this.turned.get(page);
+    if (already) return already;
+    const turned = turnedView(text, this.turns);
+    this.turned.set(page, turned);
+    return turned;
   }
 
   /**
@@ -99,7 +207,7 @@ export class TextCache {
    */
   async load(page: number): Promise<PageText | null> {
     const cached = this.pages.get(page);
-    if (cached) return cached;
+    if (cached) return this.view(page, cached);
 
     const existing = this.pending.get(page);
     if (existing) return existing;
@@ -107,7 +215,10 @@ export class TextCache {
     const request = invoke<PageText>("page_text", { doc: this.doc, page })
       .then((text) => {
         this.pages.set(page, text);
-        return text;
+        // Turned on the way out rather than on the way in, so a rotation that
+        // lands while the request is in flight is still honoured: the view is
+        // read at the moment it is asked for, not at the moment it was sent.
+        return this.view(page, text);
       })
       .catch(() => null)
       .finally(() => this.pending.delete(page));

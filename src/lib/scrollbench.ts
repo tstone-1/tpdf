@@ -302,6 +302,9 @@ function buildVariants(
             pageCount: doc.page_count,
             page,
             zoom,
+            // Upright: the benchmark measures scrolling, and a rotation would
+            // add a dimension to a table that already has three.
+            turns: 0,
             layout: layout as Layout,
             tilePx: config.tile_px,
             dpr: window.devicePixelRatio,

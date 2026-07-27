@@ -251,6 +251,11 @@ export class Sidebar {
     this.strip?.setViewerBusy(busy);
   }
 
+  /** Rotates the page strip to match the view. */
+  setTurns(turns: number): void {
+    this.strip?.setTurns(turns);
+  }
+
   private readonly onTabKey = (event: KeyboardEvent): void => {
     const order: Tab[] = [...this.tabs.keys()];
     const at = order.indexOf(this.showing);

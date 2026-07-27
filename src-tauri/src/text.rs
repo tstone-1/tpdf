@@ -203,6 +203,30 @@ pub fn to_device(turns: u8, width_pt: f32, height_pt: f32, page_box: [f64; 4]) -
     }
 }
 
+/// Turns a device-space box by `turns` quarter-turns clockwise.
+///
+/// The view rotation, as distinct from the page's own: [`to_device`] has already
+/// placed the box on the page as the document says it is displayed, and this
+/// turns that result again because a reader asked to look at it sideways.
+///
+/// `width`/`height` are the displayed page size **going in**; a quarter turn
+/// swaps them coming out. This is the same operation the frontend performs on the
+/// boxes it receives (`src/lib/text.ts`), and the reason it exists in Rust as
+/// well is that the two can then be pinned to the same rule: composing this with
+/// [`to_device`] must equal `to_device` of the summed turn, which is what
+/// `composing_a_view_turn_equals_turning_the_page_further` asserts.
+pub fn turn_device(turns: u8, width: f32, height: f32, quad: [f32; 4]) -> [f32; 4] {
+    let [left, top, right, bottom] = quad;
+    match turns % 4 {
+        0 => quad,
+        // Clockwise: the left edge becomes the top, and what was the bottom of
+        // the box is now its left, measured back from the old height.
+        1 => [height - bottom, left, height - top, right],
+        2 => [width - right, height - bottom, width - left, height - top],
+        _ => [top, width - right, bottom, width - left],
+    }
+}
+
 /// Extracts a page's text and character geometry.
 pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     let started = std::time::Instant::now();
@@ -238,7 +262,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::to_device;
+    use super::{to_device, turn_device};
 
     /// An unrotated page, portrait.
     const W0: f32 = 600.0;
@@ -357,5 +381,55 @@ mod tests {
         // free and the alternative is a panic on a value nobody validated.
         assert_eq!(map(4), map(0));
         assert_eq!(map(5), map(1));
+    }
+
+    #[test]
+    fn composing_a_view_turn_equals_turning_the_page_further() {
+        // The load-bearing test for `turn_device`, and the reason it is worth
+        // having two functions: this one is derived independently --- it turns a
+        // box that is already in device space, knowing nothing about page space
+        // or the flip --- so agreeing with `to_device` on every one of the
+        // sixteen combinations is evidence rather than a tautology.
+        //
+        // It is also what pins the frontend, which performs exactly this turn on
+        // the boxes it receives and cannot be reached from a Rust test.
+        for page_turns in 0..4u8 {
+            for view_turns in 0..4u8 {
+                let (width, height) = displayed(page_turns);
+                let composed = turn_device(
+                    view_turns,
+                    width,
+                    height,
+                    to_device(page_turns, width, height, CORNER),
+                );
+
+                let total = (page_turns + view_turns) % 4;
+                let (total_width, total_height) = displayed(total);
+                let direct = to_device(total, total_width, total_height, CORNER);
+
+                assert_eq!(
+                    composed,
+                    direct,
+                    "page /Rotate {} viewed at {} does not agree with /Rotate {}",
+                    page_turns as u32 * 90,
+                    view_turns as u32 * 90,
+                    total as u32 * 90,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_view_turn_moves_the_box_it_is_given() {
+        // The control for the test above, which a `turn_device` that returned its
+        // argument unchanged would pass for `view_turns == 0` and fail loudly
+        // elsewhere --- but a *wrong* composition could still be self-consistent.
+        // This says the turn does something, in the direction claimed: a box in
+        // the top-left goes to the top-right under one quarter turn clockwise.
+        let upright = to_device(0, W0, H0, CORNER);
+        let turned = turn_device(1, W0, H0, upright);
+        assert!(turned[0] > H0 / 2.0, "a quarter turn did not move it right");
+        assert!(turned[1] < W0 / 2.0, "a quarter turn did not keep it high");
+        assert_eq!(turn_device(0, W0, H0, upright), upright);
     }
 }

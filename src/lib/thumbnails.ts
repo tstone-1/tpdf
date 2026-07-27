@@ -149,9 +149,25 @@ export function nextWanted(
 }
 
 /** Height of one row, thumbnail plus its number plus padding. */
-export function rowHeightFor(page: PageSize): number {
-  const scale = THUMB_WIDTH / Math.max(1, page.width_pt);
-  return Math.round(page.height_pt * scale) + LABEL_HEIGHT + ROW_PADDING * 2;
+export function rowHeightFor(page: PageSize, turns = 0): number {
+  const shown = displayedSize(page, turns);
+  const scale = THUMB_WIDTH / Math.max(1, shown.width_pt);
+  return Math.round(shown.height_pt * scale) + LABEL_HEIGHT + ROW_PADDING * 2;
+}
+
+/**
+ * A page's size as displayed under `turns` quarter-turns clockwise.
+ *
+ * The strip follows the viewer's rotation rather than always showing the
+ * document upright, because its thumbnails *are* the viewer's tier-1
+ * placeholders --- borrowed, not re-rendered --- and those are rendered in
+ * whatever orientation the view is in. A strip that ignored the rotation would
+ * draw a landscape bitmap into a portrait canvas.
+ */
+export function displayedSize(page: PageSize, turns: number): PageSize {
+  return ((turns % 4) + 4) % 4 % 2 === 0
+    ? page
+    : { width_pt: page.height_pt, height_pt: page.width_pt };
 }
 
 interface Outstanding {
@@ -167,8 +183,10 @@ export class Thumbnails {
   private readonly list: HTMLElement;
   private readonly spacer: HTMLElement;
 
-  private readonly rowHeight: number;
-  private readonly thumbHeight: number;
+  private rowHeight: number;
+  private thumbHeight: number;
+  /** Quarter-turns clockwise the view is rotated by. */
+  private turns = 0;
   private readonly observer: ResizeObserver;
 
   /** Rendered pages, in least-recently-drawn order. See {@link MAX_KEPT}. */
@@ -312,6 +330,46 @@ export class Thumbnails {
     else this.pump();
   }
 
+  /**
+   * Rotates the strip to match the view, dropping every thumbnail.
+   *
+   * All of them, because a thumbnail is a rendered bitmap and a rotated page is
+   * a different picture --- the same reason the scroller drops tier 1. The rows
+   * change shape with it, so they are rebuilt rather than restyled.
+   */
+  setTurns(turns: number): void {
+    const next = ((turns % 4) + 4) % 4;
+    if (next === this.turns) return;
+    this.turns = next;
+    this.withdraw();
+
+    for (const bitmap of this.bitmaps.values()) bitmap.close();
+    this.bitmaps.clear();
+    // A borrow in flight would land as a bitmap of the previous orientation and
+    // `keep` would believe it. Clearing the set does not stop the copy --- there
+    // is no way to --- so `keep` refuses anything not still marked as borrowed.
+    this.borrowing.clear();
+
+    this.rowHeight = rowHeightFor(this.opts.page, next);
+    this.thumbHeight = this.rowHeight - LABEL_HEIGHT - ROW_PADDING * 2;
+    this.spacer.style.height = `${this.opts.pageCount * this.rowHeight}px`;
+    for (const row of this.rows.values()) row.remove();
+    this.rows.clear();
+    this.layout();
+    this.scrollTo(this.current);
+  }
+
+  /** The page as displayed, i.e. after the view rotation. */
+  private displayed(): PageSize {
+    return displayedSize(this.opts.page, this.turns);
+  }
+
+  /** Device-pixel height of a thumbnail bitmap at {@link TIER1_WIDTH}. */
+  private thumbPixels(): number {
+    const shown = this.displayed();
+    return Math.round((shown.height_pt * TIER1_WIDTH) / shown.width_pt);
+  }
+
   /** Tells the strip which page the reader is on. */
   setCurrentPage(page: number): void {
     if (page === this.current) return;
@@ -365,7 +423,12 @@ export class Thumbnails {
       this.borrowing.add(page);
       void createImageBitmap(borrowed)
         .then((copy) => {
-          this.borrowing.delete(page);
+          // Not `delete` then `keep`: a rotation during the copy clears the set,
+          // and that is exactly the signal that this bitmap is the wrong way up.
+          if (!this.borrowing.delete(page)) {
+            copy.close();
+            return;
+          }
           this.keep(page, copy);
           this.pump();
         })
@@ -383,13 +446,12 @@ export class Thumbnails {
       rid,
       doc: this.opts.doc,
       page,
-      scale: TIER1_WIDTH / this.opts.page.width_pt,
+      scale: TIER1_WIDTH / this.displayed().width_pt,
+      turns: this.turns,
       x: 0,
       y: 0,
       width: TIER1_WIDTH,
-      height: Math.round(
-        (this.opts.page.height_pt * TIER1_WIDTH) / this.opts.page.width_pt,
-      ),
+      height: this.thumbPixels(),
       format: "raw",
     })
       .then((result) => {
@@ -475,9 +537,7 @@ export class Thumbnails {
 
     const canvas = document.createElement("canvas");
     canvas.width = TIER1_WIDTH;
-    canvas.height = Math.round(
-      (this.opts.page.height_pt * TIER1_WIDTH) / this.opts.page.width_pt,
-    );
+    canvas.height = this.thumbPixels();
     canvas.setAttribute("aria-hidden", "true");
     // The backing store stays 150 px wide whatever the row is drawn at, for the
     // same reason the scroller's placeholders do: it is the bitmap tier 1

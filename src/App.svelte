@@ -103,6 +103,26 @@
       run: () => viewer?.fitWidth(),
     },
     {
+      // Preview's bindings, not Acrobat's: Acrobat rotates on Shift-Cmd-+ and
+      // Shift-Cmd-−, and on this keyboard those produce the same `key` as the
+      // zoom shortcuts they would then collide with.
+      //
+      // Rotating the *view* only. The file is untouched; rotating pages in the
+      // document is a page operation and belongs with the ones that write.
+      id: "view.rotateClockwise",
+      title: "Rotate view clockwise",
+      keys: "⌘R",
+      enabled: withDocument,
+      run: () => viewer?.rotateBy(1),
+    },
+    {
+      id: "view.rotateCounterClockwise",
+      title: "Rotate view anticlockwise",
+      keys: "⌘L",
+      enabled: withDocument,
+      run: () => viewer?.rotateBy(-1),
+    },
+    {
       id: "nav.nextPage",
       title: "Next page",
       keys: "n",
@@ -367,6 +387,10 @@
           // asking, and withdraws what it asked for, whenever the viewer has
           // work outstanding. See `thumbnails.ts`.
           sidebar?.setViewerBusy(next.pending > 0);
+          // Through the status rather than from the rotate command, so the
+          // strip follows however the rotation was reached --- the palette, the
+          // keyboard, or anything later that rotates without going via here.
+          sidebar?.setTurns(next.turns);
         },
         onPosition: (at, top) => sidebar?.setPosition(at, top),
       });

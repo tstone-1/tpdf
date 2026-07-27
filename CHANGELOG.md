@@ -295,6 +295,40 @@ experience.
   measurement. The conclusion (render in worker processes) is unchanged; its justification
   is now that threads are undefined behaviour rather than merely futile.
 
+- **Rotating the view**, clockwise on Cmd-R and anticlockwise on Cmd-L, both also in the
+  palette. Preview's bindings rather than Acrobat's, whose Shift-Cmd-`+`/`−` produce the same
+  `key` as the zoom shortcuts on this keyboard. It turns the *view* and never the document:
+  rotating pages in the file is a page operation and belongs with the ones that write.
+
+  PDFium's render call takes a rotation and composes it with the page's own `/Rotate`, so the
+  renderer's half is one argument threaded from the tile URL down --- plus the dimension swap
+  it needs, since PDFium fits the page into the rect it is given and passing the upright size
+  squeezes a landscape page rather than turning it. Character boxes cannot go the same way,
+  being a property of the document, so they are turned in our own code where the cache hands
+  them out. The two implementations are tied by a rule asserted over all sixteen
+  combinations: turning a device box after `to_device` must equal `to_device` of the summed
+  turn --- which is how the frontend's turn inherits the verification `text-probe --mode
+  align` did against pixels.
+
+  **Both cache tiers go.** A zoom step keeps the tier-1 placeholder because it is only
+  stretched; a rotated one is a different picture, and keeping it would leave the page
+  sideways under its own sharp tiles. So a rotation on the A0 sheet goes grey for the ~1.5 s
+  that placeholder costs to produce again.
+
+  **An outline destination is not placed while the view is rotated.** It carries an offset
+  down an upright page; at a quarter turn that axis is the screen's horizontal one, and at a
+  half turn it counts upwards while the reader scrolls down. Navigation and the outline
+  highlight fall back to page granularity --- which is what `/Fit` means, and what
+  `outline.rs` already returns for a destination it cannot place.
+
+  Fourteen mutations, all caught by the check aimed at them. Three of the six new checks
+  exist because a mutation survived first: "the same lines come back out of a rotated page"
+  derived its drag positions from the very boxes it was testing and so passed with the text
+  layer never told about the rotation; nothing in the harness looked at a pixel, so dropping
+  the rotation from the tile URL passed everything; and the viewer and the scroller each keep
+  a rotation, so a scroller laying every page out upright survived a check that only measured
+  the zoom.
+
 ### Fixed
 
 - **Character boxes and outline destinations on a page carrying `/Rotate`.** PDFium reports
