@@ -80,9 +80,10 @@ JavaScript and launch actions are **disabled by default**. All `lopdf` stream de
 bounded. This is a Phase 0 concern, not a hardening pass to be done later --- retrofitting
 a process boundary is an architectural rewrite.
 
-This constraint is load-bearing in a second way: because in-process PDFium is serialized
-behind a global mutex (see Known traps), worker processes are also the *only* route to
-parallel rendering. Security and performance want the same architecture.
+This constraint is load-bearing in a second way: because concurrent in-process PDFium calls
+are undefined behaviour and crash in practice (see Known traps), worker processes are also
+the *only* route to parallel rendering. Security and performance want the same
+architecture.
 
 `docs/THREAT-MODEL.md` is the worked-out version: what is being defended, the trust
 boundaries, each threat against the evidence that it is handled, the sandbox profile in
@@ -302,24 +303,69 @@ The general rule, and it is the same one `docs/PLAN.md` §6 states for redaction
 must decode each carrier **in that carrier's own encoding**, and a carrier it cannot decode
 makes the result "not verified", never "clean". "Grep found nothing" is not evidence.
 
-### PDFium is serialized behind a global mutex --- threads buy nothing
+### `thread_safe` does not serialize PDFium --- there is no mutex, and threads crash
 
 Upstream PDFium makes **no thread-safety guarantee at all**, and its authors recommend
-parallel *processing*, not multi-threading. `pdfium-render`'s `thread_safe` feature is
-**on by default** and achieves safety by locking every single PDFium call behind one
-mutex. Multiple `FPDF_Document` handles in one process therefore render strictly
-sequentially --- opening more handles buys crash-safety, not parallelism.
+parallel *processing*, not multi-threading. That much has always been right here. The
+mechanism this file gave for it was not.
 
-Consequences, which drive the whole architecture:
+**`pdfium-render`'s `thread_safe` feature does not lock anything.** Measured on 0.9.3,
+2026-07-27, by `src/bin/thread_probe.rs`. What the feature actually does is store the
+bindings in a global `OnceCell` that is *awaited* rather than unwrapped, plus
+`unsafe impl Send for Pdfium` and `unsafe impl Sync for Pdfium`. The only `Mutex` in the
+crate guards a page-index cache; the only `RwLock` is in the WASM bindings. A native call
+dispatches straight through a function pointer:
 
-- In-process parallel tile rendering is not achievable. Parallelism requires **separate
-  worker processes**.
-- One pathological page (huge CAD drawing, transparency groups, Type 3 fonts) holds the
-  mutex and starves every other render in the process.
+```rust
+unsafe fn FPDF_LoadPage(&self, document: FPDF_DOCUMENT, page_index: c_int) -> FPDF_PAGE {
+    (self.extern_FPDF_LoadPage)(document, page_index)   // no lock, anywhere
+}
+```
 
-An earlier version of this file claimed PDFium was unsafe only "per document handle" and
-that multiple handles would render in parallel. That was wrong; it was caught in the
-2026-07-26 plan audit before any code depended on it.
+The crate's README still says the feature "wraps access to Pdfium behind a mutex". The
+implementation and its documentation disagree, and this file believed the documentation.
+
+What actually happens when two threads render at once, each owning its own
+`FPDF_DOCUMENT` --- the exact scenario the old text said was serialized:
+
+| fixture | threads | outcome |
+|---|---|---|
+| `vector-heavy` (A0) | 2 | **SIGSEGV** |
+| `vector-heavy` (A0) | 4 | **SIGSEGV** |
+| `text-heavy` | 4 | survives, 3.85x speedup, pixel-correct --- 6 runs out of 6 |
+| `text-heavy` | 8 | **SIGABRT** |
+| `text-heavy` | 4, five rounds | survives round 0 at 3.85x, then **crashes on round 1** |
+
+So both halves of the old claim were wrong, in opposite directions. They do **not** render
+sequentially --- 3.85x on four threads is near-linear, which no global mutex permits. And
+extra handles buy **no crash-safety whatsoever**; they buy a segfault.
+
+The architectural conclusion is unchanged and now rests on something true: in-process
+parallel tile rendering is not achievable, and parallelism requires **separate worker
+processes**. But the reason is that threads are *undefined behaviour*, not that they are
+pointless. Those are different arguments, and only one of them is a safety argument.
+
+Two corrections that follow, both previously stated as consequences of the mutex:
+
+- **Nothing "holds the mutex and starves" anything.** tpdf's renders are serialized today
+  because `src/render.rs` deliberately uses one render thread, which is our design choice
+  and reversible, not a property of the library.
+- **The progressive API's value is cancellation, not lock release.** There is no lock to
+  release between `FPDF_RenderPage_Continue` calls.
+
+The trap worth carrying is the middle row of that table. **Concurrent PDFium often works.**
+On a simple document at four threads it returned pixel-perfect tiles six times out of six,
+and a developer who tested exactly that would have concluded threads were fine. The same
+configuration crashed on the second round of a longer run. A race that usually wins is
+indistinguishable from correct code until it is in front of a user with a CAD drawing ---
+the same shape as the sandbox that rendered `ok` with a substituted font, and the crash
+test that compiled away.
+
+This is the **second** time this entry has been wrong. An earlier version claimed PDFium
+was unsafe only "per document handle" and that multiple handles would render in parallel;
+that was caught in the 2026-07-26 audit. Both errors came from trusting a dependency's
+prose over its behaviour. The rule that would have caught either: **a claim about a
+library's concurrency is a measurement, not a citation.**
 
 Spike 0.5 measured what worker processes actually buy: near-linear speedup to the
 **performance**-core count (3.89x on four, on a 4P+6E machine), then about 0.4x per further
@@ -743,8 +789,18 @@ critical path to buy exactness it could have estimated. Load geometry lazily and
 `FPDF_RenderPageBitmap_Start()` takes an `IFSDK_PAUSE` callback whose `NeedToPauseNow()`
 is polled during rendering; returning non-zero suspends the render, and
 `FPDF_RenderPage_Continue()` resumes it. This is the mechanism for both cancellation and
-for not holding the mutex through a long render. Use the progressive API for anything
-that is not a small, bounded tile.
+for abandoning a tile the viewport has already left. (An earlier version of this entry also
+credited it with releasing the global mutex between `Continue` calls. There is no global
+mutex --- see the `thread_safe` entry above.) Use the progressive API for anything that is
+not a small, bounded tile.
+
+Reaching it is not free, though: `PdfDocument::handle`, `PdfPage::page_handle` and
+`PdfBitmap::handle` are all `pub(crate)` in `pdfium-render`, so the progressive functions
+--- which are public on `PdfiumLibraryBindings` and take raw handles --- **cannot be called
+on anything the safe API produced.** Cancellable rendering therefore means owning
+`FPDF_DOCUMENT`, `FPDF_PAGE` and `FPDF_BITMAP` ourselves and driving the render through the
+bindings trait. The safe wrapper is all-or-nothing: use it and you cannot cancel. This
+points the same way as the worker design, whose processes want raw handles regardless.
 
 ### PDFium cannot create digital signatures
 

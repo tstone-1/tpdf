@@ -146,8 +146,8 @@ bounds how long a worker may live, and the per-request bound has to be the coord
 own deadline plus a kill, measured at **1.2 ms to kill and reap, 4.8 ms to respawn**.
 PDFium's progressive API (`FPDF_RenderPageBitmap_Start` with an `IFSDK_PAUSE` callback) is
 the cooperative alternative and is still unexercised — it is the mechanism for cancelling
-without discarding the work, and for not holding the global PDFium mutex through a long
-render.
+without discarding the work, and so for not occupying a worker's only PDFium thread
+through a long render.
 
 **Memory has no kernel bound on macOS, and the substitute is weaker than it looks.**
 `setrlimit` refuses `RLIMIT_AS`, `RLIMIT_DATA` and `RLIMIT_RSS` outright with `EINVAL`
@@ -193,9 +193,11 @@ by default and so fully decodes that same stream, costing **1.92 s of CPU at 8.4
 resident** — 600× amplification in time, at no cost in memory. A limit expressed in
 megabytes would have caught none of it.
 
-**Residual.** One pathological page still holds PDFium's global mutex and starves every
-other render in that process (`pdfium-render`'s `thread_safe` feature serialises every
-call). The progressive API is the fix and is unwritten. And a burst below the polling
+**Residual.** One pathological page still occupies its process's single PDFium thread and
+starves every other render there. Note this is our own threading choice, forced by the
+fact that concurrent PDFium calls crash --- `pdfium-render`'s `thread_safe` feature does
+not serialize them, whatever its README says (AGENTS.md). The progressive API is the fix
+and is unwritten. And a burst below the polling
 granularity is unbounded until the input limits exist.
 
 ### T4 — Filesystem and network reach from a compromised worker
@@ -372,8 +374,8 @@ before the architecture can be called cross-platform.
    (§10 q9). Largest open risk in the project.
 2. **A memory burst below the polling interval is unbounded on macOS.** Input limits are
    the mitigation and are unwritten.
-3. **One pathological page starves every other render in its worker** — PDFium's global
-   mutex, and the progressive API that would fix it is unexercised.
+3. **One pathological page starves every other render in its worker** — its single PDFium
+   thread is occupied, and the progressive API that would fix it is unexercised.
 4. **Windows is entirely untested** (§6).
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is

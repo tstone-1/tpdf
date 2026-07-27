@@ -89,9 +89,11 @@ from two independent directions at once.
 - **Security.** PDFium is native C++ parsing attacker-controlled input. A malformed file
   should cost a worker, not the application and not the user's home directory. Chrome
   sandboxes PDFium for this reason.
-- **Parallelism.** `pdfium-render` serializes *every* PDFium call behind one global mutex
-  (`thread_safe`, on by default), and upstream recommends parallel processes over threads.
-  In-process parallel rendering is therefore not merely awkward, it does not exist.
+- **Parallelism.** Concurrent in-process PDFium calls are undefined behaviour --- upstream
+  gives no thread-safety guarantee and recommends parallel processes over threads, and
+  `pdfium-render`'s `thread_safe` feature does not serialize them despite its README
+  saying so (measured 2026-07-27; see AGENTS.md). Two threads rendering a complex page
+  segfault. In-process parallel rendering is therefore not merely awkward, it is unsafe.
 
 The first draft proposed "N document handles over one shared buffer, rendered in
 parallel". That does not work, and it is recorded in `AGENTS.md` as a corrected error.
@@ -306,8 +308,8 @@ but sub-millisecond claims from this harness are not supportable.
 
 **Design consequence:** if encoding is ever reintroduced (for a remote or bandwidth-bound
 transport), it must not run on the render thread. At ~100% of render time it would halve
-that thread's throughput, and the render thread is already serialized behind PDFium's
-global mutex.
+that thread's throughput, and the render thread is already the only place PDFium may be
+called from at all.
 
 ---
 
@@ -360,8 +362,8 @@ render. Four consequences, all load-bearing:
    this page costs 1.5 s. Tier 1 must be rendered once at document open, in a worker, off
    the critical path, and the UI must degrade honestly while it is absent.
 3. **A single such page starves the process.** 22.8 s at 1×, 48.4 s at 2× for a full
-   render, holding PDFium's global mutex throughout. This is the strongest empirical
-   argument for worker processes; see §3.
+   render, occupying the one thread PDFium may be called from throughout. This is the
+   strongest empirical argument for worker processes; see §3.
 4. **Progressive rendering is mandatory, not an optimization.** A 1 s floor per call means
    cancellation has to work *inside* a render, which is what the `IFSDK_PAUSE` path is
    for.

@@ -3,9 +3,10 @@
 //!
 //! The plan asserts that parsing and rendering happen in worker processes with
 //! no filesystem or network authority, under resource limits, restartable on
-//! crash --- and that this is the only route to parallelism, because
-//! `pdfium-render` serializes every Pdfium call behind one global mutex. All of
-//! that is load-bearing and none of it had been measured. Retrofitting a
+//! crash --- and that this is the only route to parallelism, because concurrent
+//! in-process Pdfium calls are undefined behaviour (spike 0.9 later showed they
+//! segfault, and that `thread_safe` does not serialize them as its README
+//! claims). All of that is load-bearing and none of it had been measured. Retrofitting a
 //! process boundary is a rewrite, so it is Phase 0 work.
 //!
 //! The binary is both halves. `worker-bench worker` is the child; every other
