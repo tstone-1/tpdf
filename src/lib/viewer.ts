@@ -30,6 +30,7 @@
  */
 
 import { AccessibleText } from "./a11y";
+import { DESTINATION_MARGIN_PT } from "./outline";
 import { Scroller, type PageSize } from "./scroller";
 import { Search, type Match } from "./search";
 import { Selection } from "./selection";
@@ -83,6 +84,14 @@ export interface ViewerOptions {
   /** Tile edge in device pixels. Section 4 measured 1024--2048 as the range. */
   tilePx?: number;
   onStatus?: (status: ViewerStatus) => void;
+  /**
+   * Called every frame with the top of the viewport.
+   *
+   * Separate from `onStatus`, which deliberately fires only when something a
+   * reader would notice changed and therefore not while scrolling *within* a
+   * page --- which is exactly the movement an outline highlight has to follow.
+   */
+  onPosition?: (page: number, top: number) => void;
 }
 
 /**
@@ -362,6 +371,8 @@ export class Viewer {
     this.paintOverlay();
     this.paintThumb();
     this.report(stats);
+    const where = this.position;
+    this.opts.onPosition?.(where.page, where.top);
 
     // Work outstanding keeps the loop awake indefinitely; `tail` covers the
     // frames after the last of it settles, and is refilled by every input.
@@ -478,6 +489,35 @@ export class Viewer {
     this.fitting = true;
     this.setZoom(this.fitWidthZoom(this.viewportSize().width));
     this.wake();
+  }
+
+  /**
+   * Where the top of the viewport is: a page, and points down it.
+   *
+   * The *top* edge rather than the middle, which is what `currentPage` uses.
+   * They answer different questions: "which page am I on" is about what fills
+   * the screen, and "which section am I in" is about the heading above me,
+   * which sits at the top.
+   */
+  get position(): { page: number; top: number } {
+    const page = this.scroller.pageAt(this.scrollTop);
+    const top = (this.scrollTop - this.scroller.pageTopOf(page)) / this.zoom;
+    return { page, top: Math.max(0, top) };
+  }
+
+  /**
+   * Scrolls to an outline destination.
+   *
+   * `top` is points from the page's top, or `null` for a destination like
+   * `/Fit` that names no coordinate --- which means the page, so the page's top
+   * is the honest interpretation of it.
+   */
+  goToDestination(page: number, top: number | null): void {
+    const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
+    const base = this.scroller.pageTopOf(clamped);
+    // A little air above, for the same reason `goToMatch` leaves a third of a
+    // screen: a heading flush against the top edge reads as cut off.
+    this.scrollTo(base + ((top ?? 0) - DESTINATION_MARGIN_PT) * this.zoom);
   }
 
   /** Scrolls so page `page` (zero-based) starts at the top of the viewport. */

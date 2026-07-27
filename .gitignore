@@ -34,4 +34,5 @@ testdata/*.pdf
 testdata/*.txt
 testdata/hostile-manifest.json
 testdata/incr-manifest.json
+testdata/outline-manifest.json
 __pycache__/

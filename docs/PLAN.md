@@ -1813,6 +1813,148 @@ which is what an untagged document forces and is strictly worse for one that is 
 Also absent: headings and table semantics, a document language attribute, visible keyboard
 navigation between pages, and any high-contrast handling.
 
+#### The outline, and a sidebar to put it in — 2026-07-27
+
+§8 wants a sidebar with thumbnails, outline, annotations and search results as tabs. Only
+the outline is here. The panel is nonetheless a container with a header rather than a bare
+list, because otherwise the *second* tab is the one that has to introduce the chrome, by
+which point something else is positioned against its absence.
+
+**The outline is the first feature in this project whose input is openly hostile.** Not
+inferred from the threat model — stated by PDFium, in the documentation of the function the
+walk is built on: *"the caller is responsible for handling circular bookmark references, as
+may arise from malformed documents."* The naive loop hangs the render thread, silently and
+forever. `testdata/make_outline_pdf.py` builds two fixtures for this; `qpdf --check` agrees
+with one of them independently, reporting *"loop detected in /Outlines tree"*.
+
+`src-tauri/src/outline.rs` carries three bounds — a visited set, a depth limit, an item
+budget — and the reason for three is that each catches what the others cannot. The visited
+set stops a cycle *at its first repeat*, which is what keeps the rest of the outline
+reachable; abandoning the level instead loses nine of the fixture's ten top-level entries.
+The depth limit stops 200 distinct nested nodes, which put nothing in the set twice. The
+budget stops the case where the set is defeated, so that termination does not depend on the
+mechanism expected to work. Whatever any of them cuts is counted and shown as a warning,
+because an outline displayed as complete when it is not is the same failure as a leak
+scanner reporting clean on a carrier it could not decode.
+
+**Two findings, and the first is the reason to have built a hostile fixture at all.**
+
+- **`FPDFBookmark_GetDest` follows the bookmark's action without checking its type.** When
+  there is no `/Dest` it falls back to the action's `/D` array regardless of the action's
+  `/S`, so a `/GoToR` — *"open other.pdf at page 1"* — comes back as an ordinary
+  destination and resolves against **this** document. The probe reported `page 1` for it.
+  Not an error and not a refusal: a plausible page of the file the reader already has open.
+  The fix is an ordering rather than a filter — read the action first, and reach
+  `FPDFBookmark_GetDest` only when there is none, which is exactly when its fallback has
+  nothing to reach. Every ordinary outline resolves identically either way, which is why
+  only a fixture built to contain a remote destination could find it.
+- **Enumerating page sizes for the destinations is cheap if you do not load the pages.**
+  A destination's `/XYZ` y arrives in page space and has to be flipped against the page's
+  height. `FPDF_LoadPage` costs 44 ms on a complex page and an outline can name hundreds;
+  `FPDF_GetPageSizeByIndexF` reads the page dictionary's boxes instead. The whole walk of
+  the ordinary fixture is **0.17 ms**, and of the hostile one — 44 entries, two cycles, a
+  50,000-character title — **1.6 ms**.
+
+Actions tpdf declines to follow are **shown, marked, and explained** rather than dropped:
+`/Launch`, `/URI`, `/GoToR` and `/EmbeddedGoTo` each get their own wording next to the row.
+An entry missing from a table of contents reads as a bug in tpdf, and one that silently
+ignores clicks reads as a worse one. `docs/THREAT-MODEL.md` disables launch actions by
+default; this is where an outline click would otherwise reach one.
+
+The sidebar is a real `role="tree"` with `aria-level`, `aria-expanded` and a roving
+tabindex, so it is one tab stop and arrow keys move within it. Tabbing through a thousand
+headings is the alternative and is why so many outline panels are unusable without a mouse.
+The list is **bounded, not virtualized** — 10,000 entries, which is what makes a real
+element per visible row affordable; bounding the input is the honest version of a windowing
+implementation that does not exist.
+
+**17 mutations, all caught, and one only after the test it aimed at was fixed.** `allRows`
+ignoring collapse could be mutated to respect it with all 58 checks still passing, because
+every fixture tree in the test file said `open: true` — the test folded rows through an
+`Expansion` it held, which is not the thing `allRows` is about. The hazard is a
+*producer-closed* subtree, and the test now uses one. Same shape as the query-key test that
+probed the wrong direction: an assertion about the mistake that came to mind rather than the
+mistake the code can make.
+
+Three of the mutations are only catchable by the PDFium probe, since each is about what the
+library does rather than what our arithmetic does: reversing the action/`GetDest` ordering,
+inverting the y-flip, and deleting cycle detection. The last one is worth its own sentence —
+it does **not** hang, because the item budget catches it, which is precisely why the probe
+asserts the budget was *not* what stopped the walk. Without that control the run still says
+18 checks, and 14 of them go red for reasons nobody would connect to a loop.
+
+**The sidebar is checked in the viewer, and three of those checks went red first.** Nine
+were added to `viewercheck.ts` — rows drawn, tree roles present, one tab stop, collapse and
+re-expand, activation moving the viewer to a page it was not on, a destination's y landing
+further down than a same-page entry above it, the highlight following a scroll, and a
+refused action being inert. Two found real defects and the third found a defect in a
+fixture, which is the best evidence available that they can fail at all:
+
+- **A roving tabindex that did not follow real focus.** `Sidebar` tracked the focused row
+  only when it moved focus *itself*, so focus arriving any other way — a Tab into the tree,
+  a programmatic `element.focus()` — left every arrow key aimed at whichever row was
+  tracked before. Collapse reported `7 rows -> 7`. A `focusin` listener on the tree fixes
+  it, and that is correct behaviour independently of the check.
+- **Clicking an entry highlighted the entry before it.** Arriving at a destination
+  deliberately leaves a little air above the heading, so on arrival the heading is *below*
+  the viewport top — and `currentId` required it to be at or above. The margin is now
+  stated in points rather than CSS pixels (in pixels it is 32 pt of the page at the lowest
+  zoom stop and 4 pt at the highest, which no single tolerance could bound), with a
+  matching tolerance in `outline.ts` pinned by unit tests in *both* directions.
+- **A fixture whose every line read the same.** The body text was 24 identical
+  "quick brown fox" lines, and the selection check locates a drag with `indexOf` — so both
+  drags resolved to the same index and it reported that the page reads bottom to top. The
+  lines are now built from a rotating word list, unique at every offset.
+
+One check was also skipping when it should have run: "a destination's y is measured from
+the page top" looked for one entry at the very top of a page and one below 50 pt, and the
+only fixture with the pair has them at 240 and 440. It now takes the highest and lowest on
+any shared page. That check is the y-flip discriminator, so a silent skip there was the
+expensive kind.
+
+All four corpora pass and every run reports the same 53 check names: `outline-simple` 51/51,
+`outline-hostile` 52/52, `text-heavy` 43/43, `vector-heavy` 29/29, the differences being
+skips with their reasons.
+
+Also not done: thumbnails, a resizable panel, persisted collapse state, "reveal current
+section in outline" as a command, and search results as a second tab.
+
+#### The check could not run, and the reason was not what it looked like
+
+Not a feature, but it cost more of this increment than the feature did, and the repairs
+are permanent. Every webview harness produced *nothing* — no output, 0% CPU, the process
+alive — and three confident diagnoses were wrong before the right one: the new code, then
+a broken frontend bundle, then window occlusion.
+
+The cause is that **a raw `cargo build` binary runs no webview content at all.**
+`src-tauri/target/release/tpdf` opens a window and never executes a line of JavaScript;
+the same code inside `target/release/bundle/macos/tpdf.app` works perfectly. WKWebView
+needs the bundle identity. Every other harness here is a plain executable with no webview
+in it, so nothing else in the repository had ever shown this, and `BUILD.md` gave the
+bundle path in its example while saying beside it that the check "does not require a
+release bundle" — true, and misleading: not a release *build*, a *bundle*.
+
+What settled it was building **HEAD itself** and watching it fail identically. An earlier
+control that reverted only the frontend was not enough, and the way it failed is the
+lesson: the Rust changes were still in that binary, so "it is not my frontend" got
+silently generalised to "it is not my code". **A control has to cover everything that
+changed, not the part currently under suspicion.**
+
+Two repairs, both kept regardless of what the next cause turns out to be:
+
+- **The watchdog names the condition.** Every spike entry point begins by asking Rust for
+  its path, so the first such call proves the page ran; it is recorded as a `webview alive`
+  mark, and a timeout without one says the page never executed rather than printing a mark
+  list to interpret. Both halves are verified — it fires on a raw binary and stays quiet
+  on a bundled one.
+- **`viewercheck.ts` prints each result as it is recorded**, not in one block at the end.
+  Buffering meant a run that stopped midway printed nothing, which is identical to a run
+  that never started — exactly the state under diagnosis.
+
+`TPDF_RAISE=1` also landed, raising the window for a run with nowhere visible to put one.
+It did not fix this and is kept because occlusion is a real WebKit behaviour with the same
+symptom; it is opt-in so the default stays polite.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

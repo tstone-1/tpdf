@@ -735,6 +735,82 @@ caffeinate -du bash -c '<run> ; <run> ; <run>'
 `-u` as well as `-d`, because `-d` only stops a display going idle and will not turn one
 back on that is already off.
 
+### A raw `cargo build` binary runs no webview content at all
+
+**`src-tauri/target/release/tpdf` opens a window and never executes a line of
+JavaScript.** No error, no crash report, no console output --- a blank window and a page
+that never loads. The same code inside the bundle
+(`target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf`) works perfectly. WKWebView
+needs the bundle identity; a bare Mach-O has none.
+
+This cost most of an afternoon on 2026-07-27, and the reason it was not obvious is that
+every other harness in this repository runs a raw binary happily --- `outline-probe`,
+`text-probe`, `worker-bench` and the rest are all plain executables with no webview in
+them. Only the four `TPDF_*` spike entry points need a page to run, and `BUILD.md` gives
+the bundle path in its example while the prose beside it says the check "does not require
+a release bundle". Both statements are true and together they are misleading: it does not
+require a *release* build, it requires a *bundle*.
+
+So: **any run that needs the webview needs the `.app`.** `npm run tauri build -- --bundles
+app`, then the executable inside it --- which keeps stdout and the environment, unlike
+`open -a`.
+
+The diagnosis that led there is worth as much as the fact. Chasing it produced two wrong
+answers first, and the thing that settled it was building **HEAD itself** and watching it
+fail identically. An earlier control that reverted only the frontend was not enough: the
+Rust changes were still in the binary, so "it is not my frontend" had been established and
+silently generalised to "it is not my code". **A control has to cover everything that
+changed, not the part currently under suspicion.**
+
+### A page that never ran looks exactly like one that ran slowly
+
+The symptom shared by the entry above and the lock-screen one: **no output, 0% CPU, the
+process alive.** It reads as a hang in whatever was most recently changed, and on
+2026-07-27 that reading was confidently wrong three times in a row --- first blaming the
+new code, then a broken frontend bundle, then window occlusion. The actual cause was the
+raw binary, above.
+
+Note especially that the occlusion theory was *stated as a conclusion* while it was still a
+guess, and it survived longer than it should have because it is a real WebKit behaviour
+that produces the identical symptom. **A plausible mechanism that explains the evidence is
+not the same as the mechanism, and neither is one that has an entry in this file.**
+
+Two repairs came out of it, both worth keeping whatever the cause turns out to be next
+time:
+
+- **The watchdog names the condition.** Every spike entry point begins by asking Rust for
+  its path or config, so the first of those calls proves the page ran; `spike_env` records
+  it as a `webview alive` mark. When the watchdog fires without that mark it says the page
+  never ran a line of JavaScript, instead of printing a mark list that has to be
+  interpreted. Both halves are now verified: it fires on a raw binary and stays quiet on a
+  bundled one.
+- **`viewercheck.ts` prints each result as it is recorded.** Buffering the report until the
+  end meant a run that stopped midway printed nothing at all --- indistinguishable from one
+  that never started, which is precisely the state being diagnosed.
+
+`TPDF_RAISE=1` also exists now, and raises the window for a run that has nowhere visible to
+put one. It did **not** fix this, and is kept because occlusion is nonetheless real. Opt-in
+rather than the default, because raising a window over whatever someone is doing,
+every time a check runs, is its own bug --- the scroll benchmark raises unconditionally
+only because an unfocused window would falsify its numbers.
+
+### A harness that prints only at the end cannot say where it stopped
+
+Found by the entry above, and the reason it took an afternoon. `viewercheck.ts` collected
+every result and printed them in one block at the very end, so a run that did not reach the
+end printed **nothing at all** --- identical to a run that never started, and identical to
+a run whose first line of code never executed. The only fact available was that the process
+was alive.
+
+It now prints each result as it is recorded. The lines are chained through one promise
+rather than awaited at the call site, so `check()` stays synchronous and the transcript
+cannot arrive shuffled --- `invoke` resolves out of order under load, and out-of-order
+results are worse than late ones.
+
+The general form, and it is the same shape as the crash test that compiled away one level
+up: **buffering a report until the end makes every partial failure look like the same
+failure.** If a harness can stop midway, it has to be able to say where.
+
 ### A mean cannot test a claim about a minimum
 
 `docs/PLAN.md` §9 requires that the visible page area is **never** below its tier-1
@@ -1225,6 +1301,59 @@ available before the fix: a column named for a cost that is 44 ms cannot read 0.
 an A/B shows no difference, check that the variable is inside the measurement before
 concluding it does not matter.**
 
+### `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
+
+The narrow-sounding accessor is not narrow. When a bookmark has no `/Dest`, PDFium's own
+implementation falls back to `FPDFBookmark_GetAction` and returns **that action's `/D`
+array**, with no check on the action's `/S`. So an entry meaning *"open other.pdf at page
+1"* --- a `/GoToR` --- comes back as an ordinary destination, and
+`FPDFDest_GetDestPageIndex` then resolves it against **this** document.
+
+Measured 2026-07-27 on `outline-hostile.pdf`: the entry titled "Remote goto" reported
+`page 1`. Not an error, not a refusal --- a plausible page of the file the reader already
+has open. The same fallback reaches `/Launch` and `/URI` actions, which happen to carry no
+`/D` and so come back null; nothing about the API guarantees that, and a `/Launch` with a
+`/D` would be followed just as silently.
+
+The fix is an ordering, not a filter: **read the action first**, obey its type, and consult
+`FPDFBookmark_GetDest` only when there is no action at all --- which is precisely the case
+where its fallback has nothing to reach. It also happens to be what PDF 32000-1 §12.3.3
+says, `/Dest` being forbidden alongside `/A`.
+
+What makes this worth an entry is that the wrong version *works*. Every ordinary outline
+resolves identically, because ordinary entries have a `/Dest` or a `/GoTo`. Only a document
+carrying a remote destination behaves differently, and it behaves plausibly. It was caught
+by a fixture built to contain one, not by reading the header.
+
+### An outline can be infinite, and PDFium says so in its own documentation
+
+`FPDFBookmark_GetNextSibling`: *"the caller is responsible for handling circular bookmark
+references, as may arise from malformed documents."* That is not a caveat to note, it is
+the library declining to bound a walk over attacker-controlled data --- and the obvious
+loop hangs the render thread forever, with no output and no error.
+
+`src-tauri/src/outline.rs` carries three bounds, and the point is that each catches
+something the others cannot:
+
+- **A visited set** stops a cycle at its first repeat. Note the alternative that looks
+  equivalent --- abandoning the sibling list on a repeat --- loses every entry *after* the
+  loop, which on the fixture is nine of the ten top-level items.
+- **A depth bound** stops a chain that is deep without ever repeating. 200 distinct nested
+  nodes put nothing in the visited set twice.
+- **An item budget** stops everything else, including a visited set defeated by PDFium
+  handing back a fresh pointer for a node already seen. The set is the mechanism expected
+  to work; the budget is what makes termination not depend on that expectation.
+
+Deleting the visited set does **not** hang --- the budget catches it --- which is exactly
+why `outline-probe` asserts that the budget was *not* what stopped the walk. Without that
+control the run still says "18 checks", the cycle is unnoticed, and 14 of them go red for
+reasons nobody would connect to a loop. Measured: removing it drops the hostile fixture
+from 18/18 to 4/18.
+
+Whatever any bound cuts is counted and reported rather than dropped. An outline shown as if
+it were complete when it is not is the same failure as a leak scanner reporting clean on a
+carrier it could not decode.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a
@@ -1398,6 +1527,7 @@ python3 testdata/make_hostile_pdf.py testdata                 # hostile-*.pdf, s
 python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf # spike 0.1
 uv run --with pyhanko --with cryptography \
     testdata/make_incremental_pdf.py testdata                 # incr-*.pdf, spike 0.6
+python3 testdata/make_outline_pdf.py testdata                 # outline-*.pdf, Phase 1
 ```
 
 `make_incremental_pdf.py` writes about **550 MB** — the scan fixtures exist so that
@@ -1427,6 +1557,20 @@ Arial made the substituted `base14` render **bit-identical** to the embedded one
 fixtures that cannot distinguish "used the embedded subset" from "silently substituted",
 which is the one thing they exist to test. Caught only because three different fixtures
 hashed the same. If a fixture's baselines ever match across fonts, suspect that first.
+
+`make_outline_pdf.py` writes `outline-manifest.json` the same way, and one of its
+expectations is deliberately **weaker** than the rest. The unpaired-surrogate title is
+marked `observed`, not `required`: PDFium may repair or drop it while parsing the document
+string, in which case the fixture proves nothing about our decoder and asserting on it
+would be a check that cannot fail. What pins the decoder is a unit test in `outline.rs`
+that hands it the bytes directly, where the input is ours. **When a fixture cannot
+guarantee it delivers the input a check needs, move the check to where the input is
+controlled and say so in the manifest** --- rather than writing an assertion whose meaning
+depends on a library's parsing.
+
+Its hostile fixture is also verified by an independent oracle: `qpdf --check` reports
+*"loop detected in /Outlines tree"* against it. A fixture built to be cyclic that no other
+implementation agrees is cyclic is a fixture that might simply be wrong.
 
 ---
 

@@ -66,6 +66,15 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin progressive-probe
 # that page cannot discriminate and the probe fails rather than reporting a pass.
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin text-probe -- \
     testdata/text-marked.pdf --mode align
+
+# The outline walk terminates, resolves and refuses. Run BOTH: the hostile
+# fixture proves the bounds fire, and the ordinary one proves they do not fire
+# when they should not, which is the half that catches a walk bounding
+# everything.
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- \
+    testdata/outline-simple.pdf --mode check
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- \
+    testdata/outline-hostile.pdf --mode check
 ```
 
 Two notes on why these are written out in full. The binary names are **hyphenated**, and
@@ -90,6 +99,7 @@ uv run --with fonttools testdata/make_text_pdf.py testdata
 python3 testdata/make_hostile_pdf.py testdata
 python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf
 uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testdata
+python3 testdata/make_outline_pdf.py testdata
 ```
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
@@ -193,10 +203,10 @@ entry for `/usr/sbin/purge`.
 ### Checking the viewer
 
 The reading surface is asserted rather than eyeballed. This opens a document in a real
-webview, dispatches real wheel and key events at it, and checks forty-three behaviours ---
-fit-width, scrolling, End and Home, the zoom ladder, a pinch, resize, text selection and
-copy, find-in-document, the command palette, the screen-reader text layer, and that the
-frame loop idles when there is nothing to do:
+webview, dispatches real wheel and key events at it, and checks fit-width, scrolling, End
+and Home, the zoom ladder, a pinch, resize, text selection and copy, find-in-document, the
+command palette, the screen-reader text layer, the outline sidebar, and that the frame loop
+idles when there is nothing to do:
 
 ```
 scripts/viewer_check.py \
@@ -207,15 +217,39 @@ It is **not** a `gates.py` gate: it needs a built bundle and a generated fixture
 which a gate run has. Run it before a release, and after any change to `viewer.ts`,
 `scroller.ts` or the tile protocol.
 
-Unlike the benchmarks it does not require a release bundle --- it asserts behaviour rather
-than timing it --- but it does require an unlocked screen, for the reason `scroll_bench.py`
-does: WebKit suspends a page whose window is not visible, so behind a lock screen the check
-does not fail, it stops. Both scripts share that guard (`scripts/webview_guard.py`).
+**It requires a bundle, not merely a release build.** A raw `cargo build` binary opens a
+window and never executes a line of JavaScript --- WKWebView needs the bundle identity, and
+the failure is silent: no error, no crash report, a blank window. Build one with
+`npm run tauri build -- --bundles app` and run the executable inside it, which keeps stdout
+and the environment that `open -a` does not. The *profile* genuinely does not matter --- the
+check asserts behaviour rather than timing it --- so a debug bundle is only slower.
+
+It also requires an unlocked screen, for the reason `scroll_bench.py` does: WebKit suspends
+a page whose window is not visible, so behind a lock screen the check does not fail, it
+stops. Both scripts share that guard (`scripts/webview_guard.py`).
 
 **It does not take focus.** The window appears and has to stay visible, but it will not raise
 itself over what you are doing, so the run can sit in the background while you work.
 `scroll_bench.py` is the exception and calls `set_focus()` on purpose --- an unfocused window
 is throttled, and a frame-rate benchmark would then be measuring the throttle.
+
+**"Visible" is stricter than "unlocked", and the guard does not check it.** A window fully
+covered by another --- a full-screen terminal, a different Space --- is *occluded*, and
+WebKit suspends the page exactly as it does behind a lock screen. The run then produces no
+output, uses no CPU, and stays alive, which reads as a hang in whatever was last changed.
+Set `TPDF_RAISE=1` to raise the window when there is nowhere visible to put one:
+
+```
+TPDF_RAISE=1 scripts/viewer_check.py <binary> testdata/text-heavy.pdf
+```
+
+The watchdog identifies **any** page that never executed, whatever the reason --- an
+occluded window and a raw unbundled binary produce exactly the same silence. Every spike
+entry point starts by asking Rust for its path, which records a `webview alive` mark; a run
+that times out without one is told in full that the page never ran a line of JavaScript.
+Confirm independently with `TPDF_STARTUP=<file> <binary>`, which fails the same way in 30 s
+and settles "environmental or mine" in one command. Results otherwise print as they are
+produced, so a run that stops partway names the last check it completed.
 
 Two of its assertions carry the weight, and both tie a position to specific content rather
 than checking that something happened. For **selection**, text dragged near the top of the
@@ -225,10 +259,20 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run it on `testdata/vector-heavy.pdf` too. That fixture is one page with no extractable
-text, so eleven checks report `[SKIP]` with their reason --- which is the expected output
-there, not a problem. The one search check it does run is the useful one for that document:
-that the viewer says there is no text to search rather than reporting no matches.
+Run all four corpora. Every run reports the same **53 check names**; what differs is how
+many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
+bug this arrangement exists to catch:
+
+| fixture | ran | skipped | what it is there for |
+|---|---|---|---|
+| `text-heavy.pdf` | 43 | 10 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 51 | 2 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 52 | 1 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 29 | 24 | one page, no extractable text |
+
+`vector-heavy` skipping most of them is the expected output there, not a problem. The one
+search check it does run is the useful one for that document: that the viewer says there is
+no text to search rather than reporting no matches.
 
 What it does **not** cover: the command list `App.svelte` registers, and the Cmd-K that
 opens the palette. The check builds its own registry, so it proves the palette works and

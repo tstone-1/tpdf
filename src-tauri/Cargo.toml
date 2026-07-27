@@ -80,3 +80,7 @@ path = "src/bin/text_probe.rs"
 [[bin]]
 name = "progressive-probe"
 path = "src/bin/progressive_probe.rs"
+
+[[bin]]
+name = "outline-probe"
+path = "src/bin/outline_probe.rs"

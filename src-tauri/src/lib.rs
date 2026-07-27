@@ -8,6 +8,7 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+pub mod outline;
 pub mod progressive;
 mod protocol;
 mod queue;
@@ -181,11 +182,47 @@ async fn search_page(
     rx.recv().map_err(|_| "render thread stopped".to_string())?
 }
 
+/// Reads a document's outline --- its bookmarks --- as a bounded tree.
+///
+/// Bounded is the operative word: the outline of a malformed document can be
+/// infinite, and PDFium documents that it is our job to notice. See
+/// `outline.rs`.
+#[tauri::command]
+async fn document_outline(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+) -> Result<outline::Outline, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    service.outline(
+        doc,
+        Box::new(move |result| {
+            let _ = tx.send(result);
+        }),
+    );
+    rx.recv().map_err(|_| "render thread stopped".to_string())?
+}
+
 /// Milliseconds since process exec, so the frontend can place its own marks on
 /// the same timeline as the Rust side (spike 0.2).
 #[tauri::command]
 fn process_elapsed_ms() -> f64 {
     startup::since_process_start_ms()
+}
+
+/// The mark that says the webview executed a line of JavaScript.
+const WEBVIEW_ALIVE: &str = "webview alive";
+
+/// Reads a spike's environment variable, recording that the webview asked.
+///
+/// Every spike entry point begins by asking Rust for its path or config, so the
+/// *first* of these calls is proof that the page loaded and ran. That matters
+/// because the alternative failure --- WebKit suspending a page whose window is
+/// occluded --- produces no output at all, and is otherwise indistinguishable
+/// from a run that is merely slow. The watchdog keys its diagnosis on this mark;
+/// `mark` is first-wins, so the four callers leave one entry between them.
+fn spike_env(key: &str) -> Option<String> {
+    startup::mark(WEBVIEW_ALIVE);
+    std::env::var(key).ok()
 }
 
 /// Path to auto-benchmark on startup, from `TPDF_AUTOBENCH`.
@@ -196,7 +233,7 @@ fn process_elapsed_ms() -> f64 {
 /// transfer benchmark and exits, so the whole thing is one shell command.
 #[tauri::command]
 fn autobench_path() -> Option<String> {
-    std::env::var("TPDF_AUTOBENCH").ok()
+    spike_env("TPDF_AUTOBENCH")
 }
 
 /// Everything the scroll benchmark needs to run without a human (spike 0.8).
@@ -250,7 +287,7 @@ fn env_list<T: std::str::FromStr>(name: &str, default: Vec<T>) -> Vec<T> {
 /// The scroll benchmark's configuration, or `None` if none was requested.
 #[tauri::command]
 fn scrollbench_config() -> Option<ScrollBenchConfig> {
-    let path = std::env::var("TPDF_SCROLLBENCH").ok()?;
+    let path = spike_env("TPDF_SCROLLBENCH")?;
 
     Some(ScrollBenchConfig {
         path,
@@ -283,13 +320,13 @@ fn scrollbench_config() -> Option<ScrollBenchConfig> {
 /// checks do not exist anywhere else.
 #[tauri::command]
 fn viewercheck_path() -> Option<String> {
-    std::env::var("TPDF_VIEWERCHECK").ok()
+    spike_env("TPDF_VIEWERCHECK")
 }
 
 /// Path to time a cold open of on startup, from `TPDF_STARTUP` (spike 0.2).
 #[tauri::command]
 fn startup_path() -> Option<String> {
-    std::env::var("TPDF_STARTUP").ok()
+    spike_env("TPDF_STARTUP")
 }
 
 /// Records a webview-observed milestone on the process timeline.
@@ -363,8 +400,28 @@ fn start_watchdog() {
         .spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(seconds));
             eprintln!("[FAIL] spike run did not finish within {seconds} s. Reached:");
-            for (name, at) in startup::timeline() {
+            let marks = startup::timeline();
+            for (name, at) in &marks {
                 eprintln!("  {name:<30} {at:>9.1}");
+            }
+
+            // The difference between "slow" and "never started" is one mark, and
+            // without saying so out loud this reads as a hang in whatever was
+            // most recently changed. It is usually not: WebKit suspends a page
+            // whose window is fully covered, and an occluded window is not a
+            // locked screen, so `webview_guard.py` passes and nothing runs.
+            if !marks.iter().any(|(name, _)| name == WEBVIEW_ALIVE) {
+                for line in [
+                    format!("No `{WEBVIEW_ALIVE}` mark: the page never ran a line of JavaScript,"),
+                    "so this is not a slow run. WebKit suspends a page whose window is".into(),
+                    "occluded --- covered by another window, or on another Space --- and".into(),
+                    "an unlocked screen is not a visible one.".into(),
+                    String::new(),
+                    "Re-run with TPDF_RAISE=1, or with nothing covering the window.".into(),
+                    "See BUILD.md.".into(),
+                ] {
+                    eprintln!("       {line}");
+                }
             }
             // Straight out, not through the app handle: the point of this path
             // is that the event loop may be the thing that is stuck.
@@ -431,13 +488,22 @@ pub fn run() {
             // nothing else would raise it, and the resulting cadence would look
             // exactly like a ceiling WebKit had imposed on us.
             //
-            // Only the benchmark. The viewer *check* deliberately does not do
-            // this: it asserts behaviour rather than timing it, so an unfocused
-            // window costs it nothing --- and raising a window over whatever
-            // someone is doing, every time a check runs, is its own bug. The
-            // window still has to be *visible*, because WebKit suspends an
-            // occluded page, but visible and focused are different things.
-            if std::env::var_os("TPDF_SCROLLBENCH").is_some() {
+            // The viewer *check* does not do this by default: it asserts
+            // behaviour rather than timing it, so an unfocused window costs it
+            // nothing --- and raising a window over whatever someone is doing,
+            // every time a check runs, is its own bug.
+            //
+            // But unfocused and *occluded* are different things, and the
+            // difference is not cosmetic: WebKit suspends a page whose window
+            // is fully covered, so a check launched from a shell behind a
+            // full-screen terminal never runs a single line of frontend code.
+            // It does not fail --- it produces nothing, which is why
+            // `TPDF_RAISE` exists. Opt-in, so the default stays polite and a
+            // run that has nowhere visible to put a window can still say what
+            // it needs.
+            if std::env::var_os("TPDF_SCROLLBENCH").is_some()
+                || std::env::var_os("TPDF_RAISE").is_some()
+            {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_focus();
                 }
@@ -467,6 +533,7 @@ pub fn run() {
             open_document,
             page_text,
             search_page,
+            document_outline,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,
@@ -490,4 +557,36 @@ pub fn run() {
             startup::mark("event loop ready");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{spike_env, WEBVIEW_ALIVE};
+    use crate::startup;
+
+    fn alive() -> bool {
+        startup::timeline()
+            .iter()
+            .any(|(name, _)| name == WEBVIEW_ALIVE)
+    }
+
+    /// The watchdog's diagnosis is gated on this mark's *absence*, so the mark
+    /// has to be produced by something the page cannot reach without running.
+    ///
+    /// The first assertion is the control and is the point of the test: without
+    /// it, a mark that was somehow always present would pass the second one, and
+    /// the diagnosis would then never fire --- which is indistinguishable from a
+    /// harness that simply never hits the failure.
+    ///
+    /// Note this is the only test in the crate that touches the global mark
+    /// table, which is what makes asserting its emptiness first safe under
+    /// `cargo test`'s parallelism.
+    #[test]
+    fn asking_for_a_spike_path_marks_the_webview_alive() {
+        assert!(!alive(), "the mark exists before anything asked for it");
+        // Unset on purpose: the mark records that the *page asked*, which it
+        // does on every launch, not that the spike was requested.
+        assert_eq!(spike_env("TPDF_NO_SUCH_VARIABLE_4711"), None);
+        assert!(alive());
+    }
 }
