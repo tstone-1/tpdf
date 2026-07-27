@@ -569,6 +569,32 @@ the in-flight limit was never released and the timed section could not issue a s
 request. It reported a perfect 60 fps over a document it had not asked for. The tell was
 `requested: 0`, which is why the counter is in the output at all.
 
+### Interleaving controls for drift, not for what the last variant left behind
+
+The standing rule for a performance comparison is to interleave A,B,A,B and compare
+pairwise, because wall clock drifts over minutes. That defends against the machine changing
+underneath the measurement. It does **not** defend against variant A leaving work in a
+shared, stateful component that variant B then inherits — and when the component is a
+single FIFO render thread whose backlog outlives a round, that is the larger effect by far.
+
+Measured 2026-07-27 comparing withdrawal of stale tiles against leaving them to render. On
+the A0 sheet, whichever variant ran **first** reached 100% tier-1 coverage and the better
+sharp figure; whichever ran second reached 75% and the worse one. Swapping the order swapped
+the result exactly, so both orderings "showed" that the first variant was better. Reading
+either run alone gives a confident, reproducible, wrong answer — and the pairwise comparison
+the interleaving rule prescribes is what produces it, because the pairs are always
+first-then-second.
+
+The fix is to drain between variants, not to average across orderings: `scrollbench.ts`
+waits for a variant's outstanding requests to settle before the next one starts, bounded,
+and shouts if the bound is hit. With that in place the two variants measured identically at
+a slow scroll and reproduced within a tile at a fast one, in both orderings.
+
+The general form: **before trusting an A/B, ask what each variant leaves behind that the
+next one can find.** Caches, queues, background threads, page-cache state, a warmed JIT. If
+the answer is "something", run the orderings both ways as a control — if they disagree, the
+harness is measuring the order.
+
 ### WKWebView presents at 59 Hz on a 120 Hz display
 
 Measured 2026-07-26 on the M5 MacBook Pro, whose panel reports a `120.00Hz` mode: an idle

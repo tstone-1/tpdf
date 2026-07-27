@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { fetchTile, type TileFormat } from "./lib/tiles";
+  import { fetchRequiredTile, type TileFormat } from "./lib/tiles";
   import { interleaved, type BenchResult } from "./lib/bench";
   import { runAutobenchIfRequested } from "./lib/autobench";
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
@@ -92,7 +92,7 @@
       for (let x = 0; x < width; x += tile) {
         const w = Math.min(tile, width - x);
         const h = Math.min(tile, height - y);
-        const result = await fetchTile({
+        const result = await fetchRequiredTile({
           doc: doc.id,
           page: 0,
           scale,
@@ -131,7 +131,7 @@
         let count = 0;
         for (let y = 0; y < height; y += tile) {
           for (let x = 0; x < width; x += tile) {
-            const result = await fetchTile({
+            const result = await fetchRequiredTile({
               doc: doc!.id,
               page: 0,
               scale,

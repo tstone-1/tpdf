@@ -51,6 +51,19 @@ needs the worker pool and the progressive render API.
   cannot reach it. A render can now be abandoned from another thread in 0.25--24 ms where
   it previously ran to completion over 6.3 s. Uncancelled output is byte-identical to the
   existing path. Not yet wired into the viewer --- see `docs/PLAN.md` §Phase 1.
+- **Stale tiles are withdrawn from the renderer** (`render.rs`, `protocol.rs`,
+  `tiles.ts`, `scroller.ts`). Every tile request carries an id; `tile://localhost/cancel/<id>`
+  withdraws it. One that has not started is dropped without rendering, one already running
+  is abandoned through the progressive API. The viewer's render service now runs on the raw
+  handles throughout, which also removes a full-tile copy --- Pdfium renders straight into
+  the buffer that is handed on, where the safe path's `as_rgba_bytes()` allocated and copied
+  a second 16 MB at 2048².
+
+  Measured against the coverage floor rather than the frame rate, withdrawal being the
+  variant: **inert on the text corpus** (100% sharp either way, nothing withdrawn) and on
+  the A0 sheet it removes the waste without buying coverage --- five finished-then-discarded
+  tiles per round become zero, and the visible area stays 6% sharp. The A0 page still fails
+  the criterion; that is the worker pool, not the queue.
 - **A page-handle cache on `RawDocument`.** `FPDF_LoadPage` re-parses the page on every
   call --- PDFium caches nothing --- which is 0.18 ms on the text corpus and **44.3 ms on
   the A0 sheet**. Loading per tile request, as `render.rs` still does, costs a six-tile
@@ -59,6 +72,10 @@ needs the worker pool and the progressive render API.
   the safe path, poll frequency and the latency it bounds, and what a cancelled bitmap
   actually contains. Its `identity` mode fails a run in which nothing paused, so a passing
   result cannot be one that never exercised pausing.
+- The scroll benchmark drains a variant's outstanding requests before the next one starts,
+  and reports the tiles each round withdrew beside the ones it threw away. Without the
+  drain the two variants share a render queue: whichever ran first measured better, and
+  swapping them swapped the result.
 - `scripts/fetch_pdfium.py` --- installs the pinned PDFium build (`chromium/7881`),
   verifying its SHA256 before extracting and refusing a V8 asset. A clean clone could not
   previously build: `vendor/pdfium/` is gitignored and nothing fetched it.

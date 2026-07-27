@@ -29,7 +29,7 @@
  * described there, which is a scrollbar problem rather than a frame-rate one.
  */
 
-import { fetchTile } from "./tiles";
+import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
 export type Layout = "tiles" | "viewport";
 
@@ -58,6 +58,15 @@ export interface ScrollerOptions {
   cacheTiles: number;
   /** Concurrent tile requests. The client's half of a supersedable queue. */
   maxInFlight: number;
+  /**
+   * Whether a request that stops being wanted is withdrawn from the renderer.
+   *
+   * A variant dimension rather than a constant, so the behaviour it is supposed
+   * to fix can be measured beside it in the same run. With this off the client
+   * still drops stale tiles on arrival --- it just pays for them first, which is
+   * what spike 0.8 measured as 60 fps over an empty screen.
+   */
+  cancel: boolean;
 }
 
 /** What one frame of scrolling cost and how much of it was covered. */
@@ -87,6 +96,14 @@ export interface RunStats {
   delivered: number;
   /** Arrived after leaving the window, i.e. work the queue should have cut. */
   discarded: number;
+  /**
+   * Withdrawn before the render finished, i.e. work the queue did cut.
+   *
+   * The counterpart of `discarded`, and the number that says whether
+   * cancellation is doing anything: a run where this stays zero while
+   * `discarded` climbs is one where every stale tile was still paid for.
+   */
+  abandoned: number;
   bytes: number;
   /** Time inside Pdfium, summed over delivered tiles. */
   renderMs: number;
@@ -124,6 +141,22 @@ interface TileEntry {
   rect: TileRect;
 }
 
+/** A request that has been issued and has not settled. */
+interface Outstanding {
+  /** Server-side id, by which the request can be withdrawn. */
+  rid: number;
+  /**
+   * Whether this is still worth paying for, tested against the window as it is
+   * now rather than as it was when the request went out. A closure because the
+   * two kinds of request answer it differently.
+   */
+  isWanted: () => boolean;
+  /** Tier-1 placeholders outlive a generation change; tier-2 tiles do not. */
+  survivesClear: boolean;
+  /** Whether a withdrawal has already been sent, so it is sent only once. */
+  withdrawn: boolean;
+}
+
 /** A tile that has landed but has not been drawn into anything yet. */
 interface Arrival {
   key: TileKey;
@@ -154,7 +187,8 @@ export class Scroller {
   /** Tier-1 canvases mounted in the `tiles` layout, so they can be recycled. */
   private readonly placeholderCanvases = new Map<number, HTMLCanvasElement>();
 
-  private readonly inFlight = new Set<string>();
+  /** Requests issued and not yet settled, by id. */
+  private readonly inFlight = new Map<string, Outstanding>();
   /**
    * Tiles that have landed since the last frame.
    *
@@ -166,7 +200,10 @@ export class Scroller {
    * responsible for inside the interval that is being attributed.
    */
   private readonly arrived: Arrival[] = [];
-  private readonly arrivedPlaceholders: { page: number; bitmap: ImageBitmap }[] = [];
+  private readonly arrivedPlaceholders: {
+    page: number;
+    bitmap: ImageBitmap;
+  }[] = [];
 
   private scrollTop = 0;
   private drawnThisFrame = 0;
@@ -185,6 +222,7 @@ export class Scroller {
     requested: 0,
     delivered: 0,
     discarded: 0,
+    abandoned: 0,
     bytes: 0,
     renderMs: 0,
     decodeMs: 0,
@@ -222,6 +260,19 @@ export class Scroller {
   /** The furthest the viewport can be scrolled. */
   get maxScroll(): number {
     return Math.max(0, this.documentHeight - this.opts.viewport.height);
+  }
+
+  /**
+   * Requests issued and not yet settled.
+   *
+   * Exposed so a harness can wait for a variant's work to leave the renderer
+   * before the next one starts. The render service is one shared FIFO, so a
+   * round that begins while the previous variant's backlog is still draining
+   * measures the two of them together --- which reverses the result when the
+   * variants are swapped, and did.
+   */
+  get outstanding(): number {
+    return this.inFlight.size;
   }
 
   /** Tiles per page, so a run can report its working set. */
@@ -264,6 +315,13 @@ export class Scroller {
     this.tiles.clear();
     for (const arrival of this.arrived.splice(0)) arrival.bitmap.close();
     this.generation++;
+
+    // No tier-2 request survives a generation change --- `drain` drops every
+    // one of them on arrival --- so let the renderer stop paying for them.
+    // Without this the next round starts against a renderer still working
+    // through the previous one's queue, which is the shape of the bug that made
+    // this harness report 60 fps over an empty screen.
+    this.withdraw((outstanding) => !outstanding.survivesClear);
   }
 
   /** Zeroes the run counters, so a round reports only its own work. */
@@ -271,6 +329,7 @@ export class Scroller {
     this.stats.requested = 0;
     this.stats.delivered = 0;
     this.stats.discarded = 0;
+    this.stats.abandoned = 0;
     this.stats.bytes = 0;
     this.stats.renderMs = 0;
     this.stats.decodeMs = 0;
@@ -377,7 +436,10 @@ export class Scroller {
   }
 
   /** Device-pixel rect of one tile within its scaled page. */
-  private tileRect(col: number, row: number): { x: number; y: number; width: number; height: number } {
+  private tileRect(
+    col: number,
+    row: number,
+  ): { x: number; y: number; width: number; height: number } {
     const x = col * this.opts.tilePx;
     const y = row * this.opts.tilePx;
     return {
@@ -400,6 +462,8 @@ export class Scroller {
    * are simply never sent.
    */
   private request(): void {
+    this.withdraw((outstanding) => !outstanding.isWanted());
+
     const { top, bottom } = this.band();
     const centre = this.scrollTop + this.opts.viewport.height / 2;
 
@@ -419,7 +483,10 @@ export class Scroller {
           const id = keyOf(key);
           if (this.tiles.has(id) || this.inFlight.has(id)) continue;
           if (!this.isWanted(key)) continue;
-          wanted.push({ key, distance: Math.abs((tileTop + tileBottom) / 2 - centre) });
+          wanted.push({
+            key,
+            distance: Math.abs((tileTop + tileBottom) / 2 - centre),
+          });
         }
       }
     }
@@ -432,14 +499,40 @@ export class Scroller {
     }
   }
 
+  /**
+   * Withdraws every outstanding request matching `predicate`.
+   *
+   * The entry stays in `inFlight` until its reply lands. A withdrawal is a
+   * request to stop, not proof of having stopped --- it can lose the race with a
+   * tile that was already finishing --- so forgetting it here would let
+   * `request` issue a duplicate for a tile that is still on its way. The
+   * `withdrawn` flag is what keeps this from re-sending the same withdrawal on
+   * every frame until the reply arrives.
+   */
+  private withdraw(predicate: (outstanding: Outstanding) => boolean): void {
+    if (!this.opts.cancel) return;
+    for (const outstanding of this.inFlight.values()) {
+      if (outstanding.withdrawn || !predicate(outstanding)) continue;
+      outstanding.withdrawn = true;
+      cancelTile(outstanding.rid);
+    }
+  }
+
   private send(key: TileKey): void {
     const id = keyOf(key);
     const rect = this.tileRect(key.col, key.row);
     const generation = this.generation;
-    this.inFlight.add(id);
+    const rid = nextRequestId();
+    this.inFlight.set(id, {
+      rid,
+      isWanted: () => this.generation === generation && this.isWanted(key),
+      survivesClear: false,
+      withdrawn: false,
+    });
     this.stats.requested++;
 
     void fetchTile({
+      rid,
       doc: this.opts.doc,
       page: key.page,
       scale: this.opts.zoom * this.opts.dpr,
@@ -451,6 +544,12 @@ export class Scroller {
     })
       .then((result) => {
         this.inFlight.delete(id);
+        // Withdrawn in time: the renderer stopped, and there is nothing to
+        // count as delivered or as discarded because nothing was produced.
+        if (!result) {
+          this.stats.abandoned++;
+          return;
+        }
         this.stats.bytes += result.bytes;
         this.stats.renderMs += result.renderUs / 1000;
         this.stats.decodeMs += result.decodeMs;
@@ -530,10 +629,22 @@ export class Scroller {
 
     const scale = TIER1_WIDTH / this.opts.page.width_pt;
     const height = Math.round(this.opts.page.height_pt * scale);
-    this.inFlight.add(id);
+    const rid = nextRequestId();
+    // Withdrawable like any other request, and for the same reason: a
+    // placeholder is permanent once it lands, but a page that has left the band
+    // is not one the renderer should be spending 1.5 s on while the visible
+    // page waits behind it in the queue. It is re-requested if the page comes
+    // back.
+    this.inFlight.set(id, {
+      rid,
+      isWanted: () => this.pageInBand(page),
+      survivesClear: true,
+      withdrawn: false,
+    });
     this.stats.requested++;
 
     void fetchTile({
+      rid,
       doc: this.opts.doc,
       page,
       scale,
@@ -545,6 +656,10 @@ export class Scroller {
     })
       .then((result) => {
         this.inFlight.delete(id);
+        if (!result) {
+          this.stats.abandoned++;
+          return;
+        }
         this.stats.delivered++;
         this.stats.bytes += result.bytes;
         this.stats.renderMs += result.renderUs / 1000;
@@ -554,6 +669,13 @@ export class Scroller {
       .catch(() => {
         this.inFlight.delete(id);
       });
+  }
+
+  /** Whether any part of a page lies in the current band. */
+  private pageInBand(page: number): boolean {
+    const { top, bottom } = this.band();
+    const pageTop = this.pageTop(page);
+    return pageTop + this.pageHeightCss >= top && pageTop <= bottom;
   }
 
   /**
@@ -589,7 +711,10 @@ export class Scroller {
 
     const left = this.pageLeftCss();
 
-    for (const page of this.pagesIn(this.scrollTop, this.scrollTop + viewport.height)) {
+    for (const page of this.pagesIn(
+      this.scrollTop,
+      this.scrollTop + viewport.height,
+    )) {
       const top = this.pageTop(page) - this.scrollTop;
 
       const placeholder = this.placeholders.get(page);
@@ -608,7 +733,11 @@ export class Scroller {
         for (let col = 0; col < this.cols; col++) {
           const entry = this.tiles.get(keyOf({ page, col, row }));
           if (!entry?.bitmap) continue;
-          ctx.drawImage(entry.bitmap, left * dpr + entry.rect.x, top * dpr + entry.rect.y);
+          ctx.drawImage(
+            entry.bitmap,
+            left * dpr + entry.rect.x,
+            top * dpr + entry.rect.y,
+          );
           this.drawnThisFrame++;
         }
       }
@@ -650,7 +779,8 @@ export class Scroller {
           // Horizontal intersection too: at 400% half the page hangs off the
           // side of the viewport, and counting it would charge the scroller
           // for pixels nobody is looking at.
-          const across = Math.min(viewport.width, tileRight) - Math.max(0, tileLeft);
+          const across =
+            Math.min(viewport.width, tileRight) - Math.max(0, tileLeft);
           if (across <= 0) continue;
 
           const area = overlap * across;

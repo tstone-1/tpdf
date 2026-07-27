@@ -8,6 +8,23 @@
 //! to work on a simple one. The single thread is what keeps that undefined
 //! behaviour off the table. Measured by `bin/thread_probe.rs`; see AGENTS.md.
 //!
+//! ## Abandoning work
+//!
+//! One FIFO thread means a queue, and a queue means tiles rendering for a
+//! viewport that has moved on. Spike 0.8 measured what that costs: sustained
+//! 60 fps over a screen that was 0--4% sharp, because every second of renderer
+//! time went to tiles nobody could see any more. So a request carries a `rid`
+//! and can be withdrawn --- [`RenderService::cancel`]. A withdrawn request that
+//! has not started is dropped without rendering; one already in flight is
+//! abandoned through PDFium's progressive API (`progressive.rs`), which returns
+//! in 0.25--24 ms against a render that would otherwise have run 6.3 s.
+//!
+//! Only the client can know a tile is no longer wanted --- the window is its
+//! state, not ours --- so cancellation is explicit rather than inferred from an
+//! epoch. An epoch would have to either cancel still-wanted long renders on
+//! every window change, which never finishes anything on a hard page, or leave
+//! stale ones running, which is the behaviour being fixed.
+//!
 //! Phase 0 note: this is an in-process service. Supervised worker processes
 //! replace it, which is what actually delivers parallelism and the security
 //! boundary. The channel interface here is deliberately shaped so that swap does
@@ -19,13 +36,15 @@
 //! change for callers are that the document must be handed over as mapped bytes
 //! rather than a path, and that a reply can now fail because the worker died.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use pdfium_render::prelude::*;
 
+use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
 use crate::startup::{mark, since_process_start_ms};
 
 /// Pixel format of a returned tile.
@@ -41,8 +60,11 @@ pub enum TileFormat {
 /// A request for one tile of one page at one zoom level.
 #[derive(Clone, Debug)]
 pub struct TileRequest {
+    /// Caller-assigned identity, unique for the life of the process, by which
+    /// the request can later be withdrawn. Zero means "not withdrawable".
+    pub rid: u64,
     pub doc: u32,
-    pub page: u16,
+    pub page: u32,
     /// Device pixels per PDF point.
     pub scale: f32,
     /// Tile origin in device pixels, relative to the scaled page's top-left.
@@ -66,6 +88,17 @@ pub struct Tile {
     pub encode_us: u64,
 }
 
+/// What became of a tile request.
+#[derive(Clone, Debug)]
+pub enum TileOutcome {
+    /// The tile was rendered.
+    Rendered(Tile),
+    /// The caller withdrew the request. Not an error, and deliberately not an
+    /// empty tile either: there is nothing to draw, and a caller that treated
+    /// this as a blank tile would paint over content it already had.
+    Abandoned,
+}
+
 /// Page geometry in PDF points, sent to the frontend up front so the virtual
 /// scroller can size the document without rendering anything.
 #[derive(Clone, Copy, Debug, serde::Serialize)]
@@ -84,7 +117,7 @@ pub struct DocumentInfo {
     pub page_count: usize,
     /// Whether `pages` is the whole table or only its first entry.
     pub lazy_geometry: bool,
-    /// Time spent in `load_pdf_from_file`, i.e. parse and cross-reference repair.
+    /// Time spent opening, i.e. parse and cross-reference repair.
     pub open_ms: f64,
     /// Milliseconds since process start when the open completed.
     pub at_ms: f64,
@@ -101,14 +134,45 @@ enum Job {
     },
     Tile {
         request: TileRequest,
-        reply: Reply<Tile>,
+        reply: Reply<TileOutcome>,
     },
+}
+
+/// Which requests are outstanding, and which have been withdrawn.
+///
+/// Shared between whatever thread issues requests and the render thread. Both
+/// halves of a withdrawal --- registering a render as in flight and cancelling
+/// it --- happen under this one lock, so a request cannot slip between them and
+/// start after it was cancelled.
+#[derive(Default)]
+struct Queue {
+    /// Sent to the render thread but not yet started.
+    queued: HashSet<u64>,
+    /// Withdrawn while still queued. A subset of `queued` by construction, so
+    /// it drains with it: a withdrawal naming a request that already finished
+    /// is dropped rather than remembered, which is what keeps this bounded.
+    cancelled: HashSet<u64>,
+    /// The render currently running, and the token that stops it.
+    inflight: Option<(u64, CancelToken)>,
 }
 
 /// Handle to the render thread. Cheap to clone.
 #[derive(Clone)]
 pub struct RenderService {
     tx: Sender<Job>,
+    queue: Arc<Mutex<Queue>>,
+}
+
+/// Locks the queue, ignoring poisoning.
+///
+/// A panic on the render thread would poison this, and refusing every later
+/// request because of it turns one failed tile into a dead viewer. The state
+/// behind it is three sets of integers with no invariant a partial update can
+/// break.
+fn lock(queue: &Mutex<Queue>) -> std::sync::MutexGuard<'_, Queue> {
+    queue
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl RenderService {
@@ -119,6 +183,8 @@ impl RenderService {
     /// app setup.
     pub fn start(library_dir: PathBuf) -> Self {
         let (tx, rx) = channel::<Job>();
+        let queue = Arc::new(Mutex::new(Queue::default()));
+        let thread_queue = Arc::clone(&queue);
 
         std::thread::Builder::new()
             .name("tpdf-render".into())
@@ -144,7 +210,8 @@ impl RenderService {
                     }
                 };
 
-                let mut docs: Vec<PdfDocument<'static>> = Vec::new();
+                let bindings = progressive::bindings_of(pdfium);
+                let mut docs: Vec<RawDocument> = Vec::new();
 
                 for job in rx {
                     match job {
@@ -153,17 +220,17 @@ impl RenderService {
                             lazy_geometry,
                             reply,
                         } => {
-                            reply(open_document(pdfium, &path, lazy_geometry, &mut docs));
+                            reply(open_document(bindings, &path, lazy_geometry, &mut docs));
                         }
                         Job::Tile { request, reply } => {
-                            reply(render_tile(&docs, &request));
+                            reply(run_tile(bindings, &docs, &thread_queue, &request));
                         }
                     }
                 }
             })
             .expect("failed to spawn render thread");
 
-        Self { tx }
+        Self { tx, queue }
     }
 
     /// Opens a document, invoking `reply` on the render thread when done.
@@ -189,9 +256,40 @@ impl RenderService {
     ///
     /// The reply runs on the render thread deliberately: the protocol responder
     /// can be satisfied there directly, so no thread is spawned per request.
-    pub fn tile(&self, request: TileRequest, reply: Reply<Tile>) {
+    pub fn tile(&self, request: TileRequest, reply: Reply<TileOutcome>) {
+        let rid = request.rid;
+        if rid != 0 {
+            lock(&self.queue).queued.insert(rid);
+        }
+
         if self.tx.send(Job::Tile { request, reply }).is_err() {
-            // Render thread is gone.
+            // Render thread is gone. Forget the request rather than leaving it
+            // outstanding forever, since nothing will ever dequeue it.
+            if rid != 0 {
+                let mut queue = lock(&self.queue);
+                queue.queued.remove(&rid);
+                queue.cancelled.remove(&rid);
+            }
+        }
+    }
+
+    /// Withdraws a tile request by its `rid`.
+    ///
+    /// Safe to call at any point in the request's life, including after it has
+    /// finished --- an unknown `rid` is simply ignored, because the caller
+    /// cannot know whether its reply is already on the way.
+    pub fn cancel(&self, rid: u64) {
+        if rid == 0 {
+            return;
+        }
+        let mut queue = lock(&self.queue);
+        match &queue.inflight {
+            Some((inflight, token)) if *inflight == rid => token.cancel(),
+            _ => {
+                if queue.queued.contains(&rid) {
+                    queue.cancelled.insert(rid);
+                }
+            }
         }
     }
 }
@@ -216,34 +314,35 @@ fn bind_pdfium(library_dir: &Path) -> Result<&'static Pdfium, String> {
 }
 
 fn open_document(
-    pdfium: &'static Pdfium,
+    bindings: Bindings,
     path: &Path,
     lazy_geometry: bool,
-    docs: &mut Vec<PdfDocument<'static>>,
+    docs: &mut Vec<RawDocument>,
 ) -> Result<DocumentInfo, String> {
     let t0 = Instant::now();
-    let doc = pdfium
-        .load_pdf_from_file(path, None)
-        .map_err(|e| format!("could not open {}: {e}", path.display()))?;
+    let doc = RawDocument::open(bindings, path)?;
     let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
     mark("document parsed");
 
-    let size_of = |page: &PdfPage<'_>| PageSize {
-        width_pt: page.width().value,
-        height_pt: page.height().value,
+    let size_of = |index: u32| -> Result<PageSize, String> {
+        let page = doc.page(index)?;
+        Ok(PageSize {
+            width_pt: page.width_pt(),
+            height_pt: page.height_pt(),
+        })
     };
 
-    let page_count = doc.pages().len() as usize;
+    let page_count = doc.page_count();
     // Lazy geometry loads exactly one page, because the first page's size is
     // what the viewer needs to lay out its first frame. The scroller estimates
     // the rest from it and corrects as pages arrive (PLAN §4).
     let pages: Vec<PageSize> = if lazy_geometry {
-        doc.pages()
-            .get(0)
-            .map(|page| vec![size_of(&page)])
-            .unwrap_or_default()
+        match page_count {
+            0 => Vec::new(),
+            _ => vec![size_of(0)?],
+        }
     } else {
-        doc.pages().iter().map(|page| size_of(&page)).collect()
+        (0..page_count).map(size_of).collect::<Result<_, _>>()?
     };
 
     let id = docs.len() as u32;
@@ -255,64 +354,117 @@ fn open_document(
     Ok(DocumentInfo {
         id,
         pages,
-        page_count,
+        page_count: page_count as usize,
         lazy_geometry,
         open_ms,
         at_ms: since_process_start_ms(),
     })
 }
 
-fn render_tile(docs: &[PdfDocument<'static>], req: &TileRequest) -> Result<Tile, String> {
+/// Claims a request, renders it, and releases it --- or drops it if it was
+/// withdrawn while queued.
+///
+/// The claim and the release are the only places `inflight` is written, and both
+/// happen under the queue lock while nothing else holds it, so a withdrawal
+/// arriving at any instant either finds the request queued (and marks it) or
+/// finds it in flight (and cancels it).
+fn run_tile(
+    bindings: Bindings,
+    docs: &[RawDocument],
+    queue: &Mutex<Queue>,
+    req: &TileRequest,
+) -> Result<TileOutcome, String> {
+    let token = {
+        let mut queue = lock(queue);
+        queue.queued.remove(&req.rid);
+        if queue.cancelled.remove(&req.rid) {
+            // Withdrawn before it ever started: the whole render is saved, not
+            // merely interrupted. On a page costing a second a tile this is the
+            // larger of the two savings.
+            return Ok(TileOutcome::Abandoned);
+        }
+        let token = CancelToken::new();
+        if req.rid != 0 {
+            queue.inflight = Some((req.rid, token.clone()));
+        }
+        token
+    };
+
+    let result = render_tile(bindings, docs, req, &token);
+
+    if req.rid != 0 {
+        let mut queue = lock(queue);
+        // Only clear our own claim: a reply is delivered before the next job is
+        // dequeued, so this cannot be someone else's, but the check costs
+        // nothing and stops a future change from silently clearing one.
+        if matches!(&queue.inflight, Some((rid, _)) if *rid == req.rid) {
+            queue.inflight = None;
+        }
+    }
+
+    result
+}
+
+fn render_tile(
+    bindings: Bindings,
+    docs: &[RawDocument],
+    req: &TileRequest,
+    cancel: &CancelToken,
+) -> Result<TileOutcome, String> {
     let doc = docs
         .get(req.doc as usize)
         .ok_or_else(|| format!("no such document: {}", req.doc))?;
 
-    let page = doc
-        .pages()
-        .get(req.page as PdfPageIndex)
-        .map_err(|e| format!("no such page {}: {e}", req.page))?;
+    // Cached, because Pdfium re-parses a page on every `FPDF_LoadPage` --- 44 ms
+    // on the A0 sheet, which loading per tile request would charge a six-tile
+    // screenful nearly four times over.
+    let page = doc.page(req.page)?;
 
-    // Full scaled page size in device pixels. The tile is a window onto this,
-    // positioned by a negative origin -- Pdfium renders the whole page into a
-    // tile-sized bitmap and clips, so no full-page bitmap is ever allocated.
-    let full_width = (page.width().value * req.scale).round() as i32;
-    let full_height = (page.height().value * req.scale).round() as i32;
-
-    let mut bitmap = PdfBitmap::empty(
-        req.width as Pixels,
-        req.height as Pixels,
-        PdfBitmapFormat::BGRA,
-    )
-    .map_err(|e| format!("could not allocate {}x{} tile: {e}", req.width, req.height))?;
-
-    let config = PdfRenderConfig::new()
-        .set_target_width(full_width)
-        .set_target_height(full_height)
-        .set_origin(-req.x, -req.y);
+    let spec = TileSpec {
+        scale: req.scale,
+        x: req.x,
+        y: req.y,
+        width: req.width,
+        height: req.height,
+    };
 
     let t0 = Instant::now();
-    page.render_into_bitmap_with_config(&mut bitmap, &config)
-        .map_err(|e| format!("render failed: {e}"))?;
+    // No slice: the pause callback returns "stop" the moment the token is set,
+    // so cancellation costs one poll interval either way, and slicing measured a
+    // 1--2% overhead for nothing this path needs.
+    let (rgba, progress) = progressive::render_tile(bindings, &page, spec, None, cancel)?;
     let render_us = t0.elapsed().as_micros() as u64;
 
-    let rgba = bitmap.as_rgba_bytes();
+    match progress.outcome {
+        Outcome::Done => {}
+        // The bitmap holds a genuine partial composite, but whether a partial
+        // tile is worth putting on screen is not measured (AGENTS.md), so it is
+        // dropped rather than shipped on a guess.
+        Outcome::Cancelled => return Ok(TileOutcome::Abandoned),
+        Outcome::Failed(status) => {
+            return Err(format!("render failed with Pdfium status {status}"))
+        }
+    }
 
     let t1 = Instant::now();
     let bytes = match req.format {
+        // Already RGBA and already in a `Vec` --- Pdfium rendered straight into
+        // it. The safe path's `as_rgba_bytes()` allocated and copied a second
+        // one, which at 2048² is 16 MB per tile.
         TileFormat::Raw => rgba,
         TileFormat::Png => encode_png(&rgba, req.width as u32, req.height as u32)?,
     };
     let encode_us = t1.elapsed().as_micros() as u64;
     mark("first tile rendered");
 
-    Ok(Tile {
+    Ok(TileOutcome::Rendered(Tile {
         bytes,
         width: req.width,
         height: req.height,
         format: req.format,
         render_us,
         encode_us,
-    })
+    }))
 }
 
 fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {

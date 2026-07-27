@@ -14,7 +14,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { fetchTile, type TileFormat } from "./tiles";
+import { fetchRequiredTile, type TileFormat } from "./tiles";
 
 interface Variant {
   label: string;
@@ -94,7 +94,7 @@ export async function runAutobenchIfRequested(): Promise<boolean> {
         const width = Math.min(variant.size, fullWidth);
         const height = Math.min(variant.size, fullHeight);
 
-        const tile = await fetchTile({
+        const tile = await fetchRequiredTile({
           doc: info.id,
           page: 0,
           scale: variant.scale,

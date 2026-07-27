@@ -121,7 +121,7 @@ pub struct RawDocument {
     bindings: Bindings,
     handle: FPDF_DOCUMENT,
     /// Loaded page handles, and the order they were loaded in for eviction.
-    pages: RefCell<(HashMap<u16, FPDF_PAGE>, VecDeque<u16>)>,
+    pages: RefCell<(HashMap<u32, FPDF_PAGE>, VecDeque<u32>)>,
 }
 
 impl RawDocument {
@@ -148,8 +148,19 @@ impl RawDocument {
         })
     }
 
+    /// How many pages the document has.
+    ///
+    /// Unlike collecting page *geometry*, this is cheap --- it reads the page
+    /// tree's count rather than loading anything (spike 0.2 measured 0.6 ms to
+    /// open a 775-page document against 86 ms to size its pages).
+    pub fn page_count(&self) -> u32 {
+        // SAFETY: `self.handle` is non-null for the lifetime of `self`.
+        let count = unsafe { self.bindings.FPDF_GetPageCount(self.handle) };
+        count.max(0) as u32
+    }
+
     /// Returns one page by zero-based index, loading it if it is not cached.
-    pub fn page(&self, index: u16) -> Result<RawPage<'_>, String> {
+    pub fn page(&self, index: u32) -> Result<RawPage<'_>, String> {
         if let Some(&handle) = self.pages.borrow().0.get(&index) {
             return Ok(self.borrow_page(handle));
         }
@@ -188,7 +199,7 @@ impl RawDocument {
     /// Exists so the cache's value can be measured rather than assumed: the probe
     /// evicts between loads to time the uncached path. Also the honest response
     /// to memory pressure.
-    pub fn evict_page(&self, index: u16) {
+    pub fn evict_page(&self, index: u32) {
         let handle = {
             let mut pages = self.pages.borrow_mut();
             let (map, order) = &mut *pages;
