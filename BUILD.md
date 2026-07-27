@@ -274,6 +274,15 @@ bug this arrangement exists to catch:
 | `vector-multi.pdf` | 51 | 24 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
 | `rotated-90.pdf` | 64 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
 
+**Do not run all six while iterating.** Each run needs an `.app` bundle rebuilt and takes
+the better part of a minute, and six transcripts of green is not evidence of anything --- the
+value of a regression check is in the run that goes red, and nothing about running the same
+one repeatedly makes that more likely. Use **one** corpus while a change is in progress,
+picked for what it can exercise, and the full sweep **once before a commit**, where "did I
+break something elsewhere" is the actual question. What the sweep is for is the corpora's
+*differences*: `vector-heavy` skips 31 of the 75, and those are the ones a single corpus
+cannot tell you about.
+
 `vector-heavy` skipping most of them is the expected output there, not a problem. The one
 search check it does run is the useful one for that document: that the viewer says there is
 no text to search rather than reporting no matches.
