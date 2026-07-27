@@ -1540,6 +1540,76 @@ What this is not, and should not be mistaken for: there is no text selection, no
 thumbnails, no outline, no accessibility tree, and no command palette. The exit criterion for
 this phase is that tpdf is the daily default for reading, and it is not.
 
+#### The text layer, and selection on top of it — 2026-07-27
+
+Selection, search and the accessibility tree all need the same thing: the page's characters
+with their positions. `src-tauri/src/text.rs` is that layer and is deliberately the only
+one — three features reading three different extractions would disagree in ways no test
+catches, each being self-consistent.
+
+**It carries codes, not a string.** `FPDFText_GetText` is shorter and wrong: it extracts
+UCS-2 and, in its own documentation, "ignores characters without UCS-2 representations", so
+the string and the character indices the boxes are keyed by fall out of step on exactly the
+documents where nobody would notice — CJK, symbol fonts, anything astral. One Unicode scalar
+per index cannot desync, and the caller builds a string from the range it selected. Same
+lesson as `set_text()` drawing `.notdef`: work in the code space the document uses.
+
+**The coordinate flip is checked against pixels.** A y-flip is the classic failure here and
+the classic one to miss — the highlight still lands in tidy rectangles, on the wrong lines.
+`bin/text-probe --mode align` renders the page, and for every drawable character asks
+whether its mapped box covers ink:
+
+| corpus | boxes land on ink | un-flipped control |
+|---|---|---|
+| `text-marked`, `text-truetype` | 100% of 145 | 4.1% |
+| `text-cid`, `text-base14` | 100% of 145 | 4.8% |
+| `text-heavy` | 100% of 2,278 | **69.9% — cannot discriminate** |
+
+The last row is the result worth keeping. On a dense page of uniform lines a *flipped*
+mapping still lands on ink most of the time, so that page cannot tell the two conventions
+apart — and the probe fails the run and says so, rather than reporting the 100%. The
+corpus most likely to be reached for is the one where this check is blind.
+
+A whole-page bounding box was tried first and is not an oracle at all: the text fixtures
+draw a frame as well as text, so the ink box is far larger than the characters and *neither*
+convention matched it.
+
+**What it costs** (`text-probe --mode extract`, 7 rounds interleaved):
+
+| corpus | page cached | page not cached | characters |
+|---|---|---|---|
+| `text-heavy` | 1.42 ms | 1.64 ms | 2,725 |
+| `vector-heavy` (A0) | 0.12 ms | **43.2 ms** | 0 |
+
+So selection on the page already on screen is free, and a document-wide search pays about
+1.6 ms per page on text and 43 ms per page on complex vector art — where almost all of it is
+`FPDF_LoadPage` rather than the text. The A0 sheet has no extractable characters at all,
+which is the correct answer and a reminder that search will need to say so rather than
+return nothing.
+
+That table also came out of a broken measurement first: the timer started *after* the page
+was loaded, so both columns measured extraction alone and reported the A0 sheet's uncached
+extraction at 0.116 ms — against a page load known to be 44 ms. A column named for a cost it
+excludes reads as a finding.
+
+**Selection** is `src/lib/text.ts` (cache, hit-testing, run merging) and
+`src/lib/selection.ts` (two carets and the per-page range between them), with the viewer
+owning an overlay canvas above the tiles. Drag to select across pages, Cmd-A for the page,
+Escape to clear, Cmd-C to copy — and the copy waits for any page whose text has not arrived,
+because a drag can reach the clipboard before the extraction does and silently copying the
+part that happened to be loaded is a bug found in someone else's document.
+
+The check gained four assertions, and the load-bearing one is that **the dragged text is a
+substring of the whole page's text**. Everything else about selection passes with the
+character indices and the character boxes belonging to different coordinate systems — a drag
+still selects *something*. That one check ties the geometry to the codes, and it is what
+fails if the flip in `text.rs` is ever inverted. Its control is a zero-length drag, which
+must select nothing.
+
+Not done, and not pretended otherwise: word and line selection by double- and triple-click,
+selection across a column boundary in reading order rather than index order, and any
+handling of rotated or vertical text.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

@@ -503,6 +503,23 @@ export class Scroller {
     this.surfaceCtx = surface.getContext("2d", { alpha: false });
   }
 
+  /**
+   * CSS-pixel top-left of a page, in document coordinates.
+   *
+   * Exposed for the selection overlay, which draws in the same space the tiles
+   * do and must not derive it independently --- a second copy of the centring
+   * and page-pitch arithmetic is a second thing to keep in step, and the symptom
+   * of it drifting is a highlight that sits beside the text rather than on it.
+   */
+  pageOrigin(page: number): { left: number; top: number } {
+    return { left: this.pageLeftCss(), top: this.pageTop(page) };
+  }
+
+  /** Pages any part of which is currently on screen. */
+  visiblePages(): number[] {
+    return this.pagesIn(this.scrollTop, this.scrollTop + this.opts.viewport.height);
+  }
+
   /** Zero-based index of the page occupying a scroll offset. */
   pageAt(css: number): number {
     const pitch = this.pageHeightCss + PAGE_GAP;

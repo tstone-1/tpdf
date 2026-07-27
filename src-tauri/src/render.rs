@@ -46,6 +46,7 @@ use pdfium_render::prelude::*;
 use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
 use crate::queue::{Claim, SharedQueue};
 use crate::startup::{mark, since_process_start_ms};
+use crate::text::{self, PageText};
 
 /// Pixel format of a returned tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -136,6 +137,11 @@ enum Job {
         request: TileRequest,
         reply: Reply<TileOutcome>,
     },
+    Text {
+        doc: u32,
+        page: u32,
+        reply: Reply<PageText>,
+    },
 }
 
 /// Handle to the render thread. Cheap to clone.
@@ -176,6 +182,7 @@ impl RenderService {
                             match job {
                                 Job::Open { reply, .. } => reply(Err(e.clone())),
                                 Job::Tile { reply, .. } => reply(Err(e.clone())),
+                                Job::Text { reply, .. } => reply(Err(e.clone())),
                             }
                         }
                         return;
@@ -196,6 +203,9 @@ impl RenderService {
                         }
                         Job::Tile { request, reply } => {
                             reply(run_tile(bindings, &docs, &thread_queue, &request));
+                        }
+                        Job::Text { doc, page, reply } => {
+                            reply(run_text(&docs, doc, page));
                         }
                     }
                 }
@@ -236,6 +246,20 @@ impl RenderService {
             // Render thread is gone. Forget the request rather than leaving it
             // outstanding forever, since nothing will ever dequeue it.
             self.queue.with(|queue| queue.forget(rid));
+        }
+    }
+
+    /// Extracts one page's characters, invoking `reply` on the render thread.
+    ///
+    /// This shares the render thread with tiles rather than getting its own,
+    /// which means a text request queues behind whatever tile is rendering ---
+    /// up to a second on the A0 sheet. That is a known cost and not an oversight:
+    /// a second thread would need a second `FPDF_DOCUMENT`, and concurrent
+    /// PDFium is undefined behaviour (see AGENTS.md). Parallelism here arrives
+    /// with the worker pool or not at all.
+    pub fn text(&self, doc: u32, page: u32, reply: Reply<PageText>) {
+        if self.tx.send(Job::Text { doc, page, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
         }
     }
 
@@ -416,4 +440,12 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
             .map_err(|e| format!("png encode failed: {e}"))?;
     }
     Ok(out)
+}
+
+/// Extracts one page's characters on the render thread.
+fn run_text(docs: &[RawDocument], doc: u32, page: u32) -> Result<PageText, String> {
+    let document = docs
+        .get(doc as usize)
+        .ok_or_else(|| format!("no such document: {doc}"))?;
+    text::extract(&document.page(page)?)
 }

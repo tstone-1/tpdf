@@ -122,6 +122,9 @@
           >{degraded} — {Math.round(status.sharp * 100)}% sharp</span
         >
       {/if}
+      {#if status.selected > 0}
+        <span class="stat">{status.selected} selected</span>
+      {/if}
       <span class="stat">{status.page} / {status.pageCount}</span>
       <span class="stat">{Math.round(status.zoom * 100)}%</span>
     {/if}

@@ -60,6 +60,12 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin worker-bench -- \
 # roughly 20 s, because the point is the page that takes seconds to render.
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin progressive-probe -- \
     testdata/vector-heavy.pdf --mode identity --slices 0
+
+# Character boxes still land on the ink they describe. Run it on a *small* text
+# fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
+# that page cannot discriminate and the probe fails rather than reporting a pass.
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin text-probe -- \
+    testdata/text-marked.pdf --mode align
 ```
 
 Two notes on why these are written out in full. The binary names are **hyphenated**, and
@@ -204,6 +210,10 @@ Unlike the benchmarks it does not require a release bundle --- it asserts behavi
 than timing it --- but it does require an unlocked screen, for the reason `scroll_bench.py`
 does: WebKit suspends a page whose window is not visible, so behind a lock screen the check
 does not fail, it stops. Both scripts share that guard (`scripts/webview_guard.py`).
+
+It also checks text selection, and the load-bearing assertion there is that the dragged text
+is a **substring** of the whole page's text --- everything else about selection passes even
+when the character indices and the character boxes belong to different coordinate systems.
 
 Run it on `testdata/vector-heavy.pdf` too. That fixture is one page, so the jump control
 reports `[SKIP]` with its reason --- which is the expected output there, not a problem.

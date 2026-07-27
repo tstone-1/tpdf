@@ -257,6 +257,21 @@ impl RawPage<'_> {
         // SAFETY: as above.
         unsafe { self.bindings.FPDF_GetPageHeightF(self.handle) }
     }
+
+    /// The raw handle, for the PDFium APIs the safe wrapper does not reach.
+    ///
+    /// Crate-private on purpose. This is the same reason `progressive.rs` exists
+    /// at all --- text extraction takes an `FPDF_PAGE` and `pdfium-render` keeps
+    /// its own accessor `pub(crate)` --- but a handle escaping the crate would
+    /// outlive the borrow that makes using it sound.
+    pub(crate) fn handle(&self) -> FPDF_PAGE {
+        self.handle
+    }
+
+    /// The bindings this page was loaded through.
+    pub(crate) fn bindings(&self) -> Bindings {
+        self.bindings
+    }
 }
 
 /// An `FPDF_BITMAP` over a caller-owned buffer.

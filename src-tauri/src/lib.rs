@@ -13,6 +13,7 @@ mod protocol;
 mod queue;
 mod render;
 mod startup;
+pub mod text;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -124,6 +125,30 @@ async fn open_document(
     service.open(
         PathBuf::from(path),
         lazy_geometry(),
+        Box::new(move |result| {
+            let _ = tx.send(result);
+        }),
+    );
+    rx.recv().map_err(|_| "render thread stopped".to_string())?
+}
+
+/// Extracts one page's characters and their positions.
+///
+/// Selection, search and the accessibility tree all read this, and they read
+/// the same one deliberately --- three extractions would disagree in ways no
+/// test catches, each being self-consistent. Cached on the frontend rather than
+/// here: what a page's text costs to *re-request* is an IPC round trip, and what
+/// it costs to re-extract is measured in `bin/text_probe.rs`.
+#[tauri::command]
+async fn page_text(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    page: u32,
+) -> Result<text::PageText, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    service.text(
+        doc,
+        page,
         Box::new(move |result| {
             let _ = tx.send(result);
         }),
@@ -410,6 +435,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_document,
+            page_text,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,

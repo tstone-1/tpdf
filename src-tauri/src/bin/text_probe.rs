@@ -1,0 +1,381 @@
+//! Phase 1: are the character boxes where the ink is, and what does asking cost?
+//!
+//! Selection, search and the accessibility tree are all about to be built on
+//! `tpdf_lib::text`, and all three are silently wrong if its coordinate
+//! convention is. A y-flip is the classic failure and the classic one to miss:
+//! the text still highlights, in tidy rectangles, on the wrong lines --- and on
+//! a page whose text happens to be vertically symmetric it is not even visibly
+//! wrong.
+//!
+//! So the mapping is checked against pixels rather than reasoned about, which is
+//! the same rule `AGENTS.md` states for the sandbox that rendered `ok` with a
+//! substituted font. Two modes:
+//!
+//! * `--mode align` --- renders the page, finds the bounding box of everything
+//!   that is not the background, and compares it with the union of the character
+//!   boxes mapped into the same space. **It carries its own control**: the same
+//!   comparison is run against a deliberately un-flipped mapping, and the run
+//!   fails if *that* also matches, because a check both conventions pass is a
+//!   check that cannot discriminate between them.
+//!
+//! * `--mode extract` --- what a page's text costs, cached page and uncached,
+//!   interleaved. Selection wants it for the visible page, search wants it for
+//!   every page, and those are very different budgets.
+//!
+//! Usage:
+//!   text-probe <file.pdf> [--page N] [--scale F] [--mode align|extract]
+//!              [--rounds N] [--lib DIR]
+
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
+use tpdf_lib::text;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Align,
+    Extract,
+}
+
+struct Args {
+    file: PathBuf,
+    page: u32,
+    scale: f32,
+    mode: Mode,
+    rounds: usize,
+    library: PathBuf,
+}
+
+/// A rectangle in device pixels, y downwards.
+#[derive(Clone, Copy, Debug)]
+struct Rect {
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+}
+
+fn parse_args() -> Result<Args, String> {
+    let mut args = std::env::args().skip(1);
+    let file = args
+        .next()
+        .ok_or("usage: text-probe <file.pdf> [options]")?;
+
+    let mut parsed = Args {
+        file: PathBuf::from(file),
+        page: 0,
+        scale: 2.0,
+        mode: Mode::Align,
+        rounds: 5,
+        library: PathBuf::from("vendor/pdfium/lib"),
+    };
+
+    while let Some(flag) = args.next() {
+        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--page" => parsed.page = value()?.parse().map_err(|_| "bad --page")?,
+            "--scale" => parsed.scale = value()?.parse().map_err(|_| "bad --scale")?,
+            "--rounds" => parsed.rounds = value()?.parse().map_err(|_| "bad --rounds")?,
+            "--lib" => parsed.library = PathBuf::from(value()?),
+            "--mode" => {
+                parsed.mode = match value()?.as_str() {
+                    "align" => Mode::Align,
+                    "extract" => Mode::Extract,
+                    other => return Err(format!("unknown mode: {other}")),
+                }
+            }
+            other => return Err(format!("unknown flag: {other}")),
+        }
+    }
+    Ok(parsed)
+}
+
+fn main() {
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("[FAIL] {e}");
+            std::process::exit(2);
+        }
+    };
+
+    match run(&args) {
+        Ok(true) => {}
+        Ok(false) => std::process::exit(1),
+        Err(e) => {
+            eprintln!("[FAIL] {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn run(args: &Args) -> Result<bool, String> {
+    let bindings = bind(&args.library)?;
+    let document = RawDocument::open(bindings, &args.file)?;
+
+    match args.mode {
+        Mode::Align => align(args, &document, bindings),
+        Mode::Extract => extract(args, &document),
+    }
+}
+
+fn bind(library: &Path) -> Result<progressive::Bindings, String> {
+    use pdfium_render::prelude::Pdfium;
+    let path = Pdfium::pdfium_platform_library_name_at_path(library);
+    let bound = Pdfium::bind_to_library(&path)
+        .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
+    Ok(progressive::bindings_of(Box::leak(Box::new(Pdfium::new(
+        bound,
+    )))))
+}
+
+/// Fraction of a device-space rectangle's pixels that are not background.
+///
+/// The render clears to opaque white, so anything darker in any channel is ink.
+/// Sub-pixel edges are clamped inwards rather than rounded outwards: a box one
+/// pixel too generous would catch its neighbour's ink and report a mapping as
+/// correct when it is off by a character.
+fn ink_fraction(pixels: &[u8], width: u32, height: u32, rect: Rect) -> f32 {
+    let left = rect.left.ceil().max(0.0) as u32;
+    let top = rect.top.ceil().max(0.0) as u32;
+    let right = (rect.right.floor().max(0.0) as u32).min(width);
+    let bottom = (rect.bottom.floor().max(0.0) as u32).min(height);
+    if right <= left || bottom <= top {
+        return 0.0;
+    }
+
+    let mut inked = 0u32;
+    for y in top..bottom {
+        for x in left..right {
+            let at = ((y * width + x) * 4) as usize;
+            if pixels[at..at + 3].iter().any(|&c| c < 247) {
+                inked += 1;
+            }
+        }
+    }
+    inked as f32 / ((right - left) * (bottom - top)) as f32
+}
+
+/// One character's device-space rectangle under a chosen convention.
+///
+/// `flip` selects it: `true` is what `text::extract` produces --- y downwards
+/// from the page's top edge --- and `false` is the mistake it would be to leave
+/// the page-space value alone. The wrong one exists so the check can be shown to
+/// reject it, which a check that only ever evaluates the right one cannot.
+fn char_rect(page: &text::PageText, index: usize, scale: f32, flip: bool) -> Option<Rect> {
+    let quad = &page.boxes[index * 4..index * 4 + 4];
+    if quad.iter().all(|v| *v == 0.0) {
+        return None;
+    }
+    let (top, bottom) = if flip {
+        (quad[1], quad[3])
+    } else {
+        (page.height_pt - quad[3], page.height_pt - quad[1])
+    };
+    Some(Rect {
+        left: quad[0] * scale,
+        top: top * scale,
+        right: quad[2] * scale,
+        bottom: bottom * scale,
+    })
+}
+
+/// Fraction of drawable characters whose box actually covers ink.
+///
+/// The whole-page bounding box was tried first and is not an oracle: the text
+/// fixtures draw a frame as well as text, so the ink box is far larger than the
+/// characters and neither convention matched it. Per character is both stricter
+/// --- it catches a horizontal error too --- and indifferent to whatever else is
+/// on the page.
+fn hit_rate(
+    page: &text::PageText,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    flip: bool,
+) -> (f32, usize) {
+    let mut considered = 0usize;
+    let mut hit = 0usize;
+
+    for index in 0..page.len() {
+        // Whitespace has a box and no ink, so counting it would put a floor on
+        // the failure rate that has nothing to do with the mapping.
+        if char::from_u32(page.codes[index]).is_none_or(char::is_whitespace) {
+            continue;
+        }
+        let Some(rect) = char_rect(page, index, scale, flip) else {
+            continue;
+        };
+        considered += 1;
+        if ink_fraction(pixels, width, height, rect) > 0.05 {
+            hit += 1;
+        }
+    }
+
+    if considered == 0 {
+        return (0.0, 0);
+    }
+    (hit as f32 / considered as f32, considered)
+}
+
+/// How many drawable characters must land on ink for the mapping to be right.
+///
+/// Not 100%: a tight glyph box on a thin glyph at a low scale can round to
+/// nothing, and PDFium reports boxes for a few characters that draw nothing
+/// visible. The number that matters is the gap to the control below, which is
+/// most of the page rather than a few percent.
+const HIT_THRESHOLD: f32 = 0.95;
+
+/// The largest hit rate a wrong convention may reach before this check is
+/// declared unable to tell the two apart on this page.
+const CONTROL_CEILING: f32 = 0.50;
+
+fn align(
+    args: &Args,
+    document: &RawDocument,
+    bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    let page = document.page(args.page)?;
+    let extracted = text::extract(&page)?;
+
+    if extracted.is_empty() {
+        return Err(format!(
+            "page {} has no extractable characters, so this proves nothing about \
+             the mapping -- run it on a text document",
+            args.page
+        ));
+    }
+
+    let width = (extracted.width_pt * args.scale).round() as u16;
+    let height = (extracted.height_pt * args.scale).round() as u16;
+    let mut buffer = vec![0u8; width as usize * height as usize * 4];
+    let mut bitmap = RawBitmap::borrowed(bindings, &mut buffer, width, height)?;
+    let placement = Placement::tile(&page, args.scale, 0, 0);
+    let progress = progressive::render(
+        &mut bitmap,
+        &page,
+        placement,
+        None,
+        &progressive::CancelToken::new(),
+    );
+    if !progress.outcome.is_done() {
+        return Err(format!("render did not complete: {:?}", progress.outcome));
+    }
+
+    let pixels = bitmap.pixels();
+    let (w, h) = (width as u32, height as u32);
+    let (mapped, considered) = hit_rate(&extracted, pixels, w, h, args.scale, true);
+    let (unflipped, _) = hit_rate(&extracted, pixels, w, h, args.scale, false);
+
+    println!(
+        "{} characters, {} of them drawable, at {}x on a {}x{} render",
+        extracted.len(),
+        considered,
+        args.scale,
+        width,
+        height,
+    );
+    println!();
+
+    let agrees = mapped >= HIT_THRESHOLD;
+    let discriminates = unflipped <= CONTROL_CEILING;
+
+    println!(
+        "{} character boxes land on ink        {:.1}% of {considered}, need {:.0}%",
+        if agrees { "[OK]  " } else { "[FAIL]" },
+        mapped * 100.0,
+        HIT_THRESHOLD * 100.0,
+    );
+    println!(
+        "{} the un-flipped convention does not {:.1}%, must stay under {:.0}%",
+        if discriminates { "[OK]  " } else { "[FAIL]" },
+        unflipped * 100.0,
+        CONTROL_CEILING * 100.0,
+    );
+    if !discriminates {
+        println!(
+            "       Both conventions land on ink, so this page cannot tell them\n\
+             \x20      apart -- its text is too close to vertically symmetric. Use a\n\
+             \x20      page whose text is not, or this check is proving nothing."
+        );
+    }
+
+    Ok(agrees && discriminates)
+}
+
+fn extract(args: &Args, document: &RawDocument) -> Result<bool, String> {
+    println!(
+        "{:<10} {:>10} {:>10} {:>10} {:>8}",
+        "variant", "median ms", "min", "max", "chars"
+    );
+
+    let mut cached = Vec::new();
+    let mut uncached = Vec::new();
+
+    // Interleaved, because wall clock on this machine drifts several percent
+    // over minutes -- see AGENTS.md. Round 0 is kept and reported in `min`/`max`
+    // rather than discarded, since the point of the cached variant is that it
+    // has no warm-up to hide behind.
+    for _ in 0..args.rounds {
+        // Each borrow is scoped, and that is load-bearing rather than tidy:
+        // `evict_page` takes `&self` and closes the handle, so a `RawPage` that
+        // outlived the eviction would be a live pointer to a closed page --- and
+        // the borrow checker permits it, because both borrows are shared.
+        //
+        // `FPDF_LoadPage` is *inside* the timer in both variants. Written with
+        // the page loaded first and the clock started after, the two columns
+        // measured the same thing and reported it: 0.116 ms uncached on the A0
+        // sheet, where loading the page alone is 44 ms.
+        // Warm the page cache so the cached variant measures extraction only.
+        {
+            let _warm = document.page(args.page)?;
+        }
+        let (first, cached_ms) = {
+            let started = Instant::now();
+            let page = document.page(args.page)?;
+            let text = text::extract(&page)?;
+            (text.len(), started.elapsed().as_secs_f64() * 1000.0)
+        };
+        cached.push(cached_ms);
+
+        document.evict_page(args.page);
+        let (second, uncached_ms) = {
+            let started = Instant::now();
+            let page = document.page(args.page)?;
+            let text = text::extract(&page)?;
+            (text.len(), started.elapsed().as_secs_f64() * 1000.0)
+        };
+        uncached.push(uncached_ms);
+
+        if first != second {
+            return Err(format!(
+                "extraction is not deterministic: {first} characters then {second}"
+            ));
+        }
+    }
+
+    let page = document.page(args.page)?;
+    let chars = text::extract(&page)?.len();
+
+    for (label, mut samples) in [("cached", cached), ("uncached", uncached)] {
+        samples.sort_by(f64::total_cmp);
+        println!(
+            "{:<10} {:>10.3} {:>10.3} {:>10.3} {:>8}",
+            label,
+            samples[samples.len() / 2],
+            samples[0],
+            samples[samples.len() - 1],
+            chars,
+        );
+    }
+
+    println!();
+    println!(
+        "Both columns include FPDF_LoadPage. Cached is what selection pays on the page\n\
+         already on screen; uncached is what a document-wide search pays per page, and\n\
+         on a complex page it is almost entirely the page load rather than the text."
+    );
+    Ok(true)
+}
