@@ -5,6 +5,7 @@
 
 pub mod progressive;
 mod protocol;
+mod queue;
 mod render;
 mod startup;
 

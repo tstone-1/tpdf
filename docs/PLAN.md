@@ -1293,10 +1293,10 @@ rediscovered:
   worker sandbox is `sandbox_init` SBPL, so the containment argument in
   `docs/THREAT-MODEL.md` is macOS-specific and needs its own answer there. `BUILD.md`
   keeps the list.
-- **There are no tests.** `cargo test --locked` gates the lockfile and compiles the test
-  targets; it runs nothing. The spike harnesses assert their own results, which is why
-  Phase 0 conclusions are trustworthy, but none of that is a regression suite. Phase 1
-  starts the first one that a change can break.
+- ~~**There are no tests.**~~ Started 2026-07-27, with the request queue and the `tile://`
+  parser --- 26 of them, each shown to fail against a deliberate mutation of the code it
+  covers. Rendering is still asserted by the spike probes rather than by tests, which is the
+  right split while it needs a PDF and a PDFium build to say anything.
 
 ### Phase 1 — The viewer
 

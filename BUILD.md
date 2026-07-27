@@ -115,9 +115,11 @@ wrong. The exit code is non-zero if any failed.
 
 Two of them are worth understanding rather than just running:
 
-- **`cargo test --locked` currently runs no tests.** It is a gate anyway: it fails on a
+- **`cargo test --locked` is two gates in one.** Besides the unit tests it fails on a
   `Cargo.lock` that was not committed after a `cargo update`, and it compiles the test
-  targets, which is where `--all-targets` clippy findings surface.
+  targets, which is where `--all-targets` clippy findings surface. Coverage is currently
+  the request queue and the `tile://` URL parser --- the parts a change can silently
+  break --- and not rendering, which the spike probes assert instead.
 - **The `pdfium` gate is a pin check, not a build step.** It fails if `vendor/pdfium` is
   missing or is not the pinned build --- which is the difference between a benchmark that
   means something and one that does not.

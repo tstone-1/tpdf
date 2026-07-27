@@ -36,15 +36,15 @@
 //! change for callers are that the document must be handed over as mapped bytes
 //! rather than a path, and that a reply can now fail because the worker died.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use pdfium_render::prelude::*;
 
 use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
+use crate::queue::{Claim, SharedQueue};
 use crate::startup::{mark, since_process_start_ms};
 
 /// Pixel format of a returned tile.
@@ -138,41 +138,13 @@ enum Job {
     },
 }
 
-/// Which requests are outstanding, and which have been withdrawn.
-///
-/// Shared between whatever thread issues requests and the render thread. Both
-/// halves of a withdrawal --- registering a render as in flight and cancelling
-/// it --- happen under this one lock, so a request cannot slip between them and
-/// start after it was cancelled.
-#[derive(Default)]
-struct Queue {
-    /// Sent to the render thread but not yet started.
-    queued: HashSet<u64>,
-    /// Withdrawn while still queued. A subset of `queued` by construction, so
-    /// it drains with it: a withdrawal naming a request that already finished
-    /// is dropped rather than remembered, which is what keeps this bounded.
-    cancelled: HashSet<u64>,
-    /// The render currently running, and the token that stops it.
-    inflight: Option<(u64, CancelToken)>,
-}
-
 /// Handle to the render thread. Cheap to clone.
 #[derive(Clone)]
 pub struct RenderService {
     tx: Sender<Job>,
-    queue: Arc<Mutex<Queue>>,
-}
-
-/// Locks the queue, ignoring poisoning.
-///
-/// A panic on the render thread would poison this, and refusing every later
-/// request because of it turns one failed tile into a dead viewer. The state
-/// behind it is three sets of integers with no invariant a partial update can
-/// break.
-fn lock(queue: &Mutex<Queue>) -> std::sync::MutexGuard<'_, Queue> {
-    queue
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    /// Which requests are outstanding and which have been withdrawn. See
+    /// `queue.rs`, which is where that state machine lives and is tested.
+    queue: SharedQueue,
 }
 
 impl RenderService {
@@ -183,8 +155,8 @@ impl RenderService {
     /// app setup.
     pub fn start(library_dir: PathBuf) -> Self {
         let (tx, rx) = channel::<Job>();
-        let queue = Arc::new(Mutex::new(Queue::default()));
-        let thread_queue = Arc::clone(&queue);
+        let queue = SharedQueue::default();
+        let thread_queue = queue.clone();
 
         std::thread::Builder::new()
             .name("tpdf-render".into())
@@ -258,18 +230,12 @@ impl RenderService {
     /// can be satisfied there directly, so no thread is spawned per request.
     pub fn tile(&self, request: TileRequest, reply: Reply<TileOutcome>) {
         let rid = request.rid;
-        if rid != 0 {
-            lock(&self.queue).queued.insert(rid);
-        }
+        self.queue.with(|queue| queue.enqueue(rid));
 
         if self.tx.send(Job::Tile { request, reply }).is_err() {
             // Render thread is gone. Forget the request rather than leaving it
             // outstanding forever, since nothing will ever dequeue it.
-            if rid != 0 {
-                let mut queue = lock(&self.queue);
-                queue.queued.remove(&rid);
-                queue.cancelled.remove(&rid);
-            }
+            self.queue.with(|queue| queue.forget(rid));
         }
     }
 
@@ -279,18 +245,7 @@ impl RenderService {
     /// finished --- an unknown `rid` is simply ignored, because the caller
     /// cannot know whether its reply is already on the way.
     pub fn cancel(&self, rid: u64) {
-        if rid == 0 {
-            return;
-        }
-        let mut queue = lock(&self.queue);
-        match &queue.inflight {
-            Some((inflight, token)) if *inflight == rid => token.cancel(),
-            _ => {
-                if queue.queued.contains(&rid) {
-                    queue.cancelled.insert(rid);
-                }
-            }
-        }
+        self.queue.with(|queue| queue.withdraw(rid));
     }
 }
 
@@ -364,44 +319,22 @@ fn open_document(
 /// Claims a request, renders it, and releases it --- or drops it if it was
 /// withdrawn while queued.
 ///
-/// The claim and the release are the only places `inflight` is written, and both
-/// happen under the queue lock while nothing else holds it, so a withdrawal
-/// arriving at any instant either finds the request queued (and marks it) or
-/// finds it in flight (and cancels it).
+/// The claim is what makes a withdrawal unambiguous: it moves the request from
+/// queued to in flight under one lock, so a withdrawal arriving at any instant
+/// either finds it queued and marks it, or finds it running and cancels it.
 fn run_tile(
     bindings: Bindings,
     docs: &[RawDocument],
-    queue: &Mutex<Queue>,
+    queue: &SharedQueue,
     req: &TileRequest,
 ) -> Result<TileOutcome, String> {
-    let token = {
-        let mut queue = lock(queue);
-        queue.queued.remove(&req.rid);
-        if queue.cancelled.remove(&req.rid) {
-            // Withdrawn before it ever started: the whole render is saved, not
-            // merely interrupted. On a page costing a second a tile this is the
-            // larger of the two savings.
-            return Ok(TileOutcome::Abandoned);
-        }
-        let token = CancelToken::new();
-        if req.rid != 0 {
-            queue.inflight = Some((req.rid, token.clone()));
-        }
-        token
+    let token = match queue.with(|queue| queue.claim(req.rid)) {
+        Claim::Start(token) => token,
+        Claim::Withdrawn => return Ok(TileOutcome::Abandoned),
     };
 
     let result = render_tile(bindings, docs, req, &token);
-
-    if req.rid != 0 {
-        let mut queue = lock(queue);
-        // Only clear our own claim: a reply is delivered before the next job is
-        // dequeued, so this cannot be someone else's, but the check costs
-        // nothing and stops a future change from silently clearing one.
-        if matches!(&queue.inflight, Some((rid, _)) if *rid == req.rid) {
-            queue.inflight = None;
-        }
-    }
-
+    queue.with(|queue| queue.release(req.rid));
     result
 }
 

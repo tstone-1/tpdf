@@ -24,10 +24,10 @@ Every gate runs even when an earlier one fails. Locally that is what you want:
 one pass tells you everything that is wrong, rather than making you re-run to
 discover the next problem. The exit code is still non-zero if any failed.
 
-Note `cargo test --locked` currently runs no tests. It is a gate anyway -- it
-fails on a `Cargo.lock` that was not committed after a `cargo update`, and it
-compiles the test targets, which is where `--all-targets` clippy findings and
-broken test-only code show up.
+`cargo test --locked` runs the unit tests and is also a lockfile gate: it fails
+on a `Cargo.lock` that was not committed after a `cargo update`, and it compiles
+the test targets, which is where `--all-targets` clippy findings and broken
+test-only code show up.
 """
 
 import argparse

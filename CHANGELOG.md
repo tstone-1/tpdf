@@ -72,6 +72,12 @@ needs the worker pool and the progressive render API.
   the safe path, poll frequency and the latency it bounds, and what a cancelled bitmap
   actually contains. Its `identity` mode fails a run in which nothing paused, so a passing
   result cannot be one that never exercised pausing.
+- **The first tests a change can break** --- 26 of them, over the request-withdrawal state
+  machine (`src-tauri/src/queue.rs`, extracted from `render.rs` so the orderings can be
+  driven directly instead of provoked) and the `tile://` URL parser. Each was verified by
+  mutating the code it covers and confirming the expected test failed; that pass found a
+  guard no mutation could break, now deleted, and a test that asserted the wrong half of the
+  property it was named for.
 - The scroll benchmark drains a variant's outstanding requests before the next one starts,
   and reports the tiles each round withdrew beside the ones it threw away. Without the
   drain the two variants share a render queue: whichever ran first measured better, and
