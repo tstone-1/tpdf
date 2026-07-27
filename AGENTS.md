@@ -836,6 +836,59 @@ paused. And a cancelled render leaves a **genuine partial composite** in the cal
 bitmap rather than an untouched buffer --- PDFium composites as it goes --- so the buffer
 is not safe to reuse on the assumption that a cancelled render wrote nothing.
 
+### `FPDF_LoadPage` re-parses every time, and on a complex page that is 44 ms
+
+PDFium does not cache a loaded page. Measured 2026-07-27 (`progressive-probe --mode
+pageload`), loading page 0 of an already-opened document, repeatedly:
+
+| corpus | per load |
+|---|---|
+| `text-heavy` | 0.18 ms |
+| `vector-heavy` (A0) | **44.3 ms** |
+
+The cost tracks page complexity, because what is being repeated is the content-stream
+parse. So "load the page, render a tile, drop the page" --- which is what `render.rs` does
+today, once per tile request --- charges a screenful of six tiles **266 ms of pure
+re-parsing** on the one document where latency is already the problem, and nothing at all
+on the corpus most likely to be used for testing. That asymmetry is why it went unnoticed:
+the cheap page hides it perfectly.
+
+`RawDocument` now keeps a small bounded cache of page *handles*. Handles rather than
+`RawPage` values because a `RawPage` borrows its document, so storing one inside the
+document would be self-referential --- whereas a handle is a plain pointer, copied out
+under a short borrow, with the document closing every one it holds on drop. Note the cache
+bound (4) is untuned; it was picked to be obviously safe.
+
+Two things to keep: **evict outside the `RefCell` borrow**, or a PDFium call can re-enter
+it and panic. And keep `evict_page` even though nothing in the viewer needs it yet --- it
+is what lets the probe measure the uncached path, and a cache whose value cannot be
+re-measured after a bump is a cache taken on faith.
+
+### `Instant` on Apple Silicon ticks at 41.67 ns, so "elapsed == 0" is reachable
+
+A latent bug, and worth the entry because the shape generalises. A pause deadline was
+stored as nanoseconds-since-origin in an `AtomicU64`, with **0 meaning "no deadline"**.
+Arming a *zero-length* slice a few nanoseconds after taking the origin should give a
+deadline of a few nanoseconds --- but `Instant` here is backed by the 24 MHz timebase, so
+its resolution is about **41.67 ns** and two reads that close together return the same
+value. `origin.elapsed()` was genuinely 0, collided with the sentinel, and turned "pause at
+the first opportunity" into "run to completion".
+
+It was intermittent, because whether the two reads land in the same tick depends on what
+the caller did between them: adding the page cache changed the timing enough to expose it,
+having been silent until then. The fix is `u64::MAX` as the sentinel --- a nanosecond count
+that cannot occur, rather than one that merely seems unlikely.
+
+**A "no value" sentinel drawn from the value's own range is a bug waiting for the right
+timing.** Zero is the worst possible choice for an elapsed-time field, because zero elapsed
+time is exactly what a fast path produces.
+
+What caught it was not a test of the sentinel. It was the probe's rule that a sliced render
+reporting `resumes: 0` **fails** --- the control that exists so a "pausing is lossless"
+result cannot be produced by never pausing. Without it, slicing would have silently stopped
+working and every identity check would still have passed, because a render that never
+pauses is byte-identical to one that never had to.
+
 ### Three similarity metrics in a row, each unable to see its own failure
 
 Characterising a cancelled tile went through three metrics before one behaved, and all

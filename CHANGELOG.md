@@ -51,6 +51,10 @@ needs the worker pool and the progressive render API.
   cannot reach it. A render can now be abandoned from another thread in 0.25--24 ms where
   it previously ran to completion over 6.3 s. Uncancelled output is byte-identical to the
   existing path. Not yet wired into the viewer --- see `docs/PLAN.md` §Phase 1.
+- **A page-handle cache on `RawDocument`.** `FPDF_LoadPage` re-parses the page on every
+  call --- PDFium caches nothing --- which is 0.18 ms on the text corpus and **44.3 ms on
+  the A0 sheet**. Loading per tile request, as `render.rs` still does, costs a six-tile
+  screenful 266 ms of re-parsing on the document that is already too slow.
 - `src-tauri/src/bin/progressive_probe.rs` --- measures the above: pixel identity against
   the safe path, poll frequency and the latency it bounds, and what a cancelled bitmap
   actually contains. Its `identity` mode fails a run in which nothing paused, so a passing
@@ -77,6 +81,11 @@ needs the worker pool and the progressive render API.
 
 ### Fixed
 
+- **A zero-length render slice ran to completion instead of pausing immediately.** The
+  pause deadline used 0 as its "no deadline" sentinel, and `Instant` on Apple Silicon ticks
+  at 41.67 ns --- so arming a zero slice right after taking the origin produced a genuinely
+  zero elapsed time and hit the sentinel. Intermittent, and invisible to every identity
+  check, because a render that never pauses is byte-identical to one that never had to.
 - The PDFium install path assumed the macOS archive layout. Windows ships the loadable
   DLL at `bin/pdfium.dll` and only an import library in `lib/`. The fetch script now knows
   both; `pdfium_library_dir()` in `src-tauri/src/lib.rs` still does not, and is recorded

@@ -1333,6 +1333,22 @@ PDFium's own work divides, so the slice picks *which* of them we stop at and can
 more. Latency budgets have to be written against PDFium's spacing, not against a number we
 choose.
 
+Two things surfaced while building it, both bigger than the thing being built.
+
+**`FPDF_LoadPage` is not cached by PDFium**, and re-parses the page on every call: 0.18 ms
+on the text corpus, **44.3 ms on the A0 sheet**. `render.rs` loads a page per tile request,
+so a screenful of six tiles pays 266 ms of pure re-parsing on the document that is already
+too slow — and nothing measurable on the corpus most likely to be used for testing.
+`RawDocument` now caches page handles.
+
+**A zero-valued sentinel collided with a genuinely zero elapsed time.** `Instant` on this
+hardware ticks at 41.67 ns, so arming a zero-length slice immediately after taking the
+origin produced `elapsed == 0`, which the pause state read as "no deadline". Slicing
+silently stopped working. It was caught by the probe's rule that a sliced render reporting
+`resumes: 0` fails — not by any test of the sentinel, and not by the identity checks, which
+all still passed because a render that never pauses is byte-identical to one that never
+had to.
+
 Three things are known and not yet done, and the next increment is the first of them:
 
 - **Nothing supersedes anything yet.** The mechanism exists; `render.rs` still runs one

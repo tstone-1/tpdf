@@ -10,7 +10,7 @@
 //! It exercises `tpdf_lib::progressive` rather than a copy of it, so what is
 //! measured here is what ships.
 //!
-//! Three questions, three modes:
+//! Four questions, four modes:
 //!
 //! * `--mode identity` --- does pausing change the pixels? Renders the same tile
 //!   through the safe all-or-nothing path and through the progressive path, both
@@ -28,12 +28,17 @@
 //!   leaves nothing behind is not obviously better than one that finishes, so the
 //!   bitmap is characterised as well as the latency.
 //!
-//! On the similarity columns, and why there are three of them: each was added
-//! because the previous one could not tell a real failure from a real success.
-//! `white`/`zero` exist because "fraction of pixels with ink" reports an
-//! untouched all-zero buffer as 100% ink. `matching` exists to say how much of
-//! the tile is final. `mean err` exists because `matching` reads 0% on a dense
-//! page even when the partial is visibly most of the way there. **All three
+//! * `--mode pageload` --- prices `RawDocument`'s page cache against loading per
+//!   request, interleaved. `FPDF_LoadPage` re-parses the page every call, so the
+//!   answer is a function of page complexity: 0.18 ms on the text corpus and
+//!   44.3 ms on the A0 sheet.
+//!
+//! On the `cancel` mode's similarity columns, and why there are three of them:
+//! each was added because the previous one could not tell a real failure from a
+//! real success. `white`/`zero` exist because "fraction of pixels with ink"
+//! reports an untouched all-zero buffer as 100% ink. `matching` exists to say how
+//! much of the tile is final. `mean err` exists because `matching` reads 0% on a
+//! dense page even when the partial is visibly most of the way there. **All three
 //! saturate on the A0 fixture**, which is antialiased random linework covering
 //! every pixel --- so it can prove that a partial composite exists, and cannot
 //! say whether one is worth showing. Use `--dump` and look.
@@ -44,7 +49,7 @@
 //!
 //! Usage:
 //!   progressive-probe <file.pdf> [--page N] [--scale F] [--tile N]
-//!                     [--mode identity|poll|cancel] [--rounds N]
+//!                     [--mode identity|poll|cancel|pageload] [--rounds N]
 //!                     [--slices 0,1,4,16] [--after 50] [--dump DIR] [--lib DIR]
 
 use std::path::{Path, PathBuf};
@@ -60,6 +65,7 @@ enum Mode {
     Identity,
     Poll,
     Cancel,
+    PageLoad,
 }
 
 struct Args {
@@ -124,6 +130,7 @@ fn main() {
             Mode::Identity => "identity",
             Mode::Poll => "poll",
             Mode::Cancel => "cancel",
+            Mode::PageLoad => "pageload",
         }
     );
     println!();
@@ -147,6 +154,7 @@ fn main() {
         Mode::Identity => identity(pdfium, raw, &page, &args),
         Mode::Poll => poll(raw, &page, &args),
         Mode::Cancel => cancel(raw, &page, &args),
+        Mode::PageLoad => pageload(raw, &document, &args),
     };
 
     println!();
@@ -569,6 +577,90 @@ fn composition(pixels: &[u8]) -> (f64, f64) {
 }
 
 // ---------------------------------------------------------------------------
+// pageload: is holding a page worth the lifetime trouble?
+// ---------------------------------------------------------------------------
+
+/// Prices `RawDocument`'s page cache against loading per request.
+///
+/// This decided a design question rather than answering a curiosity, and it stays
+/// here so the answer can be re-checked after a PDFium bump. `FPDF_LoadPage`
+/// re-parses the page every call --- PDFium caches nothing --- so the cost is a
+/// function of page complexity, and on the one document where latency is already
+/// the problem it is enormous.
+///
+/// Variants are interleaved so drift cannot masquerade as a difference, and the
+/// uncached variant evicts first, which is the only reason `evict_page` exists.
+fn pageload(_raw: progressive::Bindings, document: &RawDocument, args: &Args) -> bool {
+    let reps = args.rounds.max(20);
+    let mut cached = Vec::with_capacity(reps);
+    let mut uncached = Vec::with_capacity(reps);
+
+    for i in 0..reps {
+        // A,B,A,B within each round rather than block after block.
+        for uncached_variant in [i % 2 == 0, i % 2 != 0] {
+            if uncached_variant {
+                document.evict_page(args.page);
+            }
+
+            let t0 = Instant::now();
+            let page = match document.page(args.page) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[FAIL] {e}");
+                    return false;
+                }
+            };
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+            // Read something off the handle, so nothing can be optimised away
+            // and the page is proven usable rather than merely non-null.
+            let width = page.width_pt();
+            if width <= 0.0 {
+                eprintln!("[FAIL] page reports a width of {width}");
+                return false;
+            }
+
+            if uncached_variant {
+                uncached.push(ms);
+            } else {
+                cached.push(ms);
+            }
+        }
+    }
+
+    let summarise = |label: &str, mut v: Vec<f64>| -> f64 {
+        v.sort_by(f64::total_cmp);
+        let mean = v.iter().sum::<f64>() / v.len() as f64;
+        println!(
+            "  {label:<10} median {:>9.4} ms   mean {:>9.4} ms   worst {:>9.4} ms",
+            v[v.len() / 2],
+            mean,
+            v[v.len() - 1]
+        );
+        mean
+    };
+
+    println!("page {} lookup, {reps} of each, interleaved:", args.page);
+    let cached_mean = summarise("cached", cached);
+    let uncached_mean = summarise("uncached", uncached);
+    println!();
+    println!(
+        "  the cache saves {:.4} ms per tile request on this page ({:.0}x)",
+        uncached_mean - cached_mean,
+        uncached_mean / cached_mean.max(f64::MIN_POSITIVE)
+    );
+
+    // Not a pass/fail on speed -- a page whose load is genuinely cheap is not a
+    // defect. What must hold is that the cache actually caches.
+    if cached_mean > uncached_mean {
+        println!("  [FAIL] the cached path is slower, so the cache is not being hit");
+        return false;
+    }
+
+    true
+}
+
+// ---------------------------------------------------------------------------
 // Shared
 // ---------------------------------------------------------------------------
 
@@ -687,6 +779,7 @@ fn parse_args() -> Args {
                     "identity" => Mode::Identity,
                     "poll" => Mode::Poll,
                     "cancel" => Mode::Cancel,
+                    "pageload" => Mode::PageLoad,
                     other => panic!("unknown mode: {other}"),
                 }
             }
