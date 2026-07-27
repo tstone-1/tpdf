@@ -1296,6 +1296,59 @@ divergence, which then has to be mapped back onto the boxes. Matching over the c
 is no mapping left to get wrong. The shorter route is not cheaper; it is the same work with
 the failure moved somewhere no test would look.
 
+### A page carries `/Rotate`, and PDFium answers in two coordinate systems at once
+
+Nothing in the corpus had one until 2026-07-27, and `/Rotate 90` is what a scanner emits.
+For such a page PDFium reports:
+
+* `FPDF_GetPageWidthF` / `GetPageHeightF` --- and `FPDF_GetPageSizeByIndexF`, measured, which
+  is not obvious since it reads the page dictionary rather than the loaded page --- give the
+  size **after** rotation, and a render comes out rotated to match. Layout and tiles were
+  already right.
+* `FPDFText_GetCharBox` and `FPDFDest_GetLocationInPage` give coordinates in the page's own
+  **unrotated** space.
+
+So the obvious flip, `height_pt - y` against the reported height, is correct at `/Rotate 0`
+and wrong at every other value. Measured with `text-probe --mode align` on
+`testdata/rotated.pdf`, per page: **100% of character boxes landed on ink at 0 and 0.0% at
+90, 180 and 270.** Not approximately wrong --- every selection, every search highlight and
+the whole screen-reader reading order was somewhere else entirely, in tidy rectangles, on
+exactly the documents a scanner produces.
+
+Three things worth carrying:
+
+- **One mapping, two callers.** `text::to_device` turns a box; `outline.rs` places a
+  destination by handing it a degenerate one. A second implementation of the turn is a
+  second place to get it wrong, and the destination case is the one nobody would test.
+- **A quarter turn makes the display's vertical axis the page's horizontal one**, so a
+  destination that names no `x` cannot be placed at all. That path returns "no coordinate",
+  which is what `/Fit` means anyway --- and it needed a fixture entry (`/XYZ null 600 0`) built
+  for it, because without one the guard could be deleted and nothing would notice.
+- **Reading the rotation costs a page load.** `FPDFPage_GetRotation` needs an `FPDF_PAGE`,
+  while everything else in the outline walk reads the page dictionary. Measured on
+  `outline-simple`: the walk went **0.17 ms -> 7.5 ms** (45.7 ms on a cold first run), about
+  1 ms per distinct page named with coordinates. A three-hundred-entry table of contents is
+  therefore a third of a second of the render thread, which is why `App.svelte` now waits for
+  the first screen before asking for the outline at all.
+
+### A line-grouping rule assumes an axis, and the axis is not always vertical
+
+The consequence of the entry above, found the same day and worth its own note because the
+first fix did not imply the second. Characters are grouped into lines by **vertical**
+overlap --- which is right for a page read left to right, and on a `/Rotate 90` page puts
+every character on a line of its own. The screen-reader layer then reads the page **letter
+by letter**, and the selection highlight becomes one rectangle per glyph.
+
+Every text assertion still passed. `textContent` is identical either way; only the block
+structure differs, and the check that noticed compared a page's accessible text against an
+independent extraction and got 877 characters against 534 --- the difference being the spaces
+introduced by joining one block per character.
+
+So the grouping takes the axis from the page's rotation. The honest limit, stated because it
+is easy to believe otherwise: this fixes the *whole-page* case only. A rotated **run** inside
+an upright page --- a sideways table header --- is still split character by character, as it
+was before.
+
 ### A dense page of uniform lines cannot detect a y-flip
 
 Character boxes come in page space (y up, origin bottom-left) and everything downstream wants
@@ -1577,6 +1630,7 @@ python3 testdata/make_vector_pdf.py testdata/vector-multi.pdf 200000 12  # Phase
 uv run --with pyhanko --with cryptography \
     testdata/make_incremental_pdf.py testdata                 # incr-*.pdf, spike 0.6
 python3 testdata/make_outline_pdf.py testdata                 # outline-*.pdf, Phase 1
+python3 testdata/make_rotated_pdf.py testdata                 # rotated*.pdf, Phase 1
 ```
 
 `make_incremental_pdf.py` writes about **550 MB** — the scan fixtures exist so that
@@ -1620,6 +1674,16 @@ depends on a library's parsing.
 Its hostile fixture is also verified by an independent oracle: `qpdf --check` reports
 *"loop detected in /Outlines tree"* against it. A fixture built to be cyclic that no other
 implementation agrees is cyclic is a fixture that might simply be wrong.
+
+`make_rotated_pdf.py` writes two files and they are not interchangeable. `rotated.pdf` has
+one page per `/Rotate` value, for `text-probe --mode align`, which takes a `--page` and needs
+all four. `rotated-90.pdf` has every page at 90 because the viewer cannot use the first one:
+its scroller lays every page out at page 1's size, so a document alternating portrait and
+landscape is drawn wrong for reasons that have nothing to do with rotation, and a check run
+on it would be measuring that instead. The second also carries an outline, which is what pins
+the *destination* half of the same conversion --- including one entry with `/XYZ null 600 0`,
+which exists so that the "this destination names no horizontal coordinate" path has an input
+that reaches it.
 
 `vector-multi.pdf` is twelve A0 pages sharing **one** content stream object, which is the
 point rather than a shortcut: PDFium re-parses a page on every `FPDF_LoadPage` and rebuilds

@@ -12,17 +12,20 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { linesOf, textOf, type PageText } from "./text";
+import { linesOf, linesRunSideways, textOf, type PageText } from "./text";
 
 /** Builds a page from `(character, [left, top, right, bottom])` pairs. */
-function page(chars: [string, [number, number, number, number] | null][]): PageText {
+function page(
+  chars: [string, [number, number, number, number] | null][],
+  quarter_turns = 0,
+): PageText {
   const codes: number[] = [];
   const boxes: number[] = [];
   for (const [char, box] of chars) {
     codes.push(char.codePointAt(0) ?? 0);
     boxes.push(...(box ?? [0, 0, 0, 0]));
   }
-  return { codes, boxes, width_pt: 100, height_pt: 100, extract_ms: 0 };
+  return { codes, boxes, width_pt: 100, height_pt: 100, quarter_turns, extract_ms: 0 };
 }
 
 /** Two words on one line, then two on the line below it. */
@@ -118,5 +121,75 @@ describe("linesOf", () => {
 
   it("has no lines on a page with no characters", () => {
     expect(linesOf(page([]))).toEqual([]);
+  });
+});
+
+describe("linesOf on a rotated page", () => {
+  /**
+   * The same two lines, turned a quarter clockwise.
+   *
+   * Text runs *down* the screen and successive lines advance sideways, which is
+   * what `/Rotate 90` displays --- and what a scanner emits. Grouping by
+   * vertical overlap puts each of these five characters on a line of its own,
+   * so a screen reader reads the page letter by letter. It did.
+   */
+  function turned(): PageText {
+    return page(
+      [
+        ["a", [10, 10, 22, 20]],
+        ["b", [10, 20, 22, 30]],
+        ["c", [10, 30, 22, 40]],
+        ["d", [30, 10, 42, 20]],
+        ["e", [30, 20, 42, 30]],
+      ],
+      1,
+    );
+  }
+
+  it("knows which axis separates lines", () => {
+    expect(linesRunSideways(turned())).toBe(true);
+    expect(linesRunSideways(twoLines())).toBe(false);
+  });
+
+  it("groups characters that run down the screen into one line", () => {
+    expect(linesOf(turned())).toEqual([
+      { from: 0, to: 3 },
+      { from: 3, to: 5 },
+    ]);
+  });
+
+  it("does not group the same boxes when the page is upright", () => {
+    // The control, and the reason this fixture is a quarter turn of the other
+    // rather than a fresh one: the *only* difference between them is the
+    // rotation, so a `linesOf` that ignored it would give both the same answer.
+    // Read as an upright page these five characters are five separate lines.
+    const upright = { ...turned(), quarter_turns: 0 };
+    expect(linesOf(upright)).toEqual([
+      { from: 0, to: 1 },
+      { from: 1, to: 2 },
+      { from: 2, to: 3 },
+      { from: 3, to: 4 },
+      { from: 4, to: 5 },
+    ]);
+  });
+
+  it("covers a rotated page exactly too", () => {
+    const source = turned();
+    const rebuilt = linesOf(source)
+      .map((line) => textOf(source, line.from, line.to))
+      .join("");
+    expect(rebuilt).toBe(textOf(source, 0, source.codes.length));
+  });
+
+  it("treats a half turn as upright, since lines still stack vertically", () => {
+    // 180 degrees reverses the reading order but not the axis, so the vertical
+    // rule is still the right one. Written as "any rotation is sideways" this
+    // is what fails.
+    expect(linesRunSideways({ ...twoLines(), quarter_turns: 2 })).toBe(false);
+    expect(linesOf({ ...twoLines(), quarter_turns: 2 })).toEqual(linesOf(twoLines()));
+  });
+
+  it("treats a three-quarter turn as sideways", () => {
+    expect(linesRunSideways({ ...turned(), quarter_turns: 3 })).toBe(true);
   });
 });

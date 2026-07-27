@@ -165,7 +165,10 @@ struct Walk<'doc> {
     document: FPDF_DOCUMENT,
     page_count: u32,
     seen: HashSet<usize>,
-    heights: HashMap<u32, f32>,
+    sizes: HashMap<u32, (f32, f32)>,
+    /// Quarter-turns per page, filled only for pages a destination names with
+    /// coordinates. See [`Walk::turns_of`].
+    turns: HashMap<u32, u8>,
     limits: Limits,
     total: usize,
     _borrow: &'doc RawDocument,
@@ -179,7 +182,8 @@ pub fn read(document: &RawDocument) -> Outline {
         document: document.handle(),
         page_count: document.page_count(),
         seen: HashSet::new(),
-        heights: HashMap::new(),
+        sizes: HashMap::new(),
+        turns: HashMap::new(),
         limits: Limits::default(),
         total: 0,
         _borrow: document,
@@ -368,10 +372,22 @@ impl Walk<'_> {
     /// The `/XYZ` y coordinate of a destination, flipped into device space.
     ///
     /// PDFium reports it in page space --- y upwards from the bottom-left ---
-    /// and every consumer downstream works from the page's top edge, the same
-    /// convention and the same flip as `text.rs`. Getting it backwards does not
-    /// look like a bug: it still scrolls to the right *page*, just to the
-    /// mirror image of the right place on it.
+    /// and every consumer downstream works from the page's top edge. Getting it
+    /// backwards does not look like a bug: it still scrolls to the right *page*,
+    /// just to the mirror image of the right place on it.
+    ///
+    /// It is the same conversion `text.rs` does for character boxes and it goes
+    /// through the same function, which is the point: a destination on a page
+    /// carrying `/Rotate 90` is reported in the page's own **unrotated** space
+    /// while `FPDF_GetPageSizeByIndexF` reports the **displayed** size --- so the
+    /// naive flip is wrong there in exactly the way it was wrong for character
+    /// boxes, and a second implementation of the turn would be a second place to
+    /// get it wrong.
+    ///
+    /// Note what that costs: for a quarter or three-quarter turn the display's
+    /// vertical axis is the page's *horizontal* one, so a destination that names
+    /// no x cannot be placed at all and this returns `None` --- the page's top,
+    /// which is what a destination with no coordinate means anyway.
     fn top_of(&mut self, dest: FPDF_DEST, page: u32) -> Option<f32> {
         let (mut has_x, mut has_y, mut has_zoom) = (0, 0, 0);
         let (mut x, mut y, mut zoom) = (0f32, 0f32, 0f32);
@@ -392,20 +408,61 @@ impl Walk<'_> {
             return None;
         }
 
-        let height = self.height_of(page)?;
-        // Clamped because y is read from the file: a destination at y = -1e9
-        // would otherwise scroll to a place the document does not have.
-        Some((height - y).clamp(0.0, height))
+        let (width, height) = self.size_of(page)?;
+        let turns = self.turns_of(page);
+        if turns % 2 == 1 && has_x == 0 {
+            return None;
+        }
+
+        // A degenerate box, so the one mapping in `text.rs` places this too. Its
+        // `top` is the display's vertical coordinate under every turn.
+        let placed = crate::text::to_device(
+            turns,
+            width,
+            height,
+            [x as f64, y as f64, x as f64, y as f64],
+        );
+        // Clamped because the coordinates are read from the file: a destination
+        // at y = -1e9 would otherwise scroll to a place the document does not
+        // have.
+        Some(placed[1].clamp(0.0, height))
     }
 
-    /// A page's height in points, cached for the walk.
+    /// Quarter-turns a page is displayed rotated by, cached.
+    ///
+    /// This is the one place in the walk that loads a page, and it is why it is
+    /// asked for lazily: `FPDFPage_GetRotation` needs an `FPDF_PAGE`, while
+    /// everything else here reads the page dictionary through
+    /// `FPDF_GetPageSizeByIndexF` and never pays a load at all. Only a
+    /// destination that actually names coordinates reaches this, and the answer
+    /// is cached per page --- so an outline of headings all pointing at the top
+    /// of their page still loads nothing.
+    ///
+    /// A page that cannot be loaded is treated as unrotated, which is what it
+    /// was before this existed.
+    fn turns_of(&mut self, page: u32) -> u8 {
+        if let Some(&turns) = self.turns.get(&page) {
+            return turns;
+        }
+        let turns = self
+            ._borrow
+            .page(page)
+            .map(|loaded| loaded.quarter_turns())
+            .unwrap_or(0);
+        self.turns.insert(page, turns);
+        turns
+    }
+
+    /// A page's displayed size in points, cached for the walk.
     ///
     /// `FPDF_GetPageSizeByIndexF` reads the page dictionary's boxes rather than
     /// loading the page, which matters because an outline can name hundreds of
-    /// pages and `FPDF_LoadPage` costs 44 ms apiece on a complex one.
-    fn height_of(&mut self, page: u32) -> Option<f32> {
-        if let Some(&height) = self.heights.get(&page) {
-            return Some(height);
+    /// pages and `FPDF_LoadPage` costs 44 ms apiece on a complex one. Measured
+    /// 2026-07-27: it reports the size **after** `/Rotate`, the same as
+    /// `FPDF_GetPageWidthF` --- 792x612 for a rotated letter page, not 612x792.
+    fn size_of(&mut self, page: u32) -> Option<(f32, f32)> {
+        if let Some(&size) = self.sizes.get(&page) {
+            return Some(size);
         }
 
         let mut size = FS_SIZEF {
@@ -421,12 +478,17 @@ impl Walk<'_> {
         // `is_finite` as well as positive: a MediaBox read from the file can be
         // NaN, and NaN passes `> 0.0` being false either way while poisoning
         // every subtraction downstream.
-        if ok == 0 || !size.height.is_finite() || size.height <= 0.0 {
+        if ok == 0
+            || !size.height.is_finite()
+            || size.height <= 0.0
+            || !size.width.is_finite()
+            || size.width <= 0.0
+        {
             return None;
         }
 
-        self.heights.insert(page, size.height);
-        Some(size.height)
+        self.sizes.insert(page, (size.width, size.height));
+        Some((size.width, size.height))
     }
 }
 

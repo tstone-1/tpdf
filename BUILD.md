@@ -101,6 +101,7 @@ python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf
 python3 testdata/make_vector_pdf.py testdata/vector-multi.pdf 200000 12
 uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testdata
 python3 testdata/make_outline_pdf.py testdata
+python3 testdata/make_rotated_pdf.py testdata
 ```
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
@@ -260,7 +261,7 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all five corpora. Every run reports the same **63 check names**; what differs is how
+Run all six corpora. Every run reports the same **63 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
@@ -271,10 +272,25 @@ bug this arrangement exists to catch:
 | `outline-hostile.pdf` | 58 | 5 | the only one with a `/Launch` entry to refuse |
 | `vector-heavy.pdf` | 34 | 29 | one page, no extractable text |
 | `vector-multi.pdf` | 41 | 22 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 52 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
 
 `vector-heavy` skipping most of them is the expected output there, not a problem. The one
 search check it does run is the useful one for that document: that the viewer says there is
 no text to search rather than reporting no matches.
+
+`rotated-90` is the only document where the text layer's coordinate turn is exercised at all,
+and the defect it found was total rather than subtle --- see `docs/PLAN.md`. Its selection
+ordering check skips, with the reason: on a page whose lines advance sideways a horizontal
+drag crosses all of them, so the comparison is meaningless. What checks that mapping properly
+is the probe, per rotation:
+
+```
+for page in 0 1 2 3; do
+    src-tauri/target/release/text-probe testdata/rotated.pdf --page $page --mode align
+done
+src-tauri/target/release/outline-probe testdata/rotated-90.pdf --mode check \
+    --manifest testdata/rotated-manifest.json
+```
 
 `vector-multi` earns its place with three checks and nothing else: a thumbnail costs about a
 millisecond on a text page and a second and a half on an A0 sheet, so it is the only corpus

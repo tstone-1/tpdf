@@ -29,7 +29,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
+use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument, RawPage};
 use tpdf_lib::text;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -232,6 +232,44 @@ const HIT_THRESHOLD: f32 = 0.95;
 /// declared unable to tell the two apart on this page.
 const CONTROL_CEILING: f32 = 0.50;
 
+/// The page's characters mapped as if `/Rotate` had been read as `turns`.
+///
+/// The un-flipped control below asks whether the *flip* could have been wrong on
+/// this page. On a page carrying `/Rotate` that is no longer the same question
+/// as whether the *turn* could have been --- `FPDFText_GetCharBox` reports the
+/// page's own unrotated space while everything else reports the displayed one,
+/// so reading the rotation wrong is its own failure with its own control.
+///
+/// Deliberately re-maps from the raw boxes rather than un-mapping the extracted
+/// ones: a control derived by inverting the code under test agrees with it by
+/// construction.
+fn remapped(page: &RawPage<'_>, turns: u8) -> Result<text::PageText, String> {
+    let text_page = text::RawTextPage::load(page)?;
+    let count = text_page.count();
+    let (width_pt, height_pt) = (page.width_pt(), page.height_pt());
+
+    let mut codes = Vec::with_capacity(count as usize);
+    let mut boxes = Vec::with_capacity(count as usize * 4);
+    for index in 0..count {
+        codes.push(text_page.code(index));
+        match text_page.char_box(index) {
+            Some(quad) => {
+                boxes.extend_from_slice(&text::to_device(turns, width_pt, height_pt, quad))
+            }
+            None => boxes.extend_from_slice(&[0.0; 4]),
+        }
+    }
+
+    Ok(text::PageText {
+        codes,
+        boxes,
+        height_pt,
+        width_pt,
+        quarter_turns: turns,
+        extract_ms: 0.0,
+    })
+}
+
 fn align(
     args: &Args,
     document: &RawDocument,
@@ -302,7 +340,31 @@ fn align(
         );
     }
 
-    Ok(agrees && discriminates)
+    // And the control the rotation needs, which the one above does not provide:
+    // reading /Rotate wrong must not also land on ink. Before this mapping
+    // handled rotation at all, the check above read 0.0% on every rotated page
+    // -- so it does catch the defect; what this adds is the evidence that it
+    // could have, on the page in front of it.
+    let turns = page.quarter_turns();
+    let mut turn_discriminates = true;
+    for other in 0..4u8 {
+        if other == turns {
+            continue;
+        }
+        let (rate, _) = hit_rate(&remapped(&page, other)?, pixels, w, h, args.scale, true);
+        let ok = rate <= CONTROL_CEILING;
+        turn_discriminates &= ok;
+        println!(
+            "{} reading /Rotate as {:>3} does not   {:.1}%, must stay under {:.0}%",
+            if ok { "[OK]  " } else { "[FAIL]" },
+            other as u32 * 90,
+            rate * 100.0,
+            CONTROL_CEILING * 100.0,
+        );
+    }
+    println!("       this page is /Rotate {}", turns as u32 * 90);
+
+    Ok(agrees && discriminates && turn_discriminates)
 }
 
 fn extract(args: &Args, document: &RawDocument) -> Result<bool, String> {

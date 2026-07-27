@@ -1988,12 +1988,86 @@ reading them, and one of them before it was ever run:
   rows on screen. The defect makes `borrowCount > 0` pass *harder*; the upper bound
   `borrowCount <= renderedCount` is what sees it.
 
-All five corpora now report the same **63 check names**: `outline-simple` 58/58,
+All five corpora then reported the same **63 check names**: `outline-simple` 58/58,
 `outline-hostile` 58/58, `text-heavy` 52/52, `vector-heavy` 34/34, `vector-multi` 41/41,
-the differences being skips with their reasons.
+the differences being skips with their reasons. A sixth arrives in the entry below.
 
 Not done: reordering pages by dragging a thumbnail (that is Phase 2, and needs the
 editing model), a resizable panel, and any persistence of which tab was open.
+
+#### A page that says `/Rotate`, and the two things that were wrong on it — 2026-07-27
+
+Not a feature. A defect, found by building the fixture that nothing in the corpus had:
+`/Rotate 90` is what a scanner emits, and no document here carried one.
+
+`text-probe --mode align` renders a page and asks, per character, whether its mapped box
+covers ink. On the new four-page fixture, before anything was changed:
+
+| page | character boxes on ink |
+|---|---|
+| `/Rotate 0` | **100%** of 439 |
+| `/Rotate 90` | **0.0%** |
+| `/Rotate 180` | **0.0%** |
+| `/Rotate 270` | **0.0%** |
+
+Not approximately wrong. Every selection, every search highlight and the whole
+screen-reader reading order was somewhere else entirely, in tidy rectangles, on exactly the
+documents a scanner produces.
+
+**The cause is that PDFium answers in two coordinate systems at once.**
+`FPDF_GetPageWidthF`/`GetPageHeightF` report the size *after* rotation and a render comes
+out rotated to match — so layout and tiles were already right. `FPDFText_GetCharBox` and
+`FPDFDest_GetLocationInPage` report the page's own *unrotated* space. The flip
+`height_pt - y` against the reported height is therefore correct at 0 and wrong everywhere
+else. `FPDF_GetPageSizeByIndexF` was measured rather than assumed and belongs to the first
+group, which is not obvious given it reads the page dictionary rather than the loaded page.
+
+The turn is now one function, `text::to_device`, with two callers: character boxes, and the
+outline's destinations by way of a degenerate box. A second implementation would be a second
+place to get it wrong, and the destination is the half nobody would test.
+
+**The probe gained the control the fix needs.** Its existing one asks whether the *flip*
+could have been wrong on this page; on a rotated page that is a different question from
+whether the *turn* could have been. It now also reports what each of the three wrong
+rotations scores, and fails if any reaches the ceiling. With the rotation deliberately never
+read, the run says `reading /Rotate as 90 does not — 100.0%` — the control naming the
+mistake outright.
+
+**The fix exposed a second defect, which the first did not imply.** Characters are grouped
+into lines by *vertical* overlap. On a page whose text runs down the screen that puts every
+character on its own line, so the screen-reader layer read the page **letter by letter** and
+the selection highlight became one rectangle per glyph. Every text assertion still passed —
+`textContent` is identical either way — and what caught it was the comparison against an
+independent extraction: 877 characters against 534, the difference being the spaces from
+joining one block per character. The grouping axis now comes from the page's rotation. The
+honest limit: this fixes the whole-page case only, and a rotated *run* inside an upright page
+is still split character by character, as before.
+
+**Reading the rotation is not free, and the schedule changed because of it.**
+`FPDFPage_GetRotation` needs a loaded page, while the rest of the outline walk reads the page
+dictionary. Measured on `outline-simple`, interleaved: **0.17 ms → 7.5 ms** steady state,
+45.7 ms on a cold first run, about 1 ms per distinct page named with coordinates. A
+three-hundred-entry table of contents is a third of a second of the render thread, which is
+FIFO — so the outline is now asked for after the first screen is up rather than at open,
+with a one-second grace so a document whose first page is slow still gets one.
+
+State that last change for what it is: **scheduling, and the only thing here with no
+automated check behind it.** The viewer check invokes `document_outline` directly rather than
+through `App.svelte`, so nothing exercises the wait; and the corpus has no document with a
+table of contents large enough for the cost it avoids to be visible. What is measured is the
+walk itself, above.
+
+Thirteen mutations, all caught by the check each was aimed at: five against the turn
+arithmetic, three against the line-grouping axis, one against the page's rotation never being
+read, and four against the outline's destination path. The last set is the reason the rotated
+fixture carries an outline at all — and one of its entries is `/XYZ null 600 0`, a
+destination naming no horizontal coordinate, which exists so the code path that declines to
+place it has an input that reaches it. Without that entry the guard could be deleted and
+nothing would notice, which by this repository's own rule makes it a guard to delete rather
+than keep.
+
+All six corpora report the same **63 check names**: `outline-simple` 59/59, `outline-hostile`
+58/58, `rotated-90` 52/52, `text-heavy` 52/52, `vector-multi` 41/41, `vector-heavy` 34/34.
 
 #### The check could not run, and the reason was not what it looked like
 

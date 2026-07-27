@@ -433,10 +433,10 @@ async function selectionChecks(
   // character count comes from a second, independent extraction rather than
   // from the viewer's own cache, so "selects the page's text" cannot be
   // satisfied by the viewer agreeing with itself.
-  const extracted = await invoke<{ codes: number[] }>("page_text", {
-    doc: doc.id,
-    page: 0,
-  }).catch(() => null);
+  const extracted = await invoke<{ codes: number[]; quarter_turns: number }>(
+    "page_text",
+    { doc: doc.id, page: 0 },
+  ).catch(() => null);
 
   if (extracted && extracted.codes.length === 0) {
     // A scan, or the A0 sheet. "Selected 0 of 0" is a true statement and a
@@ -479,6 +479,22 @@ async function selectionChecks(
 
   if (!ok || !whole) {
     skip("a drag selects text from where it was dragged", "the page has no extractable text");
+    return;
+  }
+
+  // The ordering assertion below reads a *horizontal* drag high on the page
+  // against one lower down, which assumes the page reads left-to-right and its
+  // lines advance downwards. On a page carrying `/Rotate 90` --- what a scanner
+  // emits --- the text runs down the screen and lines advance sideways, so a
+  // horizontal drag crosses every line at once and the comparison means
+  // nothing. Skipped with the reason rather than rewritten for four rotations
+  // nothing here would exercise: `text-probe --mode align` checks that mapping
+  // per rotation, against pixels, with a control for each wrong turn.
+  if ((extracted?.quarter_turns ?? 0) % 2 === 1) {
+    skip(
+      "a drag selects text from where it was dragged",
+      "this page's lines advance sideways, so a horizontal drag crosses all of them",
+    );
     return;
   }
 
@@ -1443,7 +1459,10 @@ async function navigateFromStrip(
   strip: { mounted: number[]; elementFor(page: number): HTMLElement | null },
   doc: DocumentInfo,
 ): Promise<void> {
-  const name = "activating a row goes to its page";
+  // Not "activating a row", which is what the outline's equivalent is called:
+  // two different checks under one name make the transcript ambiguous, and the
+  // name is how a check that stopped existing is noticed.
+  const name = "activating a thumbnail goes to its page";
   if (doc.page_count < 2) {
     skip(name, "the document has one page");
     return;
@@ -1452,10 +1471,16 @@ async function navigateFromStrip(
   viewer.goToStart();
   await settle(() => viewer.idle);
   const here = viewer.position.page;
-  // The furthest *built* row that is not the one we are on. Written as "the
-  // last page", it skipped on every document long enough for windowing to
-  // matter --- which is every document this check is interesting on.
-  const target = strip.mounted.filter((page) => page !== here).pop();
+  // The furthest *built* row that is neither the one we are on nor the last
+  // page of the document. Two mistakes are being avoided at once. Written as
+  // "the last page" it skipped on every document long enough for windowing to
+  // matter; written without excluding the final page it *failed* on a
+  // four-page document, because scrolling to the last page clamps at
+  // `maxScroll` and leaves the page before it still at the top of the viewport
+  // --- the same clamp the outline's destination check already guards against.
+  const candidates = strip.mounted.filter((page) => page !== here);
+  const target =
+    candidates.filter((page) => page < doc.page_count - 1).pop() ?? candidates.pop();
   const element = target === undefined ? null : strip.elementFor(target);
   if (target === undefined || !element) {
     skip(name, `no row other than page ${here + 1} is currently built`);

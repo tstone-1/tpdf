@@ -21,15 +21,29 @@
 //! for `set_text()`: work in the code space the document uses, not in a
 //! re-encoding of it.
 //!
-//! ## Page space, and why the boxes are flipped here
+//! ## Page space, and why the boxes are turned here
 //!
 //! PDFium reports character boxes in page space --- y upwards, origin at the
 //! bottom-left. Every consumer here works in device space --- y downwards,
 //! origin top-left --- because that is what the tiles and the viewport are in.
-//! The flip happens once, at the bottom of this file, against the same
-//! `height_pt` that `Placement` uses to map a render onto a bitmap. Doing it
-//! anywhere else means two conventions in the codebase and an inevitable
-//! off-by-a-page-height.
+//! The conversion happens once, in [`to_device`], and doing it anywhere else
+//! means two conventions in the codebase and an inevitable off-by-a-page-height.
+//!
+//! It is a **rotation**, not only a flip, and that is not a generalisation for
+//! its own sake. A page carrying `/Rotate 90` --- which is what a scanner emits,
+//! not an edge case --- is displayed turned a quarter clockwise, and PDFium
+//! reports it in two different coordinate systems at once:
+//!
+//! * `FPDF_GetPageWidthF` / `GetPageHeightF` give the size **after** rotation,
+//!   and a render comes out rotated to match. Layout and tiles are already right.
+//! * `FPDFText_GetCharBox` gives boxes in the page's own **unrotated** space.
+//!
+//! So the obvious flip --- `height_pt - y` against the reported height --- is
+//! correct at `/Rotate 0` and wrong at every other value. Measured before it was
+//! fixed, with `text-probe --mode align` on `testdata/rotated.pdf`: **100% of
+//! character boxes landed on ink at 0 and 0.0% at 90, 180 and 270.** Not
+//! approximately wrong; every selection and every search highlight on a scanned
+//! page was somewhere else entirely, in tidy rectangles.
 
 use std::os::raw::{c_double, c_int};
 
@@ -131,6 +145,14 @@ pub struct PageText {
     pub height_pt: f32,
     /// Page width in points.
     pub width_pt: f32,
+    /// Quarter-turns clockwise the page is displayed rotated by: 0, 1, 2 or 3.
+    ///
+    /// Sent to the frontend because the *boxes* have already been turned but the
+    /// consumers' assumptions have not: grouping characters into lines by their
+    /// vertical overlap is right for a page read left-to-right and gives one
+    /// character per line on a page read top-to-bottom, which is what `/Rotate
+    /// 90` produces. See `src/lib/text.ts`.
+    pub quarter_turns: u8,
     /// Time spent inside PDFium extracting this, in milliseconds.
     pub extract_ms: f64,
 }
@@ -147,11 +169,46 @@ impl PageText {
     }
 }
 
+/// Maps one character box from unrotated page space into displayed device space.
+///
+/// `page_box` is `[left, bottom, right, top]` with y upwards, as PDFium reports
+/// it. `width_pt` and `height_pt` are the page's **displayed** size, so they are
+/// already swapped for a quarter or three-quarter turn; the unrotated size is
+/// recovered here rather than asked for twice.
+///
+/// Returns `[left, top, right, bottom]` with y downwards from the displayed
+/// page's top-left corner.
+///
+/// Pure, and separate from [`extract`] for the reason every mapping in this
+/// repository ends up separate: the failure mode is a plausible rectangle in the
+/// wrong place, which no amount of looking at a render reliably catches, and a
+/// function taking four numbers can be asserted against known corners.
+pub fn to_device(turns: u8, width_pt: f32, height_pt: f32, page_box: [f64; 4]) -> [f32; 4] {
+    let [left, bottom, right, top] = page_box.map(|value| value as f32);
+    // The page's own size, before `/Rotate` was applied to get the displayed one.
+    let (w0, h0) = match turns % 2 {
+        0 => (width_pt, height_pt),
+        _ => (height_pt, width_pt),
+    };
+
+    match turns % 4 {
+        // No rotation: the flip alone. `top` is the larger y in page space and
+        // becomes the smaller y here, which is why it is written first.
+        0 => [left, h0 - top, right, h0 - bottom],
+        // A quarter turn clockwise sends the page's top-left to the top-right,
+        // so the page's y becomes the display's x and its x becomes the y.
+        1 => [bottom, left, top, right],
+        2 => [w0 - right, bottom, w0 - left, top],
+        _ => [h0 - top, w0 - right, h0 - bottom, w0 - left],
+    }
+}
+
 /// Extracts a page's text and character geometry.
 pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     let started = std::time::Instant::now();
     let height_pt = page.height_pt();
     let width_pt = page.width_pt();
+    let turns = page.quarter_turns();
 
     let text = RawTextPage::load(page)?;
     let count = text.count();
@@ -162,13 +219,8 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     for index in 0..count {
         codes.push(text.code(index));
         match text.char_box(index) {
-            Some([left, bottom, right, top]) => {
-                // The one flip. `top` is the larger y in page space and becomes
-                // the smaller y here, which is why it is written first.
-                boxes.push(left as f32);
-                boxes.push(height_pt - top as f32);
-                boxes.push(right as f32);
-                boxes.push(height_pt - bottom as f32);
+            Some(page_box) => {
+                boxes.extend_from_slice(&to_device(turns, width_pt, height_pt, page_box));
             }
             None => boxes.extend_from_slice(&[0.0; 4]),
         }
@@ -179,6 +231,131 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
         boxes,
         height_pt,
         width_pt,
+        quarter_turns: turns,
         extract_ms: started.elapsed().as_secs_f64() * 1000.0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_device;
+
+    /// An unrotated page, portrait.
+    const W0: f32 = 600.0;
+    const H0: f32 = 800.0;
+
+    /// A small box in the **top-left** of the unrotated page.
+    ///
+    /// Asymmetric in both axes on purpose. A box in the middle, or one as wide
+    /// as it is tall, maps to something plausible under all four turns and can
+    /// distinguish none of them --- which is the whole hazard here, since a
+    /// wrong turn still produces a tidy rectangle.
+    const CORNER: [f64; 4] = [10.0, 700.0, 40.0, 780.0];
+
+    /// The displayed page size for a given number of quarter turns.
+    fn displayed(turns: u8) -> (f32, f32) {
+        if turns % 2 == 0 {
+            (W0, H0)
+        } else {
+            (H0, W0)
+        }
+    }
+
+    fn map(turns: u8) -> [f32; 4] {
+        let (width, height) = displayed(turns);
+        to_device(turns, width, height, CORNER)
+    }
+
+    #[test]
+    fn an_unrotated_box_keeps_its_x_and_flips_its_y() {
+        // 700..780 up from the bottom of an 800 pt page is 20..100 down from its
+        // top, and `top` becoming the smaller number is the flip.
+        assert_eq!(map(0), [10.0, 20.0, 40.0, 100.0]);
+    }
+
+    #[test]
+    fn each_turn_sends_the_top_left_corner_somewhere_different() {
+        // The load-bearing test. A box in the page's top-left must appear in the
+        // display's top-left, top-right, bottom-right and bottom-left in turn ---
+        // and it is the only assertion here that can tell a quarter turn from a
+        // three-quarter one, since both swap the page's dimensions identically.
+        for turns in 0..4u8 {
+            let [left, top, right, bottom] = map(turns);
+            let (width, height) = displayed(turns);
+            let near_left = left < width / 2.0;
+            let near_top = top < height / 2.0;
+            let expected = match turns {
+                0 => (true, true),
+                1 => (false, true),
+                2 => (false, false),
+                _ => (true, false),
+            };
+            assert_eq!(
+                (near_left, near_top),
+                expected,
+                "turn {turns} put the page's top-left corner at \
+                 [{left}, {top}, {right}, {bottom}] on a {width}x{height} page"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quarter_turn_swaps_the_box_proportions() {
+        // 30 wide by 80 tall becomes 80 wide by 30 tall. Without this, a turn
+        // that got the corner right but transposed the extents would pass the
+        // check above.
+        let [left, top, right, bottom] = map(1);
+        assert_eq!(right - left, 80.0);
+        assert_eq!(bottom - top, 30.0);
+    }
+
+    #[test]
+    fn every_turn_keeps_the_box_inside_the_displayed_page() {
+        for turns in 0..4u8 {
+            let [left, top, right, bottom] = map(turns);
+            let (width, height) = displayed(turns);
+            assert!(
+                left >= 0.0 && right <= width,
+                "turn {turns} left the page in x"
+            );
+            assert!(
+                top >= 0.0 && bottom <= height,
+                "turn {turns} left the page in y"
+            );
+        }
+    }
+
+    #[test]
+    fn a_box_is_never_returned_inside_out() {
+        // `left <= right` and `top <= bottom` is what every consumer assumes ---
+        // a highlight with a negative width simply does not draw, which reads as
+        // "selection is broken" rather than as a coordinate bug.
+        for turns in 0..4u8 {
+            let [left, top, right, bottom] = map(turns);
+            assert!(left <= right, "turn {turns} returned right of left");
+            assert!(top <= bottom, "turn {turns} returned bottom above top");
+        }
+    }
+
+    #[test]
+    fn two_turns_are_a_point_reflection_of_none() {
+        // 180 degrees is the one turn whose answer can be checked against turn 0
+        // without redoing the arithmetic under test: it is the same box mirrored
+        // in both axes.
+        let none = map(0);
+        let half = map(2);
+        assert_eq!(half[0], W0 - none[2]);
+        assert_eq!(half[2], W0 - none[0]);
+        assert_eq!(half[1], H0 - none[3]);
+        assert_eq!(half[3], H0 - none[1]);
+    }
+
+    #[test]
+    fn a_rotation_beyond_three_quarter_turns_wraps() {
+        // PDFium is documented to return 0..=3 and `quarter_turns` clamps, so
+        // this is defence rather than a case that occurs --- but the modulo is
+        // free and the alternative is a panic on a value nobody validated.
+        assert_eq!(map(4), map(0));
+        assert_eq!(map(5), map(1));
+    }
 }

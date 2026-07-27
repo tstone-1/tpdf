@@ -271,6 +271,28 @@ impl RawPage<'_> {
         unsafe { self.bindings.FPDF_GetPageHeightF(self.handle) }
     }
 
+    /// Quarter-turns clockwise the page is displayed rotated by: 0, 1, 2 or 3.
+    ///
+    /// `/Rotate` on the page dictionary, which a scanner sets routinely. Note
+    /// what it does *not* affect: [`width_pt`](Self::width_pt) and
+    /// [`height_pt`](Self::height_pt) already report the rotated size, and a
+    /// render already comes out rotated. The one thing left in the page's own
+    /// unrotated space is `FPDFText_GetCharBox`, which is why this is needed at
+    /// all --- see `text.rs`.
+    ///
+    /// PDFium returns -1 when it cannot say. Treated as no rotation, because a
+    /// page whose rotation cannot be read is far more likely to have none than
+    /// to have one nobody can name.
+    pub fn quarter_turns(&self) -> u8 {
+        // SAFETY: as above.
+        let turns = unsafe { self.bindings.FPDFPage_GetRotation(self.handle) };
+        if (0..=3).contains(&turns) {
+            turns as u8
+        } else {
+            0
+        }
+    }
+
     /// The raw handle, for the PDFium APIs the safe wrapper does not reach.
     ///
     /// Crate-private on purpose. This is the same reason `progressive.rs` exists
