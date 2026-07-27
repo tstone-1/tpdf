@@ -321,6 +321,61 @@ What it does **not** cover: the command list `App.svelte` registers, and the Cmd
 opens the palette. The check builds its own registry, so it proves the palette works and
 not that the application's commands are wired to it.
 
+### Checking session restore
+
+Reopening where the reader left off is a property of a *launch*, so it takes more than one:
+
+```
+scripts/session_check.py \
+    src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf testdata/text-heavy.pdf
+```
+
+Four launches, and the two labelled `control:` are what make the other two mean anything:
+
+| phase | session | argument | asserts |
+|---|---|---|---|
+| `record` | fresh | a document | drives to page 7, one quarter turn, a fixed zoom, sidebar open --- then writes it |
+| `control: opening without a session` | empty | a document | that state is **not** where the app opens by itself |
+| `verify` | recorded | none | the app came up in that state, told only by the file |
+| `control: launching with nothing remembered` | empty | none | no document opens when nothing is remembered |
+
+Without the first control, "restored to page 7" is satisfied by an app that happens to open
+there --- the same shape as a check whose precondition is already satisfied, which this
+repository has paid for four times. It fails if *any* of the four fields already matches,
+not only if all of them do: a restore that got only the rotation right would otherwise hide
+behind a default that shared the page. Without the second, an app that reopened the last
+file it could find by some other route would pass `verify` perfectly.
+
+Between the phases the script reads the written `session.json` itself. Writing a place and
+reading one back are different halves, and a run that only did the second would find nothing
+to restore and report that somewhere else entirely.
+
+Unlike every other harness here, **this one does not replace the application** --- it boots
+normally and observes itself, because restoring is part of the boot and a check that drove
+`session.ts` directly would be a second implementation agreeing with the first. Same bundle
+and unlocked-screen requirements as the viewer check.
+
+Every launch gets its own `TPDF_SESSION_FILE` in a temporary directory, and **the two
+controls get one each rather than sharing**. Shared first, and the second control failed:
+the first control opens a document, which is what it is for, so by the time the second
+launched there was something to restore and a document duly opened. A control is the thing
+you assume is inert, which is why the standing rule about what one phase leaves behind for
+the next did not fire.
+
+Unlike the viewer check, **the exit code here is meaningful** --- see the note below.
+
+### The exit code of a spike run
+
+`AppHandle::exit(code)` does **not** set the process's exit code. It ends the event loop,
+`App::run` returns normally, `main` returns unit, and the process exits 0 whatever was asked
+for. Every automated run here therefore reported success through `$?` for its whole
+existence, `viewer_check.py` included. Fixed 2026-07-27 in `spike_exit`, which now flushes
+and calls `std::process::exit`.
+
+If you add a harness, do not let the exit code be its only verdict --- parse the transcript
+too, and make the two agree. That is what caught this: a run printing `[OK] session restore
+verified` directly beneath a phase whose own last line said `0/1 checks passed`.
+
 ---
 
 ## Cutting a release
