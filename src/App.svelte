@@ -191,6 +191,30 @@
     sidebar?.selectTab(tab);
   }
 
+  /**
+   * Resolves once the viewer has something on screen, or after a short grace.
+   *
+   * The grace matters more than the signal: a document whose first page is slow
+   * --- the A0 sheet takes seconds --- must still get its outline, so this is a
+   * scheduling preference rather than a dependency. Anything that waits on the
+   * viewer without a way out is a feature that silently never arrives.
+   */
+  function firstPaint(): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, 1000);
+      const started = performance.now();
+      function done() {
+        clearTimeout(timer);
+        resolve();
+      }
+      function poll() {
+        if ((status && status.any >= 0.999) || performance.now() - started > 1000) done();
+        else requestAnimationFrame(poll);
+      }
+      requestAnimationFrame(poll);
+    });
+  }
+
   function focusFind() {
     findField?.focus();
     findField?.select();
@@ -348,11 +372,22 @@
       });
       viewer.focus();
 
-      // After the viewer, and deliberately not awaited: the outline shares the
-      // render thread with tiles, and a document that opens instantly should
-      // not wait for its table of contents. It arrives when it arrives.
+      // After the viewer, deliberately not awaited, and deliberately not asked
+      // for until the first screen is up.
+      //
+      // Not awaiting it was always right --- the outline shares the render
+      // thread with tiles and a document that opens instantly should not wait
+      // for its table of contents. Waiting for the first paint is newer, and is
+      // there because the walk stopped being free: resolving a destination on a
+      // page carrying `/Rotate` needs the page's rotation, `FPDFPage_GetRotation`
+      // needs the page loaded, and that measured 0.17 ms -> 7.5 ms on a
+      // twelve-page fixture, about 1 ms per distinct page named. On a book with
+      // a three-hundred-entry table of contents that is a third of a second of
+      // render thread, and the render thread is FIFO --- so asked for at open it
+      // would sit in front of the tiles for the page someone is looking at.
       const wanted = doc.id;
       openDoc = wanted;
+      await firstPaint();
       void invoke<Outline>("document_outline", { doc: wanted })
         .then((result) => {
           // Another document may have been opened while this was in flight, in

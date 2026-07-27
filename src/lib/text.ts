@@ -27,7 +27,23 @@ export interface PageText {
   boxes: number[];
   width_pt: number;
   height_pt: number;
+  /**
+   * Quarter-turns clockwise the page is displayed rotated by: 0, 1, 2 or 3.
+   *
+   * The boxes have already been turned in Rust, so nothing here has to rotate
+   * anything. What this decides is which axis *separates lines*: on a page read
+   * left-to-right that is the vertical one, and on a `/Rotate 90` page --- what a
+   * scanner emits --- the text runs down the screen and lines advance sideways,
+   * so grouping by vertical overlap puts every character on a line of its own.
+   * A screen reader then reads the page letter by letter, which is what it did.
+   */
+  quarter_turns: number;
   extract_ms: number;
+}
+
+/** Whether lines on this page are separated horizontally rather than vertically. */
+export function linesRunSideways(text: PageText): boolean {
+  return text.quarter_turns % 2 === 1;
 }
 
 /** A position between two characters, which is what a caret is. */
@@ -132,6 +148,11 @@ function isPlaced(quad: Quad): boolean {
 export function caretAt(text: PageText, x: number, y: number): number {
   let best = -1;
   let bestDistance = Infinity;
+  // The weight belongs on the axis that separates lines, not on `y`. On a
+  // rotated page those are different axes, and weighting the wrong one makes a
+  // click in the margin land a line away --- the same failure the weight exists
+  // to prevent, moved ninety degrees.
+  const sideways = linesRunSideways(text);
 
   for (let index = 0; index < text.codes.length; index++) {
     const quad = charQuad(text, index);
@@ -139,7 +160,8 @@ export function caretAt(text: PageText, x: number, y: number): number {
 
     const dx = Math.max(quad.left - x, 0, x - quad.right);
     const dy = Math.max(quad.top - y, 0, y - quad.bottom);
-    const distance = dx * dx + (dy * VERTICAL_WEIGHT) ** 2;
+    const [along, across] = sideways ? [dy, dx] : [dx, dy];
+    const distance = along * along + (across * ACROSS_LINE_WEIGHT) ** 2;
     if (distance < bestDistance) {
       bestDistance = distance;
       best = index;
@@ -148,19 +170,26 @@ export function caretAt(text: PageText, x: number, y: number): number {
 
   if (best < 0) return 0;
   const quad = charQuad(text, best);
-  // Past the middle of the glyph means the caret belongs after it, which is what
-  // makes dragging left-to-right include the character under the pointer.
-  return x > (quad.left + quad.right) / 2 ? best + 1 : best;
+  // Past the middle of the glyph, along the direction the text reads, means the
+  // caret belongs after it --- which is what makes a drag include the character
+  // under the pointer.
+  return sideways
+    ? y > (quad.top + quad.bottom) / 2
+      ? best + 1
+      : best
+    : x > (quad.left + quad.right) / 2
+      ? best + 1
+      : best;
 }
 
 /**
- * How much more a point of vertical distance counts than a horizontal one.
+ * How much more a point of across-the-lines distance counts than along one.
  *
  * Untuned, and chosen to be obviously large enough that a neighbouring line
  * never wins over the line the pointer is on. Lower it and clicks in the margin
  * start landing a line away.
  */
-const VERTICAL_WEIGHT = 8;
+const ACROSS_LINE_WEIGHT = 8;
 
 /**
  * Merges a character range into one rectangle per run of text on a line.
@@ -176,12 +205,13 @@ const VERTICAL_WEIGHT = 8;
 export function runsFor(text: PageText, from: number, to: number): Quad[] {
   const runs: Quad[] = [];
   let current: Quad | null = null;
+  const sideways = linesRunSideways(text);
 
   for (let index = Math.max(0, from); index < Math.min(to, text.codes.length); index++) {
     const quad = charQuad(text, index);
     if (!isPlaced(quad)) continue;
 
-    if (current && overlapsVertically(current, quad)) {
+    if (current && onSameLine(current, quad, sideways)) {
       current.left = Math.min(current.left, quad.left);
       current.right = Math.max(current.right, quad.right);
       current.top = Math.min(current.top, quad.top);
@@ -210,6 +240,7 @@ export function runsFor(text: PageText, from: number, to: number): Quad[] {
 export function linesOf(text: PageText): { from: number; to: number }[] {
   const lines: { from: number; to: number }[] = [];
   let current: Quad | null = null;
+  const sideways = linesRunSideways(text);
 
   for (let index = 0; index < text.codes.length; index++) {
     const quad = charQuad(text, index);
@@ -221,9 +252,11 @@ export function linesOf(text: PageText): { from: number; to: number }[] {
       continue;
     }
 
-    if (current && last && overlapsVertically(current, quad)) {
+    if (current && last && onSameLine(current, quad, sideways)) {
       current.top = Math.min(current.top, quad.top);
       current.bottom = Math.max(current.bottom, quad.bottom);
+      current.left = Math.min(current.left, quad.left);
+      current.right = Math.max(current.right, quad.right);
       last.to = index + 1;
       continue;
     }
@@ -234,10 +267,21 @@ export function linesOf(text: PageText): { from: number; to: number }[] {
   return lines;
 }
 
-/** Whether two boxes share most of their vertical extent, i.e. are on a line. */
-function overlapsVertically(a: Quad, b: Quad): boolean {
-  const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-  const shorter = Math.min(a.bottom - a.top, b.bottom - b.top);
+/**
+ * Whether two boxes share most of their extent across the lines, i.e. are on one.
+ *
+ * `sideways` picks the axis. It is the page's rotation rather than anything
+ * inferred from the boxes, which is a real limitation and worth stating: a
+ * *rotated run* inside an otherwise upright page --- a sideways table header ---
+ * is still split character by character. That was true before and is unchanged;
+ * what is fixed is the whole-page case, which is what a scanner produces.
+ */
+function onSameLine(a: Quad, b: Quad, sideways: boolean): boolean {
+  const [aStart, aEnd, bStart, bEnd] = sideways
+    ? [a.left, a.right, b.left, b.right]
+    : [a.top, a.bottom, b.top, b.bottom];
+  const overlap = Math.min(aEnd, bEnd) - Math.max(aStart, bStart);
+  const shorter = Math.min(aEnd - aStart, bEnd - bStart);
   return shorter > 0 && overlap / shorter > 0.5;
 }
 

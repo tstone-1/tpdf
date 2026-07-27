@@ -297,6 +297,30 @@ experience.
 
 ### Fixed
 
+- **Character boxes and outline destinations on a page carrying `/Rotate`.** PDFium reports
+  the page size *after* rotation and renders to match, but reports character boxes and
+  destination coordinates in the page's own *unrotated* space --- so the flip against the
+  reported height was correct at `/Rotate 0` and wrong at every other value. Measured with
+  `text-probe --mode align` on a new fixture: 100% of character boxes landed on ink at 0 and
+  **0.0% at 90, 180 and 270**. Every selection, every search highlight and the whole
+  screen-reader reading order was elsewhere on any scanned page, in tidy rectangles.
+
+  The turn is one function with two callers, and the probe now reports what each *wrong*
+  rotation scores rather than only what the flip does --- on a rotated page those are
+  different questions.
+
+  Fixing it exposed a second defect that the first did not imply: characters are grouped into
+  lines by vertical overlap, which on a page whose text runs down the screen puts each one on
+  its own line, so the screen reader read the page **letter by letter**. Every text assertion
+  still passed; what caught it was a comparison against an independent extraction, 877
+  characters against 534.
+
+  Reading the rotation needs a loaded page, which took the outline walk from **0.17 ms to
+  7.5 ms** on a twelve-page fixture --- about 1 ms per distinct page named. The outline is
+  therefore now requested after the first screen is painted rather than at open, since the
+  render thread is FIFO. Thirteen mutations, all caught.
+
+
 - **The viewer check printed nothing unless it reached the end.** Every result was buffered
   and emitted in one block, so a run that stopped midway was indistinguishable from one that
   never started --- which is exactly what happened when an occluded window suspended the

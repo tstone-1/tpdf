@@ -194,6 +194,13 @@ impl Report {
             println!("[FAIL] {name:<48} {detail}");
         }
     }
+
+    /// A check this fixture cannot exercise. Printed, never omitted --- a check
+    /// that quietly disappears on some inputs cannot be told apart from one that
+    /// ran, which is the failure this whole file is arranged to avoid.
+    fn skip(&mut self, name: &str, why: &str) {
+        println!("[SKIP] {name:<48} not applicable -- {why}");
+    }
 }
 
 fn check(args: &Args, outline: &Outline) -> Result<bool, String> {
@@ -239,7 +246,13 @@ fn check(args: &Args, outline: &Outline) -> Result<bool, String> {
     );
 
     if let Some(entries) = expected.get("entries").and_then(|v| v.as_array()) {
-        check_entries(&mut report, &flat, entries);
+        check_entries(&mut report, &flat, entries, expected);
+    }
+    // Outside the `entries` guard on purpose: a fixture without an entry list
+    // still has destinations, and a check that only exists for some fixtures
+    // cannot be told apart from one that ran.
+    {
+        check_tops(&mut report, &flat, expected);
     }
     if let Some(titles) = expected.get("required_titles").and_then(|v| v.as_array()) {
         for title in titles.iter().filter_map(|v| v.as_str()) {
@@ -287,7 +300,64 @@ fn check(args: &Args, outline: &Outline) -> Result<bool, String> {
 }
 
 /// Checks the ordinary fixture's entries: order, depth and destination.
-fn check_entries(report: &mut Report, flat: &[Flat], expected: &[serde_json::Value]) {
+/// Each destination's distance from the top of its page, against the manifest.
+fn check_tops(report: &mut Report, flat: &[Flat], manifest: &serde_json::Value) {
+    let tops: Vec<f32> = flat
+        .iter()
+        .filter_map(|entry| match entry.target {
+            Target::Page {
+                top_pt: Some(top), ..
+            } => Some(top),
+            _ => None,
+        })
+        .collect();
+    // Fixture-specific, and stated by the fixture rather than hardcoded here so
+    // that a second one can state its own. Under a coordinate flip these are
+    // still numbers, still inside the page and still in the same order -- what
+    // is wrong is the distance from the top edge, which is the only thing this
+    // compares. `rotated-90.pdf` is the case that needs its own numbers: its
+    // pages carry /Rotate 90, so a destination's *page-space x* is what becomes
+    // the distance down the display, and the ordinary flip is wrong there in a
+    // way no unrotated fixture can show.
+    let wanted: Vec<f64> = manifest
+        .get("tops")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_f64)
+                .collect()
+        })
+        .unwrap_or_default();
+    if wanted.is_empty() {
+        report.skip(
+            "each destination is measured from the top of its page",
+            "this fixture states no expected offsets",
+        );
+    } else {
+        let agree = wanted.len() <= tops.len()
+            && wanted
+                .iter()
+                .zip(&tops)
+                .all(|(want, got)| (*want as f32 - *got).abs() < 1.0);
+        report.check(
+            agree,
+            "each destination is measured from the top of its page",
+            &format!(
+                "{:?}, expected {:?}",
+                &tops[..tops.len().min(wanted.len())],
+                wanted
+            ),
+        );
+    }
+}
+
+fn check_entries(
+    report: &mut Report,
+    flat: &[Flat],
+    expected: &[serde_json::Value],
+    _manifest: &serde_json::Value,
+) {
     report.check(
         flat.len() == expected.len(),
         "every entry is reached, and no more",
@@ -350,15 +420,6 @@ fn check_entries(report: &mut Report, flat: &[Flat], expected: &[serde_json::Val
             tops.len(),
             tops.iter().cloned().fold(0.0f32, f32::max)
         ),
-    );
-    // Fixture-specific and deliberately so: "Introduction" is 100 pt from the
-    // top of its page and "Installation" 440 pt from the top of its own. Under
-    // the flip both become large-and-larger in the other direction, so the
-    // ordering survives -- what does not is the distance from the top edge.
-    report.check(
-        tops.first().map(|top| (*top - 100.0).abs() < 1.0) == Some(true),
-        "the first destination is measured from the page top",
-        &format!("{:?}, expected ~100 pt", tops.first()),
     );
 }
 

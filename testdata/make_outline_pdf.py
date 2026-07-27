@@ -294,6 +294,13 @@ def build_simple(path: str) -> dict:
     return {
         "pages": 12,
         "roots": 5,
+        # Expected distance from the top of its page, in points, for the first
+        # few destinations in document order. This is the assertion a coordinate
+        # flip fails: under it the numbers are still numbers, still inside the
+        # page, and still in the same order -- only the distance from the top
+        # edge is wrong. Stated in the manifest rather than hardcoded in the
+        # probe, so a second fixture can state its own.
+        "tops": [100],
         # Every entry the walk should reach, depth-first, with the page it
         # resolves to and whether it carries a y coordinate.
         "entries": [
