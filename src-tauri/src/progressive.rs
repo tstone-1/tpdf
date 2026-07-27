@@ -30,6 +30,8 @@
 //! boundary is the [`CancelToken`], which is an `AtomicBool` and touches no
 //! PDFium state.
 
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::os::raw::{c_int, c_void};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -94,10 +96,32 @@ pub fn bindings_of(pdfium: &'static Pdfium) -> Bindings {
     pdfium.bindings()
 }
 
-/// An `FPDF_DOCUMENT`, closed on drop.
+/// How many loaded pages a document keeps alive at once.
+///
+/// A loaded page holds its parsed content, so caching every page of a 775-page
+/// document is not an option. The bound is deliberately small --- a viewport
+/// spans one or two pages, plus prefetch --- and is **untuned**: it was chosen to
+/// be obviously safe, not measured to be optimal.
+const PAGE_CACHE: usize = 4;
+
+/// An `FPDF_DOCUMENT`, closed on drop, with a small cache of loaded pages.
+///
+/// The cache is not a micro-optimisation. `FPDF_LoadPage` re-parses the page
+/// every time --- PDFium does not cache it --- and that costs **44 ms per call on
+/// the A0 sheet** against 0.2 ms on the text corpus (`progressive-probe --mode
+/// pageload`). Loading per tile request therefore charges a screenful of tiles
+/// several hundred milliseconds of pure re-parsing, on precisely the document
+/// where there is none to spare.
+///
+/// It caches the *handles* rather than [`RawPage`] values, which keeps the whole
+/// thing safe: a `RawPage` borrows the document, so storing one inside the
+/// document would be self-referential. A handle is a plain pointer, copied out
+/// under a short borrow, and the document closes every one it holds on drop.
 pub struct RawDocument {
     bindings: Bindings,
     handle: FPDF_DOCUMENT,
+    /// Loaded page handles, and the order they were loaded in for eviction.
+    pages: RefCell<(HashMap<u16, FPDF_PAGE>, VecDeque<u16>)>,
 }
 
 impl RawDocument {
@@ -117,37 +141,93 @@ impl RawDocument {
             return Err(format!("could not open {}", path.display()));
         }
 
-        Ok(Self { bindings, handle })
+        Ok(Self {
+            bindings,
+            handle,
+            pages: RefCell::new((HashMap::new(), VecDeque::new())),
+        })
     }
 
-    /// Loads one page by zero-based index.
+    /// Returns one page by zero-based index, loading it if it is not cached.
     pub fn page(&self, index: u16) -> Result<RawPage<'_>, String> {
+        if let Some(&handle) = self.pages.borrow().0.get(&index) {
+            return Ok(self.borrow_page(handle));
+        }
+
         // SAFETY: `self.handle` is non-null for the lifetime of `self`.
         let handle = unsafe { self.bindings.FPDF_LoadPage(self.handle, index as c_int) };
         if handle.is_null() {
             return Err(format!("no such page: {index}"));
         }
 
-        Ok(RawPage {
+        let evicted = {
+            let mut pages = self.pages.borrow_mut();
+            let (map, order) = &mut *pages;
+            map.insert(index, handle);
+            order.push_back(index);
+            if order.len() > PAGE_CACHE {
+                order.pop_front().and_then(|old| map.remove(&old))
+            } else {
+                None
+            }
+        };
+        // Closed outside the borrow, so a Pdfium call can never re-enter the
+        // RefCell and panic.
+        if let Some(old) = evicted {
+            // SAFETY: loaded by this function, cached since, and now unreachable
+            // -- every `RawPage` handed out borrows `self`, so none can be live
+            // across a call that mutates the cache.
+            unsafe { self.bindings.FPDF_ClosePage(old) };
+        }
+
+        Ok(self.borrow_page(handle))
+    }
+
+    /// Drops a cached page, closing it.
+    ///
+    /// Exists so the cache's value can be measured rather than assumed: the probe
+    /// evicts between loads to time the uncached path. Also the honest response
+    /// to memory pressure.
+    pub fn evict_page(&self, index: u16) {
+        let handle = {
+            let mut pages = self.pages.borrow_mut();
+            let (map, order) = &mut *pages;
+            order.retain(|i| *i != index);
+            map.remove(&index)
+        };
+        if let Some(handle) = handle {
+            // SAFETY: as in `page`.
+            unsafe { self.bindings.FPDF_ClosePage(handle) };
+        }
+    }
+
+    fn borrow_page(&self, handle: FPDF_PAGE) -> RawPage<'_> {
+        RawPage {
             bindings: self.bindings,
             handle,
             _document: std::marker::PhantomData,
-        })
+        }
     }
 }
 
 impl Drop for RawDocument {
     fn drop(&mut self) {
-        // SAFETY: closed exactly once, and every page borrows `self` so none
-        // can outlive this.
+        for handle in self.pages.borrow().0.values() {
+            // SAFETY: each was loaded by `page` and closed exactly once here.
+            unsafe { self.bindings.FPDF_ClosePage(*handle) };
+        }
+        // SAFETY: closed exactly once, after every page it owns, and every
+        // `RawPage` borrows `self` so none can outlive this.
         unsafe { self.bindings.FPDF_CloseDocument(self.handle) };
     }
 }
 
-/// An `FPDF_PAGE`, closed on drop.
+/// A borrowed view of a loaded `FPDF_PAGE`.
 ///
-/// The lifetime ties it to its document: PDFium does not tolerate a page
-/// outliving the document it came from.
+/// Deliberately **not** an owner: the handle belongs to the [`RawDocument`]'s
+/// cache, which closes it on eviction or on drop. The lifetime is what makes
+/// that sound --- a page cannot outlive its document, and PDFium does not
+/// tolerate one that does.
 pub struct RawPage<'doc> {
     bindings: Bindings,
     handle: FPDF_PAGE,
@@ -165,14 +245,6 @@ impl RawPage<'_> {
     pub fn height_pt(&self) -> f32 {
         // SAFETY: as above.
         unsafe { self.bindings.FPDF_GetPageHeightF(self.handle) }
-    }
-}
-
-impl Drop for RawPage<'_> {
-    fn drop(&mut self) {
-        // SAFETY: closed exactly once. `FPDF_RenderPage_Close` has already been
-        // called by `render`, which never returns with a render still open.
-        unsafe { self.bindings.FPDF_ClosePage(self.handle) };
     }
 }
 
@@ -299,11 +371,12 @@ impl CancelToken {
 struct PauseState {
     cancel: CancelToken,
     /// Nanoseconds after `origin` at which to pause regardless of cancellation,
-    /// or 0 for "run to completion". Re-armed by the caller between resumes.
+    /// or [`NEVER`] for "run to completion". Re-armed by the caller between
+    /// resumes.
     deadline_ns: AtomicU64,
     origin: Instant,
     polls: AtomicU64,
-    /// Nanoseconds after `origin` of the previous poll, or 0 if none yet.
+    /// Nanoseconds after `origin` of the previous poll, or [`NEVER`] if none yet.
     last_poll_ns: AtomicU64,
     /// Longest observed interval between two consecutive polls. This is the real
     /// bound on how late a cancellation can be noticed, and it is not the same
@@ -312,14 +385,26 @@ struct PauseState {
     max_gap_ns: AtomicU64,
 }
 
+/// "No deadline" / "no previous poll", as a nanosecond count that cannot occur.
+///
+/// It is `u64::MAX` and **not zero**, which was a real bug rather than a
+/// stylistic preference. `Instant` on Apple Silicon ticks at the 24 MHz timebase,
+/// so its resolution is about 41.67 ns and two reads that close together return
+/// the same value. `arm()` runs a few nanoseconds after `origin` is taken, so
+/// with a zero slice `origin.elapsed()` is genuinely 0 --- colliding with the
+/// old sentinel and turning "pause at the first opportunity" into "run to
+/// completion". It reproduced only sometimes, because whether the two reads land
+/// in the same tick depends on what else the caller did in between.
+const NEVER: u64 = u64::MAX;
+
 impl PauseState {
     fn new(cancel: CancelToken) -> Self {
         Self {
             cancel,
-            deadline_ns: AtomicU64::new(0),
+            deadline_ns: AtomicU64::new(NEVER),
             origin: Instant::now(),
             polls: AtomicU64::new(0),
-            last_poll_ns: AtomicU64::new(0),
+            last_poll_ns: AtomicU64::new(NEVER),
             max_gap_ns: AtomicU64::new(0),
         }
     }
@@ -327,7 +412,7 @@ impl PauseState {
     fn arm(&self, slice: Option<Duration>) {
         let deadline = match slice {
             Some(slice) => (self.origin.elapsed() + slice).as_nanos() as u64,
-            None => 0,
+            None => NEVER,
         };
         self.deadline_ns.store(deadline, Ordering::Relaxed);
     }
@@ -347,12 +432,14 @@ unsafe extern "C" fn need_to_pause_now(this: *mut IFSDK_PAUSE) -> FPDF_BOOL {
     state.polls.fetch_add(1, Ordering::Relaxed);
 
     let last = state.last_poll_ns.swap(now, Ordering::Relaxed);
-    if last != 0 {
-        state.max_gap_ns.fetch_max(now - last, Ordering::Relaxed);
+    if last != NEVER {
+        state
+            .max_gap_ns
+            .fetch_max(now.saturating_sub(last), Ordering::Relaxed);
     }
 
     let expired = match state.deadline_ns.load(Ordering::Relaxed) {
-        0 => false,
+        NEVER => false,
         deadline => now >= deadline,
     };
 
