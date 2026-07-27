@@ -28,6 +28,12 @@ discover the next problem. The exit code is still non-zero if any failed.
 on a `Cargo.lock` that was not committed after a `cargo update`, and it compiles
 the test targets, which is where `--all-targets` clippy findings and broken
 test-only code show up.
+
+`vitest` covers the front-end logic that has an answer which can be *wrong*
+rather than merely ugly -- currently command ranking. Behaviour that needs a
+document and a window is asserted by `scripts/viewer_check.py` instead, which is
+not a gate: it needs a built bundle and a generated fixture, neither of which a
+gate run has.
 """
 
 import argparse
@@ -84,6 +90,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "check",
             [npm(), "run", "check"],
             "svelte-check or tsc found a type error",
+        ),
+        (
+            "vitest",
+            [npm(), "run", "test"],
+            "a front-end unit test failed",
         ),
         (
             "build",

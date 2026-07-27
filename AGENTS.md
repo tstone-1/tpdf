@@ -184,15 +184,17 @@ scripts/gates.py --list
 ```
 
 Currently: a PDFium pin check, `cargo fmt --check`, `cargo clippy --all-targets -- -D
-warnings`, `cargo test --locked`, `npm run check`, `npm run build`. `--all-targets` covers
-test code, `-D warnings` makes lints fatal, and `--locked` catches a `Cargo.lock` that was
-not committed after a `cargo update`; dropping any of them silently weakens the gate.
+warnings`, `cargo test --locked`, `npm run check`, `npm run test`, `npm run build`.
+`--all-targets` covers test code, `-D warnings` makes lints fatal, and `--locked` catches a
+`Cargo.lock` that was not committed after a `cargo update`; dropping any of them silently
+weakens the gate.
 
-One honest note. The earlier plan listed `npm run lint` and `npm run test`, which do not
-exist; adding an ESLint config and a test runner with nothing to lint or test is
-scaffolding, and they land when there is something for them to check. `cargo test` now runs
-real tests --- the request queue and the `tile://` parser --- and remains a lockfile gate
-besides.
+One honest note. The earlier plan listed `npm run lint` and `npm run test`, neither of
+which existed; adding an ESLint config and a test runner with nothing to lint or test is
+scaffolding, and the rule was that they land when there is something for them to check.
+`npm run test` (vitest) landed on 2026-07-27, when command ranking gave it something ---
+front-end logic with an answer that can be wrong rather than merely ugly. `npm run lint`
+still does not exist, for the same reason as before.
 
 **There is no remote CI, deliberately** --- pre-release, one machine, and a workflow would
 add a second place for the gate list to live while catching nothing `scripts/gates.py`

@@ -27,6 +27,8 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { CommandRegistry } from "./commands";
+import { Palette } from "./palette";
 import { Viewer, type ViewerStatus } from "./viewer";
 
 /** Size of the surface the check mounts, in CSS pixels. */
@@ -329,6 +331,7 @@ async function run(path: string): Promise<void> {
 
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
+  await paletteChecks(viewer);
 
   viewer.destroy();
   check("destroys cleanly", viewer.idle, "frame loop stopped");
@@ -680,6 +683,119 @@ async function stepToAnotherPage(
     `${target} presses from page ${before + 1} to page ${seen.status?.page}, ` +
       `match ${target + 1} is on page ${goal.page + 1}`,
   );
+}
+
+/**
+ * The command palette, driven through its own DOM.
+ *
+ * The registry is built here rather than reusing `App.svelte`'s, because the
+ * shell is not mounted --- so what this covers is the palette and the registry,
+ * and **not** the command list the application actually registers or the Cmd-K
+ * that opens it. Both are wiring in `App.svelte`, and both are unchecked; the
+ * ranking underneath is covered by `commands.test.ts`.
+ *
+ * The load-bearing assertion is that Enter *ran* something: a palette that
+ * filters beautifully and does nothing passes every other check here. It carries
+ * the control this repository keeps needing --- the viewer is asserted not to be
+ * at the end of the document before the command that takes it there.
+ */
+async function paletteChecks(viewer: Viewer): Promise<void> {
+  const registry = new CommandRegistry();
+  registry.register(
+    { id: "view.fitWidth", title: "Fit width", keys: "⌘0", run: () => viewer.fitWidth() },
+    { id: "nav.lastPage", title: "Go to end", keys: "End", run: () => viewer.goToEnd() },
+    { id: "nav.firstPage", title: "Go to start", keys: "Home", run: () => viewer.goToStart() },
+    { id: "edit.copy", title: "Copy selection", enabled: () => false, run: () => {} },
+  );
+  const palette = new Palette(registry);
+
+  const field = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>(".tpdf-palette input");
+
+  /** Types into the palette's real input, through its real listener. */
+  const type = (text: string): void => {
+    const input = field();
+    if (!input) return;
+    input.value = text;
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  };
+
+  const press = (k: string): void => {
+    field()?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+    );
+  };
+
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+
+  palette.open();
+  check(
+    "the palette opens on every enabled command",
+    palette.isOpen && palette.visible.length === 3,
+    `open=${palette.isOpen}, lists ${palette.visible.length} of 4 registered`,
+  );
+  check(
+    "a disabled command is not offered",
+    !palette.visible.includes("Copy selection"),
+    `lists ${palette.visible.join(", ")}`,
+  );
+
+  type("fw");
+  check(
+    "typing an abbreviation finds the command",
+    palette.highlighted === "Fit width",
+    `"fw" highlights "${palette.highlighted}" of ${palette.visible.length} shown`,
+  );
+
+  type("zzzz");
+  check(
+    "a query matching nothing lists nothing",
+    palette.visible.length === 0,
+    `"zzzz" lists ${palette.visible.length}`,
+  );
+
+  type("go to");
+  const before = palette.highlighted;
+  press("ArrowDown");
+  check(
+    "the arrow keys move the highlight",
+    palette.highlighted !== before && palette.visible.includes(before),
+    `"${before}" -> "${palette.highlighted}"`,
+  );
+
+  // Escape must not run what was highlighted. Asserted against the viewer's
+  // position, since "the palette closed" is true either way.
+  type("go to end");
+  const offsetBeforeEscape = viewer.offset;
+  press("Escape");
+  check(
+    "Escape closes without running the command",
+    !palette.isOpen && viewer.offset === offsetBeforeEscape,
+    `open=${palette.isOpen}, offset ${offsetBeforeEscape.toFixed(0)} -> ${viewer.offset.toFixed(0)}`,
+  );
+
+  // The control: at the top of the document, so "went to the end" cannot be
+  // satisfied by having been there already. A one-screen document cannot offer
+  // that, and says so rather than passing on nothing.
+  palette.open();
+  type("go to end");
+  const start = viewer.offset;
+  if (viewer.maxOffset <= 1) {
+    skip("Enter runs the highlighted command", "the document does not scroll");
+  } else if (start >= viewer.maxOffset - 1) {
+    skip("Enter runs the highlighted command", "already at the end before running it");
+  } else {
+    press("Enter");
+    check(
+      "Enter runs the highlighted command",
+      !palette.isOpen && viewer.offset > start,
+      `"${"go to end"}" from offset ${start.toFixed(0)} to ${viewer.offset.toFixed(0)} ` +
+        `of ${viewer.maxOffset.toFixed(0)}`,
+    );
+  }
+
+  palette.destroy();
 }
 
 /**

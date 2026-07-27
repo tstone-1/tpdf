@@ -476,6 +476,32 @@ export class Viewer {
     this.scrollTo(this.scroller.pageTopOf(clamped));
   }
 
+  /** Scrolls to the very top of the document. */
+  goToStart(): void {
+    this.scrollTo(0);
+  }
+
+  /**
+   * Scrolls to the very bottom.
+   *
+   * The end of the document, not the top of the last page: on a document whose
+   * last page is taller than the window those are different places, and End is
+   * expected to reach the end.
+   */
+  goToEnd(): void {
+    this.scrollTo(this.scroller.maxScroll);
+  }
+
+  /** Scrolls to the top of the next page. */
+  nextPage(): void {
+    this.goToPage(this.currentPage() + 1);
+  }
+
+  /** Scrolls to the top of the previous page. */
+  previousPage(): void {
+    this.goToPage(this.currentPage() - 1);
+  }
+
   private onResize(): void {
     const viewport = this.viewportSize();
     this.scroller.resize(viewport);
@@ -509,7 +535,6 @@ export class Viewer {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     const screen = this.viewportSize().height * PAGE_OVERLAP;
-    const page = this.currentPage();
     const accel = event.metaKey || event.ctrlKey;
 
     if (accel && (event.key === "+" || event.key === "=")) {
@@ -527,9 +552,9 @@ export class Viewer {
     } else if (event.key === "PageUp") {
       this.scrollBy(-screen);
     } else if (event.key === "Home") {
-      this.scrollTo(0);
+      this.goToStart();
     } else if (event.key === "End") {
-      this.scrollTo(this.scroller.maxScroll);
+      this.goToEnd();
     } else if (accel && event.key === "c") {
       void this.copySelection();
     } else if (accel && event.key === "a") {
@@ -542,9 +567,9 @@ export class Viewer {
     } else if (event.key === "Escape") {
       this.clearSelection();
     } else if (event.key === "n") {
-      this.goToPage(page + 1);
+      this.nextPage();
     } else if (event.key === "p") {
-      this.goToPage(page - 1);
+      this.previousPage();
     } else {
       return;
     }

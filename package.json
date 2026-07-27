@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -22,7 +23,8 @@
     "svelte-check": "^4",
     "tslib": "^2",
     "typescript": "^5.6",
-    "vite": "^6"
+    "vite": "^6",
+    "vitest": "^4.1.10"
   },
   "allowScripts": {
     "esbuild@0.25.12": true
