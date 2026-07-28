@@ -132,7 +132,7 @@ impl Drop for RawTextPage<'_> {
 /// The arrays are flat and parallel rather than a `Vec` of structs: this
 /// crosses to the webview as JSON, where a struct per character would repeat
 /// four field names a few thousand times per page.
-#[derive(Clone, Debug, Default, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PageText {
     /// One Unicode scalar per character index. See the module docs.
     pub codes: Vec<u32>,

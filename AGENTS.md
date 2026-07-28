@@ -72,7 +72,9 @@ any check cannot complete, the result is "not verified", never "clean".
 PDFium is native C++ parsing attacker-controlled files, and PDF is a format with
 JavaScript, launch actions, embedded executables, recursive object graphs and
 decompression bombs in it. Chrome sandboxes PDFium in a separate process for exactly this
-reason, and so must tpdf.
+reason, and so must tpdf. **In place for the viewer's own render path since 2026-07-28** —
+`RenderService` defaults to worker processes on macOS, and `bin/backend_probe.rs` proves the
+app process never maps libpdfium by reading the dynamic linker's image table.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -1982,6 +1984,80 @@ Corollary for verification: a render comparison proves the *content* survived an
 about the *structure*. `docs/PLAN.md` §6 requires re-parsing with an independent parser for
 this reason, and the requirement paid for itself the first time it ran, on a bug in tpdf's
 own sweep.
+
+### A refusal in the setup hook cannot speak, so it must happen before the event loop
+
+`RenderService::start` panics on an unreadable `TPDF_BACKEND` — the right decision, in the
+wrong place. The setup hook is invoked by `App::run` from inside AppKit's own frames, so a
+panic there is **non-unwinding**: it aborts through a backtrace with no symbols, and it
+races the watchdog, which has 30 seconds to report that the page never ran a line of
+JavaScript. A misspelt environment variable is then diagnosed as an occluded window.
+
+The refusal moved to `run()`, beside the worker-argv check and before the watchdog: one
+line on stderr, `exit(2)`, no window in existence to be occluded and no event loop to lose
+the message in. Same family as the `RunEvent::Opened` entry above — **anything that must be
+*heard* has to happen before Tauri's frames are on the stack.**
+
+Two notes on how this surfaced, and the second is the more useful one. It was found by
+asking whether the loud refusal was actually loud, rather than by anything failing. And the
+first run "proving" it silent was **contaminated**: the control — a perfectly valid
+configuration — failed identically, because the display had gone dark between batches and
+WebKit suspends every window then. Two mechanisms, one silence, and the wrong one nearly
+went into a commit message. Run the control before believing a failure you have just
+provoked.
+
+### An outcome two mechanisms can produce cannot test either one
+
+Withdrawing a tile has two halves once the renderer is in another process: the parent's
+own queue decides what the caller sees, and a `Withdraw` on the pipe decides whether the
+worker keeps burning CPU. The obvious check asserts the outcome --- the request comes back
+`Abandoned` --- and it **passes with the pipe half deleted**, because the parent's token
+produces that answer on its own. Confirmed by mutation: removing the broadcast changed
+nothing the check could see.
+
+What discriminates is *when*: with the withdrawal crossing, the reply arrives in 2.2 ms
+against a 1,125 ms render; without it, the caller waits out the whole render and then
+reports `Abandoned` anyway. So the assertion has to be the outcome **and** the latency,
+and the threshold has to come from the render's own measured time rather than a constant.
+
+The general form, and it is the sharpest instance of "assert on what was produced" this
+project has hit: **when two independent mechanisms can produce the same answer, that
+answer tests neither of them.** Ask what else could have produced the result before
+believing the check covers the mechanism you had in mind --- and if the only difference is
+timing, the timing is the assertion.
+
+### A length bound cannot be tested by the verdict it produces
+
+`read_reply_line` refuses a reply over 32 MB, and the test fed it 4,096 bytes with no
+newline and a 64-byte limit, asserting `TooLong`. Delete the bound entirely and it still
+passes: an unbounded read consumes the lot, hits EOF without a newline, and is refused for
+*that* reason instead. The verdict is identical and the allocation the limit exists to
+prevent has already happened.
+
+Two repairs, and both are needed. Make the input a **complete** line that is merely too
+long, so an unbounded read succeeds rather than failing for the other reason. And assert
+the reader's **position** afterwards --- 64 bytes consumed, the rest still waiting --- because
+the property is "it stopped reading", and no statement about the return value can express
+that. Same family as the atomic-write test that had to plant the intermediate file: when
+the property is *how* the result was produced, the result cannot test it.
+
+### The linker's image table is an observable; a milestone of ours is a claim
+
+The strongest claim about the worker backend is that the app process never parses a PDF,
+and the first version of the check for it asserted the absence of our own `pdfium bound`
+startup mark. That tests our bookkeeping: the mark is written by the code being trusted, so
+a path that bound PDFium without marking it reads as clean.
+
+`_dyld_image_count` / `_dyld_get_image_name` answer the actual question --- **is libpdfium
+mapped into this process** --- and the answer comes from the dynamic linker rather than from
+us. The probe scans before the in-process backend starts (615 images, no pdfium) and again
+after (616, pdfium present), so the control that the scan can see one is in the same run.
+
+Same rule as reading a written PDF back with a parser that did not write it, arriving from
+a completely different direction: **prefer an observable the code under test does not
+produce.** Note `libc` deprecates both symbols in favour of the `mach2` crate; they are
+declared directly instead, because adding a dependency for two dyld entry points is a
+licensing decision (see the constraint above) taken for nothing.
 
 ### The test fixtures are generated, not committed
 

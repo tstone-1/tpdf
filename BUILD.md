@@ -75,6 +75,14 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- 
     testdata/outline-simple.pdf --mode check
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- \
     testdata/outline-hostile.pdf --mode check
+
+# The worker boundary is still transparent: the two backends must agree byte for
+# byte on tiles, geometry, text, search and outlines. Run it on vector-heavy as
+# well as a text fixture -- it is the only corpus whose render is slow enough for
+# the "a withdrawal reaches a render already inside PDFium" check to apply, and
+# on every other one that check reports [SKIP] with the reason.
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin backend-probe -- \
+    testdata/vector-heavy.pdf
 ```
 
 Two notes on why these are written out in full. The binary names are **hyphenated**, and
@@ -202,6 +210,61 @@ Run the executable inside the `.app` directly --- that keeps stdout and the envi
 which `open -a` does not. `--purge` gives a genuinely cold page cache and needs a sudoers
 entry for `/usr/sbin/purge`.
 
+### Which backend parses the document
+
+Documents are parsed in a sandboxed worker process, one per document. `TPDF_BACKEND`
+overrides that:
+
+```
+TPDF_BACKEND=worker      # the default on macOS
+TPDF_BACKEND=in-process  # the control, and the only thing that runs off macOS
+```
+
+Anything else is **refused before the window is created** --- one line on stderr, exit 2. The
+variable exists to say which of two implementations ran, so a value that quietly selected
+the other one would make any comparison between them meaningless, and `in_process` for
+`in-process` is one underscore away.
+
+The refusal is read in `run()` rather than where the backend is used, and that placement is
+the whole of its value. `RenderService::start` runs in the Tauri setup hook, which `App::run`
+invokes from AppKit's frames --- a panic there is non-unwinding, aborts through a backtrace
+with no symbols, and races the watchdog's 30-second report about a page that never ran. A
+misspelt variable would be diagnosed as an occluded window.
+
+Two things read differently under the worker: the startup timeline has `worker spawned`
+where the in-process one has `pdfium bound`, and a render can now fail because the worker
+died rather than only because the document did. `backend-probe` is what says the two agree
+about everything else.
+
+### The "reopen its windows" dialog
+
+A development build is killed constantly --- harness timeouts, the deliberate crash probes,
+an aborted panic --- and macOS answers each abnormal exit by offering, on the *next* launch,
+*"the last time you opened tpdf, it unexpectedly quit while reopening windows. Do you want
+to try to reopen its windows again?"* That dialog **blocks the launch** until someone clicks
+it, in front of a run that has nothing to do with whatever produced it.
+
+`src-tauri/Info.plist` sets `NSQuitAlwaysKeepsWindows` to false, which is merged into the
+bundle by tauri-bundler --- check it with
+`plutil -p .../tpdf.app/Contents/Info.plist | grep Quit` after a build rather than assuming
+the merge happened. An app that saves no window state cannot be asked to restore it, and
+the observable is the mechanism rather than the symptom: hard-kill a running bundle and
+`~/Library/Saved Application State/com.timostein.tpdf.savedState` must not appear.
+
+This is also the right *product* behaviour, not only a developer convenience. tpdf reopens
+the document you were reading, on the page you were on, through its own session file
+(`session.rs`); Cocoa's restoration would be a second mechanism doing the same job, and two
+mechanisms agree until they do not.
+
+An existing machine that has already been prompted also wants the user-domain switch, since
+the plist only governs bundles built after it:
+
+```
+defaults write com.timostein.tpdf ApplePersistenceIgnoreState -bool true
+defaults write com.timostein.tpdf NSQuitAlwaysKeepsWindows -bool false
+rm -rf ~/Library/"Saved Application State"/com.timostein.tpdf.savedState
+```
+
 ### Checking the viewer
 
 The reading surface is asserted rather than eyeballed. This opens a document in a real
@@ -268,7 +331,7 @@ bug this arrangement exists to catch:
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
 | `text-heavy.pdf` | 73--74 | 10--11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 79 | 5 | the only fixture with an ordinary outline |
+| `outline-simple.pdf` | 79--80 | 4--5 | the only fixture with an ordinary outline |
 | `outline-hostile.pdf` | 79 | 5 | the only one with a `/Launch` entry to refuse |
 | `vector-heavy.pdf` | 50 | 34 | one page, no extractable text, and no white paper to invert |
 | `vector-multi.pdf` | 57 | 27 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
@@ -285,12 +348,18 @@ The two vector fixtures skip three of the six inversion checks, and that is the 
 working rather than a gap: "the page went dark" cannot be shown on a document with no bright
 paper, so it says so instead of passing on nothing.
 
-**Only `text-heavy` has a range, and it is one check: "the strip withdraws its work when the
-viewer needs the renderer".** A thumbnail there takes about a millisecond, so whether one is
-still in flight when the viewer asks for a tile is a race, and the check skips when it is not
---- correctly, since nothing outstanding reads exactly like a successful withdrawal. Measured
-71/10, 71/10, 70/11 over three runs. The other five are determinate; that check runs only on
-`vector-multi`, which exists for it.
+**The ranges are all one check: "the strip withdraws its work when the viewer needs the
+renderer".** A thumbnail on a cheap page takes about a millisecond, so whether one is still
+in flight when the viewer asks for a tile is a race, and the check skips when it is not ---
+correctly, since nothing outstanding reads exactly like a successful withdrawal. Measured
+71/10, 71/10, 70/11 on `text-heavy`, and 80/4 once against 79/5 on three consecutive runs of
+`outline-simple`. It is deterministic only on `vector-multi`, which exists for it.
+
+**So the ran/skipped columns are not the invariant** --- the **84 names** are. A count chased
+back to a documented value is a defect introduced to satisfy a document, and the repair here
+would be to delete the outstanding-request condition that makes the withdrawal observable at
+all. Read a differing count by checking that the name is present and `[SKIP]`; a name that
+has *vanished* is the bug this arrangement exists to catch.
 
 This was written as a fixed `65 | 10` first, and a perfectly ordinary run then read as a
 regression. **A table that records one sample of a race as an invariant makes the next honest

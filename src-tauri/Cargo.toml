@@ -103,3 +103,7 @@ path = "src/bin/outline_probe.rs"
 [[bin]]
 name = "worker-probe"
 path = "src/bin/worker_probe.rs"
+
+[[bin]]
+name = "backend-probe"
+path = "src/bin/backend_probe.rs"

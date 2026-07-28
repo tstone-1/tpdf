@@ -69,6 +69,16 @@ at all — which is what makes a `(deny file-read*)` worker possible in the firs
 Measured in spike 0.5: a worker under that policy opens a 775-page document and renders it
 pixel-identically to an unsandboxed one.
 
+**The coordinator's "never parses PDF syntax itself" became true on 2026-07-28**, and not
+before. Until then the boundary existed and was measured, but the viewer's own render path
+still opened documents in the app process; this table described the architecture rather
+than the running program. `RenderService` now defaults to worker processes on macOS, and
+what says so is not a comment: `backend-probe` reads the **dynamic linker's** image table
+and finds no `libpdfium` mapped in a process that has just opened a 775-page document and
+rendered a tile from it — then starts the in-process backend, watches the image appear, and
+so proves the scan can see one. Everything below the first row of that table was already
+true of the worker; this is the row above it catching up.
+
 **Every buffer the worker writes into is the coordinator's allocation.** Tiles are rendered
 straight into a shared mapping the parent created and sized. The worker cannot enlarge it,
 so tile memory is bounded by construction rather than by supervision — which matters,
@@ -98,6 +108,16 @@ the same tile to the webview. Isolation costs about 1/27th of the UI.
 **Residual.** A worker compromise can still lie about what it rendered or extracted. Any
 security-relevant answer — above all a redaction verification — must therefore not be
 taken on a worker's word alone; see T5.
+
+One class of lie is now refused rather than believed, and only one. A reply states how many
+bytes of the shared mapping it wrote, and the coordinator checks that claim before reading:
+against the mapping's size, and — for raw pixels, where the answer is arithmetic rather than
+a bound — against `width x height x 4` exactly, so a wrong length is refused even when it
+fits. A reply *line* is bounded too, at 32 MB, because `read_line` on a pipe is otherwise
+unbounded and a worker made to emit an endless one would take the coordinator down with it:
+perfect isolation, dead application. Neither bound makes the content trustworthy. They stop
+a compromised worker reaching past the buffers it was given, which is a different and much
+smaller claim.
 
 ### T2 — Execution through the document's own features
 
@@ -384,6 +404,10 @@ before the architecture can be called cross-platform.
 8. **A compromised worker can lie about what it saw** — no verification result may rest on
    a single worker's word.
 9. **Nothing here protects previous copies, backups, or free sectors.**
+10. **A crashed worker is not respawned by the viewer.** The containment holds and the
+    coordinator survives, but that document stops rendering until it is reopened. The
+    8.5–12.9 ms respawn measured under T1 is what a restart would cost, not one that
+    happens; `RenderService` has no restart yet.
 
 ## 8. How to re-verify any of this
 
@@ -394,6 +418,8 @@ worker-bench <file.pdf> --mode footprint  --lib vendor/pdfium/lib --budget-mb 12
                                           --poll-ms 0,1,5,20,50
 worker-bench <file.pdf> --mode crash      --lib vendor/pdfium/lib
 worker-bench <file.pdf> --mode limits     --lib vendor/pdfium/lib
+worker-probe  <file.pdf>                  # the boundary itself
+backend-probe <file.pdf>                  # that the viewer's own path goes through it
 ```
 
 `--mode engine` and `--mode authority` are the two that must be re-run after every PDFium

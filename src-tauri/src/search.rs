@@ -46,7 +46,7 @@ use crate::text::PageText;
 /// A run of characters matching a query, as half-open character indices into
 /// the page's `codes` --- the same indices [`crate::text::PageText`] keys its
 /// boxes by, which is what makes a hit paintable without a lookup table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Match {
     pub page: u32,
     pub start: u32,
@@ -54,7 +54,7 @@ pub struct Match {
 }
 
 /// What one page contributed to a search.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PageMatches {
     pub page: u32,
     pub matches: Vec<Match>,

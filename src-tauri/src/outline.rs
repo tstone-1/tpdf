@@ -100,7 +100,7 @@ mod action {
 }
 
 /// Where an outline entry points, or why it points nowhere.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Target {
     /// A page in this document, and how far down it, in points from the page's
@@ -116,7 +116,7 @@ pub enum Target {
 }
 
 /// One entry, and everything under it.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OutlineItem {
     pub title: String,
     /// Whether the producer marked this subtree open, from the sign of
@@ -127,7 +127,7 @@ pub struct OutlineItem {
 }
 
 /// What the bounds cut off, so the UI can say the outline is incomplete.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Limits {
     /// Entries skipped because they had already been visited.
     pub cycles: usize,
@@ -148,7 +148,7 @@ impl Limits {
 }
 
 /// A document's outline.
-#[derive(Clone, Debug, Default, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Outline {
     pub items: Vec<OutlineItem>,
     /// Entries produced, at every depth. Zero means the document has no outline.

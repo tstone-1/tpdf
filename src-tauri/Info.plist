@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the bundle's generated Info.plist by tauri-bundler.
+
+	  tpdf does not use macOS window restoration, and saying so is not only a
+	  developer convenience. The app already reopens the document you were
+	  reading, on the page you were on, through its own session file
+	  (src-tauri/src/session.rs) -- which is the behaviour a reader wants and is
+	  ours to get right. Cocoa's restoration would be a second, redundant
+	  mechanism layered on top, and the two would disagree the moment they
+	  disagreed about anything.
+
+	  What it fixes day to day: an app that terminates abnormally with a window
+	  open makes macOS offer "the last time you opened tpdf, it unexpectedly quit
+	  while reopening windows -- do you want to try to reopen its windows again?"
+	  on the *next* launch, and that dialog blocks the launch until someone
+	  clicks it. A development build is killed constantly -- harness timeouts,
+	  deliberate crash probes, an aborted panic -- so the prompt arrives in front
+	  of a run that has nothing to do with whatever produced it. The same
+	  mechanism is how the `RunEvent::Opened` crash in AGENTS.md surfaced a day
+	  late, in a dialog, rather than at the time.
+	-->
+	<key>NSQuitAlwaysKeepsWindows</key>
+	<false/>
+</dict>
+</plist>
