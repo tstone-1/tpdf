@@ -12,6 +12,8 @@ pub mod invert;
 pub mod launch;
 pub mod outline;
 pub mod print;
+#[cfg(target_os = "macos")]
+pub mod print_macos;
 pub mod progressive;
 mod protocol;
 mod queue;
@@ -297,6 +299,84 @@ fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Result<(), S
     let mut session = session::Session::load(&path);
     session.invert_pages = invert;
     session.save(&path).map_err(|e| e.to_string())
+}
+
+/// Builds a print job and opens the platform print dialog for it.
+///
+/// `async` so the build happens off the main thread: `print::build` parses the
+/// whole document, and on a 337 MB scan that is not something to do on the
+/// thread the webview draws on. Only the panel is dispatched back.
+///
+/// Returns as soon as the panel has been *asked for*, not when it closes. The
+/// outcome is deliberately not reported: `runOperation` answers one boolean for
+/// both "printed" and "cancelled" (see `print_macos::present`), so a caller
+/// waiting for it could only turn a Cancel into an error message.
+#[tauri::command]
+async fn print_document(
+    app: tauri::AppHandle,
+    path: String,
+    pages: Option<Vec<u32>>,
+    turns: u8,
+) -> Result<(), String> {
+    let source = PathBuf::from(&path);
+    let job = print::Job {
+        pages: pages.map_or(print::Pages::All, print::Pages::Only),
+        turns,
+    };
+    let expected = match &job.pages {
+        print::Pages::Only(wanted) => Some(wanted.len()),
+        print::Pages::All => None,
+    };
+    let bytes = print::build(&source, &job)?;
+    let title = source.file_name().map_or_else(
+        || "Document".to_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    present_job(&app, bytes, title, expected)
+}
+
+/// Hands built bytes to the platform, having first read them back.
+#[cfg(target_os = "macos")]
+fn present_job(
+    app: &tauri::AppHandle,
+    bytes: Vec<u8>,
+    title: String,
+    expected: Option<usize>,
+) -> Result<(), String> {
+    // Re-parsed by PDFKit before anything is offered to a printer --- a third
+    // parser, and the one the print system will use itself. Refusing here costs
+    // a dialog; not refusing costs paper.
+    let reading = print_macos::read(&bytes)
+        .ok_or("the print job could not be read back, so it will not be printed")?;
+    print::expect_pages(reading.pages.len(), expected)?;
+
+    app.run_on_main_thread(move || {
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
+            // Unreachable by construction, and silence here would be a print
+            // command that does nothing and says nothing.
+            eprintln!("[print] dispatched off the main thread; no panel shown");
+            return;
+        };
+        if let Err(e) = print_macos::present(&bytes, &title, mtm) {
+            eprintln!("[print] {e}");
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// The Windows side, which is not written.
+///
+/// An error rather than a no-op: everything in this repository is macOS-only
+/// until a Windows build has actually run, and a print command that quietly
+/// does nothing is the worse of the two failures.
+#[cfg(not(target_os = "macos"))]
+fn present_job(
+    _app: &tauri::AppHandle,
+    _bytes: Vec<u8>,
+    _title: String,
+    _expected: Option<usize>,
+) -> Result<(), String> {
+    Err("printing is implemented on macOS only".into())
 }
 
 /// Milliseconds since process exec, so the frontend can place its own marks on
@@ -697,6 +777,7 @@ pub fn run() {
             session_load,
             session_remember,
             session_set_invert_pages,
+            print_document,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,

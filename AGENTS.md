@@ -106,6 +106,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | **Settled** --- renders, extracts and sandboxes correctly; not usable for redaction (spikes 0.1, 0.3, 0.5) |
 | Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | **Settled** --- surgical rewriting and sanitation both work, with our own mark-and-sweep and an encryption guard (spikes 0.3, 0.4, 0.6) |
 | Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite; still wanted for preserving encryption and for object streams |
+| macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled on macOS** --- paginates and runs the panel; also the independent parser every print job is read back with. Windows not written |
 
 The PDFium pin is `chromium/7881`, installed by `scripts/fetch_pdfium.py` and verified by
 digest. Every measurement in this file was taken against that build, so bumping it
@@ -650,6 +651,36 @@ test exists to catch, and the one AGENTS.md already records as "removes every in
 consumer you are standing in for.** A lenient parser is the right choice for *reading* real
 documents and the wrong one for *judging* them, and the same crate is usually both.
 
+### A writer and its own reader agree about a document that is wrong
+
+The sharpest form of the two entries above, and the one that says what to do instead. Every
+check on the print job read the result back with `lopdf` --- which wrote it. That cannot
+distinguish *"the document says this"* from *"our writer and our loader resolve this the same
+way"*, and only the first of those is a fact about the file.
+
+The mutation that shows it: leave `/Pages /Count` at its pre-subset value after deleting pages,
+so the page table contradicts its own `Kids` array. `lopdf`'s `get_pages()` walks `Kids`, so
+every check reading it back saw two pages and passed. **PDFKit reported five** --- the two real
+pages, followed by three blank ones it manufactured to satisfy the count:
+
+```
+Reading { pages: [ {text: "page 2"}, {text: "page 4"}, {text: ""}, {text: ""}, {text: ""} ] }
+```
+
+Out of a printer that is two correct sheets and then three blank ones. Nothing in the file is
+malformed enough for anyone to complain about, and no amount of reading it back with the writer
+can see it.
+
+So `print.rs` re-reads every built job with `print_macos::read` before the panel opens, and the
+three `a_third_parser_*` checks assert against that rather than against `lopdf`. **Where output
+leaves the process --- a printer, another application, a file someone else opens --- at least
+one check has to go through a parser that did not write it.** PDFKit is the right one here for
+a second reason beyond independence: it is what the macOS print system itself uses, so it is
+not a neutral third party but *the* consumer.
+
+Note the mutation was written to test the tests, not the code: `delete_pages` updates `/Count`
+correctly. The finding is what the checks are worth, not a bug.
+
 ### A canvas round trip cannot read back what a renderer produced
 
 The check for page inversion computes the expected tile itself --- lightness inversion has a
@@ -781,6 +812,23 @@ It now requires the summary line (`N/M checks passed`) to be present and reports
 one as a broken run, distinct from a surviving mutation. **A harness that reads absence as
 evidence needs to distinguish absence from silence** --- the same failure as the leak scanner
 that could not decode a Type0 font, one level up.
+
+### A timeout that discards the transcript recreates the failure it was added to diagnose
+
+`viewercheck.ts` prints each result as it is recorded, specifically so that a run stopping
+midway can say *where* --- that entry is above. `viewer_check.py` then captured the child's
+output and, on timeout, **printed the verdict and threw the transcript away**. So the one
+failure mode the streaming was added for produced a single line, `[FAIL] run timed out`,
+which is character-for-character the shape of a page that never executed any JavaScript.
+
+Both were seen on the same corpus within an hour, which is what makes it worth an entry: the
+fix upstream is undone by any consumer that buffers. `subprocess.TimeoutExpired` carries
+`.stdout`; print it, and say how many checks got in.
+
+The timeout itself was the other half. 300 s against a corpus that takes **276 s** is not a
+bound, it is a coin toss --- the same run passed and timed out on consecutive attempts. A
+timeout on a check that cannot wedge quietly exists only to stop an unattended run hanging
+forever, so it belongs far clear of the slowest case, not next to it.
 
 ### A text comparison cannot see a property that is not about text
 
@@ -1832,6 +1880,32 @@ more objects than it has; `qpdf --check` rejects it and PDFium does not notice.
 
 So: use `lopdf` for the rewrite, write the sweep yourself. Do not reach for QPDF to solve
 a `Vec::contains`.
+
+**The same walk is reached from a third door, and it is worse there.** `delete_pages` calls
+`delete_object` once per page, and `delete_object` calls `traverse_objects` — so deleting *n*
+pages runs that quadratic walk *n* times. Printing one page of the 775-page corpus measured
+**620 ms** for the deletion alone, release profile; a single pass over the graph, dropping
+`/Kids` entries and dictionary keys that name a doomed page and decrementing `/Count` up each
+`/Parent` chain, does it in **1.2 ms** and produces **byte-identical output** on every fixture
+and corpus. `print.rs`'s `drop_pages` is that pass, and the byte comparison against
+`delete_pages` is kept as a test rather than having been run once.
+
+The generalisation worth carrying: **`lopdf`'s convenience methods are built on
+`traverse_objects`, so any of them is a graph walk in disguise.** Before using one in a loop,
+check what it calls.
+
+### `cargo test` is a debug build, and a debug number in a doc comment is a lie
+
+Corollary of the `tauri dev` entry below, and it was one keystroke from being published. The
+`delete_pages` figure above was first measured at **15,912 ms**, and that number was written
+into a doc comment as a measured fact. It is a debug-profile measurement: the release figure is
+620 ms, **26x apart**. The conclusion happened to survive — 620 ms is still terrible — but the
+number would have been wrong in a file whose whole value is that its numbers are real.
+
+`cargo test`, `cargo run` and `cargo bench`-adjacent harnesses all default to the dev profile.
+Anything measured through a test needs `--release`, and the same asymmetry applies: PDFium and
+other prebuilt native code are barely affected while our own Rust is 20-50x slower, so debug
+numbers do not merely inflate — they **reorder** what looks expensive.
 
 ### `lopdf` silently drops encryption on save
 

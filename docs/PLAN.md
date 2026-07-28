@@ -2519,8 +2519,82 @@ a cyclic document, and a test that never returns prints no failure line — indi
 from a mutation nobody noticed. The runner has a timeout and reports that as its own outcome
 rather than folding it into either answer.
 
-Nothing is wired to a printer yet: `NSPrintOperation` and the Windows side are still to come,
-and Windows remains unverified as everywhere else in this file.
+##### The platform half: PDFKit, and a parser that did not write the file
+
+`src-tauri/src/print_macos.rs` opens the panel. PDFKit builds the `NSPrintOperation`, AppKit
+runs it, `MainThreadMarker` carries the one real requirement in the type system, and the
+command builds the job off the main thread so a 337 MB scan is not parsed on the thread the
+webview draws on.
+
+One correction to the note above: **PDFKit does have a bindings crate.** `objc2-pdf-kit` 0.3.2
+exists, matches the `objc2` 0.6 already in the tree, and is `Zlib OR Apache-2.0 OR MIT`, so
+there is no `msg_send!` interop and no licensing question. It is the only genuinely new
+dependency; `objc2`, `objc2-foundation` and `objc2-app-kit` were already there via Tauri.
+
+Two decisions are stated in the code and **neither is verified, because both need paper**:
+pages are scaled down to fit, or an A0 sheet prints its top-left corner; and PDFKit's
+auto-rotate is offered only when no page carries a rotation, since it turns a page to fill the
+sheet and would otherwise spin back the exact turn the reader asked for.
+
+The half worth the writeup is [`print_macos::read`], which is not on the printing path at all.
+Every check on the print job had been reading it back with `lopdf` --- the library that wrote
+it --- and that tests the round trip rather than the document. The mutation demonstrating it
+leaves `/Pages /Count` at its pre-subset value: every `lopdf` check passes, and PDFKit reports
+**five pages for a two-page document**, the two real ones followed by three blank pages it
+manufactures to satisfy the count. Two correct sheets and three blank ones, invisible to the
+writer's own reader. That is now an `AGENTS.md` entry, and the three `a_third_parser_*` checks
+assert through PDFKit instead.
+
+##### Two defects the real corpora found, and a third the profile nearly hid
+
+The synthetic fixtures said the print path was fine. Running it over the actual documents said
+otherwise, twice, and both were on the critical path to a print panel.
+
+**`lopdf::delete_pages` does not scale.** It calls `delete_object` per page, and that calls
+`traverse_objects` --- the quadratic walk this plan already recorded for `prune_objects`, here
+run once *per deleted page*. Keeping two pages of the 775-page corpus: **620.5 ms**. A single
+pass doing the same work --- drop `/Kids` entries and dictionary keys naming a doomed page,
+decrement `/Count` up every `/Parent` chain --- costs **1.2 ms**, a 533x difference, and its
+output is **byte-identical** on the synthetic fixture and on six corpora. `incr-xrefstream`
+reproduces it at 663.1 ms against 1.0 ms. The byte comparison is kept as a test.
+
+**The verification was the expensive half.** `print_macos::read` extracted every page's text,
+which only the checks use, and that is **1,017 ms** on 775 pages and **467 ms** on twelve A0
+pages --- a second of waiting in front of a print panel to fill a field nothing on that path
+reads. Split into a structural read (count and rotations, **62 ms** and **0.6 ms**) and a
+text-carrying one for the checks. `PageReading::text` became `Option<String>` in the process,
+because "not extracted" and "no extractable text" are different facts and one empty string for
+both is the leak-scanner defect again.
+
+**And the first number here was a debug-profile measurement, written into a doc comment as
+fact.** `delete_pages` measured 15,912 ms under `cargo test` and 620 ms under
+`cargo test --release` --- 26x apart. The conclusion survived; the number would not have. Now
+an `AGENTS.md` entry, because the existing rule named `tauri dev` and this arrived through a
+test runner.
+
+##### Eleven more mutations, and a page tree with a middle
+
+Eleven, all as predicted, plus the earlier eleven re-run as a control on the refactor --- since
+`build` changed underneath them, their previous result no longer said anything.
+
+One predicted **survivor** is kept rather than dropped: `pageCount` disagreeing with what
+`pageAtIndex` produces has no fixture that can provoke it, so that guard is unpinned and known
+to be.
+
+A second predicted survivor was closed instead. Deleting a page must decrement `/Count` on
+**every** ancestor, and every fixture here built its pages directly under the root --- where
+"the page's parent" and "the whole chain" are the same node, so a walk that stops after one
+step is indistinguishable from a correct one. Real producers balance the tree. A nested fixture
+(three groups of two, resources two levels up) makes the mutation fail, and the check asserts
+different deltas at different levels so that decrementing per *group* rather than per *page* is
+wrong in the other direction.
+
+`⌘P` is bound, and prevented even with no document open --- WKWebView's own `⌘P` prints the
+*chrome*. No page-range field of ours: the system panel has one, and its numbers refer to the
+document handed over, which is every page. `print::build` takes a range because printing
+selected thumbnails will need it, not because anything asks today.
+
+**Windows is not written**, and `present_job` says so with an error rather than doing nothing.
 
 ### Phase 2 — Editing foundation
 

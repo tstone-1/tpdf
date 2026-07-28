@@ -261,18 +261,25 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **81 check names**; what differs is how
+Run all six corpora. Every run reports the same **84 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 70--71 | 10--11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 76 | 5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 76 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 47 | 34 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 54 | 27 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 70 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 73--74 | 10--11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 79 | 5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 79 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 50 | 34 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 57 | 27 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 73 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+
+**`vector-multi` takes about 4m40s**, and everything else a fraction of that --- twelve A0
+pages is what it is for. The default timeout was 300 s, which sat close enough to that to
+fail intermittently, and the timeout path *discarded the transcript* --- so a slow machine
+produced one line, `[FAIL] run timed out`, which is exactly what a page that never ran a
+line of JavaScript produces. It now prints how far it got and the bound is 900 s, well
+clear of the slowest corpus rather than beside it.
 
 The two vector fixtures skip three of the six inversion checks, and that is the design
 working rather than a gap: "the page went dark" cannot be shown on a document with no bright

@@ -82,6 +82,18 @@
   commands.register(
     { id: "file.open", title: "Open document", keys: "⌘O", run: () => void pickAndOpen() },
     {
+      // No page-range field of our own, deliberately: the system panel has one,
+      // and its numbers refer to the document we hand over --- which is every
+      // page, so they mean what the reader thinks they mean. `print::build`
+      // takes a range because thumbnail-selection printing will need it, not
+      // because anything asks for one today.
+      id: "file.print",
+      title: "Print",
+      keys: "⌘P",
+      enabled: withDocument,
+      run: () => void printDocument(),
+    },
+    {
       id: "find.open",
       title: "Find in document",
       keys: "⌘F",
@@ -244,6 +256,35 @@
     });
   }
 
+  /**
+   * Hands the open document to the platform print dialog.
+   *
+   * The view rotation goes with it, because the reader asked to see the page
+   * that way and printing it the other way round would be a surprise. Nothing
+   * else about the view does: zoom, inversion and the scroll position are
+   * properties of a screen, and a printed page that came out inverted because
+   * the room was dark would be a genuinely expensive mistake.
+   *
+   * Resolves when the panel has been *asked for*, not when it closes --- the
+   * backend cannot tell a cancel from a failure (see `print_macos::present`),
+   * so there is no outcome here worth waiting for.
+   */
+  async function printDocument() {
+    if (!openPathName || !viewer) return;
+    try {
+      await invoke("print_document", {
+        path: openPathName,
+        pages: null,
+        turns: viewer.rotation,
+      });
+    } catch (e) {
+      // Shown, unlike a failed place write. This one the reader is standing
+      // there waiting for: a print command that silently does nothing reads as
+      // a broken application, and on Windows it *will* fail, by design.
+      error = String(e);
+    }
+  }
+
   function toggleSidebar() {
     sidebarShown = !sidebarShown;
     // The viewer's own ResizeObserver notices the width it just lost or got
@@ -356,6 +397,14 @@
     } else if (event.key === "f" && title) {
       event.preventDefault();
       focusFind();
+    } else if (event.key === "p" && !event.shiftKey) {
+      // Prevented whether or not a document is open --- note the missing
+      // `&& title` that every other binding here has. WKWebView's own Cmd-P
+      // prints the *page*: the chrome, the toolbar, and a scaled-down
+      // screenshot of whatever tiles happen to be painted. On the empty state
+      // that is a picture of the words "Open a PDF, or drop one here."
+      event.preventDefault();
+      void printDocument();
     } else if (event.key === "\\" && title) {
       event.preventDefault();
       toggleSidebar();

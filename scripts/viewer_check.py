@@ -31,7 +31,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
     parser.add_argument("pdf")
-    parser.add_argument("--timeout", type=float, default=300.0)
+    # 300 s was marginal and produced an intermittent failure that looked like a
+    # hang: `vector-multi` renders twelve A0 pages and measured 276 s, i.e. it
+    # passed or timed out depending on the machine's mood. A timeout is not a
+    # useful signal here --- nothing in this check can wedge quietly, and every
+    # real failure prints a `[FAIL]` line --- so the bound exists only to stop an
+    # unattended run hanging forever, and belongs well clear of the slowest
+    # corpus rather than next to it.
+    parser.add_argument("--timeout", type=float, default=900.0)
     args = parser.parse_args()
 
     if not require_visible_session():
@@ -43,8 +50,18 @@ def main() -> int:
         completed = subprocess.run(
             [args.binary], env=env, capture_output=True, text=True, timeout=args.timeout
         )
-    except subprocess.TimeoutExpired:
-        print("[FAIL] run timed out", file=sys.stderr)
+    except subprocess.TimeoutExpired as expired:
+        # The partial transcript, not just the verdict. `viewercheck.ts` prints
+        # each result as it is recorded precisely so a run that stops midway can
+        # say where --- and discarding it here threw that away again, leaving a
+        # timeout indistinguishable from a page that never ran a line of
+        # JavaScript. Both were seen on the same corpus within an hour.
+        partial = expired.stdout or b""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", "replace")
+        print(partial, end="")
+        done = partial.count("[OK]") + partial.count("[FAIL]") + partial.count("[SKIP]")
+        print(f"[FAIL] run timed out after {args.timeout:.0f}s, {done} checks in", file=sys.stderr)
         return 1
 
     print(completed.stdout, end="")
