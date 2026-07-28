@@ -394,8 +394,12 @@ before the architecture can be called cross-platform.
    (§10 q9). Largest open risk in the project.
 2. **A memory burst below the polling interval is unbounded on macOS.** Input limits are
    the mitigation and are unwritten.
-3. **One pathological page starves every other render in its worker** — its single PDFium
-   thread is occupied, and the progressive API that would fix it is unexercised.
+3. **A document's pool multiplies its memory by up to six.** Each worker holds its own
+   parse, at 7.8–48.2 MB depending on the corpus, so a fully grown pool on the A0 sheet is
+   about 290 MB. Growth is lazy — a reader turning one page at a time never has more than
+   one worker — but nothing retires an idle one afterwards, so the peak is what a session
+   keeps. Isolation is unaffected: every worker is separately sandboxed and separately
+   killable, and one dying costs its document one process rather than the document.
 4. **Windows is entirely untested** (§6).
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is

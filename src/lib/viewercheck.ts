@@ -688,8 +688,15 @@ async function searchesFromHere(
   pageCount: number,
 ): Promise<void> {
   const name = "searches forward from the page being read";
+  // Both names, on every path out. This function records *two* checks, and its
+  // early returns skipped only the first --- so on a one-page document the
+  // second did not fail, did not skip, and did not appear at all. The name set
+  // is the invariant here (86 across every corpus but one, which is how it was
+  // found); a check that evaporates is invisible in a way a red one is not.
+  const scanned = "finds something from the end of the document";
   if (pageCount < 2) {
     skip(name, "the document has one page");
+    skip(scanned, "the document has one page");
     return;
   }
 
@@ -698,12 +705,13 @@ async function searchesFromHere(
   const from = (seen.status?.page ?? 1) - 1;
   if (from === 0) {
     skip(name, "the whole document fits on one screen");
+    skip(scanned, "the whole document fits on one screen");
     return;
   }
 
   viewer.search(needle);
   const found = await eventually(
-    "finds something from the end of the document",
+    scanned,
     () => viewer.searchMatches.length > 0,
     () => `${viewer.searchMatches.length} matches so far`,
   );

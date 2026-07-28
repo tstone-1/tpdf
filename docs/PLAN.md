@@ -2840,7 +2840,7 @@ replaced made them **vanish** rather than fail: no `[FAIL]`, no `[SKIP]`, and th
 was the total dropping from 23 to 22. Both were caught by controls that existed because the
 prediction was written down first.
 
-**Still not done:** a pool. Reclaiming a document is below.
+**Still not done:** a pool, which is two sections below.
 
 ##### A document can be released — 2026-07-28
 
@@ -2892,6 +2892,76 @@ at runtime, only when a second file is opened, and only as a console warning. `v
 covers that seam with two checks, the second being the control: releasing the same id twice
 must be refused *by that id*, since "no error" is equally true of a command that ignored its
 argument.
+
+##### The pool — 2026-07-28
+
+The last Phase 1 item. The worker backend is now served by several threads sharing one job
+queue, and each document has a pool of processes they draw from, so several tiles of the same
+page render at once. The in-process backend is deliberately **not** pooled: concurrent PDFium
+in one process is undefined behaviour whatever the handles are, which is the reason security
+and performance wanted the same architecture in the first place.
+
+`bin/pool_bench.rs` measures it through `RenderService` rather than the raw protocol, six
+1024-square tiles of the A0 sheet, interleaved across rounds and compared pairwise within a
+round. Two runs:
+
+| workers | 1 | 2 | 4 | 6 | 8 |
+|---|---|---|---|---|---|
+| screenful | 3457–3465 ms | 1800–1868 ms | 1263–1299 ms | 830–837 ms | 843–851 ms |
+| speedup | 1.00x | 1.92–1.94x | 2.67–2.93x | 4.15–4.18x | 4.07–4.12x |
+
+Six is the default because that is where the curve flattens — eight is slower by less than
+the spread, so read it as flat. Note six is neither the core count (10) nor the
+performance-core count (4). Two runs are quoted rather than one because the four-worker
+figure moved 2.67–2.93x between them while six moved 0.03x; a single run would have
+presented that as a measurement. On a *cheap* corpus the pool helps too and does not hurt:
+`text-heavy` goes 6.5 ms → 2.5 ms, 2.69x.
+
+**Growth is lazy, and that is what makes it affordable.** A document opens with one worker
+and gains another only when a request arrives while the first is busy — so a reader turning
+one page at a time never pays for a second parse. A fully grown pool on the A0 sheet is about
+290 MB, which is the cost of the number and is stated in `docs/THREAT-MODEL.md` as a
+residual, because nothing retires an idle worker afterwards.
+
+**`close` drains.** Dequeue order is still FIFO — one channel — so a close is taken off the
+queue after everything queued before it; but with several threads those requests may still be
+*running*, in workers the close is about to kill. It waits for the pool to come home first,
+which is the guarantee the single-threaded version got for free.
+
+**Five mutations, five caught — after two of them exposed a design fault rather than a test
+gap.**
+
+| mutation | which check went red |
+|---|---|
+| the pool never grows | the pool grew; the recovery tile; the dead worker; the oversized burst |
+| the pool grows without bound | "an oversized burst is served, and the pool stays at its ceiling" |
+| `close` does not drain | "a close waits for the render it interrupted" |
+| a discarded worker's slot is not given back | the close, which never returns; and the closed id, still answering |
+| one service thread instead of a pool of them | "concurrent tiles grew the pool" |
+
+The two that first survived are the interesting ones. **The thread count was doing the
+capacity bound's job**: with one thread per worker, `idle` can only be empty when every worker
+is checked out, which takes one thread each, so a thread arriving to find none free cannot
+exist — both the ceiling and the wait beside it were unreachable, and removing the ceiling
+changed nothing any check could see. Threads are now `pool + 2`, which makes both reachable
+*and* fixes a real starvation: with exactly `pool` threads, six tiles of a slow document
+occupy every one of them and a request for a second document waits behind a render while its
+own workers sit idle.
+
+Even then it took a second correction. The burst provoking contention was `capacity + 1`
+tiles and the extra one was the tile being *withdrawn* — and a withdrawal is refused at the
+claim, before a worker is checked out, so the burst could never demand more than `capacity`
+workers however the cap behaved. A surplus that gets cancelled is not a surplus.
+
+**And several properties here fail by not answering at all.** A pool that believes in a
+worker it retired never finishes a close; a checkout waits for a process that will never
+exist. Written with a blocking receive, those checks could only stop, never go red. The
+probe's `wait` now has a 60 s bound against a 1.2 s render and reports *"the service is
+wedged, not slow"*; the mutation harness keeps the partial transcript on timeout, because one
+mutation turned a check red **and then** wedged the run — and a harness that reads a timeout
+as "no result" throws away a correct red.
+
+**Still to come here:** retiring idle workers, so the peak is not what a session keeps.
 
 ### Phase 2 — Editing foundation
 

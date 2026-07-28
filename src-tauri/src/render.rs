@@ -46,14 +46,29 @@
 //!   sees; a `Withdraw` on the wire decides whether the worker keeps burning CPU
 //!   on a tile nobody wants. Neither is redundant --- see [`RenderService::cancel`].
 //!
-//! This is still one FIFO thread. A worker *pool* is what buys parallelism, and
-//! it is not this change: spike 0.5 measured 3.9x on four workers across
-//! documents but only 3.2x on six tiles of one A0 page, which is the workload a
-//! viewport actually asks for.
+//! ## The pool
+//!
+//! The worker backend is served by several threads sharing one job queue, and
+//! each document has a pool of processes they draw from --- so several tiles of
+//! the same page render at once. The in-process backend is **not**: concurrent
+//! Pdfium in one process is undefined behaviour whatever the handles are, which
+//! is why security and performance wanted the same architecture.
+//!
+//! Three properties are worth keeping in mind when changing anything here.
+//!
+//! - **Growth is lazy.** A document opens with one worker and gains another only
+//!   when a request arrives while the first is busy. A reader turning one page
+//!   at a time never pays for a second parse of the document, which is what
+//!   makes the pool affordable at 7.8--48.2 MB per worker.
+//! - **Dequeue order is still FIFO**, because there is still one channel. Only
+//!   *execution* overlaps. That is what lets [`Workers::close`] stay correct by
+//!   draining rather than by taking a lock over the whole service.
+//! - **No lock is held across a render.** Every critical section here is pool
+//!   bookkeeping; the render happens in another process entirely.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 
 use pdfium_render::prelude::*;
@@ -207,12 +222,6 @@ impl Backend {
 
 type Reply<T> = Box<dyn FnOnce(Result<T, String>) + Send>;
 
-/// Every live worker's write half, for broadcasting a withdrawal.
-///
-/// Positional, with a hole where a document has been closed --- the index is the
-/// document id, which [`Workers::restart`] needs in order to re-point one.
-type Senders = Arc<Mutex<Vec<Option<WorkerSender>>>>;
-
 /// Looks up an open document, distinguishing an id that never existed from one
 /// that has been closed.
 ///
@@ -296,9 +305,10 @@ pub struct RenderService {
     /// Which requests are outstanding and which have been withdrawn. See
     /// `queue.rs`, which is where that state machine lives and is tested.
     queue: SharedQueue,
-    /// Empty in-process. One entry per open document in worker mode, appended
-    /// by the render thread and read by whichever thread withdraws.
-    senders: Senders,
+    /// The worker pool, in worker mode, so a withdrawal can reach a render
+    /// already inside Pdfium. `None` in-process, where there is nothing to
+    /// withdraw *to* --- the token in `queue` is the whole mechanism there.
+    workers: Option<Arc<Workers>>,
     backend: Backend,
 }
 
@@ -327,34 +337,60 @@ impl RenderService {
     /// call, so a missing or mismatched library surfaces as a failed open rather
     /// than a panic during app setup.
     pub fn start_with(library_dir: PathBuf, backend: Backend) -> Self {
+        Self::start_with_pool(library_dir, backend, pool_size())
+    }
+
+    /// Starts the render thread with an explicit pool size.
+    ///
+    /// Separate from the environment variable so that a benchmark can hold
+    /// several services at different sizes in one process --- reading `TPDF_POOL`
+    /// per service would make the sizes depend on when each was constructed,
+    /// which is exactly the kind of thing an interleaved A/B is supposed to rule
+    /// out rather than introduce.
+    ///
+    /// Ignored in-process: concurrent Pdfium in one process is undefined
+    /// behaviour, so that backend is one thread whatever is asked for.
+    pub fn start_with_pool(library_dir: PathBuf, backend: Backend, pool: usize) -> Self {
+        let pool = pool.max(1);
         let (tx, rx) = channel::<Job>();
         let queue = SharedQueue::default();
-        let thread_queue = queue.clone();
-        let senders: Senders = Senders::default();
-        let thread_senders = senders.clone();
 
-        std::thread::Builder::new()
-            .name("tpdf-render".into())
-            .spawn(move || match backend {
-                Backend::InProcess => match InProcess::start(&library_dir, thread_queue) {
-                    Ok(mut engine) => serve(rx, &mut engine),
-                    // Drain the queue, failing every job with the bind error, so
-                    // callers get a diagnosable message instead of a hang.
-                    Err(e) => drain(rx, &e),
-                },
-                Backend::Worker => {
-                    let mut engine = Workers::new(library_dir, thread_queue, thread_senders);
-                    serve(rx, &mut engine);
-                }
-            })
-            .expect("failed to spawn render thread");
+        let workers = match backend {
+            Backend::InProcess => {
+                let thread_queue = queue.clone();
+                // One thread, because concurrent Pdfium in this process is
+                // undefined behaviour whatever the handles are (module note).
+                std::thread::Builder::new()
+                    .name("tpdf-render".into())
+                    .spawn(move || match InProcess::start(&library_dir, thread_queue) {
+                        Ok(engine) => serve(rx, &engine),
+                        // Drain the queue, failing every job with the bind
+                        // error, so callers get a diagnosable message instead
+                        // of a hang.
+                        Err(e) => drain(rx, &e),
+                    })
+                    .expect("failed to spawn render thread");
+                None
+            }
+            Backend::Worker => {
+                let engine = Arc::new(Workers::new(library_dir, queue.clone(), pool));
+                serve_pooled(rx, engine.clone(), service_threads(pool));
+                Some(engine)
+            }
+        };
 
         Self {
             tx,
             queue,
-            senders,
+            workers,
             backend,
         }
+    }
+
+    /// How many workers one document may have on this service.
+    #[must_use]
+    pub fn pool_size(&self) -> usize {
+        self.workers.as_ref().map_or(1, |w| w.capacity)
     }
 
     /// Which backend this service is running.
@@ -471,11 +507,8 @@ impl RenderService {
     pub fn cancel(&self, rid: u64) {
         self.queue.with(|queue| queue.withdraw(rid));
 
-        let senders = self.senders.lock().unwrap_or_else(|e| e.into_inner());
-        for sender in senders.iter().flatten() {
-            // A dead worker is not this call's problem: the render thread's own
-            // reply will report it, with an epitaph this path cannot produce.
-            let _ = sender.withdraw(rid);
+        if let Some(workers) = &self.workers {
+            workers.broadcast_withdraw(rid);
         }
     }
 
@@ -502,39 +535,84 @@ impl RenderService {
 
 /// What a backend has to be able to do.
 ///
-/// One method per job, so the dispatch loop below is written once and neither
-/// backend can quietly grow a job the other does not serve. Every method takes
-/// `&mut self` and runs on the render thread: an in-process `RawDocument` is not
-/// `Send`, and a worker's stdout has exactly one reader.
+/// One method per job, so the dispatch below is written once and neither backend
+/// can quietly grow a job the other does not serve.
+///
+/// `&self` rather than `&mut self`, because the worker backend is served by
+/// several threads at once and the in-process one cannot be. Each keeps whatever
+/// interior mutability it needs: a `RefCell` where there is provably one thread,
+/// a `Mutex` and a `Condvar` where there are several.
 trait Engine {
-    fn open(&mut self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String>;
-    fn tile(&mut self, request: &TileRequest) -> Result<TileOutcome, String>;
-    fn text(&mut self, doc: u32, page: u32) -> Result<PageText, String>;
-    fn search(&mut self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String>;
-    fn outline(&mut self, doc: u32) -> Result<Outline, String>;
-    fn close(&mut self, doc: u32) -> Result<(), String>;
+    fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String>;
+    fn tile(&self, request: &TileRequest) -> Result<TileOutcome, String>;
+    fn text(&self, doc: u32, page: u32) -> Result<PageText, String>;
+    fn search(&self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String>;
+    fn outline(&self, doc: u32) -> Result<Outline, String>;
+    fn close(&self, doc: u32) -> Result<(), String>;
 }
 
-/// Serves jobs until every handle to the service is dropped.
-fn serve(rx: Receiver<Job>, engine: &mut dyn Engine) {
+/// Serves one job and answers it.
+fn dispatch(job: Job, engine: &dyn Engine) {
+    match job {
+        Job::Open {
+            path,
+            lazy_geometry,
+            reply,
+        } => reply(engine.open(&path, lazy_geometry)),
+        Job::Tile { request, reply } => reply(engine.tile(&request)),
+        Job::Text { doc, page, reply } => reply(engine.text(doc, page)),
+        Job::Search {
+            doc,
+            page,
+            query,
+            reply,
+        } => reply(engine.search(doc, page, &query)),
+        Job::Outline { doc, reply } => reply(engine.outline(doc)),
+        Job::Close { doc, reply } => reply(engine.close(doc)),
+    }
+}
+
+/// Serves jobs on this thread until every handle to the service is dropped.
+fn serve(rx: Receiver<Job>, engine: &dyn Engine) {
     for job in rx {
-        match job {
-            Job::Open {
-                path,
-                lazy_geometry,
-                reply,
-            } => reply(engine.open(&path, lazy_geometry)),
-            Job::Tile { request, reply } => reply(engine.tile(&request)),
-            Job::Text { doc, page, reply } => reply(engine.text(doc, page)),
-            Job::Search {
-                doc,
-                page,
-                query,
-                reply,
-            } => reply(engine.search(doc, page, &query)),
-            Job::Outline { doc, reply } => reply(engine.outline(doc)),
-            Job::Close { doc, reply } => reply(engine.close(doc)),
-        }
+        dispatch(job, engine);
+    }
+}
+
+/// Serves jobs from `threads` threads sharing one receiver.
+///
+/// The receiver is behind a mutex and each thread holds it only across `recv`,
+/// so a thread that has taken a job releases it before doing any work. What that
+/// buys is the whole point of the pool: several tiles of the same document are
+/// rendered at once, in different processes.
+///
+/// **Dequeue order is still FIFO** --- one channel, one queue --- and only
+/// *execution* overlaps. That is what keeps `close` correct without a lock of its
+/// own: a close is taken off the queue after everything queued before it, and
+/// drains whatever is still running (see [`Workers::close`]).
+/// Returns as soon as the threads are running --- it does not join them. They
+/// are detached exactly as the single render thread always was: they end when
+/// the last `RenderService` handle is dropped and the channel closes.
+fn serve_pooled(rx: Receiver<Job>, engine: Arc<Workers>, threads: usize) {
+    let rx = Arc::new(Mutex::new(rx));
+
+    for index in 0..threads {
+        let rx = rx.clone();
+        let engine = engine.clone();
+        std::thread::Builder::new()
+            .name(format!("tpdf-render-{index}"))
+            .spawn(move || loop {
+                let job = {
+                    let guard = rx.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.recv()
+                };
+                match job {
+                    Ok(job) => dispatch(job, engine.as_ref()),
+                    // Every sender is gone: the service was dropped.
+                    Err(_) => break,
+                }
+            })
+            .expect("failed to spawn a render thread");
     }
 }
 
@@ -555,11 +633,17 @@ fn drain(rx: Receiver<Job>, error: &str) {
 // ---------------------------------------------------------------- in-process
 
 /// Documents parsed in this process, on the render thread.
+///
+/// A `RefCell` and not a `Mutex`, and the difference is the whole reason this
+/// backend exists as a separate one: concurrent Pdfium is undefined behaviour
+/// (see the module note), so this is served by exactly **one** thread and a lock
+/// here would suggest otherwise while never being contended. The worker backend
+/// is the one that gets a pool.
 struct InProcess {
     bindings: Bindings,
     /// Indexed by document id, with a hole where one has been closed. See
     /// [`open_slot`].
-    docs: Vec<Option<RawDocument>>,
+    docs: std::cell::RefCell<Vec<Option<RawDocument>>>,
     queue: SharedQueue,
 }
 
@@ -574,14 +658,14 @@ impl InProcess {
         mark("pdfium bound");
         Ok(Self {
             bindings: progressive::bindings_of(pdfium),
-            docs: Vec::new(),
+            docs: std::cell::RefCell::new(Vec::new()),
             queue,
         })
     }
 }
 
 impl Engine for InProcess {
-    fn open(&mut self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String> {
+    fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String> {
         let t0 = Instant::now();
         let doc = RawDocument::open(self.bindings, path)?;
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -608,8 +692,12 @@ impl Engine for InProcess {
             (0..page_count).map(size_of).collect::<Result<_, _>>()?
         };
 
-        let id = self.docs.len() as u32;
-        self.docs.push(Some(doc));
+        // Borrowed only to append. Pdfium is never called under this borrow:
+        // `AGENTS.md` records a re-entrant call panicking a `RefCell` here.
+        let mut docs = self.docs.borrow_mut();
+        let id = docs.len() as u32;
+        docs.push(Some(doc));
+        drop(docs);
         // Distinct from `document parsed`: collecting page geometry walks every
         // page object, which on a long document is its own measurable cost.
         mark("document open complete");
@@ -631,142 +719,278 @@ impl Engine for InProcess {
     /// from queued to in flight under one lock, so a withdrawal arriving at any
     /// instant either finds it queued and marks it, or finds it running and
     /// cancels it.
-    fn tile(&mut self, request: &TileRequest) -> Result<TileOutcome, String> {
+    fn tile(&self, request: &TileRequest) -> Result<TileOutcome, String> {
         let token = match self.queue.with(|queue| queue.claim(request.rid)) {
             Claim::Start(token) => token,
             Claim::Withdrawn => return Ok(TileOutcome::Abandoned),
         };
 
-        let result = open_slot(&self.docs, request.doc)
+        let docs = self.docs.borrow();
+        let result = open_slot(&docs, request.doc)
             .and_then(|doc| render_tile(self.bindings, doc, request, &token));
+        drop(docs);
         self.queue.with(|queue| queue.release(request.rid));
         result
     }
 
-    fn text(&mut self, doc: u32, page: u32) -> Result<PageText, String> {
-        run_text(open_slot(&self.docs, doc)?, page)
+    fn text(&self, doc: u32, page: u32) -> Result<PageText, String> {
+        run_text(open_slot(&self.docs.borrow(), doc)?, page)
     }
 
-    fn search(&mut self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String> {
-        run_search(open_slot(&self.docs, doc)?, page, query)
+    fn search(&self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String> {
+        run_search(open_slot(&self.docs.borrow(), doc)?, page, query)
     }
 
-    fn outline(&mut self, doc: u32) -> Result<Outline, String> {
-        Ok(run_outline(open_slot(&self.docs, doc)?))
+    fn outline(&self, doc: u32) -> Result<Outline, String> {
+        Ok(run_outline(open_slot(&self.docs.borrow(), doc)?))
     }
 
     /// Drops the document, which is what closes the Pdfium handle.
-    fn close(&mut self, doc: u32) -> Result<(), String> {
+    fn close(&self, doc: u32) -> Result<(), String> {
+        let mut docs = self.docs.borrow_mut();
         // Looked up first, so closing an id twice is an error rather than a
         // silent success. Unlike a withdrawal, a caller here *does* know what it
         // has open --- a second close is a caller that has lost track, and that
         // is worth saying rather than absorbing.
-        open_slot_mut(&mut self.docs, doc)?;
-        self.docs[doc as usize] = None;
+        open_slot_mut(&mut docs, doc)?;
+        docs[doc as usize] = None;
         Ok(())
     }
 }
 
 // -------------------------------------------------------------------- workers
 
-/// One open document: the bytes, and whichever process is currently holding
-/// them.
-struct Held {
-    /// The document mapping, owned here rather than by the worker so that a
-    /// replacement is handed the same bytes. See [`Worker::spawn_shared`].
-    doc: Arc<Shm>,
-    /// The worker serving it, `None` between a death and its replacement.
-    worker: Option<Worker>,
+/// How many workers one document may have, unless `TPDF_POOL` says otherwise.
+///
+/// Six, because that is where the curve flattens on the workload a viewport
+/// actually issues. Measured through this service by `bin/pool_bench.rs`, six
+/// 1024-square tiles of the A0 sheet, interleaved across rounds (4P+6E machine):
+///
+/// | workers | 1 | 2 | 4 | 6 | 8 |
+/// |---|---|---|---|---|---|
+/// | screenful | 3457--3465 ms | 1800--1868 ms | 1263--1299 ms | 830--837 ms | 843--851 ms |
+/// | speedup | 1.00x | 1.92--1.94x | 2.67--2.93x | 4.15--4.18x | 4.07--4.12x |
+///
+/// Past six there is nothing --- eight is *slower*, by less than the spread, so
+/// read it as flat rather than as a cost. Note six is neither the core count
+/// (10) nor the performance-core count (4): it is where this workload
+/// saturates, and `AGENTS.md` records the earlier mistake of carrying a pool
+/// size over from a different one.
+///
+/// Two runs are quoted as a range rather than one as a number, because the
+/// four-worker figure moved 2.67--2.93x between them while six moved 0.03x. A
+/// single run would have made that look like a measurement.
+///
+/// The cost of the number is not CPU: every worker holds its own parse of the
+/// document, which `worker-probe` measured at 7.8--48.2 MB depending on the
+/// corpus, so a fully grown pool on the A0 sheet is about 290 MB. What makes
+/// that affordable is that growth is lazy --- a reader turning one page at a
+/// time never has more than one worker. What makes it a real cost is that
+/// nothing retires an idle one afterwards.
+pub const DEFAULT_POOL: usize = 6;
+
+/// How many threads serve the job queue, for a given per-document pool.
+///
+/// **More than the pool, deliberately, and it took a mutation to see why.** With
+/// one thread per worker the two bounds in [`Workers::checkout`] --- the capacity
+/// ceiling and the wait for a free worker --- are both unreachable: `idle` can
+/// only be empty when every worker is checked out, which needs one thread each,
+/// so a thread arriving to find none free cannot exist. A mutation removing the
+/// ceiling entirely survived every check, because the thread count was silently
+/// doing the ceiling's job.
+///
+/// The spare threads are not there to satisfy a test, though. They are what
+/// stops one document starving another: with exactly `pool` threads, six tiles
+/// of a slow document occupy every one of them, and a request for a *different*
+/// document waits behind a render even though its own workers are idle.
+fn service_threads(pool: usize) -> usize {
+    pool + 2
 }
 
-/// Documents parsed in sandboxed child processes, one per document.
+/// How many workers a document may have.
+///
+/// # Panics
+///
+/// Never: an unreadable `TPDF_POOL` falls back to the default rather than
+/// refusing, because unlike `TPDF_BACKEND` a wrong value here cannot make two
+/// measurements silently incomparable --- the size is reported in every place
+/// that reports a speedup.
+#[must_use]
+pub fn pool_size() -> usize {
+    std::env::var("TPDF_POOL")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|size| *size > 0)
+        .unwrap_or(DEFAULT_POOL)
+}
+
+/// One open document: its bytes, and the pool of processes parsing them.
+struct Held {
+    /// The document mapping, owned here rather than by any one worker so that
+    /// every worker in the pool --- and every replacement for a dead one --- is
+    /// handed the same bytes. See [`Worker::spawn_shared`].
+    doc: Arc<Shm>,
+    /// Workers not currently serving a request.
+    idle: Vec<Worker>,
+    /// How many exist at all, idle or checked out. Not `idle.len()`: that would
+    /// grow the pool again every time one was busy.
+    spawned: usize,
+    /// Every live worker's write half, by pid.
+    ///
+    /// Kept here rather than read off `idle`, because the worker that most needs
+    /// a withdrawal is precisely the one that is **checked out** --- it is the
+    /// one inside Pdfium. Removed on discard, since the entry holds a clone of
+    /// the child's stdin and a stale one is a leaked descriptor.
+    senders: Vec<(u32, WorkerSender)>,
+}
+
+/// Documents parsed in sandboxed child processes, several per document.
+///
+/// Shared across the service's threads, which is what makes the pool a pool:
+/// each thread takes a job, checks a worker out, and renders in that process
+/// while the others do the same. Everything here is short critical sections ---
+/// no lock is ever held across a render.
 struct Workers {
     library_dir: PathBuf,
     /// Indexed by document id, with a hole where one has been closed. See
     /// [`open_slot`].
-    docs: Vec<Option<Held>>,
-    senders: Senders,
+    docs: Mutex<Vec<Option<Held>>>,
+    /// Signalled when a worker returns to a pool, is discarded, or fails to
+    /// spawn --- i.e. whenever waiting for one might have become worthwhile.
+    returned: Condvar,
+    /// The most workers any one document may have.
+    capacity: usize,
     queue: SharedQueue,
 }
 
 impl Workers {
-    fn new(library_dir: PathBuf, queue: SharedQueue, senders: Senders) -> Self {
+    fn new(library_dir: PathBuf, queue: SharedQueue, capacity: usize) -> Self {
         Self {
             library_dir,
-            docs: Vec::new(),
-            senders,
+            docs: Mutex::new(Vec::new()),
+            returned: Condvar::new(),
+            capacity,
             queue,
         }
     }
 
-    /// A document by the id [`Engine::open`] returned.
-    fn held(&mut self, doc: u32) -> Result<&mut Held, String> {
-        open_slot_mut(&mut self.docs, doc)
+    /// The document table. Poisoning is recovered from rather than propagated:
+    /// a panic in one job must not take every open document with it.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Option<Held>>> {
+        self.docs.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Replaces a document's worker with a fresh one holding the same bytes.
+    /// Takes a worker out of a document's pool, growing or waiting as needed.
     ///
-    /// There is no reopening protocol to run: the worker parses its document
-    /// during its own startup, before it reads a single request, so a
-    /// replacement is ready as soon as it is spawned. That is a property of "one
-    /// worker serves one document" rather than a convenience --- a multiplexing
-    /// worker would have a session to re-establish here.
-    fn restart(&mut self, doc: u32) -> Result<(), String> {
-        let index = doc as usize;
-        let held = self.held(doc)?;
-        // Said out loud, once, because a successful retry makes the death
-        // invisible to the caller and a worker that dies quietly is the hardest
-        // thing in this design to diagnose. The epitaph has to be read before
-        // the child is dropped, since dropping it is what reaps it.
-        let epitaph = held
-            .worker
-            .as_mut()
-            .map_or_else(|| "already gone".to_string(), Worker::epitaph);
-        // Dropped before the replacement is spawned, so no document ever holds
-        // two 16 MB tile mappings at once. Not for the reaping, which happens
-        // either way --- assigning over the old `Worker` would drop it too, just
-        // later. Nothing pins this ordering, and it is a footprint choice rather
-        // than a correctness one.
-        held.worker = None;
-        let bytes = held.doc.clone();
-        eprintln!("[render] document {doc}: worker {epitaph}; starting a replacement");
-
-        let worker = Worker::spawn_shared(bytes, &self.library_dir)?;
-        // Overwritten in place: a withdrawal broadcast between the death and
-        // here reaches nothing, which is harmless because the queue in the
-        // parent has already recorded it and is what the caller sees.
-        if let Some(slot) = self
-            .senders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(index)
-        {
-            *slot = Some(worker.sender());
+    /// Growth is **lazy**, and that is the whole reason a pool is affordable: a
+    /// reader turning one page at a time never has more than one worker, and so
+    /// never pays for more than one parse of the document. A second appears only
+    /// when a second request arrives while the first is still rendering --- which
+    /// is exactly the case a pool is for.
+    fn checkout(&self, doc: u32) -> Result<Worker, String> {
+        let mut docs = self.lock();
+        loop {
+            let held = open_slot_mut(&mut docs, doc)?;
+            if let Some(worker) = held.idle.pop() {
+                return Ok(worker);
+            }
+            if held.spawned < self.capacity {
+                // The reservation is taken *before* the lock is released, so two
+                // threads arriving together cannot both decide there is room for
+                // the last worker.
+                held.spawned += 1;
+                let bytes = held.doc.clone();
+                drop(docs);
+                return self.spawn_into(doc, bytes);
+            }
+            // At capacity and all of them busy. Waiting is right rather than
+            // queueing another request: this thread has nothing else to do, and
+            // the caller's tile cannot start until a process is free anyway.
+            docs = self.returned.wait(docs).unwrap_or_else(|e| e.into_inner());
         }
-        self.held(doc)?.worker = Some(worker);
-        Ok(())
     }
 
-    /// A document's worker, starting a replacement if it is already known dead.
-    fn live(&mut self, doc: u32) -> Result<&mut Worker, String> {
-        if self.held(doc)?.worker.is_none() {
-            self.restart(doc)?;
+    /// Spawns a worker against a reservation already taken by [`checkout`].
+    fn spawn_into(&self, doc: u32, bytes: Arc<Shm>) -> Result<Worker, String> {
+        // Outside the lock: a spawn is ~12 ms, and holding the table for that
+        // would stall every other document as well as this one's other threads.
+        let worker = match Worker::spawn_shared(bytes, &self.library_dir) {
+            Ok(worker) => worker,
+            Err(e) => {
+                // Give the reservation back, or the pool shrinks by one every
+                // time a spawn fails and eventually deadlocks at zero.
+                let mut docs = self.lock();
+                if let Ok(held) = open_slot_mut(&mut docs, doc) {
+                    held.spawned = held.spawned.saturating_sub(1);
+                }
+                drop(docs);
+                self.returned.notify_all();
+                return Err(e);
+            }
+        };
+
+        let mut docs = self.lock();
+        let Ok(held) = open_slot_mut(&mut docs, doc) else {
+            // Closed while this was spawning. Dropping the worker kills it,
+            // which is what the close would have done.
+            return Err(not_open(doc, true));
+        };
+        held.senders.push((worker.pid(), worker.sender()));
+        Ok(worker)
+    }
+
+    /// Returns a worker to its pool.
+    fn checkin(&self, doc: u32, worker: Worker) {
+        let mut docs = self.lock();
+        match open_slot_mut(&mut docs, doc) {
+            Ok(held) => held.idle.push(worker),
+            // The document was closed while this worker was out. Dropping it
+            // kills it --- and `close` is waiting for exactly this, so the
+            // notify below is what lets it finish.
+            Err(_) => drop(worker),
         }
-        self.held(doc)?
-            .worker
-            .as_mut()
-            .ok_or_else(|| format!("document {doc} has no worker"))
+        drop(docs);
+        self.returned.notify_all();
     }
 
-    /// Whether a document's worker process is still there.
-    fn running(&mut self, doc: u32) -> bool {
-        self.docs
-            .get_mut(doc as usize)
-            .and_then(|held| held.as_mut()?.worker.as_mut())
-            .is_some_and(Worker::is_running)
+    /// Retires a worker rather than returning it, so a fresh one takes its slot.
+    fn discard(&self, doc: u32, worker: Worker) {
+        let pid = worker.pid();
+        // Dropped first: `Worker`'s own `Drop` kills and reaps, and doing that
+        // outside the lock keeps a dying child off the critical section.
+        drop(worker);
+
+        let mut docs = self.lock();
+        if let Ok(held) = open_slot_mut(&mut docs, doc) {
+            held.spawned = held.spawned.saturating_sub(1);
+            // The sender holds a clone of the child's stdin, so leaving it here
+            // would keep the pipe open for the life of the service --- one
+            // descriptor per worker that ever died.
+            held.senders.retain(|(other, _)| *other != pid);
+        }
+        drop(docs);
+        self.returned.notify_all();
     }
 
-    /// Runs one exchange with a document's worker, replacing it if it has died.
+    /// Sends a withdrawal to every worker of every open document.
+    ///
+    /// Broadcast rather than addressed, because a `rid` is unique for the life
+    /// of the process and a worker that has never seen one ignores it. With a
+    /// pool that is more useful than before rather than less: the parent does
+    /// not know which of a document's workers took the request.
+    fn broadcast_withdraw(&self, rid: u64) {
+        let docs = self.lock();
+        for held in docs.iter().flatten() {
+            for (_, sender) in &held.senders {
+                // A dead worker is not this call's problem: whichever thread is
+                // holding it will report that, with an epitaph.
+                let _ = sender.withdraw(rid);
+            }
+        }
+    }
+
+    /// Runs one exchange with one of a document's workers, replacing it if it
+    /// has died.
     ///
     /// Retried exactly once, and the bound is the retry rather than a counter.
     /// A crash the document *causes* reproduces on the retry --- so the reader
@@ -779,32 +1003,48 @@ impl Workers {
     /// or by anything outside the document at all, is invisible to the caller.
     /// That is the point of restarting.
     fn with_worker<T>(
-        &mut self,
+        &self,
         doc: u32,
-        mut exchange: impl FnMut(&mut Worker) -> Result<T, String>,
+        exchange: impl Fn(&mut Worker) -> Result<T, String>,
     ) -> Result<T, String> {
-        // Scoped so the borrow of `self` ends before anything below touches it.
-        let first = {
-            let worker = self.live(doc)?;
-            exchange(worker)
-        };
-        let error = match first {
-            Ok(value) => return Ok(value),
+        let mut worker = self.checkout(doc)?;
+
+        let error = match exchange(&mut worker) {
+            Ok(value) => {
+                self.checkin(doc, worker);
+                return Ok(value);
+            }
             Err(e) => e,
         };
 
-        if self.running(doc) {
+        // Only a *dead* worker is worth replacing. A live one that answered with
+        // an error answered: restarting on that would hide a bug here behind a
+        // process that gets the next question right, and would cost a document
+        // reopen per malformed request.
+        if worker.is_running() {
+            self.checkin(doc, worker);
             return Err(error);
         }
-        self.restart(doc).map_err(|e| format!("{error} --- {e}"))?;
 
-        let worker = self.live(doc)?;
-        exchange(worker)
+        // Said out loud, once, because a successful retry makes the death
+        // invisible to the caller and a worker that dies quietly is the hardest
+        // thing in this design to diagnose.
+        eprintln!(
+            "[render] document {doc}: worker {}; starting a replacement",
+            worker.epitaph()
+        );
+        self.discard(doc, worker);
+
+        // The discard freed a slot, so this checkout spawns rather than waits.
+        let mut replacement = self.checkout(doc).map_err(|e| format!("{error} --- {e}"))?;
+        let second = exchange(&mut replacement);
+        self.checkin(doc, replacement);
+        second
     }
 
     /// Sends a request that answers with JSON, and reads the answer back.
     fn ask<T: serde::de::DeserializeOwned>(
-        &mut self,
+        &self,
         doc: u32,
         request: &Request,
     ) -> Result<T, String> {
@@ -818,12 +1058,8 @@ impl Workers {
         })
     }
 
-    /// Renders through the worker, having already claimed the request.
-    fn render(
-        &mut self,
-        request: &TileRequest,
-        token: &CancelToken,
-    ) -> Result<TileOutcome, String> {
+    /// Renders through a worker, having already claimed the request.
+    fn render(&self, request: &TileRequest, token: &CancelToken) -> Result<TileOutcome, String> {
         self.with_worker(request.doc, |worker| {
             let response = worker.call(&Request::Tile {
                 rid: request.rid,
@@ -903,14 +1139,16 @@ fn payload_length(
 }
 
 impl Engine for Workers {
-    /// Spawns a worker holding this document and asks it for the geometry.
+    /// Spawns the document's first worker and asks it for the geometry.
     ///
-    /// The spawn is on this thread and therefore on the critical path to the
-    /// first page. What it costs is measured rather than assumed --- see PLAN §9.
-    fn open(&mut self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String> {
+    /// One, not `capacity`: the pool grows only under contention, so a document
+    /// that is opened and read one page at a time costs exactly one process. The
+    /// spawn is on the critical path to the first page and what it costs is
+    /// measured rather than assumed --- see PLAN §9.
+    fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String> {
         let t0 = Instant::now();
-        // Mapped here rather than inside the spawn, because this is the copy a
-        // replacement worker will be handed if this one dies. The file is read
+        // Mapped here rather than inside the spawn, because this is the copy
+        // every later worker for this document will be handed. The file is read
         // once, at open, and never again.
         let doc = Arc::new(Shm::map_file(path)?);
         let mut worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
@@ -926,15 +1164,15 @@ impl Engine for Workers {
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
         mark("document parsed");
 
-        let id = self.docs.len() as u32;
-        self.senders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(Some(worker.sender()));
-        self.docs.push(Some(Held {
+        let mut docs = self.lock();
+        let id = docs.len() as u32;
+        docs.push(Some(Held {
             doc,
-            worker: Some(worker),
+            senders: vec![(worker.pid(), worker.sender())],
+            spawned: 1,
+            idle: vec![worker],
         }));
+        drop(docs);
         mark("document open complete");
 
         Ok(DocumentInfo {
@@ -953,7 +1191,10 @@ impl Engine for Workers {
     /// request that was withdrawn before it ever reached a worker, and the
     /// worker's own reaches a render already inside Pdfium. See
     /// [`RenderService::cancel`].
-    fn tile(&mut self, request: &TileRequest) -> Result<TileOutcome, String> {
+    ///
+    /// The claim is taken before the checkout on purpose. A request withdrawn
+    /// while it is waiting for a free worker should not then occupy one.
+    fn tile(&self, request: &TileRequest) -> Result<TileOutcome, String> {
         let token = match self.queue.with(|queue| queue.claim(request.rid)) {
             Claim::Start(token) => token,
             Claim::Withdrawn => return Ok(TileOutcome::Abandoned),
@@ -964,11 +1205,11 @@ impl Engine for Workers {
         result
     }
 
-    fn text(&mut self, doc: u32, page: u32) -> Result<PageText, String> {
+    fn text(&self, doc: u32, page: u32) -> Result<PageText, String> {
         self.ask(doc, &Request::Text { page })
     }
 
-    fn search(&mut self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String> {
+    fn search(&self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String> {
         self.ask(
             doc,
             &Request::Search {
@@ -978,40 +1219,37 @@ impl Engine for Workers {
         )
     }
 
-    fn outline(&mut self, doc: u32) -> Result<Outline, String> {
+    fn outline(&self, doc: u32) -> Result<Outline, String> {
         self.ask(doc, &Request::Outline)
     }
 
-    /// Drops the document, which kills the process holding it.
+    /// Drops the document, which kills every process holding it.
+    ///
+    /// **It waits for the pool to come home first**, and that wait is what keeps
+    /// the guarantee the single-threaded version got for free. Dequeue order is
+    /// still FIFO, so a close is taken off the queue after every request made
+    /// before it --- but with several threads those requests may still be
+    /// *running*, in workers this is about to kill. Draining first means a
+    /// request never loses its worker mid-render.
     ///
     /// No goodbye on the wire. `Worker`'s own `Drop` kills and reaps, and a
     /// request to exit cleanly would be a message the one process in this design
     /// that is *assumed hostile* gets to ignore --- the reader would then wait on
-    /// a shutdown that never comes. Killing it is both simpler and the only
-    /// version that cannot be refused.
-    fn close(&mut self, doc: u32) -> Result<(), String> {
-        // Looked up first, so closing an id twice is an error rather than a
-        // silent success --- see the in-process twin.
-        self.held(doc)?;
-        self.docs[doc as usize] = None;
-        if let Some(slot) = self
-            .senders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(doc as usize)
-        {
-            // Cleared because the sender holds an `Arc<Mutex<ChildStdin>>`, and
-            // this `Vec` holds a *clone* of the worker's --- so dropping the
-            // worker does not close the pipe, and a stale entry here is a
-            // descriptor leaked per closed document. Writing to it would merely
-            // fail harmlessly, which is why the leak is the reason and not the
-            // failed write.
-            //
-            // Emptied rather than removed, because the broadcast is positional:
-            // removing would shift every later document's sender out from under
-            // its own id.
-            *slot = None;
+    /// a shutdown that never comes.
+    fn close(&self, doc: u32) -> Result<(), String> {
+        let mut docs = self.lock();
+        loop {
+            // Looked up every time round, and inside the loop, because a second
+            // close of the same id must be an error rather than a wait that
+            // never ends. Unlike a withdrawal, a caller here *does* know what it
+            // has open.
+            let held = open_slot_mut(&mut docs, doc)?;
+            if held.idle.len() >= held.spawned {
+                break;
+            }
+            docs = self.returned.wait(docs).unwrap_or_else(|e| e.into_inner());
         }
+        docs[doc as usize] = None;
         Ok(())
     }
 }

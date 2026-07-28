@@ -290,6 +290,24 @@ experience.
   produces on its own. It now asserts the latency too: 2.2 ms against a 1,125 ms render.
 
   **Windows still refuses rather than running unsandboxed**, and so defaults to in-process.
+- **Tiles of one page render in several worker processes at once.** The worker backend is
+  served by a pool of threads over one job queue, and each document has a pool of processes
+  they draw from. A screenful of the A0 sheet goes from **3.46 s to 0.83 s, 4.2x**, measured
+  through the service itself with interleaved rounds; a cheap page gains 2.7x. Six workers is
+  where the curve flattens --- neither the core count nor the performance-core count.
+
+  **Growth is lazy**: a document opens with one worker and gains another only under
+  contention, so a reader turning one page at a time never pays for a second parse of it.
+  Nothing retires an idle worker afterwards, so a fully grown pool on the A0 sheet keeps
+  about 290 MB --- recorded as a residual rather than hidden.
+
+  The in-process backend is deliberately *not* pooled: concurrent PDFium in one process is
+  undefined behaviour whatever the handles are.
+
+  Two of five mutations first survived, and both pointed at the design rather than the tests.
+  With one thread per worker the pool's own capacity bound was unreachable --- the thread
+  count was enforcing it --- which also meant six tiles of a slow document could occupy every
+  thread and starve a second document whose workers were idle. Threads are now `pool + 2`.
 - **A document is released when the reader moves to another file.** Until now nothing ever
   removed one, so a session that opened a dozen files held a dozen documents --- which the
   process boundary turned from a heap allocation into a dozen sandboxed children at
@@ -469,6 +487,20 @@ experience.
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **A viewer check vanished instead of skipping, on every one-page document.**
+  `searchesFromHere` records two check names, and its two early returns skipped only the
+  first --- so on a document with one page, `"finds something from the end of the document"`
+  did not pass, did not fail, and did not appear at all. It had been that way since the check
+  was written, through every green run and every mutation pass.
+
+  Nothing red found it. It surfaced as an inconsistency *between corpora*: 86 check names on
+  five of them and 85 on `text-cid`. That invariant --- the set of names is fixed, and a count
+  that moves is itself a defect --- was written down when a check disappeared inside an
+  `if let`; this is the first time it has caught one. A static scan for names that are
+  recorded but never skipped is not a substitute: it returns 48 candidates, nearly all false,
+  because a skip can be reached through a `const` or a call it cannot see. Diffing the name
+  sets across corpora costs one `diff` and names the missing check exactly.
 
 - **The test guarding `path_from_url`'s scheme check could not fail.** The behaviour was
   always correct; the test was not. `Url::to_file_path` rejects `https://example.com/a.pdf` on

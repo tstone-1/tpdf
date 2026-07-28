@@ -611,6 +611,16 @@ impl Worker {
         self.stdin.send(request)
     }
 
+    /// The worker's process id.
+    ///
+    /// Identity for the parent's own bookkeeping --- which sender belongs to
+    /// which worker in a pool --- and not a handle to act on: signalling by pid
+    /// races a reaped child whose number has been reused.
+    #[must_use]
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Whether the process is still there.
     ///
     /// Asked of the kernel rather than inferred from a failed call, because the

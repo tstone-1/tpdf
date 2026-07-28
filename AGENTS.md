@@ -2107,6 +2107,27 @@ failing check printed *"1048576 bytes, identical to the tile before it died"* ne
 line has to be computed from the same quantity as the verdict**, or it will eventually
 contradict it --- at exactly the moment someone is relying on it.
 
+**That invariant then caught one, which is the first time it has earned its keep.** Later the
+same day, a routine sweep across the corpora reported 86 check names everywhere except
+`text-cid`, which reported 85 --- no failure, no skip, nothing red anywhere. The missing name
+was `"finds something from the end of the document"`, and the cause is a shape worth naming
+separately from the one above: **`searchesFromHere` records two names and its early returns
+skipped only one.** On a one-page document it took the `pageCount < 2` branch, skipped
+`"searches forward from the page being read"` by name, and returned --- and the second check,
+recorded further down by an `eventually`, simply never happened.
+
+Note what did *not* find it. Every corpus was green; the suite had been run and mutated
+repeatedly; and a static scan for names that are recorded but never skipped returns 48
+candidates, most of them false, because a skip can be reached through a `const` or a
+multi-line call the scan cannot see. The only thing that discriminated was **comparing the
+name sets across corpora**, which costs one `diff` and needs no knowledge of the suite at all.
+
+So the rule generalises past nesting: **a function that records more than one check name must
+skip every one of them on every path out.** Count the names a function can print, then count
+the ones each early return prints; if those differ, a document exists that makes one vanish.
+And when a suite runs over several inputs, diff the name sets rather than reading the totals
+--- a total tells you a number moved, the diff tells you which check stopped existing.
+
 ### A released id must leave a hole, because removing it renumbers the rest
 
 Documents live in a `Vec` whose index *is* the id the caller was given. Releasing one by
@@ -2152,6 +2173,77 @@ harmlessly, so nothing misbehaves.
 that closing a document gives back exactly what opening it took --- 9 before, 9 after, and 10
 with the clearing removed. **A resource whose leak has no functional symptom needs a check
 that counts the resource**, and the kernel's own listing is the place to count it.
+
+### Two mechanisms with the same limit make one of them untestable
+
+The render service grew a pool of worker processes, capped per document, and the number of
+threads serving the job queue was set equal to that cap --- one thread to drive each worker,
+which reads as obviously right. A mutation removing the cap **entirely** then survived every
+check: `idle` can only be empty when every worker is checked out, which takes one thread
+each, so a thread arriving to find none free cannot exist. The thread count was silently
+doing the cap's job, and both the cap and the wait beside it were unreachable.
+
+By this file's own rule that would make them guards to delete. The better reading is that the
+coincidence was the defect: the two limits are about different things --- how many *processes*
+a document may have, and how many *jobs* may be in flight --- and tying them together also
+means six tiles of a slow document occupy every thread, so a request for a second document
+waits behind a render while its own workers sit idle. Decoupling them (threads = pool + 2)
+made both bounds reachable *and* fixed the starvation.
+
+**When a mutation of a bound survives, check whether some other quantity is enforcing the
+same limit** --- and if it is, ask whether the two were ever meant to be equal.
+
+A second, sharper reason the first attempt could not see it: the burst used to provoke
+contention was `capacity + 1` tiles, and the extra one was the tile being *withdrawn*. A
+withdrawal is refused at the claim, before a worker is checked out --- deliberately, so a
+tile nobody wants does not occupy a process --- so the burst could never demand more than
+`capacity` workers however the cap behaved. **A surplus that gets cancelled is not a
+surplus.**
+
+### A check whose failure mode is a wait cannot fail
+
+Several properties of a worker pool break by *not answering*: a pool that believes in a
+worker it retired never finishes a close, and a checkout waits for a process that will never
+exist. Every check for those was written with a blocking `recv`, so the defect produced no
+verdict at all --- the run stopped, and the harness had to interpret a timeout.
+
+Two repairs, and both were needed. The probe's own `wait` takes a bound far above any
+legitimate wait (60 s against a 1.2 s render) and returns *"the service is wedged, not slow"*
+as a failure. And the mutation harness keeps the partial transcript on timeout: one mutation
+turned a check red **and then** wedged the run, and a harness that reads a timeout as "no
+result" throws away a correct red and reports it as nothing. It now distinguishes
+`CAUGHT, then hung` from `BROKEN: hung with nothing red`.
+
+Same family as the timeout that discarded `viewercheck.ts`'s transcript, one level out: there
+the fix upstream was undone by a consumer that buffered, here by a consumer that could not
+time out at all.
+
+### A mutation harness that dies leaves the mutation in the tree
+
+`AGENTS.md` already says to restore by writing the bytes back rather than moving a file. That
+is necessary and not sufficient: the restore was the last statement of a loop body, and an
+unhandled `TimeoutExpired` skipped it. The tree sat mutated, and the next thing run against it
+was a build.
+
+Put the restore in a `finally` around the whole run, not at the end of the happy path. A
+harness that can leave the tree in a state its own output does not describe is worse than no
+harness, and this is the second way this project has found to do it.
+
+### FIFO dequeue is not FIFO completion
+
+The moment tiles render in a pool, replies come back in *completion* order. A check that
+issued two tiles, withdrew the second, and then read two replies positionally reported the two
+outcomes **swapped** --- the withdrawn one answers in milliseconds and arrives first.
+
+It announced itself, which was luck. The same change quietly converted the check's meaning:
+"withdrawn before it starts" needs the request to be *waiting*, and with a pool the second
+tile starts immediately in another process. Had the reply ordering not also changed, the check
+would have passed while testing "withdrawn after it started" --- which the parent's own token
+satisfies regardless, and which this file already records as an outcome two mechanisms can
+produce.
+
+So: match replies by their own identity, never by arrival; and when adding concurrency, re-read
+every check whose meaning depended on there being one of something.
 
 ### The test fixtures are generated, not committed
 

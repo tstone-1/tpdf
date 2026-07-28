@@ -107,3 +107,7 @@ path = "src/bin/worker_probe.rs"
 [[bin]]
 name = "backend-probe"
 path = "src/bin/backend_probe.rs"
+
+[[bin]]
+name = "pool-bench"
+path = "src/bin/pool_bench.rs"
