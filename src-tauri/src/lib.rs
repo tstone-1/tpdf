@@ -11,6 +11,7 @@
 pub mod invert;
 pub mod launch;
 pub mod outline;
+pub mod print;
 pub mod progressive;
 mod protocol;
 mod queue;
@@ -18,6 +19,7 @@ mod render;
 pub mod search;
 pub mod session;
 mod startup;
+pub mod sweep;
 pub mod text;
 
 use std::path::PathBuf;
