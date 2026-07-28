@@ -79,8 +79,21 @@ impl ShellMode {
 /// `TPDF_STARTUP` here --- and the shell then spends ~95 ms booting a webview
 /// that cannot ask for anything. The open can run inside that interval instead
 /// of after it. Holding the receiver rather than the result means the frontend
-/// blocks only if it beat the render thread to the finish.
-struct EagerOpen(Mutex<Option<Receiver<Result<DocumentInfo, String>>>>);
+/// blocks only if it beat the render service to the finish.
+///
+/// The path is kept beside the receiver because this is a *speculative* answer:
+/// it is the document one particular path resolved to, and handing it back to
+/// whoever asks next would answer a request for file B with file A --- silently,
+/// with the right page count for the wrong document. Nothing in the shipped app
+/// can ask for a second path first, since the frontend opens what
+/// `startup_path()` gave it; that is a precondition of the spike wiring rather
+/// than a property of the command, so it is checked rather than relied on.
+struct EagerOpen {
+    /// What was opened, to be compared against what is asked for.
+    path: PathBuf,
+    /// The pending result, taken by the first matching request.
+    pending: Mutex<Option<Receiver<Result<DocumentInfo, String>>>>,
+}
 
 /// Whether page geometry should be collected lazily rather than up front.
 ///
@@ -171,16 +184,23 @@ async fn open_document(
     service: tauri::State<'_, RenderService>,
     path: String,
 ) -> Result<DocumentInfo, String> {
-    if let Some(pending) = app.try_state::<EagerOpen>() {
-        if let Some(rx) = pending.0.lock().take() {
-            startup::mark("eager open collected");
-            return rx.recv().map_err(|_| "render thread stopped".to_string())?;
+    let wanted = PathBuf::from(&path);
+    if let Some(eager) = app.try_state::<EagerOpen>() {
+        // Only for the path it was started on. A mismatch falls through to an
+        // ordinary open and leaves the eager result where it is: it costs the
+        // head start, which is what a speculative optimisation is allowed to
+        // lose, rather than returning the wrong document.
+        if eager.path == wanted {
+            if let Some(rx) = eager.pending.lock().take() {
+                startup::mark("eager open collected");
+                return rx.recv().map_err(|_| "render thread stopped".to_string())?;
+            }
         }
     }
 
     let (tx, rx) = std::sync::mpsc::channel();
     service.open(
-        PathBuf::from(path),
+        wanted,
         lazy_geometry(),
         Box::new(move |result| {
             let _ = tx.send(result);
@@ -196,13 +216,15 @@ async fn open_document(
 /// process, not a heap allocation, so a session that opens a dozen files would
 /// otherwise be holding a dozen of them.
 ///
-/// It waits for the render thread's reply rather than returning as soon as the
+/// It waits for the render service's reply rather than returning as soon as the
 /// job is posted, so the promise resolving means the process is really gone and
 /// a refusal has somewhere to be reported. Whether the *caller* waits on that
-/// promise is its own decision, and `App.svelte` does not --- the render thread
-/// is FIFO, so this is already queued behind everything the outgoing document
-/// had outstanding, and holding the reader there would put a process teardown on
-/// the path to the first page of the file they asked for.
+/// promise is its own decision, and `App.svelte` does not: nothing outstanding
+/// for the outgoing document can lose its worker to this call, and the guarantee
+/// belongs to `Workers::close`, which drains the pool before dropping it. Read
+/// the argument there rather than a copy of it here --- holding the reader on
+/// this promise would put a process teardown on the path to the first page of
+/// the file they asked for, and that is the only decision this end makes.
 #[tauri::command]
 async fn close_document(service: tauri::State<'_, RenderService>, doc: u32) -> Result<(), String> {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -688,18 +710,21 @@ fn start_watchdog() {
 /// off by default and the baseline stays the baseline.
 fn start_eager_open(service: &RenderService) -> Option<EagerOpen> {
     std::env::var_os("TPDF_EAGER_OPEN")?;
-    let path = std::env::var("TPDF_STARTUP").ok()?;
+    let path = PathBuf::from(std::env::var("TPDF_STARTUP").ok()?);
 
     let (tx, rx) = std::sync::mpsc::channel();
     service.open(
-        PathBuf::from(path),
+        path.clone(),
         lazy_geometry(),
         Box::new(move |result| {
             let _ = tx.send(result);
         }),
     );
     startup::mark("eager open requested");
-    Some(EagerOpen(Mutex::new(Some(rx))))
+    Some(EagerOpen {
+        path,
+        pending: Mutex::new(Some(rx)),
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

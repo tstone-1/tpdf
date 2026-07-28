@@ -1,17 +1,27 @@
-//! The render service: the single owner of Pdfium and of every open document.
+//! The render service: the owner of every open document and of the queue they
+//! are served from.
 //!
-//! Everything Pdfium touches happens on one dedicated thread. This is not a
-//! stylistic choice, but the reason is not the one this comment used to give.
-//! `pdfium-render`'s `thread_safe` feature does **not** serialize Pdfium calls
-//! --- there is no mutex anywhere in the crate's native path, and concurrent
-//! renders from two threads segfault on a complex page while merely appearing
-//! to work on a simple one. The single thread is what keeps that undefined
-//! behaviour off the table. Measured by `bin/thread_probe.rs`; see AGENTS.md.
+//! **Dequeue order is FIFO; execution overlaps.** There is one channel, so a job
+//! comes off it after everything queued before it --- but on the shipping
+//! backend that channel is served by `pool + 2` threads, each driving a
+//! different worker *process*, so several tiles of the same page render at once.
+//! The two halves of that sentence are load-bearing separately: the first is
+//! what lets [`Workers::close`] stay correct by draining rather than by locking
+//! the whole service, and the second is why replies arrive in **completion**
+//! order and why anything reading them positionally is wrong.
+//!
+//! **The in-process backend is the one-thread special case**, and not by
+//! preference. `pdfium-render`'s `thread_safe` feature does **not** serialize
+//! Pdfium calls --- there is no mutex anywhere in the crate's native path, and
+//! concurrent renders from two threads segfault on a complex page while merely
+//! appearing to work on a simple one. So that backend is one thread whatever
+//! pool size it is handed, and the only route to parallel rendering is the
+//! process boundary. Measured by `bin/thread_probe.rs`; see AGENTS.md.
 //!
 //! ## Abandoning work
 //!
-//! One FIFO thread means a queue, and a queue means tiles rendering for a
-//! viewport that has moved on. Spike 0.8 measured what that costs: sustained
+//! A queue means tiles rendering for a viewport that has moved on, whatever is
+//! serving it. Spike 0.8 measured what that costs: sustained
 //! 60 fps over a screen that was 0--4% sharp, because every second of renderer
 //! time went to tiles nobody could see any more. So a request carries a `rid`
 //! and can be withdrawn --- [`RenderService::cancel`]. A withdrawn request that
@@ -48,11 +58,10 @@
 //!
 //! ## The pool
 //!
-//! The worker backend is served by several threads sharing one job queue, and
-//! each document has a pool of processes they draw from --- so several tiles of
-//! the same page render at once. The in-process backend is **not**: concurrent
-//! Pdfium in one process is undefined behaviour whatever the handles are, which
-//! is why security and performance wanted the same architecture.
+//! Each document has a pool of processes the service threads draw from, grown
+//! under contention and given back when the scrolling stops --- which is where
+//! the overlapping execution at the top of this note actually comes from, and
+//! why security and performance wanted the same architecture.
 //!
 //! All of that lives in [`crate::workers`]. What stays here is the service, the
 //! [`Engine`] trait both backends implement, the dispatch written once against
@@ -72,7 +81,9 @@ use crate::queue::{Claim, SharedQueue};
 use crate::search::{self, PageMatches};
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::{self, PageText};
-use crate::workers::{reap_idle, serve_pooled, service_threads, Workers};
+use crate::workers::{
+    call_deadline, reap_idle, serve_pooled, service_threads, watch_calls, Workers,
+};
 
 /// The pool's knobs, re-exported on the path they have always had.
 ///
@@ -396,13 +407,29 @@ impl RenderService {
                 None
             }
             Backend::Worker => {
-                let engine = Arc::new(Workers::new(library_dir, queue.clone(), pool, idle_after));
+                // The deadline is read here rather than taken as a parameter,
+                // which is the opposite of the choice made for the pool size and
+                // the idle timeout, and for the reason those two give: they are
+                // parameters because a harness compares them against each other
+                // in one process. Nothing compares two deadlines --- it is a
+                // bound on pathological input, not a variant --- so `TPDF_CALL_MS`
+                // is enough. It becomes a parameter the day something needs to
+                // hold two services at different deadlines at once.
+                let deadline = call_deadline();
+                let engine = Arc::new(Workers::new(
+                    library_dir,
+                    queue.clone(),
+                    pool,
+                    idle_after,
+                    deadline,
+                ));
                 // Immediately, and this is the point of the whole mechanism: the
                 // link, the sandbox and the font walk happen while Tauri and
                 // WebKit are still coming up -- ~250 ms of which none is ours --
                 // rather than while a reader waits for a first page.
                 engine.prewarm();
                 reap_idle(&engine, idle_after);
+                watch_calls(&engine, deadline);
                 serve_pooled(rx, engine.clone(), service_threads(pool));
                 Some(engine)
             }
@@ -467,7 +494,7 @@ impl RenderService {
         self.backend
     }
 
-    /// Opens a document, invoking `reply` on the render thread when done.
+    /// Opens a document, invoking `reply` on a service thread when done.
     ///
     /// `lazy_geometry` skips collecting every page's size, which spike 0.2
     /// measured at 86 ms on a 775-page document --- the largest avoidable item
@@ -486,42 +513,59 @@ impl RenderService {
         }
     }
 
-    /// Requests a tile, invoking `reply` on the render thread when done.
+    /// Requests a tile, invoking `reply` on a service thread when done.
     ///
-    /// The reply runs on the render thread deliberately: the protocol responder
-    /// can be satisfied there directly, so no thread is spawned per request.
+    /// The reply runs on the thread that served the job deliberately: the
+    /// protocol responder can be satisfied there directly, so no thread is
+    /// spawned per request.
+    ///
+    /// **The reply is answered even when there is nobody to serve it.** Every
+    /// other job here can be dropped on a failed send, because its reply closure
+    /// owns a channel and dropping it wakes the caller's `recv` with an error.
+    /// A tile's does not: it owns a `UriSchemeResponder`, and dropping one
+    /// leaves the webview's `fetch` pending for as long as the page lives ---
+    /// the frontend's own in-flight set never clears the entry, so that tile is
+    /// never re-requested either. A shutdown would show as a viewport that
+    /// stopped filling in rather than as an error.
     pub fn tile(&self, request: TileRequest, reply: Reply<TileOutcome>) {
         let rid = request.rid;
         self.queue.with(|queue| queue.enqueue(rid));
 
-        if self.tx.send(Job::Tile { request, reply }).is_err() {
-            // Render thread is gone. Forget the request rather than leaving it
-            // outstanding forever, since nothing will ever dequeue it.
+        if let Err(std::sync::mpsc::SendError(job)) = self.tx.send(Job::Tile { request, reply }) {
+            // Forget the request rather than leaving it outstanding forever,
+            // since nothing will ever dequeue it.
             self.queue.with(|queue| queue.forget(rid));
+            if let Job::Tile { reply, .. } = job {
+                reply(Err("the render service has stopped".to_string()));
+            }
         }
     }
 
-    /// Extracts one page's characters, invoking `reply` on the render thread.
+    /// Extracts one page's characters, invoking `reply` on a service thread.
     ///
-    /// This shares the render thread with tiles rather than getting its own,
-    /// which means a text request queues behind whatever tile is rendering ---
-    /// up to a second on the A0 sheet. That is a known cost and not an oversight:
-    /// a second thread would need a second `FPDF_DOCUMENT`, and concurrent
-    /// PDFium is undefined behaviour (see AGENTS.md). Parallelism here arrives
-    /// with the worker pool or not at all.
+    /// This shares the job queue with tiles rather than getting one of its own.
+    /// In worker mode that costs a text request only the wait for a *free
+    /// thread*, since one of `pool + 2` is usually idle and the extraction then
+    /// runs in a worker beside whatever tiles are rendering. In-process it is
+    /// the older, harder cost: one thread, so the request queues behind
+    /// whatever tile is running --- up to a second on the A0 sheet --- and a
+    /// second thread there would need a second `FPDF_DOCUMENT`, which is
+    /// undefined behaviour (see AGENTS.md).
     pub fn text(&self, doc: u32, page: u32, reply: Reply<PageText>) {
         if self.tx.send(Job::Text { doc, page, reply }).is_err() {
             // Render thread is gone; nothing left to reply with.
         }
     }
 
-    /// Searches one page, invoking `reply` on the render thread.
+    /// Searches one page, invoking `reply` on a service thread.
     ///
     /// One page per job, rather than one job for the document, and that is the
-    /// whole design: the render thread is FIFO, so a job that scanned 775 pages
-    /// would hold it for a second and a half and every tile behind it would
-    /// wait. At page granularity a search interleaves with rendering, and the
-    /// caller stops asking to cancel it --- there is nothing to withdraw.
+    /// whole design: a job that scanned 775 pages would hold a service thread
+    /// for a second and a half --- the only one, in-process --- and it would
+    /// hold the *worker* it was running in for as long either way, which is one
+    /// of the six a document may have. At page granularity a search interleaves
+    /// with rendering, and the caller stops asking to cancel it --- there is
+    /// nothing to withdraw.
     pub fn search(&self, doc: u32, page: u32, query: String, reply: Reply<PageMatches>) {
         if self
             .tx
@@ -537,7 +581,7 @@ impl RenderService {
         }
     }
 
-    /// Reads a document's outline, invoking `reply` on the render thread.
+    /// Reads a document's outline, invoking `reply` on a service thread.
     ///
     /// One job for the whole tree rather than one per level, which is the
     /// opposite of the choice `search` makes and for the opposite reason: the
@@ -591,10 +635,14 @@ impl RenderService {
     /// dozen of them.
     ///
     /// **Safe to call the moment the caller stops wanting the document**, with
-    /// requests still outstanding. The render thread is FIFO, so everything
-    /// already queued for this document is served before the close is; anything
-    /// that arrives afterwards is answered "has been closed" rather than from
-    /// another document, because the id leaves a hole rather than being removed.
+    /// requests still outstanding. [`Workers::close`] owns that guarantee and
+    /// states the argument for it --- FIFO dequeue puts the close after
+    /// everything already queued, and a drain covers the requests that are
+    /// still *running* in workers about to be killed. Restating it here would
+    /// be a second copy to drift, and the half that is easy to lose is the
+    /// drain. Anything arriving after the close is answered "has been closed"
+    /// rather than from another document, because the id leaves a hole rather
+    /// than being removed.
     pub fn close(&self, doc: u32, reply: Reply<()>) {
         if self.tx.send(Job::Close { doc, reply }).is_err() {
             // Render thread is gone; nothing left to reply with, and every

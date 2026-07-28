@@ -189,9 +189,13 @@ Two of them are worth understanding rather than just running:
 
 - **`cargo test --locked` is two gates in one.** Besides the unit tests it fails on a
   `Cargo.lock` that was not committed after a `cargo update`, and it compiles the test
-  targets, which is where `--all-targets` clippy findings surface. Coverage is currently
-  the request queue and the `tile://` URL parser --- the parts a change can silently
-  break --- and not rendering, which the spike probes assert instead.
+  targets, which is where `--all-targets` clippy findings surface. Coverage now reaches
+  most of the backend --- the request queue and the `tile://` parser, the worker protocol
+  and the pool, rendering, text, search, outlines, printing, session and sweep --- with
+  `npm run test` doing the same for the front-end logic beside it. What it deliberately
+  leaves to the harnesses under `scripts/` is everything that needs a live webview. What
+  nothing covers is Windows, and paper: a print job is checked by reading its bytes back
+  with PDFKit, which is a parser independent of the writer but still not a printer.
 - **Wrap a batch of benchmark runs in `caffeinate -du`.** `scroll_bench.py` holds one for
   its own lifetime, but the gaps between runs --- and any headless bench running alongside
   it --- are unprotected, and a session that locks mid-batch fails the next frame-rate run

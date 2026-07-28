@@ -32,6 +32,21 @@ use lopdf::{Document, Object, ObjectId};
 /// nowhere near: a page tree is a handful of levels and an outline is bounded at
 /// 32 by `outline.rs`.
 ///
+/// **No document `lopdf` will load can reach this bound**, and saying so is the
+/// point rather than an aside. `lopdf` 0.44's own parser refuses past
+/// `reader::MAX_NESTING_DEPTH`, which is **100** --- it counts down through
+/// arrays and dictionaries and returns a parse error at zero --- so every object
+/// in a `Document` arrived through a stricter check than this one. The guard is
+/// therefore defence against **that constant changing**, not against any input:
+/// a `lopdf` bump that raised it past 256, or a caller that hands this a graph
+/// it built rather than parsed, and this walk is the only thing between either
+/// and a stack overflow in the process holding the user's filesystem authority.
+///
+/// It is deliberately not written as a compile-time comparison against `lopdf`'s
+/// constant, which would be the stronger form: `reader` is a private module and
+/// `MAX_NESTING_DEPTH` is not re-exported, so there is nothing to compare
+/// against. A version bump is the moment to re-read it.
+///
 /// What happens at the bound is the part that matters. **Refusing is not
 /// optional here**, and truncating would be worse than the overflow it avoids: a
 /// mark-and-sweep that stops descending has not found every reference, so it
@@ -165,6 +180,11 @@ mod tests {
         // Refused, not "walked as far as it got": a partial reachable set makes
         // `collect` delete live objects, which produces a document that still
         // parses and has holes in it.
+        //
+        // Note the object is *built* rather than parsed, and it has to be:
+        // `lopdf`'s parser stops at 100 levels, so no loaded document reaches
+        // 257 and there is no fixture that could stand in for one. That is the
+        // same fact `MAX_NESTING` records as its reason for existing.
         //
         // One honest limit, worth stating rather than leaving to be discovered.
         // This asserts the *bound fires*, not that an unbounded walk would have

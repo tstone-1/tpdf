@@ -32,7 +32,7 @@
 import { AccessibleText } from "./a11y";
 import { matches } from "./keys";
 import { DESTINATION_MARGIN_PT } from "./outline";
-import { Scroller, type PageSize } from "./scroller";
+import { displayedSize, Scroller, type PageSize } from "./scroller";
 import { Search, type Match } from "./search";
 import { Selection } from "./selection";
 import { caretAt, runsFor, TextCache, type Caret, type PageText } from "./text";
@@ -105,6 +105,16 @@ export interface ViewerOptions {
    * page --- which is exactly the movement an outline highlight has to follow.
    */
   onPosition?: (page: number, top: number) => void;
+  /**
+   * Called when something the reader asked for could not be done.
+   *
+   * Not for a tile that failed --- that is `ViewerStatus.failed` and the status
+   * line already says so. This is for a command someone typed and is standing
+   * there waiting for, where silence reads as a broken application: a copy that
+   * could not include every page it spans, or a clipboard that refused the
+   * write. Both used to resolve to nothing and say nothing.
+   */
+  onError?: (message: string) => void;
 }
 
 /**
@@ -234,6 +244,27 @@ export class Viewer {
   private frameHandle = 0;
   private running = false;
   /**
+   * Whether {@link destroy} has run. Checked wherever a continuation re-enters.
+   *
+   * Almost everything here is asynchronous and almost none of it is cancellable:
+   * a text extraction is an IPC round trip that resolves whenever it resolves,
+   * and `TextCache.load` never rejects --- a failure resolves to `null`. So a
+   * document closed while any of that is outstanding leaves `.then` callbacks
+   * holding a viewer that has been torn down, and the one they all reach is
+   * {@link wake}, which was idempotent about *running* and said nothing about
+   * *destroyed*: it restarted the frame loop.
+   *
+   * What that costs is worth spelling out, because a resurrected loop does not
+   * look like a leak from anywhere. The zombie tick drives the destroyed
+   * scroller, which requests tiles for a document the backend has closed; they
+   * fail; the backoff arms a retry; the retry wakes the zombie again, every
+   * eight seconds, forever. And each tick fires the *old* `onStatus` and
+   * `onPosition` closures, which in `App.svelte` write the module-level `status`
+   * --- so a closed document keeps driving the sidebar and the header of the one
+   * that replaced it.
+   */
+  private destroyed = false;
+  /**
    * Wake scheduled for a request whose backoff has not elapsed.
    *
    * The loop idles when there is no work, and a backed-off request is not work
@@ -339,6 +370,8 @@ export class Viewer {
   }
 
   destroy(): void {
+    // First, so anything that lands during the teardown below finds it set.
+    this.destroyed = true;
     this.stop();
     clearTimeout(this.retryTimer);
     this.a11y.destroy();
@@ -400,9 +433,14 @@ export class Viewer {
    * Starts the frame loop if it is not already running.
    *
    * Every state change goes through here. It is idempotent on purpose: callers
-   * should not have to know whether the loop happens to be awake.
+   * should not have to know whether the loop happens to be awake --- nor whether
+   * the viewer is still alive, which is what the first line answers. That is the
+   * whole of the post-destroy guard: every async continuation in this class ends
+   * up here, so refusing here is refusing all of them at once. See
+   * {@link destroyed}.
    */
   wake(): void {
+    if (this.destroyed) return;
     this.tail = 2;
     clearTimeout(this.retryTimer);
     this.retryTimer = 0;
@@ -419,17 +457,26 @@ export class Viewer {
     cancelAnimationFrame(this.frameHandle);
   }
 
-  /** Arranges one wake for the earliest backed-off request, if there is one. */
-  private scheduleRetry(): void {
+  /**
+   * Arranges one wake for the earliest backed-off request, if there is one.
+   *
+   * `now` is the frame's own clock reading, not a fresh one. The frame decided
+   * which requests were due against that instant; taking a second reading here
+   * would silently drop any request that came due between the two --- it was not
+   * issued, and no wake would be armed for it. See `scroller.ts`'s
+   * `nextRetryMs`.
+   */
+  private scheduleRetry(now: number): void {
     clearTimeout(this.retryTimer);
     this.retryTimer = 0;
-    const wait = this.scroller.nextRetryMs;
+    const wait = this.scroller.nextRetryMs(now);
     if (wait === null) return;
     this.retryTimer = setTimeout(() => this.wake(), wait) as unknown as number;
   }
 
   private readonly tick = (): void => {
-    const stats = this.scroller.frame(this.scrollTop);
+    const now = performance.now();
+    const stats = this.scroller.frame(this.scrollTop, now);
     this.prefetchText();
     this.syncAccessibleText();
     this.paintOverlay();
@@ -447,7 +494,7 @@ export class Viewer {
       this.running = false;
       // Going idle is the one moment a backed-off request needs somebody to
       // come back for it.
-      this.scheduleRetry();
+      this.scheduleRetry(now);
       return;
     }
     this.frameHandle = requestAnimationFrame(this.tick);
@@ -509,11 +556,8 @@ export class Viewer {
   }
 
   /** The page's size in points as displayed, i.e. after the view rotation. */
-  private displayedPage(): { width_pt: number; height_pt: number } {
-    const { page } = this.opts;
-    return this.turns % 2 === 0
-      ? page
-      : { width_pt: page.height_pt, height_pt: page.width_pt };
+  private displayedPage(): PageSize {
+    return displayedSize(this.opts.page, this.turns);
   }
 
   /** The zoom at which the page fills the viewport's width. */
@@ -991,12 +1035,24 @@ export class Viewer {
     this.wake();
   }
 
-  /** Selects every character of the page currently being read. */
+  /**
+   * Selects every character of the page currently being read.
+   *
+   * Retried when the text arrives, and only then. The retry used to be
+   * unconditional --- `.then(() => this.selectPage())` --- which on a page whose
+   * extraction fails is an unbounded loop of IPC calls: `TextCache.load`
+   * resolves to `null` on error and caches nothing, so `peek` is still empty,
+   * so the next attempt issues a *fresh* `page_text` and so does the one after
+   * it. Nothing bounded that, and closing the document did not stop it either.
+   * The load's own result is the answer: no text, no retry.
+   */
   selectPage(): void {
     const page = this.currentPage();
     const text = this.text.peek(page);
     if (!text) {
-      void this.text.load(page).then(() => this.selectPage());
+      void this.text.load(page).then((arrived) => {
+        if (arrived && !this.destroyed) this.selectPage();
+      });
       return;
     }
     this.selection = new Selection({ page, index: 0 });
@@ -1007,11 +1063,22 @@ export class Viewer {
   /**
    * Puts the selected text on the clipboard.
    *
-   * Resolves to what was copied, or `null` if there was nothing. It waits for
-   * any page whose text has not arrived: a selection dragged quickly across a
-   * page boundary can reach the clipboard before the extraction does, and
-   * silently copying the part that happened to be loaded is the kind of bug a
-   * user discovers in someone else's document.
+   * Resolves to what was copied, or `null` if nothing was --- including when
+   * something went wrong, which is reported through `onError` rather than by
+   * rejecting: every caller of this is a `void`ed keystroke, so a rejection
+   * would be an unhandled one.
+   *
+   * It waits for any page whose text has not arrived: a selection dragged
+   * quickly across a page boundary can reach the clipboard before the
+   * extraction does, and silently copying the part that happened to be loaded is
+   * the kind of bug a user discovers in someone else's document.
+   *
+   * **Waiting is not the same as having it**, which is the half that was
+   * missing. `loadPages` resolves whether or not the extractions succeeded ---
+   * `TextCache.load` resolves to `null` on failure --- and `Selection.text`
+   * skips a page it cannot read, by design and as its own docstring says. So the
+   * completeness test has to be made again *after* the wait; before it, it only
+   * decides whether to wait at all.
    */
   async copySelection(): Promise<string | null> {
     const selection = this.selection;
@@ -1020,10 +1087,25 @@ export class Viewer {
     if (!selection.isComplete(this.text)) {
       await this.loadPages(selection.pages());
     }
+    if (!selection.isComplete(this.text)) {
+      this.opts.onError?.(
+        "Some of the selected pages' text could not be read, so nothing was copied.",
+      );
+      return null;
+    }
     const text = selection.text(this.text);
     if (!text) return null;
 
-    await navigator.clipboard.writeText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // A refusal, not a silence: the reader pressed a key and is entitled to
+      // know the clipboard does not hold what they asked for. The webview can
+      // reject this --- permission, or a window that is not focused --- and
+      // every caller here voids the promise, so nothing else would ever see it.
+      this.opts.onError?.(`Could not write to the clipboard: ${String(e)}`);
+      return null;
+    }
     return text;
   }
 
@@ -1182,7 +1264,10 @@ export class Viewer {
     this.wake();
 
     const text = await this.text.load(match.page);
-    if (!text) return;
+    // The load outlives a document being closed --- it is an IPC round trip and
+    // nothing withdraws it --- so the scroll below would run against a torn-down
+    // scroller. See `destroyed`.
+    if (!text || this.destroyed) return;
     const [first] = runsFor(text, match.start, match.end);
     const top =
       this.scroller.pageTopOf(match.page) + (first ? first.top * this.zoom : 0);

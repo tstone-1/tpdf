@@ -401,11 +401,13 @@ resume. Anything not a small bounded tile uses the progressive API, so a patholo
 yields instead of blocking. (The audit asserted PDFium rendering is uncancellable; that is
 wrong, and the progressive API is precisely the mechanism.)
 
-Backstop for the genuinely pathological: a per-tile CPU budget, and worker process
-termination and restart when it is exceeded. Process isolation makes that cheap and safe —
-measured at 1.2 ms to kill and reap and 4.8 ms to respawn (§3). Note the budget has to be
-enforced by the parent's deadline, not by `RLIMIT_CPU`, which is a process-lifetime budget
-rather than a per-request one.
+Backstop for the genuinely pathological: a per-request deadline, and worker process
+termination when it is exceeded. Process isolation makes that cheap and safe —
+measured at 1.2 ms to kill and reap and 4.8 ms to respawn (§3). **Wired 2026-07-29**: the
+pool's supervisor (`workers.rs`) kills any worker whose request has outrun `TPDF_CALL_MS`
+(default 30 s) and the caller gets an error rather than a wait. The budget is enforced by
+the parent's deadline and not by `RLIMIT_CPU`, which is a process-lifetime budget rather
+than a per-request one.
 
 ### Startup path — measured 2026-07-26
 

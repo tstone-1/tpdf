@@ -183,23 +183,61 @@ would silently move this threat from "impossible" back to "policy".
 **The threat.** A decompression bomb, an A0 CAD page, a 25,000-object graph, or a page
 that simply takes forever. None of these requires a vulnerability.
 
-**CPU is bounded, in two layers.** `RLIMIT_CPU` is accepted on macOS and does fire — but
-it counts CPU over the *process lifetime*, not per request: under a 3 s limit a 1.72 s
-render succeeds and the next dies 1.30 s in, at a cumulative 3.0 s (spike 0.5). So it
-bounds how long a worker may live, and the per-request bound has to be the coordinator's
-own deadline plus a kill, measured at **1.2 ms to kill and reap, 4.8 ms to respawn**.
-PDFium's progressive API (`FPDF_RenderPageBitmap_Start` with an `IFSDK_PAUSE` callback) is
-the cooperative alternative and is still unexercised — it is the mechanism for cancelling
-without discarding the work, and so for not occupying a worker's only PDFium thread
-through a long render.
+**CPU is bounded per request, by the coordinator's own deadline — wired in the app.** A
+request outstanding longer than `TPDF_CALL_MS` (default **30 s**) has its worker killed:
+`workers::watch_calls` sweeps the in-flight table on a timer, `kill_pid` sends `SIGKILL`,
+the read blocked on that worker's pipe reaches EOF, and `Workers::with_worker` discards the
+corpse and answers the caller with an error. Started by `RenderService::start_tuned` beside
+the idle reaper, since 2026-07-29. It covers every request that waits on a worker, `Open`
+included — that one is not served through the pool and would otherwise be watched by
+nothing.
 
-**Memory has no kernel bound on macOS, and the substitute is weaker than it looks.**
-`setrlimit` refuses `RLIMIT_AS`, `RLIMIT_DATA` and `RLIMIT_RSS` outright with `EINVAL`
-(spike 0.5, confirmed independently through Python's `resource` module). The remaining
-mechanism is supervision: the coordinator samples the worker's `ri_phys_footprint` through
-`proc_pid_rusage` and kills it over budget. Measured 2026-07-26
-(`worker-bench --mode footprint`), against a child taking memory as fast as the allocator
-will hand it over (~22 GB/s) and a 128 MB budget:
+One detail is worth recording because it looks like an implementation choice and is not: the
+supervisor marks the request it is about to kill, and the waiting thread reads that mark
+rather than asking the kernel. A child's pipe closes on the way out and it becomes waitable
+slightly later, so `try_wait` answers *"still running"* for a process `SIGKILL`ed
+microseconds earlier — measured, by running the app's own probe under `TPDF_CALL_MS=1`.
+Believing it would return the corpse to the pool, where it would fail a different request
+than the one that was actually too slow.
+
+The deadline is not a refinement of the withdrawal mechanism, it is the only bound the
+other request kinds have. Only a tile can be withdrawn; `Text`, `Search`, `Outline` and
+`Open` hold a service thread until they answer, and there are `pool + 2` of those *shared
+across every open document* — so one page that never finished parsing stopped the viewer
+answering anything at all, and `Workers::close` then hung on its own drain waiting for a
+worker that was never coming back.
+
+**`RLIMIT_CPU` is measured and deliberately not set.** It is accepted on macOS and does
+fire, but it counts CPU over the *process lifetime*, not per request: under a 3 s limit a
+1.72 s render succeeds and the next dies 1.30 s in, at a cumulative 3.0 s (spike 0.5,
+`worker-bench --mode limits`). It can bound how long a worker lives and cannot bound a
+request, which is the thing that needed bounding, and a lifetime budget on a pooled worker
+kills a reader's third page for the sins of the first two. The kill-and-respawn cost the
+deadline pays instead is **1.2 ms to kill and reap, 4.8 ms to respawn**.
+
+**This section read "CPU is bounded, in two layers" until 2026-07-29, and neither layer was
+in the app.** `setrlimit` was called in the spike binary and nowhere in the shipped path;
+"the coordinator's own deadline plus a kill" named a mechanism that did not exist, and gave
+the timing of the kill it would have performed. That is precisely the failure this
+document's opening rule exists for, arriving from an angle it did not anticipate: not an
+unmeasured claim, but a *measured* one — every number in the sentence was real — describing
+a mitigation nobody had wired. A measurement reads exactly like a deployment. Every
+mitigation below now says which of the two it is.
+
+PDFium's progressive API (`FPDF_RenderPageBitmap_Start` with an `IFSDK_PAUSE` callback) is
+the cooperative alternative and is exercised for tiles only (`progressive.rs`) — it is the
+mechanism for cancelling without discarding the work, and so for not occupying a worker's
+only PDFium thread through a long render. The deadline is the blunt version: it ends the
+process, and the work is lost rather than paused.
+
+**Memory has no kernel bound on macOS, and the substitute is designed, measured, and NOT
+wired.** `setrlimit` refuses `RLIMIT_AS`, `RLIMIT_DATA` and `RLIMIT_RSS` outright with
+`EINVAL` (spike 0.5, confirmed independently through Python's `resource` module). The
+remaining mechanism is supervision: sample the worker's `ri_phys_footprint` through
+`proc_pid_rusage` and kill it over budget. `Worker::footprint` is that sample, and **it has
+no caller in the shipped app** — nothing polls it, so no worker's memory is bounded by
+anything today. Measured 2026-07-26 (`worker-bench --mode footprint`), against a child
+taking memory as fast as the allocator will hand it over (~22 GB/s) and a 128 MB budget:
 
 | poll | overshoot, median | worst seen | what the interval bounds | poll costs | bursts missed |
 |---|---|---|---|---|---|
@@ -230,6 +268,16 @@ A pool of N workers must therefore be budgeted at (per-worker budget + bounded o
 should disappear, since a job object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY` is a real
 kernel bound that needs no polling.
 
+**Why the poll is still unwired, now that a supervisor thread exists to host it.** The
+missing piece is not the mechanism, it is the budget. A worker legitimately holds its own
+parse of the document (7.8–48.2 MB by corpus), a 16 MB tile mapping, and whatever a single
+page's render allocates on the way — and the peak of a *legitimate* worst case, the A0
+sheet at high zoom or the 337 MB scan, has never been measured. A budget set below that
+kills documents readers are entitled to open, which is a worse failure than the leak it
+would bound, and this document's own rule forbids putting a number here that no spike
+produced. What a sample costs is known (**0.33 µs**); what it should refuse is not. That
+measurement is the work, and the wiring is an afternoon after it.
+
 **Decompression is bounded at the parser.** `lopdf`'s `LoadOptions::max_decompressed_size`
 refuses a 1 GiB-inflating stream in 0.3 ms (spike 0.4). Worth remembering why the bound
 belongs on the rewriter and not only on a verifier: `qpdf in out` re-encodes stream data
@@ -240,9 +288,17 @@ megabytes would have caught none of it.
 **Residual.** One pathological page still occupies its process's single PDFium thread and
 starves every other render there. Note this is our own threading choice, forced by the
 fact that concurrent PDFium calls crash --- `pdfium-render`'s `thread_safe` feature does
-not serialize them, whatever its README says (AGENTS.md). The progressive API is the fix
-and is unwritten. And a burst below the polling
-granularity is unbounded until the input limits exist.
+not serialize them, whatever its README says (AGENTS.md). It no longer does so
+indefinitely: one deadline is the bound, since a request killed for exceeding it is the one
+death `Workers::with_worker` does **not** retry — retrying would spend a second deadline of
+a service thread to learn what the first established. The deadline is still a coarse
+instrument, in that the process dies and every partial render goes with it.
+
+Memory is the larger residual and it is unbounded, not merely coarsely bounded: neither the
+kernel's limit (refused) nor ours (unwired) applies to a worker on macOS today. Bounding the
+*inputs* — decompressed stream size, tile dimensions, pages per request — is the layer that
+would catch a sub-interval burst even with the poll running, and only the tile bound exists
+(`protocol.rs`, refused before a worker is asked).
 
 ### T4 — Filesystem and network reach from a compromised worker
 
@@ -402,8 +458,8 @@ Untested, and it shares no mechanism with any of the above. The intended shape:
 | macOS | Windows |
 |---|---|
 | `sandbox_init` SBPL profile | Restricted token, low integrity level, job object |
-| No memory rlimit; parent polls `proc_pid_rusage` | `JOB_OBJECT_LIMIT_PROCESS_MEMORY` — a real kernel bound, no polling |
-| `RLIMIT_CPU` (lifetime), parent deadline | `JOB_OBJECT_LIMIT_JOB_TIME`, parent deadline |
+| No memory rlimit; a `proc_pid_rusage` poll is measured and **not wired** (§T3) | `JOB_OBJECT_LIMIT_PROCESS_MEMORY` — a real kernel bound, no polling |
+| Parent deadline per request, **wired** (`workers::watch_calls`); `RLIMIT_CPU` measured and not set, being a lifetime budget | `JOB_OBJECT_LIMIT_JOB_TIME`, parent deadline |
 | Unlinked temp file passed by descriptor | Named section object, or an inherited handle |
 | `dup2` to fixed fds before `exec` | Handle inheritance with an explicit attribute list |
 
@@ -416,8 +472,13 @@ before the architecture can be called cross-platform.
 1. **Redaction verification refuses too much** — the "cannot decode" rule has not been
    calibrated against a real corpus, and applied literally it fails almost every scan
    (§10 q9). Largest open risk in the project.
-2. **A memory burst below the polling interval is unbounded on macOS.** Input limits are
-   the mitigation and are unwritten.
+2. **A worker's memory is unbounded on macOS**, and this entry understated it until
+   2026-07-29 by saying only that a burst *below the polling interval* escapes. There is no
+   polling interval: the kernel refuses the three relevant rlimits, and the
+   `proc_pid_rusage` poll that would substitute for them is measured in spike 0.5 and has
+   no caller in the app (§T3). What is missing before it can be wired is the budget, which
+   needs a measurement of a legitimate worker's peak that nothing has taken. Input limits
+   are the second layer and only the tile bound exists.
 3. **A document's pool multiplies its memory by up to six, while it is being scrolled.**
    Each worker holds its own parse, at 7.8–48.2 MB depending on the corpus, so a fully
    grown pool on the A0 sheet is about 290 MB. Growth is lazy — a reader turning one page
@@ -466,6 +527,15 @@ before the architecture can be called cross-platform.
     filesystem authority, which is asset 1 in §1. Recursion in the two graph walks is
     bounded at `sweep::MAX_NESTING`; nothing else about this is mitigated, and it is reached
     by ⌘P on any open document.
+
+12. **A request that hangs costs a deadline and a worker, and its work is lost.** The
+    per-request bound is a kill (§T3), so a page that never finishes parsing holds one of
+    `pool + 2` service threads for `TPDF_CALL_MS` — thirty seconds by default — and then
+    answers the reader with an error, having spent a process. That is a bound rather than a
+    wedge, which is the whole improvement, but a reader looking at a document with such a
+    page pays it on every request that reaches it, and nothing remembers that the page is
+    bad. The frontend's per-request backoff (§7.10) is what keeps that from repeating at
+    frame rate; there is no equivalent for text, search or outline requests.
 
 ## 8. How to re-verify any of this
 

@@ -51,6 +51,17 @@ experience.
 
 ### Added
 
+- **A per-request deadline on worker calls** (`TPDF_CALL_MS`, default 30 000 ms; zero means
+  zero, unreadable values fall back). A request that does not answer within the deadline now
+  kills its worker and returns an error --- previously it held one of the pool's service
+  threads forever, a handful of such requests wedged rendering for every open document, and
+  `close` hung on its drain. The kill is announced (`[render] worker <pid>: no reply in
+  <n> s; killing it`) and is not retried: a crash retry costs milliseconds, a deadline retry
+  costs another deadline of a service thread. `docs/THREAT-MODEL.md` T3 is corrected to
+  match what ships --- the deadline is wired, `RLIMIT_CPU` is measured and deliberately not
+  set, and the footprint poll is measured and *not* wired, which the section previously
+  stated as an operating mitigation.
+
 - **A text layer** (`src-tauri/src/text.rs`), which selection, search and the accessibility
   tree will all read --- one extraction rather than three that disagree. It carries one
   Unicode scalar per PDFium character index and no string: `FPDFText_GetText` extracts UCS-2
@@ -403,6 +414,23 @@ experience.
 
 ### Changed
 
+- **The tile-retry backoff moved into its own module** (`src/lib/backoff.ts`), with unit
+  tests for the properties the scroller relies on: a failed request is not reissued before
+  its wait, each further failure doubles the wait up to 8 s, an already-due entry reports no
+  wake (the busy-loop guard), success forgets the entry. The clock is a parameter, which is
+  also the fix for a dropped wake — the frame and the retry scheduler previously read the
+  clock at two different moments, and an entry falling due between the two readings got no
+  wake and stayed blank until unrelated input. Tile and thumbnail failures also now name
+  their reason on the console, once per request rather than once per attempt.
+
+- **`displayedSize` exists once** (exported from `scroller.ts`) instead of three times ---
+  the odd-turn dimension swap was independently implemented in the scroller, the viewer and
+  the page strip, and a rotation fix applied to one would not have reached the other two.
+
+- **The eager startup open is only collected for the path it was started on.** A first open
+  naming a different file than `TPDF_STARTUP` now falls through to a normal open instead of
+  silently receiving the pre-opened document.
+
 - **The worker pool moved out of `render.rs` into `workers.rs`.** That file held the service,
   both backends, the pool, the spare slot and the reaper at 1,958 lines. Nothing changed in
   the move — verified by asserting every top-level item HEAD defined exists in exactly one of
@@ -549,6 +577,43 @@ experience.
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **A document closed while a text extraction was outstanding left the old viewer's frame
+  loop running.** `destroy()` set no flag and `wake()` restarted the loop unconditionally, so
+  a text load landing after destroy --- guaranteed, since the loader never rejects ---
+  resurrected the dead viewer: fresh tile requests for a closed document, re-woken by its own
+  backoff every 8 s for the life of the process, and status callbacks overwriting the *new*
+  document's header and sidebar. A `destroyed` flag is now set first in `destroy()` and
+  checked at the single choke point every continuation reaches.
+
+- **"Select all on page" issued an unbounded stream of extraction calls on a page whose text
+  could not be read** --- the retry re-entered on every resolution and a failed load caches
+  nothing, so each iteration was a fresh IPC invoke, surviving destroy and document close.
+  The continuation now re-enters only when text actually arrived.
+
+- **A file that failed to open tore down the reader's current document.** The error path
+  cleared the title --- which unmounts the document body --- even when the failure happened
+  before anything about the current document was touched, leaving a live viewer on detached
+  DOM and a header describing a document with no body under it. The cleanup now runs only if
+  the old document was already released, and the header state is cleared together with the
+  title, never separately.
+
+- **Copying a selection spanning a page whose text could not be read put a silently
+  incomplete string on the clipboard** --- the exact bug the copy path documents itself as
+  existing to prevent. Completeness is now re-checked after the loads; a copy that cannot be
+  completed reports instead of writing, as does a clipboard that refuses the write.
+
+- **A post-fork descriptor shuffle could close the descriptor it had just installed.** `dup`
+  returns the lowest free descriptor, so the scratch copy could land on a target number
+  (document on 3, tile on 5, hole at 4), where the second `dup2` overwrote it and the cleanup
+  then closed the installed copy --- a worker dying on a closed fd, intermittently, as a
+  function of the parent's fd-table holes. Scratch descriptors are now identified against the
+  same table that drives the installs, so the two cannot drift.
+
+- **The page strip kept fetching after the document closed; Cmd-O could stack file dialogs;
+  a pending find-debounce could fire at the newly opened document; a `tile://` request posted
+  after the render service stopped left the webview's fetch pending forever.** Four small
+  teardown holes, each now closed where the state lives.
 
 - **A tile that failed was re-requested every frame, forever.** `Scroller.request()` runs on
   each frame and issues any wanted tile that is neither resident nor in flight; the failure

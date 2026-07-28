@@ -434,6 +434,34 @@ fn epitaph_of(child: &mut Child) -> String {
     }
 }
 
+/// Whether a temporary descriptor from the pre-`exec` shuffle is only that.
+///
+/// Between `fork` and `exec` each mapping is `dup`'d to a scratch number and
+/// then `dup2`'d onto the number the child expects, because the source may
+/// already *be* one of those numbers. The scratch copy is closed afterwards ---
+/// except when it is not a scratch copy at all.
+///
+/// `dup` returns the **lowest free** descriptor, and the trap is that "lowest
+/// free" can be a number the shuffle is about to install on. With the document
+/// mapping on fd 3, the tile mapping on fd 5 and a hole at fd 4, `dup(3)`
+/// returns **4**, which is [`TILE_FD`]: the tile's own `dup2` then installs the
+/// tile there, correctly, and closing the document's "temporary" afterwards
+/// closes the tile the child is about to be handed. The child starts with a
+/// descriptor that names nothing, on a number the protocol says is a 16 MB
+/// mapping, and every later diagnosis points at the mapping rather than at the
+/// fork.
+///
+/// So a temporary is compared against **every** number the shuffle installs, not
+/// only against its own target --- and the list it is compared against is the
+/// same array that drives the `dup2` calls, so there is no second copy of the
+/// target set to fall out of step with them. A temporary that equals a target
+/// *is* the installed descriptor by then; there is nothing left to close, and
+/// nothing leaks by keeping it.
+#[cfg(target_os = "macos")]
+fn is_scratch(fd: i32, shuffle: &[(i32, i32)]) -> bool {
+    !shuffle.iter().any(|(_, target)| *target == fd)
+}
+
 /// A connected pair, one half of which is handed to a pre-spawned worker.
 #[cfg(target_os = "macos")]
 fn socket_pair() -> Result<(OwnedFd, OwnedFd), String> {
@@ -853,14 +881,21 @@ impl Worker {
                 if t < 0 || s < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
-                if libc::dup2(t, TILE_FD) < 0 || libc::dup2(s, SOCK_FD) < 0 {
-                    return Err(std::io::Error::last_os_error());
+                // One array, driving both the installs and the cleanup, so the
+                // set of numbers being installed on cannot drift from the set
+                // the cleanup protects. See [`is_scratch`] for what closing the
+                // wrong one costs --- here it is the handover socket, and a
+                // spare that never receives a document waits forever.
+                let shuffle = [(t, TILE_FD), (s, SOCK_FD)];
+                for (temp, target) in shuffle {
+                    if libc::dup2(temp, target) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
                 }
-                if t != TILE_FD {
-                    libc::close(t);
-                }
-                if s != SOCK_FD {
-                    libc::close(s);
+                for (temp, _) in shuffle {
+                    if is_scratch(temp, &shuffle) {
+                        libc::close(temp);
+                    }
                 }
                 Ok(())
             });
@@ -946,14 +981,22 @@ impl Worker {
                 if d < 0 || t < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
-                if libc::dup2(d, DOC_FD) < 0 || libc::dup2(t, TILE_FD) < 0 {
-                    return Err(std::io::Error::last_os_error());
+                // As in `prespawn`: one array drives the installs and the
+                // cleanup, so a temporary is never closed on the strength of
+                // its own target alone. The parent's mapping files typically
+                // land on exactly fd 3 and 4, which is what makes a temporary
+                // landing on the *other* target a layout to expect rather than
+                // a curiosity --- see [`is_scratch`].
+                let shuffle = [(d, DOC_FD), (t, TILE_FD)];
+                for (temp, target) in shuffle {
+                    if libc::dup2(temp, target) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
                 }
-                if d != DOC_FD {
-                    libc::close(d);
-                }
-                if t != TILE_FD {
-                    libc::close(t);
+                for (temp, _) in shuffle {
+                    if is_scratch(temp, &shuffle) {
+                        libc::close(temp);
+                    }
                 }
                 Ok(())
             });
@@ -1340,6 +1383,62 @@ mod tests {
             read_reply_line(&mut empty, 64),
             Err(ReplyError::Closed)
         ));
+    }
+
+    /// The layout that provokes it, and it is an ordinary one: the parent's own
+    /// mapping files land low, so a hole below the tile's descriptor is exactly
+    /// what a process that has opened and closed a file has. With the document
+    /// on fd 3, the tile on fd 5 and fd 4 free, `dup` of the document returns 4
+    /// --- which is `TILE_FD`, and by the time the cleanup runs it holds the
+    /// tile.
+    ///
+    /// The failure this pins is silent on the parent's side: the child comes up
+    /// with a closed descriptor where its tile mapping should be, and says so
+    /// as a mapping error rather than as a fork one.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_temporary_that_landed_on_another_installed_number_is_not_closed() {
+        let shuffle = [(4, super::DOC_FD), (6, super::TILE_FD)];
+        assert!(
+            !super::is_scratch(4, &shuffle),
+            "fd 4 is TILE_FD and holds the tile mapping by now"
+        );
+        // And the one that really is a temporary still goes, or the check has
+        // been satisfied by refusing to close anything at all.
+        assert!(super::is_scratch(6, &shuffle));
+    }
+
+    /// The control: the common layout, where both temporaries land above every
+    /// number the shuffle installs on and both must be closed.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn temporaries_above_every_installed_number_are_all_closed() {
+        let shuffle = [(7, super::DOC_FD), (8, super::TILE_FD)];
+        assert!(super::is_scratch(7, &shuffle));
+        assert!(super::is_scratch(8, &shuffle));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_temporary_that_is_already_its_own_target_is_not_closed() {
+        // `dup2(n, n)` is a no-op that returns `n`, so the "temporary" and the
+        // installed descriptor are the same open file --- closing it would take
+        // the mapping with it.
+        let shuffle = [(super::DOC_FD, super::DOC_FD), (9, super::TILE_FD)];
+        assert!(!super::is_scratch(super::DOC_FD, &shuffle));
+        assert!(super::is_scratch(9, &shuffle));
+    }
+
+    /// The pre-spawn shuffle installs on different numbers, and the same trap
+    /// reaches it: a tile temporary landing on `SOCK_FD` would close the
+    /// handover socket, and a spare that never receives a document is not an
+    /// error --- it is a process waiting in `recvmsg` for the rest of its life.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_prespawn_shuffle_protects_the_handover_socket_too() {
+        let shuffle = [(super::SOCK_FD, super::TILE_FD), (7, super::SOCK_FD)];
+        assert!(!super::is_scratch(super::SOCK_FD, &shuffle));
+        assert!(super::is_scratch(7, &shuffle));
     }
 
     #[test]

@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { nextWanted, rowHeightFor, stripWindow } from "./thumbnails";
+import { installFakeDom, settle, type FakeDom } from "./testdom";
+import { nextWanted, rowHeightFor, stripWindow, Thumbnails } from "./thumbnails";
+
+const tiles = vi.hoisted(() => ({
+  fetchTile: vi.fn(),
+  cancelTile: vi.fn(),
+  nextRequestId: vi.fn(),
+}));
+
+vi.mock("./tiles", () => tiles);
 
 /** A window of rows, as `stripWindow` reports one. */
 function window(first: number, last: number): { first: number; last: number } {
@@ -136,5 +145,99 @@ describe("rowHeightFor", () => {
     const portrait = { width_pt: 612, height_pt: 792 };
     expect(rowHeightFor(portrait, 2)).toBe(rowHeightFor(portrait, 0));
     expect(rowHeightFor(portrait, 4)).toBe(rowHeightFor(portrait, 0));
+  });
+});
+
+/**
+ * What the strip does once it has been torn down.
+ *
+ * The renderer is one FIFO thread shared with the page the reader is looking
+ * at, so a strip that keeps asking after its document is gone is not merely
+ * wasteful --- every doomed thumbnail is 1.5 s of that thread on the A0 sheet,
+ * in front of the tiles for the document that replaced it.
+ */
+describe("Thumbnails lifetime", () => {
+  let dom: FakeDom;
+  /** Settles the one outstanding render, whenever the test wants it to. */
+  let deliver: (result: null) => void;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    deliver = () => {};
+    tiles.fetchTile.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  function strip(): Thumbnails {
+    return new Thumbnails(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 40,
+      page: { width_pt: 600, height_pt: 800 },
+      tier1: { placeholderFor: () => null },
+      onNavigate: () => {},
+    });
+  }
+
+  it("asks for nothing more once it has been destroyed", async () => {
+    // `pump` refuses to issue anything while the strip is inactive, and a
+    // teardown that left it active kept that door open: the request settling
+    // pumps the next page, whose reply pumps the one after it.
+    const pages = strip();
+    pages.setActive(true);
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(1);
+
+    pages.destroy();
+    deliver(null);
+    await settle();
+
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(1);
+  });
+
+  it("names a thumbnail that failed, once", async () => {
+    // `tiles.ts` builds an error naming the page and every catch here dropped
+    // it, so a strip with a blank row said nothing anywhere about why. Once per
+    // page is all there is to say --- a failed page is never retried for the
+    // life of this orientation.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let reject: (reason: Error) => void = () => {};
+    tiles.fetchTile.mockImplementation(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    const pages = strip();
+    pages.setActive(true);
+    reject(new Error("page is broken"));
+    await settle();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("page is broken");
+    pages.destroy();
+    warn.mockRestore();
+  });
+
+  it("asks for the next one while it is alive", async () => {
+    // The control. A strip that stopped pumping on every settling reply would
+    // pass the test above and never draw a second thumbnail.
+    const pages = strip();
+    pages.setActive(true);
+    deliver(null);
+    await settle();
+
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
+    pages.destroy();
   });
 });
