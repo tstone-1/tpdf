@@ -85,7 +85,10 @@ fn main() {
     // only moment the laziness claim is observable. A service that opened every
     // document with a full pool would satisfy every check below it while costing
     // `capacity` parses of a file nobody has scrolled yet.
-    let opened_with = worker_pids().len();
+    let opened_pool = pool_pids(&workers);
+    let opened_children = worker_pids();
+    let opened_spares = workers.spare_pids();
+    let opened_with = opened_pool.len();
 
     report.check(
         "the app process has not mapped libpdfium",
@@ -286,6 +289,16 @@ fn main() {
                  around it cannot see a page number that was ignored",
             );
         }
+    } else {
+        // The name has to appear on a one-page document too. Without this the
+        // check does not fail and does not skip --- it is simply absent, and the
+        // only trace is the total moving from 32 to 31 between corpora. That is
+        // the second time today the same shape has been found by diffing check
+        // names across inputs rather than by anything going red.
+        report.skip(
+            "the page asked for is one a wrong page number would betray",
+            "the document has one page, so there is no other page to confuse it with",
+        );
     }
 
     // Searched for something a text page has and a vector one does not, so the
@@ -401,7 +414,7 @@ fn main() {
     // below is about a worker that dies mid-session, and every observation of a
     // *process* is taken from the OS table rather than from bookkeeping of ours
     // --- same reason as the libpdfium check at the top.
-    let before = worker_pids();
+    let before = pool_pids(&workers);
     // The pool, as the concurrent tiles above will have grown it. Both bounds
     // matter and they fail differently: below two says nothing ever ran in
     // parallel, above capacity says the ceiling is not a ceiling. `opened_with`
@@ -410,9 +423,11 @@ fn main() {
         "concurrent tiles grew the pool, and no further than its capacity",
         before.len() > 1 && before.len() <= workers.pool_size() && opened_with == 1,
         format!(
-            "{} workers, capacity {}, opened with {opened_with}",
+            "{} workers, capacity {}, opened with {opened_with} \
+             (at open: pool {opened_pool:?}, children {opened_children:?}, \
+             spares {opened_spares:?}; now pool {before:?})",
             before.len(),
-            workers.pool_size()
+            workers.pool_size(),
         ),
     );
 
@@ -430,7 +445,7 @@ fn main() {
             reply,
         )
     });
-    let unchanged = worker_pids();
+    let unchanged = pool_pids(&workers);
     report.check(
         "a worker that answers with an error is not replaced",
         refused.is_err() && unchanged == before,
@@ -489,7 +504,7 @@ fn main() {
     // the pool must be untouched, which is the half a single-worker service
     // could not express: a death must cost one process, not the document. And
     // something must still be there to serve the next request.
-    let after = worker_pids();
+    let after = pool_pids(&workers);
     let survivors: Vec<u32> = before
         .iter()
         .copied()
@@ -543,7 +558,7 @@ fn main() {
                 _ => break,
             }
         }
-        (worker_pids().len(), rendered)
+        (pool_pids(&workers).len(), rendered)
     };
     // The worker count is reported and *not* asserted: growth is driven by
     // contention, so on a document whose tiles take half a millisecond a worker
@@ -586,7 +601,7 @@ fn main() {
     // The other call site. `with_worker` is shared between them, but a tile is
     // read out of the shared mapping and a JSON reply off the pipe, and only the
     // first of those was exercised above.
-    let second = worker_pids().first().copied();
+    let second = pool_pids(&workers).first().copied();
     let death = kill_a_worker(second);
     let again = wait(|reply| workers.text(worker_doc.id, page, reply));
     let same = matches!(
@@ -613,7 +628,7 @@ fn main() {
     // Two documents from the same file, so that closing one has something to be
     // measured against: a close that took down more than it was asked to would
     // otherwise look identical to one that worked.
-    let before_second = worker_pids();
+    let before_second = pool_pids(&workers);
     let second_doc = wait(|reply| workers.open(document.clone(), false, reply));
     let closing = match &second_doc {
         Ok(info) => {
@@ -621,9 +636,9 @@ fn main() {
             // that was there before the second document opened. Recorded rather
             // than inferred, because after the close there is no way to ask.
             let closed_pool = before_second.clone();
-            let held = worker_pids();
+            let held = pool_pids(&workers);
             let closed = wait(|reply| workers.close(worker_doc.id, reply));
-            let left = worker_pids();
+            let left = pool_pids(&workers);
             Some((info.id, held, closed, left, closed_pool))
         }
         Err(_) => None,
@@ -892,6 +907,26 @@ fn worker_pids() -> Vec<u32> {
     .unwrap_or_default()
 }
 
+/// Children of this process that are serving a document.
+///
+/// A warmed spare is a child too, and counting it as a pool worker is what first
+/// turned the capacity check red at `7 workers, capacity 6` --- correctly, since
+/// seven processes existed. What was wrong was the question, not the answer: the
+/// bound is on workers *for a document*, and a spare has none. Excluded by
+/// identity rather than by widening the bound to `capacity + 1`, which would also
+/// have accepted a genuine overrun by one.
+fn pool_pids(service: &RenderService) -> Vec<u32> {
+    // Waited for, because a spare between `fork` and registration is a child this
+    // process cannot name -- and an unnamed child is counted as a pool worker,
+    // which reads as the pool's laziness being broken.
+    settle_for(Duration::from_secs(5), || service.spares_settled());
+    let spares = service.spare_pids();
+    worker_pids()
+        .into_iter()
+        .filter(|pid| !spares.contains(pid))
+        .collect()
+}
+
 /// Kills a worker, or reports that there was no worker to kill.
 ///
 /// The absence is an outcome rather than a reason to stop: a defect that stops
@@ -943,6 +978,23 @@ fn kill_and_wait(pid: u32) -> Result<(), String> {
 /// the table as a zombie until its parent reaps it, and `kill(pid, 0)` succeeds
 /// on a zombie. Reading only "does the pid exist" would report a dead worker as
 /// alive right up until the restart that reaps it.
+/// Polls until a condition holds, or the bound expires.
+///
+/// Bounded rather than blocking, because the properties it is used for break by
+/// *not happening*: a spare that never warms would otherwise stop the run with no
+/// verdict, and `AGENTS.md` records that a check whose failure mode is a wait
+/// cannot fail.
+fn settle_for(bound: Duration, mut ready: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + bound;
+    while Instant::now() < deadline {
+        if ready() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    ready()
+}
+
 fn pid_is_running(pid: u32) -> bool {
     let out = std::process::Command::new("ps")
         .args(["-o", "state=", "-p", &pid.to_string()])

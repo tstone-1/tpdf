@@ -32,6 +32,9 @@
 //! [`Worker::spawn`] refuses, rather than silently running unsandboxed.
 
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(target_os = "macos")]
+use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,6 +57,18 @@ pub const WORKER_ARGV: &str = "--render-worker";
 pub const DOC_FD: i32 = 3;
 /// Descriptor the tile mapping is handed over on.
 pub const TILE_FD: i32 = 4;
+/// Descriptor a pre-spawned worker is handed its document over, later.
+///
+/// A worker started before any file is chosen cannot be given one at `exec`, so
+/// it gets a socket instead and receives the mapping as `SCM_RIGHTS` ancillary
+/// data once there is something to open. `bin/fdpass_probe.rs` is the standing
+/// proof that this crosses a sandboxed boundary --- with the control that the
+/// child cannot read `/etc/hosts` at the time, since the transfer works equally
+/// well on a process that never sandboxed itself.
+pub const SOCK_FD: i32 = 5;
+
+/// The argv marker that starts a worker with no document.
+pub const PRESPAWN_ARGV: &str = "--prespawn";
 
 /// Bytes reserved for one tile payload.
 ///
@@ -398,6 +413,177 @@ impl Drop for Shm {
     }
 }
 
+// ------------------------------------------------------- handing over a file
+
+/// How a child died, in words.
+///
+/// Free rather than a method, because both [`Worker`] and [`PreWorker`] need it
+/// and a second copy is a second thing to drift. A signal is named as one:
+/// `AGENTS.md` records a crash test that reported "exited with code 9" where a
+/// segfault should have said "killed by signal 11", and that difference was the
+/// whole tell.
+fn epitaph_of(child: &mut Child) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match child.try_wait() {
+        Ok(None) => "still running".into(),
+        Ok(Some(status)) => match status.signal() {
+            Some(signal) => format!("killed by signal {signal}"),
+            None => format!("exited with code {}", status.code().unwrap_or(-1)),
+        },
+        Err(e) => format!("could not be waited on: {e}"),
+    }
+}
+
+/// A connected pair, one half of which is handed to a pre-spawned worker.
+#[cfg(target_os = "macos")]
+fn socket_pair() -> Result<(OwnedFd, OwnedFd), String> {
+    let mut fds = [0i32; 2];
+    // SAFETY: writes exactly two descriptors into a two-element array.
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    if rc != 0 {
+        return Err(format!("socketpair: {}", std::io::Error::last_os_error()));
+    }
+
+    // Close-on-exec on **both** ends, and this is not hygiene --- without it a
+    // pre-spawned worker never dies.
+    //
+    // A spare blocks in `recvmsg` on this socket, so unlike a document-serving
+    // worker it is not reading stdin and cannot notice the parent going away that
+    // way. What should end it is the socket reaching EOF when the parent's end
+    // closes. But `socketpair` descriptors are not close-on-exec, so every child
+    // spawned afterwards inherits a copy and holds the write end open --- and the
+    // spare therefore waits forever, reparented to init, on a socket that will
+    // never close because a sibling has it.
+    //
+    // The symptom is a pile of orphaned `--prespawn` processes that outlive every
+    // run, which is what the process table showed: eighteen of them, some seconds
+    // old. `Drop` does not help here, because `std::process::exit` runs no
+    // destructors and every probe and the app itself exit that way.
+    //
+    // `dup2` clears the flag on the descriptor it creates, so the child still
+    // receives a usable socket on `SOCK_FD`.
+    for fd in fds {
+        // SAFETY: both descriptors were just created by `socketpair`.
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+            let e = std::io::Error::last_os_error();
+            // SAFETY: closing descriptors this function owns and is abandoning.
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+            return Err(format!(
+                "could not set FD_CLOEXEC on a handover socket: {e}"
+            ));
+        }
+    }
+    // SAFETY: both are fresh descriptors this process owns.
+    unsafe { Ok((OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))) }
+}
+
+/// Sends a document mapping's descriptor, with its length as the payload.
+///
+/// The length travels in the ordinary payload rather than in a second message
+/// because a descriptor carries no notion of how much of it to map, and two
+/// messages could be interleaved by a future caller in a way one cannot.
+///
+/// A byte of payload is required, not incidental: a `sendmsg` carrying only
+/// ancillary data may transfer nothing at all, and the receiver then blocks
+/// forever on a message that was never framed.
+#[cfg(target_os = "macos")]
+fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), String> {
+    let mut payload = (len as u64).to_le_bytes();
+    let mut iov = libc::iovec {
+        iov_base: payload.as_mut_ptr().cast(),
+        iov_len: payload.len(),
+    };
+    let mut space = [0u8; 32];
+    // SAFETY: the control buffer is sized by CMSG_SPACE for one descriptor, and
+    // every pointer is into storage that outlives the call.
+    unsafe {
+        let mut msg: libc::msghdr = std::mem::zeroed();
+        msg.msg_iov = &raw mut iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = space.as_mut_ptr().cast();
+        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32);
+
+        let cmsg = libc::CMSG_FIRSTHDR(&msg);
+        if cmsg.is_null() {
+            return Err("no control header".into());
+        }
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as u32);
+        std::ptr::copy_nonoverlapping(&raw const fd, libc::CMSG_DATA(cmsg).cast::<i32>(), 1);
+
+        if libc::sendmsg(socket, &raw const msg, 0) < 0 {
+            return Err(format!("sendmsg: {}", std::io::Error::last_os_error()));
+        }
+    }
+    Ok(())
+}
+
+/// Receives a document mapping's descriptor and its length.
+///
+/// # Errors
+///
+/// The socket closing --- which is how a pre-spawned worker learns the parent has
+/// gone away without ever giving it a file --- or a message that is not the one
+/// this protocol sends.
+///
+/// # Safety
+///
+/// The caller must own `socket` and must not be reading it concurrently.
+#[cfg(target_os = "macos")]
+pub unsafe fn recv_document(socket: i32) -> Result<(OwnedFd, usize), String> {
+    let mut payload = [0u8; 8];
+    let mut iov = libc::iovec {
+        iov_base: payload.as_mut_ptr().cast(),
+        iov_len: payload.len(),
+    };
+    let mut space = [0u8; 32];
+    // SAFETY: as `send_document`; the control header is only read once `recvmsg`
+    // has reported success.
+    unsafe {
+        let mut msg: libc::msghdr = std::mem::zeroed();
+        msg.msg_iov = &raw mut iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = space.as_mut_ptr().cast();
+        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32);
+
+        let read = libc::recvmsg(socket, &raw mut msg, 0);
+        if read < 0 {
+            return Err(format!("recvmsg: {}", std::io::Error::last_os_error()));
+        }
+        if read == 0 {
+            return Err("the parent closed the handover socket".into());
+        }
+        // Checked rather than assumed: a short read leaves the rest of `payload`
+        // zeroed, and a length of zero is a mapping of nothing that would fail
+        // much further along with a far worse message.
+        if read as usize != payload.len() {
+            return Err(format!("the handover payload was {read} bytes, wanted 8"));
+        }
+        let cmsg = libc::CMSG_FIRSTHDR(&msg);
+        if cmsg.is_null() {
+            return Err("no descriptor arrived with the handover".into());
+        }
+        if (*cmsg).cmsg_level != libc::SOL_SOCKET || (*cmsg).cmsg_type != libc::SCM_RIGHTS {
+            return Err("the handover control message was not SCM_RIGHTS".into());
+        }
+        let mut fd: i32 = -1;
+        std::ptr::copy_nonoverlapping(libc::CMSG_DATA(cmsg).cast::<i32>(), &raw mut fd, 1);
+        if fd < 0 {
+            return Err("the descriptor that arrived is not valid".into());
+        }
+        let len = usize::try_from(u64::from_le_bytes(payload))
+            .map_err(|_| "the handover length does not fit in this address space".to_string())?;
+        if len == 0 {
+            return Err("the handover length is zero".into());
+        }
+        Ok((OwnedFd::from_raw_fd(fd), len))
+    }
+}
+
 // -------------------------------------------------------------------- parent
 
 /// A worker process serving one document.
@@ -414,7 +600,9 @@ pub struct Worker {
     /// and is subtly wrong: a file rewritten in the meantime would become the
     /// document the reader is looking at, silently, under a scroller sized for
     /// the old one.
-    _doc: Arc<Shm>,
+    ///
+    /// `None` only while a [`PreWorker`] is waiting to be given one.
+    _doc: Option<Arc<Shm>>,
 }
 
 /// The write half of a worker, separable and cheap to clone.
@@ -458,6 +646,137 @@ impl WorkerSender {
     }
 }
 
+/// A worker that is running, sandboxed and warmed, and has no document yet.
+///
+/// This is the whole point of pre-spawning. `bin/prespawn_bench.rs` measures what
+/// a worker costs before it can answer anything: a **~6.6 ms floor** --- fork,
+/// exec, dyld, mapping libpdfium, `sandbox_init` --- plus **~7.4 ms of system-font
+/// enumeration** on any document that does not embed its fonts, plus the page
+/// parse. The first two are paid by every worker and depend on no document, so
+/// they can be spent while the shell is still coming up (~250 ms, of which none
+/// is ours) instead of while a reader waits for their first page.
+///
+/// Kept as a distinct type rather than a `Worker` with an empty document,
+/// because the two cannot do the same things: this one has no document to render
+/// from, and a `Worker` cannot be given a second one. Making that a state machine
+/// inside one struct would put a runtime check where the compiler is willing to
+/// do it.
+pub struct PreWorker {
+    /// The running process, with no document yet.
+    ///
+    /// Held as a whole `Worker` rather than as its parts, and that is the fix for
+    /// a real defect rather than a tidiness preference. `std::process::Child`
+    /// does **not** kill on drop, so an unused spare otherwise outlives the
+    /// service that made it -- reparented to init, blocked forever in `recvmsg`,
+    /// still holding the stderr it inherited. The symptom is not a stray process
+    /// anyone notices: it is that whatever captures the parent's output waits on
+    /// a pipe an orphan still holds, so a run that finished cleanly looks hung.
+    /// `backend-probe` appeared to wedge on its first corpus exactly this way.
+    ///
+    /// A second `Drop` here would have worked and could drift from the first.
+    /// Containing a `Worker` makes the kill impossible to forget, because it is
+    /// not written twice.
+    worker: Worker,
+    /// Our end of the pair the document descriptor is sent over.
+    socket: OwnedFd,
+    /// Whether the child's readiness announcement has been consumed.
+    ///
+    /// It arrives exactly once, and reading it twice would consume the answer to
+    /// a real request instead.
+    warm: bool,
+}
+
+impl PreWorker {
+    /// Hands over the document and returns the worker now serving it.
+    ///
+    /// The mapping is sent as a descriptor rather than a path, for exactly the
+    /// reason the whole design exists: the worker has already dropped the
+    /// authority to open a file, so a path would be unusable even if it were
+    /// trusted. The length travels as the ordinary payload of the same message,
+    /// since a descriptor says nothing about how much of it to map.
+    ///
+    /// # Errors
+    ///
+    /// The send failing, or the worker having died while it waited --- reported
+    /// with its epitaph, because "the pipe is closed" and "killed by signal 11"
+    /// are different diagnoses.
+    pub fn adopt(mut self, doc: Arc<Shm>) -> Result<Worker, String> {
+        // Sent *before* waiting for the warm announcement, not after. The socket
+        // buffers it, so the descriptor is already on its way while the child
+        // finishes linking --- waiting first would serialise two things that have
+        // no reason to be ordered.
+        send_document(self.socket.as_raw_fd(), doc.raw_fd(), doc.len()).map_err(|e| {
+            format!(
+                "could not hand the document to a pre-spawned worker: {e} --- {}",
+                self.worker.epitaph()
+            )
+        })?;
+
+        // The warm line has to be consumed before any real reply, or it becomes
+        // the answer to whatever the caller asks first --- an `Open` reply that is
+        // actually a readiness notice, carrying geometry nobody sent.
+        self.wait_warm()?;
+
+        // Kept mapped for as long as the worker lives. Until this line the worker
+        // had no document; from here it is an ordinary one in every respect.
+        self.worker._doc = Some(doc);
+        Ok(self.worker)
+    }
+
+    /// Blocks until the child has linked, sandboxed and warmed itself.
+    ///
+    /// Separate from [`PreWorker::adopt`] because a caller may want the waiting
+    /// and the handover at different moments --- a pool filling itself in the
+    /// background wants to know a worker is ready without having a document for
+    /// it, and a benchmark must be able to put the waiting *outside* its timer.
+    /// Without that separation the head start a pre-spawned worker gets is
+    /// whatever the code before it happened to take, which is not a quantity
+    /// anyone chose.
+    ///
+    /// Idempotent: the announcement arrives once, and reading it twice would
+    /// consume a real reply.
+    ///
+    /// # Errors
+    ///
+    /// The worker dying before it was ready, or answering something other than
+    /// its readiness.
+    pub fn wait_warm(&mut self) -> Result<(), String> {
+        if self.warm {
+            return Ok(());
+        }
+        let ready = self
+            .worker
+            .read_reply()
+            .map_err(|e| format!("a pre-spawned worker was not ready: {e}"))?;
+        if !ready.ok {
+            return Err(format!(
+                "a pre-spawned worker failed to warm: {}",
+                ready.error
+            ));
+        }
+        let warm = ready
+            .json
+            .as_ref()
+            .and_then(|j| j.get("prespawn"))
+            .and_then(serde_json::Value::as_str);
+        // Asserted positively. "Not an error" would be satisfied by any reply at
+        // all, including a real one if the ordering here ever changed.
+        if warm != Some("warm") {
+            return Err(format!(
+                "a pre-spawned worker sent {warm:?} where its readiness was expected"
+            ));
+        }
+        self.warm = true;
+        Ok(())
+    }
+
+    /// The process id, for a probe that wants to prove one exists.
+    #[must_use]
+    pub fn pid(&self) -> u32 {
+        self.worker.pid()
+    }
+}
+
 impl Worker {
     /// Spawns a worker holding this document, sandboxed.
     ///
@@ -467,6 +786,88 @@ impl Worker {
     /// platform but macOS, always --- see the module note.
     pub fn spawn(document: &Path, library_dir: &Path) -> Result<Self, String> {
         Self::spawn_shared(Arc::new(Shm::map_file(document)?), library_dir)
+    }
+
+    /// Starts a worker with no document, to be given one later.
+    ///
+    /// # Errors
+    ///
+    /// Creating the tile buffer, the socket pair, or spawning; and on any
+    /// platform but macOS, always --- see the module note.
+    #[cfg(not(target_os = "macos"))]
+    pub fn prespawn(_library_dir: &Path) -> Result<PreWorker, String> {
+        Err("render workers are implemented on macOS only".into())
+    }
+
+    /// Starts a worker with no document, to be given one later.
+    ///
+    /// Returns as soon as `fork`/`exec` has been issued --- like [`Worker::spawn`],
+    /// it waits for nothing. The child then links, maps PDFium, sandboxes itself
+    /// and warms the font list, and none of that is on anyone's critical path
+    /// unless a document arrives before it finishes.
+    ///
+    /// # Errors
+    ///
+    /// Creating the tile buffer, the socket pair, or spawning.
+    #[cfg(target_os = "macos")]
+    pub fn prespawn(library_dir: &Path) -> Result<PreWorker, String> {
+        use std::os::unix::process::CommandExt;
+
+        let tile = Shm::create(TILE_CAPACITY)?;
+        let (ours, theirs) = socket_pair()?;
+
+        let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+        let mut command = Command::new(exe);
+        command
+            .arg(WORKER_ARGV)
+            .arg(PRESPAWN_ARGV)
+            .arg("--lib")
+            .arg(library_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            // Inherited, as for a document-carrying worker: a sandbox denial or
+            // a fatal signal has to be visible.
+            .stderr(Stdio::inherit());
+
+        let tile_fd = tile.raw_fd();
+        let sock_fd = theirs.as_raw_fd();
+        // SAFETY: only dup/dup2/close run between fork and exec, all of which are
+        // async-signal-safe. Both sources are dup'd to fresh descriptors first,
+        // because either may already occupy the target number.
+        unsafe {
+            command.pre_exec(move || {
+                let t = libc::dup(tile_fd);
+                let s = libc::dup(sock_fd);
+                if t < 0 || s < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::dup2(t, TILE_FD) < 0 || libc::dup2(s, SOCK_FD) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if t != TILE_FD {
+                    libc::close(t);
+                }
+                if s != SOCK_FD {
+                    libc::close(s);
+                }
+                Ok(())
+            });
+        }
+
+        let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let stdin = child.stdin.take().ok_or("worker has no stdin")?;
+        let stdout = BufReader::new(child.stdout.take().ok_or("worker has no stdout")?);
+        Ok(PreWorker {
+            worker: Worker {
+                child,
+                stdin: WorkerSender(Arc::new(Mutex::new(stdin))),
+                stdout,
+                tile,
+                _doc: None,
+            },
+            socket: ours,
+            warm: false,
+        })
     }
 
     /// Spawns a worker over a document mapping the caller made and keeps.
@@ -555,7 +956,7 @@ impl Worker {
             stdin: WorkerSender(Arc::new(Mutex::new(stdin))),
             stdout,
             tile,
-            _doc: doc,
+            _doc: Some(doc),
         })
     }
 
@@ -641,15 +1042,7 @@ impl Worker {
     /// "exited with code 9" where a segfault should have said "killed by signal
     /// 11", and that difference was the whole tell.
     pub fn epitaph(&mut self) -> String {
-        use std::os::unix::process::ExitStatusExt;
-        match self.child.try_wait() {
-            Ok(None) => "still running".into(),
-            Ok(Some(status)) => match status.signal() {
-                Some(signal) => format!("killed by signal {signal}"),
-                None => format!("exited with code {}", status.code().unwrap_or(-1)),
-            },
-            Err(e) => format!("could not be waited on: {e}"),
-        }
+        epitaph_of(&mut self.child)
     }
 
     /// The worker's physical footprint in bytes, for supervision.

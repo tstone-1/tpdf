@@ -25,13 +25,15 @@ use std::sync::mpsc::{channel, Sender};
 
 use pdfium_render::prelude::Pdfium;
 
-use crate::progressive::{self, RawDocument};
+use crate::progressive::{self, CancelToken, RawDocument};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{self, PageSize, TileFormat, TileRequest};
 use crate::worker::{
-    doc_len_arg, library_dir_arg, Request, Response, Shm, DOC_FD, SANDBOX_PROFILE, TILE_CAPACITY,
-    TILE_FD,
+    doc_len_arg, library_dir_arg, Request, Response, Shm, DOC_FD, PRESPAWN_ARGV, SANDBOX_PROFILE,
+    TILE_CAPACITY, TILE_FD,
 };
+#[cfg(target_os = "macos")]
+use crate::worker::{recv_document, SOCK_FD};
 
 /// Runs this process as a render worker. Never returns.
 pub fn main(args: &[String]) -> ! {
@@ -53,19 +55,41 @@ pub fn main(args: &[String]) -> ! {
     std::process::exit(code);
 }
 
+/// A document naming a base-14 face, opened to warm PDFium's font list.
+///
+/// 571 bytes, `qpdf --check` clean, and committed as source rather than
+/// generated: every other PDF in this repository is a gitignored fixture, and
+/// this one has to be inside the shipped binary.
+///
+/// It exists because of what `bin/prespawn_bench.rs` measured. A worker's fixed
+/// startup is ~6.6 ms, but a document that does *not* embed its fonts pays a
+/// further ~7.4 ms while PDFium goes looking for a system face --- which reads
+/// like a per-document cost and is not one. It is the machine's font list, so
+/// one process can pay it once, before it knows which file it will be given.
+const WARM_DOCUMENT: &[u8] = include_bytes!("warm.pdf");
+
 /// Sets the process up and serves requests until stdin closes.
 fn serve(args: &[String]) -> Result<(), String> {
-    let doc_len = doc_len_arg(args).ok_or("--doc-len is missing or unreadable")?;
     let library_dir = library_dir_arg(args).ok_or("--lib is missing")?;
+    // A pre-spawned worker has no document yet, and is told so rather than
+    // inferring it from a missing `--doc-len`: an argument that failed to parse
+    // would otherwise be indistinguishable from a deliberate omission, and the
+    // worker would sit waiting on a socket nobody is going to write to.
+    let prespawned = args.iter().any(|a| a == PRESPAWN_ARGV);
 
-    // Adopted before anything else: these are the only two things this process
-    // will ever be given.
-    //
-    // SAFETY: the parent dup2'd live descriptors to these numbers before exec,
-    // and nothing else in this process owns them.
-    // Read-only: a worker must not be able to write the reader's file.
-    let doc_shm = unsafe { Shm::from_fd(DOC_FD, doc_len, false) }?;
+    // SAFETY: the parent dup2'd a live descriptor to this number before exec, and
+    // nothing else in this process owns it.
     let mut tile_shm = unsafe { Shm::from_fd(TILE_FD, TILE_CAPACITY, true) }?;
+
+    // Adopted before the sandbox when there is one to adopt. Read-only: a worker
+    // must not be able to write the reader's file.
+    let early_doc = if prespawned {
+        None
+    } else {
+        let doc_len = doc_len_arg(args).ok_or("--doc-len is missing or unreadable")?;
+        // SAFETY: as above.
+        Some(unsafe { Shm::from_fd(DOC_FD, doc_len, false) }?)
+    };
 
     // BEFORE the sandbox. Binding opens and maps libpdfium, which a policy
     // denying file reads forbids.
@@ -73,6 +97,26 @@ fn serve(args: &[String]) -> Result<(), String> {
     let bindings = progressive::bindings_of(pdfium);
 
     apply_sandbox(SANDBOX_PROFILE)?;
+
+    let doc_shm = match early_doc {
+        Some(shm) => shm,
+        None => {
+            // Both of these happen while nobody is waiting, which is the entire
+            // value of pre-spawning. Warming first, because the descriptor may
+            // already be on its way.
+            warm_fonts(bindings);
+            // Said out loud, on the ordinary reply channel, because "warm" is not
+            // observable from outside otherwise -- and a pre-spawn that silently
+            // stopped warming would look exactly like one that worked, which is
+            // the failure shape this repository keeps meeting. The parent waits
+            // for this in `PreWorker::adopt`.
+            reply(
+                &mut std::io::stdout(),
+                &Response::json(&serde_json::json!({ "prespawn": "warm" })),
+            )?;
+            wait_for_document()?
+        }
+    };
 
     // AFTER the sandbox: this is the hostile input.
     //
@@ -296,6 +340,66 @@ fn reply(out: &mut impl Write, response: &Response) -> Result<(), String> {
     out.write_all(line.as_bytes())
         .and_then(|()| out.flush())
         .map_err(|e| format!("could not reply: {e}"))
+}
+
+/// Blocks until the parent hands over a document mapping.
+///
+/// # Errors
+///
+/// The socket closing --- which is how a pre-spawned worker that is never given a
+/// file learns to exit rather than waiting forever --- or a malformed handover.
+#[cfg(target_os = "macos")]
+fn wait_for_document() -> Result<Shm, String> {
+    use std::os::fd::IntoRawFd;
+
+    // SAFETY: the parent dup2'd its half of a socket pair to this number before
+    // exec, and nothing else in this process reads it.
+    let (fd, len) = unsafe { recv_document(SOCK_FD) }?;
+    // `into_raw_fd` rather than `as_raw_fd` and a forget: `Shm` adopts the
+    // descriptor and closes it on drop, so leaving the `OwnedFd` alive would
+    // close it twice.
+    let raw = fd.into_raw_fd();
+    // SAFETY: just received, owned here, and handed to `Shm` which now owns it.
+    unsafe { Shm::from_fd(raw, len, false) }
+}
+
+/// Not reachable: a worker refuses to start at all off macOS.
+#[cfg(not(target_os = "macos"))]
+fn wait_for_document() -> Result<Shm, String> {
+    Err("pre-spawned workers are implemented on macOS only".into())
+}
+
+/// Makes PDFium build its system font list, before any document needs it.
+///
+/// Deliberately ignores every failure. This is an optimisation: a worker that
+/// could not warm itself is still a correct worker, and a hard failure here would
+/// turn a missed 7 ms into a document that does not open. What it must not do is
+/// *look* like it worked --- `bin/prespawn_bench.rs --mode warm` measures the
+/// effect, so a warm that silently stopped working shows up as the saving
+/// disappearing rather than as nothing at all.
+fn warm_fonts(bindings: progressive::Bindings) {
+    let Ok(document) = RawDocument::open_bytes(bindings, WARM_DOCUMENT) else {
+        return;
+    };
+    // Through `render_tile`, not a bespoke render: warming has to exercise the
+    // path a real tile takes, or it warms something adjacent to what is measured.
+    let request = TileRequest {
+        rid: 0,
+        doc: 0,
+        page: 0,
+        scale: 1.0,
+        turns: 0,
+        invert: false,
+        x: 0,
+        y: 0,
+        // The whole 20x20 page. Rendering is what forces the lookup --- opening
+        // the page does not resolve the face, because nothing has asked for a
+        // glyph yet.
+        width: 20,
+        height: 20,
+        format: TileFormat::Raw,
+    };
+    let _ = render::render_tile(bindings, &document, &request, &CancelToken::new());
 }
 
 /// Loads PDFium. Must run before the sandbox.

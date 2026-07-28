@@ -290,6 +290,21 @@ experience.
   produces on its own. It now asserts the latency too: 2.2 ms against a 1,125 ms render.
 
   **Windows still refuses rather than running unsandboxed**, and so defaults to in-process.
+- **A worker is started, sandboxed and font-warmed before any document is chosen.** Opening a
+  file then costs **0.3--1.1 ms** instead of 8--17 ms, because the process is already past its
+  link, its `sandbox_init` and PDFium's system-font walk. The A0 sheet keeps 48 ms of its 56 ---
+  that is page parse, which no pre-spawn can remove, and it is the row that says the
+  measurement is not merely reporting zero.
+
+  The document is handed over **after** the sandbox, as an `SCM_RIGHTS` descriptor: a
+  pre-spawned worker has already dropped the authority to open a file, so a path would be
+  useless to it even if it were trusted. `bin/fdpass_probe.rs` proves that crossing, with the
+  control that the child cannot read `/etc/hosts` at the time.
+
+  One spare, not a pool of them --- it is for the *first* worker of a document, which is what a
+  reader waits on. A spare that dies falls back to an ordinary spawn rather than failing the
+  open.
+
 - **Tiles of one page render in several worker processes at once.** The worker backend is
   served by a pool of threads over one job queue, and each document has a pool of processes
   they draw from. A screenful of the A0 sheet goes from **3.46 s to 0.83 s, 4.2x**, measured
@@ -487,6 +502,11 @@ experience.
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **`backend-probe` had a vanishing check of its own**, the second found in a day and by the
+  same method. "The page asked for is one a wrong page number would betray" disappeared on
+  one-page documents rather than skipping, and the only trace was the name count moving from
+  32 to 31 between corpora. All six now report 32.
 
 - **A viewer check vanished instead of skipping, on every one-page document.**
   `searchesFromHere` records two check names, and its two early returns skipped only the

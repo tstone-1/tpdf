@@ -48,9 +48,10 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
-use tpdf_lib::worker::{self, Request, Worker};
+use tpdf_lib::worker::{self, PreWorker, Request, Shm, Worker};
 use tpdf_lib::worker_child;
 
 /// Documents chosen to span the parse cost while sharing every fixed cost.
@@ -110,15 +111,29 @@ fn main() {
     // either a real effect or a spread wide enough to make the median
     // meaningless, and a single number cannot tell those apart.
     println!(
-        "  {:<22} {:>8} {:>10} {:>26}",
-        "document", "size", "fork+exec", "to 1st reply (min/med/max)"
+        "  {:<22} {:>8} {:>26} {:>12} {:>8}",
+        "document", "size", "spawn now (min/med/max)", "pre-spawned", "saved"
     );
 
     let mut samples: Vec<Vec<(f64, f64)>> = vec![Vec::new(); present.len()];
+    let mut warm: Vec<Vec<f64>> = vec![Vec::new(); present.len()];
     for round in 0..rounds {
         // Interleaved: every fixture is measured once per round, so a machine
-        // that drifts between rounds moves all of them together.
+        // that drifts between rounds moves all of them together. The two
+        // variants are adjacent within a round for the same reason.
         for (index, path) in present.iter().enumerate() {
+            // Warmed to completion *before* the control runs, and outside every
+            // timer. The first version of this let the pre-spawned worker warm
+            // while the control ran, so its head start was however long the
+            // control happened to take -- which made `text-heavy`, whose control
+            // is 8 ms, report no saving at all while the A0 sheet, whose control
+            // is 55 ms, reported the true one. The head start has to be a
+            // quantity chosen here, not a side effect of the row above it.
+            let pre = Worker::prespawn(&library_dir).and_then(|mut pre| {
+                pre.wait_warm()?;
+                Ok(pre)
+            });
+
             match once(path, &library_dir) {
                 Ok(sample) => {
                     if round > 0 {
@@ -130,22 +145,42 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+
+            match pre.and_then(|pre| once_prespawned(path, pre)) {
+                Ok(sample) => {
+                    if round > 0 {
+                        warm[index].push(sample);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[FAIL] {} (pre-spawned): {e}", path.display());
+                    std::process::exit(1);
+                }
+            }
         }
     }
 
     for (index, path) in present.iter().enumerate() {
-        let forks: Vec<f64> = samples[index].iter().map(|s| s.0).collect();
         let mut readys: Vec<f64> = samples[index].iter().map(|s| s.1).collect();
         readys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // Pairwise within a round, then the median of those -- not the difference
+        // of two medians, which would let a drifting machine appear as a saving.
+        let mut deltas: Vec<f64> = samples[index]
+            .iter()
+            .zip(&warm[index])
+            .map(|(cold, hot)| cold.1 - hot)
+            .collect();
+        deltas.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         println!(
-            "  {:<22} {:>8} {:>7.2} ms {:>7.2} /{:>7.2} /{:>7.2} ms",
+            "  {:<22} {:>8} {:>7.2} /{:>7.2} /{:>7.2} ms {:>9.2} ms {:>+7.2}",
             path.file_name()
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
             bytes(path),
-            median(&forks),
             readys.first().copied().unwrap_or(f64::NAN),
             median(&readys),
             readys.last().copied().unwrap_or(f64::NAN),
+            median(&warm[index]),
+            median(&deltas),
         );
     }
 
@@ -153,6 +188,38 @@ fn main() {
     // closed with "the cheapest document is the floor", and the data said a
     // 757-byte file cost twice what a 775-page one did -- a conclusion the
     // numbers contradicted, printed underneath them. Read the table.
+}
+
+/// What a reader waits for when a warm worker already exists.
+///
+/// The pre-spawn itself is deliberately outside the timer, and that is the claim
+/// rather than a convenience: a worker started while the shell is still coming up
+/// has ~250 ms of someone else's work to hide behind, so the number that matters
+/// is what remains once it is warm. `PreWorker::adopt` returns only after the
+/// child has announced itself warm, so this cannot accidentally include the link,
+/// the sandbox or the font walk --- if the worker were not ready, the wait would
+/// appear here in full rather than being quietly excluded.
+fn once_prespawned(path: &Path, pre: PreWorker) -> Result<f64, String> {
+    let doc = Arc::new(Shm::map_file(path)?);
+    let t0 = Instant::now();
+    let mut worker = pre.adopt(doc)?;
+    let response = worker.call(&Request::Open {
+        lazy_geometry: true,
+    })?;
+    let ready = t0.elapsed().as_secs_f64() * 1e3;
+    check_opened(&response)?;
+    Ok(ready)
+}
+
+/// Rejects a reply that is fast because it failed.
+fn check_opened(response: &tpdf_lib::worker::Response) -> Result<(), String> {
+    if !response.ok {
+        return Err(format!("the worker refused to open it: {}", response.error));
+    }
+    if response.json.is_none() {
+        return Err("the open reply carried no geometry".into());
+    }
+    Ok(())
 }
 
 /// One spawn, and the first request that forces the child to be ready.

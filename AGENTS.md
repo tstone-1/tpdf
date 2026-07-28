@@ -2174,6 +2174,38 @@ that closing a document gives back exactly what opening it took --- 9 before, 9 
 with the clearing removed. **A resource whose leak has no functional symptom needs a check
 that counts the resource**, and the kernel's own listing is the place to count it.
 
+### A descriptor without `FD_CLOEXEC` leaks into every later child, and keeps it alive
+
+The same family, one level nastier, found 2026-07-28 building the pre-spawned worker. A spare
+waits for its document by blocking in `recvmsg` on a `socketpair`, so --- unlike a
+document-serving worker --- it is **not reading stdin** and cannot notice the parent going
+away that way. What should end it is the socket reaching EOF when the parent's end closes.
+
+It never does. `socketpair` descriptors are not close-on-exec, so **every child spawned
+afterwards inherits a copy** and holds the write end open. The spare then waits forever, on a
+socket a sibling is keeping alive, reparented to init. The process table showed eighteen
+orphaned `--prespawn` processes, some of them seconds old.
+
+Three things about it are worth carrying:
+
+- **`Drop` is not the fix, and believing it was cost an hour.** A `Drop` that kills was added
+  first, and it is correct and does nothing here: `std::process::exit` runs no destructors,
+  and every probe and the app itself exit that way. Anything that must not outlive the process
+  has to be arranged so the *kernel* ends it --- a pipe that reaches EOF, a signal --- not so a
+  destructor would have.
+- **The neighbouring mechanism hid it.** Document workers do not leak, because their stdin
+  closes and they exit on EOF. So "workers clean up after themselves" was true, observed, and
+  did not generalise to the one worker that reads a different descriptor.
+- **`dup2` clears the flag**, so setting `FD_CLOEXEC` on both ends costs the child nothing ---
+  it still receives a usable socket on the agreed number.
+
+The general rule: **any descriptor a process keeps in order to notice something ending must be
+close-on-exec**, or a later `fork`/`exec` silently appoints a third party to keep it open. And
+the symptom is not a stray process anybody notices --- it is that whatever captures the
+parent's output waits on a pipe an orphan still holds, so a run that finished cleanly looks
+like it hung. `backend-probe` appeared to wedge on its first corpus exactly this way, which is
+how the whole thing surfaced.
+
 ### Two mechanisms with the same limit make one of them untestable
 
 The render service grew a pool of worker processes, capped per document, and the number of
