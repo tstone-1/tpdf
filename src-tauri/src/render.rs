@@ -79,7 +79,7 @@ use crate::queue::{Claim, SharedQueue};
 use crate::search::{self, PageMatches};
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::{self, PageText};
-use crate::worker::{Request, Response, Shm, Worker, WorkerSender};
+use crate::worker::{PreWorker, Request, Response, Shm, Worker, WorkerSender};
 
 /// Pixel format of a returned tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -374,6 +374,11 @@ impl RenderService {
             }
             Backend::Worker => {
                 let engine = Arc::new(Workers::new(library_dir, queue.clone(), pool));
+                // Immediately, and this is the point of the whole mechanism: the
+                // link, the sandbox and the font walk happen while Tauri and
+                // WebKit are still coming up -- ~250 ms of which none is ours --
+                // rather than while a reader waits for a first page.
+                engine.prewarm();
                 serve_pooled(rx, engine.clone(), service_threads(pool));
                 Some(engine)
             }
@@ -391,6 +396,54 @@ impl RenderService {
     #[must_use]
     pub fn pool_size(&self) -> usize {
         self.workers.as_ref().map_or(1, |w| w.capacity)
+    }
+
+    /// The process id of the warmed spare, if one is waiting.
+    ///
+    /// Exposed for `bin/backend_probe.rs`, and it earns its place twice. A spare
+    /// is a child process like any other, so anything counting this process's
+    /// children counts it too --- which is how the pool-capacity check first went
+    /// red, at `7 workers, capacity 6`, correctly. Excluding it needs its
+    /// identity, not a bigger allowance.
+    ///
+    /// It is also the only *observable* that a pre-spawn happened at all. The
+    /// alternative is a startup mark of ours, and `AGENTS.md` records why that is
+    /// weaker: a mark says what our code believes it did, where a pid can be
+    /// looked up in the process table by something that did not write it.
+    #[must_use]
+    pub fn spare_pid(&self) -> Option<u32> {
+        self.workers.as_ref().and_then(|w| {
+            w.spare
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .ready
+                .as_ref()
+                .map(PreWorker::pid)
+        })
+    }
+
+    /// Every process the spare slot is responsible for, warm or still warming.
+    ///
+    /// Distinct from [`RenderService::spare_pid`], which answers "is one ready to
+    /// use". This answers "which children are not pool workers" --- and during the
+    /// window between `fork` and the readiness notice those are different sets.
+    #[must_use]
+    pub fn spare_pids(&self) -> Vec<u32> {
+        self.workers.as_ref().map_or_else(Vec::new, |w| {
+            w.spare.lock().unwrap_or_else(|e| e.into_inner()).pids()
+        })
+    }
+
+    /// Whether every spare process can currently be named.
+    ///
+    /// For a caller counting this process's children: between `fork` and
+    /// registration there is a child that [`RenderService::spare_pids`] does not
+    /// list, so a count taken then attributes it to a document's pool.
+    #[must_use]
+    pub fn spares_settled(&self) -> bool {
+        self.workers
+            .as_ref()
+            .is_none_or(|w| w.spare.lock().unwrap_or_else(|e| e.into_inner()).settled())
     }
 
     /// Which backend this service is running.
@@ -824,6 +877,62 @@ pub fn pool_size() -> usize {
         .unwrap_or(DEFAULT_POOL)
 }
 
+/// The slot a warmed, documentless worker waits in.
+///
+/// Shared separately from [`Workers`] so the filling thread needs only this and a
+/// library path, rather than a handle to the whole service.
+type Spare = Arc<Mutex<SpareSlot>>;
+
+/// A spare worker, and the pid of one that is still warming.
+///
+/// The pid is recorded the moment the process exists rather than when it becomes
+/// usable, and that distinction is load-bearing rather than tidy. A spare is a
+/// child process, so anything counting this process's children counts it --- and
+/// during the window between `fork` and the readiness notice it would be in the
+/// process table while absent from `ready`. `backend-probe` saw exactly that as
+/// "2 workers" for a document that had one, which reads as the pool's laziness
+/// being broken.
+#[derive(Default)]
+struct SpareSlot {
+    /// Warmed and waiting for a document.
+    ready: Option<PreWorker>,
+    /// Started, not yet warm. Its pid, because there is nothing else to hold.
+    warming: Option<u32>,
+    /// A spawn is in progress and its pid is not known yet.
+    ///
+    /// A separate flag rather than a sentinel pid. `AGENTS.md` records a
+    /// zero-means-absent field in this repository that collided with a real value
+    /// the moment the timing was right, and pid 0 is a real pid.
+    ///
+    /// It exists because `fork` and "the parent learns the pid" are not the same
+    /// instant: `Command::spawn` returns after the child exists, so for a short
+    /// window there is a process nothing can name. Anything counting children can
+    /// see it, which is how a document with one worker was observed to have two.
+    spawning: bool,
+}
+
+impl SpareSlot {
+    /// Whether every process this slot owns can be named.
+    ///
+    /// False only inside the fork-to-registration window. An observer counting
+    /// child processes should wait for this before drawing conclusions --- not
+    /// because the count is wrong, but because it includes a process the slot
+    /// cannot yet identify as its own.
+    fn settled(&self) -> bool {
+        !self.spawning
+    }
+
+    /// Every process this slot is responsible for, warm or not.
+    fn pids(&self) -> Vec<u32> {
+        self.ready
+            .as_ref()
+            .map(PreWorker::pid)
+            .into_iter()
+            .chain(self.warming)
+            .collect()
+    }
+}
+
 /// One open document: its bytes, and the pool of processes parsing them.
 struct Held {
     /// The document mapping, owned here rather than by any one worker so that
@@ -860,12 +969,26 @@ struct Workers {
     returned: Condvar,
     /// The most workers any one document may have.
     capacity: usize,
+    /// A worker that is running, sandboxed and font-warmed, with no document.
+    ///
+    /// One, not a pool of them. It exists for the *first* worker of a document,
+    /// which is the one on the critical path to a first page; the pool's later
+    /// workers are grown under contention, when a render is already on screen and
+    /// several milliseconds are not what anybody is waiting for.
+    ///
+    /// `bin/prespawn_bench.rs` measures what it removes from an open: **7.9 ms**
+    /// on a document that embeds its fonts and **15.3 ms** on one that does not,
+    /// because a pre-spawned worker has already paid both the ~6.6 ms link-and-
+    /// sandbox floor and the ~7.4 ms system-font walk. What it cannot remove is
+    /// the page parse --- the A0 sheet still costs 48 ms of its 56.
+    spare: Spare,
     queue: SharedQueue,
 }
 
 impl Workers {
     fn new(library_dir: PathBuf, queue: SharedQueue, capacity: usize) -> Self {
         Self {
+            spare: Spare::default(),
             library_dir,
             docs: Mutex::new(Vec::new()),
             returned: Condvar::new(),
@@ -878,6 +1001,81 @@ impl Workers {
     /// a panic in one job must not take every open document with it.
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Option<Held>>> {
         self.docs.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Starts a spare worker, unless one is already waiting.
+    ///
+    /// Called once as the service starts and again after each spare is consumed,
+    /// always on a thread nobody is waiting on --- the whole value of this is that
+    /// the ~6.6 ms link and the ~7.4 ms font walk happen while the shell is still
+    /// coming up, and `AGENTS.md` measures that at ~250 ms of which none is ours.
+    ///
+    /// Failure is deliberately silent. A spare is an optimisation, and a machine
+    /// that could not start one still opens documents by the ordinary path; the
+    /// alternative is turning a missed 8 ms into an app that will not launch.
+    fn prewarm(&self) {
+        // The slot rather than the whole service, so this needs no `Arc<Self>`
+        // and the `Engine` methods can keep taking `&self`.
+        let slot = self.spare.clone();
+        let library_dir = self.library_dir.clone();
+        std::thread::Builder::new()
+            .name("tpdf-prewarm".into())
+            .spawn(move || {
+                {
+                    // Checked before spawning, so a burst of opens cannot leave a
+                    // pile of unused sandboxed children behind. A spare that is
+                    // still warming counts: two threads arriving together must not
+                    // both decide there is none.
+                    let mut current = slot.lock().unwrap_or_else(|e| e.into_inner());
+                    if current.ready.is_some() || current.warming.is_some() || current.spawning {
+                        return;
+                    }
+                    // Claimed before the fork, so the window in which a child
+                    // exists unnamed is a window this slot admits to being in.
+                    current.spawning = true;
+                }
+                let spawned = Worker::prespawn(&library_dir);
+                let mut pre = match spawned {
+                    Ok(pre) => {
+                        // Registered before warming, not after.
+                        let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+                        slot.warming = Some(pre.pid());
+                        slot.spawning = false;
+                        drop(slot);
+                        pre
+                    }
+                    Err(_) => {
+                        // The claim has to be given back, or no spare is ever
+                        // started again for the life of the service.
+                        slot.lock().unwrap_or_else(|e| e.into_inner()).spawning = false;
+                        return;
+                    }
+                };
+
+                // Warmed here rather than at the point of use. Waiting on this
+                // thread is free; waiting on the reader's thread is precisely the
+                // cost being avoided.
+                let warmed = pre.wait_warm().is_ok();
+                let mut spare = slot.lock().unwrap_or_else(|e| e.into_inner());
+                spare.warming = None;
+                if warmed && spare.ready.is_none() {
+                    spare.ready = Some(pre);
+                }
+            })
+            .ok();
+    }
+
+    /// Takes the spare worker, if one is ready.
+    ///
+    /// Only `ready`: a spare that is still warming is left alone, because taking
+    /// it would mean waiting out the link and the sandbox on the caller's thread,
+    /// which is the entire cost this mechanism exists to move elsewhere.
+    fn take_spare(&self) -> Option<PreWorker> {
+        self.spare
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ready
+            .take()
     }
 
     /// Takes a worker out of a document's pool, growing or waiting as needed.
@@ -1151,8 +1349,36 @@ impl Engine for Workers {
         // every later worker for this document will be handed. The file is read
         // once, at open, and never again.
         let doc = Arc::new(Shm::map_file(path)?);
-        let mut worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
-        mark("worker spawned");
+        // A spare, if one warmed in time. It has already paid the link, the
+        // sandbox and the font walk, so what remains is the parse of this
+        // document -- 0.3 ms on a small file against 15.7 ms cold.
+        let mut worker = match self.take_spare() {
+            Some(pre) => match pre.adopt(doc.clone()) {
+                Ok(worker) => {
+                    mark("worker adopted");
+                    worker
+                }
+                // Not fatal. A spare can die while it waits -- it is a process
+                // like any other -- and falling back is the difference between a
+                // slower open and a document that refuses to open at all. The
+                // reason is said out loud because a spare that dies every time
+                // would otherwise show up only as the saving quietly vanishing.
+                Err(e) => {
+                    eprintln!("[render] a pre-spawned worker could not take the document: {e}");
+                    let worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
+                    mark("worker spawned");
+                    worker
+                }
+            },
+            None => {
+                let worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
+                mark("worker spawned");
+                worker
+            }
+        };
+        // Started before the reply is waited for, so the next document's spare is
+        // warming while this one is still parsing.
+        self.prewarm();
 
         let response = worker.call(&Request::Open { lazy_geometry })?;
         if !response.ok {
