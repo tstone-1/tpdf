@@ -618,6 +618,32 @@ code under test controls", it is decoration however relevant it sounds. Related 
 test above that probed the wrong direction, but worse --- that one could fail on some input,
 this one on none.
 
+### A canvas round trip cannot read back what a renderer produced
+
+The check for page inversion computes the expected tile itself --- lightness inversion has a
+closed form --- and compares it against what the renderer returned. It failed on 17% of the
+bytes, reporting `wanted 255, got 0`, which reads unambiguously as a renderer that did not
+invert something.
+
+The renderer was right. An `ImageBitmap` drawn onto a 2D canvas and read back with
+`getImageData` is **premultiplied by alpha**, so every pixel with alpha 0 comes back as
+`[0,0,0,0]` whatever colour it carried --- and a square tile of a portrait page is about a
+sixth transparent margin. The oracle inverted the *read-back* black-and-transparent to white,
+the renderer had genuinely produced white-and-transparent, and the comparison failed on a
+difference that existed only inside the decode.
+
+The fix is to read the bytes off the wire: `fetch(tileUrl(...))` and `arrayBuffer()`, no
+canvas anywhere. The claim under test is what the renderer returns, so the wire is where to
+test it --- and a decode in the middle of a comparison means comparing through a transform
+nobody asked about.
+
+Two things worth carrying. **A comparison against an oracle needs the oracle and the subject
+to be read the same way**, and "the same way" has to include every lossy step, not just the
+obvious ones. And the diagnosis was cheap only because the failure was made to print the
+actual pixel: `wanted 255, got 0` sends you to the renderer, `pixel 116 was [0,0,0,0]` settles
+it in one run. Same lesson as dumping the cancelled tiles and looking at them --- **when a
+numeric comparison fails, print the values before theorising about the producer.**
+
 ### A documented count that is one sample of a race makes an honest run look like a defect
 
 `BUILD.md` recorded what each corpus reports from the viewer check as a fixed table --- for

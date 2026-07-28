@@ -31,7 +31,7 @@ import { CommandRegistry } from "./commands";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { Sidebar } from "./sidebar";
-import { fetchRequiredTile } from "./tiles";
+import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor } from "./thumbnails";
 import { Viewer, type ViewerStatus } from "./viewer";
 
@@ -404,6 +404,7 @@ async function run(path: string): Promise<void> {
   await outlineChecks(viewer, sidebar, doc);
   await thumbnailChecks(root, viewer, sidebar, doc, page);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
+  await invertChecks(viewer, doc, page, seen);
 
   sidebar.destroy();
   panel.remove();
@@ -1740,6 +1741,261 @@ async function rotatedTextLayerCheck(viewer: Viewer, doc: DocumentInfo): Promise
       `the text layer reports /Rotate ${shown.quarter_turns * 90} ` +
       `(wanted ${wanted * 90}) on a ${shown.width_pt.toFixed(0)} pt wide page ` +
       `(the document says ${raw.width_pt.toFixed(0)})`,
+  );
+}
+
+/**
+ * Inverting the page, at both ends of the path.
+ *
+ * Two very different assertions, because two very different things can be
+ * wrong. The renderer might not invert; or it might invert perfectly while
+ * nothing on screen changes, because the flag never reached a tile request.
+ *
+ * The first is answered exactly. Lightness inversion has a closed form --- every
+ * channel moves by `255 - max - min` --- so the inverted tile is not merely
+ * "different", it is a value this check can compute for itself and compare byte
+ * for byte. Re-deriving the formula here would only duplicate whatever the Rust
+ * got wrong, so the *independent* half is the pair of properties beside it: the
+ * transform must actually change the tile, and it must be its own inverse.
+ *
+ * The second is answered on the composited canvas, which is the last thing
+ * before the compositor and the only pixels in this file that a reader would
+ * actually see.
+ */
+async function invertChecks(
+  viewer: Viewer,
+  doc: DocumentInfo,
+  page: { width_pt: number; height_pt: number },
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  await rendererInvertCheck(doc, page);
+  await screenInvertCheck(viewer, seen);
+}
+
+/**
+ * The bytes the renderer sent, read off the wire rather than through a canvas.
+ *
+ * A canvas round trip cannot be used here, and finding that out cost a run. An
+ * `ImageBitmap` drawn onto a canvas is **premultiplied**, so every pixel with
+ * alpha 0 reads back as `[0,0,0,0]` whatever colour the renderer put there ---
+ * and a square tile of a portrait page is about a sixth transparent. The oracle
+ * then "wanted" white in the margins, the renderer had genuinely produced white
+ * in the margins, and the comparison failed on a difference neither side had.
+ *
+ * The claim under test is about what the renderer returns, so the wire is the
+ * right place to read it. It also removes the decode from a comparison that was
+ * never about the decode.
+ */
+async function tileBytes(req: Parameters<typeof tileUrl>[0]): Promise<Uint8ClampedArray | null> {
+  const response = await fetch(tileUrl(req));
+  if (!response.ok || response.status === 204) return null;
+  return new Uint8ClampedArray(await response.arrayBuffer());
+}
+
+/** The lightness inversion, as an oracle for what the renderer should return. */
+function invertedCopy(rgba: Uint8ClampedArray): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(rgba);
+  for (let at = 0; at + 3 < out.length; at += 4) {
+    const r = out[at] ?? 0;
+    const g = out[at + 1] ?? 0;
+    const b = out[at + 2] ?? 0;
+    const offset = 255 - Math.max(r, g, b) - Math.min(r, g, b);
+    out[at] = r + offset;
+    out[at + 1] = g + offset;
+    out[at + 2] = b + offset;
+  }
+  return out;
+}
+
+/** Mean lightness, `(max + min) / 2` per pixel, over an RGBA buffer. */
+function meanLightness(rgba: Uint8ClampedArray): number {
+  let total = 0;
+  let count = 0;
+  for (let at = 0; at + 3 < rgba.length; at += 4) {
+    const r = rgba[at] ?? 0;
+    const g = rgba[at + 1] ?? 0;
+    const b = rgba[at + 2] ?? 0;
+    const high = Math.max(r, g, b);
+    const low = Math.min(r, g, b);
+    total += (high + low) / 2;
+    count += 1;
+  }
+  return count === 0 ? 0 : total / count / 255;
+}
+
+async function rendererInvertCheck(
+  doc: DocumentInfo,
+  page: { width_pt: number; height_pt: number },
+): Promise<void> {
+  const exact = "an inverted tile is the exact inversion of the plain one";
+  const moved = "inverting a tile changes it";
+  const edge = 150;
+  const request = (invert: boolean) =>
+    tileBytes({
+      doc: doc.id,
+      page: 0,
+      // A whole small page rather than a tile of one, for the reason the
+      // rotation check gives: a fixed-offset tile can be blank, and two blank
+      // tiles agree under every transform there is.
+      scale: edge / Math.max(page.width_pt, page.height_pt),
+      x: 0,
+      y: 0,
+      width: edge,
+      height: edge,
+      invert,
+      format: "raw",
+    });
+
+  const [plainPixels, darkPixels] = await Promise.all([request(false), request(true)]).catch(
+    () => [null, null],
+  );
+  if (!plainPixels || !darkPixels || plainPixels.length !== darkPixels.length) {
+    skip(exact, "the tile requests did not complete");
+    skip(moved, "the tile requests did not complete");
+    return;
+  }
+
+  // The control, and it comes first because it is what stops the exact check
+  // passing on a page the transform happens to fix. Every pixel of a uniformly
+  // mid-grey tile is its own inversion, and on such a tile "the renderer
+  // returned the exact inversion" is satisfied by a renderer that did nothing.
+  let differences = 0;
+  for (let at = 0; at < plainPixels.length; at++) {
+    if (plainPixels[at] !== darkPixels[at]) differences += 1;
+  }
+  check(
+    moved,
+    differences > 0,
+    differences > 0
+      ? `${differences} of ${plainPixels.length} bytes differ`
+      : "the inverted tile is byte-identical, so the exact check below proves nothing",
+  );
+  if (differences === 0) {
+    skip(exact, "the two tiles are identical, so there is nothing to compare against");
+    return;
+  }
+
+  const wanted = invertedCopy(plainPixels);
+  let wrong = 0;
+  let firstWrong = -1;
+  for (let at = 0; at < wanted.length; at++) {
+    if (wanted[at] !== darkPixels[at]) {
+      wrong += 1;
+      if (firstWrong < 0) firstWrong = at;
+    }
+  }
+  check(
+    exact,
+    wrong === 0,
+    wrong === 0
+      ? `${plainPixels.length / 4} pixels match the closed form exactly`
+      : `${wrong} bytes differ; pixel ${Math.floor(firstWrong / 4)} was ` +
+        `[${[0, 1, 2, 3].map((c) => plainPixels[(firstWrong & ~3) + c]).join(",")}], ` +
+        `wanted [${[0, 1, 2, 3].map((c) => wanted[(firstWrong & ~3) + c]).join(",")}], ` +
+        `got [${[0, 1, 2, 3].map((c) => darkPixels[(firstWrong & ~3) + c]).join(",")}]`,
+  );
+}
+
+async function screenInvertCheck(
+  viewer: Viewer,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const darker = "the page on screen goes dark when it is inverted";
+  const back = "and light again when it is turned off";
+  const dropped = "inverting discards what it invalidates";
+  const reported = "the status says the page is inverted";
+
+  const surface = viewer.compositedSurface;
+  if (!surface) {
+    for (const name of [darker, back, dropped, reported]) {
+      skip(name, "this layout composites per tile, so there is no single surface");
+    }
+    return;
+  }
+
+  /**
+   * Mean lightness of the middle of the viewport.
+   *
+   * The centre rather than the whole canvas, because the surround is painted
+   * into it too and does not invert --- and at fit-width the middle is inside
+   * the page on every corpus here.
+   */
+  const middle = (): number | null => {
+    const ctx = surface.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    const w = Math.floor(surface.width / 3);
+    const h = Math.floor(surface.height / 3);
+    if (w < 1 || h < 1) return null;
+    return meanLightness(ctx.getImageData(w, h, w, h).data);
+  };
+
+  await settle(() => viewer.idle);
+  const before = middle();
+  if (before === null) {
+    for (const name of [darker, back, dropped, reported]) {
+      skip(name, "the surface could not be read back");
+    }
+    return;
+  }
+  // A corpus with no bright paper cannot show "it got darker" --- and saying so
+  // is the point: a check that silently passed on such a document would be
+  // measuring nothing. `vector-heavy` is dense linework and lands here.
+  if (before < 0.6) {
+    for (const name of [darker, back, dropped]) {
+      skip(name, `the page is already dark at ${(before * 100).toFixed(0)}% lightness`);
+    }
+    await invertReportedCheck(viewer, seen, reported);
+    return;
+  }
+
+  viewer.setInverted(true);
+  // The control this repository keeps having to relearn: waiting for a good
+  // state proves nothing unless the state was first shown to be bad. One frame
+  // after the toggle every tile must be gone, or "it went dark" could be
+  // satisfied by tiles that never changed at all.
+  await frame();
+  const midSharp = seen.status?.sharp ?? 1;
+  check(
+    dropped,
+    midSharp < 0.999,
+    midSharp < 0.999
+      ? `sharp coverage fell to ${(midSharp * 100).toFixed(1)}% one frame after the toggle`
+      : `sharp coverage was still ${(midSharp * 100).toFixed(1)}% a frame after the toggle, ` +
+        `so nothing was discarded and "it went dark" could not have been earned`,
+  );
+
+  await settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
+  const after = middle();
+  check(
+    darker,
+    after !== null && after < 0.4,
+    `middle of the viewport went from ${(before * 100).toFixed(0)}% to ` +
+      `${((after ?? 0) * 100).toFixed(0)}% lightness`,
+  );
+
+  await invertReportedCheck(viewer, seen, reported);
+
+  viewer.setInverted(false);
+  await settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
+  const restored = middle();
+  check(
+    back,
+    restored !== null && restored >= 0.6,
+    `back to ${((restored ?? 0) * 100).toFixed(0)}% lightness, from ${(before * 100).toFixed(0)}%`,
+  );
+}
+
+/** The status carries the mode, which is how the page strip learns about it. */
+async function invertReportedCheck(
+  viewer: Viewer,
+  seen: { status: ViewerStatus | null },
+  name: string,
+): Promise<void> {
+  await settle(() => seen.status?.invert === viewer.inverted);
+  check(
+    name,
+    seen.status?.invert === viewer.inverted,
+    `viewer says ${viewer.inverted}, status says ${seen.status?.invert}`,
   );
 }
 

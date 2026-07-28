@@ -8,6 +8,7 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+pub mod invert;
 pub mod launch;
 pub mod outline;
 pub mod progressive;
@@ -275,6 +276,24 @@ fn session_remember(app: tauri::AppHandle, place: session::Place) -> Result<(), 
     let path = session_file(&app);
     let mut session = session::Session::load(&path);
     session.remember(place);
+    session.save(&path).map_err(|e| e.to_string())
+}
+
+/// Records whether pages are shown inverted.
+///
+/// Its own command rather than a field on `session_remember`, because it is a
+/// preference and not a place. Folding it into the place payload would also make
+/// it invisible to the writer's own de-duplication: that compares consecutive
+/// places, so toggling the mode without moving would compare equal and never be
+/// written at all.
+///
+/// Called directly instead of through the throttle, since a reader inverts the
+/// page deliberately and rarely, where a place changes on every frame.
+#[tauri::command]
+fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Result<(), String> {
+    let path = session_file(&app);
+    let mut session = session::Session::load(&path);
+    session.invert_pages = invert;
     session.save(&path).map_err(|e| e.to_string())
 }
 
@@ -675,6 +694,7 @@ pub fn run() {
             take_launch_paths,
             session_load,
             session_remember,
+            session_set_invert_pages,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,

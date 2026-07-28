@@ -52,6 +52,14 @@
   let openPageCount = 0;
   /** Places read at launch. Read once: the file is ours and nothing else writes it. */
   let session: Session = { places: [] };
+  /**
+   * Whether pages are shown inverted.
+   *
+   * Held here rather than read from the viewer, because it has to survive the
+   * viewer: closing one document and opening another must not quietly turn the
+   * mode back off.
+   */
+  let invertPages = false;
   /** Collapses a scroll's worth of positions into at most one write per second. */
   const places = new SessionWriter();
 
@@ -209,7 +217,32 @@
       enabled: withDocument,
       run: () => showTab("pages"),
     },
+    {
+      // "Invert page colours", not "Dark mode". The chrome is already dark when
+      // the desktop is, so a command called dark mode would appear to do nothing
+      // for the reader who most expects it to --- and what this actually does is
+      // change how the document looks, which is worth saying out loud.
+      id: "view.invertPages",
+      title: "Invert page colours",
+      keys: "⌘⇧I",
+      enabled: withDocument,
+      run: () => toggleInvert(),
+    },
   );
+
+  function toggleInvert() {
+    if (!viewer) return;
+    invertPages = !viewer.inverted;
+    viewer.setInverted(invertPages);
+    // Written directly rather than through the place writer. The writer skips a
+    // place identical to the last one it sent, and inverting the page moves
+    // nothing --- so routed that way, a reader who inverts and quits without
+    // scrolling would find the preference forgotten.
+    void invoke("session_set_invert_pages", { invert: invertPages }).catch(() => {
+      // Same posture as a failed place write: losing the preference is worth
+      // less than a dialog saying so.
+    });
+  }
 
   function toggleSidebar() {
     sidebarShown = !sidebarShown;
@@ -326,6 +359,12 @@
     } else if (event.key === "\\" && title) {
       event.preventDefault();
       toggleSidebar();
+    } else if ((event.key === "i" || event.key === "I") && event.shiftKey && title) {
+      // Both cases, because Shift is held: the browser reports `I` on a US
+      // layout and `i` on some others, and matching only one makes the shortcut
+      // work on one keyboard.
+      event.preventDefault();
+      toggleInvert();
     }
   }
 
@@ -389,6 +428,9 @@
       const handed = await invoke<string[]>("take_launch_paths");
 
       session = await loadSession();
+      // Read before any document opens, so the first tiles of the first page are
+      // requested in the polarity the reader left the application in.
+      invertPages = session.invert_pages ?? false;
       const [first] = handed;
       if (first) {
         // One window, so one document. Selecting several in the Finder opens
@@ -502,6 +544,9 @@
           // strip follows however the rotation was reached --- the palette, the
           // keyboard, or anything later that rotates without going via here.
           sidebar?.setTurns(next.turns);
+          // Same reasoning as the rotation above: the strip follows the view
+          // however the inversion was reached, rather than only via the command.
+          sidebar?.setInvert(next.invert);
           notePlace();
         },
         onPosition: (at, top) => {
@@ -513,6 +558,10 @@
       // one and then a jump --- and before `focus`, which does not move the view
       // but would make the jump look like something they did.
       if (resume) viewer.restore(resume);
+      // After `restore`, which does not touch the colours, and before `focus`,
+      // so the first tiles requested are already the right polarity rather than
+      // being rendered light and immediately thrown away.
+      viewer.setInverted(invertPages);
       viewer.focus();
 
       // After the viewer, deliberately not awaited, and deliberately not asked
@@ -628,6 +677,18 @@
     background: Canvas;
     color: CanvasText;
     color-scheme: light dark;
+  }
+  /* The area around the page. Not derivable from `Canvas` by a single formula:
+     it has to be *darker* than the paper in a light window and darker again in
+     a dark one, where any symmetric mix of Canvas and CanvasText goes the wrong
+     way and lights it up. Two literals, one per theme. */
+  :global(:root) {
+    --tpdf-surround: #666;
+  }
+  @media (prefers-color-scheme: dark) {
+    :global(:root) {
+      --tpdf-surround: #2b2b2b;
+    }
   }
   main {
     display: flex;

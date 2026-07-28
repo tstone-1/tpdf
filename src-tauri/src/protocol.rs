@@ -135,12 +135,23 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
         None => 0,
     };
 
+    // Spelled out rather than "present means on", so that a caller which builds
+    // the query wrongly --- `invert=0`, or `invert=false` from a stringified
+    // boolean --- gets an error instead of a dark page it did not ask for. The
+    // absent case is the only one that means light.
+    let invert = match query.and_then(|q| param(q, "invert")) {
+        Some("1") => true,
+        None => false,
+        Some(raw) => return Err(format!("invert must be 1 or absent: {raw:?}")),
+    };
+
     Ok(TileRequest {
         rid,
         doc: field("doc", doc)? as u32,
         page: page_index as u32,
         scale: scale_thousandths as f32 / 1000.0,
         turns,
+        invert,
         x: field("x", x)? as i32,
         y: field("y", y)? as i32,
         width: width as u16,
@@ -334,6 +345,27 @@ mod tests {
         assert_eq!(ok(PATH, Some("grid=42")).rid, 0);
         assert_eq!(ok(PATH, Some("turnsx=2")).turns, 0);
         assert_eq!(ok(PATH, Some("returns=2")).turns, 0);
+        assert!(!ok(PATH, Some("invertx=1")).invert);
+        assert!(!ok(PATH, Some("noinvert=1")).invert);
+    }
+
+    #[test]
+    fn a_page_is_not_inverted_unless_it_is_asked_for() {
+        assert!(!ok(PATH, None).invert);
+        assert!(!ok(PATH, Some("fmt=raw&rid=1&turns=2")).invert);
+        assert!(ok(PATH, Some("invert=1")).invert);
+        assert!(ok(PATH, Some("rid=7&turns=3&invert=1&fmt=png")).invert);
+    }
+
+    #[test]
+    fn anything_other_than_one_is_refused_rather_than_read_as_light() {
+        // `invert=0` and `invert=false` are what a caller stringifying a boolean
+        // produces, and both would otherwise land on the default and render a
+        // light page --- which is indistinguishable from the mode being off.
+        assert!(parse(PATH, Some("invert=0")).is_err());
+        assert!(parse(PATH, Some("invert=false")).is_err());
+        assert!(parse(PATH, Some("invert=true")).is_err());
+        assert!(parse(PATH, Some("invert=")).is_err());
     }
 
     #[test]

@@ -61,6 +61,16 @@ const TARGET = {
   turns: 1,
   /** Open, where a fresh window has it closed. */
   sidebar: true,
+  /**
+   * Pages inverted, where a fresh window shows them as the document has them.
+   *
+   * The one field here that is *not* part of a place: it is a preference, saved
+   * beside the list rather than inside an entry and written by its own command.
+   * That is exactly why it needs covering here --- the place writer skips a
+   * place equal to the last one it sent, so an inversion routed through it would
+   * never be written at all, and nothing else in this file would notice.
+   */
+  invert: true,
 };
 
 /** What the check needs from the running application. */
@@ -88,6 +98,27 @@ function key(root: HTMLElement, k: string, accel = false): void {
   );
 }
 
+/**
+ * Dispatches a chord at the window, where `App.svelte`'s own handler listens.
+ *
+ * The viewer's root is the wrong target for these: its handler never sees them,
+ * and a check that called the toggle directly would leave the binding itself
+ * untested --- which for a shortcut advertised in the palette is the whole of
+ * what can be wrong. A label teaching a chord that does nothing is worse than no
+ * label.
+ */
+function windowKey(k: string, shift = false): void {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: k,
+      metaKey: true,
+      shiftKey: shift,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 /** How a phase describes the state it found, for a detail column. */
 function describe(host: SessionCheckHost): string {
   const viewer = host.viewer();
@@ -96,7 +127,7 @@ function describe(host: SessionCheckHost): string {
   return (
     `${file} page ${viewer.position.page} zoom ${viewer.currentZoom.toFixed(2)} ` +
     `turns ${viewer.rotation} sidebar ${host.sidebarShown() ? "open" : "closed"}` +
-    `${viewer.isFitting ? " fitting" : ""}`
+    `${viewer.inverted ? " inverted" : ""}${viewer.isFitting ? " fitting" : ""}`
   );
 }
 
@@ -114,6 +145,9 @@ async function driveToTarget(host: SessionCheckHost): Promise<void> {
   if (!viewer || !root) throw new Error("nothing open to drive");
 
   if (!host.sidebarShown()) host.toggleSidebar();
+  // The advertised chord, not the function behind it: ⌘⇧I is a claim the palette
+  // makes, and this is the only thing that tests it.
+  if (viewer.inverted !== TARGET.invert) windowKey("I", true);
   key(root, "r", true);
   key(root, "-", true);
   viewer.goToPage(TARGET.page);
@@ -151,6 +185,11 @@ function checkRestored(host: SessionCheckHost, expectedPath: string): void {
     host.sidebarShown() === TARGET.sidebar,
     host.sidebarShown() ? "open" : "closed",
   );
+  check(
+    "it opens with pages inverted, as they were left",
+    viewer.inverted === TARGET.invert,
+    viewer.inverted ? "inverted" : "as the document has them",
+  );
 }
 
 /**
@@ -171,12 +210,13 @@ function checkNotAlreadyThere(host: SessionCheckHost): void {
   if (viewer.rotation === TARGET.turns) same.push("rotation");
   if (viewer.isFitting === TARGET.fitting) same.push("zoom mode");
   if (host.sidebarShown() === TARGET.sidebar) same.push("sidebar");
+  if (viewer.inverted === TARGET.invert) same.push("inversion");
 
   check(
     "the default state is not the remembered one",
     same.length === 0,
     same.length === 0
-      ? `differs in all four: ${describe(host)}`
+      ? `differs in all five: ${describe(host)}`
       : `already matches on ${same.join(", ")} — the restore check would pass without restoring`,
   );
 }
@@ -226,7 +266,8 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
           driven.position.page === TARGET.page &&
           driven.rotation === TARGET.turns &&
           driven.isFitting === TARGET.fitting &&
-          host.sidebarShown() === TARGET.sidebar,
+          host.sidebarShown() === TARGET.sidebar &&
+          driven.inverted === TARGET.invert,
         describe(host),
       );
       // Without this the run would exit inside the writer's interval and the

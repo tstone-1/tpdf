@@ -111,6 +111,14 @@ impl Place {
 pub struct Session {
     #[serde(default)]
     pub places: Vec<Place>,
+    /// Whether pages are shown with their lightness inverted.
+    ///
+    /// A preference rather than a place: it belongs to the reader, not to a
+    /// document, so it sits beside the list rather than inside each entry. A
+    /// reader who inverts one file has said how they want to read, not how they
+    /// want to read that file.
+    #[serde(default)]
+    pub invert_pages: bool,
 }
 
 impl Session {
@@ -133,6 +141,11 @@ impl Session {
                 .map(Place::sanitized)
                 .take(CAPACITY)
                 .collect(),
+            // Carried through explicitly. This rebuilds the struct rather than
+            // repairing it in place, so a field added later and not named here
+            // is silently reset to its default on every load --- which for a
+            // preference reads as "it does not remember", with nothing failing.
+            invert_pages: session.invert_pages,
         }
     }
 
@@ -242,6 +255,36 @@ mod tests {
         let dir = TempDir::new("malformed");
         std::fs::write(dir.file(), b"{not json at all").expect("write");
         assert!(Session::load(&dir.file()).places.is_empty());
+    }
+
+    #[test]
+    fn the_inversion_preference_survives_a_round_trip() {
+        // `load` rebuilds the struct field by field rather than repairing it in
+        // place, so a field it forgets to name comes back as its default --- and
+        // a preference that resets every launch has nothing that fails, it just
+        // does not work.
+        let dir = TempDir::new("preference");
+        let session = Session {
+            places: vec![place("/tmp/a.pdf")],
+            invert_pages: true,
+        };
+        session.save(&dir.file()).expect("save");
+        assert!(Session::load(&dir.file()).invert_pages);
+    }
+
+    #[test]
+    fn a_session_written_before_the_preference_existed_still_loads() {
+        // The field is absent from every file written before today, and the
+        // whole session must not be discarded over that.
+        let dir = TempDir::new("older");
+        std::fs::write(
+            dir.file(),
+            br#"{"places":[{"path":"/tmp/a.pdf","page":4,"zoom":1.0}]}"#,
+        )
+        .expect("write");
+        let loaded = Session::load(&dir.file());
+        assert_eq!(loaded.places.len(), 1);
+        assert!(!loaded.invert_pages);
     }
 
     #[test]

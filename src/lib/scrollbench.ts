@@ -305,6 +305,11 @@ function buildVariants(
             // Upright: the benchmark measures scrolling, and a rotation would
             // add a dimension to a table that already has three.
             turns: 0,
+      // The benchmark measures the light path. Inversion is a per-pixel pass
+      // over the tile in the renderer, so it would be a variant dimension of
+      // its own rather than a constant here, and nothing has asked for that
+      // number yet.
+      invert: false,
             layout: layout as Layout,
             tilePx: config.tile_px,
             dpr: window.devicePixelRatio,

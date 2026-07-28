@@ -76,6 +76,14 @@ pub struct TileRequest {
     /// document --- rotating the view never touches the file. It composes on top
     /// of the page's own `/Rotate`.
     pub turns: u8,
+    /// Whether to invert the page's lightness, for reading in the dark.
+    ///
+    /// Like `turns`, a property of the view rather than the document. It is part
+    /// of the request rather than something the frontend does to the pixels
+    /// because a CSS filter is applied by the compositor and cannot be read
+    /// back: a check could then only assert that the style was set, which is the
+    /// style agreeing with itself and no evidence about what is on screen.
+    pub invert: bool,
     /// Tile origin in device pixels, relative to the scaled page's top-left.
     pub x: i32,
     pub y: i32,
@@ -468,6 +476,13 @@ fn render_tile(
         Outcome::Failed(status) => {
             return Err(format!("render failed with Pdfium status {status}"))
         }
+    }
+
+    // Before the encode, so PNG and raw ship the same pixels, and after the
+    // cancellation check, so a tile that is about to be dropped is not paid for.
+    let mut rgba = rgba;
+    if req.invert {
+        crate::invert::invert_lightness(&mut rgba);
     }
 
     let t1 = Instant::now();

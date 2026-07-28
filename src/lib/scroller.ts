@@ -60,6 +60,14 @@ export interface ScrollerOptions {
    * renderer is asked for and how the page is laid out, and writes nothing.
    */
   turns: number;
+  /**
+   * Whether the page's lightness is inverted, for reading in the dark.
+   *
+   * A property of the view like `turns`, and carried in the tile request for the
+   * same reason: the renderer produces the pixels that are shown, so what is on
+   * screen is something a check can read rather than infer from a style.
+   */
+  invert: boolean;
   layout: Layout;
   /** Tile edge in device pixels. Section 4 measured 1024-2048 as the range. */
   tilePx: number;
@@ -191,6 +199,23 @@ function keyOf(k: TileKey): string {
   return `${k.page}:${k.col}:${k.row}`;
 }
 
+/** Fallback surround, used only if the stylesheet has not loaded. */
+const SURROUND_FALLBACK = "#666";
+
+/**
+ * The colour around the page, read from the theme.
+ *
+ * Resolved rather than fixed because the `viewport` layout fills the whole
+ * canvas with it, and a canvas takes a colour, not a custom property --- so the
+ * one place it is actually visible is the one place CSS cannot reach.
+ */
+function surroundColour(): string {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue("--tpdf-surround")
+    .trim();
+  return value || SURROUND_FALLBACK;
+}
+
 export class Scroller {
   private readonly opts: ScrollerOptions;
   private readonly host: HTMLElement;
@@ -201,6 +226,26 @@ export class Scroller {
   /** `viewport` layout: the single canvas and its context. */
   private surface: HTMLCanvasElement | null = null;
   private surfaceCtx: CanvasRenderingContext2D | null = null;
+
+  /** The colour behind and between pages, following the system theme. */
+  private surround = surroundColour();
+
+  /**
+   * Re-reads the surround when the desktop switches between light and dark.
+   *
+   * A listener rather than reading it per frame: `getComputedStyle` forces style
+   * resolution, and the frame loop is the one place in this file that has a
+   * budget. Held as a field so `destroy` can take it off again --- a scroller
+   * outlives no document, but the listener would outlive the scroller.
+   */
+  private readonly onScheme = () => {
+    this.surround = surroundColour();
+    if (this.opts.layout === "tiles") {
+      this.host.style.background = this.surround;
+    }
+  };
+
+  private readonly scheme = window.matchMedia("(prefers-color-scheme: dark)");
 
   /** Tier 2, LRU by insertion order: re-inserting on use moves an entry last. */
   private readonly tiles = new Map<string, TileEntry>();
@@ -278,6 +323,20 @@ export class Scroller {
 
     this.computeGeometry();
     this.mount();
+    this.scheme.addEventListener("change", this.onScheme);
+  }
+
+  /**
+   * The canvas the `viewport` layout composites into, or `null` for `tiles`.
+   *
+   * Exposed so a check can read what was actually drawn. Everything else about
+   * the page is either a request the renderer answered or a style, and neither
+   * is evidence about the screen: a check on a style is the style agreeing with
+   * itself, which is the exact failure the whole inversion path is arranged to
+   * avoid.
+   */
+  get compositedSurface(): HTMLCanvasElement | null {
+    return this.surface;
   }
 
   /** The page's size in points as displayed, i.e. after the view rotation. */
@@ -415,6 +474,32 @@ export class Scroller {
     this.relayout();
   }
 
+  /**
+   * Turns page inversion on or off, discarding everything drawn the other way.
+   *
+   * Cheaper than {@link setTurns} in one respect and identical in the other: the
+   * geometry does not move, so nothing has to be recomputed or laid out again,
+   * but every tile and placeholder on screen is the wrong colour and has to be
+   * rendered again. On the A0 sheet that is the same seconds a rotation costs,
+   * and for the same reason --- the pixels are produced by Pdfium, and there is
+   * no way to reach them without asking it.
+   *
+   * Inverting the bitmaps we already hold is the obvious alternative, and it
+   * would be exact: the transform is its own inverse. It is not done because
+   * nothing has measured whether inverting a screenful of tiles beats rendering
+   * them, and on the cheap corpus a tile costs 1.5 ms to render outright.
+   */
+  setInvert(invert: boolean): void {
+    if (invert === this.opts.invert) return;
+    // Cleared before the flag moves, exactly as `setTurns` does: `clearTiles`
+    // asks the window which tiles it still wants, and that has to be the window
+    // they were requested for.
+    this.clearTiles();
+    this.dropPlaceholders();
+    this.opts.invert = invert;
+    this.relayout();
+  }
+
   /** Forgets every tier-1 placeholder, and any request still out for one. */
   private dropPlaceholders(): void {
     for (const bitmap of this.placeholders.values()) bitmap.close();
@@ -535,6 +620,7 @@ export class Scroller {
   }
 
   destroy(): void {
+    this.scheme.removeEventListener("change", this.onScheme);
     this.clearTiles();
     for (const bitmap of this.placeholders.values()) bitmap.close();
     this.placeholders.clear();
@@ -582,7 +668,11 @@ export class Scroller {
     this.host.style.height = `${viewport.height}px`;
     this.host.style.position = "relative";
     this.host.style.overflow = "hidden";
-    this.host.style.background = "#666";
+    // The surround, from a custom property so it follows the system theme.
+    // A literal here was a mid grey that reads as "unlit" against a light
+    // window and as "lit" against a dark one --- brighter than the page it
+    // surrounds, which is the one thing it must not be.
+    this.host.style.background = this.surround;
 
     if (layout === "tiles") {
       const container = document.createElement("div");
@@ -781,6 +871,7 @@ export class Scroller {
       page: key.page,
       scale: this.opts.zoom * this.opts.dpr,
       turns: this.opts.turns,
+      invert: this.opts.invert,
       x: rect.x,
       y: rect.y,
       width: rect.width,
@@ -896,6 +987,7 @@ export class Scroller {
       page,
       scale,
       turns: this.opts.turns,
+      invert: this.opts.invert,
       x: 0,
       y: 0,
       width: TIER1_WIDTH,
@@ -958,7 +1050,7 @@ export class Scroller {
     if (!ctx || !surface) return;
 
     const { dpr, viewport } = this.opts;
-    ctx.fillStyle = "#666";
+    ctx.fillStyle = this.surround;
     ctx.fillRect(0, 0, surface.width, surface.height);
 
     const left = this.pageLeftCss();

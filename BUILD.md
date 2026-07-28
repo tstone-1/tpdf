@@ -208,7 +208,7 @@ The reading surface is asserted rather than eyeballed. This opens a document in 
 webview, dispatches real wheel and key events at it, and checks fit-width, scrolling, End
 and Home, the zoom ladder, a pinch, resize, text selection and copy, find-in-document, the
 command palette, the screen-reader text layer, the outline sidebar, the page-thumbnail
-strip, and that the frame loop idles when there is nothing to do:
+strip, page inversion, and that the frame loop idles when there is nothing to do:
 
 ```
 scripts/viewer_check.py \
@@ -261,24 +261,28 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **75 check names**; what differs is how
+Run all six corpora. Every run reports the same **81 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 64--65 | 10--11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 70 | 5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 70 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 44 | 31 | one page, no extractable text |
-| `vector-multi.pdf` | 51 | 24 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 64 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 70--71 | 10--11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 76 | 5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 76 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 47 | 34 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 54 | 27 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 70 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+
+The two vector fixtures skip three of the six inversion checks, and that is the design
+working rather than a gap: "the page went dark" cannot be shown on a document with no bright
+paper, so it says so instead of passing on nothing.
 
 **Only `text-heavy` has a range, and it is one check: "the strip withdraws its work when the
 viewer needs the renderer".** A thumbnail there takes about a millisecond, so whether one is
 still in flight when the viewer asks for a tile is a race, and the check skips when it is not
 --- correctly, since nothing outstanding reads exactly like a successful withdrawal. Measured
-65/10, 65/10, 64/11 over three runs. The other five are determinate; that check runs only on
+71/10, 71/10, 70/11 over three runs. The other five are determinate; that check runs only on
 `vector-multi`, which exists for it.
 
 This was written as a fixed `65 | 10` first, and a perfectly ordinary run then read as a

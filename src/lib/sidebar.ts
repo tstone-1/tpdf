@@ -256,6 +256,11 @@ export class Sidebar {
     this.strip?.setTurns(turns);
   }
 
+  /** Inverts the thumbnails with the page, so the strip is not the odd one out. */
+  setInvert(invert: boolean): void {
+    this.strip?.setInvert(invert);
+  }
+
   private readonly onTabKey = (event: KeyboardEvent): void => {
     const order: Tab[] = [...this.tabs.keys()];
     const at = order.indexOf(this.showing);
