@@ -79,7 +79,7 @@ use crate::queue::{Claim, SharedQueue};
 use crate::search::{self, PageMatches};
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::{self, PageText};
-use crate::worker::{PreWorker, Request, Response, Shm, Worker, WorkerSender};
+use crate::worker::{Request, Response, Shm, WarmWorker, Worker, WorkerSender};
 
 /// Pixel format of a returned tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -418,7 +418,7 @@ impl RenderService {
                 .unwrap_or_else(|e| e.into_inner())
                 .ready
                 .as_ref()
-                .map(PreWorker::pid)
+                .map(WarmWorker::pid)
         })
     }
 
@@ -895,7 +895,11 @@ type Spare = Arc<Mutex<SpareSlot>>;
 #[derive(Default)]
 struct SpareSlot {
     /// Warmed and waiting for a document.
-    ready: Option<PreWorker>,
+    ///
+    /// A `WarmWorker`, and the type is doing work: nothing can be published here
+    /// that has not had its readiness line consumed, so the ordering `adopt`
+    /// depends on is not a policy this module has to remember.
+    ready: Option<WarmWorker>,
     /// Started, not yet warm. Its pid, because there is nothing else to hold.
     warming: Option<u32>,
     /// A spawn is in progress and its pid is not known yet.
@@ -926,7 +930,7 @@ impl SpareSlot {
     fn pids(&self) -> Vec<u32> {
         self.ready
             .as_ref()
-            .map(PreWorker::pid)
+            .map(WarmWorker::pid)
             .into_iter()
             .chain(self.warming)
             .collect()
@@ -1035,7 +1039,7 @@ impl Workers {
                     current.spawning = true;
                 }
                 let spawned = Worker::prespawn(&library_dir);
-                let mut pre = match spawned {
+                let pre = match spawned {
                     Ok(pre) => {
                         // Registered before warming, not after.
                         let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
@@ -1055,11 +1059,15 @@ impl Workers {
                 // Warmed here rather than at the point of use. Waiting on this
                 // thread is free; waiting on the reader's thread is precisely the
                 // cost being avoided.
-                let warmed = pre.wait_warm().is_ok();
+                let warmed = pre.wait_warm();
                 let mut spare = slot.lock().unwrap_or_else(|e| e.into_inner());
                 spare.warming = None;
-                if warmed && spare.ready.is_none() {
-                    spare.ready = Some(pre);
+                match warmed {
+                    // A second spare arriving while one is already published is
+                    // dropped rather than kept, and dropping it kills it ---
+                    // `Worker`'s own `Drop`, reached through `WarmWorker`.
+                    Ok(worker) if spare.ready.is_none() => spare.ready = Some(worker),
+                    _ => {}
                 }
             })
             .ok();
@@ -1070,7 +1078,7 @@ impl Workers {
     /// Only `ready`: a spare that is still warming is left alone, because taking
     /// it would mean waiting out the link and the sandbox on the caller's thread,
     /// which is the entire cost this mechanism exists to move elsewhere.
-    fn take_spare(&self) -> Option<PreWorker> {
+    fn take_spare(&self) -> Option<WarmWorker> {
         self.spare
             .lock()
             .unwrap_or_else(|e| e.into_inner())

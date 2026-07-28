@@ -2261,6 +2261,76 @@ Put the restore in a `finally` around the whole run, not at the end of the happy
 harness that can leave the tree in a state its own output does not describe is worse than no
 harness, and this is the second way this project has found to do it.
 
+### An unreachable guard is worth keeping if the type can carry it instead
+
+`PreWorker::adopt` consumed the worker's readiness line before sending it a document, so that
+the announcement could not become the answer to the caller's first real request. Deleting that
+call changed **nothing**: not a check, not a benchmark, on any corpus. `Workers::prewarm` waits
+for readiness on its own thread and publishes a spare only if that succeeded, and the wait was
+idempotent --- so no `PreWorker` that could reach `adopt` was ever unwarmed.
+
+By this file's own rule that is a guard to delete. Deleting it would have been wrong for the
+reason the `path_from_url` entry gives from the other direction: **what made the guard
+unreachable lived in a different module.** `worker.rs` would have become silently dependent on
+a publishing policy in `render.rs`, and nothing would have failed when that policy changed.
+
+The third option is the one that was taken: make the ordering structural. `wait_warm` now
+*consumes* a `PreWorker` and returns a `WarmWorker`, which is the only type `adopt` accepts. The
+runtime check is gone, the guarantee is stronger than it was, and the mutation that motivated
+all this no longer compiles --- which is the strongest verdict a mutation can get.
+
+**When a mutation of a guard survives, the choices are not only "delete" and "keep".** Ask
+whether the impossibility can be moved into the type, and prefer that: it deletes the code
+*and* the assumption.
+
+### Three mechanisms, no checks: measure what a commit's tests can actually see
+
+A mutation pass over the pre-spawned worker put one deliberate defect into each of the three
+mechanisms that commit added. **All three survived every check in `backend-probe`** --- 32 check
+names, zero failures, on every corpus, in all three runs. What each was caught by instead:
+
+| mutation | backend-probe | what noticed |
+|---|---|---|
+| delete the font warm | green | `prespawn-bench`: 0.37 ms -> **7.68 ms** on a base-14 document |
+| skip the readiness wait | green | **nothing** --- unreachable defence, see above |
+| drop `FD_CLOEXEC` | green | the harness hanging, and a `pgrep` count |
+
+The two that were real defects are now pinned. `prespawn-bench` asserts and exits non-zero
+rather than printing a table nobody reads --- and the discriminating comparison is **between two
+fixtures**, base-14 against embedded-font, because the gap between them *is* the system-font
+walk that warming exists to pay early. Measured 0.35 vs 0.80 ms warm, 9.96 vs 0.84 ms with the
+warm deleted, against a 3.7 ms bound: an order of magnitude clear on both sides, not next to it.
+
+The descriptor leak needed a **second process**, because it is invisible while the parent lives:
+the spare waits on a socket whose other end the parent legitimately holds, and the failure is
+only that the socket does not reach EOF afterwards. So `backend-probe` runs itself as a
+short-lived service (`--spare-lifetime`), lets it exit, and asserts the spare went with it. Two
+details are load-bearing. The child must **open a document and grow the pool**, or no sibling is
+ever spawned to inherit the descriptor and the leak does not reproduce. And the parent must read
+**one line, never to EOF** --- that pipe is precisely what a leaked spare holds open, so waiting
+on it converts a red check into a hang.
+
+The general shape, and it is the reason to do this at all: **a commit's test suite can be
+entirely orthogonal to what the commit added.** Every check was passing, none of them was wrong,
+and none of them was about the new code. Only mutating it says so.
+
+### A verdict that reads a timeout as "no result" throws away the finding
+
+The mutation harness classified any run that timed out as `BROKEN: hung with nothing red`. For
+the `FD_CLOEXEC` mutation that was exactly backwards: the probe printed a complete
+`28/32 checks passed` **and then never exited**, because the leaked spare held its stdout. Every
+check had run, and the hang *was* the defect.
+
+A timeout is only unreadable if the report is also missing. Split the two: a run with no summary
+line is broken, and a run with a full summary that failed to exit is a result --- and, for
+anything holding a descriptor, usually the result. Same family as the `viewercheck.ts` timeout
+that discarded its transcript, one level further out.
+
+The same harness then reported the correct, restored tree as `[FAIL] restore is not green`,
+because its orphan count was absolute rather than a delta and the leaked processes from the
+mutated runs were --- by definition --- still there. **A counter for a leak has to be reset
+before the run it is attributed to**, or every later run is charged for every earlier one.
+
 ### FIFO dequeue is not FIFO completion
 
 The moment tiles render in a pool, replies come back in *completion* order. A check that

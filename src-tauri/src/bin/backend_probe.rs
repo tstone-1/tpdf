@@ -20,7 +20,8 @@
 //! cargo run --release --bin backend-probe -- testdata/text-heavy.pdf
 //! ```
 
-use std::path::PathBuf;
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
@@ -50,10 +51,20 @@ fn main() {
         worker_child::main(&args);
     }
 
-    let Some(document) = args.get(1).map(PathBuf::from) else {
+    // The first argument that is not a flag, so the child mode below can take
+    // the same document without the positional index shifting under it.
+    let Some(document) = args
+        .iter()
+        .skip(1)
+        .find(|a| !a.starts_with("--"))
+        .map(PathBuf::from)
+    else {
         eprintln!("usage: backend-probe <file.pdf>");
         std::process::exit(2);
     };
+    if args.iter().any(|a| a == LIFETIME_ARGV) {
+        run_spare_lifetime(document);
+    }
     if !document.exists() {
         eprintln!(
             "[FAIL] {} does not exist --- see AGENTS.md on generating fixtures",
@@ -815,7 +826,151 @@ fn main() {
         },
     );
 
+    spare_outlives_nothing(&mut report, &document);
+
     report.finish();
+}
+
+/// Argument that runs this binary as the short-lived service the check below
+/// watches, rather than as the probe.
+const LIFETIME_ARGV: &str = "--spare-lifetime";
+
+/// A spare must not outlive the process that started it.
+///
+/// This is the only check here that needs a **second process**, and it needs one
+/// for a reason no in-process assertion can work around: the leak it exists to
+/// catch is invisible while the parent is alive. A spare waits in `recvmsg` on a
+/// socket whose other end the parent holds, so during a run there is nothing
+/// wrong to see --- the failure is that the socket does not reach EOF when the
+/// parent goes away, because a sibling spawned later inherited a copy of that
+/// end. `AGENTS.md` has the mechanism: descriptors from `socketpair` are not
+/// close-on-exec, and `Drop` cannot help because `std::process::exit` runs no
+/// destructors.
+///
+/// So the shape is: run a service in a child, let it exit, and ask whether the
+/// grandchild is gone. Measured against the real defect --- with `FD_CLOEXEC`
+/// removed, `backend-probe` left one orphaned `--prespawn` process per corpus,
+/// reparented to init and still alive twenty minutes later.
+///
+/// **The parent must not read the child's output to EOF.** That pipe is exactly
+/// what a leaked spare holds open, so waiting for it turns a red check into a
+/// hang --- which is how this defect presented in the first place: a probe run
+/// that printed a complete report and then never exited. One line, then `wait`.
+fn spare_outlives_nothing(report: &mut Report, document: &Path) {
+    let name = "a spare does not outlive the service that started it";
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => return report.check(name, false, format!("cannot find this binary: {e}")),
+    };
+    let spawned = std::process::Command::new(exe)
+        .arg(LIFETIME_ARGV)
+        .arg(document)
+        .stdout(std::process::Stdio::piped())
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(e) => return report.check(name, false, format!("cannot run the child service: {e}")),
+    };
+
+    // One line, never to EOF. See the note above.
+    let announced = child.stdout.take().map(|out| {
+        let mut line = String::new();
+        let _ = std::io::BufReader::new(out).read_line(&mut line);
+        line
+    });
+    let pids: Vec<u32> = announced
+        .as_deref()
+        .unwrap_or_default()
+        .strip_prefix("SPARE ")
+        .map(|rest| {
+            rest.split_whitespace()
+                .filter_map(|p| p.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let exited = child.wait();
+    if pids.is_empty() {
+        // Distinguished from a leak, because "no spare was ever made" and "the
+        // spare survived" are different defects and only one of them is this
+        // check's subject.
+        return report.check(
+            name,
+            false,
+            format!(
+                "the child service announced no spare (it said {announced:?}, exit {exited:?})"
+            ),
+        );
+    }
+
+    // Bounded, not blocking: the property breaks by a process *staying*, and a
+    // check whose failure mode is a wait cannot fail.
+    let gone = settle_for(Duration::from_secs(5), || {
+        pids.iter().all(|pid| !pid_is_running(*pid))
+    });
+    let survivors: Vec<u32> = pids
+        .iter()
+        .copied()
+        .filter(|pid| pid_is_running(*pid))
+        .collect();
+    report.check(
+        name,
+        gone,
+        if gone {
+            format!("its {} spare process(es) {pids:?} went with it", pids.len())
+        } else {
+            format!("{survivors:?} of {pids:?} still running 5 s after the service exited")
+        },
+    );
+}
+
+/// Runs a render service for as long as it takes to warm a spare, then exits.
+///
+/// A document is opened and tiles are requested first, so the pool grows and
+/// spawns children *after* the surviving spare's socket pair exists --- which is
+/// the whole condition for the leak. A service that only ever warmed a spare and
+/// exited would clean up correctly even with the descriptor flags removed, and
+/// the check watching it would pass while the defect was present.
+fn run_spare_lifetime(document: PathBuf) -> ! {
+    let service = RenderService::start_with(library_dir(), Backend::Worker);
+    let opened = wait(|reply| service.open(document, false, reply));
+    if let Ok(info) = &opened {
+        let at = Placement::inside(info.pages.first().unwrap_or(&PageSize {
+            width_pt: 612.0,
+            height_pt: 792.0,
+        }));
+        // Concurrent, so the pool grows: every worker it spawns inherits any
+        // descriptor the parent left inheritable.
+        let mut pending = Vec::new();
+        for rid in 0..4 {
+            let (tx, rx) = channel();
+            service.tile(
+                request(info.id, 900 + rid, at),
+                Box::new(move |r| {
+                    let _ = tx.send(r);
+                }),
+            );
+            pending.push(rx);
+        }
+        for rx in pending {
+            let _ = rx.recv_timeout(Duration::from_secs(60));
+        }
+    }
+    // Whatever the slot holds now, warm or still warming: a spare that leaks
+    // while warming leaks just as thoroughly as one that finished.
+    settle_for(Duration::from_secs(10), || !service.spare_pids().is_empty());
+    let pids = service.spare_pids();
+    println!(
+        "SPARE {}",
+        pids.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let _ = std::io::stdout().flush();
+    // Exactly how the app and every probe leave: no destructors run, which is
+    // the condition under which the leak happens at all.
+    std::process::exit(0);
 }
 
 /// The id of a document that may not have opened.

@@ -305,6 +305,24 @@ experience.
   reader waits on. A spare that dies falls back to an ordinary spawn rather than failing the
   open.
 
+  A mutation pass afterwards found that **none of the three mechanisms this added was visible
+  to any check**: deleting the font warm, skipping the readiness wait and dropping `FD_CLOEXEC`
+  each left `backend-probe` green on every corpus. Two were real and are now pinned, and the
+  third turned out to be unreachable defence:
+
+  - `bin/prespawn_bench.rs` asserts and exits non-zero instead of printing a table. The
+    comparison is between a base-14 fixture and an embedded-font one, because the gap between
+    them *is* the system-font walk that warming pays early: 0.35 against 0.80 ms warm, 9.96
+    against 0.84 ms with the warm deleted, over a 3.7 ms bound.
+  - `backend-probe` gained "a spare does not outlive the service that started it", which runs
+    this binary as a short-lived service and asserts the spare died with it. It needs a second
+    process because the leak cannot be seen from inside the one that has the socket open.
+  - `PreWorker::wait_warm` now *consumes* its receiver and returns a `WarmWorker`, the only
+    type `adopt` accepts. The runtime check it replaces could not be made to fail, because a
+    spare is only ever published warm --- but that was enforced in another module, so the
+    ordering moved into the type rather than being deleted. Skipping the wait no longer
+    compiles.
+
 - **Tiles of one page render in several worker processes at once.** The worker backend is
   served by a pool of threads over one job queue, and each document has a pool of processes
   they draw from. A screenful of the A0 sheet goes from **3.46 s to 0.83 s, 4.2x**, measured
