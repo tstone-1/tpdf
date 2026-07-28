@@ -267,12 +267,24 @@ bug this arrangement exists to catch:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 65 | 10 | the dense case, and search across 775 pages |
+| `text-heavy.pdf` | 64--65 | 10--11 | the dense case, and search across 775 pages |
 | `outline-simple.pdf` | 70 | 5 | the only fixture with an ordinary outline |
 | `outline-hostile.pdf` | 70 | 5 | the only one with a `/Launch` entry to refuse |
 | `vector-heavy.pdf` | 44 | 31 | one page, no extractable text |
 | `vector-multi.pdf` | 51 | 24 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
 | `rotated-90.pdf` | 64 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+
+**Only `text-heavy` has a range, and it is one check: "the strip withdraws its work when the
+viewer needs the renderer".** A thumbnail there takes about a millisecond, so whether one is
+still in flight when the viewer asks for a tile is a race, and the check skips when it is not
+--- correctly, since nothing outstanding reads exactly like a successful withdrawal. Measured
+65/10, 65/10, 64/11 over three runs. The other five are determinate; that check runs only on
+`vector-multi`, which exists for it.
+
+This was written as a fixed `65 | 10` first, and a perfectly ordinary run then read as a
+regression. **A table that records one sample of a race as an invariant makes the next honest
+run look like a defect** --- state the range and what varies, or the check that flips gets
+"fixed" by someone chasing a number.
 
 **Do not run all six while iterating.** Each run needs an `.app` bundle rebuilt and takes
 the better part of a minute, and six transcripts of green is not evidence of anything --- the

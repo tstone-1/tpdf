@@ -368,9 +368,17 @@ experience.
 
   A handed-over document beats a remembered one, since someone who double-clicked a file is
   asking for that file. Checked by `scripts/open_check.py` across five launches and 11
-  checks, two of them controls.
+  checks, two of them controls --- and the checks themselves by eleven mutations, all of
+  which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **The test guarding `path_from_url`'s scheme check could not fail.** The behaviour was
+  always correct; the test was not. `Url::to_file_path` rejects `https://example.com/a.pdf` on
+  its own, because the host is a domain --- so deleting our scheme check broke nothing, which
+  by the standing rule marks it a guard to delete. It is not: a `localhost` host is treated as
+  *no host at all* whatever the scheme, so `https://localhost/a.pdf` resolves to `/a.pdf`. A
+  second case covers that direction and goes red alone when the guard is removed.
 
 - **A macOS double-click crashed the app before it could open anything.** `RunEvent::Opened`
   fires *before* Tauri's setup hook, so state registered there is not yet managed and

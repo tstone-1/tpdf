@@ -618,6 +618,52 @@ code under test controls", it is decoration however relevant it sounds. Related 
 test above that probed the wrong direction, but worse --- that one could fail on some input,
 this one on none.
 
+### A documented count that is one sample of a race makes an honest run look like a defect
+
+`BUILD.md` recorded what each corpus reports from the viewer check as a fixed table --- for
+`text-heavy`, `65 | 10`. A routine sweep then returned 64 ran and 11 skipped, every check
+green, and that read as a regression: one check had started skipping, which is precisely the
+failure the table exists to surface.
+
+Nothing had changed. One check --- "the strip withdraws its work when the viewer needs the
+renderer" --- depends on whether a thumbnail is still in flight when the viewer asks for a
+tile, and on that corpus a thumbnail takes about a millisecond. Three runs measured 65/10,
+65/10, 64/11. The code says so in its own comment; the table did not.
+
+The cost is not the twenty minutes. It is that the obvious repair is to make the check stop
+skipping, which would mean deleting the condition that keeps it honest --- an outstanding
+request is what makes a withdrawal observable, and without one "nothing is outstanding" is
+true for reasons that have nothing to do with the mechanism. **A number chased back to a
+documented value is a defect introduced to satisfy a document.**
+
+So: when recording expected output, state a range and name what varies, or do not record it.
+The invariant worth asserting here was never the split --- it is that all **75 check names
+appear**, skipping with a reason rather than vanishing, and that one holds on every run.
+
+### A dependency that refuses your test input makes your own guard look redundant
+
+`path_from_url` checks `url.scheme() != "file"` before calling `Url::to_file_path`, and the
+test for it used `https://example.com/a.pdf`. Delete the guard and that test still passes ---
+so by the standing rule, a guard no mutation can break is a guard to delete.
+
+Deleting it would have been wrong. `Url::to_file_path` refuses that URL for a reason that has
+nothing to do with the scheme: its host is a domain. Read its source and the match arm is
+`None | Some(Host::Domain("localhost")) => None` --- a **`localhost` host is treated as no
+host at all, whatever the scheme**, and the path is then built from the segments. So
+`https://localhost/a.pdf` becomes `/a.pdf`, and the scheme check is the whole of what stops a
+URL handed over by another application from naming a local file. The test probed the one
+direction the guard does not defend, and the dependency's own refusal covered for it.
+
+Same shape as the `fmt` / `xfmt` query-key test, with an extra layer: there the wrong
+direction was ours to see, here it was a library's behaviour on an input we chose. **When a
+mutation leaves a guard standing, read what is refusing the input before concluding the guard
+is redundant** --- "something rejects this" and "this guard rejects this" are different facts,
+and only the second one is about the code being deleted.
+
+The repair is a second case (`https://localhost/a.pdf`) rather than a different one: both are
+kept, because the first still documents the ordinary rejection and the pair brackets where the
+responsibility actually lies.
+
 ### A defect that switches off a check's precondition is not caught by that check
 
 The sharpest form yet of "a test whose precondition is already satisfied never runs", and
