@@ -364,6 +364,42 @@ the next did not fire.
 
 Unlike the viewer check, **the exit code here is meaningful** --- see the note below.
 
+### Checking file associations
+
+A PDF reaches tpdf three ways and they share almost no code, so this drives all of them:
+
+```
+scripts/open_check.py \
+    src-tauri/target/release/bundle/macos/tpdf.app testdata/text-heavy.pdf \
+    --other testdata/outline-simple.pdf
+```
+
+Note it takes the **`.app` bundle**, not the executable inside it: two phases go through
+Launch Services and there is nothing else to hand `open`.
+
+| phase | delivery | asserts |
+|---|---|---|
+| `argv` | the binary, with a path | the terminal and Windows double-click route |
+| `double-click` | `open -a` on a cold app | the Apple Event, which is how macOS actually does it |
+| `beats` | argv, with a different document remembered | a handed-over document wins |
+| `control` | nothing handed over | the remembered one opens --- without this, `beats` passes on an app that ignores the session |
+| `running` | `open -a` on an app already up | the *emit* branch rather than the queue |
+
+`running` is the only phase that would notice the frontend and the backend disagreeing about
+the event's name, and it carries its own control: nothing may be open before the document
+arrives, or "a document arrived" is satisfied by one that was already there.
+
+**The environment does reach an app that Launch Services started** ---
+`TPDF_OPENCHECK=… open -a tpdf.app file.pdf` propagates --- which is what makes the
+double-click phase testable rather than merely argued. Both `open` phases capture the app's
+stdout with `open --stdout`.
+
+Same bundle and unlocked-screen requirements as the viewer check, and one extra: **leftover
+tpdf windows occlude new ones**, and an occluded page never runs, so a phase produces no
+output at all. `pkill -f "tpdf.app/Contents/MacOS/tpdf"` before a run, or `TPDF_RAISE=1`.
+This cost real time once already --- it looked exactly like the failure it was sitting next
+to, which was genuine.
+
 ### The exit code of a spike run
 
 `AppHandle::exit(code)` does **not** set the process's exit code. It ends the event loop,

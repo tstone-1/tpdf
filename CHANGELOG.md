@@ -353,7 +353,31 @@ experience.
   itself, and that nothing opens when nothing is remembered. Without the first, "restored to
   page 7" is satisfied by an app that happens to open there.
 
+- **File associations.** Double-clicking a PDF, "Open With", dragging one onto the icon, and
+  `tpdf file.pdf` from a terminal all open it. Declared as `role: Viewer` rather than Tauri's
+  default `Editor`, deliberately: `Editor` tells Launch Services tpdf can edit a PDF, and it
+  cannot yet. Rank stays `Default` --- not `Owner`, since tpdf does not create PDFs, and not
+  `Alternate`, which ranks it below every other viewer.
+
+  A macOS double-click puts nothing in `argv` --- it is an Apple Event, and it can arrive
+  before the webview exists --- so paths are queued until the frontend is listening and
+  emitted directly after, with the drain and the flag flip under one lock. The event's name
+  is fetched from Rust rather than duplicated as a constant on both sides, because a constant
+  that drifts fails by silence: the app keeps working and merely stops noticing documents
+  opened while it is already running.
+
+  A handed-over document beats a remembered one, since someone who double-clicked a file is
+  asking for that file. Checked by `scripts/open_check.py` across five launches and 11
+  checks, two of them controls.
+
 ### Fixed
+
+- **A macOS double-click crashed the app before it could open anything.** `RunEvent::Opened`
+  fires *before* Tauri's setup hook, so state registered there is not yet managed and
+  `state::<Launch>()` panicked --- on precisely the path it existed to serve. No error, no
+  output, an empty window, and `EXC_CRASH SIGABRT` in the crash reports. Registered on the
+  builder now, before the event loop exists, and read with `try_state` so the same mistake
+  would cost one document rather than the launch.
 
 - **Every automated check reported success through its exit code, whatever it printed.**
   `AppHandle::exit(code)` ends Tauri's event loop; `App::run` then returns normally, `run()`
