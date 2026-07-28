@@ -98,7 +98,7 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
             .copied()
             .filter(|number| !wanted.contains(number))
             .collect();
-        drop_pages(&mut doc, &dropped);
+        drop_pages(&mut doc, &dropped)?;
         // Destinations into pages that are no longer here.
         doc.catalog_mut()
             .map_err(|e| format!("no document catalog: {e}"))?
@@ -117,7 +117,7 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
         }
     }
 
-    sweep::collect(&mut doc);
+    sweep::collect(&mut doc)?;
 
     let mut out = Vec::new();
     doc.save_to(&mut out)
@@ -137,14 +137,22 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
 ///
 /// Same shape as the mark-and-sweep, and the same conclusion --- use `lopdf`
 /// for the object model, write the graph walks ourselves.
-fn drop_pages(doc: &mut Document, numbers: &[u32]) {
+///
+/// # Errors
+///
+/// An object nesting deeper than [`sweep::MAX_NESTING`]. Refused rather than
+/// walked as far as it goes, for the same reason the sweep refuses: a pass that
+/// stopped early would leave a reference to a deleted page in the file, and a
+/// page tree naming an object that is gone is a document that opens and prints
+/// blank pages.
+fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
     let pages = doc.get_pages();
     let doomed: HashSet<ObjectId> = numbers
         .iter()
         .filter_map(|number| pages.get(number).copied())
         .collect();
     if doomed.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Every ancestor of every doomed page, collected before anything moves, so
@@ -173,13 +181,14 @@ fn drop_pages(doc: &mut Document, numbers: &[u32]) {
     // that name a doomed page --- the `/Kids` entry that removes it from the
     // tree, and anything else pointing at it. The trailer is not in `objects`
     // and has to be walked in its own right.
-    forget_in_dictionary(&mut doc.trailer, &doomed);
+    forget_in_dictionary(&mut doc.trailer, &doomed, 0)?;
     for object in doc.objects.values_mut() {
-        forget_in_object(object, &doomed);
+        forget_in_object(object, &doomed, 0)?;
     }
     for id in &doomed {
         doc.objects.remove(id);
     }
+    Ok(())
 }
 
 /// The `/Parent` of an object, if it names one.
@@ -192,22 +201,47 @@ fn parent_of(doc: &Document, id: ObjectId) -> Option<ObjectId> {
 }
 
 /// Drops references to any doomed object, recursively.
-fn forget_in_object(object: &mut Object, doomed: &HashSet<ObjectId>) {
+///
+/// Depth-bounded by [`sweep::MAX_NESTING`], for the reason recorded there: this
+/// runs on a document we did not write, in the app process, and the recursion is
+/// otherwise unbounded.
+fn forget_in_object(
+    object: &mut Object,
+    doomed: &HashSet<ObjectId>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > sweep::MAX_NESTING {
+        return Err(format!(
+            "an object nests deeper than {} levels",
+            sweep::MAX_NESTING
+        ));
+    }
     match object {
         Object::Array(items) => {
             items.retain(|item| !matches!(item, Object::Reference(id) if doomed.contains(id)));
             for item in items.iter_mut() {
-                forget_in_object(item, doomed);
+                forget_in_object(item, doomed, depth + 1)?;
             }
         }
-        Object::Dictionary(dictionary) => forget_in_dictionary(dictionary, doomed),
-        Object::Stream(stream) => forget_in_dictionary(&mut stream.dict, doomed),
+        Object::Dictionary(dictionary) => forget_in_dictionary(dictionary, doomed, depth + 1)?,
+        Object::Stream(stream) => forget_in_dictionary(&mut stream.dict, doomed, depth + 1)?,
         _ => {}
     }
+    Ok(())
 }
 
 /// Drops keys whose value names a doomed object, then recurses.
-fn forget_in_dictionary(dictionary: &mut Dictionary, doomed: &HashSet<ObjectId>) {
+fn forget_in_dictionary(
+    dictionary: &mut Dictionary,
+    doomed: &HashSet<ObjectId>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > sweep::MAX_NESTING {
+        return Err(format!(
+            "an object nests deeper than {} levels",
+            sweep::MAX_NESTING
+        ));
+    }
     let dead: Vec<Vec<u8>> = dictionary
         .iter()
         .filter(|(_, value)| matches!(value, Object::Reference(id) if doomed.contains(id)))
@@ -217,8 +251,9 @@ fn forget_in_dictionary(dictionary: &mut Dictionary, doomed: &HashSet<ObjectId>)
         dictionary.remove(&key);
     }
     for (_, value) in dictionary.iter_mut() {
-        forget_in_object(value, doomed);
+        forget_in_object(value, doomed, depth + 1)?;
     }
+    Ok(())
 }
 
 /// Checks a built job against what was asked for, before it reaches paper.
@@ -884,7 +919,7 @@ mod tests {
 
         let mut doc = Document::load(&path).expect("load");
         assert_eq!(declared_count(&doc, root), 6);
-        drop_pages(&mut doc, &[1, 5, 6]);
+        drop_pages(&mut doc, &[1, 5, 6]).expect("drop");
 
         assert_eq!(declared_count(&doc, root), 3, "root");
         assert_eq!(declared_count(&doc, middles[0]), 1, "first group");
@@ -912,7 +947,7 @@ mod tests {
         use std::time::Instant;
 
         let save = |doc: &mut Document| {
-            super::sweep::collect(doc);
+            super::sweep::collect(doc).expect("collect");
             let mut out = Vec::new();
             doc.save_to(&mut out).expect("save");
             out
@@ -967,7 +1002,7 @@ mod tests {
 
             let mut ours = load(&path);
             let t = Instant::now();
-            drop_pages(&mut ours, &dropped);
+            drop_pages(&mut ours, &dropped).expect("drop");
             let our_ms = t.elapsed().as_secs_f64() * 1e3;
             let our_bytes = save(&mut ours);
 

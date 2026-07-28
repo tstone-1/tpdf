@@ -208,6 +208,17 @@ export class Thumbnails {
    * borrows on a twelve-page document that had only a handful of rows on screen.
    */
   private readonly borrowing = new Set<number>();
+  /**
+   * Pages whose render came back an error.
+   *
+   * Not retried for the life of the strip's current orientation. `pump` is
+   * called from a scroll handler, a resize, a tab change and every request
+   * settling, so a page that fails every time would otherwise be re-rendered on
+   * each of those --- less pathological than the frame-driven loop `scroller.ts`
+   * had, and the same shape. Cleared by `setTurns` and `setInvert`, which are
+   * the reader asking for a different picture and so are owed a fresh attempt.
+   */
+  private readonly failed = new Set<number>();
   /** Whether the strip is the visible tab. Nothing is rendered when it is not. */
   private active = false;
   /** Whether the viewer has work outstanding. See the class docs. */
@@ -362,6 +373,7 @@ export class Thumbnails {
     for (const bitmap of this.bitmaps.values()) bitmap.close();
     this.bitmaps.clear();
     this.borrowing.clear();
+    this.failed.clear();
     this.layout();
   }
 
@@ -377,6 +389,7 @@ export class Thumbnails {
     // `keep` would believe it. Clearing the set does not stop the copy --- there
     // is no way to --- so `keep` refuses anything not still marked as borrowed.
     this.borrowing.clear();
+    this.failed.clear();
 
     this.rowHeight = rowHeightFor(this.opts.page, next);
     this.thumbHeight = this.rowHeight - LABEL_HEIGHT - ROW_PADDING * 2;
@@ -437,7 +450,7 @@ export class Thumbnails {
     const page = nextWanted(
       window,
       this.current,
-      (p) => this.bitmaps.has(p) || this.borrowing.has(p),
+      (p) => this.bitmaps.has(p) || this.borrowing.has(p) || this.failed.has(p),
     );
     if (page === null) return;
 
@@ -493,6 +506,10 @@ export class Thumbnails {
       })
       .catch(() => {
         this.request = null;
+        this.failed.add(page);
+        // Still pumped: the strip should carry on with the *other* pages rather
+        // than stopping at the first one that cannot be drawn.
+        this.pump();
       });
   }
 

@@ -56,7 +56,7 @@ Four principals, each trusting only what is below it in the table.
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
 | **Webview** (Svelte) | Draws, receives tiles, issues commands | No filesystem, no network, no PDF parsing |
-| **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Never parses PDF syntax itself |
+| **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
 | **Disk** | Holds the document and tpdf's output | — |
 
@@ -78,6 +78,30 @@ and finds no `libpdfium` mapped in a process that has just opened a 775-page doc
 rendered a tile from it — then starts the in-process backend, watches the image appear, and
 so proves the scan can see one. Everything below the first row of that table was already
 true of the worker; this is the row above it catching up.
+
+**Printing is the exception, and it is a real one.** Added 2026-07-28, and the row above
+said "never parses PDF syntax itself" for two days while it did. Three call paths parse
+attacker-controlled bytes inside the coordinator:
+
+- `print_macos::read` — PDFKit, i.e. CoreGraphics — on **every** print, including the
+  passthrough case where the bytes are the untrusted file verbatim.
+- `print_macos::present` — the same parser again, on the **main thread**, inside AppKit's
+  run loop.
+- `print::build` — `lopdf` — whenever the job is not a passthrough, which today means
+  whenever the reader has rotated the view.
+
+Two of the three cannot move. `NSPrintOperation` needs the application's own window and its
+`NSPrintInfo`, so the panel is in the coordinator by construction; PDFKit is also the parser
+the print system will use itself, which is the whole argument for reading the job back with
+it (`print_macos`). What *can* move is `print::build`'s `lopdf` rewrite and the verification
+read, and neither has. Reaching this needs no more than ⌘P on an open document.
+
+What is bounded rather than moved: both graph walks the rewrite performs — `sweep::references`
+and `print::forget_in_object` — are recursive and now refuse past `sweep::MAX_NESTING` (256)
+rather than descending until the stack runs out. They **refuse** rather than truncate, which
+is not a stylistic choice: a mark-and-sweep that stops early has an incomplete reachable set,
+so it would delete live objects and hand back a document that still parses and has holes in
+it. Decompression was already bounded (§T4). See residual risk 11.
 
 **Every buffer the worker writes into is the coordinator's allocation.** Tiles are rendered
 straight into a shared mapping the parent created and sized. The worker cannot enlarge it,
@@ -416,9 +440,32 @@ before the architecture can be called cross-platform.
     a death from anything other than the request in hand is invisible to the reader. The
     bound on the pathological case is the single retry rather than a budget: a page that
     faults deterministically spawns a fresh sandboxed process each time it is asked for,
-    which is bounded by the reader's own requests and is not free. Verified by
-    `backend-probe`, which kills the worker out of the OS process table and asserts the same
-    pixels come back from a different pid.
+    which is not free. Verified by `backend-probe`, which kills the worker out of the OS
+    process table and asserts the same pixels come back from a different pid.
+
+    **This entry read "bounded by the reader's own requests" until 2026-07-28, and that was
+    false** — which is worth keeping visible, because the sentence was doing the work of a
+    mitigation while naming a bound nothing enforced. The reader makes one request; the
+    *frame loop* made the rest. `Scroller.request()` runs every frame and re-issued any tile
+    that was not resident and not in flight, and a failure deleted the in-flight entry
+    without recording anything — so a deterministically faulting page had the application
+    spawning and killing sandboxed processes at display cadence, indefinitely, with nobody
+    touching the machine. The frame loop could not idle out either, because the re-issued
+    requests kept `pendingWork` above zero. The real bound is now a per-request exponential
+    backoff in `scroller.ts` (250 ms doubling to 8 s), a matching `failed` set in
+    `thumbnails.ts`, and a `failed` count carried into `ViewerStatus` so the state is
+    visible rather than silent. The general lesson is the one `AGENTS.md` already records
+    from the other direction: a bound stated in prose and enforced nowhere reads exactly
+    like one that holds.
+
+11. **Printing parses the document inside the coordinator** (§3). PDFKit reads every job in
+    the app process and again on the main thread, and `lopdf` rewrites the document there
+    whenever the view is rotated. The panel genuinely cannot move — `NSPrintOperation` needs
+    the application's window — but the `lopdf` rewrite and the verification read could, and
+    have not. A parser bug reached this way lands in the process holding the user's
+    filesystem authority, which is asset 1 in §1. Recursion in the two graph walks is
+    bounded at `sweep::MAX_NESTING`; nothing else about this is mitigated, and it is reached
+    by ⌘P on any open document.
 
 ## 8. How to re-verify any of this
 

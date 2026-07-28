@@ -403,6 +403,15 @@ experience.
 
 ### Changed
 
+- **The worker pool moved out of `render.rs` into `workers.rs`.** That file held the service,
+  both backends, the pool, the spare slot and the reaper at 1,958 lines. Nothing changed in
+  the move — verified by asserting every top-level item HEAD defined exists in exactly one of
+  the two files, that no test name was lost, and that the moved block diffs clean against
+  `HEAD` apart from the accessors that replaced `RenderService` reaching into `SpareSlot`'s
+  fields. `render.rs` keeps the service, the `Engine` trait and the in-process control;
+  `pool_size` and friends are re-exported on the path the benchmarks already import.
+
+
 - **Lazy page geometry is the default**, with `TPDF_EAGER_GEOMETRY` to restore the walk.
   Enumerating every page of a 775-page document costs 86 ms on the critical path to buy a
   scrollbar exactness the scroller estimates anyway; it is what takes warm startup from
@@ -540,6 +549,82 @@ experience.
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **A tile that failed was re-requested every frame, forever.** `Scroller.request()` runs on
+  each frame and issues any wanted tile that is neither resident nor in flight; the failure
+  paths deleted the in-flight entry and recorded nothing, so the next frame asked again — and
+  the frame loop could not idle out, because the re-issued requests kept `pendingWork` above
+  zero. Under the worker backend each attempt costs a `kill`, a fresh `fork`/`exec` and a full
+  re-parse, so a page that faults deterministically had the application spawning and killing
+  sandboxed processes at display cadence for as long as the document stayed open, with nobody
+  touching the machine.
+
+  `docs/THREAT-MODEL.md` §7 stated this was "bounded by the reader's own requests". It was
+  not: the reader makes one and the frame loop made the rest, which is a bound written in
+  prose and enforced nowhere. Now a per-request exponential backoff (250 ms doubling to 8 s),
+  cleared only by a reader's own zoom, rotation or inversion — nothing on the frame path
+  clears it. `Viewer` schedules exactly one wake per backoff so a transient failure still
+  recovers, and `nextRetryMs` deliberately reports nothing for a request already due, or that
+  wake would rebuild the busy loop one level up. `thumbnails.ts` gets the same treatment
+  through its own `failed` set, and `RunStats`/`ViewerStatus` now carry a `failed` count, so a
+  renderer erroring on everything no longer looks identical to one that is merely slow.
+
+- **Two document opens could interleave, closing a live document and leaving two viewers on
+  one element.** `openPath` suspends three times while mutating `openDoc`, `viewer`, `sidebar`
+  and `openPathName`, and two of its six callers fire it without awaiting anything — the drop
+  handler and the `OPEN_EVENT` listener. Double-clicking a second PDF while a large one was
+  still opening had each call read the *other's* freshly-set `openDoc` as its `outgoing` and
+  release the document the other was about to build a viewer on, while the second
+  `new Viewer` overwrote the first without destroying it: two sets of live `wheel`, `keydown`
+  and `pointerdown` listeners on the same element, and two sidebars in the DOM, since
+  `Sidebar` appends rather than replacing. Opens are now serialised through a promise chain.
+  The body no longer awaits `firstPaint()`, so a queued open waits for the real work and not
+  for a one-second grace period that has nothing to do with it.
+
+- **A tile request was bounded by the wire format and not by the mapping it is delivered
+  through.** `protocol::parse` accepted any size up to 65535², and the refusal happened in the
+  worker *after* `progressive::render_tile` had allocated `width × height × 4` and drawn into
+  it — about 17 GB at the maximum, inside the process holding the attacker's document. Now
+  refused at parse time. `doc`, `x` and `y` are range-checked there too rather than `as`-cast:
+  a negative document number silently became `u32::MAX` and an origin past `i32` wrapped to a
+  plausible one, which is the quiet coercion that parser refuses everywhere else.
+
+- **The recursive graph walks in the print path had no depth bound.** `sweep::references` and
+  `print::forget_in_object` run on a document we did not write, in the **app process**, and
+  recursed until the stack ran out. Both now stop at `sweep::MAX_NESTING` (256) and **refuse**
+  rather than truncating: a mark-and-sweep that stops early has an incomplete reachable set,
+  so it would delete live objects and hand back a document that still parses and has holes in
+  it. `collect` and `drop_pages` propagate that as an error.
+
+- **⌘O was advertised in the palette and reached no handler at all, and ⌘P turned the page as
+  well as printing.** The palette's shortcut labels were hand-written strings sitting twenty
+  lines from the handlers that implement them, with nothing checking the two agreed — which
+  `App.svelte` said out loud and called "a real gap and a small one". Both defects were in
+  that gap: no ⌘O branch was ever written, and the viewer's `p` arm tested the key without the
+  modifier, so it sat below the ⌘-guarded arms and caught ⌘P on the way past. Bindings are now
+  data in `src/lib/keys.ts`; the label is *rendered from* the same modifiers `matches` tests,
+  so the two cannot drift, and the table is covered by `keys.test.ts`.
+
+- **`Queue` tracked one in-flight request while the pool ran several.** `inflight` was an
+  `Option<(u64, CancelToken)>`, correct when the render service was one FIFO thread and wrong
+  once the worker backend served the same queue from `pool + 2`: a second claim evicted the
+  first, so withdrawing the older of two concurrent renders matched nothing in either table
+  and cancelled nothing. The worker's own copy of the queue still stopped the render, so
+  nothing looked broken — a safety net that could not fire. Now a `HashMap`, with `release`
+  keyed on the request.
+
+- **Closing a document left its renders in the queue.** `Scroller.destroy()` withdrew only
+  tier-2 requests, and only when the `cancel` variant flag was set — a flag that exists so the
+  benchmark can measure what withdrawal is worth. A teardown is not a variant: everything
+  outstanding is now withdrawn unconditionally, so the outgoing document's tiles stop sitting
+  in front of the first page of the file the reader has just opened. The placeholder arrival
+  queue is closed with it.
+
+- **`copySelection` issued one extraction per selected page at once.** A selection dragged to
+  the end of the 775-page corpus named 775 pages and `Promise.all` put all of them on the FIFO
+  queue that also draws the page in front of the reader — the cost `prefetchText` and
+  `TextCache` both go out of their way to avoid, re-entering through the copy path. Chunked at
+  16, rather than capped: a copy has to be complete.
 
 - **`backend-probe` had a vanishing check of its own**, the second found in a day and by the
   same method. "The page asked for is one a wrong page number would betray" disappeared on

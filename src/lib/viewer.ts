@@ -30,6 +30,7 @@
  */
 
 import { AccessibleText } from "./a11y";
+import { matches } from "./keys";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { Scroller, type PageSize } from "./scroller";
 import { Search, type Match } from "./search";
@@ -74,6 +75,14 @@ export interface ViewerStatus {
   any: number;
   /** Requests outstanding, so "still working" can be distinguished from "done". */
   pending: number;
+  /**
+   * Requests that came back an error since the document opened.
+   *
+   * Reported because "slow" and "erroring on everything" look identical from
+   * every other field here, and they are the two things a reader most needs told
+   * apart: one resolves by waiting and the other never does.
+   */
+  failed: number;
   /** Characters currently selected, so a status line can say so. */
   selected: number;
   /** State of the find-in-document scan. */
@@ -225,6 +234,18 @@ export class Viewer {
   private frameHandle = 0;
   private running = false;
   /**
+   * Wake scheduled for a request whose backoff has not elapsed.
+   *
+   * The loop idles when there is no work, and a backed-off request is not work
+   * yet --- so without this a tile that failed once would sit unretried until
+   * some unrelated input happened to restart the loop, which for a transient
+   * failure is a blank square that never fills. One timer, rearmed on each idle,
+   * gives the scroller exactly one retry per backoff. See `scroller.ts`'s
+   * `nextRetryMs`, which deliberately reports nothing for a request that is
+   * already due.
+   */
+  private retryTimer = 0;
+  /**
    * Frames to run after the last piece of work settles.
    *
    * One is not enough: the frame that drains an arrival is also the frame that
@@ -319,6 +340,7 @@ export class Viewer {
 
   destroy(): void {
     this.stop();
+    clearTimeout(this.retryTimer);
     this.a11y.destroy();
     this.searcher.cancel();
     this.observer.disconnect();
@@ -382,15 +404,28 @@ export class Viewer {
    */
   wake(): void {
     this.tail = 2;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = 0;
     if (this.running) return;
     this.running = true;
     this.frameHandle = requestAnimationFrame(this.tick);
   }
 
   private stop(): void {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = 0;
     if (!this.running) return;
     this.running = false;
     cancelAnimationFrame(this.frameHandle);
+  }
+
+  /** Arranges one wake for the earliest backed-off request, if there is one. */
+  private scheduleRetry(): void {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = 0;
+    const wait = this.scroller.nextRetryMs;
+    if (wait === null) return;
+    this.retryTimer = setTimeout(() => this.wake(), wait) as unknown as number;
   }
 
   private readonly tick = (): void => {
@@ -410,6 +445,9 @@ export class Viewer {
 
     if (this.tail <= 0) {
       this.running = false;
+      // Going idle is the one moment a backed-off request needs somebody to
+      // come back for it.
+      this.scheduleRetry();
       return;
     }
     this.frameHandle = requestAnimationFrame(this.tick);
@@ -437,6 +475,7 @@ export class Viewer {
       sharp: stats.sharp,
       any: stats.any,
       pending: this.scroller.pendingWork,
+      failed: this.scroller.stats.failed,
       selected: this.selectedCount(),
       search: this.searchStatus(),
     };
@@ -448,6 +487,7 @@ export class Viewer {
       Math.round(status.sharp * 100),
       Math.round(status.any * 100),
       status.pending > 0,
+      status.failed,
       status.selected,
       status.search.query,
       status.search.total,
@@ -776,22 +816,52 @@ export class Viewer {
     this.scrollBy(event.deltaY * scale);
   };
 
+  /**
+   * The surface's key handling.
+   *
+   * Advertised bindings are matched through `keys.ts`, which is the same table
+   * the palette renders its labels from --- so a label can no longer teach a
+   * chord this handler does not accept. It also tests the modifiers in *both*
+   * directions, which the hand-written chain did not: `event.key === "p"` had no
+   * accelerator test and sat after the ⌘-guarded arms, so ⌘P printed the
+   * document and turned the page back at the same time.
+   *
+   * The scrolling keys below stay literal. They are not commands, the palette
+   * does not list them, and there is no label for them to disagree with.
+   */
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     const screen = this.viewportSize().height * PAGE_OVERLAP;
-    const accel = event.metaKey || event.ctrlKey;
 
-    if (accel && (event.key === "+" || event.key === "=")) {
+    if (matches("view.zoomIn", event)) {
       this.zoomStep(1);
-    } else if (accel && event.key === "-") {
+    } else if (matches("view.zoomOut", event)) {
       this.zoomStep(-1);
-    } else if (accel && event.key === "0") {
+    } else if (matches("view.fitWidth", event)) {
       this.fitWidth();
-    } else if (accel && (event.key === "r" || event.key === "R")) {
+    } else if (matches("view.rotateClockwise", event)) {
       // Preview's bindings. Acrobat puts these on Shift-Cmd-+/-, which on this
       // keyboard is the same `key` as Cmd-+ and would collide with zoom.
       this.rotateBy(1);
-    } else if (accel && (event.key === "l" || event.key === "L")) {
+    } else if (matches("view.rotateCounterClockwise", event)) {
       this.rotateBy(-1);
+    } else if (matches("edit.copy", event)) {
+      void this.copySelection();
+    } else if (matches("edit.selectAll", event)) {
+      this.selectPage();
+    } else if (matches("find.previous", event)) {
+      this.prevMatch();
+    } else if (matches("find.next", event)) {
+      this.nextMatch();
+    } else if (matches("edit.clearSelection", event)) {
+      this.clearSelection();
+    } else if (matches("nav.nextPage", event)) {
+      this.nextPage();
+    } else if (matches("nav.previousPage", event)) {
+      this.previousPage();
+    } else if (matches("nav.firstPage", event)) {
+      this.goToStart();
+    } else if (matches("nav.lastPage", event)) {
+      this.goToEnd();
     } else if (event.key === "ArrowDown") {
       this.scrollBy(ARROW_STEP);
     } else if (event.key === "ArrowUp") {
@@ -800,25 +870,6 @@ export class Viewer {
       this.scrollBy(event.shiftKey ? -screen : screen);
     } else if (event.key === "PageUp") {
       this.scrollBy(-screen);
-    } else if (event.key === "Home") {
-      this.goToStart();
-    } else if (event.key === "End") {
-      this.goToEnd();
-    } else if (accel && event.key === "c") {
-      void this.copySelection();
-    } else if (accel && event.key === "a") {
-      this.selectPage();
-    } else if (accel && (event.key === "g" || event.key === "G")) {
-      // Cmd-G and Cmd-Shift-G, which is what find-next is on this platform.
-      // `key` carries the shifted form, so both spellings have to be listed.
-      if (event.shiftKey) this.prevMatch();
-      else this.nextMatch();
-    } else if (event.key === "Escape") {
-      this.clearSelection();
-    } else if (event.key === "n") {
-      this.nextPage();
-    } else if (event.key === "p") {
-      this.previousPage();
     } else {
       return;
     }
@@ -967,13 +1018,36 @@ export class Viewer {
     if (!selection) return null;
 
     if (!selection.isComplete(this.text)) {
-      await Promise.all(selection.pages().map((page) => this.text.load(page)));
+      await this.loadPages(selection.pages());
     }
     const text = selection.text(this.text);
     if (!text) return null;
 
     await navigator.clipboard.writeText(text);
     return text;
+  }
+
+  /**
+   * Loads several pages' text without flooding the render queue.
+   *
+   * A selection dragged to the end of the 775-page corpus names 775 pages, and
+   * `Promise.all` over them issues 775 extractions at once --- onto the single
+   * FIFO queue that also draws the page in front of the reader. `prefetchText`
+   * and `TextCache` both go out of their way to avoid exactly that ("asking for
+   * all of it up front would put a minute of extraction in front of the first
+   * tile"); the copy path let it back in through the other door.
+   *
+   * Chunked rather than capped, because a copy has to be *complete* --- silently
+   * copying the part that fitted is the bug this whole path exists to avoid. The
+   * chunk is what keeps a tile from waiting behind more than a handful of them.
+   */
+  private async loadPages(pages: number[]): Promise<void> {
+    const CHUNK = 16;
+    for (let at = 0; at < pages.length; at += CHUNK) {
+      await Promise.all(
+        pages.slice(at, at + CHUNK).map((page) => this.text.load(page)),
+      );
+    }
   }
 
   /** The selected text, without touching the clipboard. For the check harness. */

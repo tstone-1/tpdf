@@ -127,6 +127,15 @@ export interface RunStats {
    * `discarded` climbs is one where every stale tile was still paid for.
    */
   abandoned: number;
+  /**
+   * Requests that came back an error.
+   *
+   * Counted rather than discarded. Every `catch` in this file used to swallow
+   * the failure whole, which left a viewer whose renderer was erroring on every
+   * request indistinguishable --- to the status line, to the benchmark and to
+   * anyone reading it --- from one that was merely slow.
+   */
+  failed: number;
   bytes: number;
   /** Time inside Pdfium, summed over delivered tiles. */
   renderMs: number;
@@ -147,6 +156,33 @@ export const TIER1_WIDTH = 150;
 
 /** CSS pixels between pages. */
 const PAGE_GAP = 16;
+
+/**
+ * How long a failed request waits before it may be issued again, and the
+ * ceiling that wait doubles towards.
+ *
+ * There was no such wait, and its absence was the most expensive thing in this
+ * file. `request()` runs every frame and issues any wanted tile that is in
+ * neither `tiles` nor `inFlight`; a failure deleted the entry from `inFlight`
+ * and recorded nothing, so the next frame asked for it again --- and the frame
+ * loop cannot idle out while `pendingWork` is above zero, which the re-issued
+ * requests kept true. A tile that fails deterministically was therefore
+ * re-requested at display cadence for as long as the document stayed open.
+ *
+ * That is not merely wasteful. Under the worker backend each failed tile costs a
+ * `kill` and a fresh `fork`/`exec` plus a full re-parse of the document
+ * (`render.rs`, `Workers::with_worker`), so a page that faults deterministically
+ * had the application spawning and killing sandboxed processes indefinitely with
+ * nobody touching the machine. `docs/THREAT-MODEL.md` §7 claimed that cost was
+ * "bounded by the reader's own requests"; the reader makes one, and the frame
+ * loop made the rest.
+ *
+ * Doubling rather than a fixed interval, because the two cases want opposite
+ * things: a transient failure should recover in a quarter of a second, and a
+ * permanent one should stop costing anything at all.
+ */
+const RETRY_BASE_MS = 250;
+const RETRY_MAX_MS = 8000;
 
 interface TileKey {
   page: number;
@@ -257,6 +293,15 @@ export class Scroller {
   /** Requests issued and not yet settled, by id. */
   private readonly inFlight = new Map<string, Outstanding>();
   /**
+   * Requests that failed, and the earliest they may be issued again.
+   *
+   * A due entry is left in the map rather than deleted, so the *next* failure
+   * doubles its wait instead of starting over --- a document that fails every
+   * time must not settle into a fixed retry rate, which is the thing being
+   * fixed. See {@link RETRY_BASE_MS}.
+   */
+  private readonly failed = new Map<string, { until: number; tries: number }>();
+  /**
    * Tiles that have landed since the last frame.
    *
    * Drawing them is deferred to the next frame deliberately. A fetch settles in
@@ -302,6 +347,7 @@ export class Scroller {
     delivered: 0,
     discarded: 0,
     abandoned: 0,
+    failed: 0,
     bytes: 0,
     renderMs: 0,
     decodeMs: 0,
@@ -395,6 +441,30 @@ export class Scroller {
     return (
       this.inFlight.size + this.arrived.length + this.arrivedPlaceholders.length
     );
+  }
+
+  /**
+   * Milliseconds until the earliest backed-off request may be issued again, or
+   * `null` if nothing is waiting.
+   *
+   * The viewer's frame loop idles when there is no work, so without this a tile
+   * that failed would sit unretried until some unrelated input happened to wake
+   * it --- a transient hiccup would leave a permanently blank square. One
+   * scheduled wake per backoff gives it exactly one retry, which is the whole
+   * difference between recovering and spinning.
+   *
+   * A request whose wait has already elapsed is deliberately **not** counted: it
+   * will be issued by the next frame that runs anyway, and reporting it as "due
+   * in 0 ms" would have the viewer schedule an immediate wake, which is the busy
+   * loop this mechanism exists to remove, rebuilt one level up.
+   */
+  get nextRetryMs(): number | null {
+    const now = performance.now();
+    let soonest = Infinity;
+    for (const { until } of this.failed.values()) {
+      if (until > now && until < soonest) soonest = until;
+    }
+    return soonest === Infinity ? null : soonest - now;
   }
 
   /**
@@ -504,6 +574,7 @@ export class Scroller {
   private dropPlaceholders(): void {
     for (const bitmap of this.placeholders.values()) bitmap.close();
     this.placeholders.clear();
+    this.failed.clear();
     for (const canvas of this.placeholderCanvases.values()) canvas.remove();
     this.placeholderCanvases.clear();
     for (const { bitmap } of this.arrivedPlaceholders.splice(0)) bitmap.close();
@@ -598,6 +669,12 @@ export class Scroller {
     this.tiles.clear();
     for (const arrival of this.arrived.splice(0)) arrival.bitmap.close();
     this.generation++;
+    // Backoff is dropped with the tiles, and only the callers of this method can
+    // drop it: every one of them is a *reader's* action --- a zoom, a rotation,
+    // an inversion --- and someone who has just asked for something different is
+    // owed an immediate attempt rather than the tail of a wait they cannot see.
+    // Nothing on the frame path clears it, which is what keeps the bound real.
+    this.failed.clear();
 
     // No tier-2 request survives a generation change --- `drain` drops every
     // one of them on arrival --- so let the renderer stop paying for them.
@@ -613,6 +690,7 @@ export class Scroller {
     this.stats.delivered = 0;
     this.stats.discarded = 0;
     this.stats.abandoned = 0;
+    this.stats.failed = 0;
     this.stats.bytes = 0;
     this.stats.renderMs = 0;
     this.stats.decodeMs = 0;
@@ -621,9 +699,27 @@ export class Scroller {
 
   destroy(): void {
     this.scheme.removeEventListener("change", this.onScheme);
+
+    // Everything outstanding, unconditionally --- **not** through `withdraw`,
+    // which honours the `cancel` variant flag. That flag exists so the benchmark
+    // can measure what withdrawal is worth; a teardown is not a variant, and a
+    // document being closed while its tiles are still rendering is the one case
+    // where there is nothing to trade off. Without this the outgoing document's
+    // renders stay in the FIFO ahead of the first page of the file the reader
+    // has just opened, and on the A0 corpus a single tier-1 placeholder is 1.5 s
+    // of that queue.
+    for (const outstanding of this.inFlight.values()) {
+      if (outstanding.withdrawn) continue;
+      outstanding.withdrawn = true;
+      cancelTile(outstanding.rid);
+    }
+
     this.clearTiles();
     for (const bitmap of this.placeholders.values()) bitmap.close();
     this.placeholders.clear();
+    // The arrival queue too: `clearTiles` splices `arrived`, and these are the
+    // other half of it --- placeholders that landed and had not been drawn yet.
+    for (const { bitmap } of this.arrivedPlaceholders.splice(0)) bitmap.close();
     this.placeholderCanvases.clear();
     this.host.replaceChildren();
   }
@@ -798,13 +894,14 @@ export class Scroller {
   private request(): void {
     this.withdraw((outstanding) => !outstanding.isWanted());
 
+    const now = performance.now();
     const { top, bottom } = this.band();
     const centre = this.scrollTop + this.opts.viewport.height / 2;
 
     const wanted: { key: TileKey; distance: number }[] = [];
 
     for (const page of this.pagesIn(top, bottom)) {
-      this.requestPlaceholder(page);
+      this.requestPlaceholder(page, now);
 
       const pageTop = this.pageTop(page);
       for (let row = 0; row < this.rows; row++) {
@@ -816,6 +913,7 @@ export class Scroller {
           const key: TileKey = { page, col, row };
           const id = keyOf(key);
           if (this.tiles.has(id) || this.inFlight.has(id)) continue;
+          if (this.backedOff(id, now)) continue;
           if (!this.isWanted(key)) continue;
           wanted.push({
             key,
@@ -852,6 +950,20 @@ export class Scroller {
     }
   }
 
+  /** Whether a request that failed is still inside its backoff. */
+  private backedOff(id: string, now: number): boolean {
+    const entry = this.failed.get(id);
+    return entry !== undefined && entry.until > now;
+  }
+
+  /** Records a failed request, and when it may be issued again. */
+  private noteFailure(id: string): void {
+    const tries = (this.failed.get(id)?.tries ?? 0) + 1;
+    const wait = Math.min(RETRY_BASE_MS * 2 ** (tries - 1), RETRY_MAX_MS);
+    this.failed.set(id, { until: performance.now() + wait, tries });
+    this.stats.failed++;
+  }
+
   private send(key: TileKey): void {
     const id = keyOf(key);
     const rect = this.tileRect(key.col, key.row);
@@ -882,10 +994,14 @@ export class Scroller {
         this.inFlight.delete(id);
         // Withdrawn in time: the renderer stopped, and there is nothing to
         // count as delivered or as discarded because nothing was produced.
+        // Deliberately not treated as a success either --- the request never
+        // ran, so it says nothing about whether this tile can be rendered, and
+        // clearing the backoff on it would let a withdrawal reset the wait.
         if (!result) {
           this.stats.abandoned++;
           return;
         }
+        this.failed.delete(id);
         this.stats.bytes += result.bytes;
         this.stats.renderMs += result.renderUs / 1000;
         this.stats.decodeMs += result.decodeMs;
@@ -893,6 +1009,7 @@ export class Scroller {
       })
       .catch(() => {
         this.inFlight.delete(id);
+        this.noteFailure(id);
       });
   }
 
@@ -959,9 +1076,10 @@ export class Scroller {
    * everything else and the scroller shows nothing until it lands. The
    * alternative, blocking on it, would hide exactly that cost.
    */
-  private requestPlaceholder(page: number): void {
+  private requestPlaceholder(page: number, now: number): void {
     const id = `p${page}`;
     if (this.placeholders.has(page) || this.inFlight.has(id)) return;
+    if (this.backedOff(id, now)) return;
 
     const displayed = this.displayedPage();
     const scale = TIER1_WIDTH / displayed.width_pt;
@@ -1000,6 +1118,7 @@ export class Scroller {
           this.stats.abandoned++;
           return;
         }
+        this.failed.delete(id);
         this.stats.delivered++;
         this.stats.bytes += result.bytes;
         this.stats.renderMs += result.renderUs / 1000;
@@ -1012,6 +1131,7 @@ export class Scroller {
       })
       .catch(() => {
         this.inFlight.delete(id);
+        this.noteFailure(id);
       });
   }
 
