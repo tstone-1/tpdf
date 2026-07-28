@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use tpdf_lib::worker::{self, PreWorker, Request, Shm, Worker};
+use tpdf_lib::worker::{self, PreWorker, Request, Shm, WarmWorker, Worker};
 use tpdf_lib::worker_child;
 
 /// Documents chosen to span the parse cost while sharing every fixed cost.
@@ -129,10 +129,7 @@ fn main() {
             // is 8 ms, report no saving at all while the A0 sheet, whose control
             // is 55 ms, reported the true one. The head start has to be a
             // quantity chosen here, not a side effect of the row above it.
-            let pre = Worker::prespawn(&library_dir).and_then(|mut pre| {
-                pre.wait_warm()?;
-                Ok(pre)
-            });
+            let pre = Worker::prespawn(&library_dir).and_then(PreWorker::wait_warm);
 
             match once(path, &library_dir) {
                 Ok(sample) => {
@@ -184,10 +181,64 @@ fn main() {
         );
     }
 
-    // Deliberately no verdict printed here. The first version of this probe
-    // closed with "the cheapest document is the floor", and the data said a
-    // 757-byte file cost twice what a 775-page one did -- a conclusion the
-    // numbers contradicted, printed underneath them. Read the table.
+    // Deliberately no verdict about *where the time goes* printed here. The
+    // first version of this probe closed with "the cheapest document is the
+    // floor", and the data said a 757-byte file cost twice what a 775-page one
+    // did -- a conclusion the numbers contradicted, printed underneath them.
+    // Read the table.
+    //
+    // The one claim that is asserted is the one below, because a table nobody
+    // reads is not a check: deleting `warm_fonts` from the worker left every
+    // check in `backend-probe` green on every corpus, and only this table moved.
+    std::process::exit(i32::from(!warming_holds(&present, &warm)));
+}
+
+/// Asserts that warming a pre-spawned worker actually removed the font walk.
+///
+/// The discriminating comparison is **between two fixtures, not against a
+/// constant**. A document naming base-14 faces sends PDFium looking through the
+/// machine's font list; one carrying its own subset does not. That difference
+/// --- ~7.4 ms, measured, and a property of the machine rather than the file ---
+/// is the entire thing `worker_child::warm_fonts` exists to pay before a reader
+/// is waiting. So when warming works the two documents' pre-spawned opens are
+/// indistinguishable, and when it does not the base-14 one is a font walk
+/// slower. Measured both ways: 0.37 ms against 0.76 ms warm, and 7.68 ms
+/// against 0.70 ms with the warm deleted.
+///
+/// Half the walk is the threshold, so the assertion sits an order of magnitude
+/// clear of the noise on both sides rather than next to it --- `AGENTS.md`
+/// records a 300 s timeout against a 276 s run, which is a coin toss, not a
+/// bound.
+///
+/// Skipped, by name and with a reason, when either fixture is absent: a control
+/// that silently disappears on some inputs cannot be told from one that ran.
+fn warming_holds(present: &[PathBuf], warm: &[Vec<f64>]) -> bool {
+    /// Half of the ~7.4 ms system-font enumeration the module header measures.
+    const HALF_A_FONT_WALK_MS: f64 = 3.7;
+
+    let find = |name: &str| {
+        present
+            .iter()
+            .position(|p| p.file_name().is_some_and(|n| n == name))
+            .map(|i| median(&warm[i]))
+    };
+    let (Some(base14), Some(embedded)) = (find("text-base14.pdf"), find("text-heavy.pdf")) else {
+        println!(
+            "\n[SKIP] a warmed worker does not pay the font walk  \
+             needs both text-base14.pdf and text-heavy.pdf"
+        );
+        return true;
+    };
+
+    let gap = base14 - embedded;
+    let ok = gap < HALF_A_FONT_WALK_MS;
+    println!(
+        "\n[{}] a warmed worker does not pay the font walk    \
+         base-14 {base14:.2} ms against embedded {embedded:.2} ms, \
+         a gap of {gap:+.2} ms against a {HALF_A_FONT_WALK_MS} ms bound",
+        if ok { "OK" } else { "FAIL" }
+    );
+    ok
 }
 
 /// What a reader waits for when a warm worker already exists.
@@ -195,11 +246,15 @@ fn main() {
 /// The pre-spawn itself is deliberately outside the timer, and that is the claim
 /// rather than a convenience: a worker started while the shell is still coming up
 /// has ~250 ms of someone else's work to hide behind, so the number that matters
-/// is what remains once it is warm. `PreWorker::adopt` returns only after the
-/// child has announced itself warm, so this cannot accidentally include the link,
-/// the sandbox or the font walk --- if the worker were not ready, the wait would
-/// appear here in full rather than being quietly excluded.
-fn once_prespawned(path: &Path, pre: PreWorker) -> Result<f64, String> {
+/// is what remains once it is warm.
+///
+/// That exclusion is guaranteed by the argument's *type*, not by this function
+/// being careful: a [`WarmWorker`] can only be obtained from
+/// `PreWorker::wait_warm`, so the link, the sandbox and the font walk are
+/// provably behind us before the timer starts. An earlier version took a
+/// `PreWorker` and relied on `adopt` waiting internally --- which measured
+/// correctly and could not say so.
+fn once_prespawned(path: &Path, pre: WarmWorker) -> Result<f64, String> {
     let doc = Arc::new(Shm::map_file(path)?);
     let t0 = Instant::now();
     let mut worker = pre.adopt(doc)?;

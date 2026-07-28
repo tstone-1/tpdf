@@ -679,71 +679,41 @@ pub struct PreWorker {
     worker: Worker,
     /// Our end of the pair the document descriptor is sent over.
     socket: OwnedFd,
-    /// Whether the child's readiness announcement has been consumed.
-    ///
-    /// It arrives exactly once, and reading it twice would consume the answer to
-    /// a real request instead.
-    warm: bool,
 }
 
 impl PreWorker {
-    /// Hands over the document and returns the worker now serving it.
-    ///
-    /// The mapping is sent as a descriptor rather than a path, for exactly the
-    /// reason the whole design exists: the worker has already dropped the
-    /// authority to open a file, so a path would be unusable even if it were
-    /// trusted. The length travels as the ordinary payload of the same message,
-    /// since a descriptor says nothing about how much of it to map.
-    ///
-    /// # Errors
-    ///
-    /// The send failing, or the worker having died while it waited --- reported
-    /// with its epitaph, because "the pipe is closed" and "killed by signal 11"
-    /// are different diagnoses.
-    pub fn adopt(mut self, doc: Arc<Shm>) -> Result<Worker, String> {
-        // Sent *before* waiting for the warm announcement, not after. The socket
-        // buffers it, so the descriptor is already on its way while the child
-        // finishes linking --- waiting first would serialise two things that have
-        // no reason to be ordered.
-        send_document(self.socket.as_raw_fd(), doc.raw_fd(), doc.len()).map_err(|e| {
-            format!(
-                "could not hand the document to a pre-spawned worker: {e} --- {}",
-                self.worker.epitaph()
-            )
-        })?;
-
-        // The warm line has to be consumed before any real reply, or it becomes
-        // the answer to whatever the caller asks first --- an `Open` reply that is
-        // actually a readiness notice, carrying geometry nobody sent.
-        self.wait_warm()?;
-
-        // Kept mapped for as long as the worker lives. Until this line the worker
-        // had no document; from here it is an ordinary one in every respect.
-        self.worker._doc = Some(doc);
-        Ok(self.worker)
-    }
-
     /// Blocks until the child has linked, sandboxed and warmed itself.
     ///
-    /// Separate from [`PreWorker::adopt`] because a caller may want the waiting
-    /// and the handover at different moments --- a pool filling itself in the
-    /// background wants to know a worker is ready without having a document for
-    /// it, and a benchmark must be able to put the waiting *outside* its timer.
-    /// Without that separation the head start a pre-spawned worker gets is
-    /// whatever the code before it happened to take, which is not a quantity
-    /// anyone chose.
+    /// **Consumes the `PreWorker`, and that is the point.** The readiness line
+    /// has to be off the pipe before any real request, or it becomes the answer
+    /// to whichever one is asked first --- an `Open` reply that is actually a
+    /// readiness notice, carrying geometry nobody sent. Returning a distinct
+    /// type is what makes that ordering hold by construction: [`WarmWorker`] is
+    /// the only thing that can be handed a document, and this is the only way to
+    /// obtain one.
     ///
-    /// Idempotent: the announcement arrives once, and reading it twice would
-    /// consume a real reply.
+    /// It was a `&mut self` call inside `adopt` first, guarded by an
+    /// `is_it_warm` flag. Deleting that call changed **nothing** anywhere --- no
+    /// check, no benchmark --- because `Workers::prewarm` already warms on its
+    /// own thread and publishes a spare only if it succeeded. That is
+    /// unreachable defence in the sense `AGENTS.md` records, with the extra
+    /// wrinkle that the impossibility was enforced in a *different module*, so
+    /// simply deleting the line would have made this file's correctness depend
+    /// silently on a policy decision in `render.rs`. Encoding it in the type
+    /// keeps the guarantee and removes the code.
+    ///
+    /// Waiting is also deliberately *not* folded into the handover: a pool
+    /// filling itself in the background wants to know a worker is ready without
+    /// having a document for it, and a benchmark must be able to put the wait
+    /// outside its timer --- otherwise the head start a pre-spawned worker gets
+    /// is whatever the code before it happened to take, which is not a quantity
+    /// anyone chose.
     ///
     /// # Errors
     ///
     /// The worker dying before it was ready, or answering something other than
     /// its readiness.
-    pub fn wait_warm(&mut self) -> Result<(), String> {
-        if self.warm {
-            return Ok(());
-        }
+    pub fn wait_warm(mut self) -> Result<WarmWorker, String> {
         let ready = self
             .worker
             .read_reply()
@@ -766,14 +736,56 @@ impl PreWorker {
                 "a pre-spawned worker sent {warm:?} where its readiness was expected"
             ));
         }
-        self.warm = true;
-        Ok(())
+        Ok(WarmWorker { pre: self })
     }
 
     /// The process id, for a probe that wants to prove one exists.
     #[must_use]
     pub fn pid(&self) -> u32 {
         self.worker.pid()
+    }
+}
+
+/// A pre-spawned worker whose readiness has been consumed, ready for a document.
+///
+/// The only route here is [`PreWorker::wait_warm`], which is the whole reason
+/// the type exists --- see its note.
+pub struct WarmWorker {
+    pre: PreWorker,
+}
+
+impl WarmWorker {
+    /// Hands over the document and returns the worker now serving it.
+    ///
+    /// The mapping is sent as a descriptor rather than a path, for exactly the
+    /// reason the whole design exists: the worker has already dropped the
+    /// authority to open a file, so a path would be unusable even if it were
+    /// trusted. The length travels as the ordinary payload of the same message,
+    /// since a descriptor says nothing about how much of it to map.
+    ///
+    /// # Errors
+    ///
+    /// The send failing, or the worker having died while it waited --- reported
+    /// with its epitaph, because "the pipe is closed" and "killed by signal 11"
+    /// are different diagnoses.
+    pub fn adopt(mut self, doc: Arc<Shm>) -> Result<Worker, String> {
+        send_document(self.pre.socket.as_raw_fd(), doc.raw_fd(), doc.len()).map_err(|e| {
+            format!(
+                "could not hand the document to a pre-spawned worker: {e} --- {}",
+                self.pre.worker.epitaph()
+            )
+        })?;
+
+        // Kept mapped for as long as the worker lives. Until this line the worker
+        // had no document; from here it is an ordinary one in every respect.
+        self.pre.worker._doc = Some(doc);
+        Ok(self.pre.worker)
+    }
+
+    /// The process id, for a probe that wants to prove one exists.
+    #[must_use]
+    pub fn pid(&self) -> u32 {
+        self.pre.pid()
     }
 }
 
@@ -866,7 +878,6 @@ impl Worker {
                 _doc: None,
             },
             socket: ours,
-            warm: false,
         })
     }
 
