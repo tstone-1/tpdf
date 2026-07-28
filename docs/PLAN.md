@@ -2667,14 +2667,9 @@ the number is in the output.
 `apply_sandbox` both refuse on Windows rather than running unsandboxed — the correct
 half-answer until a Windows build has ever run.
 
-**A dead worker is not replaced.** The isolation works — a worker that crashes takes
-nothing with it, and the parent says so with an epitaph naming the signal — but
-`RenderService` has no respawn, so that document stops rendering until the reader opens it
-again. `worker-bench --mode crash` measured respawn, reopen and first tile at 8.5–12.9 ms,
-and `docs/THREAT-MODEL.md` T1 quotes that number; read it as what a restart *would* cost,
-not as a restart that happens. The protocol was shaped so this is a small change — one
-worker serves one document, so there is nothing to re-establish but the document itself —
-which is why it is a gap rather than a redesign.
+**A dead worker was not replaced** when this was written; *The service survives its worker*
+below closed it on 2026-07-28, and the shape predicted here is the shape it took — one
+worker serves one document, so there was nothing to re-establish but the document itself.
 
 **A document is never released, and that now costs a process.** `open_document` appends and
 nothing removes: opening a second file in the same window leaves the first one's document
@@ -2786,6 +2781,72 @@ those tests was wrong: it fed 4,096 bytes with no newline to a 64-byte limit and
 hits EOF, and is refused for the other reason. The input is now a complete line that is
 merely too long, and the assertion is the reader's *position* afterwards. The property is
 "it stopped reading", and no statement about the return value can express that.
+
+##### The service survives its worker — 2026-07-28
+
+Isolation that ends the reading session is isolation nobody wants. A worker that dies is now
+replaced, and the request that found it dead is retried against the replacement — so the
+common case, a death caused by something other than the request in hand, is invisible to the
+reader.
+
+Three decisions, and each of them is the interesting half.
+
+**The replacement is handed the same mapping, not the same path.** `Held` owns the document
+`Shm` behind an `Arc` and `Worker::spawn_shared` borrows it, so re-opening reads no file and
+cannot pick up a different one. Re-reading the path is the obvious implementation and is
+quietly wrong: a document rewritten between the death and the restart would become what the
+reader is looking at, under a scroller sized for the old one, with nothing to say so. It also
+means a 337 MB scan is not read a second time. The property holds by construction — there is
+no path stored to re-read — rather than by a check, which is the right place for it.
+
+**The bound on a crash loop is the retry, not a counter.** `with_worker` tries once more and
+no further. A crash the document *causes* reproduces on that retry, so the reader pays two
+crashes for that tile and gets an error, and the next request pays one more; the whole thing
+is bounded by the requests the reader makes. A restart budget on top of that would be
+unreachable defence of exactly the kind `AGENTS.md` says to delete — there is no loop left
+for one to break. What it costs is stated rather than hidden: a document that reliably kills
+its worker on one page spawns a process per attempt at that page.
+
+**A worker that answers with an error is not replaced.** A live process that said "no such
+page" has answered; restarting it would spend a document reopen on every malformed request
+and hide a bug in the protocol behind a fresh process that gets the next question right. The
+discriminator is `Worker::is_running`, i.e. `try_wait`, which asks the kernel rather than
+inferring death from a failed call.
+
+`backend-probe` grew seven checks for this, and every observation of a *process* comes from
+the OS table (`pgrep -P`) rather than from our own `Vec<Held>` — the same reason the
+libpdfium check reads dyld's image list. On `vector-heavy`: **23/23**.
+
+**Six mutations, five caught, one predicted survivor.**
+
+| mutation | which check went red |
+|---|---|
+| `with_worker` never retries | the tile returns; a new process; a withdrawal reaches the replacement; the text path |
+| the replacement gets a *different* document | the tile returns — plus two by overlap |
+| the restart does not re-point the sender | **only** "a withdrawal reaches the replacement too" |
+| a dead worker looks alive | the same four as the first |
+| a live worker looks dead | "a worker that answers with an error is not replaced" |
+| `live()` never restarts a `None` worker | **nothing** — predicted |
+
+The survivor is honest and stays: that branch is reachable only after a *spawn* failure,
+which no fixture provokes, and deleting it would leave a document permanently dead after one
+transient failure to fork. The third row is the one that earned its keep — a withdrawal sent
+down a dead pipe still comes back `Abandoned` on this side's own token, so the check that
+sees it is the latency (`abandoned after 1101.7 ms, against a 1153 ms render`), for exactly
+the reason the first withdrawal check needed the same treatment.
+
+Two findings were about the checks rather than the code, and both are in `AGENTS.md`.
+`SIGSEGV` does not kill a Rust process the first time it is *sent* — std's stack-overflow
+handler restores the default and returns — so the first version of this killed nothing and
+two checks passed against a worker that was still alive. And the crash checks were nested
+inside `if let Some(victim) = worker_pids().first()`, so the mutation that stops workers being
+replaced made them **vanish** rather than fail: no `[FAIL]`, no `[SKIP]`, and the only trace
+was the total dropping from 23 to 22. Both were caught by controls that existed because the
+prediction was written down first.
+
+**Still not done:** a pool, and reclaiming a document nobody is reading. The leak recorded
+above is unchanged — `Held` is appended and never removed — and a restart does not change its
+price, only who is holding it.
 
 ### Phase 2 — Editing foundation
 

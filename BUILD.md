@@ -77,10 +77,12 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- 
     testdata/outline-hostile.pdf --mode check
 
 # The worker boundary is still transparent: the two backends must agree byte for
-# byte on tiles, geometry, text, search and outlines. Run it on vector-heavy as
-# well as a text fixture -- it is the only corpus whose render is slow enough for
-# the "a withdrawal reaches a render already inside PDFium" check to apply, and
-# on every other one that check reports [SKIP] with the reason.
+# byte on tiles, geometry, text, search and outlines, and a worker killed out of
+# the OS process table must be replaced by one serving the same document. Run it
+# on vector-heavy as well as a text fixture -- it is the only corpus whose render
+# is slow enough for the two withdrawal checks to apply, and on every other one
+# they report [SKIP] with the reason. vector-heavy is the run to read: 23 checks,
+# none skipped.
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin backend-probe -- \
     testdata/vector-heavy.pdf
 ```
@@ -235,6 +237,13 @@ Two things read differently under the worker: the startup timeline has `worker s
 where the in-process one has `pdfium bound`, and a render can now fail because the worker
 died rather than only because the document did. `backend-probe` is what says the two agree
 about everything else.
+
+A worker that dies is replaced and the request retried once, so a crash usually reaches the
+reader as nothing at all --- but it is never silent in the terminal: the parent prints
+`[render] document N: worker killed by signal 11; starting a replacement` on stderr, and the
+worker's own stderr is inherited. Seeing that line repeatedly on one document means the
+document is faulting PDFium on a page the reader keeps asking for, which is the one case a
+single retry cannot make cheap.
 
 ### The "reopen its windows" dialog
 

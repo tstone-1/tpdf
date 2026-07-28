@@ -2059,6 +2059,54 @@ produce.** Note `libc` deprecates both symbols in favour of the `mach2` crate; t
 declared directly instead, because adding a dependency for two dyld entry points is a
 licensing decision (see the constraint above) taken for nothing.
 
+### A Rust process absorbs the first SIGSEGV you send it
+
+Killing a child with `SIGSEGV` is the obvious way to simulate a crash, and against a Rust
+child it does nothing at all. `std` installs a handler on SIGSEGV and SIGBUS so a stack
+overflow can be reported; on a fault address outside the guard page it restores the default
+disposition and **returns** --- which, for a signal that arrived by `kill(2)` rather than
+from a faulting instruction, simply resumes the process. Measured 2026-07-28, three
+processes, same harness: a tpdf worker and a trivial `rustc`-built sleeper both survived the
+first SIGSEGV and died on the second; `/bin/sleep` died on the first.
+
+A *genuine* fault still terminates, because the faulting instruction re-executes against the
+restored default --- which is why nothing in production depends on this and why it is easy to
+believe the simulation works. What it broke was the check: `backend-probe` killed its worker,
+the worker carried on, and the two checks that followed passed against a worker that had
+never died. They were caught only because a control asserted the death separately, which is
+the entry above arriving from a new direction --- **assert that the thing you broke is
+broken, never that the recovery looks fine.**
+
+Use `SIGKILL` to make a process go away. Use a real fault (`black_box` plus
+`write_volatile`, as `worker-bench --mode crash` does) to test what a crash does.
+
+### A check nested inside a lookup for the thing under test disappears with it
+
+Found 2026-07-28 by mutation M1 on the worker restart, and it is the *silent* sibling of
+"a defect that switches off a check's precondition". The crash checks were written as
+`if let Some(victim) = worker_pids().first() { ... }` --- perfectly reasonable, since there is
+nothing to kill otherwise. Then the mutation that stops workers being replaced leaves **no
+worker to find**, so the block does not run: not `[FAIL]`, not `[SKIP]`, nothing. The check
+name never appears.
+
+The only trace was the total: `19/22 checks passed` where every other run says 23. Nothing
+compared those two numbers, and a reader scanning for `[FAIL]` lines sees three where four
+were predicted --- which reads as a prediction that was slightly wrong, not as a check that
+evaporated. Writing the prediction down beforehand is what turned it into a finding.
+
+So: **when the subject of a check is also the thing that decides whether it runs, do not let
+it decide.** Hoist the lookup, pass the absence in as a value, and let "there was nothing to
+kill" be a failing detail line rather than a branch not taken. The standing invariant is the
+one this file already states for the viewer: the set of check *names* is fixed, and a count
+that moves is itself a defect.
+
+A smaller one from the same run, worth a sentence because it costs nothing to avoid: the
+failing check printed *"1048576 bytes, identical to the tile before it died"* next to
+`[FAIL]`, because the detail string was written on the success branch of a `match` on
+`Result` and said nothing about the comparison that actually decided the verdict. **A detail
+line has to be computed from the same quantity as the verdict**, or it will eventually
+contradict it --- at exactly the moment someone is relying on it.
+
 ### The test fixtures are generated, not committed
 
 `testdata/*.pdf` is gitignored. Regenerate with:

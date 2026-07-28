@@ -294,6 +294,23 @@ experience.
   7.8--48.2 MB `worker-probe` measured per corpus. The leak is not new; its price is.
 
   **Windows still refuses rather than running unsandboxed**, and so defaults to in-process.
+- **A worker that dies is replaced, and the request retried once.** Isolation that ends the
+  reading session is isolation nobody wants: a crash caused by anything other than the
+  request in hand is now invisible to the reader. The replacement is handed the **same
+  document mapping**, not the same path, so a file rewritten in between cannot silently
+  become what is on screen --- and a 337 MB scan is not read twice. A live worker that
+  answers with an error is *not* replaced; only one the kernel says has exited.
+
+  The bound on a crash loop is the single retry rather than a restart budget. A page that
+  faults deterministically then costs one process per attempt, which is bounded by the
+  reader's own requests --- a counter on top would be defence nothing could reach, and
+  `AGENTS.md` says to delete those rather than keep them.
+
+  `backend-probe` kills the worker out of the OS process table and asserts the same pixels
+  come back from a *different* pid. Six mutations, five caught; the survivor is recorded
+  with its reason. Two of the findings were about the checks: `SIGSEGV` does not kill a Rust
+  process the first time it is sent, and a check nested inside a lookup for the thing under
+  test disappears rather than failing when the defect removes it.
 - **A parent that does not trust its worker's arithmetic.** A reply states how many bytes of
   the shared mapping it wrote; that claim is checked against the mapping's size and, for raw
   pixels, against `width x height x 4` exactly. Reply lines are bounded at 32 MB, because

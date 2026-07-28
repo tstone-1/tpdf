@@ -231,6 +231,14 @@ pub struct Shm {
 // buffer at a time, and the parent only reads after the worker's reply.
 unsafe impl Send for Shm {}
 
+// Sharing a reference is fine for the same reason, and for one more: every
+// `&self` method here reads, and the only writer --- `as_mut_slice` --- takes
+// `&mut self`, which no shared handle can produce. This is what lets a document
+// mapping be held behind an `Arc` and handed to a replacement worker. It says
+// nothing about the *other* process writing the same pages; that race is
+// disciplined by the protocol above and predates this impl.
+unsafe impl Sync for Shm {}
+
 impl Shm {
     /// Creates a mapping of `len` bytes backed by an unlinked temp file.
     ///
@@ -400,7 +408,13 @@ pub struct Worker {
     /// Where tile payloads arrive.
     pub tile: Shm,
     /// Kept mapped for the worker's lifetime --- it is the document.
-    _doc: Shm,
+    ///
+    /// Shared rather than owned so that a caller replacing a dead worker can
+    /// hand the replacement the **same bytes**. Re-reading the path would work
+    /// and is subtly wrong: a file rewritten in the meantime would become the
+    /// document the reader is looking at, silently, under a scroller sized for
+    /// the old one.
+    _doc: Arc<Shm>,
 }
 
 /// The write half of a worker, separable and cheap to clone.
@@ -452,7 +466,21 @@ impl Worker {
     /// Mapping the document, creating the tile buffer, or spawning; and on any
     /// platform but macOS, always --- see the module note.
     pub fn spawn(document: &Path, library_dir: &Path) -> Result<Self, String> {
-        let doc = Shm::map_file(document)?;
+        Self::spawn_shared(Arc::new(Shm::map_file(document)?), library_dir)
+    }
+
+    /// Spawns a worker over a document mapping the caller made and keeps.
+    ///
+    /// The keeping is the point. A worker that dies is replaced by calling this
+    /// again with the same `Arc`, so the replacement parses the bytes the first
+    /// one did rather than whatever is at that path now --- and a 337 MB scan is
+    /// not read a second time to find that out.
+    ///
+    /// # Errors
+    ///
+    /// Creating the tile buffer or spawning; and on any platform but macOS,
+    /// always --- see the module note.
+    pub fn spawn_shared(doc: Arc<Shm>, library_dir: &Path) -> Result<Self, String> {
         let tile = Shm::create(TILE_CAPACITY)?;
         Self::spawn_mapped(doc, tile, library_dir)
     }
@@ -463,7 +491,7 @@ impl Worker {
     ///
     /// As [`Worker::spawn`].
     #[cfg(not(target_os = "macos"))]
-    pub fn spawn_mapped(_doc: Shm, _tile: Shm, _library_dir: &Path) -> Result<Self, String> {
+    pub fn spawn_mapped(_doc: Arc<Shm>, _tile: Shm, _library_dir: &Path) -> Result<Self, String> {
         // Not a silent fallback to running unsandboxed. Every containment claim
         // in docs/THREAT-MODEL.md is `sandbox_init` SBPL, so a worker without it
         // is a different thing wearing the same name.
@@ -476,7 +504,7 @@ impl Worker {
     ///
     /// As [`Worker::spawn`].
     #[cfg(target_os = "macos")]
-    pub fn spawn_mapped(doc: Shm, tile: Shm, library_dir: &Path) -> Result<Self, String> {
+    pub fn spawn_mapped(doc: Arc<Shm>, tile: Shm, library_dir: &Path) -> Result<Self, String> {
         use std::os::unix::process::CommandExt;
 
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
@@ -581,6 +609,20 @@ impl Worker {
     /// The pipe being closed.
     pub fn send(&mut self, request: &Request) -> Result<(), String> {
         self.stdin.send(request)
+    }
+
+    /// Whether the process is still there.
+    ///
+    /// Asked of the kernel rather than inferred from a failed call, because the
+    /// two are different diagnoses and only one of them is worth replacing a
+    /// worker over: a live worker that answered with an error *answered*, and
+    /// restarting it would hide a bug in the protocol behind a fresh process
+    /// that gets the next question right.
+    ///
+    /// Reaps as a side effect, which is deliberate --- `try_wait` is what turns
+    /// a zombie into an exit status [`Worker::epitaph`] can name.
+    pub fn is_running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
     }
 
     /// How the worker died, in words.
