@@ -405,6 +405,7 @@ async function run(path: string): Promise<void> {
   await thumbnailChecks(root, viewer, sidebar, doc, page);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await invertChecks(viewer, doc, page, seen);
+  await printChecks(path, doc);
 
   sidebar.destroy();
   panel.remove();
@@ -2358,4 +2359,57 @@ function pickNeedle(codes: number[]): string | null {
 function preview(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > 40 ? `${flat.slice(0, 40)}...` : flat;
+}
+
+/**
+ * The print command, up to but not including the panel.
+ *
+ * Everything about printing that a test can reach is in Rust and covered there.
+ * What is **not** covered anywhere else is the wiring: a mistyped command name
+ * or a parameter Tauri cannot deserialise compiles perfectly and fails the first
+ * time somebody presses Cmd-P. Nothing in the gate would notice, because the
+ * two sides never meet until then.
+ *
+ * So these ask for jobs the backend must *refuse*, and assert on the reason it
+ * gives. A refusal proves the command exists, the arguments arrived, and
+ * `print::build` ran --- and stops before anything platform-specific, which is
+ * the half that would need a person and a sheet of paper.
+ */
+async function printChecks(path: string, doc: DocumentInfo): Promise<void> {
+  const print = async (pages: number[] | null, turns: number): Promise<string> => {
+    try {
+      await invoke("print_document", { path, pages, turns });
+      return "";
+    } catch (e) {
+      return String(e);
+    }
+  };
+
+  // A page past the end. Refused by `resolve`, before any platform code.
+  const beyond = await print([doc.page_count + 1], 0);
+  check(
+    "the print command refuses a page the document does not have",
+    beyond.includes("is not in this document"),
+    beyond ? preview(beyond) : "it accepted the job",
+  );
+
+  // The control, and the half that actually pins the wiring: the message above
+  // could be produced by a backend that refuses everything. An empty selection
+  // is refused by a *different* branch, so the two together show the argument
+  // was read rather than that some error was reached.
+  const empty = await print([], 0);
+  check(
+    "the print command refuses an empty selection",
+    empty.includes("no pages selected"),
+    empty ? preview(empty) : "it accepted the job",
+  );
+
+  // And a turn count is a `u8` in Rust: sending a number outside it proves the
+  // parameter is typed rather than ignored. `resolve` never runs here.
+  const turned = await print(null, 4096);
+  check(
+    "the print command's rotation is a typed parameter",
+    turned.length > 0 && !turned.includes("is not in this document"),
+    turned ? preview(turned) : "it accepted 4096 quarter-turns",
+  );
 }

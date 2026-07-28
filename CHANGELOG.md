@@ -247,6 +247,24 @@ experience.
   and reports the tiles each round withdrew beside the ones it threw away. Without the
   drain the two variants share a render queue: whichever ran first measured better, and
   swapping them swapped the result.
+- **Printing** (`⌘P`, macOS). tpdf hands the operating system a **PDF, never pixels** ---
+  measured: `cupsfilter -d <queue>` against a PDF-native printer returns the input file byte
+  for byte, so rasterising first could only throw information away. What is ours is deciding
+  *which* PDF: everything unrotated is handed over untouched, a page range deletes pages in
+  place so nothing loses an inherited `/Resources`, and the reader's view rotation composes
+  onto each page's effective `/Rotate`. PDFKit paginates and runs the panel; the panel's own
+  page-range field is why there is no range UI here.
+
+  Every job is re-read with PDFKit --- a parser that did not write it --- before the panel
+  opens. That is not ceremony: a page table left contradicting its own `Kids` array passes
+  every `lopdf` check and makes PDFKit report five pages for a two-page document, the extra
+  three being blank sheets it manufactures to satisfy the count.
+
+  Page deletion is ours rather than `lopdf::delete_pages`, which runs a quadratic graph walk
+  once per deleted page: keeping two pages of a 775-page document costs 620 ms there and
+  1.2 ms here, for byte-identical output.
+
+  **Windows is not implemented**, and says so with an error rather than doing nothing.
 - `scripts/fetch_pdfium.py` --- installs the pinned PDFium build (`chromium/7881`),
   verifying its SHA256 before extracting and refusing a V8 asset. A clean clone could not
   previously build: `vendor/pdfium/` is gitignored and nothing fetched it.

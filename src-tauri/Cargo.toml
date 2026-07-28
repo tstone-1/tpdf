@@ -45,6 +45,21 @@ png = "0.17"
 libc = "0.2"
 tauri-plugin-dialog = "2.7.2"
 
+# The macOS print dialog. PDFKit paginates the document and builds the
+# NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,
+# `objc2-foundation` and `objc2-app-kit` are already in the tree transitively via
+# Tauri, so only `objc2-pdf-kit` is genuinely new --- same crate family, same
+# `Zlib OR Apache-2.0 OR MIT`, so no licensing question (AGENTS.md).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSData", "NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSPrintInfo", "NSPrintOperation"] }
+objc2-pdf-kit = { version = "0.3", features = [
+    "PDFDocument",
+    "PDFPage",
+    "objc2-app-kit",
+] }
+
 [[bin]]
 name = "tile-bench"
 path = "src/bin/tile_bench.rs"

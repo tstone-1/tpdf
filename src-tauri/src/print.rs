@@ -29,9 +29,10 @@
 //! worse than none --- the same reason a bounded outline walk reports what it cut
 //! rather than presenting a partial tree as whole.
 
+use std::collections::HashSet;
 use std::path::Path;
 
-use lopdf::{Document, LoadOptions, Object};
+use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
 use crate::sweep;
 
@@ -97,7 +98,7 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
             .copied()
             .filter(|number| !wanted.contains(number))
             .collect();
-        doc.delete_pages(&dropped);
+        drop_pages(&mut doc, &dropped);
         // Destinations into pages that are no longer here.
         doc.catalog_mut()
             .map_err(|e| format!("no document catalog: {e}"))?
@@ -122,6 +123,123 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
     doc.save_to(&mut out)
         .map_err(|e| format!("could not serialise the print job: {e}"))?;
     Ok(out)
+}
+
+/// Removes pages, and every reference to them, in a single pass.
+///
+/// `lopdf::delete_pages` does exactly this and does not scale: it calls
+/// `delete_object` per page, and `delete_object` calls `traverse_objects` ---
+/// the quadratic walk AGENTS.md already records for `prune_objects`, here run
+/// once *per deleted page*. Measured release-profile on the 775-page corpus,
+/// keeping two pages: **620 ms** against **1.2 ms** here, and the two produce
+/// byte-identical output on every fixture and corpus
+/// (`control_page_deletion_matches_lopdf_byte_for_byte`).
+///
+/// Same shape as the mark-and-sweep, and the same conclusion --- use `lopdf`
+/// for the object model, write the graph walks ourselves.
+fn drop_pages(doc: &mut Document, numbers: &[u32]) {
+    let pages = doc.get_pages();
+    let doomed: HashSet<ObjectId> = numbers
+        .iter()
+        .filter_map(|number| pages.get(number).copied())
+        .collect();
+    if doomed.is_empty() {
+        return;
+    }
+
+    // Every ancestor of every doomed page, collected before anything moves, so
+    // that a `/Count` is decremented once per page beneath it. A page tree is
+    // usually two levels deep and may be many.
+    let mut decrements = Vec::new();
+    for id in &doomed {
+        let mut at = parent_of(doc, *id);
+        // Same `/Parent`-cycle bound as `effective_rotation`, same reason: this
+        // runs on input we did not write.
+        for _ in 0..64 {
+            let Some(parent) = at else { break };
+            decrements.push(parent);
+            at = parent_of(doc, parent);
+        }
+    }
+    for parent in decrements {
+        if let Ok(tree) = doc.get_object_mut(parent).and_then(Object::as_dict_mut) {
+            if let Ok(count) = tree.get(b"Count").and_then(Object::as_i64) {
+                tree.set("Count", count - 1);
+            }
+        }
+    }
+
+    // One pass over the whole graph, dropping array entries and dictionary keys
+    // that name a doomed page --- the `/Kids` entry that removes it from the
+    // tree, and anything else pointing at it. The trailer is not in `objects`
+    // and has to be walked in its own right.
+    forget_in_dictionary(&mut doc.trailer, &doomed);
+    for object in doc.objects.values_mut() {
+        forget_in_object(object, &doomed);
+    }
+    for id in &doomed {
+        doc.objects.remove(id);
+    }
+}
+
+/// The `/Parent` of an object, if it names one.
+fn parent_of(doc: &Document, id: ObjectId) -> Option<ObjectId> {
+    doc.get_object(id)
+        .and_then(Object::as_dict)
+        .and_then(|dict| dict.get(b"Parent"))
+        .and_then(Object::as_reference)
+        .ok()
+}
+
+/// Drops references to any doomed object, recursively.
+fn forget_in_object(object: &mut Object, doomed: &HashSet<ObjectId>) {
+    match object {
+        Object::Array(items) => {
+            items.retain(|item| !matches!(item, Object::Reference(id) if doomed.contains(id)));
+            for item in items.iter_mut() {
+                forget_in_object(item, doomed);
+            }
+        }
+        Object::Dictionary(dictionary) => forget_in_dictionary(dictionary, doomed),
+        Object::Stream(stream) => forget_in_dictionary(&mut stream.dict, doomed),
+        _ => {}
+    }
+}
+
+/// Drops keys whose value names a doomed object, then recurses.
+fn forget_in_dictionary(dictionary: &mut Dictionary, doomed: &HashSet<ObjectId>) {
+    let dead: Vec<Vec<u8>> = dictionary
+        .iter()
+        .filter(|(_, value)| matches!(value, Object::Reference(id) if doomed.contains(id)))
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in dead {
+        dictionary.remove(&key);
+    }
+    for (_, value) in dictionary.iter_mut() {
+        forget_in_object(value, doomed);
+    }
+}
+
+/// Checks a built job against what was asked for, before it reaches paper.
+///
+/// `found` comes from an independent parser, never from the writer that
+/// produced the bytes --- see `print_macos::read` for why that is the whole
+/// point. `expected` is `None` for "everything", where there is no count to
+/// compare against and the only wrong answer that can be recognised is nothing
+/// at all.
+///
+/// # Errors
+///
+/// A count that disagrees, or an empty job.
+pub fn expect_pages(found: usize, expected: Option<usize>) -> Result<(), String> {
+    match expected {
+        Some(expected) if found != expected => Err(format!(
+            "the print job has {found} pages, not the {expected} asked for"
+        )),
+        None if found == 0 => Err("the print job came out empty".into()),
+        _ => Ok(()),
+    }
 }
 
 /// The page numbers to keep, validated against what the document has.
@@ -172,8 +290,8 @@ fn effective_rotation(doc: &Document, page: lopdf::ObjectId) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{build, effective_rotation, Job, Pages};
-    use lopdf::{dictionary, Document, Object, Stream};
+    use super::{build, drop_pages, effective_rotation, Job, Pages};
+    use lopdf::{dictionary, Document, Object, ObjectId, Stream};
     use std::path::{Path, PathBuf};
 
     /// A scratch directory that removes itself.
@@ -254,6 +372,85 @@ mod tests {
         let mut bytes = std::fs::read(path).expect("read back");
         bytes.extend_from_slice(b"\n% a tail no serialiser would reproduce\n");
         std::fs::write(path, bytes).expect("retag");
+    }
+
+    /// A document whose page tree has an intermediate level.
+    ///
+    /// `fixture` above builds every page directly under the root, which is what
+    /// a generator does and not what a producer does --- real documents balance
+    /// the tree, so a page's `/Parent` chain is two or more nodes long. Deleting
+    /// a page has to decrement `/Count` on **every** ancestor, and with a flat
+    /// tree "the page's parent" and "the whole chain" are the same thing, so
+    /// nothing can tell the two apart. Found by a mutation that survived
+    /// (`D4`), not by reading the code.
+    ///
+    /// Returns the root and the intermediate node ids, so a check can name the
+    /// level it is asserting about.
+    fn nested_fixture(path: &Path, groups: usize, per_group: usize) -> (ObjectId, Vec<ObjectId>) {
+        let mut doc = Document::with_version("1.7");
+        let root_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+
+        let mut number = 0;
+        let mut middles = Vec::new();
+        let mut root_kids = Vec::new();
+        for _ in 0..groups {
+            let middle_id = doc.new_object_id();
+            let mut kids = Vec::new();
+            for _ in 0..per_group {
+                number += 1;
+                let content = format!("BT /F1 24 Tf 72 700 Td (page {number}) Tj ET");
+                let contents_id = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+                kids.push(Object::Reference(doc.add_object(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => middle_id,
+                    "Contents" => contents_id,
+                })));
+            }
+            doc.objects.insert(
+                middle_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => "Pages",
+                    "Parent" => root_id,
+                    "Count" => per_group as i64,
+                    "Kids" => kids,
+                }),
+            );
+            middles.push(middle_id);
+            root_kids.push(Object::Reference(middle_id));
+        }
+
+        doc.objects.insert(
+            root_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => number as i64,
+                "Kids" => root_kids,
+                // Inheritable, and two levels above the pages on purpose.
+                "Resources" => resources_id,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => root_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(path).expect("fixture");
+        (root_id, middles)
+    }
+
+    /// The `/Count` a page-tree node declares.
+    fn declared_count(doc: &Document, id: ObjectId) -> i64 {
+        doc.get_object(id)
+            .and_then(Object::as_dict)
+            .and_then(|node| node.get(b"Count"))
+            .and_then(Object::as_i64)
+            .expect("a page tree node must declare a count")
     }
 
     /// Reloads built bytes.
@@ -549,6 +746,242 @@ mod tests {
             .expect("catalog")
             .get(b"Outlines")
             .is_err());
+    }
+
+    /// What PDFKit makes of built bytes.
+    ///
+    /// A **third** parser, on CoreGraphics: independent of `lopdf`, which wrote
+    /// the job, and of PDFium, which drew what the reader was looking at. Every
+    /// other check in this module asks `lopdf` to read back a file `lopdf`
+    /// produced, which cannot distinguish "the document says this" from "our
+    /// serialiser and our loader agree about this" --- and it is the second that
+    /// a printer does not care about. It is also not a neutral third party: it
+    /// is the parser the print system itself will use.
+    #[cfg(target_os = "macos")]
+    fn read_back(bytes: &[u8]) -> crate::print_macos::Reading {
+        // The text-carrying variant: these checks assert *which* pages survived,
+        // and the print path deliberately does not pay for that (see `read`).
+        crate::print_macos::read_with_text(bytes).expect("PDFKit could not read the print job")
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_third_parser_reads_back_exactly_the_pages_that_were_kept() {
+        let dir = TempDir::new("pdfkit-range");
+        let path = dir.file("in.pdf");
+        fixture(&path, 5, 0);
+
+        let out = build(
+            &path,
+            &Job {
+                pages: Pages::Only(vec![2, 4]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+
+        let reading = read_back(&out);
+        assert_eq!(reading.pages.len(), 2, "{reading:?}");
+        // Which pages, read by something that did not write them.
+        assert!(
+            reading.pages[0]
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .contains("page 2"),
+            "{reading:?}"
+        );
+        assert!(
+            reading.pages[1]
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .contains("page 4"),
+            "{reading:?}"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_third_parser_sees_the_rotation_the_page_inherited_and_the_one_we_added() {
+        // The pair is the point. `effective_rotation` returning 0 instead of
+        // reading the tree writes 90 here where 180 is correct, and only the
+        // second case can tell --- the first is 90 either way.
+        for (inherited, expected) in [(0, 90), (90, 180)] {
+            let dir = TempDir::new(&format!("pdfkit-turn-{inherited}"));
+            let path = dir.file("in.pdf");
+            fixture(&path, 2, inherited);
+
+            let out = build(
+                &path,
+                &Job {
+                    pages: Pages::All,
+                    turns: 1,
+                },
+            )
+            .expect("build");
+
+            let reading = read_back(&out);
+            for page in &reading.pages {
+                assert_eq!(
+                    page.rotation, expected,
+                    "inherited {inherited}: {reading:?}"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_third_parser_accepts_the_handed_over_file_tail_and_all() {
+        // The passthrough fixture carries bytes past `%%EOF` so a rewrite is
+        // distinguishable from a copy. That trick is only legitimate because
+        // readers tolerate the tail --- asserted here rather than assumed, by a
+        // reader that is not the one which wrote it.
+        let dir = TempDir::new("pdfkit-tail");
+        let path = dir.file("in.pdf");
+        fixture(&path, 3, 0);
+
+        let out = build(
+            &path,
+            &Job {
+                pages: Pages::All,
+                turns: 0,
+            },
+        )
+        .expect("build");
+
+        assert_eq!(out, std::fs::read(&path).expect("source"));
+        assert_eq!(read_back(&out).pages.len(), 3);
+    }
+
+    #[test]
+    fn a_job_of_the_wrong_size_is_refused_before_it_reaches_paper() {
+        use super::expect_pages;
+        assert!(expect_pages(2, Some(2)).is_ok());
+        assert!(expect_pages(1, Some(2)).is_err());
+        assert!(expect_pages(3, Some(2)).is_err());
+        // "Everything" has no count to check against, so the only recognisable
+        // wrong answer is nothing at all.
+        assert!(expect_pages(5, None).is_ok());
+        assert!(expect_pages(0, None).is_err());
+        // And an empty selection is refused earlier, by `resolve` --- so a
+        // zero-page job with a zero expectation is a state nothing can reach,
+        // and this pins which of the two guards is doing the work.
+        assert!(expect_pages(0, Some(0)).is_ok());
+    }
+
+    #[test]
+    fn every_level_of_the_page_tree_learns_it_lost_a_page() {
+        // Three groups of two. Dropping one page from the first group and both
+        // from the last means the root must fall by three while the middles
+        // fall by different amounts --- so a walk that stops at the page's own
+        // parent, and one that decrements the root once per *group* rather than
+        // once per page, are both wrong here and in different directions.
+        let dir = TempDir::new("nested");
+        let path = dir.file("in.pdf");
+        let (root, middles) = nested_fixture(&path, 3, 2);
+
+        let mut doc = Document::load(&path).expect("load");
+        assert_eq!(declared_count(&doc, root), 6);
+        drop_pages(&mut doc, &[1, 5, 6]);
+
+        assert_eq!(declared_count(&doc, root), 3, "root");
+        assert_eq!(declared_count(&doc, middles[0]), 1, "first group");
+        assert_eq!(declared_count(&doc, middles[1]), 2, "untouched group");
+        assert_eq!(declared_count(&doc, middles[2]), 0, "emptied group");
+        // And the tree agrees with itself: what the root claims is what a
+        // reader walking `/Kids` actually finds.
+        assert_eq!(doc.get_pages().len(), 3);
+    }
+
+    /// The control for replacing `lopdf::delete_pages` with `drop_pages`.
+    ///
+    /// A refactor claiming to change nothing has to be shown to change nothing,
+    /// so both routes run on the same input and their bytes are compared. Same
+    /// procedure as the mark-and-sweep move, which was verified by running the
+    /// pre-move code as a control rather than by reading it.
+    ///
+    /// The 775-page corpora are deliberately **not** in this list even though
+    /// they are the interesting case: `lopdf`'s side of the comparison is the
+    /// quadratic one, and in the debug profile the gate runs in it costs 20 s.
+    /// They were checked once, by hand, at 775 -> 2 pages --- identical bytes,
+    /// 620.5 ms against 1.2 ms and 663.1 ms against 1.0 ms (docs/PLAN.md).
+    #[test]
+    fn control_page_deletion_matches_lopdf_byte_for_byte() {
+        use std::time::Instant;
+
+        let save = |doc: &mut Document| {
+            super::sweep::collect(doc);
+            let mut out = Vec::new();
+            doc.save_to(&mut out).expect("save");
+            out
+        };
+        let load = |path: &Path| {
+            Document::load_with_options(
+                path,
+                lopdf::LoadOptions {
+                    max_decompressed_size: Some(super::MAX_DECODE),
+                    ..Default::default()
+                },
+            )
+            .expect("load")
+        };
+
+        let dir = TempDir::new("control");
+        let synthetic = dir.file("in.pdf");
+        fixture(&synthetic, 6, 90);
+
+        let mut cases: Vec<(String, PathBuf)> = vec![("synthetic-6p".into(), synthetic)];
+        for name in [
+            "vector-multi.pdf",
+            "rotated.pdf",
+            "outline-hostile.pdf",
+            "incr-scan-5p.pdf",
+        ] {
+            let path = Path::new("../testdata").join(name);
+            if path.exists() {
+                cases.push((name.into(), path));
+            } else {
+                println!("[SKIP] {name}: fixture not generated");
+            }
+        }
+
+        for (name, path) in cases {
+            let present: Vec<u32> = load(&path).get_pages().keys().copied().collect();
+            // Keep the first and the last, so the dropped set is neither a
+            // prefix nor a suffix and the `/Kids` surgery has to be right in
+            // the middle of the array.
+            let keep = [1, *present.last().expect("pages")];
+            let dropped: Vec<u32> = present
+                .iter()
+                .copied()
+                .filter(|n| !keep.contains(n))
+                .collect();
+
+            let mut theirs = load(&path);
+            let t = Instant::now();
+            theirs.delete_pages(&dropped);
+            let their_ms = t.elapsed().as_secs_f64() * 1e3;
+            let their_bytes = save(&mut theirs);
+
+            let mut ours = load(&path);
+            let t = Instant::now();
+            drop_pages(&mut ours, &dropped);
+            let our_ms = t.elapsed().as_secs_f64() * 1e3;
+            let our_bytes = save(&mut ours);
+
+            println!(
+                "[{}] {name:22} {:>4} -> {:>2} pages   lopdf {:>9.1} ms   ours {:>7.1} ms   {:>6.0}x",
+                if our_bytes == their_bytes { "OK" } else { "DIFF" },
+                present.len(),
+                keep.len(),
+                their_ms,
+                our_ms,
+                their_ms / our_ms.max(1e-6),
+            );
+            assert_eq!(our_bytes, their_bytes, "{name}: bytes differ");
+        }
     }
 
     #[test]
