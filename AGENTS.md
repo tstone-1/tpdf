@@ -618,6 +618,38 @@ code under test controls", it is decoration however relevant it sounds. Related 
 test above that probed the wrong direction, but worse --- that one could fail on some input,
 this one on none.
 
+### A fixture the library itself wrote cannot tell a passthrough from a rewrite
+
+`print.rs` hands the file over untouched when every page is wanted and nothing is rotated,
+because rewriting a document in order to change nothing about it is pure risk. The test is the
+obvious one: build, and assert the bytes equal the file's.
+
+It could not fail. The fixture was written by `lopdf`, so loading and saving it reproduces it
+byte for byte --- and "handed over untouched" is then equally true of a full rewrite. Both
+passthrough mutations survived. The repair is in the *fixture*, not the assertion: append a
+tail past `%%EOF` that readers tolerate and no serialiser emits, and the two paths separate
+immediately.
+
+The general form is one this file keeps meeting from new directions: **a round trip through
+the tool under test is not a control, because the tool is idempotent on its own output.**
+Anything asserting "unchanged" needs an input the code could not have produced.
+
+### An oracle more forgiving than the thing it stands in for cannot fail
+
+Same session, same module. `/Resources` is inheritable, so a page kept from a subset must
+still reach its parent's --- lose that and the page still opens, still counts, and prints
+blank. The test asked `lopdf`'s `get_page_fonts` whether the font was reachable.
+
+`get_page_resources` collects the page's own resources **and every ancestor's, and merges
+them**. A renderer does not: PDF 32000-1 §7.7.3.4 makes an inherited attribute one the page's
+own dictionary *replaces*. So a page carrying an empty `/Resources` --- the exact defect the
+test exists to catch, and the one AGENTS.md already records as "removes every inherited one"
+--- still reports the font through lopdf, and the mutation modelling it survived.
+
+**Before trusting a library call as an oracle, check that it is at least as strict as the
+consumer you are standing in for.** A lenient parser is the right choice for *reading* real
+documents and the wrong one for *judging* them, and the same crate is usually both.
+
 ### A canvas round trip cannot read back what a renderer produced
 
 The check for page inversion computes the expected tile itself --- lightness inversion has a

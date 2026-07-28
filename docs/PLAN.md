@@ -2439,6 +2439,89 @@ the `search.rs` harness whose regex silently matched nothing, small enough to be
 and worth the sentence because the next instance may not be: **when a harness summarises, the
 thing it claims must appear in what it prints.**
 
+#### Print — started 2026-07-28, measurement first
+
+The remaining Phase 1 item, and one of the two this plan flags as quietly large. The decision
+that everything else follows from is whether tpdf **hands the PDF to the operating system** or
+**renders pages itself**, so that is what was measured before anything was written.
+
+The answer is unambiguous on macOS. Asking CUPS what the configured printer actually receives —
+`cupsfilter -d <queue> file.pdf` — produced output **byte-identical to the input file**. That
+printer is PDF-native, as AirPrint and IPP Everywhere devices are, so the document reaches it
+untouched and there is nothing we could add by rendering it ourselves. Rasterising first would
+be strictly destructive.
+
+Where a printer is *not* PDF-native the conversion is CUPS's, and its quality is not ours to
+control: `cupsfilter -m application/postscript` turned the same one-page fixture from 18,840
+bytes into 98,231, with image operators present and **no embedded fonts at all** (`/Type42` and
+`/Type1` both absent) — i.e. the page became a raster. Worth knowing, and not worth working
+around: every other macOS application is on that same path, and pre-rasterising ourselves at a
+resolution we guessed would only make it worse.
+
+**The first version of this measurement proved nothing, and the tell was a byte count.** It ran
+`cupsfilter -m application/pdf` and compared extractable text before and after: 177 characters
+in, 177 out, which reads like a clean vector round trip. Both files were 18,840 bytes. Asking a
+converter for the format it already has is a copy, so the chain under test was the identity and
+the result was guaranteed by construction — the same shape as every other precondition already
+recorded here, wearing a MIME type. **A conversion is only evidence once something has been
+shown to have been converted.**
+
+So the architecture: hand over a PDF, never pixels. What that leaves as genuinely ours is
+producing the *right* PDF — a page range, and the view rotation if the reader wants what they
+see — which is `lopdf` page subsetting and is platform-independent and testable. The platform
+half is the print dialog: `objc2-app-kit` already exposes `NSPrintOperation`, `NSPrintPanel`
+and `NSPrintInfo`, and both it and `objc2` are already linked transitively under MIT, so no new
+dependency and no licensing question. PDFKit has no bindings crate and would need direct
+`msg_send!` interop on the main thread.
+
+##### The half that is ours: building the right PDF
+
+`src-tauri/src/print.rs` produces the bytes to hand over. Three cases, and the first is the
+one worth arguing for: **everything unrotated is the file itself**, byte for byte. Rewriting a
+document in order to change nothing about it is pure risk — `lopdf` drops encryption silently
+(AGENTS.md), a rewrite reflows structure, and the printer was going to receive these exact
+bytes anyway.
+
+A page range **deletes pages in place** rather than re-parenting the survivors under a fresh
+`/Pages`. That is the whole design decision: `/Resources`, `/MediaBox`, `/CropBox` and
+`/Rotate` are inheritable, and a page moved out from under its parent loses whatever it was
+inheriting — after which it still opens, still counts as a page, and prints blank. A view
+rotation composes onto each page's *effective* `/Rotate`, resolved up the `/Parent` chain,
+because the literal one is absent on exactly the documents that inherit it. The outline is
+dropped whenever pages are, since its destinations name pages the file no longer has.
+
+The mark-and-sweep moved out of `bin/sanitize_rewrite.rs` into `src/sweep.rs`, since printing a
+range needs the same walk. That refactor was verified rather than assumed: the spike's eleven
+rewritten fixtures are **byte-identical before and after the move**, checked by running the
+pre-move code as a control. (One of them, `hostile-stale`, differs from lopdf's own collector
+— it already did, which is why the control was necessary to say so.)
+
+##### Eleven mutations, and four of the tests were wrong
+
+All eleven behave as predicted now. They did not at first: **four survived**, and every one was
+a defect in a test rather than in the code. Two are general enough to be in `AGENTS.md`.
+
+- **The passthrough fixture was written by `lopdf`**, so loading and saving it reproduced it
+  byte for byte and "the file was handed over untouched" was equally true of a full rewrite.
+  Both passthrough mutations survived. Fixed in the fixture — a tail past `%%EOF` that readers
+  tolerate and no serialiser emits — not in the assertion.
+- **The inheritance test used a more forgiving oracle than a renderer.** `lopdf`'s
+  `get_page_fonts` merges the page's resources with every ancestor's; PDF makes an inherited
+  attribute one the page's own dictionary *replaces*. So a page carrying an empty `/Resources`
+  — precisely the defect — still reported the font, and the mutation modelling it survived.
+- **"Fewer objects than before" did not test the sweep.** Deleting a page removes the page
+  object, so the count falls whether or not anything was collected. What only the sweep can
+  remove is the content stream a deleted page pointed at, so that is what is named and looked
+  for now.
+
+One mutation is predicted to **hang** rather than fail: unbounding the `/Parent` walk spins on
+a cyclic document, and a test that never returns prints no failure line — indistinguishable
+from a mutation nobody noticed. The runner has a timeout and reports that as its own outcome
+rather than folding it into either answer.
+
+Nothing is wired to a printer yet: `NSPrintOperation` and the Windows side are still to come,
+and Windows remains unverified as everywhere else in this file.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

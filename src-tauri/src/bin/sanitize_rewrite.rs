@@ -20,15 +20,16 @@
 //! Usage:
 //!     sanitize-rewrite [--manifest PATH] [--outdir DIR] [--only NAME] [--bench PATH]
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
-use lopdf::{Document, LoadOptions, Object as LoObject, ObjectId};
+use lopdf::{Document, LoadOptions, Object as LoObject};
 use pdfium_render::prelude::*;
 use serde::Deserialize;
+use tpdf_lib::sweep;
 
 /// Ceiling on any single decoded stream. A carrier that will not fit is a blind
 /// spot, never a pass -- which is exactly what the `bomb` fixture provokes.
@@ -430,65 +431,11 @@ fn route_lopdf_gc(input: &Path, output: &Path) -> Result<String, String> {
 fn route_lopdf_mark(input: &Path, output: &Path) -> Result<String, String> {
     let mut doc = load(input)?;
     let before = doc.objects.len();
-    let reachable = reachable_objects(&doc);
-    doc.objects.retain(|id, _| reachable.contains(id));
-    // `/Size` is written from `max_id`, which sweeping does not touch. Leaving it
-    // alone claims more objects than the file contains, and QPDF says so. Caught
-    // by the independent-parser check on this route's first run, which is the
-    // whole argument for having one: every other check passed.
-    doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0);
+    // The sweep itself lives in `tpdf_lib::sweep`, because printing a page range
+    // needs the same walk and two copies of it is two things to keep in step.
+    let collected = sweep::collect(&mut doc);
     doc.save(output).map_err(|e| format!("save failed: {e}"))?;
-    Ok(format!(
-        "collected {} of {before} objects",
-        before - doc.objects.len()
-    ))
-}
-
-/// Every object reachable from the trailer, by breadth-first mark.
-fn reachable_objects(doc: &Document) -> HashSet<ObjectId> {
-    let mut seen: HashSet<ObjectId> = HashSet::new();
-    let mut queue: Vec<ObjectId> = Vec::new();
-    let mark = |id: ObjectId, seen: &mut HashSet<ObjectId>, queue: &mut Vec<ObjectId>| {
-        if seen.insert(id) {
-            queue.push(id);
-        }
-    };
-
-    let trailer = LoObject::Dictionary(doc.trailer.clone());
-    let mut roots = Vec::new();
-    collect_references(&trailer, &mut roots);
-    for id in roots {
-        mark(id, &mut seen, &mut queue);
-    }
-
-    while let Some(id) = queue.pop() {
-        let Some(object) = doc.objects.get(&id) else {
-            // A dangling reference. Not this pass's problem: it names no object,
-            // so it carries no content.
-            continue;
-        };
-        let mut referenced = Vec::new();
-        collect_references(object, &mut referenced);
-        for id in referenced {
-            mark(id, &mut seen, &mut queue);
-        }
-    }
-    seen
-}
-
-fn collect_references(object: &LoObject, out: &mut Vec<ObjectId>) {
-    match object {
-        LoObject::Reference(id) => out.push(*id),
-        LoObject::Array(items) => items.iter().for_each(|i| collect_references(i, out)),
-        LoObject::Dictionary(dictionary) => dictionary
-            .iter()
-            .for_each(|(_, v)| collect_references(v, out)),
-        LoObject::Stream(stream) => stream
-            .dict
-            .iter()
-            .for_each(|(_, v)| collect_references(v, out)),
-        _ => {}
-    }
+    Ok(format!("collected {collected} of {before} objects"))
 }
 
 fn route_qpdf(input: &Path, output: &Path) -> Result<String, String> {
