@@ -2333,6 +2333,112 @@ Recording a predicted survivor separately from an unexpected one is the whole po
 distinction: collapsing them into one "caught" number is how a suite takes credit for coverage
 it does not have.
 
+#### Dark mode — done 2026-07-28
+
+Two separate things wear this name, and only one of them was missing.
+
+**The chrome already followed the system**, because it was built on `Canvas` / `CanvasText`
+and `color-scheme: light dark` rather than on literals. Two places had escaped that and are
+fixed: the scrollbar was drawn in `rgba(0,0,0,…)`, invisible on a dark window, and the
+surround around the page was a fixed `#666` — which reads as unlit against a light window
+and as *lit* against a dark one, brighter than the page it surrounds, the one thing it must
+not be. No single formula over `Canvas` and `CanvasText` produces both, since the surround has
+to be darker than the paper in *both* themes; it is two literals behind a custom property.
+
+The surround also has to be resolved rather than referenced, and that is not obvious: the
+default layout composites into one canvas and fills it with the surround, and a canvas takes a
+colour, not `var(--tpdf-surround)`. The one place the value is actually visible is the one
+place CSS cannot reach it. It is read once and re-read on a `prefers-color-scheme` change,
+rather than per frame, because `getComputedStyle` forces style resolution and the frame loop
+is the one thing here with a budget.
+
+**The page did not follow anything, and should not follow the system either.** Inverting a
+document changes what it looks like, and a reader who has turned their desktop dark has not
+asked for that. It is an explicit command — *Invert page colours*, ⌘⇧I, and named that rather
+than "Dark mode" because a command called dark mode would appear to do nothing for the reader
+who most expects it to, the chrome having already been dark.
+
+##### The transform is a constant offset, and that is derivable rather than lucky
+
+The obvious inversion, `255 - c` per channel, also rotates every hue half a turn: blue
+headings come out yellow, a red stamp comes out cyan. What is wanted is HSL's **lightness**
+inverted with hue and saturation held, which normally means a round trip through HSL and does
+not have to. Writing `M` and `m` for the largest and smallest channel:
+
+* `L = (M + m) / 2`, so inverting it asks for `M' + m' = 2 - (M + m)`.
+* HSL saturation divides chroma by `1 - |2L - 1|`, and `|2(1-L) - 1|` is the *same number* —
+  so holding saturation fixed holds **chroma** fixed, and `M' - m' = M - m`.
+
+Sum moves, difference does not, so every channel moves by the same amount: `d = 255 - M - m`.
+Three properties fall out, and each is a test. It needs no float and **no clamp** — the
+extremes become `255 - m` and `255 - M`, in range by construction. It is an **exact
+involution**, so the mode is reasonable to toggle. And on a neutral pixel it reduces to
+`255 - c`, so black text on white paper does exactly what anyone would predict.
+
+##### It is done in the renderer, and that is a testability decision
+
+A CSS filter over the tile layer would be free, instant, and invalidate nothing. It is not
+used, because a filter is applied by the compositor and the pixels cannot be read back: the
+only thing a check could then assert is that the style was set, which is the style agreeing
+with itself. That is precisely the failure this repository has recorded four times.
+
+So `invert` rides in the tile request beside `turns`, and a toggle discards every tile the way
+a rotation does. The cost is the same seconds a rotation costs on the A0 sheet, and the reader
+sees the tier-1 placeholder — itself re-rendered inverted — meanwhile.
+
+Five checks in the viewer harness, at both ends of the path, because two very different things
+can be wrong. The renderer might not invert; or it might invert perfectly while nothing on
+screen changes because the flag never reached a request. The first is answered **exactly** —
+the closed form is computable, so the assertion is byte-for-byte rather than "they differ" —
+with the control beside it that the transform must actually change the tile, since every pixel
+of a mid-grey tile is its own inversion and the exact check would pass on a renderer that did
+nothing. The second is answered on the composited canvas, with the drop asserted before the
+recovery.
+
+The session check grew a fifth field. The preference is deliberately **not** part of a place —
+it belongs to the reader, not to a document — and that is exactly why it needed covering: the
+place writer skips a place equal to the last one it sent, and inverting the page moves nothing,
+so routed through the throttle it would never have been written at all.
+
+It drives the mode by **pressing ⌘⇧I at the window**, not by calling the function behind it.
+The palette advertises that chord, and a label teaching a shortcut that does nothing is worse
+than no label — so the binding is the thing worth testing, and calling the toggle directly
+would have left it the one part of this that nothing touched. Confirmed load-bearing by
+deleting it: the *record* phase's own precondition goes red first, which is the right place,
+and the restore check follows.
+
+**What it does not do: photographs.** A photograph's lightness *is* its content, so a face
+comes out as a negative with the right hues. Every reader offering this has the same
+limitation. Excluding image regions is possible — PDFium reports each page object's type and
+bounds — and is not done, because nothing has measured what enumerating objects per tile costs
+on a page with two hundred thousand of them. The honest position is that the mode is off by
+default and asked for explicitly, never that the inversion is clever enough to be safe.
+
+##### Fourteen mutations, all caught by the check aimed at them
+
+Seven against the transform and its plumbing through `cargo test`, five against what reaches
+the screen, two against what survives a launch. Three results are worth more than the count.
+
+**The layers are genuinely independent, and the mutations prove it rather than assert it.**
+Deleting the viewer's call into the scroller (V3) left both *tile* checks green — they ask the
+renderer directly and never go through the viewer — and turned only the screen checks red. Had
+all four gone red, two of them would have been measuring the same thing and one would not be
+worth its runtime.
+
+**Two mutations are indistinguishable, and that is a limit worth stating.** V3 (the viewer
+never tells the scroller) and V4 (the scroller never discards what it invalidated) produce
+*identical* red sets. Both are real defects and both are caught, so nothing is missed — but
+the suite cannot say which of the two happened, and a reader of a future failure should not
+expect it to.
+
+**The harness's own report disagreed with its verdict, in miniature.** It prints at most five
+red checks per mutation, and I1 turned six red — so it printed `[CAUGHT]` above a list that
+did not contain the check it claimed had caught it. The verdict was computed from the full
+list and was correct; the evidence shown was not evidence for it. That is the same shape as
+the `search.rs` harness whose regex silently matched nothing, small enough to be harmless here
+and worth the sentence because the next instance may not be: **when a harness summarises, the
+thing it claims must appear in what it prints.**
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

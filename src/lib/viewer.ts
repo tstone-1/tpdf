@@ -66,6 +66,8 @@ export interface ViewerStatus {
   zoom: number;
   /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
   turns: number;
+  /** Whether the page's lightness is inverted, for reading in the dark. */
+  invert: boolean;
   /** Fraction of the visible page area backed by a sharp tile. */
   sharp: number;
   /** Fraction backed by anything at all, tier-1 placeholder included. */
@@ -199,6 +201,16 @@ export class Viewer {
   private zoom = 1;
   /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
   private turns = 0;
+
+  /**
+   * Whether the page's lightness is inverted, for reading in the dark.
+   *
+   * Off by default and never inferred from the system theme. Inverting a page
+   * changes what the document looks like, and a reader who has turned their
+   * desktop dark has not thereby asked for that --- the chrome follows the
+   * system, the page waits to be asked.
+   */
+  private invert = false;
   /**
    * Whether the zoom is still tracking the window width.
    *
@@ -262,11 +274,11 @@ export class Viewer {
     this.track = document.createElement("div");
     this.track.style.cssText =
       `position:absolute;top:0;right:0;bottom:0;width:${SCROLLBAR_WIDTH}px;` +
-      `background:rgba(0,0,0,0.12);`;
+      `background:color-mix(in srgb, CanvasText 12%, transparent);`;
     this.thumb = document.createElement("div");
     this.thumb.style.cssText =
       `position:absolute;left:2px;right:2px;top:0;height:0;border-radius:4px;` +
-      `background:rgba(0,0,0,0.38);`;
+      `background:color-mix(in srgb, CanvasText 38%, transparent);`;
     this.track.appendChild(this.thumb);
     root.appendChild(this.track);
 
@@ -277,6 +289,7 @@ export class Viewer {
       page: opts.page,
       zoom: this.zoom,
       turns: 0,
+      invert: false,
       // Measured verdict, docs/PLAN.md section 4: over ~3,300 timed frames the
       // per-tile-canvas layout dropped three frames and stalled once, while
       // this one dropped none at identical coverage and 3--4x lower per-frame
@@ -420,6 +433,7 @@ export class Viewer {
       pageCount: this.opts.pageCount,
       zoom: this.zoom,
       turns: this.turns,
+      invert: this.invert,
       sharp: stats.sharp,
       any: stats.any,
       pending: this.scroller.pendingWork,
@@ -430,6 +444,7 @@ export class Viewer {
       status.page,
       status.zoom,
       status.turns,
+      status.invert,
       Math.round(status.sharp * 100),
       Math.round(status.any * 100),
       status.pending > 0,
@@ -520,6 +535,32 @@ export class Viewer {
   /** Quarter-turns clockwise the view is currently rotated by. */
   get rotation(): number {
     return this.turns;
+  }
+
+  /** Whether the page's lightness is currently inverted. */
+  get inverted(): boolean {
+    return this.invert;
+  }
+
+  /**
+   * Turns page inversion on or off.
+   *
+   * Nothing about the layout moves, so unlike a rotation there is no place to
+   * preserve --- the reader stays exactly where they were and the pixels arrive
+   * again in the other polarity. What they see meanwhile is the tier-1
+   * placeholder, itself re-rendered inverted, which is the same degradation any
+   * zoom or rotation already produces.
+   */
+  setInverted(invert: boolean): void {
+    if (invert === this.invert) return;
+    this.invert = invert;
+    this.scroller.setInvert(invert);
+    this.wake();
+  }
+
+  /** What the scroller composited into, for a check that must read pixels. */
+  get compositedSurface(): HTMLCanvasElement | null {
+    return this.scroller.compositedSurface;
   }
 
   /** A page's size on screen, as the scroller laid it out. */

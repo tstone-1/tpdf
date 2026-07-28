@@ -187,6 +187,9 @@ export class Thumbnails {
   private thumbHeight: number;
   /** Quarter-turns clockwise the view is rotated by. */
   private turns = 0;
+
+  /** Whether the page's lightness is inverted, for reading in the dark. */
+  private invert = false;
   private readonly observer: ResizeObserver;
 
   /** Rendered pages, in least-recently-drawn order. See {@link MAX_KEPT}. */
@@ -337,6 +340,31 @@ export class Thumbnails {
    * a different picture --- the same reason the scroller drops tier 1. The rows
    * change shape with it, so they are rebuilt rather than restyled.
    */
+  /**
+   * Turns page inversion on or off, discarding every thumbnail.
+   *
+   * Narrower than {@link setTurns} and for a reason worth stating: the rows do
+   * not change shape, so they are kept and only their pictures are dropped.
+   * Rebuilding them would work and would also scroll the strip back to wherever
+   * `scrollTo` put it, which a reader who only changed the colours did not ask
+   * for.
+   *
+   * A borrowed placeholder is dropped with the rest. The viewer re-renders its
+   * own tier 1 inverted, so the next borrow gets the right polarity --- and
+   * `borrowing` is cleared for the same reason it is in `setTurns`: a copy
+   * already in flight lands in the old polarity and there is no way to stop it.
+   */
+  setInvert(invert: boolean): void {
+    if (invert === this.invert) return;
+    this.invert = invert;
+    this.withdraw();
+
+    for (const bitmap of this.bitmaps.values()) bitmap.close();
+    this.bitmaps.clear();
+    this.borrowing.clear();
+    this.layout();
+  }
+
   setTurns(turns: number): void {
     const next = ((turns % 4) + 4) % 4;
     if (next === this.turns) return;
@@ -448,6 +476,7 @@ export class Thumbnails {
       page,
       scale: TIER1_WIDTH / this.displayed().width_pt,
       turns: this.turns,
+      invert: this.invert,
       x: 0,
       y: 0,
       width: TIER1_WIDTH,

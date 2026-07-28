@@ -28,6 +28,15 @@ export interface TileRequest {
    * wrong gets an error instead of a plausible page.
    */
   turns?: number;
+  /**
+   * Whether the page's lightness is inverted, for reading in the dark.
+   *
+   * Done in the renderer rather than as a CSS filter over the tiles. A filter is
+   * applied by the compositor and the pixels cannot be read back, so the only
+   * thing a check could assert is that the style was set --- the style agreeing
+   * with itself, and no evidence about what reached the screen.
+   */
+  invert?: boolean;
   x: number;
   y: number;
   width: number;
@@ -68,7 +77,11 @@ export function tileUrl(req: TileRequest): string {
   const path = [req.doc, req.page, scale, req.x, req.y, req.width, req.height].join("/");
   const rid = req.rid ? `&rid=${req.rid}` : "";
   const turns = req.turns ? `&turns=${req.turns}` : "";
-  return `tile://localhost/${path}?fmt=${req.format}${rid}${turns}`;
+  // Absent rather than `invert=0`, because the server refuses anything but `1`:
+  // a stringified `false` reaching it would otherwise be a light page and look
+  // exactly like the mode being switched off.
+  const invert = req.invert ? "&invert=1" : "";
+  return `tile://localhost/${path}?fmt=${req.format}${rid}${turns}${invert}`;
 }
 
 let lastRequestId = 0;

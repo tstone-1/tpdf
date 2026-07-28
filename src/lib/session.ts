@@ -40,6 +40,14 @@ export interface Place {
 
 export interface Session {
   places: Place[];
+  /**
+   * Whether pages are shown with their lightness inverted.
+   *
+   * A preference, not a place: it belongs to the reader rather than to any one
+   * document. Optional because a session file written before it existed has no
+   * such field, and an older file must not be discarded over a missing one.
+   */
+  invert_pages?: boolean;
 }
 
 /**

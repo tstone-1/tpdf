@@ -353,6 +353,27 @@ experience.
   itself, and that nothing opens when nothing is remembered. Without the first, "restored to
   page 7" is satisfied by an app that happens to open there.
 
+- **Dark mode.** Two things wear that name and only one was missing. The chrome already
+  followed the system, being built on `Canvas` / `CanvasText`; the scrollbar and the surround
+  around the page had escaped that and now follow it too. The surround needs two literals
+  rather than a formula, since it has to be darker than the paper in *both* themes.
+
+  The page gets an explicit command instead --- **Invert page colours**, ⌘⇧I. Named that and
+  not "Dark mode" because the chrome is already dark when the desktop is, so a command called
+  dark mode would appear to do nothing for the reader who most expects it to. Inverting a
+  document changes what it looks like, and a reader who darkened their desktop has not asked
+  for that, so it is never inferred from the system theme.
+
+  It inverts HSL **lightness**, holding hue and saturation, so blue headings stay blue where a
+  plain `255 - c` would turn them yellow. That has a closed form --- chroma is unchanged by the
+  inversion, so every channel moves by the same `255 - max - min` --- which needs no float, can
+  never clamp, and is an exact involution. Applied in the renderer rather than as a CSS filter,
+  because a filter is applied by the compositor and its pixels cannot be read back: a check
+  could then only assert that a style was set.
+
+  Photographs come out as negatives with the right hues, as they do in every reader that
+  offers this. That is why the mode is off by default and asked for explicitly.
+
 - **File associations.** Double-clicking a PDF, "Open With", dragging one onto the icon, and
   `tpdf file.pdf` from a terminal all open it. Declared as `role: Viewer` rather than Tauri's
   default `Editor`, deliberately: `Editor` tells Launch Services tpdf can edit a PDF, and it
