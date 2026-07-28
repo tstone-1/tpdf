@@ -23,12 +23,24 @@
 //! duration of a call rather than a guard the caller could split a decision
 //! across.
 //!
+//! **Several requests are in flight at once, and that is why `inflight` is a map.**
+//! It was an `Option<(u64, CancelToken)>` first, written when the render service
+//! was one FIFO thread and only one render could exist. The worker backend serves
+//! the same queue from `pool + 2` threads (`render.rs`), so a second claim
+//! overwrote the first --- and a withdrawal naming the first then matched nothing
+//! in `inflight` and nothing in `queued` either, because its own claim had already
+//! removed it. It was a silent no-op, on the *older* of two concurrent renders,
+//! which is exactly the one a scrolling viewport wants to withdraw. The worker's
+//! own copy of this queue still cancelled the render, so nothing looked broken ---
+//! a safety net that cannot fire, which `AGENTS.md` records twice as the shape to
+//! watch for.
+//!
 //! Request id **zero means "not withdrawable"** and is not tracked at all. That
 //! is not an optimisation: an untracked id must never become the in-flight
 //! registration, or a withdrawal naming zero would cancel whatever unrelated
 //! render happened to be running.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::progressive::CancelToken;
@@ -53,8 +65,13 @@ pub struct Queue {
     /// drains with it: a withdrawal naming a request that already finished is
     /// dropped rather than remembered, which is what keeps this bounded.
     cancelled: HashSet<u64>,
-    /// The render currently running, and the token that stops it.
-    inflight: Option<(u64, CancelToken)>,
+    /// Every render currently running, and the token that stops each one.
+    ///
+    /// A map rather than a single slot because the worker backend renders several
+    /// tiles of a document at once --- see the module note. Bounded by the number
+    /// of service threads, and drained by [`Queue::release`], which every claim
+    /// path pairs with.
+    inflight: HashMap<u64, CancelToken>,
 }
 
 impl Queue {
@@ -88,13 +105,12 @@ impl Queue {
     /// guards already made it unreachable, and a check nothing can pin is a
     /// check that will one day be wrong without anyone noticing.
     pub fn withdraw(&mut self, rid: u64) {
-        match &self.inflight {
-            Some((inflight, token)) if *inflight == rid => token.cancel(),
-            _ => {
-                if self.queued.contains(&rid) {
-                    self.cancelled.insert(rid);
-                }
-            }
+        if let Some(token) = self.inflight.get(&rid) {
+            token.cancel();
+            return;
+        }
+        if self.queued.contains(&rid) {
+            self.cancelled.insert(rid);
         }
     }
 
@@ -107,20 +123,19 @@ impl Queue {
 
         let token = CancelToken::new();
         if rid != 0 {
-            self.inflight = Some((rid, token.clone()));
+            self.inflight.insert(rid, token.clone());
         }
         Claim::Start(token)
     }
 
     /// Releases a claim once its render has ended.
     ///
-    /// Clears only this request's own claim. A reply is delivered before the
-    /// next job is dequeued, so it cannot be anyone else's --- but checking
-    /// costs nothing and stops a future change from silently clearing one.
+    /// Keyed on the request, so a render finishing cannot clear a *different*
+    /// one that is still running beside it. That was already the intent when
+    /// there was one slot; with several threads claiming concurrently it is the
+    /// difference between a working withdrawal and a silent no-op.
     pub fn release(&mut self, rid: u64) {
-        if matches!(&self.inflight, Some((inflight, _)) if *inflight == rid) {
-            self.inflight = None;
-        }
+        self.inflight.remove(&rid);
     }
 
     /// Requests known to this queue, whether queued or running.
@@ -130,7 +145,7 @@ impl Queue {
     /// asserted empty rather than argued to be. Ungate them if a caller appears.
     #[cfg(test)]
     pub fn outstanding(&self) -> usize {
-        self.queued.len() + usize::from(self.inflight.is_some())
+        self.queued.len() + self.inflight.len()
     }
 
     /// Withdrawals recorded against requests that have not been claimed yet.
@@ -281,6 +296,47 @@ mod tests {
         start(&mut queue, 0);
         queue.withdraw(1);
         assert!(real.is_cancelled());
+    }
+
+    #[test]
+    fn withdrawing_the_older_of_two_concurrent_claims_still_cancels_it() {
+        // The worker backend claims from `pool + 2` threads at once, so two
+        // requests are genuinely in flight together. With a single `inflight`
+        // slot the second claim evicted the first, and `withdraw(1)` then found
+        // it in neither table --- `claim` having already taken it out of
+        // `queued` --- so it cancelled nothing and said nothing.
+        let mut queue = Queue::default();
+        queue.enqueue(1);
+        queue.enqueue(2);
+        let first = start(&mut queue, 1);
+        let second = start(&mut queue, 2);
+
+        queue.withdraw(1);
+        assert!(first.is_cancelled(), "the older claim was not cancelled");
+        // The control: withdrawing one must not cancel the other, or a queue
+        // that cancels everything would pass the assertion above.
+        assert!(!second.is_cancelled(), "the newer claim was cancelled too");
+    }
+
+    #[test]
+    fn several_claims_are_tracked_at_once_and_each_drains_on_release() {
+        // The bounding property, now that the table can hold more than one. A
+        // release keyed on the wrong request would leave entries behind, and
+        // `inflight` would grow for the life of the process.
+        let mut queue = Queue::default();
+        for rid in 1..=4 {
+            queue.enqueue(rid);
+            start(&mut queue, rid);
+        }
+        assert_eq!(queue.outstanding(), 4);
+
+        // Out of order on purpose: renders finish in whatever order the pool
+        // gets to them, which is not the order they were claimed in.
+        for rid in [3, 1, 4, 2] {
+            queue.release(rid);
+        }
+        assert_eq!(queue.outstanding(), 0);
+        assert_eq!(queue.pending_withdrawals(), 0);
     }
 
     #[test]

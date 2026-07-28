@@ -8,6 +8,7 @@
   import { runStartupTimelineIfRequested } from "./lib/startup";
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
   import { CommandRegistry } from "./lib/commands";
+  import { label, matches } from "./lib/keys";
   import { Palette } from "./lib/palette";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Outline } from "./lib/outline";
@@ -69,6 +70,13 @@
   let invertPages = false;
   /** Collapses a scroll's worth of positions into at most one write per second. */
   const places = new SessionWriter();
+  /**
+   * Serialises document opens. See {@link openPath}.
+   *
+   * Every open is chained onto this, so no two bodies ever interleave and the
+   * document singletons above are only ever mutated by one of them.
+   */
+  let openChain: Promise<void> = Promise.resolve();
 
   /**
    * Every command the application has, in one place.
@@ -78,16 +86,18 @@
    * rest guard on `viewer`, which is read at call time rather than captured, so
    * closing and opening a document does not need the registry rebuilt.
    *
-   * The `keys` strings are labels the palette displays; the bindings themselves
-   * live in `viewer.ts`'s key handler and in `onWindowKey` below. Nothing checks
-   * that the two agree, which is a real gap and a small one --- a wrong label
-   * teaches a wrong shortcut, it does not break a command.
+   * The `keys` strings are labels the palette displays, and they are **derived**
+   * from the same table `viewer.ts`'s key handler and `onWindowKey` below match
+   * against --- see `keys.ts`. They were hand-written beside those handlers with
+   * nothing checking the two agreed, and the gap was not hypothetical: ⌘O was
+   * advertised and reached no handler at all, and ⌘P turned the page as well as
+   * printing, because the viewer's `p` arm tested the key without the modifier.
    */
   const commands = new CommandRegistry();
   const withDocument = () => viewer !== null;
 
   commands.register(
-    { id: "file.open", title: "Open document", keys: "⌘O", run: () => void pickAndOpen() },
+    { id: "file.open", title: "Open document", keys: label("file.open"), run: () => void pickAndOpen() },
     {
       // No page-range field of our own, deliberately: the system panel has one,
       // and its numbers refer to the document we hand over --- which is every
@@ -96,49 +106,49 @@
       // because anything asks for one today.
       id: "file.print",
       title: "Print",
-      keys: "⌘P",
+      keys: label("file.print"),
       enabled: withDocument,
       run: () => void printDocument(),
     },
     {
       id: "find.open",
       title: "Find in document",
-      keys: "⌘F",
+      keys: label("find.open"),
       enabled: withDocument,
       run: () => focusFind(),
     },
     {
       id: "find.next",
       title: "Find next",
-      keys: "⌘G",
+      keys: label("find.next"),
       enabled: withDocument,
       run: () => viewer?.nextMatch(),
     },
     {
       id: "find.previous",
       title: "Find previous",
-      keys: "⇧⌘G",
+      keys: label("find.previous"),
       enabled: withDocument,
       run: () => viewer?.prevMatch(),
     },
     {
       id: "view.zoomIn",
       title: "Zoom in",
-      keys: "⌘+",
+      keys: label("view.zoomIn"),
       enabled: withDocument,
       run: () => viewer?.zoomStep(1),
     },
     {
       id: "view.zoomOut",
       title: "Zoom out",
-      keys: "⌘−",
+      keys: label("view.zoomOut"),
       enabled: withDocument,
       run: () => viewer?.zoomStep(-1),
     },
     {
       id: "view.fitWidth",
       title: "Fit width",
-      keys: "⌘0",
+      keys: label("view.fitWidth"),
       enabled: withDocument,
       run: () => viewer?.fitWidth(),
     },
@@ -151,63 +161,63 @@
       // document is a page operation and belongs with the ones that write.
       id: "view.rotateClockwise",
       title: "Rotate view clockwise",
-      keys: "⌘R",
+      keys: label("view.rotateClockwise"),
       enabled: withDocument,
       run: () => viewer?.rotateBy(1),
     },
     {
       id: "view.rotateCounterClockwise",
       title: "Rotate view anticlockwise",
-      keys: "⌘L",
+      keys: label("view.rotateCounterClockwise"),
       enabled: withDocument,
       run: () => viewer?.rotateBy(-1),
     },
     {
       id: "nav.nextPage",
       title: "Next page",
-      keys: "n",
+      keys: label("nav.nextPage"),
       enabled: withDocument,
       run: () => viewer?.nextPage(),
     },
     {
       id: "nav.previousPage",
       title: "Previous page",
-      keys: "p",
+      keys: label("nav.previousPage"),
       enabled: withDocument,
       run: () => viewer?.previousPage(),
     },
     {
       id: "nav.firstPage",
       title: "Go to start",
-      keys: "Home",
+      keys: label("nav.firstPage"),
       enabled: withDocument,
       run: () => viewer?.goToStart(),
     },
     {
       id: "nav.lastPage",
       title: "Go to end",
-      keys: "End",
+      keys: label("nav.lastPage"),
       enabled: withDocument,
       run: () => viewer?.goToEnd(),
     },
     {
       id: "edit.selectAll",
       title: "Select all on page",
-      keys: "⌘A",
+      keys: label("edit.selectAll"),
       enabled: withDocument,
       run: () => viewer?.selectPage(),
     },
     {
       id: "edit.copy",
       title: "Copy selection",
-      keys: "⌘C",
+      keys: label("edit.copy"),
       enabled: withDocument,
       run: () => void viewer?.copySelection(),
     },
     {
       id: "edit.clearSelection",
       title: "Clear selection",
-      keys: "Esc",
+      keys: label("edit.clearSelection"),
       enabled: withDocument,
       run: () => viewer?.clearSelection(),
     },
@@ -217,7 +227,7 @@
       // same shortcut twice in the palette and teach that it does two things.
       id: "view.toggleSidebar",
       title: "Toggle sidebar",
-      keys: "⌘\\",
+      keys: label("view.toggleSidebar"),
       enabled: withDocument,
       run: () => toggleSidebar(),
     },
@@ -243,7 +253,7 @@
       // change how the document looks, which is worth saying out loud.
       id: "view.invertPages",
       title: "Invert page colours",
-      keys: "⌘⇧I",
+      keys: label("view.invertPages"),
       enabled: withDocument,
       run: () => toggleInvert(),
     },
@@ -392,19 +402,31 @@
     }
   }
 
-  /** The two shortcuts that belong to the window rather than to the surface. */
+  /**
+   * The shortcuts that belong to the window rather than to the surface.
+   *
+   * Matched through `keys.ts`, which is where the palette's labels come from
+   * too --- see the note there. ⌘K is the one chord not in that table: it opens
+   * the palette rather than being listed in it, so there is no label for it to
+   * disagree with.
+   */
   function onWindowKey(event: KeyboardEvent) {
-    if (!(event.metaKey || event.ctrlKey)) return;
-    if (event.key === "k") {
+    if ((event.metaKey || event.ctrlKey) && event.key === "k") {
       event.preventDefault();
       // Toggling rather than reopening: Cmd-K on an open palette is a request
       // to get rid of it, not to clear the query someone is halfway through.
       if (palette?.isOpen) palette.close();
       else palette?.open();
-    } else if (event.key === "f" && title) {
+    } else if (matches("file.open", event)) {
+      // ⌘O was advertised in the palette and reached nothing at all: the label
+      // was written by hand and no handler was ever added for it, which is the
+      // exact disagreement the shared table exists to make impossible.
+      event.preventDefault();
+      void pickAndOpen();
+    } else if (matches("find.open", event) && title) {
       event.preventDefault();
       focusFind();
-    } else if (event.key === "p" && !event.shiftKey) {
+    } else if (matches("file.print", event)) {
       // Prevented whether or not a document is open --- note the missing
       // `&& title` that every other binding here has. WKWebView's own Cmd-P
       // prints the *page*: the chrome, the toolbar, and a scaled-down
@@ -412,13 +434,10 @@
       // that is a picture of the words "Open a PDF, or drop one here."
       event.preventDefault();
       void printDocument();
-    } else if (event.key === "\\" && title) {
+    } else if (matches("view.toggleSidebar", event) && title) {
       event.preventDefault();
       toggleSidebar();
-    } else if ((event.key === "i" || event.key === "I") && event.shiftKey && title) {
-      // Both cases, because Shift is held: the browser reports `I` on a US
-      // layout and `i` on some others, and matching only one makes the shortcut
-      // work on one keyboard.
+    } else if (matches("view.invertPages", event) && title) {
       event.preventDefault();
       toggleInvert();
     }
@@ -526,7 +545,40 @@
   }
 
   /**
+   * Opens a document, one at a time.
+   *
+   * **Serialised, and it has to be.** The body below suspends three times --- on
+   * the open, on a frame, and on the outline --- while mutating `openDoc`,
+   * `viewer`, `sidebar` and `openPathName`, none of which can be half-updated.
+   * Two of the six callers fire it without awaiting anything (`onDragDropEvent`
+   * and the `OPEN_EVENT` listener), so two opens genuinely interleaved: each
+   * read the *other's* freshly-set `openDoc` as its `outgoing` and released the
+   * document the other was about to build a viewer on, and the second
+   * `new Viewer` overwrote the first without destroying it --- leaving two
+   * viewers with live `wheel`, `keydown` and `pointerdown` listeners on the same
+   * element, and two sidebars in the DOM, since `Sidebar` appends rather than
+   * replacing. Combined with a tile request that could not stop failing, that
+   * was a pegged core for the life of the process.
+   *
+   * A chain rather than a generation counter, because the invariant is "one
+   * document at a time" and a chain says exactly that. The cost is that a second
+   * double-click waits for the first open, which is why the body no longer waits
+   * on `firstPaint()` --- see the outline note at the end of it.
+   */
+  function openPath(path: string, resuming = false): Promise<void> {
+    // Both arms, so one document failing to open does not stop the next.
+    openChain = openChain.then(
+      () => openDocument(path, resuming),
+      () => openDocument(path, resuming),
+    );
+    return openChain;
+  }
+
+  /**
    * Opens a document, putting the reader back where they left it.
+   *
+   * Never called directly --- {@link openPath} is the entry point, and going
+   * around it reintroduces the interleaving described there.
    *
    * `resuming` is set only by the launch restore, and changes one thing: a
    * document that no longer opens is not an error to report. Someone who chose
@@ -534,7 +586,7 @@
    * whose last document has since been deleted or unmounted needs an empty
    * window, not a dialog about a file they did not ask for.
    */
-  async function openPath(path: string, resuming = false) {
+  async function openDocument(path: string, resuming = false) {
     error = null;
     opening = true;
     try {
@@ -655,13 +707,40 @@
       // a three-hundred-entry table of contents that is a third of a second of
       // render thread, and the render thread is FIFO --- so asked for at open it
       // would sit in front of the tiles for the page someone is looking at.
+      // Deliberately not awaited --- not the first paint, and not the outline.
+      //
+      // Not awaiting the *outline* was always right: it shares the render thread
+      // with tiles and a document that opens instantly should not wait for its
+      // table of contents. Waiting for the first paint before *asking* is there
+      // because the walk stopped being free: resolving a destination on a page
+      // carrying `/Rotate` needs the page's rotation, `FPDFPage_GetRotation`
+      // needs the page loaded, and that measured 0.17 ms -> 7.5 ms on a
+      // twelve-page fixture, about 1 ms per distinct page named. On a book with
+      // a three-hundred-entry table of contents that is a third of a second of
+      // render thread, and the render thread is FIFO --- so asked for at open it
+      // would sit in front of the tiles for the page someone is looking at.
+      //
+      // What changed is that `openPath` is now a chain, and `firstPaint` waits
+      // up to a second: awaiting it here would hold the *next* document's open
+      // behind a delay that has nothing to do with it. Both halves are already
+      // guarded by `openDoc === wanted`, so letting the whole tail run detached
+      // costs nothing --- an outline for a document nobody is looking at is
+      // dropped exactly as it was before.
       const wanted = doc.id;
-      await firstPaint();
-      void invoke<Outline>("document_outline", { doc: wanted })
+      void firstPaint()
+        .then(() => {
+          // Checked before asking as well as after. The wait is up to a second
+          // and is no longer inside the open, so another document can arrive
+          // during it --- and an outline walk for a file nobody is looking at is
+          // not merely wasted, it is a third of a second of the FIFO render
+          // thread in front of the tiles for the file they *are* looking at.
+          if (openDoc !== wanted) return null;
+          return invoke<Outline>("document_outline", { doc: wanted });
+        })
         .then((result) => {
-          // Another document may have been opened while this was in flight, in
-          // which case this outline belongs to a file nobody is looking at.
-          if (openDoc === wanted) sidebar?.setOutline(result);
+          // And again, because another document may have been opened while the
+          // walk itself was in flight.
+          if (result && openDoc === wanted) sidebar?.setOutline(result);
         })
         .catch(() => {
           if (openDoc === wanted) sidebar?.setOutline(null);
@@ -695,6 +774,11 @@
    */
   const degraded = $derived.by(() => {
     if (!status) return null;
+    // First, because it is the one state waiting does not fix. "preparing page"
+    // in front of a renderer that is erroring on every request is a lie by
+    // omission --- the honest failures here were previously invisible, since
+    // every `catch` in the scroller discarded them whole.
+    if (status.failed > 0) return "some pages could not be drawn";
     if (status.any < 0.999) return "preparing page";
     if (status.sharp < 0.999) return "sharpening";
     return status.pending > 0 ? "loading ahead" : null;

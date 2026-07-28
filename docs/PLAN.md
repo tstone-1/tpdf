@@ -1,8 +1,14 @@
 # tpdf — Architecture and Roadmap
 
-Status: **planning**, pre-Phase-0. Nothing is built yet. This document records the design
-and the reasoning behind it, so that decisions can be revisited on their merits rather
-than re-argued from scratch.
+Status: **Phase 0 closed; Phase 1 in progress.** The viewer runs --- sandboxed worker
+pool, virtual scroller, selection, find, outline, page strip, session restore and
+printing --- on macOS arm64. Windows has never been built. Editing, annotations, forms and
+redaction are not started.
+
+This document records the design and the reasoning behind it, so that decisions can be
+revisited on their merits rather than re-argued from scratch. Sections written before a
+thing was built still describe it in the future tense; §9 carries the verdict on each
+Phase 0 question, and `AGENTS.md` carries what is settled.
 
 Revised 2026-07-26 after an independent audit (Codex, cold read). The audit found the
 first draft's thread-safety model factually wrong, its redaction verifier over-claiming,

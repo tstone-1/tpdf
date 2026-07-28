@@ -24,6 +24,7 @@ use tauri::http::{Request, Response};
 use tauri::UriSchemeResponder;
 
 use crate::render::{RenderService, Tile, TileFormat, TileOutcome, TileRequest};
+use crate::worker::TILE_CAPACITY;
 
 /// Handles one `tile://` request. Never blocks the caller: the render service
 /// invokes the responder from the render thread when the tile is ready.
@@ -106,6 +107,35 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
         return Err(format!("tile size out of range: {width}x{height}"));
     }
 
+    // Refused *here*, before anything renders it. The worker checks too
+    // (`worker_child::render`), but only after `progressive::render_tile` has
+    // allocated `width * height * 4` and drawn into it --- which at the wire
+    // format's own maximum is a 17 GB allocation, made inside the process that is
+    // holding the attacker's document. The boundary contains the damage; it does
+    // not make paying for it sensible. Bounding the request is a subtraction.
+    let bytes = width as usize * height as usize * 4;
+    if bytes > TILE_CAPACITY {
+        return Err(format!(
+            "a {width}x{height} tile is {bytes} bytes and the shared mapping holds {TILE_CAPACITY}"
+        ));
+    }
+
+    // Range-checked like every other field, rather than `as`-cast. A negative
+    // document number silently became `u32::MAX` and an origin past `i32` wrapped
+    // to a plausible one --- neither reaches anything dangerous today, and both
+    // are the kind of quiet coercion this parser refuses everywhere else.
+    let doc = field("doc", doc)?;
+    if doc < 0 || doc > u32::MAX as i64 {
+        return Err(format!("document out of range: {doc}"));
+    }
+
+    let x = field("x", x)?;
+    let y = field("y", y)?;
+    let in_device_range = |value: i64| (i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&value);
+    if !in_device_range(x) || !in_device_range(y) {
+        return Err(format!("tile origin out of range: {x},{y}"));
+    }
+
     let format = match query.and_then(|q| param(q, "fmt")).map(parse_format) {
         Some(Some(f)) => f,
         Some(None) => return Err("fmt must be raw or png".into()),
@@ -147,13 +177,13 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
 
     Ok(TileRequest {
         rid,
-        doc: field("doc", doc)? as u32,
+        doc: doc as u32,
         page: page_index as u32,
         scale: scale_thousandths as f32 / 1000.0,
         turns,
         invert,
-        x: field("x", x)? as i32,
-        y: field("y", y)? as i32,
+        x: x as i32,
+        y: y as i32,
         width: width as u16,
         height: height as u16,
         format,
@@ -286,6 +316,47 @@ mod tests {
         assert!(parse("/1/0/1000/0/0/64/0", None).is_err());
         assert!(parse("/1/0/1000/0/0/65536/64", None).is_err());
         assert!(parse("/1/0/1000/0/0/64/65536", None).is_err());
+    }
+
+    #[test]
+    fn a_tile_larger_than_the_shared_mapping_is_refused_before_it_is_rendered() {
+        // 2048² RGBA is exactly the mapping, so this is the boundary from both
+        // sides: one pixel row more does not fit and must be refused *here*,
+        // rather than after a worker has allocated and drawn it.
+        assert_eq!(ok("/0/0/1000/0/0/2048/2048", None).width, 2048);
+        assert!(parse("/0/0/1000/0/0/2048/2049", None).is_err());
+        assert!(parse("/0/0/1000/0/0/2049/2048", None).is_err());
+        // And the wire format's own maximum, which is the allocation this bound
+        // exists for: 65535² × 4 is about 17 GB.
+        assert!(parse("/0/0/1000/0/0/65535/65535", None).is_err());
+    }
+
+    #[test]
+    fn a_document_number_outside_the_wire_format_is_refused() {
+        // `-1 as u32` is 4294967295, which names no document and so fails
+        // harmlessly downstream --- which is exactly why the coercion survived.
+        assert!(parse("/-1/0/1000/0/0/64/64", None).is_err());
+        assert!(parse("/4294967296/0/1000/0/0/64/64", None).is_err());
+        assert_eq!(ok("/4294967295/0/1000/0/0/64/64", None).doc, u32::MAX);
+    }
+
+    #[test]
+    fn a_tile_origin_outside_the_wire_format_is_refused() {
+        // A wrapped origin renders a real tile from the wrong part of the page,
+        // which is the plausible-wrong-answer failure this parser refuses
+        // everywhere else.
+        assert!(parse("/1/0/1000/2147483648/0/64/64", None).is_err());
+        assert!(parse("/1/0/1000/0/-2147483649/64/64", None).is_err());
+        // The boundaries themselves stay valid, or the check is off by one in
+        // the direction that silently refuses legitimate work.
+        assert_eq!(
+            ok("/1/0/1000/2147483647/-2147483648/64/64", None).x,
+            i32::MAX
+        );
+        assert_eq!(
+            ok("/1/0/1000/2147483647/-2147483648/64/64", None).y,
+            i32::MIN
+        );
     }
 
     #[test]

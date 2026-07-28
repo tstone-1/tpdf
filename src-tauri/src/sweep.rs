@@ -23,27 +23,52 @@ use std::collections::HashSet;
 
 use lopdf::{Document, Object, ObjectId};
 
+/// How deep a single object may nest before the walk refuses to descend.
+///
+/// This runs on input we did not write, in the **app process** rather than in a
+/// worker (see `docs/THREAT-MODEL.md` §3), and the walk below is recursive --- so
+/// without a bound a document nesting arrays a few hundred thousand deep
+/// overflows the stack and takes the application with it. Real structure is
+/// nowhere near: a page tree is a handful of levels and an outline is bounded at
+/// 32 by `outline.rs`.
+///
+/// What happens at the bound is the part that matters. **Refusing is not
+/// optional here**, and truncating would be worse than the overflow it avoids: a
+/// mark-and-sweep that stops descending has not found every reference, so it
+/// would then delete objects that are genuinely reachable and hand back a
+/// document with holes in it --- silently, since the result still parses. So the
+/// depth is reported and every caller turns it into an error.
+pub const MAX_NESTING: usize = 256;
+
 /// Drops every object unreachable from the trailer, and repairs `max_id`.
 ///
 /// Returns how many were collected. Object numbers are deliberately **not**
 /// made contiguous: that is cosmetic, and costs a second quadratic pass.
-pub fn collect(doc: &mut Document) -> usize {
+///
+/// # Errors
+///
+/// An object nesting deeper than [`MAX_NESTING`], which makes the reachable set
+/// incomplete and so makes collecting unsafe --- see that constant.
+pub fn collect(doc: &mut Document) -> Result<usize, String> {
     let before = doc.objects.len();
-    let reachable = reachable(doc);
+    let reachable = reachable(doc)?;
     doc.objects.retain(|id, _| reachable.contains(id));
     doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0);
-    before - doc.objects.len()
+    Ok(before - doc.objects.len())
 }
 
 /// Every object reachable from the trailer, by breadth-first mark.
-#[must_use]
-pub fn reachable(doc: &Document) -> HashSet<ObjectId> {
+///
+/// # Errors
+///
+/// As [`collect`].
+pub fn reachable(doc: &Document) -> Result<HashSet<ObjectId>, String> {
     let mut seen: HashSet<ObjectId> = HashSet::new();
     let mut queue: Vec<ObjectId> = Vec::new();
 
     let trailer = Object::Dictionary(doc.trailer.clone());
     let mut roots = Vec::new();
-    references(&trailer, &mut roots);
+    references(&trailer, &mut roots)?;
     for id in roots {
         if seen.insert(id) {
             queue.push(id);
@@ -57,23 +82,101 @@ pub fn reachable(doc: &Document) -> HashSet<ObjectId> {
             continue;
         };
         let mut referenced = Vec::new();
-        references(object, &mut referenced);
+        references(object, &mut referenced)?;
         for id in referenced {
             if seen.insert(id) {
                 queue.push(id);
             }
         }
     }
-    seen
+    Ok(seen)
 }
 
 /// Every object id named directly by `object`.
-pub fn references(object: &Object, out: &mut Vec<ObjectId>) {
+///
+/// # Errors
+///
+/// Nesting deeper than [`MAX_NESTING`].
+pub fn references(object: &Object, out: &mut Vec<ObjectId>) -> Result<(), String> {
+    descend(object, out, 0)
+}
+
+/// [`references`], carrying how deep it already is.
+fn descend(object: &Object, out: &mut Vec<ObjectId>, depth: usize) -> Result<(), String> {
+    if depth > MAX_NESTING {
+        return Err(format!("an object nests deeper than {MAX_NESTING} levels"));
+    }
     match object {
         Object::Reference(id) => out.push(*id),
-        Object::Array(items) => items.iter().for_each(|i| references(i, out)),
-        Object::Dictionary(dictionary) => dictionary.iter().for_each(|(_, v)| references(v, out)),
-        Object::Stream(stream) => stream.dict.iter().for_each(|(_, v)| references(v, out)),
+        Object::Array(items) => {
+            for item in items {
+                descend(item, out, depth + 1)?;
+            }
+        }
+        Object::Dictionary(dictionary) => {
+            for (_, value) in dictionary.iter() {
+                descend(value, out, depth + 1)?;
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, value) in stream.dict.iter() {
+                descend(value, out, depth + 1)?;
+            }
+        }
         _ => {}
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{references, MAX_NESTING};
+    use lopdf::Object;
+
+    /// An array nested `depth` levels, with a reference at the bottom.
+    fn nested(depth: usize) -> Object {
+        let mut object = Object::Reference((7, 0));
+        for _ in 0..depth {
+            object = Object::Array(vec![object]);
+        }
+        object
+    }
+
+    #[test]
+    fn ordinary_nesting_is_walked_to_the_bottom() {
+        // The control. Without it every assertion below is satisfied by a walk
+        // that refuses everything, which is how a bound fails.
+        let mut out = Vec::new();
+        references(&nested(8), &mut out).expect("eight levels is ordinary structure");
+        assert_eq!(out, vec![(7, 0)]);
+    }
+
+    #[test]
+    fn nesting_at_the_bound_is_still_walked() {
+        // The boundary from the permitted side, or the check is off by one in
+        // the direction that refuses a document nobody would call hostile.
+        let mut out = Vec::new();
+        references(&nested(MAX_NESTING), &mut out).expect("the bound itself must be allowed");
+        assert_eq!(out, vec![(7, 0)]);
+    }
+
+    #[test]
+    fn nesting_past_the_bound_is_refused_rather_than_truncated() {
+        // Refused, not "walked as far as it got": a partial reachable set makes
+        // `collect` delete live objects, which produces a document that still
+        // parses and has holes in it.
+        //
+        // One honest limit, worth stating rather than leaving to be discovered.
+        // This asserts the *bound fires*, not that an unbounded walk would have
+        // overflowed --- provoking that needs an object nested hundreds of
+        // thousands deep, and `lopdf::Object`'s derived `Drop` is itself
+        // recursive, so building one to prove the point would overflow the test
+        // thread on the way out rather than on the way in. The bound is the
+        // reason no such object is ever walked; that it is reached at 257 levels
+        // is what can be checked here.
+        let mut out = Vec::new();
+        let error = references(&nested(MAX_NESTING + 1), &mut out)
+            .expect_err("nesting past the bound must be refused");
+        assert!(error.contains(&MAX_NESTING.to_string()), "{error}");
     }
 }

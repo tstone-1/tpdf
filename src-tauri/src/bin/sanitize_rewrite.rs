@@ -433,7 +433,7 @@ fn route_lopdf_mark(input: &Path, output: &Path) -> Result<String, String> {
     let before = doc.objects.len();
     // The sweep itself lives in `tpdf_lib::sweep`, because printing a page range
     // needs the same walk and two copies of it is two things to keep in step.
-    let collected = sweep::collect(&mut doc);
+    let collected = sweep::collect(&mut doc)?;
     doc.save(output).map_err(|e| format!("save failed: {e}"))?;
     Ok(format!("collected {collected} of {before} objects"))
 }

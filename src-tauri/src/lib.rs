@@ -25,6 +25,7 @@ pub mod sweep;
 pub mod text;
 pub mod worker;
 pub mod worker_child;
+pub mod workers;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
