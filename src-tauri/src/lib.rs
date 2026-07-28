@@ -188,6 +188,32 @@ async fn open_document(
     rx.recv().map_err(|_| "render thread stopped".to_string())?
 }
 
+/// Releases a document the reader has finished with.
+///
+/// Called when the window moves to another file, and it matters more than it
+/// looks: under the worker backend an unreleased document is a sandboxed
+/// process, not a heap allocation, so a session that opens a dozen files would
+/// otherwise be holding a dozen of them.
+///
+/// It waits for the render thread's reply rather than returning as soon as the
+/// job is posted, so the promise resolving means the process is really gone and
+/// a refusal has somewhere to be reported. Whether the *caller* waits on that
+/// promise is its own decision, and `App.svelte` does not --- the render thread
+/// is FIFO, so this is already queued behind everything the outgoing document
+/// had outstanding, and holding the reader there would put a process teardown on
+/// the path to the first page of the file they asked for.
+#[tauri::command]
+async fn close_document(service: tauri::State<'_, RenderService>, doc: u32) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    service.close(
+        doc,
+        Box::new(move |result| {
+            let _ = tx.send(result);
+        }),
+    );
+    rx.recv().map_err(|_| "render thread stopped".to_string())?
+}
+
 /// Extracts one page's characters and their positions.
 ///
 /// Selection, search and the accessibility tree all read this, and they read
@@ -793,6 +819,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_document,
+            close_document,
             page_text,
             search_page,
             document_outline,

@@ -43,7 +43,14 @@
   let palette: Palette | null = null;
   let sidebar: Sidebar | null = null;
   let findTimer = 0;
-  /** Document the sidebar belongs to, so a late outline for an old one is dropped. */
+  /**
+   * The document the backend is holding for this window, or -1 for none.
+   *
+   * Two jobs, and the second is why it is set the instant the open returns: a
+   * late outline for a document nobody is looking at is dropped by comparing
+   * against it, and it is also what the *next* open releases. A document the
+   * backend has open and the frontend has forgotten is a leaked process.
+   */
   let openDoc = -1;
 
   /** Path of the open document, which is what a remembered place is keyed on. */
@@ -532,6 +539,28 @@
     opening = true;
     try {
       const doc = await invoke<DocumentInfo>("open_document", { path });
+
+      // Released only once the replacement exists, so a file that turns out not
+      // to open leaves the reader with what they had --- and recorded here,
+      // before anything else can throw, because from this line on the backend is
+      // holding this document whether or not it ever reaches the screen.
+      //
+      // Under the worker backend this is a process rather than an allocation:
+      // without it a session that opens a dozen files holds a dozen sandboxed
+      // children. Not awaited --- the render thread is FIFO, so the close is
+      // already behind everything the outgoing document had outstanding, and
+      // making the reader wait for a process teardown on the way to their first
+      // page would be paying for it twice.
+      const outgoing = openDoc;
+      openDoc = doc.id;
+      if (outgoing >= 0 && outgoing !== doc.id) {
+        void invoke("close_document", { doc: outgoing }).catch((e) => {
+          // Not raised to the reader: the file they asked for is open and fine,
+          // and this is a leak rather than anything they can act on.
+          console.warn(`could not release document ${outgoing}: ${e}`);
+        });
+      }
+
       const page = doc.pages[0];
       if (!page) throw new Error("document reports no pages");
 
@@ -627,7 +656,6 @@
       // render thread, and the render thread is FIFO --- so asked for at open it
       // would sit in front of the tiles for the page someone is looking at.
       const wanted = doc.id;
-      openDoc = wanted;
       await firstPaint();
       void invoke<Outline>("document_outline", { doc: wanted })
         .then((result) => {

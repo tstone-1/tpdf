@@ -2671,14 +2671,10 @@ half-answer until a Windows build has ever run.
 below closed it on 2026-07-28, and the shape predicted here is the shape it took — one
 worker serves one document, so there was nothing to re-establish but the document itself.
 
-**A document is never released, and that now costs a process.** `open_document` appends and
-nothing removes: opening a second file in the same window leaves the first one's document
-open, exactly as it did in-process. What changed is the price of the leak rather than the
-leak itself — `worker-probe` measured an idle worker's footprint at 7.8 MB on `rotated-90`,
-17.5 MB on `text-heavy` and 48.2 MB on the A0 sheet, so a session that opens a dozen files
-ends up holding a dozen sandboxed processes. Reclaiming needs an answer to "is any request
-still naming this id", which the document ids being array indices makes awkward, so it is
-recorded here rather than guessed at.
+**A document was never released, and that made the leak a process.** Closed on 2026-07-28 —
+see *A document can be released* below. The question this paragraph left open, "is any
+request still naming this id", turned out not to need an answer: the render thread is FIFO,
+so a close lands behind everything already queued for that document.
 
 ##### The service switches over — 2026-07-28
 
@@ -2844,9 +2840,58 @@ replaced made them **vanish** rather than fail: no `[FAIL]`, no `[SKIP]`, and th
 was the total dropping from 23 to 22. Both were caught by controls that existed because the
 prediction was written down first.
 
-**Still not done:** a pool, and reclaiming a document nobody is reading. The leak recorded
-above is unchanged — `Held` is appended and never removed — and a restart does not change its
-price, only who is holding it.
+**Still not done:** a pool. Reclaiming a document is below.
+
+##### A document can be released — 2026-07-28
+
+The leak that the boundary made expensive: `open` appended and nothing ever removed, so a
+window that moved to another file left the first one's worker alive, holding the 7.8–48.2 MB
+`worker-probe` measured per corpus. `RenderService::close` releases it, and `App.svelte`
+calls it when the reader opens something else.
+
+The question the earlier note left open — *is any request still naming this id* — did not
+need an answer. **The render thread is FIFO**, so a close is queued behind everything the
+outgoing document already had outstanding, and there is no instant at which a request
+outlives its document. No reference count, no epoch, no lock.
+
+What did need deciding is what a released id *becomes*. It leaves a **hole**: the `Vec`
+index is the id, so removing the entry renumbers every document after it, and a request
+naming the closed id is then answered in full from a document the caller has never asked
+about. That is not a hypothesis — the mutation that removes instead of holing returned
+`rendered 1048576 bytes` of the wrong file, and the check that caught it was the one
+asserting a *refusal*. Ids are therefore never reused, and the two failures are named apart:
+past the end is a caller that invented an id, a hole is a caller still using one it closed.
+
+Five checks in `backend-probe`, two documents open at once so that a close has something to
+be measured against — "the worker is gone" is otherwise equally true of a close that killed
+every worker there was, which is the failure that matters to a reader with two files open.
+On `vector-heavy`: **29/29**.
+
+**Four mutations, four caught — but two of them only after the run found real defects.**
+
+| mutation | which check went red |
+|---|---|
+| close leaves the slot in place | the process is killed; a closed document is refused |
+| close removes the entry instead of holing it | the *other* document renders; the refusal; the id is not reused |
+| a hole reads as out of range | the refusal's wording — **only after the message was shared** |
+| close does not clear the sender slot | the descriptor count — **only after that check existed** |
+
+The third survived at first because `open_slot` and `open_slot_mut` each spelled the
+distinction out, and the worker path goes through one while the in-process tile path goes
+through the other: each check passed through whichever copy was still right. The fourth
+survived because nothing counted anything. Its leak is a descriptor per document ever
+opened — the withdrawal broadcast holds a *clone* of the worker's `ChildStdin`, so killing
+the worker does not close the pipe — and it has no functional symptom at all, because writing
+to a dead pipe fails harmlessly. `/dev/fd` is what discriminates: 9 descriptors before the
+second open and 9 after the close, against 10 with the clearing removed.
+
+One thing is pinned less tightly than the rest, and it is worth saying so. `backend-probe`
+drives `RenderService` directly, so it cannot see whether the **Tauri command** exists under
+the name `App.svelte` invokes or takes an argument called `doc` — a mistake there fails only
+at runtime, only when a second file is opened, and only as a console warning. `viewercheck.ts`
+covers that seam with two checks, the second being the control: releasing the same id twice
+must be refused *by that id*, since "no error" is equally true of a command that ignored its
+argument.
 
 ### Phase 2 — Editing foundation
 

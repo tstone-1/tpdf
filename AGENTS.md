@@ -2107,6 +2107,52 @@ failing check printed *"1048576 bytes, identical to the tile before it died"* ne
 line has to be computed from the same quantity as the verdict**, or it will eventually
 contradict it --- at exactly the moment someone is relying on it.
 
+### A released id must leave a hole, because removing it renumbers the rest
+
+Documents live in a `Vec` whose index *is* the id the caller was given. Releasing one by
+removing the entry is the obvious implementation and is the worst available outcome: every
+later document shifts down one, so a request naming the *closed* id is answered, in full,
+from a document the caller has never asked about. Measured 2026-07-28 by mutation --- with
+`Vec::remove` in place of a hole, a tile request for the closed document returned
+`rendered 1048576 bytes` of the wrong file, and the check that noticed was the one asserting
+the request is **refused**, not any check on the pixels.
+
+So a closed slot is `None`, ids are never reused, and the two failures are named apart: an id
+past the end is a caller that invented one, a hole is a caller still using a document it
+closed itself. The same applies to the parallel `Vec` of withdrawal senders, which is
+positional for the same reason.
+
+Note what protects the *in-flight* case, because it is not a lock: the render thread is FIFO,
+so a close lands behind everything already queued for that document. There is no window in
+which a request outlives its document, and nothing needed a reference count to say so.
+
+### Two copies of a distinction drift, and a mutation of one survives
+
+`open_slot` and `open_slot_mut` each spelled out the same two error messages. Mutating one of
+them to collapse the distinction changed **nothing any check could see** --- because the
+worker path reaches documents through the `_mut` variant and the in-process tile path does
+not, so each check went through whichever copy was still correct.
+
+That reads exactly like a distinction nothing depends on, which is the wrong conclusion:
+both copies are load-bearing, on different paths. The repair is to share the message, after
+which the same mutation goes red immediately. **When a mutation of duplicated logic survives,
+check whether the callers are split across the copies before deciding the logic is
+unnecessary.**
+
+### Dropping the owner does not close a pipe something else has cloned
+
+`Worker` owns its child's stdin --- and the withdrawal broadcast holds a **clone** of the
+`Arc<Mutex<ChildStdin>>`, because a withdrawal has to be sendable while the owning thread is
+blocked reading a reply. So killing the worker and dropping it leaves the write end of the
+pipe open, held by an entry in a `Vec` nobody thinks of as owning anything. One descriptor
+per document the reader ever opened, invisible to every functional check: writing to it fails
+harmlessly, so nothing misbehaves.
+
+`/dev/fd` counts what the process actually holds, and the assertion that discriminates is
+that closing a document gives back exactly what opening it took --- 9 before, 9 after, and 10
+with the clearing removed. **A resource whose leak has no functional symptom needs a check
+that counts the resource**, and the kernel's own listing is the place to count it.
+
 ### The test fixtures are generated, not committed
 
 `testdata/*.pdf` is gitignored. Regenerate with:

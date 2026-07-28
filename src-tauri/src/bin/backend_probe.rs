@@ -514,7 +514,127 @@ fn main() {
         },
     );
 
+    // ------------------------------------------------------ releasing a document
+    // Two documents from the same file, so that closing one has something to be
+    // measured against: a close that took down more than it was asked to would
+    // otherwise look identical to one that worked.
+    let baseline_fds = open_descriptors();
+    let second_doc = wait(|reply| workers.open(document.clone(), false, reply));
+    let closing = match &second_doc {
+        Ok(info) => {
+            let held = worker_pids();
+            let closed = wait(|reply| workers.close(worker_doc.id, reply));
+            let left = worker_pids();
+            Some((info.id, held, closed, left))
+        }
+        Err(_) => None,
+    };
+
+    match &closing {
+        Some((_, held, closed, left)) => {
+            report.check(
+                "closing a document kills the process holding it",
+                closed.is_ok() && held.len() == 2 && left.len() == 1,
+                format!("{held:?} then {left:?}"),
+            );
+            // The point of the second document. Without it "the worker is gone"
+            // is equally satisfied by a close that killed every worker there
+            // was, which is the failure that matters to a reader with two files
+            // open and would look exactly the same here.
+            let survivor = tile_of(&workers, second_doc.as_ref().expect("open"), 30, at);
+            report.check(
+                "the document that was not closed still renders",
+                matches!((&survivor, &worker_tile), (Ok(new), Ok(old)) if new.bytes == old.bytes),
+                match &survivor {
+                    Ok(t) => format!("{} bytes from document {:?}", t.bytes.len(), left),
+                    Err(e) => e.clone(),
+                },
+            );
+            // A closed id must be refused rather than answered from whatever is
+            // now at that index. Removing the entry instead of holing it shifts
+            // every later document down one, and the reader gets tiles from the
+            // wrong file with nothing anywhere reporting a problem.
+            let stale = wait(|reply| workers.tile(request(worker_doc.id, 31, at), reply));
+            report.check(
+                "a closed document is refused rather than reused",
+                stale.as_ref().err().is_some_and(|e| e.contains("closed")),
+                match &stale {
+                    Ok(outcome) => format!("answered anyway: {}", outcome_of(&Ok(outcome.clone()))),
+                    Err(e) => e.clone(),
+                },
+            );
+            // Everything opening a document took, given back. A worker costs
+            // four descriptors here --- the document mapping, the tile mapping,
+            // and the two ends of its pipe --- and the withdrawal broadcast
+            // holds a *clone* of the pipe's write half, so dropping the worker
+            // does not close it. Without clearing that entry the count settles
+            // one above where it started, which is a descriptor per document a
+            // reader ever opened and nothing else in this file can see.
+            let settled = open_descriptors();
+            report.check(
+                "closing gives back every descriptor opening took",
+                settled == baseline_fds,
+                format!("{baseline_fds} before the second open, {settled} after the close"),
+            );
+
+            // And the id itself is spent. A backend that filled the hole would
+            // hand this id to a document the caller has never seen, while every
+            // check above still passed.
+            let reopened = wait(|reply| workers.open(document.clone(), true, reply));
+            report.check(
+                "a closed id is not handed out to the next document",
+                reopened.as_ref().is_ok_and(|info| {
+                    info.id != worker_doc.id && info.id != second_doc_id(&second_doc)
+                }),
+                match &reopened {
+                    Ok(info) => format!("id {} after closing {}", info.id, worker_doc.id),
+                    Err(e) => e.clone(),
+                },
+            );
+        }
+        None => {
+            for name in [
+                "closing a document kills the process holding it",
+                "the document that was not closed still renders",
+                "a closed document is refused rather than reused",
+                "closing gives back every descriptor opening took",
+                "a closed id is not handed out to the next document",
+            ] {
+                report.check(name, false, "a second document would not open");
+            }
+        }
+    }
+
+    // The other backend closes too, and it is not the same code: no process to
+    // kill, no sender to clear, just the Pdfium handle dropped. It shares only
+    // the lookup, which is exactly the part a check here can confirm agrees.
+    let native_closed = wait(|reply| in_process.close(native_doc.id, reply));
+    let native_stale = wait(|reply| in_process.tile(request(native_doc.id, 32, at), reply));
+    report.check(
+        "the in-process backend releases a document too",
+        native_closed.is_ok()
+            && native_stale
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("closed")),
+        match (&native_closed, &native_stale) {
+            (Err(e), _) => e.clone(),
+            (Ok(()), Err(e)) => e.clone(),
+            (Ok(()), Ok(outcome)) => {
+                format!("answered anyway: {}", outcome_of(&Ok(outcome.clone())))
+            }
+        },
+    );
+
     report.finish();
+}
+
+/// The id of a document that may not have opened.
+///
+/// `u32::MAX` for one that did not, which no real id reaches --- so a comparison
+/// against it is false rather than accidentally true.
+fn second_doc_id(info: &Result<DocumentInfo, String>) -> u32 {
+    info.as_ref().map_or(u32::MAX, |info| info.id)
 }
 
 /// Issues a tile and withdraws it once the worker is inside Pdfium, reporting
@@ -565,6 +685,17 @@ fn withdrawal_needs_a_slow_page(render_ms: f64) -> String {
          {WITHDRAWABLE_MS:.0} ms a withdrawal needs to arrive --- run this on \
          testdata/vector-heavy.pdf"
     )
+}
+
+/// How many descriptors this process currently holds open.
+///
+/// `/dev/fd` is the kernel's own answer, listing exactly what this process has.
+/// A count rather than a set because the question is whether closing a document
+/// gives back what opening it took, and the numbers themselves are reused.
+fn open_descriptors() -> usize {
+    // The read_dir handle is itself a descriptor and is counted, which is fine:
+    // it is counted identically in both samples, so it cancels.
+    std::fs::read_dir("/dev/fd").map_or(0, |entries| entries.count())
 }
 
 /// The worker processes this probe has spawned, from the OS process table.
