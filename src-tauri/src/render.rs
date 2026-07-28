@@ -63,13 +63,16 @@
 //! - **Dequeue order is still FIFO**, because there is still one channel. Only
 //!   *execution* overlaps. That is what lets [`Workers::close`] stay correct by
 //!   draining rather than by taking a lock over the whole service.
+//! - **Growth is undone.** A worker that has sat idle past [`DEFAULT_IDLE`] is
+//!   killed, down to one per document, so a burst of scrolling does not decide
+//!   what the session keeps. See [`Workers::retire_idle`].
 //! - **No lock is held across a render.** Every critical section here is pool
 //!   bookkeeping; the render happens in another process entirely.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
 
@@ -351,6 +354,26 @@ impl RenderService {
     /// Ignored in-process: concurrent Pdfium in one process is undefined
     /// behaviour, so that backend is one thread whatever is asked for.
     pub fn start_with_pool(library_dir: PathBuf, backend: Backend, pool: usize) -> Self {
+        Self::start_tuned(library_dir, backend, pool, idle_timeout())
+    }
+
+    /// Starts the render thread with an explicit pool size and idle timeout.
+    ///
+    /// The timeout is a parameter for the same reason the pool size is: a harness
+    /// needs to watch a retirement happen without waiting the default thirty
+    /// seconds for it, and `TPDF_IDLE_MS` would set it for every service in the
+    /// process --- including the ones a check is using as controls. `AGENTS.md`
+    /// records a control in this repository contaminated by the phase that ran
+    /// before it; a shared environment variable is the same hazard with a wider
+    /// blast radius.
+    ///
+    /// Ignored in-process, where there are no worker processes to retire.
+    pub fn start_tuned(
+        library_dir: PathBuf,
+        backend: Backend,
+        pool: usize,
+        idle_after: Duration,
+    ) -> Self {
         let pool = pool.max(1);
         let (tx, rx) = channel::<Job>();
         let queue = SharedQueue::default();
@@ -373,12 +396,13 @@ impl RenderService {
                 None
             }
             Backend::Worker => {
-                let engine = Arc::new(Workers::new(library_dir, queue.clone(), pool));
+                let engine = Arc::new(Workers::new(library_dir, queue.clone(), pool, idle_after));
                 // Immediately, and this is the point of the whole mechanism: the
                 // link, the sandbox and the font walk happen while Tauri and
                 // WebKit are still coming up -- ~250 ms of which none is ours --
                 // rather than while a reader waits for a first page.
                 engine.prewarm();
+                reap_idle(&engine, idle_after);
                 serve_pooled(rx, engine.clone(), service_threads(pool));
                 Some(engine)
             }
@@ -669,6 +693,39 @@ fn serve_pooled(rx: Receiver<Job>, engine: Arc<Workers>, threads: usize) {
     }
 }
 
+/// Kills idle workers on a timer, until the service is gone.
+///
+/// A `Weak`, and that is the whole design of this thread rather than a detail.
+/// The reaper must not be what keeps the pool alive: the service's threads end
+/// when the last [`RenderService`] handle drops and the channel closes, and their
+/// `Arc`s go with them, so a failed upgrade is how this thread learns to stop. A
+/// strong handle would keep every worker of every document --- and the documents'
+/// mappings --- alive for the life of the process, which is a worse leak than the
+/// one this function exists to fix.
+///
+/// The sleep comes before the upgrade, so the thread outlives the service by at
+/// most one interval. That is deliberate rather than accidental: checking first
+/// would spend a sweep on a service nobody has used yet.
+fn reap_idle(engine: &Arc<Workers>, idle_after: Duration) {
+    let weak = Arc::downgrade(engine);
+    let interval = sweep_interval(idle_after);
+    std::thread::Builder::new()
+        .name("tpdf-reaper".into())
+        .spawn(move || loop {
+            std::thread::sleep(interval);
+            // Not `while let`: the upgraded handle must be dropped before the
+            // next sleep, or the service stays alive for the whole interval
+            // after its last user let go of it.
+            let Some(engine) = weak.upgrade() else { return };
+            engine.retire_idle();
+        })
+        // Failure is silent for the same reason a failed prewarm is: retirement
+        // is an optimisation, and a machine that cannot spawn this thread still
+        // reads documents. What it does not do is grow without bound --- the
+        // capacity ceiling is a separate mechanism and is unaffected.
+        .ok();
+}
+
 /// Fails every job with the same message, for a backend that never started.
 fn drain(rx: Receiver<Job>, error: &str) {
     for job in rx {
@@ -838,9 +895,48 @@ impl Engine for InProcess {
 /// document, which `worker-probe` measured at 7.8--48.2 MB depending on the
 /// corpus, so a fully grown pool on the A0 sheet is about 290 MB. What makes
 /// that affordable is that growth is lazy --- a reader turning one page at a
-/// time never has more than one worker. What makes it a real cost is that
-/// nothing retires an idle one afterwards.
+/// time never has more than one worker --- and that it is given back again once
+/// the scrolling stops. See [`DEFAULT_IDLE`].
 pub const DEFAULT_POOL: usize = 6;
+
+/// How long a worker may sit idle before it is killed.
+///
+/// The pool exists for a *burst* --- a screenful of tiles, a fast scroll --- and
+/// a burst is over long before the reader is. Without this the peak a session
+/// ever reached is what it keeps: `pool-bench --mode retire` measures a grown
+/// pool on the A0 sheet and what retiring it gives back, and that is the number
+/// this constant is chosen against rather than a feeling about tidiness.
+///
+/// Thirty seconds is a policy choice and both directions of it cost something
+/// real, so it is worth stating which. Shorter gives the memory back sooner and
+/// charges the *reader* for it: measured, the first screenful after a retirement
+/// costs **+65 ms on 811 ms** on the A0 sheet and **+15 ms on 2.5 ms** on the
+/// text corpus --- a spawn and a fresh parse per worker, paid concurrently.
+/// Longer keeps processes a reader who has stopped scrolling has no use for.
+/// Thirty is past any plausible pause inside one gesture and well short of a
+/// coffee break.
+///
+/// **Retirement is polled, and that is sound here in a way it is not elsewhere.**
+/// `AGENTS.md` records that polling a child's footprint cannot see a burst
+/// smaller than interval x growth rate --- because the thing being watched is an
+/// *event*. Idleness is a *state*: a worker that crossed the threshold is still
+/// over it at the next sweep, so a coarse interval delays a retirement and can
+/// never miss one.
+pub const DEFAULT_IDLE: Duration = Duration::from_secs(30);
+
+/// Workers a document keeps however long it idles.
+///
+/// One, not zero, and the difference is what a reader feels on coming back to a
+/// document they left open. Retiring the last worker would give back its 7.8--48.2
+/// MB and charge the next page turn a spawn plus a full re-parse --- the
+/// stall being paid at exactly the moment someone is watching. Keeping one still
+/// returns **242.5 MB of 289.9** on the A0 sheet, which is 84% of it.
+///
+/// It also keeps an invariant the rest of this module reads as obvious: an open
+/// document has a process holding it. Nothing here would break at zero --- the
+/// checkout path spawns from `spawned == 0` and the close drain is trivially
+/// satisfied by it --- which is precisely why the reason is written down.
+const KEPT_WARM: usize = 1;
 
 /// How many threads serve the job queue, for a given per-document pool.
 ///
@@ -875,6 +971,40 @@ pub fn pool_size() -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|size| *size > 0)
         .unwrap_or(DEFAULT_POOL)
+}
+
+/// How long a worker may idle, in milliseconds, from `TPDF_IDLE_MS`.
+///
+/// Zero is **accepted and means zero**: retire at the first sweep. It is not a
+/// sentinel for "off", and there deliberately is no spelling for off ---
+/// `AGENTS.md` records a field in this repository where a "no value" marker was
+/// drawn from the value's own range and collided with a real one the moment the
+/// timing was right. A caller that wants no retirement asks for a long timeout,
+/// which is a quantity rather than a special case.
+///
+/// # Panics
+///
+/// Never: an unreadable value falls back to the default, as `TPDF_POOL` does and
+/// for the same reason --- unlike `TPDF_BACKEND`, a wrong value here cannot make
+/// two measurements silently incomparable, because every harness that depends on
+/// the timeout is handed one explicitly rather than reading it from here.
+#[must_use]
+pub fn idle_timeout() -> Duration {
+    std::env::var("TPDF_IDLE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(DEFAULT_IDLE, Duration::from_millis)
+}
+
+/// How often the reaper looks, for a given idle timeout.
+///
+/// A quarter of it, so a worker is killed between one and one-and-a-quarter
+/// timeouts after its last use. Clamped at both ends: the floor keeps a
+/// harness's short timeout from spinning a thread, and the ceiling keeps the
+/// default's sweep at five seconds rather than seven and a half, which costs
+/// nothing --- a sweep is a lock and a subtraction per document.
+fn sweep_interval(idle_after: Duration) -> Duration {
+    (idle_after / 4).clamp(Duration::from_millis(10), Duration::from_secs(5))
 }
 
 /// The slot a warmed, documentless worker waits in.
@@ -937,14 +1067,32 @@ impl SpareSlot {
     }
 }
 
+/// A worker waiting in a pool, and since when.
+///
+/// The timestamp is what retirement is decided on, and it belongs here rather
+/// than on `Worker` because it is a fact about the *pool's* use of the process,
+/// not about the process: a worker checked out and back is the same child with a
+/// new idle time.
+struct Idle {
+    worker: Worker,
+    /// When it was last returned to the pool.
+    since: Instant,
+}
+
 /// One open document: its bytes, and the pool of processes parsing them.
 struct Held {
     /// The document mapping, owned here rather than by any one worker so that
     /// every worker in the pool --- and every replacement for a dead one --- is
     /// handed the same bytes. See [`Worker::spawn_shared`].
     doc: Arc<Shm>,
-    /// Workers not currently serving a request.
-    idle: Vec<Worker>,
+    /// Workers not currently serving a request, oldest first.
+    ///
+    /// Pushed at the back and popped from the back, so the *front* is the coldest
+    /// end and is where [`Workers::retire_idle`] takes from. Order is a
+    /// convenience rather than the mechanism --- each entry carries its own
+    /// timestamp and is judged on that --- but it means the survivor of a
+    /// retirement is the worker a checkout would have reached for anyway.
+    idle: Vec<Idle>,
     /// How many exist at all, idle or checked out. Not `idle.len()`: that would
     /// grow the pool again every time one was busy.
     spawned: usize,
@@ -986,17 +1134,31 @@ struct Workers {
     /// sandbox floor and the ~7.4 ms system-font walk. What it cannot remove is
     /// the page parse --- the A0 sheet still costs 48 ms of its 56.
     spare: Spare,
+    /// How long a worker may sit idle before [`Workers::retire_idle`] kills it.
+    ///
+    /// Held rather than read from the environment where it is used, so that a
+    /// benchmark can run two services at different timeouts in one process ---
+    /// the same reason `capacity` is a field. It does **not** apply to the spare
+    /// above: that is one process whose entire purpose is to be waiting, and
+    /// retiring it would be retiring the mechanism.
+    idle_after: Duration,
     queue: SharedQueue,
 }
 
 impl Workers {
-    fn new(library_dir: PathBuf, queue: SharedQueue, capacity: usize) -> Self {
+    fn new(
+        library_dir: PathBuf,
+        queue: SharedQueue,
+        capacity: usize,
+        idle_after: Duration,
+    ) -> Self {
         Self {
             spare: Spare::default(),
             library_dir,
             docs: Mutex::new(Vec::new()),
             returned: Condvar::new(),
             capacity,
+            idle_after,
             queue,
         }
     }
@@ -1097,8 +1259,8 @@ impl Workers {
         let mut docs = self.lock();
         loop {
             let held = open_slot_mut(&mut docs, doc)?;
-            if let Some(worker) = held.idle.pop() {
-                return Ok(worker);
+            if let Some(idle) = held.idle.pop() {
+                return Ok(idle.worker);
             }
             if held.spawned < self.capacity {
                 // The reservation is taken *before* the lock is released, so two
@@ -1145,11 +1307,14 @@ impl Workers {
         Ok(worker)
     }
 
-    /// Returns a worker to its pool.
+    /// Returns a worker to its pool, and starts its idle clock.
     fn checkin(&self, doc: u32, worker: Worker) {
         let mut docs = self.lock();
         match open_slot_mut(&mut docs, doc) {
-            Ok(held) => held.idle.push(worker),
+            Ok(held) => held.idle.push(Idle {
+                worker,
+                since: Instant::now(),
+            }),
             // The document was closed while this worker was out. Dropping it
             // kills it --- and `close` is waiting for exactly this, so the
             // notify below is what lets it finish.
@@ -1176,6 +1341,63 @@ impl Workers {
         }
         drop(docs);
         self.returned.notify_all();
+    }
+
+    /// Kills every worker that has idled past the timeout, down to [`KEPT_WARM`].
+    ///
+    /// This is what stops the pool's peak being what the session keeps. Growth is
+    /// driven by contention and contention is a burst --- a screenful, a fast
+    /// scroll --- so without this, one flick through a large document leaves six
+    /// processes each holding their own parse for as long as the file is open.
+    ///
+    /// The bookkeeping has to move together with the processes, and each half is
+    /// load-bearing for a different reason:
+    ///
+    /// - **`spawned` comes down with them**, or the pool believes in workers that
+    ///   do not exist: [`Workers::checkout`] would refuse to grow past a ceiling
+    ///   nothing is under, and [`Workers::close`] would wait forever for a worker
+    ///   that can never come home.
+    /// - **The sender goes too.** It holds a *clone* of the child's stdin, so
+    ///   dropping the worker does not close the pipe --- that is a descriptor per
+    ///   worker ever retired, with no functional symptom at all, because writing
+    ///   to a dead pipe fails harmlessly. `discard` learned this the same way.
+    ///
+    /// Returns how many were killed, for a caller that wants to say so.
+    fn retire_idle(&self) -> usize {
+        // Collected under the lock and killed outside it. `Worker`'s own `Drop`
+        // kills and reaps, measured at 1.2 ms each, and every other document's
+        // threads would be waiting on the table for the duration.
+        let mut retired: Vec<Worker> = Vec::new();
+        {
+            let mut docs = self.lock();
+            for held in docs.iter_mut().flatten() {
+                // Counted against everything alive, not against what is idle: a
+                // document with one worker out and one waiting has two, and the
+                // waiting one is not the last.
+                let mut may_go = held.spawned.saturating_sub(KEPT_WARM);
+                let mut index = 0;
+                while index < held.idle.len() && may_go > 0 {
+                    if held.idle[index].since.elapsed() < self.idle_after {
+                        index += 1;
+                        continue;
+                    }
+                    let idle = held.idle.remove(index);
+                    held.spawned = held.spawned.saturating_sub(1);
+                    held.senders.retain(|(pid, _)| *pid != idle.worker.pid());
+                    retired.push(idle.worker);
+                    may_go -= 1;
+                }
+            }
+        }
+
+        let count = retired.len();
+        drop(retired);
+        if count > 0 {
+            // A close is waiting on exactly this condition, and a retirement
+            // changes both sides of it.
+            self.returned.notify_all();
+        }
+        count
     }
 
     /// Sends a withdrawal to every worker of every open document.
@@ -1404,7 +1626,10 @@ impl Engine for Workers {
             doc,
             senders: vec![(worker.pid(), worker.sender())],
             spawned: 1,
-            idle: vec![worker],
+            idle: vec![Idle {
+                worker,
+                since: Instant::now(),
+            }],
         }));
         drop(docs);
         mark("document open complete");

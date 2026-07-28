@@ -44,6 +44,36 @@ const TILE: u16 = 512;
 /// test is how a broken mechanism reports `[SKIP]` instead of `[FAIL]`.
 const WITHDRAWABLE_MS: f64 = 120.0;
 
+/// An idle timeout no run reaches, for services whose pools must hold still.
+///
+/// A quantity rather than a flag, because `render.rs` deliberately has no
+/// spelling for "off" --- a "no value" marker drawn from the value's own range is
+/// how a sentinel collides with a real value the moment the timing is right.
+const NO_RETIRE: Duration = Duration::from_secs(3600);
+
+/// The idle timeout the retirement phase runs at.
+///
+/// Four seconds, and both bounds on it are real. It must be long enough that the
+/// control below --- a pool sampled *before* the timeout --- is not racing the
+/// staggered moments at which a burst's workers finish, which on the A0 sheet are
+/// spread over more than a second. It must be short enough that the phase does
+/// not dominate the run.
+const RETIRE_IDLE: Duration = Duration::from_secs(4);
+
+/// When the control samples the pool: after at least one sweep, well short of
+/// [`RETIRE_IDLE`]. The sweep interval is a quarter of the timeout, so a second
+/// of it has already passed and a reaper that ignores timestamps has had its
+/// chance.
+const RETIRE_CONTROL_AT: Duration = Duration::from_millis(1_200);
+
+/// How many workers a document keeps however long it idles.
+///
+/// Written out rather than imported from `render.rs`, where it is private. That
+/// is the point: a check that read the constant would agree with any value it
+/// was given, including zero --- and retiring the *last* worker is a distinct
+/// defect from not retiring at all, costing the next page turn a re-parse.
+const KEPT_WARM: usize = 1;
+
 fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
@@ -77,7 +107,18 @@ fn main() {
     let library_dir = library_dir();
 
     // ------------------------------------------------------- the worker first
-    let workers = RenderService::start_with(library_dir.clone(), Backend::Worker);
+    // Retirement pinned off, and this is not tidiness --- half the checks below
+    // compare *which pids* the pool holds across a gap, and on a slow corpus that
+    // gap can exceed the default idle timeout. A worker legitimately retired
+    // between two samples would read as a pool that shrank for the wrong reason,
+    // in a check about crash recovery. Retirement gets its own service, at the
+    // bottom, where it is the subject rather than the weather.
+    let workers = RenderService::start_tuned(
+        library_dir.clone(),
+        Backend::Worker,
+        tpdf_lib::render::pool_size(),
+        NO_RETIRE,
+    );
     let worker_doc = match wait(|reply| workers.open(document.clone(), false, reply)) {
         Ok(info) => info,
         Err(e) => {
@@ -543,32 +584,14 @@ fn main() {
     // the two spare service threads exist to carry it.
     let wanted = workers.pool_size() + 2;
     let regrown = {
-        let (tx, rx) = channel();
-        for n in 0..wanted as u64 {
-            let tx = tx.clone();
-            workers.tile(
-                request(worker_doc.id, 50 + n, at),
-                Box::new(move |result| {
-                    let _ = tx.send(result);
-                }),
-            );
-        }
-        drop(tx);
-        // Bounded, and that is the whole design of this check. The failure it
-        // exists for --- a pool that believes in a worker it retired --- is a
-        // *wait*, not a wrong answer, so an unbounded collect could only stop,
-        // never go red. A check that hangs instead of failing is one the harness
-        // has to interpret rather than read.
-        let bound = Duration::from_secs_f64((render_ms * 20.0 / 1e3).max(10.0));
-        let started = Instant::now();
-        let mut rendered = 0;
-        while rendered < wanted {
-            let left = bound.saturating_sub(started.elapsed());
-            match rx.recv_timeout(left) {
-                Ok(Ok(TileOutcome::Rendered(_))) => rendered += 1,
-                _ => break,
-            }
-        }
+        let rendered = burst(
+            &workers,
+            worker_doc.id,
+            50,
+            wanted,
+            at,
+            burst_bound(render_ms),
+        );
         (pool_pids(&workers).len(), rendered)
     };
     // The worker count is reported and *not* asserted: growth is driven by
@@ -826,10 +849,252 @@ fn main() {
         },
     );
 
+    // ------------------------------------------------------ retiring idle workers
+    // Everything already running, sampled before the retirement phase makes a
+    // service of its own. `pool_pids` asks the OS for every child of this
+    // process, which is exactly right with one service and wrong with two --- the
+    // main service's workers would be counted as the new pool's and would never
+    // retire, which is the failure this phase exists to detect.
+    settle_for(Duration::from_secs(5), || workers.spares_settled());
+    let others = worker_pids();
+    retiring_idle_workers(&mut report, &document, render_ms, &others);
+
     spare_outlives_nothing(&mut report, &document);
 
     report.finish();
 }
+
+/// A pool that grew for a burst is given back, and one still in use is not.
+///
+/// Its **own service**, at its own idle timeout, for two independent reasons. A
+/// four-second timeout on the service above would retire workers underneath every
+/// pid-identity check in this file; and `TPDF_IDLE_MS` would do it to every
+/// service in the process at once, which is the shape `AGENTS.md` records as a
+/// control contaminated by the phase beside it.
+///
+/// The order is the argument. Growing, then a sample *before* the timeout, then
+/// one after: without the middle sample "the pool shrank to one" is equally
+/// satisfied by a reaper that kills everything it finds on every sweep, which is
+/// not retirement --- it is a pool of one with extra steps.
+fn retiring_idle_workers(report: &mut Report, document: &Path, render_ms: f64, others: &[u32]) {
+    let service = RenderService::start_tuned(
+        library_dir(),
+        Backend::Worker,
+        tpdf_lib::render::pool_size(),
+        RETIRE_IDLE,
+    );
+    let doc = match wait(|reply| service.open(document.to_path_buf(), false, reply)) {
+        Ok(info) => info,
+        Err(e) => {
+            // Every name, on every path. A defect that stops the document
+            // opening must not make these checks *vanish* --- `AGENTS.md` records
+            // a check lost that way whose only trace was the total moving.
+            for name in RETIRE_CHECKS {
+                report.check(name, false, format!("the document would not open: {e}"));
+            }
+            return dropping_a_service_kills_its_workers(report, document);
+        }
+    };
+    let at = Placement::inside(doc.pages.first().unwrap_or(&PageSize {
+        width_pt: 612.0,
+        height_pt: 792.0,
+    }));
+    let bound = burst_bound(render_ms);
+
+    // The tile the surviving worker has to reproduce, taken while the pool is
+    // still the one worker `open` made.
+    let before = tile_of(&service, &doc, 600, at);
+    let lean_fds = settled_descriptors(&service);
+    let lean = pool_pids_besides(&service, others);
+
+    let wanted = service.pool_size();
+    let (grown, attempts) = grow_pool(&service, &doc, at, bound, others);
+    let grown_fds = settled_descriptors(&service);
+    // The precondition, named rather than assumed. Everything below is about
+    // giving workers back, and a pool that never grew has nothing to give.
+    report.check(
+        RETIRE_GROWS,
+        grown.len() > lean.len() && lean.len() == KEPT_WARM,
+        format!(
+            "{} workers from {} after {attempts} burst(s) of {wanted} ({lean:?} then {grown:?})",
+            grown.len(),
+            lean.len()
+        ),
+    );
+
+    // The control. A sweep has run by now and the timeout has not expired, so a
+    // pool that has shrunk here shrank for a reason that is not idleness.
+    std::thread::sleep(RETIRE_CONTROL_AT);
+    let held = pool_pids_besides(&service, others);
+    report.check(
+        RETIRE_CONTROL,
+        held.len() == grown.len(),
+        format!(
+            "{} of {} workers after {:.1} s of a {:.1} s timeout, {:.0} sweeps in",
+            held.len(),
+            grown.len(),
+            RETIRE_CONTROL_AT.as_secs_f64(),
+            RETIRE_IDLE.as_secs_f64(),
+            RETIRE_CONTROL_AT.as_secs_f64() / (RETIRE_IDLE.as_secs_f64() / 4.0),
+        ),
+    );
+
+    // Bounded, because the failure is a pool that *stays*, and a check whose
+    // failure mode is a wait cannot fail. Polled coarsely: each poll shells out
+    // to `pgrep`, and at five milliseconds this would spend the whole wait
+    // spawning processes into the table it is counting.
+    let shrank = settle_every(RETIRE_IDLE * 4, Duration::from_millis(200), || {
+        pool_pids_besides(&service, others).len() <= KEPT_WARM
+    });
+    let left = pool_pids_besides(&service, others);
+    // Exactly one, not "at most". Zero is a different defect with a different
+    // cost --- the next page turn pays a spawn and a fresh parse --- and `<=`
+    // would call it a pass.
+    report.check(
+        RETIRE_DOWN,
+        shrank && left.len() == KEPT_WARM,
+        format!("{} workers left of {}: {left:?}", left.len(), grown.len()),
+    );
+
+    // What a retired worker holds that dropping it does not release: the
+    // withdrawal broadcast keeps a *clone* of the child's stdin, so the pipe
+    // survives the process. It has no functional symptom at all --- writing to a
+    // dead pipe fails harmlessly --- so only a count can see it.
+    let settled_fds = settled_descriptors(&service);
+    report.check(
+        RETIRE_FDS,
+        grown_fds > lean_fds && settled_fds == lean_fds,
+        format!("{lean_fds} with one worker, {grown_fds} grown, {settled_fds} retired"),
+    );
+
+    // Pixels, not a reply. A pool left holding the wrong worker --- or a document
+    // mapping released with them --- would answer perfectly well.
+    let after = tile_of(&service, &doc, 620, at);
+    report.check(
+        RETIRE_PIXELS,
+        matches!((&after, &before), (Ok(new), Ok(old)) if new.bytes == old.bytes),
+        match (&after, &before) {
+            (Ok(new), Ok(old)) => format!(
+                "{} bytes against the earlier {}, {} differing",
+                new.bytes.len(),
+                old.bytes.len(),
+                differing(&new.bytes, &old.bytes)
+            ),
+            (Err(e), _) | (_, Err(e)) => e.clone(),
+        },
+    );
+
+    // The bookkeeping half, and it fails by *waiting* rather than by answering
+    // wrongly: a retirement that took the process without lowering `spawned`
+    // leaves a pool at a ceiling nothing is under, so the checkout blocks for a
+    // worker that can never come home. Hence the bound, and hence bursts rather
+    // than one tile --- one tile is served by the survivor and proves nothing.
+    let (regrown, retries) = grow_pool(&service, &doc, at, bound, others);
+    report.check(
+        RETIRE_REGROWS,
+        regrown.len() > KEPT_WARM,
+        format!(
+            "{} workers after {retries} burst(s): {regrown:?}",
+            regrown.len()
+        ),
+    );
+
+    // The other reader of `spawned`. `close` drains by comparing it against the
+    // idle count, so a retirement that moved one and not the other hangs here
+    // too --- differently enough to be worth its own check, since the close path
+    // is the one a reader reaches by shutting a file rather than by scrolling.
+    let closed = wait(|reply| service.close(doc.id, reply));
+    report.check(
+        RETIRE_CLOSES,
+        closed.is_ok(),
+        match &closed {
+            Ok(()) => format!(
+                "after retiring {} of {} workers",
+                grown.len() - 1,
+                grown.len()
+            ),
+            Err(e) => e.clone(),
+        },
+    );
+
+    drop(service);
+    dropping_a_service_kills_its_workers(report, document);
+}
+
+/// A service that goes away takes its processes with it.
+///
+/// This is the check the reaper's `Weak` handle is for. A reaper holding a strong
+/// `Arc<Workers>` would keep the pool --- and every document mapping in it ---
+/// alive for the life of the process after the last handle to the service was
+/// dropped, and nothing else here could see it: every other check in this file
+/// runs against a service that is still alive, which is exactly when the leak is
+/// invisible. Same shape as the spare that outlived its parent.
+///
+/// A separate service, opened and dropped, rather than a claim about one of the
+/// services above: the property is what happens *after* the last handle goes, and
+/// only a service nothing else holds can be taken to that point.
+fn dropping_a_service_kills_its_workers(report: &mut Report, document: &Path) {
+    let before = worker_pids();
+    let doomed = RenderService::start_tuned(library_dir(), Backend::Worker, 2, RETIRE_IDLE);
+    let opened = wait(|reply| doomed.open(document.to_path_buf(), true, reply));
+
+    // Waited for, so the spare is *in the slot* rather than owned by the thread
+    // still warming it. Both die, but only the first dies promptly, and a check
+    // measuring the second would be measuring a race.
+    settle_for(Duration::from_secs(5), || {
+        !doomed.spare_pids().is_empty() && doomed.spares_settled()
+    });
+    let mine: Vec<u32> = worker_pids()
+        .into_iter()
+        .filter(|pid| !before.contains(pid))
+        .collect();
+    drop(doomed);
+
+    let gone = settle_every(Duration::from_secs(10), Duration::from_millis(100), || {
+        mine.iter().all(|pid| !pid_is_running(*pid))
+    });
+    let survivors: Vec<u32> = mine
+        .iter()
+        .copied()
+        .filter(|pid| pid_is_running(*pid))
+        .collect();
+    report.check(
+        RETIRE_DROP,
+        opened.is_ok() && !mine.is_empty() && gone,
+        match &opened {
+            Err(e) => e.clone(),
+            Ok(_) if mine.is_empty() => "the service spawned no process to lose".into(),
+            Ok(_) if gone => format!("its {} process(es) {mine:?} went with it", mine.len()),
+            Ok(_) => format!("{survivors:?} of {mine:?} outlived the service by 10 s"),
+        },
+    );
+}
+
+const RETIRE_GROWS: &str = "a burst grows the pool it will later give back";
+const RETIRE_CONTROL: &str = "a worker idle for less than its timeout survives a sweep";
+const RETIRE_DOWN: &str = "an idle pool is retired down to one worker";
+const RETIRE_FDS: &str = "retiring gives back every descriptor growing took";
+const RETIRE_PIXELS: &str = "the worker left after a retirement renders the same tile";
+const RETIRE_REGROWS: &str = "a burst after a retirement grows the pool again";
+const RETIRE_CLOSES: &str = "a close completes after a retirement";
+const RETIRE_DROP: &str = "dropping a service kills the workers it owned";
+
+/// Every check the retirement phase records, so that a document which will not
+/// open reports them rather than losing them.
+///
+/// The names are shared with the call sites rather than repeated, because two
+/// copies of a list like this drift and the drift is silent: a renamed check
+/// would simply appear twice, once per path, and the invariant that says the set
+/// of names is fixed would still hold.
+const RETIRE_CHECKS: [&str; 7] = [
+    RETIRE_GROWS,
+    RETIRE_CONTROL,
+    RETIRE_DOWN,
+    RETIRE_FDS,
+    RETIRE_PIXELS,
+    RETIRE_REGROWS,
+    RETIRE_CLOSES,
+];
 
 /// Argument that runs this binary as the short-lived service the check below
 /// watches, rather than as the probe.
@@ -1048,10 +1313,29 @@ fn open_descriptors() -> usize {
 /// replaced by another, and the kernel's table is the observable for that. A
 /// count derived from our own `Vec<Held>` would report whatever the code under
 /// test believes.
+///
+/// **Matched on argv, not merely on parentage, and that is a fix rather than a
+/// refinement.** "Every child of this process is a worker" is false in the one
+/// way nobody looks for: `caffeinate -du <utility>` does not run the utility as
+/// its child --- it forks a helper to hold the power assertion and then `exec`s
+/// the utility in the *parent*, so the helper ends up a child of the very process
+/// it was wrapping. `AGENTS.md` tells you to wrap long batches in exactly that,
+/// so following the standing advice made this probe report `7 workers, capacity
+/// 6` and `opened with 2` --- a capacity overrun and a broken laziness claim, both
+/// entirely fictitious, and both perfectly reproducible. Run bare, the same
+/// binary passed.
+///
+/// The probe's own `--spare-lifetime` child is excluded by the same filter, which
+/// it needed anyway.
 fn worker_pids() -> Vec<u32> {
     let out = std::process::Command::new("pgrep")
         .arg("-P")
         .arg(std::process::id().to_string())
+        // Matches against the full argument list, which is where the marker is.
+        // `--` because the pattern begins with a dash.
+        .arg("-f")
+        .arg("--")
+        .arg(worker::WORKER_ARGV)
         .output();
     out.map(|out| {
         String::from_utf8_lossy(&out.stdout)
@@ -1080,6 +1364,134 @@ fn pool_pids(service: &RenderService) -> Vec<u32> {
         .into_iter()
         .filter(|pid| !spares.contains(pid))
         .collect()
+}
+
+/// The workers of one service, when more than one service is running.
+///
+/// [`pool_pids`] asks the OS for every child of this process, which is the right
+/// question with one service and the wrong one with two: it cannot tell whose
+/// child a pid is. Subtracting a snapshot taken before this service existed is
+/// the only separation available, and it holds only because the *other* services
+/// here are pinned against retirement and are issued nothing during the phase ---
+/// a pool of theirs that moved would be attributed to this one.
+fn pool_pids_besides(service: &RenderService, others: &[u32]) -> Vec<u32> {
+    pool_pids(service)
+        .into_iter()
+        .filter(|pid| !others.contains(pid))
+        .collect()
+}
+
+/// This process's descriptor count, once the spare slot holds a settled spare.
+///
+/// The wait is load-bearing, and one condition is not enough. A spare costs four
+/// descriptors --- its tile mapping, our end of the handover socket, and the two
+/// ends of its pipe --- and they appear the instant `Command::spawn` returns. But
+/// `spares_settled` is *also* true before the prewarm thread has claimed the
+/// slot, so a sample taken in that first window misses all four, and the miss
+/// resurfaces later as a leak of exactly that size. Waiting for a pid as well as
+/// for the claim brackets both windows.
+fn settled_descriptors(service: &RenderService) -> usize {
+    settle_for(Duration::from_secs(5), || {
+        !service.spare_pids().is_empty() && service.spares_settled()
+    });
+    open_descriptors()
+}
+
+/// How long a burst of tiles is given before it is called a wedge.
+///
+/// Scaled off the measured render rather than fixed, so that a corpus taking a
+/// second a tile is not called hung, and a corpus taking a millisecond does not
+/// have to be waited on for ten seconds to find out that it is.
+fn burst_bound(render_ms: f64) -> Duration {
+    Duration::from_secs_f64((render_ms * 20.0 / 1e3).max(10.0))
+}
+
+/// Issues `count` tiles at once and waits for them, bounded, returning how many
+/// came back rendered.
+///
+/// All issued before any is awaited, which is what makes it a burst: one at a
+/// time would never put two requests in front of the pool and would never grow
+/// it. **Bounded** rather than blocking, because the defects it is used against
+/// --- a pool that believes in a worker it retired, a ceiling nothing is under ---
+/// fail by waiting, and a check that hangs is one the harness has to interpret
+/// rather than read.
+fn burst(
+    service: &RenderService,
+    doc: u32,
+    first_rid: u64,
+    count: usize,
+    at: Placement,
+    bound: Duration,
+) -> usize {
+    let (tx, rx) = channel();
+    for n in 0..count as u64 {
+        let tx = tx.clone();
+        service.tile(
+            request(doc, first_rid + n, at),
+            Box::new(move |result| {
+                let _ = tx.send(result);
+            }),
+        );
+    }
+    drop(tx);
+
+    let started = Instant::now();
+    let mut rendered = 0;
+    while rendered < count {
+        let left = bound.saturating_sub(started.elapsed());
+        match rx.recv_timeout(left) {
+            Ok(Ok(TileOutcome::Rendered(_))) => rendered += 1,
+            _ => break,
+        }
+    }
+    rendered
+}
+
+/// Issues bursts until the document has more than one worker, or gives up.
+///
+/// **A burst does not reliably grow a pool, and that is correct behaviour rather
+/// than a flaw to assert around.** Growth happens when a request arrives while
+/// every worker is busy, so it is a race between a render and a checkout --- and
+/// on `text-heavy`, where a tile is 0.6 ms against a 12 ms spawn, the first
+/// worker is free again before the second request needs another. The check
+/// immediately above this one in the main phase says as much about its own pool
+/// and declines to assert a size for exactly this reason.
+///
+/// Retrying is sound because growth is a **precondition** here, not the property:
+/// nothing about retirement is being measured yet, and a precondition driven to
+/// hold is worth more than one asserted on a coin toss. What must not happen is
+/// the retry hiding a failure, so the attempt count is returned and reported, and
+/// exhausting the attempts leaves the pool at one and the check red.
+///
+/// The alternative --- skipping the whole phase on a fast corpus, as the
+/// withdrawal checks do --- was rejected: it would leave retirement checked on one
+/// fixture out of six, and the thing that makes withdrawal genuinely unskippable
+/// there (a render long enough to interrupt) has no analogue here.
+fn grow_pool(
+    service: &RenderService,
+    doc: &DocumentInfo,
+    at: Placement,
+    bound: Duration,
+    others: &[u32],
+) -> (Vec<u32>, usize) {
+    /// Enough that a corpus which grows on one burst in three still gets there,
+    /// and few enough that a pool which cannot grow at all fails in seconds.
+    const ATTEMPTS: usize = 8;
+    /// Rising across calls, so no two requests in a run share a `rid` --- a reused
+    /// one is a request the queue has already seen and may refuse.
+    static NEXT_RID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(600);
+
+    let wanted = service.pool_size();
+    let mut pids = pool_pids_besides(service, others);
+    for attempt in 1..=ATTEMPTS {
+        let first = NEXT_RID.fetch_add(wanted as u64, std::sync::atomic::Ordering::Relaxed);
+        burst(service, doc.id, first, wanted, at, bound);
+        pids = pool_pids_besides(service, others);
+        if pids.len() > 1 {
+            return (pids, attempt);
+        }
+    }
+    (pids, ATTEMPTS)
 }
 
 /// Kills a worker, or reports that there was no worker to kill.
@@ -1139,13 +1551,23 @@ fn kill_and_wait(pid: u32) -> Result<(), String> {
 /// *not happening*: a spare that never warms would otherwise stop the run with no
 /// verdict, and `AGENTS.md` records that a check whose failure mode is a wait
 /// cannot fail.
-fn settle_for(bound: Duration, mut ready: impl FnMut() -> bool) -> bool {
+fn settle_for(bound: Duration, ready: impl FnMut() -> bool) -> bool {
+    settle_every(bound, Duration::from_millis(5), ready)
+}
+
+/// [`settle_for`] with the poll interval named.
+///
+/// Some of these conditions are answered by shelling out to `pgrep` and `ps`, and
+/// at five milliseconds a long wait spends itself spawning processes into the
+/// very table it is counting. A condition that costs a syscall keeps the tight
+/// interval; one that costs a fork gets a coarse one.
+fn settle_every(bound: Duration, every: Duration, mut ready: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + bound;
     while Instant::now() < deadline {
         if ready() {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(every);
     }
     ready()
 }

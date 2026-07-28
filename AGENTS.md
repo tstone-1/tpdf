@@ -879,6 +879,21 @@ passed. Two numbers in one buffer disagreeing, and nothing comparing them. **Whe
 can derive the same fact two ways — a parsed detail and a printed total — make it check that
 they agree**, because the parse is the half that breaks silently.
 
+**It recurred on 2026-07-28, in a harness written by someone who had just read this
+paragraph.** The retirement mutation harness used `^\[FAIL\] (.+?)\s{2,}` against a probe that
+pads names to **56**; the check "a worker idle for less than its timeout survives a sweep" is
+55 characters, so one space followed it and the regex matched nothing. The mutation it was
+aimed at was reported `SURVIVED` — the single most misleading verdict a mutation pass can
+produce, since it reads as a gap in the tests — while the summary line four lines further down
+in the same buffer said `37/41 checks passed, 3 skipped`, which is one failure.
+
+Two things are worth taking from the repetition rather than from the incident. The lesson that
+failed to transfer was not "beware regexes"; it was the **repair**, which is mechanical and
+was simply not implemented: derive the count both ways and refuse to report either when they
+disagree. A rule stated as a caution gets nodded at, and a rule stated as a line of code gets
+written. And the padding width is not a constant anyone remembers — so the parse must not
+depend on it at all. Split on the marker (`[FAIL] `) and take the rest of the line.
+
 ### A test whose precondition is already satisfied never runs
 
 The sharpest instance of the shape above, and the fourth in this project. `viewercheck.ts`
@@ -2346,6 +2361,47 @@ produce.
 
 So: match replies by their own identity, never by arrival; and when adding concurrency, re-read
 every check whose meaning depended on there being one of something.
+
+### `caffeinate <utility>` becomes a child of the utility, so a child count counts it
+
+Every observation of a *process* in this repository comes from `pgrep -P <us>` --- deliberately,
+because the kernel's table is the observable and our own `Vec<Held>` is what the code under
+test believes. The unstated premise is that every child of this process is a worker, and it is
+false in one way nobody goes looking for.
+
+`caffeinate -d -u <utility>` does **not** run the utility as its child. It forks a helper to
+hold the power assertion and then `exec`s the utility in the *parent* --- so the helper ends up
+a child of the very process it was wrapping. `pgrep -P` finds it, and it is indistinguishable
+from a worker by parentage alone.
+
+The consequence is worse than a wrong number, because this file and the personal notes both say
+to wrap long unattended batches in exactly that, to stop the screen locking mid-run:
+
+```
+[FAIL] concurrent tiles grew the pool, and no further than its capacity
+       7 workers, capacity 6, opened with 2
+```
+
+A capacity overrun *and* a broken laziness claim, both entirely fictitious, both perfectly
+reproducible, and both gone the moment the same binary is run bare. Two harnesses had it
+independently --- `backend-probe`, where it read as the defect above, and `pool-bench --mode
+retire`, where it read as a pool that never retires. The second was caught only because that
+wait is bounded and says which; the first survived several runs being read as a real
+regression at HEAD.
+
+The fix is to match on **argv** rather than on parentage: `pgrep -P <us> -f -- --render-worker`.
+That is the marker the worker is spawned with, so it identifies our processes rather than
+merely our descendants --- and it excludes `backend-probe`'s own `--spare-lifetime` child, which
+it needed anyway.
+
+Two things worth carrying past this instance. **A wrapper is part of the process tree**, so
+anything reasoning about children has to identify what it is looking for rather than assume
+everything found is it --- `nohup`, `timeout`, `stdbuf` and a shell's job-control fork all sit in
+the same place. And the diagnosis went the wrong way for an hour because the failure was
+*stable*: three runs, same failure, same shape, so it read as a defect at HEAD rather than as an
+artefact of how it was being run. **A reproducible failure is evidence about the whole setup,
+not about the code**, and the cheapest control is to change the way you invoke it before
+changing anything else.
 
 ### The test fixtures are generated, not committed
 

@@ -80,12 +80,26 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- 
 # byte on tiles, geometry, text, search and outlines, and a worker killed out of
 # the OS process table must be replaced by one serving the same document. Run it
 # on vector-heavy as well as a text fixture -- it is the only corpus whose render
-# is slow enough for the two withdrawal checks to apply, and on every other one
-# they report [SKIP] with the reason. vector-heavy is the run to read: 31 checks,
-# none skipped.
+# is slow enough for the withdrawal and drain checks to apply, and on every other
+# one they report [SKIP] with the reason. vector-heavy is the run to read: 41
+# check names, 1 skipped.
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin backend-probe -- \
     testdata/vector-heavy.pdf
 ```
+
+The count that matters there is the count of **names**, not the split between passed and
+skipped: the split moves with the corpus and with a thumbnail's timing, and chasing a
+documented split back to its value is how a condition that keeps a check honest gets
+deleted. What holds on every corpus is that all 41 names appear --- diff the name sets
+across two fixtures rather than comparing their totals, which is what caught a check that
+had stopped existing on one-page documents.
+
+**Do not run it under `caffeinate`.** `caffeinate -d -u <utility>` `exec`s the utility in
+its own process and leaves a helper behind as that process's *child*, and every observation
+of a worker here comes from the process table. The probe filters on the worker's argv for
+exactly this reason, so it is now correct either way --- but the same trap is waiting for any
+new check that counts children, and it presents as a stable, reproducible failure that reads
+like a real defect. `AGENTS.md` has the incident.
 
 The worker pool has its own measurement rather than a check, because what it is for is a
 number. It is not part of the bump checklist above --- run it when the pool, the thread
@@ -100,6 +114,22 @@ It interleaves the sizes across rounds and compares pairwise within a round, dis
 0, and reports the cold regime (the pool growing) separately from the warm one. Quote two
 runs, not one: the four-worker figure moves several percent between runs while six barely
 moves, and one run would present that as a measurement.
+
+The other half of the same subject --- what a grown pool costs to hold and what retiring it
+gives back --- is a second mode. Run it when the idle timeout, the reaper, or the number of
+workers kept changes:
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin pool-bench -- \
+    testdata/vector-heavy.pdf --mode retire --rounds 4
+```
+
+It reports the pool's footprint at three points and, per round, a warm screenful against
+the first one after a retirement. `--idle-ms` sets the timeout it runs at (4 s by default,
+so a round does not take half a minute); the app's own default is 30 s. The wait for a
+retirement is **bounded and fails the run** if it does not happen --- without that, the
+second column would quietly be a warm screenful wearing a cold label, which is a number
+that looks entirely reasonable.
 
 Two notes on why these are written out in full. The binary names are **hyphenated**, and
 `--bin remove_probe` fails as "no such target", which reads like a missing binary rather
@@ -234,7 +264,17 @@ overrides that:
 ```
 TPDF_BACKEND=worker      # the default on macOS
 TPDF_BACKEND=in-process  # the control, and the only thing that runs off macOS
+TPDF_POOL=6              # workers one document may have
+TPDF_IDLE_MS=30000       # how long one may idle before it is killed
 ```
+
+`TPDF_IDLE_MS` is a quantity and **zero means zero** --- retire at the first sweep. There is
+deliberately no spelling for "off": a "no value" marker taken from the value's own range is
+how a sentinel collides with a real value the moment the timing is right, which this
+repository has already paid for once. A caller that wants no retirement asks for a long
+timeout. Unlike `TPDF_BACKEND`, an unreadable value here falls back to the default rather
+than refusing, because it cannot make two measurements silently incomparable --- every
+harness that depends on the timeout is handed one explicitly.
 
 Anything else is **refused before the window is created** --- one line on stderr, exit 2. The
 variable exists to say which of two implementations ran, so a value that quietly selected

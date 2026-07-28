@@ -2961,7 +2961,77 @@ wedged, not slow"*; the mutation harness keeps the partial transcript on timeout
 mutation turned a check red **and then** wedged the run — and a harness that reads a timeout
 as "no result" throws away a correct red.
 
-**Still to come here:** retiring idle workers, so the peak is not what a session keeps.
+##### Retiring idle workers — 2026-07-28
+
+The last thing the pool was missing, and the reason the section above had to state its
+cost as a standing residual: growth is driven by contention, contention is a *burst*, and
+the burst is over long before the reader is. A worker idle past `DEFAULT_IDLE` (30 s) is
+now killed, down to one per document, by a reaper thread sweeping every quarter of that.
+
+`pool-bench --mode retire` measures both halves. Two runs each, per the standing rule:
+
+| corpus | one worker | grown | retired | given back | next screenful |
+|---|---|---|---|---|---|
+| `vector-heavy` (A0) | 47.3–47.4 MB | 289.8–289.9 MB | 48.4 MB | **242.5 MB** | +64.6 / +66.9 ms on 811–814 ms |
+| `text-heavy` | 15.9 MB | 72.0–72.1 MB | 10.3–10.4 MB | **56.1–56.2 MB** | +14.7 / +14.9 ms on 2.4–2.6 ms |
+
+So it gives back 84% of a grown A0 pool and charges the screenful after the pause about
+8% of itself for it — five workers respawning and re-parsing concurrently, against a
+44 ms page parse. On the cheap corpus the ratio reads far worse (a 15 ms penalty on a
+2.5 ms screenful) and the absolute number is the one that matters: 15 ms, once, after
+someone has stopped scrolling for half a minute.
+
+Two notes on reading that table. The `retired` column is a *different process* from the
+`at open` one — the survivor is whichever worker was hottest, not the original — so on
+`text-heavy` it lands below the open figure and is not a floor. And footprint excludes
+clean file-backed pages, so none of these numbers include the document itself.
+
+**One worker is kept, and zero was the tempting alternative.** Nothing breaks at zero:
+the checkout path spawns from `spawned == 0` and the close drain is trivially satisfied
+by it. What it costs is a spawn plus a full re-parse charged to the *next page turn* —
+the stall landing exactly when someone is watching — to save the 7.8–48.2 MB of one
+process. Retiring to one already returns five sixths of a full pool.
+
+**The reaper holds a `Weak`.** With a strong `Arc<Workers>` it would keep every worker,
+and every document mapping, alive for the life of the process after the last handle to
+the service was dropped — a worse leak than the one it exists to fix, and invisible to
+every other check here, all of which run against a service that is still alive. That is
+the same shape as the spare that outlived its parent, and it needed the same answer: a
+check that drops a service and asks the OS whether its processes went with it.
+
+**Six mutations, six caught — after the harness reported one of them as a survivor.**
+
+| mutation | which check went red |
+|---|---|
+| the reaper never runs | the pool retired; the descriptor count |
+| retirement ignores the idle timeout | the control: a worker idle for less than its timeout |
+| the last worker is retired too | the pool retired (**0** workers, not 1); the descriptor count |
+| retirement does not lower `spawned` | the regrowth burst; the close, which wedges |
+| the withdrawal sender is left behind | the descriptor count |
+| the reaper holds a strong handle | dropping a service kills the workers it owned |
+
+Three things came out of it worth more than the table.
+
+**The control is the whole check.** "The pool shrank to one" is equally satisfied by a
+reaper that kills everything it finds on every sweep, which is not retirement but a pool
+of one with extra steps. The sample taken *before* the timeout is what discriminates, and
+it is the only thing the second mutation turned red.
+
+**Two of the mutations fail by not answering.** A pool that keeps a ceiling nothing is
+under blocks the next checkout forever; the close that drains against `spawned` does the
+same. Both are bounded here — the burst by a measured multiple of a render, the close by
+the probe's 60 s answer bound — because a check whose failure mode is a wait cannot fail.
+
+**And the harness lost a red.** Its regex wanted two spaces between a check's name and
+its detail; the probe pads names to 56, so a 55-character name is followed by one space
+and matched nothing. It reported `SURVIVED` while its own summary line in the same buffer
+said one check had failed. That is the defect `AGENTS.md` already records from the
+`search.rs` harness, reproduced by someone who had read the entry — the lesson that did
+not transfer was not "beware regexes" but the *repair*: derive the fact both ways and make
+the harness compare them. It does now, and a mismatch is reported as a broken run rather
+than as either answer.
+
+**Still to come here:** nothing. Phase 1's worker backend is complete.
 
 ### Phase 2 — Editing foundation
 
