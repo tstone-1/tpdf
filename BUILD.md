@@ -81,11 +81,25 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- 
 # the OS process table must be replaced by one serving the same document. Run it
 # on vector-heavy as well as a text fixture -- it is the only corpus whose render
 # is slow enough for the two withdrawal checks to apply, and on every other one
-# they report [SKIP] with the reason. vector-heavy is the run to read: 29 checks,
+# they report [SKIP] with the reason. vector-heavy is the run to read: 31 checks,
 # none skipped.
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin backend-probe -- \
     testdata/vector-heavy.pdf
 ```
+
+The worker pool has its own measurement rather than a check, because what it is for is a
+number. It is not part of the bump checklist above --- run it when the pool, the thread
+count, or the tile path changes:
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin pool-bench -- \
+    testdata/vector-heavy.pdf --rounds 4 --sizes 1,2,4,6,8
+```
+
+It interleaves the sizes across rounds and compares pairwise within a round, discards round
+0, and reports the cold regime (the pool growing) separately from the warm one. Quote two
+runs, not one: the four-worker figure moves several percent between runs while six barely
+moves, and one run would present that as a measurement.
 
 Two notes on why these are written out in full. The binary names are **hyphenated**, and
 `--bin remove_probe` fails as "no such target", which reads like a missing binary rather

@@ -81,6 +81,11 @@ fn main() {
         height_pt: 792.0,
     }));
     let worker_tile = tile_of(&workers, &worker_doc, 1, at);
+    // Sampled before anything concurrent has been asked for, because that is the
+    // only moment the laziness claim is observable. A service that opened every
+    // document with a full pool would satisfy every check below it while costing
+    // `capacity` parses of a file nobody has scrolled yet.
+    let opened_with = worker_pids().len();
 
     report.check(
         "the app process has not mapped libpdfium",
@@ -307,29 +312,43 @@ fn main() {
     // see `RenderService::cancel`. The first never reaches a worker at all; the
     // second has to arrive while Pdfium is already inside the render.
     let (ahead, queued) = {
-        // Two tiles, and the second is the one withdrawn. The render thread can
-        // only be inside the first, so the second is still queued when the
-        // withdrawal lands --- against a single request the window is one
-        // channel handoff, which is a race this check would sometimes lose and
-        // report as a broken withdrawal.
+        // Enough tiles to fill the pool, and *then* the one that is withdrawn ---
+        // so it is still waiting for a free worker when the withdrawal lands.
+        // Two would do on a single-worker service and does not here: with a pool
+        // the second tile starts immediately in another process, and the check
+        // would quietly become "withdrawn after it started", which passes for a
+        // different reason entirely (the parent's own token).
+        let filling: Vec<u64> = (0..workers.pool_size() as u64).map(|n| 9 + n).collect();
+        let withdrawn = 9 + workers.pool_size() as u64;
+
         let (tx, rx) = channel();
-        let echo = tx.clone();
-        workers.tile(
-            request(worker_doc.id, 9, at),
-            Box::new(move |result| {
-                let _ = echo.send(result);
-            }),
-        );
-        workers.tile(
-            request(worker_doc.id, 10, at),
-            Box::new(move |result| {
-                let _ = tx.send(result);
-            }),
-        );
-        workers.cancel(10);
-        let first = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
-        let second = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
-        (first, second)
+        for rid in filling.iter().chain(std::iter::once(&withdrawn)) {
+            let tx = tx.clone();
+            let rid = *rid;
+            workers.tile(
+                request(worker_doc.id, rid, at),
+                Box::new(move |result| {
+                    let _ = tx.send((rid, result));
+                }),
+            );
+        }
+        drop(tx);
+        workers.cancel(withdrawn);
+
+        // Collected by rid, not by arrival. The pool renders concurrently, so
+        // replies come back in completion order --- and the withdrawn one is the
+        // fastest to answer, which is precisely why reading them in order
+        // reported the two outcomes swapped.
+        let mut replies: Vec<(u64, Result<TileOutcome, String>)> = rx.iter().collect();
+        let take = |replies: &mut Vec<(u64, Result<TileOutcome, String>)>, want: u64| {
+            replies
+                .iter()
+                .position(|(rid, _)| *rid == want)
+                .map_or_else(|| Err("no reply".into()), |at| replies.remove(at).1)
+        };
+        let queued = take(&mut replies, withdrawn);
+        let ahead = take(&mut replies, filling[0]);
+        (ahead, queued)
     };
     report.check(
         "the tile ahead of a withdrawal still renders",
@@ -383,10 +402,18 @@ fn main() {
     // *process* is taken from the OS table rather than from bookkeeping of ours
     // --- same reason as the libpdfium check at the top.
     let before = worker_pids();
+    // The pool, as the concurrent tiles above will have grown it. Both bounds
+    // matter and they fail differently: below two says nothing ever ran in
+    // parallel, above capacity says the ceiling is not a ceiling. `opened_with`
+    // is what says it did not simply start this large.
     report.check(
-        "one worker process is holding the document",
-        before.len() == 1,
-        format!("{before:?}"),
+        "concurrent tiles grew the pool, and no further than its capacity",
+        before.len() > 1 && before.len() <= workers.pool_size() && opened_with == 1,
+        format!(
+            "{} workers, capacity {}, opened with {opened_with}",
+            before.len(),
+            workers.pool_size()
+        ),
     );
 
     // The other direction, and it is the one a restart mechanism gets wrong by
@@ -457,15 +484,83 @@ fn main() {
         },
     );
 
-    // Two claims in one, and they fail differently: a replacement that never
-    // spawned leaves none, and one that spawned without reaping its predecessor
-    // leaves two --- the zombie counts, which is why this is a count and not a
-    // "there is a worker" test.
+    // Three claims, failing differently. The killed pid must be gone --- a
+    // zombie still counts here, so this also says it was reaped. The *rest* of
+    // the pool must be untouched, which is the half a single-worker service
+    // could not express: a death must cost one process, not the document. And
+    // something must still be there to serve the next request.
     let after = worker_pids();
+    let survivors: Vec<u32> = before
+        .iter()
+        .copied()
+        .filter(|p| Some(*p) != victim)
+        .collect();
     report.check(
-        "the replacement is a new process, and the old one reaped",
-        after.len() == 1 && victim.is_some() && after.first().copied() != victim,
-        format!("{before:?} then {after:?}"),
+        "a dead worker is retired and the rest of the pool is not",
+        victim.is_some_and(|pid| !after.contains(&pid))
+            && survivors.iter().all(|pid| after.contains(pid))
+            && !after.is_empty(),
+        format!("{before:?} then {after:?}, killed {victim:?}"),
+    );
+
+    // The pool comes back after a death, which is a different claim from "the
+    // request succeeded": a discard that never gave its slot back leaves a pool
+    // convinced of a worker that does not exist, and the next burst of work
+    // waits for it forever. Issued as a burst, because that is the only thing
+    // that grows a pool.
+    // Two more than the pool can hold, and every one of them wanted. The
+    // withdrawal burst earlier cannot do this job: its extra request is the one
+    // that gets withdrawn, and a withdrawn request is refused at the claim
+    // *before* it reaches a worker --- by design, so that a tile nobody wants
+    // does not occupy a process. So a pool with its ceiling removed grew to
+    // exactly capacity there and the check passed. Here the surplus is real, and
+    // the two spare service threads exist to carry it.
+    let wanted = workers.pool_size() + 2;
+    let regrown = {
+        let (tx, rx) = channel();
+        for n in 0..wanted as u64 {
+            let tx = tx.clone();
+            workers.tile(
+                request(worker_doc.id, 50 + n, at),
+                Box::new(move |result| {
+                    let _ = tx.send(result);
+                }),
+            );
+        }
+        drop(tx);
+        // Bounded, and that is the whole design of this check. The failure it
+        // exists for --- a pool that believes in a worker it retired --- is a
+        // *wait*, not a wrong answer, so an unbounded collect could only stop,
+        // never go red. A check that hangs instead of failing is one the harness
+        // has to interpret rather than read.
+        let bound = Duration::from_secs_f64((render_ms * 20.0 / 1e3).max(10.0));
+        let started = Instant::now();
+        let mut rendered = 0;
+        while rendered < wanted {
+            let left = bound.saturating_sub(started.elapsed());
+            match rx.recv_timeout(left) {
+                Ok(Ok(TileOutcome::Rendered(_))) => rendered += 1,
+                _ => break,
+            }
+        }
+        (worker_pids().len(), rendered)
+    };
+    // The worker count is reported and *not* asserted: growth is driven by
+    // contention, so on a document whose tiles take half a millisecond a worker
+    // is free again before the next request needs a new one, and the pool
+    // legitimately stays below capacity. What has to hold on every corpus is
+    // that the whole burst came back, within a bound --- which it cannot if a
+    // retired worker's slot was never given up.
+    report.check(
+        "an oversized burst is served, and the pool stays at its ceiling",
+        regrown.1 == wanted && regrown.0 <= workers.pool_size(),
+        format!(
+            "{}/{} tiles, {} workers, capacity {}",
+            regrown.1,
+            wanted,
+            regrown.0,
+            workers.pool_size()
+        ),
     );
 
     // A restart has to re-point the withdrawal path at the new process, and
@@ -518,24 +613,40 @@ fn main() {
     // Two documents from the same file, so that closing one has something to be
     // measured against: a close that took down more than it was asked to would
     // otherwise look identical to one that worked.
-    let baseline_fds = open_descriptors();
+    let before_second = worker_pids();
     let second_doc = wait(|reply| workers.open(document.clone(), false, reply));
     let closing = match &second_doc {
         Ok(info) => {
+            // Which pids belong to the document about to be closed: everything
+            // that was there before the second document opened. Recorded rather
+            // than inferred, because after the close there is no way to ask.
+            let closed_pool = before_second.clone();
             let held = worker_pids();
             let closed = wait(|reply| workers.close(worker_doc.id, reply));
             let left = worker_pids();
-            Some((info.id, held, closed, left))
+            Some((info.id, held, closed, left, closed_pool))
         }
         Err(_) => None,
     };
 
     match &closing {
-        Some((_, held, closed, left)) => {
+        Some((_, held, closed, left, closed_pool)) => {
+            // Every process of that document's pool, and only those. The
+            // second document's workers are the ones that must survive, and
+            // with a pool this is no longer a count --- it is which pids.
+            let survivors: Vec<u32> = held
+                .iter()
+                .copied()
+                .filter(|p| !closed_pool.contains(p))
+                .collect();
             report.check(
-                "closing a document kills the process holding it",
-                closed.is_ok() && held.len() == 2 && left.len() == 1,
-                format!("{held:?} then {left:?}"),
+                "closing a document kills every process holding it",
+                closed.is_ok()
+                    && !closed_pool.is_empty()
+                    && closed_pool.iter().all(|pid| !left.contains(pid))
+                    && survivors.iter().all(|pid| left.contains(pid))
+                    && !left.is_empty(),
+                format!("{held:?} then {left:?}, its pool was {closed_pool:?}"),
             );
             // The point of the second document. Without it "the worker is gone"
             // is equally satisfied by a close that killed every worker there
@@ -568,13 +679,26 @@ fn main() {
             // and the two ends of its pipe --- and the withdrawal broadcast
             // holds a *clone* of the pipe's write half, so dropping the worker
             // does not close it. Without clearing that entry the count settles
-            // one above where it started, which is a descriptor per document a
-            // reader ever opened and nothing else in this file can see.
+            // above where it started, which is a descriptor per worker that ever
+            // existed and nothing else in this file can see.
+            //
+            // Its own open/close pair, and not a measurement across the ones
+            // above: a document that has been *read* has grown its pool by an
+            // amount that depends on timing, so only a freshly opened one --- one
+            // worker, by the laziness this file asserts separately --- gives a
+            // deterministic delta.
+            let quiet = open_descriptors();
+            let throwaway = wait(|reply| workers.open(document.clone(), true, reply));
+            let opened_fds = open_descriptors();
+            let released = match &throwaway {
+                Ok(info) => wait(|reply| workers.close(info.id, reply)),
+                Err(e) => Err(e.clone()),
+            };
             let settled = open_descriptors();
             report.check(
                 "closing gives back every descriptor opening took",
-                settled == baseline_fds,
-                format!("{baseline_fds} before the second open, {settled} after the close"),
+                released.is_ok() && opened_fds > quiet && settled == quiet,
+                format!("{quiet} quiet, {opened_fds} with it open, {settled} after closing it"),
             );
 
             // And the id itself is spent. A backend that filled the hole would
@@ -594,7 +718,7 @@ fn main() {
         }
         None => {
             for name in [
-                "closing a document kills the process holding it",
+                "closing a document kills every process holding it",
                 "the document that was not closed still renders",
                 "a closed document is refused rather than reused",
                 "closing gives back every descriptor opening took",
@@ -603,6 +727,56 @@ fn main() {
                 report.check(name, false, "a second document would not open");
             }
         }
+    }
+
+    // ------------------------------------------------------- closing under load
+    // The drain, which nothing above can reach: every close so far has happened
+    // with the pool idle, and a close that did not wait would look identical.
+    // Here a render is deliberately still running when the close is issued --- so
+    // a close that took the worker out from under it would lose the tile, and a
+    // close that waits returns *after* the render it was queued behind.
+    if render_ms >= WITHDRAWABLE_MS {
+        let busy = wait(|reply| workers.open(document.clone(), true, reply));
+        match &busy {
+            Ok(info) => {
+                let (tx, rx) = channel();
+                workers.tile(
+                    request(info.id, 40, at),
+                    Box::new(move |result| {
+                        let _ = tx.send(result);
+                    }),
+                );
+                // Long enough that the worker is inside Pdfium, short enough
+                // that it cannot have finished.
+                std::thread::sleep(Duration::from_millis(60));
+                let issued = Instant::now();
+                let closed = wait(|reply| workers.close(info.id, reply));
+                let waited = issued.elapsed().as_secs_f64() * 1e3;
+                let tile = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
+
+                // Three things, and the timing is the one that discriminates. A
+                // close that never waited would also see the tile arrive --- the
+                // render is in another process and finishes regardless --- so
+                // what says it drained is that the close itself did not return
+                // until the render was done.
+                report.check(
+                    "a close waits for the render it interrupted",
+                    closed.is_ok()
+                        && matches!(&tile, Ok(TileOutcome::Rendered(_)))
+                        && waited > render_ms / 3.0,
+                    format!(
+                        "{}, close returned after {waited:.0} ms of a {render_ms:.0} ms render",
+                        outcome_of(&tile)
+                    ),
+                );
+            }
+            Err(e) => report.check("a close waits for the render it interrupted", false, e),
+        }
+    } else {
+        report.skip(
+            "a close waits for the render it interrupted",
+            withdrawal_needs_a_slow_page(render_ms),
+        );
     }
 
     // The other backend closes too, and it is not the same code: no process to
@@ -870,6 +1044,16 @@ fn tile_of(
     }
 }
 
+/// The longest this probe will wait for any single answer.
+///
+/// Far above every legitimate wait here --- the slowest is a 1.2 s render, and
+/// the close that drains one --- and far below "forever". It exists because
+/// several properties in this file fail by **waiting** rather than by answering
+/// wrongly: a pool that believes in a worker it retired never finishes a close,
+/// and a probe that blocked there would produce no verdict at all. A check that
+/// hangs is one the harness has to interpret; a check that goes red says which.
+const ANSWER_BOUND: Duration = Duration::from_secs(60);
+
 /// Drives one of the service's callback-shaped calls to an answer.
 fn wait<T: Send + 'static>(
     call: impl FnOnce(Box<dyn FnOnce(Result<T, String>) + Send>),
@@ -878,8 +1062,16 @@ fn wait<T: Send + 'static>(
     call(Box::new(move |result| {
         let _ = tx.send(result);
     }));
-    rx.recv()
-        .unwrap_or_else(|_| Err("the render thread stopped".into()))
+    match rx.recv_timeout(ANSWER_BOUND) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "no answer within {} s --- the service is wedged, not slow",
+            ANSWER_BOUND.as_secs()
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("the render thread stopped".into())
+        }
+    }
 }
 
 /// Whether a startup milestone has been recorded in this process.
