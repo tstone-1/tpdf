@@ -2596,6 +2596,78 @@ selected thumbnails will need it, not because anything asks today.
 
 **Windows is not written**, and `present_job` says so with an error rather than doing nothing.
 
+#### The worker boundary — started 2026-07-28, parent half landed
+
+The one Phase 0 constraint that never landed. Every PDF is still parsed in the app process
+today, and `AGENTS.md` is explicit that this cannot be a later hardening pass — retrofitting
+a process boundary is an architectural rewrite, so it is one now rather than one later. Note
+the justification is `docs/THREAT-MODEL.md` and **not** the coverage floor: measured above, a
+pool buys 3.2× on a screenful of the A0 sheet and leaves it just as unscrollable.
+
+`src/worker.rs` is the parent half and the shared contract: the protocol, the shared mapping,
+spawn/call/withdraw, the epitaph, footprint supervision, and the measured SBPL profile. Every
+design decision in it is a spike 0.5 number rather than a preference — the document crosses as
+a **mapped descriptor and never a path**, which is the whole reason a sandbox that denies
+`file-read*` can work at all; payloads cross through the mapping at 0.11 ms against 0.61 ms
+down the pipe; `file-read-metadata` is allowed back because font lookup stats paths and
+denying it makes PDFium substitute a typeface *silently*.
+
+Two choices worth stating because they are not forced. **One worker serves one document** —
+stronger isolation than multiplexing, and it makes a worker restartable with no reopening
+protocol. And the worker is this executable re-exec'd with `--render-worker`, not a second
+binary, because a path that resolves in development and not in the bundle is a defect this
+file already records once for the PDFium library directory.
+
+Seven tests, and one that clippy correctly refused: `TILE_CAPACITY >= 2048²×4` is two
+constants, so it could not fail at runtime any more than `2 + 2 == 4` can. It is a `const`
+assertion now, where it also cannot drift.
+
+##### The child half, and what it is measured against
+
+`src/worker_child.rs` is the other side, and its ordering *is* the security argument: PDFium
+is bound **before** `sandbox_init`, because binding opens and maps the dylib; the document is
+opened **after**, because that is the attacker's input. Move either across that line and it
+breaks or is defeated, and neither shows as an error — a sandbox applied too late still
+returns `ok`.
+
+Two threads, and they cannot be one. A withdrawal exists to reach a render *already running*,
+so it has to be read while the render thread is inside PDFium. The reader thread never touches
+the document, which is what makes that sound — `RawDocument` is not `Send`, and concurrent
+PDFium is undefined behaviour whatever the handles are. The queue's claim/withdraw state
+machine is reused verbatim from `queue.rs` rather than rewritten.
+
+`bin/worker_probe.rs` is the evidence, and the load-bearing check compares **pixels** against
+an in-process render of the same tile — because a sandbox that renders the wrong typeface
+returns `ok` and this file already records that happening. 12/12 on `text-heavy`,
+`vector-heavy` and `rotated-90`:
+
+| | text-heavy | vector-heavy (A0) | rotated-90 |
+|---|---|---|---|
+| pixels vs in-process | identical | identical | identical |
+| 1 MB tile across the boundary | 2.1 ms | 433.6 ms | 0.4 ms |
+| worker footprint | 17.5 MB | 48.2 MB | 7.8 MB |
+
+The A0 figure is the render, not the boundary: the same tile in-process costs the same, which
+is the point of comparing rather than timing.
+
+**Two defects, both found by running it rather than by reading it.** `mmap` refused the
+document with `EACCES` — mapped `PROT_WRITE` off a read-only descriptor. The fix is not a
+wider open: a worker holding a *writable* mapping of the reader's own file could corrupt the
+document it was asked to display, which is exactly the authority the boundary withholds. The
+kernel refused it before the threat model did.
+
+And the first withdrawal check was wrong, not the code. `Queue::withdraw` ignores an id it has
+never seen — deliberately, since remembering them is what lets its tables grow without bound —
+so withdrawing *before* sending the request is a no-op, and that is what the check did. It now
+pipelines two tiles and withdraws the second, with the first tile's render as the window, and
+prints that window: 0.1 ms on `rotated-90`, which is a thinner margin than it looks and is why
+the number is in the output.
+
+**Still to come:** `RenderService` switching to the worker, with the in-process path kept as
+the control it has to be compared against, and then a pool. `Worker::spawn` and `apply_sandbox`
+both refuse on Windows rather than running unsandboxed — the correct half-answer until a
+Windows build has ever run.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,

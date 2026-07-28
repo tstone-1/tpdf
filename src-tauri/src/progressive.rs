@@ -148,6 +148,33 @@ impl RawDocument {
         })
     }
 
+    /// Opens a document from bytes that outlive it.
+    ///
+    /// The worker's route in, and the reason the sandbox can exist: a mapped
+    /// descriptor has no path, so a policy that denies `file-read*` outright
+    /// still leaves the document reachable. PDFium does **not** copy the buffer
+    /// --- it reads from it for as long as the document is open, which is why
+    /// this takes `&'static [u8]` rather than a borrow the caller could end.
+    ///
+    /// # Errors
+    ///
+    /// Bytes PDFium will not parse, or an encrypted document with no password.
+    pub fn open_bytes(bindings: Bindings, bytes: &'static [u8]) -> Result<Self, String> {
+        // SAFETY: the buffer is `'static`, so it outlives the document, which is
+        // exactly what this call requires and what the safe wrapper cannot
+        // express.
+        let handle = unsafe { bindings.FPDF_LoadMemDocument64(bytes, None) };
+        if handle.is_null() {
+            return Err(format!("could not parse {} bytes as a PDF", bytes.len()));
+        }
+
+        Ok(Self {
+            bindings,
+            handle,
+            pages: RefCell::new((HashMap::new(), VecDeque::new())),
+        })
+    }
+
     /// The bindings this document was opened through.
     pub fn bindings(&self) -> Bindings {
         self.bindings

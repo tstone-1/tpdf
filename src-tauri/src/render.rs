@@ -436,7 +436,7 @@ fn run_tile(
     result
 }
 
-fn render_tile(
+pub(crate) fn render_tile(
     bindings: Bindings,
     docs: &[RawDocument],
     req: &TileRequest,
@@ -506,7 +506,7 @@ fn render_tile(
     }))
 }
 
-fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut out, width, height);
@@ -525,7 +525,7 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
 }
 
 /// Extracts one page's characters on the render thread.
-fn run_text(docs: &[RawDocument], doc: u32, page: u32) -> Result<PageText, String> {
+pub(crate) fn run_text(docs: &[RawDocument], doc: u32, page: u32) -> Result<PageText, String> {
     let document = docs
         .get(doc as usize)
         .ok_or_else(|| format!("no such document: {doc}"))?;
@@ -539,7 +539,7 @@ fn run_text(docs: &[RawDocument], doc: u32, page: u32) -> Result<PageText, Strin
 /// megabytes as JSON and the frontend needs it only for the pages it draws, so
 /// shipping it in order to search it would be the expensive half of a cheap
 /// operation.
-fn run_search(
+pub(crate) fn run_search(
     docs: &[RawDocument],
     doc: u32,
     page: u32,
@@ -553,7 +553,7 @@ fn run_search(
 }
 
 /// Walks a document's outline on the render thread.
-fn run_outline(docs: &[RawDocument], doc: u32) -> Result<Outline, String> {
+pub(crate) fn run_outline(docs: &[RawDocument], doc: u32) -> Result<Outline, String> {
     let document = docs
         .get(doc as usize)
         .ok_or_else(|| format!("no such document: {doc}"))?;
