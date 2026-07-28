@@ -31,10 +31,11 @@
 //! Windows build of this repository has ever run. The module compiles there and
 //! [`Worker::spawn`] refuses, rather than silently running unsandboxed.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +70,20 @@ pub const TILE_CAPACITY: usize = 16 * 1024 * 1024;
 /// A check nothing can break is a check to delete or to move somewhere it means
 /// something --- here that is the compiler, where it also cannot drift.
 const _: () = assert!(TILE_CAPACITY >= 2048 * 2048 * 4);
+
+/// The longest reply line the parent will read.
+///
+/// The worker is ours, but it is the process holding the attacker's document, so
+/// its replies are the one thing crossing back from where the hostile input is.
+/// `read_line` on a pipe is unbounded: a worker that has been made to emit an
+/// endless line takes the *parent* down with it, which is precisely the failure
+/// the boundary exists to prevent — the isolation would be perfect and the app
+/// would still die.
+///
+/// Generous rather than tight, because a legitimate reply can be large: a dense
+/// page's characters and boxes are hundreds of kilobytes of JSON, and a 10,000-
+/// entry outline is a few megabytes. Tile pixels do not travel this way at all.
+pub const MAX_REPLY_BYTES: u64 = 32 * 1024 * 1024;
 
 /// The sandbox the worker applies to itself before touching a document.
 ///
@@ -380,12 +395,53 @@ impl Drop for Shm {
 /// A worker process serving one document.
 pub struct Worker {
     child: Child,
-    stdin: ChildStdin,
+    stdin: WorkerSender,
     stdout: BufReader<ChildStdout>,
     /// Where tile payloads arrive.
     pub tile: Shm,
     /// Kept mapped for the worker's lifetime --- it is the document.
     _doc: Shm,
+}
+
+/// The write half of a worker, separable and cheap to clone.
+///
+/// It exists for exactly one caller: a withdrawal has to reach a render that is
+/// **already running**, and the thread that would send it is not the thread
+/// waiting on the reply --- that one is blocked inside [`Worker::call`]. So the
+/// two halves cannot both live behind the same `&mut`.
+///
+/// The lock is held for one write and released before any read, which is what
+/// keeps a withdrawal from being blocked behind the reply it is trying to
+/// pre-empt.
+#[derive(Clone)]
+pub struct WorkerSender(Arc<Mutex<ChildStdin>>);
+
+impl WorkerSender {
+    /// Writes one request line.
+    ///
+    /// # Errors
+    ///
+    /// The pipe being closed, i.e. the worker is gone. Reported without an
+    /// epitaph, because reaping the child needs the [`Worker`] this was split
+    /// from and a caller holding only the sender has no business waiting on it.
+    pub fn send(&self, request: &Request) -> Result<(), String> {
+        let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
+        line.push('\n');
+        let mut stdin = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        stdin
+            .write_all(line.as_bytes())
+            .and_then(|()| stdin.flush())
+            .map_err(|e| format!("worker stdin: {e}"))
+    }
+
+    /// Withdraws a tile request.
+    ///
+    /// # Errors
+    ///
+    /// As [`WorkerSender::send`].
+    pub fn withdraw(&self, rid: u64) -> Result<(), String> {
+        self.send(&Request::Withdraw { rid })
+    }
 }
 
 impl Worker {
@@ -468,11 +524,17 @@ impl Worker {
         let stdout = BufReader::new(child.stdout.take().ok_or("worker has no stdout")?);
         Ok(Self {
             child,
-            stdin,
+            stdin: WorkerSender(Arc::new(Mutex::new(stdin))),
             stdout,
             tile,
             _doc: doc,
         })
+    }
+
+    /// A handle another thread can withdraw through. See [`WorkerSender`].
+    #[must_use]
+    pub fn sender(&self) -> WorkerSender {
+        self.stdin.clone()
     }
 
     /// Sends a request and reads its reply.
@@ -483,55 +545,42 @@ impl Worker {
     /// a bare pipe error --- "killed by signal 11" and "exited with code 9" are
     /// different diagnoses and only one of them is a crash.
     pub fn call(&mut self, request: &Request) -> Result<Response, String> {
-        let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
-        line.push('\n');
-        self.stdin
-            .write_all(line.as_bytes())
-            .and_then(|()| self.stdin.flush())
-            .map_err(|e| format!("worker stdin: {e} ({})", self.epitaph()))?;
-
-        let mut reply = String::new();
-        match self.stdout.read_line(&mut reply) {
-            Ok(0) => Err(format!("worker stopped answering ({})", self.epitaph())),
-            Ok(_) => {
-                serde_json::from_str(&reply).map_err(|e| format!("unreadable reply {reply:?}: {e}"))
-            }
-            Err(e) => Err(format!("worker stdout: {e} ({})", self.epitaph())),
-        }
+        self.send(request)
+            .map_err(|e| format!("{e} ({})", self.epitaph()))?;
+        self.read_reply()
     }
 
     /// Reads one reply, for a caller that pipelined its requests.
     ///
     /// # Errors
     ///
-    /// The worker being gone, reported with its epitaph.
+    /// The worker being gone, reported with its epitaph; or a reply longer than
+    /// [`MAX_REPLY_BYTES`], which leaves the stream mid-line and so kills the
+    /// worker rather than trying to resynchronise on a boundary that is no
+    /// longer where the protocol says it is.
     pub fn read_reply(&mut self) -> Result<Response, String> {
-        let mut reply = String::new();
-        match self.stdout.read_line(&mut reply) {
-            Ok(0) => Err(format!("worker stopped answering ({})", self.epitaph())),
-            Ok(_) => {
+        match read_reply_line(&mut self.stdout, MAX_REPLY_BYTES) {
+            Ok(reply) => {
                 serde_json::from_str(&reply).map_err(|e| format!("unreadable reply {reply:?}: {e}"))
             }
-            Err(e) => Err(format!("worker stdout: {e} ({})", self.epitaph())),
+            Err(ReplyError::Closed) => {
+                Err(format!("worker stopped answering ({})", self.epitaph()))
+            }
+            Err(ReplyError::TooLong(limit)) => {
+                self.kill();
+                Err(format!("worker sent a reply longer than {limit} bytes"))
+            }
+            Err(ReplyError::Io(e)) => Err(format!("worker stdout: {e} ({})", self.epitaph())),
         }
     }
 
     /// Sends a request without waiting for a reply.
     ///
-    /// Only [`Request::Withdraw`] uses this, and it must: a withdrawal exists to
-    /// reach a render already running, so a caller blocked on that render's
-    /// reply is exactly who needs to send it.
-    ///
     /// # Errors
     ///
     /// The pipe being closed.
     pub fn send(&mut self, request: &Request) -> Result<(), String> {
-        let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
-        line.push('\n');
-        self.stdin
-            .write_all(line.as_bytes())
-            .and_then(|()| self.stdin.flush())
-            .map_err(|e| format!("worker stdin: {e}"))
+        self.stdin.send(request)
     }
 
     /// How the worker died, in words.
@@ -578,6 +627,43 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+/// Why a reply could not be read.
+#[derive(Debug)]
+enum ReplyError {
+    /// The pipe reached end of file: the worker is gone.
+    Closed,
+    /// The line exceeded the limit, which is reported rather than truncated ---
+    /// a truncated line would deserialise as a *malformed* reply and send the
+    /// diagnosis to the protocol rather than to the worker that ran away.
+    TooLong(u64),
+    Io(std::io::Error),
+}
+
+/// Reads one newline-terminated reply, refusing one longer than `limit`.
+///
+/// Separate from [`Worker::read_reply`] so that it can be tested at all: the
+/// thing worth asserting here is what happens on input a live worker will not
+/// produce, and the only way to hand that over is to call this with a reader
+/// that is not a pipe.
+fn read_reply_line(reader: &mut impl BufRead, limit: u64) -> Result<String, ReplyError> {
+    let mut line = String::new();
+    // `take` bounds the read itself rather than checking the length afterwards,
+    // which is the difference between refusing a huge line and allocating it
+    // first and then complaining about it.
+    match reader.take(limit).read_line(&mut line) {
+        Ok(0) => Err(ReplyError::Closed),
+        Ok(_) if line.ends_with('\n') => Ok(line),
+        // No newline, and the two reasons for that are different diagnoses. At
+        // the limit, the line was still going. Short of it, the pipe ended
+        // mid-reply --- a worker that died while writing --- and calling that
+        // "longer than 32 MB" would send the reader off to look at a size limit
+        // when what happened is a crash the epitaph can name.
+        Ok(read) if read as u64 >= limit => Err(ReplyError::TooLong(limit)),
+        Ok(_) => Err(ReplyError::Closed),
+        Err(e) => Err(ReplyError::Io(e)),
     }
 }
 
@@ -635,7 +721,9 @@ fn value_of<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{doc_len_arg, library_dir_arg, value_of, Request, Response, Shm};
+    use super::{
+        doc_len_arg, library_dir_arg, read_reply_line, value_of, ReplyError, Request, Response, Shm,
+    };
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| (*s).to_string()).collect()
@@ -730,6 +818,72 @@ mod tests {
         assert!(abandoned.ok && abandoned.abandoned);
         assert!(empty.ok && !empty.abandoned);
         assert!(!failed.ok && !failed.abandoned && !failed.error.is_empty());
+    }
+
+    #[test]
+    fn an_ordinary_reply_is_read_whole() {
+        // The control. Without it every assertion below is satisfied by a reader
+        // that refuses everything, which is the shape a length bound fails in.
+        let mut input = std::io::Cursor::new(b"{\"ok\":true}\n{\"ok\":false}\n".to_vec());
+        let first = read_reply_line(&mut input, 64).expect("first line");
+        assert_eq!(first, "{\"ok\":true}\n");
+        // And the reader is left on the boundary, not somewhere inside the next
+        // line: a bounded read that consumed too much would desynchronise the
+        // stream and every later reply would be garbage.
+        let second = read_reply_line(&mut input, 64).expect("second line");
+        assert_eq!(second, "{\"ok\":false}\n");
+    }
+
+    #[test]
+    fn a_reply_that_fills_the_limit_exactly_is_still_read() {
+        // The boundary, from the permitted side. `take` counts the newline, so
+        // an off-by-one here rejects the largest legitimate reply --- which
+        // would only ever be discovered on a document big enough to produce one.
+        let line = b"12345678\n";
+        let mut input = std::io::Cursor::new(line.to_vec());
+        assert_eq!(
+            read_reply_line(&mut input, line.len() as u64).expect("exact fit"),
+            "12345678\n"
+        );
+    }
+
+    #[test]
+    fn a_reply_longer_than_the_limit_is_refused_rather_than_truncated() {
+        // A *complete* line that is merely too long, not a truncated one: with
+        // no newline in it, an unbounded read would run out of input, return
+        // without a newline, and be refused for that reason instead --- so the
+        // first version of this test passed with the bound deleted.
+        let mut line = vec![b'x'; 4096];
+        line.push(b'\n');
+        let mut input = std::io::Cursor::new(line);
+
+        assert!(matches!(
+            read_reply_line(&mut input, 64),
+            Err(ReplyError::TooLong(64))
+        ));
+        // And the property the bound exists for, which no verdict can express:
+        // that it stopped reading. The point of a limit is the memory never
+        // allocated, so what has to be asserted is the input still waiting.
+        assert_eq!(input.position(), 64, "the read was not bounded");
+    }
+
+    #[test]
+    fn a_pipe_that_ends_mid_reply_is_a_dead_worker_and_not_an_oversized_one() {
+        // The two ways a read ends without a newline, and they are different
+        // diagnoses: "longer than 32 MB" sends the reader to look for a size
+        // limit when what happened is a crash the epitaph can name.
+        let mut input = std::io::Cursor::new(b"{\"ok\":tr".to_vec());
+        assert!(matches!(
+            read_reply_line(&mut input, 64),
+            Err(ReplyError::Closed)
+        ));
+        // And an empty stream is the same answer, reached without reading
+        // anything at all.
+        let mut empty = std::io::Cursor::new(Vec::new());
+        assert!(matches!(
+            read_reply_line(&mut empty, 64),
+            Err(ReplyError::Closed)
+        ));
     }
 
     #[test]

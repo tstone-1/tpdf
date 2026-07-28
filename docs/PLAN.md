@@ -2663,10 +2663,129 @@ pipelines two tiles and withdraws the second, with the first tile's render as th
 prints that window: 0.1 ms on `rotated-90`, which is a thinner margin than it looks and is why
 the number is in the output.
 
-**Still to come:** `RenderService` switching to the worker, with the in-process path kept as
-the control it has to be compared against, and then a pool. `Worker::spawn` and `apply_sandbox`
-both refuse on Windows rather than running unsandboxed — the correct half-answer until a
-Windows build has ever run.
+**Still to come:** a pool, and reclaiming a document nobody is reading. `Worker::spawn` and
+`apply_sandbox` both refuse on Windows rather than running unsandboxed — the correct
+half-answer until a Windows build has ever run.
+
+**A dead worker is not replaced.** The isolation works — a worker that crashes takes
+nothing with it, and the parent says so with an epitaph naming the signal — but
+`RenderService` has no respawn, so that document stops rendering until the reader opens it
+again. `worker-bench --mode crash` measured respawn, reopen and first tile at 8.5–12.9 ms,
+and `docs/THREAT-MODEL.md` T1 quotes that number; read it as what a restart *would* cost,
+not as a restart that happens. The protocol was shaped so this is a small change — one
+worker serves one document, so there is nothing to re-establish but the document itself —
+which is why it is a gap rather than a redesign.
+
+**A document is never released, and that now costs a process.** `open_document` appends and
+nothing removes: opening a second file in the same window leaves the first one's document
+open, exactly as it did in-process. What changed is the price of the leak rather than the
+leak itself — `worker-probe` measured an idle worker's footprint at 7.8 MB on `rotated-90`,
+17.5 MB on `text-heavy` and 48.2 MB on the A0 sheet, so a session that opens a dozen files
+ends up holding a dozen sandboxed processes. Reclaiming needs an answer to "is any request
+still naming this id", which the document ids being array indices makes awkward, so it is
+recorded here rather than guessed at.
+
+##### The service switches over — 2026-07-28
+
+`RenderService` now runs on either backend, chosen by `Backend` and defaulting to
+`Backend::Worker` on macOS. The in-process path stays, and not out of sentiment: it is the
+control the worker is compared against, and `TPDF_BACKEND=in-process` selects it. An
+unrecognised value is **refused**, because the whole purpose of the variable is to pin down
+which implementation ran, and a typo that silently selected the other one would let a
+comparison between them report anything it liked.
+
+What actually changed above the module is small: the app process no longer binds PDFium, a
+reply can now fail because the worker died, and a withdrawal grew a second half. Everything
+else — the callback shape, the FIFO ordering, the queue's semantics — is what it was, which
+is what the interface was shaped for in Phase 0.
+
+`bin/backend_probe.rs` is the comparison, at the level callers use rather than at the
+protocol: one service per backend, driven through the same public methods the viewer calls.
+Sixteen checks, of which the pixel comparison is the one that matters — a sandboxed PDFium
+that renders the wrong typeface returns `ok`, and this project has recorded that happening.
+On `text-heavy`, `vector-heavy`, `vector-multi`, `outline-simple`, `rotated-90` and
+`text-cid` the two backends agree byte for byte on tiles, page geometry, character boxes,
+search ranges and outlines.
+
+The claim it makes that nothing else can is that **the app process never maps libpdfium at
+all**. That is read out of the dynamic linker's own image table, not out of a startup mark
+of ours: a mark says what our code believes it did, and the question is what the process
+*is*. 615 images loaded with no pdfium among them after a 775-page document has been opened
+and a tile rendered from it; 616 with it present once the in-process service starts, which
+is the control saying the scan can see one.
+
+**Ten mutations, eight caught, two survivors that were predicted.** Writing the predictions
+down first paid for itself twice, the same way it did on the page strip.
+
+| mutation | which check went red |
+|---|---|
+| worker mode silently runs in-process | the linker scan, and the `worker spawned` mark |
+| the view rotation is not sent | a turned and inverted tile is identical too |
+| the inversion is not sent | a turned and inverted tile is identical too |
+| the tile origin is transposed | a tile is identical whichever backend rendered it |
+| the open is always lazy | page geometry crosses the boundary unchanged |
+| text always reads the first page | one page's characters and boxes survive |
+| a withdrawal never crosses the pipe | a withdrawal reaches a render already inside PDFium |
+| a withdrawal never reaches the queue | a tile withdrawn before it starts comes back abandoned |
+| the lost-race guard is deleted | **nothing** — see below |
+| the parent trusts the worker's payload length | **nothing** — pinned by unit tests instead |
+
+Three things came out of that run, and none of them is the table.
+
+**The withdrawal check could not have failed as first written.** It asserted that a
+withdrawn tile comes back `Abandoned`, which the parent's own token produces whatever the
+worker did — so deleting the wire withdrawal entirely left it green while the worker burnt a
+full second of CPU on a tile nobody wanted. What discriminates is *when* the reply arrives:
+2.2 ms against a 1,125 ms render with the withdrawal crossing, and the whole render without
+it. The assertion is now the outcome *and* the latency, with the threshold taken from that
+render's measured time rather than from a constant.
+
+**The compared tile had to be placed from the document, not fixed.** A rectangle at a fixed
+offset lands in `rotated-90`'s margin, and the uniform-buffer control fired: two backends
+agreeing about an empty tile is not evidence of anything. It is now sized and placed from
+the page's own geometry — and deliberately not square, not at the origin and not at 1x,
+because a request whose width equals its height and whose `x` equals its `y` cannot tell a
+field that was dropped in translation from one that arrived.
+
+**One guard is knowingly unpinned**, and it is recorded here rather than deleted or quietly
+kept. If a withdrawal wins the race to the pipe and arrives *before* the tile it names, the
+worker's queue no-ops it and renders anyway; the parent then returns `Abandoned` on its own
+token. No check can provoke that interleaving, so by this project's standing rule it is a
+guard to delete — except that rule is about guards whose condition is *unreachable*, and
+this one's is merely rare. Deleting it would hand the reader a stale tile they had
+withdrawn, in a window that exists.
+
+###### What the boundary costs at startup
+
+Measured the same day with interleaved variants (`startup_bench.py --variant`, two runs of
+8 and 14 rounds, `text-heavy`, release bundle). The boundary is on the critical path to the
+first page, so it had to be measured rather than waved through on spike 0.5's 6 µs control
+latency — that number is the round trip, not the spawn.
+
+| interval | in-process | worker |
+|---|---|---|
+| `document open requested` → `document open complete` | **1.2 ms** | **12.0 ms** (3.1 to spawn, 8.9 to bind PDFium, sandbox and parse) |
+| → `first tile rendered` | +5.5 ms | +10.4 ms |
+| first page presented, warm | 282–284 ms | 287–295 ms |
+
+Three statistics agree on the size of it: the open interval is +10.8 ms, and the pairwise
+within-round deltas are −10.3 ms and −17.7 ms across the two runs. Individual rounds go both
+ways, which is why the end-to-end medians (+2.4 ms in one run, +12.8 ms in the other) are the
+weakest of the three and not the one to quote.
+
+So the process boundary costs **roughly 11–16 ms of a ~50 ms application budget**, against a
+~250 ms shell floor nothing on our side moves. It is affordable and it is not free, and the
+consequence to carry is that warm start is now 287–295 ms against a 300 ms target: the margin
+that lazy page geometry bought has largely been spent. The next thing to want here is a
+worker started *before* the document is chosen, since 8.9 of those milliseconds are PDFium
+binding and have nothing to do with which file it is.
+
+The two bounds on the parent's side of the pipe are pinned by unit tests instead, and one of
+those tests was wrong: it fed 4,096 bytes with no newline to a 64-byte limit and asserted
+"too long", which **passes with the bound deleted** — an unbounded read consumes the lot,
+hits EOF, and is refused for the other reason. The input is now a complete line that is
+merely too long, and the assertion is the reader's *position* afterwards. The property is
+"it stopped reading", and no statement about the return value can express that.
 
 ### Phase 2 — Editing foundation
 

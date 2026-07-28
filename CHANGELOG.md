@@ -265,6 +265,40 @@ experience.
   1.2 ms here, for byte-identical output.
 
   **Windows is not implemented**, and says so with an error rather than doing nothing.
+- **Every document is parsed in a sandboxed worker process** (`src-tauri/src/render.rs`).
+  The one Phase 0 constraint that had never reached the running program: the boundary
+  existed and was measured, but the viewer still opened documents in the app process.
+  `RenderService` now runs on either backend, defaulting to workers on macOS, with
+  `TPDF_BACKEND=in-process` selecting the control --- and refusing any other value, because a
+  typo that silently ran the other implementation would make every comparison between them
+  meaningless.
+
+  What says it really moved is not a comment: `backend-probe` reads the **dynamic linker's**
+  image table and finds no `libpdfium` mapped in a process that has just opened a 775-page
+  document and rendered a tile from it. A startup mark of our own would only report what our
+  code believes it did.
+
+  The boundary is transparent on six corpora --- tiles byte for byte, and the same page
+  geometry, character boxes, search ranges and outlines. It costs **11--16 ms at startup**
+  of a ~50 ms application budget: 3.1 ms to spawn and 8.9 ms for the child to bind PDFium,
+  sandbox itself and parse. Warm start is 287--295 ms against a 300 ms target, so the margin
+  lazy page geometry bought has largely been spent.
+
+  A withdrawal now has two halves that do different jobs --- the parent's queue decides what
+  the caller sees, the wire withdrawal decides whether the worker keeps burning CPU --- and
+  the first check for it could not have failed, since `Abandoned` is what the parent
+  produces on its own. It now asserts the latency too: 2.2 ms against a 1,125 ms render.
+
+  **A document is still never released, and that now costs a process rather than a heap
+  allocation.** Opening a second file leaves the first one's worker alive, holding the
+  7.8--48.2 MB `worker-probe` measured per corpus. The leak is not new; its price is.
+
+  **Windows still refuses rather than running unsandboxed**, and so defaults to in-process.
+- **A parent that does not trust its worker's arithmetic.** A reply states how many bytes of
+  the shared mapping it wrote; that claim is checked against the mapping's size and, for raw
+  pixels, against `width x height x 4` exactly. Reply lines are bounded at 32 MB, because
+  `read_line` on a pipe is otherwise unbounded and a worker made to emit an endless one would
+  take the app down with it --- perfect isolation, dead application.
 - `scripts/fetch_pdfium.py` --- installs the pinned PDFium build (`chromium/7881`),
   verifying its SHA256 before extracting and refusing a V8 asset. A clean clone could not
   previously build: `vendor/pdfium/` is gitignored and nothing fetched it.

@@ -17,10 +17,10 @@ pub mod print_macos;
 pub mod progressive;
 mod protocol;
 mod queue;
-mod render;
+pub mod render;
 pub mod search;
 pub mod session;
-mod startup;
+pub mod startup;
 pub mod sweep;
 pub mod text;
 pub mod worker;
@@ -686,6 +686,18 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
         worker_child::main(&args);
+    }
+
+    // Also before the watchdog, and for a reason the panic in `RenderService::start`
+    // cannot serve. That call happens in the setup hook, which `App::run` invokes
+    // from inside AppKit's frames --- so a panic there is *non-unwinding*, aborts
+    // through a backtrace with no symbols, and races the watchdog's own 30-second
+    // report about an occluded webview. A misspelt environment variable would then
+    // be diagnosed as a suspended page. Read it here, where there is no event loop
+    // to lose the message in and no window to be occluded.
+    if let Err(e) = render::Backend::from_env() {
+        eprintln!("[FAIL] {e}");
+        std::process::exit(2);
     }
 
     start_watchdog();
