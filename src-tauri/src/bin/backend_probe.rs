@@ -346,46 +346,22 @@ fn main() {
         .as_ref()
         .map_or(0.0, |t| t.render_us as f64 / 1e3);
     if render_ms >= WITHDRAWABLE_MS {
-        let running = {
-            let (tx, rx) = channel();
-            workers.tile(
-                request(worker_doc.id, 11, at),
-                Box::new(move |result| {
-                    let _ = tx.send(result);
-                }),
-            );
-            // Long enough that the worker is inside Pdfium, short enough that
-            // it cannot have finished: the render takes `render_ms`.
-            std::thread::sleep(Duration::from_millis(60));
-            let sent = Instant::now();
-            workers.cancel(11);
-            let outcome = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
-            (outcome, sent.elapsed().as_secs_f64() * 1e3)
-        };
+        let running = withdraw_in_flight(&workers, worker_doc.id, 11, at);
         // Both halves, and the second is the one that matters. `Abandoned`
         // alone is what this side's own token produces whatever the worker
         // did --- so a withdrawal that never crossed the pipe would still
         // report it, after waiting out the entire render. What says the
         // worker actually stopped is that the reply came back long before
         // the render could have finished.
-        let promptly = running.1 < render_ms / 3.0;
         report.check(
             "a withdrawal reaches a render already inside Pdfium",
-            matches!(running.0, Ok(TileOutcome::Abandoned)) && promptly,
-            format!(
-                "{} after {:.1} ms, against a {render_ms:.0} ms render",
-                outcome_of(&running.0),
-                running.1
-            ),
+            withdrawn_promptly(&running, render_ms),
+            describe_withdrawal(&running, render_ms),
         );
     } else {
         report.skip(
             "a withdrawal reaches a render already inside Pdfium",
-            format!(
-                "a tile of this document renders in {render_ms:.1} ms, under the \
-                 {WITHDRAWABLE_MS:.0} ms a withdrawal needs to arrive --- run this on \
-                 testdata/vector-heavy.pdf"
-            ),
+            withdrawal_needs_a_slow_page(render_ms),
         );
     }
 
@@ -401,7 +377,277 @@ fn main() {
         },
     );
 
+    // ------------------------------------------------------- surviving a crash
+    // The isolation is only worth having if the reader keeps reading. Everything
+    // below is about a worker that dies mid-session, and every observation of a
+    // *process* is taken from the OS table rather than from bookkeeping of ours
+    // --- same reason as the libpdfium check at the top.
+    let before = worker_pids();
+    report.check(
+        "one worker process is holding the document",
+        before.len() == 1,
+        format!("{before:?}"),
+    );
+
+    // The other direction, and it is the one a restart mechanism gets wrong by
+    // being too eager. A live worker that answers with an error has *answered*:
+    // replacing it would spend a process reopen on every malformed request, and
+    // would hide a protocol bug behind a fresh process that gets the next
+    // question right. One page past the end is the cheapest way to ask for one.
+    let refused = wait(|reply| {
+        workers.tile(
+            TileRequest {
+                page: worker_doc.page_count as u32,
+                ..request(worker_doc.id, 21, at)
+            },
+            reply,
+        )
+    });
+    let unchanged = worker_pids();
+    report.check(
+        "a worker that answers with an error is not replaced",
+        refused.is_err() && unchanged == before,
+        format!(
+            "{} / {before:?} then {unchanged:?}",
+            refused.as_ref().err().map_or("rendered", String::as_str)
+        ),
+    );
+
+    // Deliberately *not* `if let Some(victim) = ...`, which is how this was
+    // first written and how it was wrong. A defect that stops workers being
+    // replaced also leaves no worker to kill, so every check nested inside that
+    // lookup disappeared --- not as a `[SKIP]` but silently, and the only trace
+    // was the total dropping from 23 to 22. Found by mutation M1, which was
+    // predicted to turn four checks red and turned three.
+    let victim = before.first().copied();
+
+    // Establishing that something broke, before asserting it recovered. A check
+    // shaped "do X, then wait for the good state" passes on a worker nothing
+    // ever touched --- `AGENTS.md` records that one twice.
+    let death = kill_a_worker(victim);
+    report.check(
+        "the worker can be made to die",
+        death.is_ok(),
+        match &death {
+            Ok(()) => format!("pid {victim:?} is gone"),
+            Err(e) => e.clone(),
+        },
+    );
+
+    // Pixels, not merely a reply. A replacement handed a *different* document
+    // would answer perfectly well and render something plausible, and the reason
+    // the document mapping is shared rather than re-read from its path is
+    // precisely that it cannot.
+    let recovered = tile_of(&workers, &worker_doc, 20, at);
+    report.check(
+        "a killed worker is replaced and the same tile returns",
+        matches!((&recovered, &worker_tile), (Ok(new), Ok(old)) if new.bytes == old.bytes),
+        // Says what was actually compared. Written first as "identical to the
+        // tile before it died" on every `Ok`, which under mutation M2 printed
+        // that sentence next to `[FAIL]` --- a detail line contradicting its own
+        // verdict is worse than none.
+        match (&recovered, &worker_tile) {
+            (Ok(new), Ok(old)) => format!(
+                "{} bytes against the earlier {}, {} differing",
+                new.bytes.len(),
+                old.bytes.len(),
+                differing(&new.bytes, &old.bytes)
+            ),
+            (Err(e), _) | (_, Err(e)) => e.clone(),
+        },
+    );
+
+    // Two claims in one, and they fail differently: a replacement that never
+    // spawned leaves none, and one that spawned without reaping its predecessor
+    // leaves two --- the zombie counts, which is why this is a count and not a
+    // "there is a worker" test.
+    let after = worker_pids();
+    report.check(
+        "the replacement is a new process, and the old one reaped",
+        after.len() == 1 && victim.is_some() && after.first().copied() != victim,
+        format!("{before:?} then {after:?}"),
+    );
+
+    // A restart has to re-point the withdrawal path at the new process, and
+    // nothing above can see whether it did: a withdrawal sent down a dead pipe
+    // still comes back `Abandoned` on this side's own token, after waiting out
+    // the whole render. So this is the latency assertion again, for the same
+    // reason as the first time --- an outcome two mechanisms can produce tests
+    // neither of them.
+    if render_ms >= WITHDRAWABLE_MS {
+        let running = withdraw_in_flight(&workers, worker_doc.id, 22, at);
+        report.check(
+            "a withdrawal reaches the replacement too",
+            withdrawn_promptly(&running, render_ms),
+            describe_withdrawal(&running, render_ms),
+        );
+    } else {
+        report.skip(
+            "a withdrawal reaches the replacement too",
+            withdrawal_needs_a_slow_page(render_ms),
+        );
+    }
+
+    // The other call site. `with_worker` is shared between them, but a tile is
+    // read out of the shared mapping and a JSON reply off the pipe, and only the
+    // first of those was exercised above.
+    let second = worker_pids().first().copied();
+    let death = kill_a_worker(second);
+    let again = wait(|reply| workers.text(worker_doc.id, page, reply));
+    let same = matches!(
+        (&again, &worker_text),
+        (Ok(new), Ok(old)) if new.codes == old.codes && new.boxes == old.boxes
+    );
+    report.check(
+        "a killed worker is replaced on the text path too",
+        death.is_ok() && second.is_some() && same,
+        match (&death, &again) {
+            (Err(e), _) => e.clone(),
+            (Ok(()), Err(e)) => e.clone(),
+            // Said out loud when the page carries no text: the content half of
+            // this comparison is then two empty vectors agreeing, and only the
+            // recovery is still being asserted.
+            (Ok(()), Ok(t)) if t.codes.is_empty() => {
+                format!("recovered after killing {second:?}; this page has no text")
+            }
+            (Ok(()), Ok(t)) => format!("{} codes back after killing {second:?}", t.codes.len()),
+        },
+    );
+
     report.finish();
+}
+
+/// Issues a tile and withdraws it once the worker is inside Pdfium, reporting
+/// the outcome and how long the reply took to arrive.
+///
+/// The delay is what makes this a test of the *wire* withdrawal rather than of
+/// the parent's queue: withdrawn before it is claimed, a request never reaches a
+/// worker at all.
+fn withdraw_in_flight(
+    service: &RenderService,
+    doc: u32,
+    rid: u64,
+    at: Placement,
+) -> (Result<TileOutcome, String>, f64) {
+    let (tx, rx) = channel();
+    service.tile(
+        request(doc, rid, at),
+        Box::new(move |result| {
+            let _ = tx.send(result);
+        }),
+    );
+    // Long enough that the worker is inside Pdfium, short enough that it cannot
+    // have finished: the render takes `render_ms`, which the caller checked.
+    std::thread::sleep(Duration::from_millis(60));
+    let sent = Instant::now();
+    service.cancel(rid);
+    let outcome = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
+    (outcome, sent.elapsed().as_secs_f64() * 1e3)
+}
+
+/// Whether a withdrawal both took effect and did so before the render could
+/// have finished on its own.
+fn withdrawn_promptly(result: &(Result<TileOutcome, String>, f64), render_ms: f64) -> bool {
+    matches!(result.0, Ok(TileOutcome::Abandoned)) && result.1 < render_ms / 3.0
+}
+
+fn describe_withdrawal(result: &(Result<TileOutcome, String>, f64), render_ms: f64) -> String {
+    format!(
+        "{} after {:.1} ms, against a {render_ms:.0} ms render",
+        outcome_of(&result.0),
+        result.1
+    )
+}
+
+fn withdrawal_needs_a_slow_page(render_ms: f64) -> String {
+    format!(
+        "a tile of this document renders in {render_ms:.1} ms, under the \
+         {WITHDRAWABLE_MS:.0} ms a withdrawal needs to arrive --- run this on \
+         testdata/vector-heavy.pdf"
+    )
+}
+
+/// The worker processes this probe has spawned, from the OS process table.
+///
+/// `pgrep`, rather than anything of ours: the claim is that one *process* was
+/// replaced by another, and the kernel's table is the observable for that. A
+/// count derived from our own `Vec<Held>` would report whatever the code under
+/// test believes.
+fn worker_pids() -> Vec<u32> {
+    let out = std::process::Command::new("pgrep")
+        .arg("-P")
+        .arg(std::process::id().to_string())
+        .output();
+    out.map(|out| {
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|pid| pid.parse().ok())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Kills a worker, or reports that there was no worker to kill.
+///
+/// The absence is an outcome rather than a reason to stop: a defect that stops
+/// workers being replaced arrives here with nothing to kill, and a check that
+/// quietly does not run in that case is invisible.
+fn kill_a_worker(pid: Option<u32>) -> Result<(), String> {
+    match pid {
+        Some(pid) => kill_and_wait(pid),
+        None => Err("no worker process is holding the document by this point".into()),
+    }
+}
+
+/// Kills a worker and waits for it to actually be gone.
+///
+/// **SIGKILL rather than SIGSEGV, and that is not a stylistic choice.** A Rust
+/// process absorbs the first SIGSEGV *sent* to it: std installs a handler so a
+/// stack overflow can be reported, and on a fault address outside the guard page
+/// that handler restores the default disposition and returns --- which for a
+/// signal that arrived by `kill(2)` simply resumes the process. Measured while
+/// writing this: the worker survived SIGSEGV and `/bin/sleep` did not, and the
+/// checks below then passed against a worker that had never died. A genuine
+/// Pdfium fault still terminates, because the faulting instruction re-executes
+/// against the restored default; only a sent one is swallowed.
+///
+/// The wait is not a sleep, and is not optional either: a signal is delivered
+/// asynchronously, so asking the replacement question too early is answered by
+/// the worker that is still alive.
+fn kill_and_wait(pid: u32) -> Result<(), String> {
+    // SAFETY: `kill` takes two integers and touches nothing this process owns.
+    if unsafe { libc::kill(pid as i32, libc::SIGKILL) } != 0 {
+        return Err(format!(
+            "could not signal pid {pid}: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if !pid_is_running(pid) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    Err(format!("pid {pid} was still running 5 s after SIGKILL"))
+}
+
+/// Whether a pid names a process that has not exited.
+///
+/// The state column rather than the pid's existence: a signalled child stays in
+/// the table as a zombie until its parent reaps it, and `kill(pid, 0)` succeeds
+/// on a zombie. Reading only "does the pid exist" would report a dead worker as
+/// alive right up until the restart that reaps it.
+fn pid_is_running(pid: u32) -> bool {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "state=", "-p", &pid.to_string()])
+        .output();
+    out.map(|out| {
+        let state = String::from_utf8_lossy(&out.stdout);
+        let state = state.trim();
+        !state.is_empty() && !state.starts_with('Z')
+    })
+    .unwrap_or(false)
 }
 
 /// Where on the page the compared tile is taken from.

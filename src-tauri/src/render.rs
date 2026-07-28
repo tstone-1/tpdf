@@ -39,7 +39,9 @@
 //! - **The app process never binds PDFium** in worker mode, so it never maps
 //!   the parsing code, let alone runs it on a document.
 //! - **A reply can fail because the worker died**, which an in-process render
-//!   could only do by taking the app with it.
+//!   could only do by taking the app with it. A death is not usually visible to
+//!   the caller: the request is retried against a replacement holding the same
+//!   bytes --- see [`Workers::with_worker`].
 //! - **A withdrawal now has two halves.** The queue here decides what the caller
 //!   sees; a `Withdraw` on the wire decides whether the worker keeps burning CPU
 //!   on a tile nobody wants. Neither is redundant --- see [`RenderService::cancel`].
@@ -62,7 +64,7 @@ use crate::queue::{Claim, SharedQueue};
 use crate::search::{self, PageMatches};
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::{self, PageText};
-use crate::worker::{Request, Response, Worker, WorkerSender};
+use crate::worker::{Request, Response, Shm, Worker, WorkerSender};
 
 /// Pixel format of a returned tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -579,10 +581,20 @@ impl Engine for InProcess {
 
 // -------------------------------------------------------------------- workers
 
+/// One open document: the bytes, and whichever process is currently holding
+/// them.
+struct Held {
+    /// The document mapping, owned here rather than by the worker so that a
+    /// replacement is handed the same bytes. See [`Worker::spawn_shared`].
+    doc: Arc<Shm>,
+    /// The worker serving it, `None` between a death and its replacement.
+    worker: Option<Worker>,
+}
+
 /// Documents parsed in sandboxed child processes, one per document.
 struct Workers {
     library_dir: PathBuf,
-    workers: Vec<Worker>,
+    docs: Vec<Held>,
     senders: Senders,
     queue: SharedQueue,
 }
@@ -591,17 +603,115 @@ impl Workers {
     fn new(library_dir: PathBuf, queue: SharedQueue, senders: Senders) -> Self {
         Self {
             library_dir,
-            workers: Vec::new(),
+            docs: Vec::new(),
             senders,
             queue,
         }
     }
 
-    /// The worker holding a document, by the id [`Engine::open`] returned.
-    fn worker(&mut self, doc: u32) -> Result<&mut Worker, String> {
-        self.workers
+    /// A document by the id [`Engine::open`] returned.
+    fn held(&mut self, doc: u32) -> Result<&mut Held, String> {
+        self.docs
             .get_mut(doc as usize)
             .ok_or_else(|| format!("no such document: {doc}"))
+    }
+
+    /// Replaces a document's worker with a fresh one holding the same bytes.
+    ///
+    /// There is no reopening protocol to run: the worker parses its document
+    /// during its own startup, before it reads a single request, so a
+    /// replacement is ready as soon as it is spawned. That is a property of "one
+    /// worker serves one document" rather than a convenience --- a multiplexing
+    /// worker would have a session to re-establish here.
+    fn restart(&mut self, doc: u32) -> Result<(), String> {
+        let index = doc as usize;
+        let held = self.held(doc)?;
+        // Said out loud, once, because a successful retry makes the death
+        // invisible to the caller and a worker that dies quietly is the hardest
+        // thing in this design to diagnose. The epitaph has to be read before
+        // the child is dropped, since dropping it is what reaps it.
+        let epitaph = held
+            .worker
+            .as_mut()
+            .map_or_else(|| "already gone".to_string(), Worker::epitaph);
+        // Dropped before the replacement is spawned, so no document ever holds
+        // two 16 MB tile mappings at once. Not for the reaping, which happens
+        // either way --- assigning over the old `Worker` would drop it too, just
+        // later. Nothing pins this ordering, and it is a footprint choice rather
+        // than a correctness one.
+        held.worker = None;
+        let bytes = held.doc.clone();
+        eprintln!("[render] document {doc}: worker {epitaph}; starting a replacement");
+
+        let worker = Worker::spawn_shared(bytes, &self.library_dir)?;
+        // Overwritten in place: a withdrawal broadcast between the death and
+        // here reaches nothing, which is harmless because the queue in the
+        // parent has already recorded it and is what the caller sees.
+        if let Some(slot) = self
+            .senders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(index)
+        {
+            *slot = worker.sender();
+        }
+        self.held(doc)?.worker = Some(worker);
+        Ok(())
+    }
+
+    /// A document's worker, starting a replacement if it is already known dead.
+    fn live(&mut self, doc: u32) -> Result<&mut Worker, String> {
+        if self.held(doc)?.worker.is_none() {
+            self.restart(doc)?;
+        }
+        self.held(doc)?
+            .worker
+            .as_mut()
+            .ok_or_else(|| format!("document {doc} has no worker"))
+    }
+
+    /// Whether a document's worker process is still there.
+    fn running(&mut self, doc: u32) -> bool {
+        self.docs
+            .get_mut(doc as usize)
+            .and_then(|held| held.worker.as_mut())
+            .is_some_and(Worker::is_running)
+    }
+
+    /// Runs one exchange with a document's worker, replacing it if it has died.
+    ///
+    /// Retried exactly once, and the bound is the retry rather than a counter.
+    /// A crash the document *causes* reproduces on the retry --- so the reader
+    /// pays two crashes for that tile and gets an error, and the next request
+    /// pays one more. That is bounded by the requests the reader makes, which is
+    /// what makes a restart budget on top of it unreachable defence: there is no
+    /// loop here for one to break.
+    ///
+    /// The trade it does make is that a death caused by the *previous* request,
+    /// or by anything outside the document at all, is invisible to the caller.
+    /// That is the point of restarting.
+    fn with_worker<T>(
+        &mut self,
+        doc: u32,
+        mut exchange: impl FnMut(&mut Worker) -> Result<T, String>,
+    ) -> Result<T, String> {
+        // Scoped so the borrow of `self` ends before anything below touches it.
+        let first = {
+            let worker = self.live(doc)?;
+            exchange(worker)
+        };
+        let error = match first {
+            Ok(value) => return Ok(value),
+            Err(e) => e,
+        };
+
+        if self.running(doc) {
+            return Err(error);
+        }
+        self.restart(doc).map_err(|e| format!("{error} --- {e}"))?;
+
+        let worker = self.live(doc)?;
+        exchange(worker)
     }
 
     /// Sends a request that answers with JSON, and reads the answer back.
@@ -610,12 +720,14 @@ impl Workers {
         doc: u32,
         request: &Request,
     ) -> Result<T, String> {
-        let response = self.worker(doc)?.call(request)?;
-        if !response.ok {
-            return Err(response.error);
-        }
-        let json = response.json.ok_or("worker replied without a payload")?;
-        serde_json::from_value(json).map_err(|e| format!("unreadable reply from a worker: {e}"))
+        self.with_worker(doc, |worker| {
+            let response = worker.call(request)?;
+            if !response.ok {
+                return Err(response.error);
+            }
+            let json = response.json.ok_or("worker replied without a payload")?;
+            serde_json::from_value(json).map_err(|e| format!("unreadable reply from a worker: {e}"))
+        })
     }
 
     /// Renders through the worker, having already claimed the request.
@@ -624,46 +736,47 @@ impl Workers {
         request: &TileRequest,
         token: &CancelToken,
     ) -> Result<TileOutcome, String> {
-        let worker = self.worker(request.doc)?;
-        let response = worker.call(&Request::Tile {
-            rid: request.rid,
-            page: request.page,
-            scale: request.scale,
-            turns: request.turns,
-            invert: request.invert,
-            x: request.x,
-            y: request.y,
-            width: request.width,
-            height: request.height,
-            png: request.format == TileFormat::Png,
-        })?;
+        self.with_worker(request.doc, |worker| {
+            let response = worker.call(&Request::Tile {
+                rid: request.rid,
+                page: request.page,
+                scale: request.scale,
+                turns: request.turns,
+                invert: request.invert,
+                x: request.x,
+                y: request.y,
+                width: request.width,
+                height: request.height,
+                png: request.format == TileFormat::Png,
+            })?;
 
-        if !response.ok {
-            return Err(response.error);
-        }
-        if response.abandoned {
-            return Ok(TileOutcome::Abandoned);
-        }
-        // The withdrawal that lost its race to the pipe. The worker rendered the
-        // tile because the `Withdraw` arrived before the request it names, and
-        // the caller stopped wanting it regardless --- so this side's token, not
-        // the worker's answer, is what decides.
-        if token.is_cancelled() {
-            return Ok(TileOutcome::Abandoned);
-        }
+            if !response.ok {
+                return Err(response.error);
+            }
+            if response.abandoned {
+                return Ok(TileOutcome::Abandoned);
+            }
+            // The withdrawal that lost its race to the pipe. The worker rendered
+            // the tile because the `Withdraw` arrived before the request it
+            // names, and the caller stopped wanting it regardless --- so this
+            // side's token, not the worker's answer, is what decides.
+            if token.is_cancelled() {
+                return Ok(TileOutcome::Abandoned);
+            }
 
-        let length = payload_length(&response, request, worker.tile.len())?;
-        let bytes = worker.tile.as_slice()[..length].to_vec();
-        mark("first tile rendered");
+            let length = payload_length(&response, request, worker.tile.len())?;
+            let bytes = worker.tile.as_slice()[..length].to_vec();
+            mark("first tile rendered");
 
-        Ok(TileOutcome::Rendered(Tile {
-            bytes,
-            width: request.width,
-            height: request.height,
-            format: request.format,
-            render_us: response.render_us,
-            encode_us: response.encode_us,
-        }))
+            Ok(TileOutcome::Rendered(Tile {
+                bytes,
+                width: request.width,
+                height: request.height,
+                format: request.format,
+                render_us: response.render_us,
+                encode_us: response.encode_us,
+            }))
+        })
     }
 }
 
@@ -708,7 +821,11 @@ impl Engine for Workers {
     /// first page. What it costs is measured rather than assumed --- see PLAN §9.
     fn open(&mut self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String> {
         let t0 = Instant::now();
-        let mut worker = Worker::spawn(path, &self.library_dir)?;
+        // Mapped here rather than inside the spawn, because this is the copy a
+        // replacement worker will be handed if this one dies. The file is read
+        // once, at open, and never again.
+        let doc = Arc::new(Shm::map_file(path)?);
+        let mut worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
         mark("worker spawned");
 
         let response = worker.call(&Request::Open { lazy_geometry })?;
@@ -721,12 +838,15 @@ impl Engine for Workers {
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
         mark("document parsed");
 
-        let id = self.workers.len() as u32;
+        let id = self.docs.len() as u32;
         self.senders
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(worker.sender());
-        self.workers.push(worker);
+        self.docs.push(Held {
+            doc,
+            worker: Some(worker),
+        });
         mark("document open complete");
 
         Ok(DocumentInfo {

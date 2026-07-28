@@ -404,10 +404,14 @@ before the architecture can be called cross-platform.
 8. **A compromised worker can lie about what it saw** — no verification result may rest on
    a single worker's word.
 9. **Nothing here protects previous copies, backups, or free sectors.**
-10. **A crashed worker is not respawned by the viewer.** The containment holds and the
-    coordinator survives, but that document stops rendering until it is reopened. The
-    8.5–12.9 ms respawn measured under T1 is what a restart would cost, not one that
-    happens; `RenderService` has no restart yet.
+10. **A document that reliably kills its worker costs a process per attempt.** A crashed
+    worker *is* now replaced and the request retried once (`RenderService`, 2026-07-28), so
+    a death from anything other than the request in hand is invisible to the reader. The
+    bound on the pathological case is the single retry rather than a budget: a page that
+    faults deterministically spawns a fresh sandboxed process each time it is asked for,
+    which is bounded by the reader's own requests and is not free. Verified by
+    `backend-probe`, which kills the worker out of the OS process table and asserts the same
+    pixels come back from a different pid.
 
 ## 8. How to re-verify any of this
 
