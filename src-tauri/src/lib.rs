@@ -8,6 +8,7 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+pub mod launch;
 pub mod outline;
 pub mod progressive;
 mod protocol;
@@ -82,6 +83,35 @@ struct EagerOpen(Mutex<Option<Receiver<Result<DocumentInfo, String>>>>);
 /// that measurement compared against is still reachable.
 fn lazy_geometry() -> bool {
     std::env::var_os("TPDF_EAGER_GEOMETRY").is_none()
+}
+
+/// The event name a document handed over later will arrive on.
+///
+/// Asked for rather than agreed in two places. A constant duplicated on both
+/// sides fails by *silence* when the two drift --- the app keeps working, and
+/// simply stops noticing documents opened while it is already running, which is
+/// the half of file associations nobody tests by hand.
+///
+/// It has to be a separate call from `take_launch_paths`, and in that order: the
+/// listener must be registered before the queue is drained, because a path
+/// delivered between the drain and the listen is emitted to nobody.
+#[tauri::command]
+fn launch_open_event() -> &'static str {
+    launch::OPEN_EVENT
+}
+
+/// Hands over documents that arrived from outside, and starts listening.
+///
+/// Called once by the frontend during boot. Everything queued before that ---
+/// a double-click that launched the app, a path on the command line --- comes
+/// back here; anything arriving afterwards is emitted on `launch::OPEN_EVENT`.
+#[tauri::command]
+fn take_launch_paths(launch: tauri::State<'_, launch::Launch>) -> Vec<String> {
+    launch
+        .take()
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// Where the remembered places are kept.
@@ -282,6 +312,17 @@ fn autobench_path() -> Option<String> {
     spike_env("TPDF_AUTOBENCH")
 }
 
+/// What the file-association check should assert, from `TPDF_OPENCHECK`.
+///
+/// Like the session check, this observes the real boot rather than replacing
+/// it. Note the environment reaches the app even when Launch Services starts it:
+/// `TPDF_OPENCHECK=... open -a tpdf.app file.pdf` does propagate, which is what
+/// makes the actual double-click path testable rather than merely argued.
+#[tauri::command]
+fn opencheck_mode() -> Option<String> {
+    spike_env("TPDF_OPENCHECK")
+}
+
 /// What the session check should do this launch, from `TPDF_SESSIONCHECK`.
 ///
 /// Unlike the other spike entry points this one does *not* replace the
@@ -461,6 +502,10 @@ fn start_watchdog() {
         // Frame-driven like the scroll benchmark, and so exposed to the same
         // suspension, but it waits on renders rather than counting frames.
         env_or("TPDF_VIEWERCHECK_TIMEOUT", 300)
+    } else if std::env::var_os("TPDF_OPENCHECK").is_some() {
+        // One of its phases deliberately waits for a document that another
+        // process sends it, so it outlives a plain boot by design.
+        env_or("TPDF_OPENCHECK_TIMEOUT", 120)
     } else if std::env::var_os("TPDF_SESSIONCHECK").is_some() {
         // Opens a document and waits for one screen, twice per two-launch run.
         env_or("TPDF_SESSIONCHECK_TIMEOUT", 120)
@@ -541,7 +586,22 @@ pub fn run() {
         context.config_mut().app.windows.clear();
     }
 
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    // Managed on the builder rather than in the setup hook, and the difference
+    // is not stylistic. **`RunEvent::Opened` fires before setup runs**, so with
+    // this registered there `state::<Launch>()` panics inside the run callback
+    // on exactly the path it exists to serve: a cold double-click. The window
+    // appears, nothing else happens, and the last startup mark is `app built`.
+    //
+    // Queued here for the same reason: on Windows a double-click arrives in
+    // `argv`, long before there is a webview to tell about it.
+    let launch = launch::Launch::default();
+    for path in launch::paths_from_args(std::env::args()) {
+        launch.deliver(path);
+    }
+
+    let mut builder = tauri::Builder::default()
+        .manage(launch)
+        .plugin(tauri_plugin_dialog::init());
     if std::env::var_os("TPDF_EMPTY_MENU").is_some() {
         // Tauri installs a full default application menu on macOS. Building it
         // means constructing every item and submenu through AppKit, which is
@@ -611,12 +671,15 @@ pub fn run() {
             page_text,
             search_page,
             document_outline,
+            launch_open_event,
+            take_launch_paths,
             session_load,
             session_remember,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,
             sessioncheck_mode,
+            opencheck_mode,
             startup_path,
             scrollbench_config,
             startup_mark,
@@ -635,6 +698,32 @@ pub fn run() {
     app.run(|_handle, event| {
         if matches!(event, tauri::RunEvent::Ready) {
             startup::mark("event loop ready");
+        }
+
+        // How a double-click reaches tpdf on macOS. Launch Services sends an
+        // Apple Event and nothing appears in `argv` at all, so this arm is the
+        // *only* route for the way most people will open a document --- and it
+        // can fire before the webview exists, which is why it queues rather
+        // than emitting unconditionally.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = &event {
+            use tauri::{Emitter, Manager};
+            // `try_state`, not `state`: the latter panics on unmanaged state,
+            // and this arm runs before the setup hook. It is managed on the
+            // builder now so this cannot be `None`, but a panic here is
+            // invisible --- a window with nothing in it --- and the degradation
+            // is one document not opening.
+            let Some(launch) = _handle.try_state::<launch::Launch>() else {
+                return;
+            };
+            for url in urls {
+                let Some(path) = launch::path_from_url(url) else {
+                    continue;
+                };
+                if let launch::Delivery::Emit(path) = launch.deliver(path) {
+                    let _ = _handle.emit(launch::OPEN_EVENT, path.to_string_lossy().into_owned());
+                }
+            }
         }
     });
 }

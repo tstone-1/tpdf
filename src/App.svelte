@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { runAutobenchIfRequested } from "./lib/autobench";
@@ -12,6 +13,7 @@
   import type { Outline } from "./lib/outline";
   import { clampPlace, loadSession, SessionWriter, type Session } from "./lib/session";
   import { runSessionCheckIfRequested } from "./lib/sessioncheck";
+  import { runOpenCheckIfRequested } from "./lib/opencheck";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
 
   interface PageSize {
@@ -370,13 +372,40 @@
       // starts empty every morning is not the one someone reaches for. It runs
       // after the spike entry points above, all of which exit the process, so no
       // measurement ever opens a document it was not pointed at.
-      session = await loadSession();
-      const resume = session.places[0];
-      if (resume) await openPath(resume.path, true);
+      // Documents handed over from outside: a double-click, "Open With", or a
+      // path on the command line. Drained before anything is restored, because
+      // a person who double-clicked a file is asking for *that* file and would
+      // read yesterday's document appearing instead as the association being
+      // broken. Anything arriving later --- a second double-click while tpdf is
+      // already running --- comes in on the event below.
+      //
+      // The name comes from Rust rather than being agreed in two places: a
+      // constant that drifts fails by silence, the app simply ceasing to notice
+      // documents opened while it is already running. And the listener is
+      // registered *before* the queue is drained, because a path delivered
+      // between the two would be emitted to nobody.
+      const openEvent = await invoke<string>("launch_open_event");
+      await listen<string>(openEvent, (event) => void openPath(event.payload));
+      const handed = await invoke<string[]>("take_launch_paths");
 
-      // After the restore, not instead of it: what this checks is what the boot
-      // above just did. Unlike the other harnesses it does not replace the
-      // application --- see `sessioncheck.ts` for why it cannot.
+      session = await loadSession();
+      const [first] = handed;
+      if (first) {
+        // One window, so one document. Selecting several in the Finder opens
+        // the first; the rest are dropped rather than silently replacing each
+        // other, which is what opening them in turn would look like.
+        await openPath(first);
+      } else {
+        const resume = session.places[0];
+        if (resume) await openPath(resume.path, true);
+      }
+
+      // Both of these observe the boot rather than replacing it, for the same
+      // reason --- see `sessioncheck.ts`. The open check goes first because its
+      // `arrives` phase asserts that *nothing* opened, which the session check
+      // would have to have finished with to be true.
+      if (await runOpenCheckIfRequested({ path: () => openPathName })) return;
+
       await runSessionCheckIfRequested({
         open: (path) => openPath(path),
         viewer: () => viewer,

@@ -30,10 +30,18 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import { pause, Report, settle as settleFor } from "./checkreport";
 import type { Viewer } from "./viewer";
 
 /** How long any single wait may take before the check gives up. */
 const TIMEOUT_MS = 30_000;
+
+const report = new Report();
+
+/** Waits for a condition, returning whether it arrived. */
+const settle = (predicate: () => boolean) => settleFor(predicate, TIMEOUT_MS);
+
+const check = (name: string, ok: boolean, detail: string) => report.check(name, ok, detail);
 
 /**
  * The state `record` drives to, and `verify` expects back.
@@ -71,48 +79,6 @@ export interface SessionCheckHost {
   toggleSidebar: () => void;
   /** Writes any outstanding place now. */
   flush: () => void;
-}
-
-type Outcome = "ok" | "fail";
-
-const LABEL: Record<Outcome, string> = { ok: "[OK]  ", fail: "[FAIL]" };
-const results: { name: string; outcome: Outcome; detail: string }[] = [];
-
-/**
- * Lines already handed to the process, in order.
- *
- * Printed as each is recorded and chained through one promise, for the two
- * reasons `viewercheck.ts` gives at length: a run that stops midway must say
- * where it got to, and `invoke` resolves out of order under load.
- */
-let printing: Promise<unknown> = Promise.resolve();
-
-function emit(line: string): void {
-  printing = printing.then(() => invoke("spike_print", { text: line }));
-}
-
-function check(name: string, ok: boolean, detail: string): void {
-  results.push({ name, outcome: ok ? "ok" : "fail", detail });
-  emit(`${LABEL[ok ? "ok" : "fail"]} ${name.padEnd(46)} ${detail}`);
-}
-
-function frame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
-}
-
-/** Waits for a condition, returning whether it arrived. */
-async function settle(predicate: () => boolean): Promise<boolean> {
-  const deadline = performance.now() + TIMEOUT_MS;
-  while (!predicate()) {
-    if (performance.now() > deadline) return false;
-    await frame();
-  }
-  return true;
-}
-
-/** Waits a fixed time, for the one case where there is nothing to wait *on*. */
-function pause(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Dispatches a keydown at the viewer's root, the way the window would. */
@@ -235,10 +201,7 @@ export async function runSessionCheckIfRequested(host: SessionCheckHost): Promis
     check("the phase ran", false, String(e));
   }
 
-  const failed = results.filter((r) => r.outcome === "fail").length;
-  emit(`\n${results.length - failed}/${results.length} checks passed`);
-  await printing;
-  await invoke("spike_exit", { code: failed === 0 ? 0 : 1 });
+  await report.finish();
   return true;
 }
 

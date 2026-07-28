@@ -783,6 +783,42 @@ this in **both** directions --- a failing run must exit non-zero *and* a passing
 exit zero. Only one of those was ever in doubt, and checking just it would have been happy
 with `exit(1)` unconditionally.
 
+### `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
+
+A macOS double-click does not put anything in `argv`. Launch Services sends an Apple Event,
+Tauri surfaces it as `RunEvent::Opened`, and **it arrives before the setup hook runs**. So a
+handler that reaches for state registered in `setup` --- the obvious place --- calls
+`state::<T>()` on unmanaged state, which **panics**, on precisely the path it was written to
+serve.
+
+The symptom is not a crash dialog at the time. The window appears, nothing is in it, no
+error reaches stdout or stderr, and the last startup mark is `app built`. macOS records it
+and offers to reopen windows on the *next* launch, which is how it surfaced --- a day later,
+in a dialog. `~/Library/Logs/DiagnosticReports/<app>-*.ips` has the truth: `EXC_CRASH
+SIGABRT`, `Abort trap: 6`, main thread.
+
+Register anything the run callback touches with `Builder::manage`, before the event loop
+exists, and read it with `try_state` --- a panic here is invisible, where a `None` costs one
+document not opening.
+
+Note what this does to the ordering advice already in this file. `Builder::build()` does not
+run the setup hook and `App::run` does; `Opened` is dispatched by that same `run` *before*
+setup. So "before the setup hook" is a strictly larger set of moments than it looks.
+
+**Two causes were producing this one symptom, and the second nearly buried the first.**
+Windows left over from testing were occluding new ones, so unrelated runs *also* produced no
+output --- and `TPDF_RAISE=1` "fixed" those, which read as the whole problem being
+environmental. A missing `tauri setup` mark was then read as "the setup hook never ran",
+which was true and not the cause. Two mechanisms, one silence: fix the one you can prove and
+re-measure, rather than accepting the first explanation that covers the evidence.
+
+**The harness was the last thing to doubt, and should have been.** Four phases passed and one
+produced nothing, so `open --stdout` looked like the culprit --- plausible, since `open`
+detaches. What settled it was abandoning stdout and asking a different question: does the app
+write its session file after a double-click? It did not. That turned "the capture is broken"
+into "the feature is broken" in one command. **When a check reports a failure it alone can
+see, find a second channel that does not share its machinery.**
+
 ### A test for an atomic write must plant the intermediate it is meant to prove
 
 `Session::save` writes a scratch file and renames it over the target, so that a crash

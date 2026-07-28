@@ -2259,6 +2259,56 @@ same range as before. Comparing that against a previously recorded run is not ev
 hook's cost — the interleaving rule exists precisely because wall clock drifts between runs —
 so it says the criteria still hold and nothing more.
 
+#### File associations — done 2026-07-28
+
+The literal reading of the phase's exit criterion: an application you cannot double-click a
+PDF into is not the default reader for anything. A PDF now reaches tpdf three ways —
+`argv` from a terminal and from a Windows double-click, an Apple Event from a macOS
+double-click or "Open With", and the file dialog that was already there.
+
+`bundle.fileAssociations` declares it, and one field is deliberately not Tauri's default:
+**`role` is `Viewer`, where the default is `Editor`.** `Editor` tells Launch Services and the
+Finder that tpdf can edit a PDF, which it cannot yet. It becomes `Editor` when that is true.
+Rank stays `Default` — not `Owner`, since tpdf does not create PDFs, and not `Alternate`,
+which would rank it below every other viewer and defeat the point. No exported type is
+declared: PDF is `com.adobe.pdf`, a system type, and Tauri infers it from the extension.
+
+The design problem is *when* a path arrives, not where from. An Apple Event can be delivered
+before the webview exists, so `launch.rs` queues paths until the frontend says it is
+listening and emits them directly afterwards — with the drain and the flag flip under one
+lock, since doing them separately just makes the same lost document rarer. The event's name
+is fetched from Rust rather than agreed as a constant in two places: a constant that drifts
+fails by *silence*, the app simply ceasing to notice documents opened while it is running,
+which is the half nobody checks by hand.
+
+A handed-over document beats a remembered one. Someone who double-clicked a file is asking
+for that file, and yesterday's document appearing instead reads as the association being
+broken.
+
+`scripts/open_check.py` runs five launches of the real app, 11 checks. Two of them are
+controls: with nothing handed over the remembered document must open — without which
+"the handed-over one wins" passes on an app that ignores the session entirely — and the
+running-app phase asserts that *nothing* is open before one arrives, or "a document arrived"
+is satisfied by one that was already there.
+
+**The check earned itself immediately: the cold double-click was broken, and only that phase
+could see it.** `RunEvent::Opened` fires *before* the setup hook, so managed state registered
+there is absent and `state::<Launch>()` panicked — an `EXC_CRASH SIGABRT` with no output, an
+empty window, and `app built` as the last startup mark. The state is registered on the
+builder now, and read with `try_state`.
+
+Two things about finding it are worth more than the fix. A second, unrelated cause —
+leftover windows occluding new ones, so other runs also printed nothing — nearly buried it,
+and `TPDF_RAISE=1` "fixing" those read as the whole problem being environmental. And the
+harness was suspected before the feature was, reasonably, since `open` detaches stdout; what
+settled it was asking a different question through a channel the harness did not share.
+The app was not writing its session file after a double-click either, which turned "the
+capture is broken" into "the feature is broken" in one command.
+
+The reporting half of the unattended checks now lives in `src/lib/checkreport.ts`, shared
+rather than copied. What it encodes — print each result as it is recorded, chain the lines —
+is a bug already paid for once, and two copies of it is two chances to drift back.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,
