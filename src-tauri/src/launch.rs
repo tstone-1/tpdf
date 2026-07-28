@@ -104,6 +104,12 @@ where
 /// `file:///Users/x/my%20report.pdf`, and the raw path opens nothing. Any URL
 /// that is not a local file --- an `http://` handed over by another application
 /// --- returns `None` rather than being coerced into a path that does not exist.
+///
+/// The scheme check is **not** redundant with `to_file_path`, however much it
+/// looks it. That function maps a `localhost` host to *no host* whatever the
+/// scheme, so `https://localhost/a.pdf` is a path it will happily build; only a
+/// host that is some other domain makes it refuse. This guard is the whole of
+/// what stops a URL from another application naming a local file it should not.
 pub fn path_from_url(url: &tauri::Url) -> Option<PathBuf> {
     if url.scheme() != "file" {
         return None;
@@ -169,6 +175,17 @@ mod tests {
     #[test]
     fn a_url_that_is_not_a_file_is_refused() {
         let url = tauri::Url::parse("https://example.com/a.pdf").expect("url");
+        assert_eq!(path_from_url(&url), None);
+    }
+
+    #[test]
+    fn a_url_that_is_not_a_file_is_refused_even_when_it_looks_local() {
+        // The case above cannot fail if the scheme check is deleted: a domain
+        // host makes `to_file_path` refuse on its own, so it probes a direction
+        // the guard does not defend. `localhost` is the direction that does ---
+        // `to_file_path` treats it as *no host at all*, whatever the scheme, and
+        // builds `/a.pdf` from the segments. Found by mutation, 2026-07-28.
+        let url = tauri::Url::parse("https://localhost/a.pdf").expect("url");
         assert_eq!(path_from_url(&url), None);
     }
 

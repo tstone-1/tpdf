@@ -2309,6 +2309,30 @@ The reporting half of the unattended checks now lives in `src/lib/checkreport.ts
 rather than copied. What it encodes — print each result as it is recorded, chain the lines —
 is a bug already paid for once, and two copies of it is two chances to drift back.
 
+**Eleven mutations, all eleven behaving as predicted — including the one predicted to
+survive.** Seven against `launch.rs` through `cargo test`, four against the wiring, each of
+those a full bundle rebuild and a five-launch run of `scripts/open_check.py`. Writing the
+prediction down before running it is the cheap half of the procedure, and it paid twice here.
+
+The prediction that mattered was E4: put `manage(launch)` back in the setup hook — the exact
+shape of the crash — and **exactly one phase should go red, the cold double-click**, since
+`argv` is queued before the builder exists and the running-app route arrives after setup. That
+is what happened, and it is what makes that phase worth its runtime: no other route through
+the application can see the ordering.
+
+The prediction of *survival* was the more useful one. `path_from_url` guards on the URL's
+scheme, and deleting that guard breaks nothing — which by the standing rule makes it a guard
+to delete. It would have been wrong. `Url::to_file_path` refuses `https://example.com/a.pdf`
+because its host is a *domain*, and it maps a `localhost` host to no host at all whatever the
+scheme, so `https://localhost/a.pdf` resolves to `/a.pdf` and the guard is the only thing in
+the way. The test probed the one direction the guard does not defend, and the dependency's own
+refusal covered for it. A second case pins it now, and goes red alone when the guard is
+removed.
+
+Recording a predicted survivor separately from an unexpected one is the whole point of the
+distinction: collapsing them into one "caught" number is how a suite takes credit for coverage
+it does not have.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,
