@@ -23,6 +23,8 @@ pub mod session;
 mod startup;
 pub mod sweep;
 pub mod text;
+pub mod worker;
+pub mod worker_child;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -676,6 +678,16 @@ fn start_eager_open(service: &RenderService) -> Option<EagerOpen> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     startup::mark_process_start();
+
+    // Before anything else, and before the watchdog: this process may not be the
+    // app at all. A worker is this executable re-exec'd with a marker argument,
+    // and everything below --- the watchdog, the Tauri context, a window ---
+    // would be wrong for it. It never returns.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == worker::WORKER_ARGV) {
+        worker_child::main(&args);
+    }
+
     start_watchdog();
     let mode = ShellMode::from_env();
 

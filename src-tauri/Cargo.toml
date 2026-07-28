@@ -99,3 +99,7 @@ path = "src/bin/progressive_probe.rs"
 [[bin]]
 name = "outline-probe"
 path = "src/bin/outline_probe.rs"
+
+[[bin]]
+name = "worker-probe"
+path = "src/bin/worker_probe.rs"
