@@ -331,8 +331,8 @@ experience.
 
   **Growth is lazy**: a document opens with one worker and gains another only under
   contention, so a reader turning one page at a time never pays for a second parse of it.
-  Nothing retires an idle worker afterwards, so a fully grown pool on the A0 sheet keeps
-  about 290 MB --- recorded as a residual rather than hidden.
+  A fully grown pool on the A0 sheet is about 290 MB, which is given back again once the
+  scrolling stops --- see the retirement entry below.
 
   The in-process backend is deliberately *not* pooled: concurrent PDFium in one process is
   undefined behaviour whatever the handles are.
@@ -341,6 +341,26 @@ experience.
   With one thread per worker the pool's own capacity bound was unreachable --- the thread
   count was enforcing it --- which also meant six tiles of a slow document could occupy every
   thread and starve a second document whose workers were idle. Threads are now `pool + 2`.
+- **An idle worker is retired, so a burst of scrolling no longer decides what the session
+  keeps.** A worker untouched for 30 seconds is killed, down to one per document. On the A0
+  sheet that returns **242.5 MB of a 289.9 MB pool** and charges the screenful after the
+  pause **+65 ms on 811 ms**; on the text corpus, 56 MB and +15 ms. Both measured over two
+  runs by `pool-bench --mode retire`, pairwise within interleaved rounds.
+
+  **One worker is kept rather than zero.** Nothing breaks at zero --- the checkout path
+  spawns from an empty pool and the close drain is trivially satisfied by it --- but the
+  saving is one process against a spawn and a full re-parse charged to the next page turn,
+  which is the moment someone is watching. Retiring to one already returns five sixths.
+
+  The reaper thread holds a **weak** handle to the pool. A strong one would keep every worker
+  and every document mapping alive after the last handle to the service was dropped, which is
+  a larger leak than the one being fixed and is invisible to any check running against a live
+  service --- so `backend-probe` now drops a service and asks the OS whether its processes
+  went with it.
+
+  Eight checks, and six mutations all caught. The one that matters is the *control*: a sample
+  taken before the timeout expires, without which "the pool shrank to one" is equally
+  satisfied by a reaper that kills everything on every sweep.
 - **A document is released when the reader moves to another file.** Until now nothing ever
   removed one, so a session that opened a dozen files held a dozen documents --- which the
   process boundary turned from a heap allocation into a dozen sandboxed children at
