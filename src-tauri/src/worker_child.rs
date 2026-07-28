@@ -299,7 +299,15 @@ fn reply(out: &mut impl Write, response: &Response) -> Result<(), String> {
 }
 
 /// Loads PDFium. Must run before the sandbox.
-fn bind(library_dir: &Path) -> Result<&'static Pdfium, String> {
+///
+/// Public so a probe can exercise *this* binding rather than a copy of it: a
+/// feasibility check that reimplements the thing it is checking measures the
+/// reimplementation.
+///
+/// # Errors
+///
+/// The library being absent or unloadable at `library_dir`.
+pub fn bind(library_dir: &Path) -> Result<&'static Pdfium, String> {
     let path = Pdfium::pdfium_platform_library_name_at_path(library_dir);
     let bindings = Pdfium::bind_to_library(&path)
         .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
@@ -324,7 +332,7 @@ extern "C" {
 /// A profile the kernel refuses, which is reported with the message
 /// `sandbox_init` produced rather than as a bare code.
 #[cfg(target_os = "macos")]
-fn apply_sandbox(profile: &str) -> Result<(), String> {
+pub fn apply_sandbox(profile: &str) -> Result<(), String> {
     let c_profile = std::ffi::CString::new(profile).map_err(|e| format!("bad profile: {e}"))?;
     let mut error: *mut std::os::raw::c_char = std::ptr::null_mut();
     // SAFETY: the profile is a live NUL-terminated string for the call, and
@@ -353,6 +361,6 @@ fn apply_sandbox(profile: &str) -> Result<(), String> {
 /// Always, off macOS. Returning `Ok` here would leave every containment claim in
 /// `docs/THREAT-MODEL.md` asserted by a process that has none.
 #[cfg(not(target_os = "macos"))]
-fn apply_sandbox(_profile: &str) -> Result<(), String> {
+pub fn apply_sandbox(_profile: &str) -> Result<(), String> {
     Err("no sandbox is implemented on this platform".into())
 }
