@@ -111,3 +111,11 @@ path = "src/bin/backend_probe.rs"
 [[bin]]
 name = "pool-bench"
 path = "src/bin/pool_bench.rs"
+
+[[bin]]
+name = "prespawn-bench"
+path = "src/bin/prespawn_bench.rs"
+
+[[bin]]
+name = "fdpass-probe"
+path = "src/bin/fdpass_probe.rs"
