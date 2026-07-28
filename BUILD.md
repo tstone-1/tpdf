@@ -81,7 +81,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- 
 # the OS process table must be replaced by one serving the same document. Run it
 # on vector-heavy as well as a text fixture -- it is the only corpus whose render
 # is slow enough for the two withdrawal checks to apply, and on every other one
-# they report [SKIP] with the reason. vector-heavy is the run to read: 23 checks,
+# they report [SKIP] with the reason. vector-heavy is the run to read: 29 checks,
 # none skipped.
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin backend-probe -- \
     testdata/vector-heavy.pdf
@@ -333,18 +333,18 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **84 check names**; what differs is how
+Run all six corpora. Every run reports the same **86 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 73--74 | 10--11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 79--80 | 4--5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 79 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 50 | 34 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 57 | 27 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 73 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 75--76 | 10--11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 81--82 | 4--5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 81 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 52 | 34 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 59 | 27 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 75 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
 
 **`vector-multi` takes about 4m40s**, and everything else a fraction of that --- twelve A0
 pages is what it is for. The default timeout was 300 s, which sat close enough to that to
@@ -360,11 +360,15 @@ paper, so it says so instead of passing on nothing.
 **The ranges are all one check: "the strip withdraws its work when the viewer needs the
 renderer".** A thumbnail on a cheap page takes about a millisecond, so whether one is still
 in flight when the viewer asks for a tile is a race, and the check skips when it is not ---
-correctly, since nothing outstanding reads exactly like a successful withdrawal. Measured
-71/10, 71/10, 70/11 on `text-heavy`, and 80/4 once against 79/5 on three consecutive runs of
-`outline-simple`. It is deterministic only on `vector-multi`, which exists for it.
+correctly, since nothing outstanding reads exactly like a successful withdrawal. Repeated
+runs of `text-heavy` and `outline-simple` have each landed on both sides of it. It is
+deterministic only on `vector-multi`, which exists for it.
 
-**So the ran/skipped columns are not the invariant** --- the **84 names** are. A count chased
+Absolute counts are deliberately not quoted in this paragraph: they move whenever a check is
+added, and a stale number here would send someone looking for a regression that is a
+changelog entry. The table above is the one place they are written down.
+
+**So the ran/skipped columns are not the invariant** --- the **86 names** are. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that

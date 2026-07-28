@@ -289,11 +289,18 @@ experience.
   the first check for it could not have failed, since `Abandoned` is what the parent
   produces on its own. It now asserts the latency too: 2.2 ms against a 1,125 ms render.
 
-  **A document is still never released, and that now costs a process rather than a heap
-  allocation.** Opening a second file leaves the first one's worker alive, holding the
-  7.8--48.2 MB `worker-probe` measured per corpus. The leak is not new; its price is.
-
   **Windows still refuses rather than running unsandboxed**, and so defaults to in-process.
+- **A document is released when the reader moves to another file.** Until now nothing ever
+  removed one, so a session that opened a dozen files held a dozen documents --- which the
+  process boundary turned from a heap allocation into a dozen sandboxed children at
+  7.8--48.2 MB each.
+
+  A released id leaves a **hole** rather than being removed, and is never handed out again.
+  The `Vec` index is the id, so removing the entry renumbers every document after it and a
+  request naming the closed one is answered in full from a file the caller never asked about
+  --- demonstrated by mutation, which returned a perfectly good tile of the wrong document.
+  Whether a request might still be in flight needs no answer at all: the render thread is
+  FIFO, so a close lands behind everything already queued.
 - **A worker that dies is replaced, and the request retried once.** Isolation that ends the
   reading session is isolation nobody wants: a crash caused by anything other than the
   request in hand is now invisible to the reader. The replacement is handed the **same

@@ -82,7 +82,6 @@ fn serve(args: &[String]) -> Result<(), String> {
     let bytes: &'static [u8] = unsafe { doc_shm.as_static() };
     std::mem::forget(doc_shm);
     let document = RawDocument::open_bytes(bindings, bytes)?;
-    let docs = [document];
 
     // The same state machine the in-process renderer uses, for the same reason:
     // a claim moves a request from queued to in flight under one lock, so a
@@ -94,7 +93,7 @@ fn serve(args: &[String]) -> Result<(), String> {
 
     let mut out = std::io::stdout();
     for request in rx {
-        let response = handle(bindings, &docs, &queue, &mut tile_shm, &request);
+        let response = handle(bindings, &document, &queue, &mut tile_shm, &request);
         reply(&mut out, &response)?;
     }
     Ok(())
@@ -142,29 +141,26 @@ fn spawn_reader(tx: Sender<Request>, queue: SharedQueue) {
 /// Serves one request.
 fn handle(
     bindings: progressive::Bindings,
-    docs: &[RawDocument],
+    document: &RawDocument,
     queue: &SharedQueue,
     tile: &mut Shm,
     request: &Request,
 ) -> Response {
     match request {
-        Request::Open { lazy_geometry } => open(docs, *lazy_geometry),
-        Request::Tile { .. } => render(bindings, docs, queue, tile, request),
+        Request::Open { lazy_geometry } => open(document, *lazy_geometry),
+        Request::Tile { .. } => render(bindings, document, queue, tile, request),
         // Consumed on the reader thread; reaching here would mean the dispatch
         // above changed and this arm was forgotten.
         Request::Withdraw { .. } => Response::err("a withdrawal is not a request to answer"),
-        Request::Text { page } => match render::run_text(docs, 0, *page) {
+        Request::Text { page } => match render::run_text(document, *page) {
             Ok(text) => Response::json(&text),
             Err(e) => Response::err(e),
         },
-        Request::Search { page, query } => match render::run_search(docs, 0, *page, query) {
+        Request::Search { page, query } => match render::run_search(document, *page, query) {
             Ok(matches) => Response::json(&matches),
             Err(e) => Response::err(e),
         },
-        Request::Outline => match render::run_outline(docs, 0) {
-            Ok(outline) => Response::json(&outline),
-            Err(e) => Response::err(e),
-        },
+        Request::Outline => Response::json(&render::run_outline(document)),
     }
 }
 
@@ -173,10 +169,7 @@ fn handle(
 /// Deliberately not `render::open_document`: that one opens from a path, which
 /// is the thing this process does not have. The document is already open by the
 /// time anything is served.
-fn open(docs: &[RawDocument], lazy_geometry: bool) -> Response {
-    let Some(document) = docs.first() else {
-        return Response::err("no document");
-    };
+fn open(document: &RawDocument, lazy_geometry: bool) -> Response {
     let page_count = document.page_count();
 
     let size_of = |index: u32| -> Result<PageSize, String> {
@@ -212,7 +205,7 @@ fn open(docs: &[RawDocument], lazy_geometry: bool) -> Response {
 /// Renders one tile into the shared mapping.
 fn render(
     bindings: progressive::Bindings,
-    docs: &[RawDocument],
+    document: &RawDocument,
     queue: &SharedQueue,
     tile: &mut Shm,
     request: &Request,
@@ -262,7 +255,7 @@ fn render(
         },
     };
 
-    let outcome = render::render_tile(bindings, docs, &req, &token);
+    let outcome = render::render_tile(bindings, document, &req, &token);
     queue.with(|queue| queue.release(rid));
 
     match outcome {

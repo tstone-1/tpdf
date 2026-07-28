@@ -208,7 +208,54 @@ impl Backend {
 type Reply<T> = Box<dyn FnOnce(Result<T, String>) + Send>;
 
 /// Every live worker's write half, for broadcasting a withdrawal.
-type Senders = Arc<Mutex<Vec<WorkerSender>>>;
+///
+/// Positional, with a hole where a document has been closed --- the index is the
+/// document id, which [`Workers::restart`] needs in order to re-point one.
+type Senders = Arc<Mutex<Vec<Option<WorkerSender>>>>;
+
+/// Looks up an open document, distinguishing an id that never existed from one
+/// that has been closed.
+///
+/// Both backends keep their documents in a `Vec` whose index *is* the id, and
+/// a closed document leaves a hole rather than being removed. Removing it would
+/// shift every id after it, so a request already in flight would silently be
+/// answered from the wrong document --- which is a far worse failure than an
+/// error, because it looks like a rendering bug.
+fn open_slot<T>(slots: &[Option<T>], doc: u32) -> Result<&T, String> {
+    match slots.get(doc as usize) {
+        Some(Some(value)) => Ok(value),
+        Some(None) => Err(not_open(doc, true)),
+        None => Err(not_open(doc, false)),
+    }
+}
+
+/// As [`open_slot`], for a caller that needs to mutate what it finds.
+fn open_slot_mut<T>(slots: &mut [Option<T>], doc: u32) -> Result<&mut T, String> {
+    match slots.get_mut(doc as usize) {
+        Some(Some(value)) => Ok(value),
+        Some(None) => Err(not_open(doc, true)),
+        None => Err(not_open(doc, false)),
+    }
+}
+
+/// Why an id does not name an open document.
+///
+/// Shared by the two lookups above rather than written out in each, and that is
+/// not tidiness: a mutation of the message in one of them survived every check,
+/// because the worker path goes through `_mut` and the in-process tile path does
+/// not. Two copies of a distinction are two places for it to drift, and the
+/// drift is invisible --- both still refuse.
+///
+/// The distinction is worth having when one turns up in a log: an id past the
+/// end is a caller that invented one, a hole is a caller still using a document
+/// it closed itself.
+fn not_open(doc: u32, in_range: bool) -> String {
+    if in_range {
+        format!("document {doc} has been closed")
+    } else {
+        format!("no such document: {doc}")
+    }
+}
 
 enum Job {
     Open {
@@ -235,6 +282,10 @@ enum Job {
     Outline {
         doc: u32,
         reply: Reply<Outline>,
+    },
+    Close {
+        doc: u32,
+        reply: Reply<()>,
     },
 }
 
@@ -421,10 +472,30 @@ impl RenderService {
         self.queue.with(|queue| queue.withdraw(rid));
 
         let senders = self.senders.lock().unwrap_or_else(|e| e.into_inner());
-        for sender in senders.iter() {
+        for sender in senders.iter().flatten() {
             // A dead worker is not this call's problem: the render thread's own
             // reply will report it, with an epitaph this path cannot produce.
             let _ = sender.withdraw(rid);
+        }
+    }
+
+    /// Releases a document and everything holding it open.
+    ///
+    /// In worker mode that is a process, which is why this exists at all: before
+    /// the boundary a leaked document was a heap allocation, and now it is a
+    /// sandboxed child holding 7.8--48.2 MB (`worker-probe`, per corpus). A
+    /// reader who opens a dozen files in a session should not end up with a
+    /// dozen of them.
+    ///
+    /// **Safe to call the moment the caller stops wanting the document**, with
+    /// requests still outstanding. The render thread is FIFO, so everything
+    /// already queued for this document is served before the close is; anything
+    /// that arrives afterwards is answered "has been closed" rather than from
+    /// another document, because the id leaves a hole rather than being removed.
+    pub fn close(&self, doc: u32, reply: Reply<()>) {
+        if self.tx.send(Job::Close { doc, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with, and every
+            // document went with it.
         }
     }
 }
@@ -441,6 +512,7 @@ trait Engine {
     fn text(&mut self, doc: u32, page: u32) -> Result<PageText, String>;
     fn search(&mut self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String>;
     fn outline(&mut self, doc: u32) -> Result<Outline, String>;
+    fn close(&mut self, doc: u32) -> Result<(), String>;
 }
 
 /// Serves jobs until every handle to the service is dropped.
@@ -461,6 +533,7 @@ fn serve(rx: Receiver<Job>, engine: &mut dyn Engine) {
                 reply,
             } => reply(engine.search(doc, page, &query)),
             Job::Outline { doc, reply } => reply(engine.outline(doc)),
+            Job::Close { doc, reply } => reply(engine.close(doc)),
         }
     }
 }
@@ -474,6 +547,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Text { reply, .. } => reply(Err(error.to_string())),
             Job::Search { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
+            Job::Close { reply, .. } => reply(Err(error.to_string())),
         }
     }
 }
@@ -483,7 +557,9 @@ fn drain(rx: Receiver<Job>, error: &str) {
 /// Documents parsed in this process, on the render thread.
 struct InProcess {
     bindings: Bindings,
-    docs: Vec<RawDocument>,
+    /// Indexed by document id, with a hole where one has been closed. See
+    /// [`open_slot`].
+    docs: Vec<Option<RawDocument>>,
     queue: SharedQueue,
 }
 
@@ -533,7 +609,7 @@ impl Engine for InProcess {
         };
 
         let id = self.docs.len() as u32;
-        self.docs.push(doc);
+        self.docs.push(Some(doc));
         // Distinct from `document parsed`: collecting page geometry walks every
         // page object, which on a long document is its own measurable cost.
         mark("document open complete");
@@ -561,21 +637,33 @@ impl Engine for InProcess {
             Claim::Withdrawn => return Ok(TileOutcome::Abandoned),
         };
 
-        let result = render_tile(self.bindings, &self.docs, request, &token);
+        let result = open_slot(&self.docs, request.doc)
+            .and_then(|doc| render_tile(self.bindings, doc, request, &token));
         self.queue.with(|queue| queue.release(request.rid));
         result
     }
 
     fn text(&mut self, doc: u32, page: u32) -> Result<PageText, String> {
-        run_text(&self.docs, doc, page)
+        run_text(open_slot(&self.docs, doc)?, page)
     }
 
     fn search(&mut self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String> {
-        run_search(&self.docs, doc, page, query)
+        run_search(open_slot(&self.docs, doc)?, page, query)
     }
 
     fn outline(&mut self, doc: u32) -> Result<Outline, String> {
-        run_outline(&self.docs, doc)
+        Ok(run_outline(open_slot(&self.docs, doc)?))
+    }
+
+    /// Drops the document, which is what closes the Pdfium handle.
+    fn close(&mut self, doc: u32) -> Result<(), String> {
+        // Looked up first, so closing an id twice is an error rather than a
+        // silent success. Unlike a withdrawal, a caller here *does* know what it
+        // has open --- a second close is a caller that has lost track, and that
+        // is worth saying rather than absorbing.
+        open_slot_mut(&mut self.docs, doc)?;
+        self.docs[doc as usize] = None;
+        Ok(())
     }
 }
 
@@ -594,7 +682,9 @@ struct Held {
 /// Documents parsed in sandboxed child processes, one per document.
 struct Workers {
     library_dir: PathBuf,
-    docs: Vec<Held>,
+    /// Indexed by document id, with a hole where one has been closed. See
+    /// [`open_slot`].
+    docs: Vec<Option<Held>>,
     senders: Senders,
     queue: SharedQueue,
 }
@@ -611,9 +701,7 @@ impl Workers {
 
     /// A document by the id [`Engine::open`] returned.
     fn held(&mut self, doc: u32) -> Result<&mut Held, String> {
-        self.docs
-            .get_mut(doc as usize)
-            .ok_or_else(|| format!("no such document: {doc}"))
+        open_slot_mut(&mut self.docs, doc)
     }
 
     /// Replaces a document's worker with a fresh one holding the same bytes.
@@ -653,7 +741,7 @@ impl Workers {
             .unwrap_or_else(|e| e.into_inner())
             .get_mut(index)
         {
-            *slot = worker.sender();
+            *slot = Some(worker.sender());
         }
         self.held(doc)?.worker = Some(worker);
         Ok(())
@@ -674,7 +762,7 @@ impl Workers {
     fn running(&mut self, doc: u32) -> bool {
         self.docs
             .get_mut(doc as usize)
-            .and_then(|held| held.worker.as_mut())
+            .and_then(|held| held.as_mut()?.worker.as_mut())
             .is_some_and(Worker::is_running)
     }
 
@@ -842,11 +930,11 @@ impl Engine for Workers {
         self.senders
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push(worker.sender());
-        self.docs.push(Held {
+            .push(Some(worker.sender()));
+        self.docs.push(Some(Held {
             doc,
             worker: Some(worker),
-        });
+        }));
         mark("document open complete");
 
         Ok(DocumentInfo {
@@ -893,6 +981,39 @@ impl Engine for Workers {
     fn outline(&mut self, doc: u32) -> Result<Outline, String> {
         self.ask(doc, &Request::Outline)
     }
+
+    /// Drops the document, which kills the process holding it.
+    ///
+    /// No goodbye on the wire. `Worker`'s own `Drop` kills and reaps, and a
+    /// request to exit cleanly would be a message the one process in this design
+    /// that is *assumed hostile* gets to ignore --- the reader would then wait on
+    /// a shutdown that never comes. Killing it is both simpler and the only
+    /// version that cannot be refused.
+    fn close(&mut self, doc: u32) -> Result<(), String> {
+        // Looked up first, so closing an id twice is an error rather than a
+        // silent success --- see the in-process twin.
+        self.held(doc)?;
+        self.docs[doc as usize] = None;
+        if let Some(slot) = self
+            .senders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(doc as usize)
+        {
+            // Cleared because the sender holds an `Arc<Mutex<ChildStdin>>`, and
+            // this `Vec` holds a *clone* of the worker's --- so dropping the
+            // worker does not close the pipe, and a stale entry here is a
+            // descriptor leaked per closed document. Writing to it would merely
+            // fail harmlessly, which is why the leak is the reason and not the
+            // failed write.
+            //
+            // Emptied rather than removed, because the broadcast is positional:
+            // removing would shift every later document's sender out from under
+            // its own id.
+            *slot = None;
+        }
+        Ok(())
+    }
 }
 
 /// What a worker answers [`Request::Open`] with.
@@ -926,16 +1047,18 @@ fn bind_pdfium(library_dir: &Path) -> Result<&'static Pdfium, String> {
     Ok(PDFIUM.get_or_init(|| Pdfium::new(bindings)))
 }
 
+/// Renders one tile of one document.
+///
+/// Takes the document rather than the table it lives in, so that the two
+/// backends can disagree about how documents are stored --- a worker holds
+/// exactly one and the app process holds a `Vec` with holes in it --- without
+/// this needing to know.
 pub(crate) fn render_tile(
     bindings: Bindings,
-    docs: &[RawDocument],
+    doc: &RawDocument,
     req: &TileRequest,
     cancel: &CancelToken,
 ) -> Result<TileOutcome, String> {
-    let doc = docs
-        .get(req.doc as usize)
-        .ok_or_else(|| format!("no such document: {}", req.doc))?;
-
     // Cached, because Pdfium re-parses a page on every `FPDF_LoadPage` --- 44 ms
     // on the A0 sheet, which loading per tile request would charge a six-tile
     // screenful nearly four times over.
@@ -1015,10 +1138,7 @@ pub(crate) fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>
 }
 
 /// Extracts one page's characters on the render thread.
-pub(crate) fn run_text(docs: &[RawDocument], doc: u32, page: u32) -> Result<PageText, String> {
-    let document = docs
-        .get(doc as usize)
-        .ok_or_else(|| format!("no such document: {doc}"))?;
+pub(crate) fn run_text(document: &RawDocument, page: u32) -> Result<PageText, String> {
     text::extract(&document.page(page)?)
 }
 
@@ -1030,24 +1150,16 @@ pub(crate) fn run_text(docs: &[RawDocument], doc: u32, page: u32) -> Result<Page
 /// shipping it in order to search it would be the expensive half of a cheap
 /// operation.
 pub(crate) fn run_search(
-    docs: &[RawDocument],
-    doc: u32,
+    document: &RawDocument,
     page: u32,
     query: &str,
 ) -> Result<PageMatches, String> {
-    Ok(search::search_page(
-        &run_text(docs, doc, page)?,
-        page,
-        query,
-    ))
+    Ok(search::search_page(&run_text(document, page)?, page, query))
 }
 
 /// Walks a document's outline on the render thread.
-pub(crate) fn run_outline(docs: &[RawDocument], doc: u32) -> Result<Outline, String> {
-    let document = docs
-        .get(doc as usize)
-        .ok_or_else(|| format!("no such document: {doc}"))?;
-    Ok(outline::read(document))
+pub(crate) fn run_outline(document: &RawDocument) -> Outline {
+    outline::read(document)
 }
 
 #[cfg(test)]

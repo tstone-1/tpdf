@@ -406,6 +406,7 @@ async function run(path: string): Promise<void> {
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await invertChecks(viewer, doc, page, seen);
   await printChecks(path, doc);
+  await releaseChecks(path);
 
   sidebar.destroy();
   panel.remove();
@@ -2375,6 +2376,49 @@ function preview(text: string): string {
  * `print::build` ran --- and stops before anything platform-specific, which is
  * the half that would need a person and a sheet of paper.
  */
+/**
+ * That a document can be released, through the command the app really calls.
+ *
+ * `backend-probe` pins what releasing *does* --- the process dies, the id is
+ * refused afterwards and never handed out again, and the descriptors come back.
+ * What it cannot see is this: whether the Tauri command exists under that name
+ * and takes an argument called `doc`. A wrong name there fails only at runtime,
+ * only when someone opens a second file, and only as a warning in a console
+ * nobody is watching --- so the leak comes back with every check still green.
+ *
+ * Opened here rather than reusing the document under test, which the viewer is
+ * still reading from.
+ */
+async function releaseChecks(path: string): Promise<void> {
+  const extra = await invoke<DocumentInfo>("open_document", { path });
+  const release = async (doc: number): Promise<string> => {
+    try {
+      await invoke("close_document", { doc });
+      return "";
+    } catch (e) {
+      return String(e);
+    }
+  };
+
+  const first = await release(extra.id);
+  check(
+    "a document can be released through the command",
+    first === "",
+    first ? preview(first) : `released document ${extra.id}`,
+  );
+
+  // The control, and it is the half that pins the argument. "It returned no
+  // error" is equally true of a command that ignored `doc` entirely, or of one
+  // that quietly succeeded on an id it had never seen; a second release of the
+  // same id has to be refused, and refused *by that id*.
+  const again = await release(extra.id);
+  check(
+    "releasing the same document twice is refused",
+    again.includes(`document ${extra.id}`) && again.includes("closed"),
+    again ? preview(again) : "it accepted the second release",
+  );
+}
+
 async function printChecks(path: string, doc: DocumentInfo): Promise<void> {
   const print = async (pages: number[] | null, turns: number): Promise<string> => {
     try {
