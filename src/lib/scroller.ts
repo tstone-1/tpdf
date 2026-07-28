@@ -37,6 +37,7 @@
  * described there, which is a scrollbar problem rather than a frame-rate one.
  */
 
+import { Backoff } from "./backoff";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
 export type Layout = "tiles" | "viewport";
@@ -158,31 +159,27 @@ export const TIER1_WIDTH = 150;
 const PAGE_GAP = 16;
 
 /**
- * How long a failed request waits before it may be issued again, and the
- * ceiling that wait doubles towards.
+ * A page's size as displayed under `turns` quarter-turns clockwise.
  *
- * There was no such wait, and its absence was the most expensive thing in this
- * file. `request()` runs every frame and issues any wanted tile that is in
- * neither `tiles` nor `inFlight`; a failure deleted the entry from `inFlight`
- * and recorded nothing, so the next frame asked for it again --- and the frame
- * loop cannot idle out while `pendingWork` is above zero, which the re-issued
- * requests kept true. A tile that fails deterministically was therefore
- * re-requested at display cadence for as long as the document stayed open.
+ * One implementation because three places need it and each had grown its own: a
+ * scroller laying pages out, a viewer computing fit-width, and the page strip
+ * sizing its rows. A quarter-turn swap is one line, which is exactly why it gets
+ * copied --- and three copies are three chances for one of them to disagree
+ * about a rotated page. The symptoms are not obviously the same bug: rows the
+ * wrong shape in the strip, or a fit-width that fits the other axis.
  *
- * That is not merely wasteful. Under the worker backend each failed tile costs a
- * `kill` and a fresh `fork`/`exec` plus a full re-parse of the document
- * (`render.rs`, `Workers::with_worker`), so a page that faults deterministically
- * had the application spawning and killing sandboxed processes indefinitely with
- * nobody touching the machine. `docs/THREAT-MODEL.md` §7 claimed that cost was
- * "bounded by the reader's own requests"; the reader makes one, and the frame
- * loop made the rest.
- *
- * Doubling rather than a fixed interval, because the two cases want opposite
- * things: a transient failure should recover in a quarter of a second, and a
- * permanent one should stop costing anything at all.
+ * Reduced modulo four twice, which normalises a negative turn --- `rotateBy(-1)`
+ * reaches here. Worth being precise that this is not what makes negatives work:
+ * JavaScript's remainder keeps the sign, so the parity test below is right
+ * either way and dropping one reduction changes nothing. It is kept because it
+ * is the form the strip already used and because a reader of `((t % 4) + 4) % 4`
+ * does not have to reason about the sign at all.
  */
-const RETRY_BASE_MS = 250;
-const RETRY_MAX_MS = 8000;
+export function displayedSize(page: PageSize, turns: number): PageSize {
+  return ((turns % 4) + 4) % 4 % 2 === 0
+    ? page
+    : { width_pt: page.height_pt, height_pt: page.width_pt };
+}
 
 interface TileKey {
   page: number;
@@ -295,12 +292,12 @@ export class Scroller {
   /**
    * Requests that failed, and the earliest they may be issued again.
    *
-   * A due entry is left in the map rather than deleted, so the *next* failure
-   * doubles its wait instead of starting over --- a document that fails every
-   * time must not settle into a fixed retry rate, which is the thing being
-   * fixed. See {@link RETRY_BASE_MS}.
+   * A separate class rather than a map here, because the semantics are what
+   * matter and none of them was reachable from a test while they lived in a
+   * private field of a class that needs a webview to exist. See `backoff.ts`,
+   * which carries the reasoning and the failure it was written for.
    */
-  private readonly failed = new Map<string, { until: number; tries: number }>();
+  private readonly backoff = new Backoff();
   /**
    * Tiles that have landed since the last frame.
    *
@@ -387,10 +384,7 @@ export class Scroller {
 
   /** The page's size in points as displayed, i.e. after the view rotation. */
   private displayedPage(): PageSize {
-    const { page, turns } = this.opts;
-    return turns % 2 === 0
-      ? page
-      : { width_pt: page.height_pt, height_pt: page.width_pt };
+    return displayedSize(this.opts.page, this.opts.turns);
   }
 
   /** Derives page and tile geometry from the current zoom and rotation. */
@@ -447,24 +441,21 @@ export class Scroller {
    * Milliseconds until the earliest backed-off request may be issued again, or
    * `null` if nothing is waiting.
    *
-   * The viewer's frame loop idles when there is no work, so without this a tile
-   * that failed would sit unretried until some unrelated input happened to wake
-   * it --- a transient hiccup would leave a permanently blank square. One
-   * scheduled wake per backoff gives it exactly one retry, which is the whole
-   * difference between recovering and spinning.
+   * `reference` is the caller's clock reading, and it has to be the same one the
+   * frame that just ran was given --- which is why {@link frame} takes one. Two
+   * decisions are made about a backed-off request: "may this be issued yet",
+   * inside the frame, and "when should the loop be woken", as it goes idle.
+   * Sampling the clock separately for each lets an entry come due *between* the
+   * two readings: the frame did not issue it, and the wake is not armed for it,
+   * so it waits for some unrelated input. That is the permanently blank square
+   * this whole mechanism exists to avoid, arriving as a race rather than by
+   * design.
    *
-   * A request whose wait has already elapsed is deliberately **not** counted: it
-   * will be issued by the next frame that runs anyway, and reporting it as "due
-   * in 0 ms" would have the viewer schedule an immediate wake, which is the busy
-   * loop this mechanism exists to remove, rebuilt one level up.
+   * A request whose wait has already elapsed is deliberately not counted; see
+   * `backoff.ts` for why.
    */
-  get nextRetryMs(): number | null {
-    const now = performance.now();
-    let soonest = Infinity;
-    for (const { until } of this.failed.values()) {
-      if (until > now && until < soonest) soonest = until;
-    }
-    return soonest === Infinity ? null : soonest - now;
+  nextRetryMs(reference: number): number | null {
+    return this.backoff.nextWaitMs(reference);
   }
 
   /**
@@ -574,7 +565,7 @@ export class Scroller {
   private dropPlaceholders(): void {
     for (const bitmap of this.placeholders.values()) bitmap.close();
     this.placeholders.clear();
-    this.failed.clear();
+    this.backoff.clearAll();
     for (const canvas of this.placeholderCanvases.values()) canvas.remove();
     this.placeholderCanvases.clear();
     for (const { bitmap } of this.arrivedPlaceholders.splice(0)) bitmap.close();
@@ -641,15 +632,20 @@ export class Scroller {
    * callback, so the whole per-frame cost of the design is inside the interval
    * the harness times. A tile that arrives between frames is drawn at the start
    * of the next one.
+   *
+   * `now` is the frame's clock reading, and a caller that also asks
+   * {@link nextRetryMs} when to wake again must pass the same one to both --- see
+   * there. It defaults so the benchmark, which asks nothing about retries, does
+   * not have to carry a clock it has no use for.
    */
-  frame(scrollTop: number): FrameStats {
+  frame(scrollTop: number, now = performance.now()): FrameStats {
     this.scrollTop = Math.max(0, Math.min(scrollTop, this.maxScroll));
     this.drawnThisFrame = 0;
 
     if (this.container) this.container.scrollTop = this.scrollTop;
 
     this.drain();
-    this.request();
+    this.request(now);
     if (this.opts.layout === "viewport") this.paintSurface();
     this.evict();
 
@@ -674,7 +670,7 @@ export class Scroller {
     // an inversion --- and someone who has just asked for something different is
     // owed an immediate attempt rather than the tail of a wait they cannot see.
     // Nothing on the frame path clears it, which is what keeps the bound real.
-    this.failed.clear();
+    this.backoff.clearAll();
 
     // No tier-2 request survives a generation change --- `drain` drops every
     // one of them on arrival --- so let the renderer stop paying for them.
@@ -891,10 +887,9 @@ export class Scroller {
    * has already left are still in *our* list when they stop being wanted, and
    * are simply never sent.
    */
-  private request(): void {
+  private request(now: number): void {
     this.withdraw((outstanding) => !outstanding.isWanted());
 
-    const now = performance.now();
     const { top, bottom } = this.band();
     const centre = this.scrollTop + this.opts.viewport.height / 2;
 
@@ -913,7 +908,7 @@ export class Scroller {
           const key: TileKey = { page, col, row };
           const id = keyOf(key);
           if (this.tiles.has(id) || this.inFlight.has(id)) continue;
-          if (this.backedOff(id, now)) continue;
+          if (this.backoff.blocked(id, now)) continue;
           if (!this.isWanted(key)) continue;
           wanted.push({
             key,
@@ -950,18 +945,20 @@ export class Scroller {
     }
   }
 
-  /** Whether a request that failed is still inside its backoff. */
-  private backedOff(id: string, now: number): boolean {
-    const entry = this.failed.get(id);
-    return entry !== undefined && entry.until > now;
-  }
-
-  /** Records a failed request, and when it may be issued again. */
-  private noteFailure(id: string): void {
-    const tries = (this.failed.get(id)?.tries ?? 0) + 1;
-    const wait = Math.min(RETRY_BASE_MS * 2 ** (tries - 1), RETRY_MAX_MS);
-    this.failed.set(id, { until: performance.now() + wait, tries });
+  /**
+   * Records a failed request, and says once why it failed.
+   *
+   * `tiles.ts` builds an error naming the page and the tile's origin, and every
+   * `catch` in this file used to drop it --- so a renderer erroring on one page
+   * and a renderer erroring on everything left the same trace, which is none.
+   * Printed on the first failure only, because the reason does not change
+   * between retries and the retries go on for as long as the document is open.
+   */
+  private noteFailure(id: string, reason: unknown): void {
     this.stats.failed++;
+    if (this.backoff.note(id, performance.now()) === 1) {
+      console.warn(`tile ${id} could not be rendered: ${String(reason)}`);
+    }
   }
 
   private send(key: TileKey): void {
@@ -1001,15 +998,15 @@ export class Scroller {
           this.stats.abandoned++;
           return;
         }
-        this.failed.delete(id);
+        this.backoff.clear(id);
         this.stats.bytes += result.bytes;
         this.stats.renderMs += result.renderUs / 1000;
         this.stats.decodeMs += result.decodeMs;
         this.arrived.push({ key, rect, bitmap: result.bitmap, generation });
       })
-      .catch(() => {
+      .catch((reason: unknown) => {
         this.inFlight.delete(id);
-        this.noteFailure(id);
+        this.noteFailure(id, reason);
       });
   }
 
@@ -1079,7 +1076,7 @@ export class Scroller {
   private requestPlaceholder(page: number, now: number): void {
     const id = `p${page}`;
     if (this.placeholders.has(page) || this.inFlight.has(id)) return;
-    if (this.backedOff(id, now)) return;
+    if (this.backoff.blocked(id, now)) return;
 
     const displayed = this.displayedPage();
     const scale = TIER1_WIDTH / displayed.width_pt;
@@ -1118,7 +1115,7 @@ export class Scroller {
           this.stats.abandoned++;
           return;
         }
-        this.failed.delete(id);
+        this.backoff.clear(id);
         this.stats.delivered++;
         this.stats.bytes += result.bytes;
         this.stats.renderMs += result.renderUs / 1000;
@@ -1129,9 +1126,9 @@ export class Scroller {
           generation,
         });
       })
-      .catch(() => {
+      .catch((reason: unknown) => {
         this.inFlight.delete(id);
-        this.noteFailure(id);
+        this.noteFailure(id, reason);
       });
   }
 

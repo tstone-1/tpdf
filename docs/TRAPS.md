@@ -1549,6 +1549,14 @@ let _ = page.width_pt();      // use after close, and rustc is fine with it
 it as a no-op, which is how this surfaced. Scope the borrow instead. It bit while writing
 `text-probe --mode extract`, whose whole method is load, extract, evict, load again.
 
+`evict_page` is not the only route, and reading the entry as though it were is the mistake
+to avoid. `RawDocument::page` evicts too --- loading a fifth page closes the oldest cached
+handle --- so the same shape is reachable by holding a `RawPage` across a *load*, with no
+eviction call in sight. It cannot happen today only because every shipped caller holds one
+page at a time, which is a property of the callers rather than of the type; the safety
+comment on that close says as much. A caller that ever holds two must scope the first
+borrow before asking for the second.
+
 ### A timer that starts after the setup measures the wrong thing, and reports it
 
 `text-probe --mode extract` compares extracting from a cached page against an uncached one.
@@ -2288,3 +2296,34 @@ check nothing to catch. **A fixture built to exercise a slow path has to be long
 the rest of the run does not warm it.**
 
 ---
+
+### A worker killed a moment ago still says it is running
+
+Found wiring the per-request deadline (2026-07-29). The supervisor SIGKILLs a worker whose
+call has outrun its deadline, and the thread blocked on that call wakes up --- because the
+pipe closes --- *before* the child becomes waitable. `is_running()` is `try_wait`, and for
+those microseconds it answers "still running", so a deadline kill cannot be recognised by
+interrogating the process: the corpse read as a healthy worker, was checked back in, and
+failed someone else's request.
+
+The fix is to make the kill legible from shared state rather than from the process: the
+supervisor marks the in-flight entry *before* signalling, and the waiting thread reads the
+mark (`CallWatch::end`). The general shape: **when one side kills and another side waits,
+the fact of the kill has to travel by a channel neither of them can race** --- the process
+table is not that channel, because death and waitability are two events with a gap between
+them.
+
+### The cleanup after an fd shuffle can close what it just installed
+
+`dup` returns the lowest free descriptor, so the scratch copy made *before* a `dup2` shuffle
+can land on one of the target numbers: with the document on 3, the tile on 5 and a hole at
+4, `dup(doc_fd)` returns 4 --- which is `TILE_FD`. The later `dup2(t, TILE_FD)` overwrites
+it, and the cleanup's `d != DOC_FD` test then closes the descriptor the shuffle just
+installed. The worker dies on a closed fd, the retry respawns into the same layout, and the
+document intermittently will not open --- as a function of the parent's fd-table holes,
+which nothing logs.
+
+The dup-first advice this file already carries is right; the trap is the cleanup undoing
+it. A scratch is anything that is *not a target*, and the only safe way to say so is to
+derive the test from the same table that drives the installs (`is_scratch(fd, shuffle)`
+takes the `(source, target)` array itself), so the two can never drift apart.

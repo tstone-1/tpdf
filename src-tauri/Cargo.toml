@@ -23,7 +23,8 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# PDF rendering and text extraction. Provisional until the Phase 0 spikes pass
+# PDF rendering and text extraction. Settled 2026-07-27 by spikes 0.1, 0.3 and 0.5:
+# it renders, extracts and sandboxes correctly, and is not usable for redaction
 # -- see AGENTS.md. `thread_safe` is a default feature and is left ON, but note it
 # does NOT serialize calls behind a mutex despite what the crate README says: it
 # only makes `Pdfium` Send + Sync and awaits the global bindings. Concurrent

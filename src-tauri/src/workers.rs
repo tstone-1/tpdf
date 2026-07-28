@@ -17,6 +17,9 @@
 //!   and the font walk.
 //! - **The bookkeeping that keeps those two honest** --- `spawned` against
 //!   `idle`, the sender table, and the reservation taken before a spawn.
+//! - **The deadline.** A request that never comes back would otherwise hold a
+//!   service thread for the life of the process; [`watch_calls`] kills the
+//!   worker holding it, which is what turns a wedge into an error.
 //!
 //! Three properties are worth keeping in mind when changing anything here.
 //!
@@ -171,13 +174,66 @@ pub fn idle_timeout() -> Duration {
         .map_or(DEFAULT_IDLE, Duration::from_millis)
 }
 
-/// How often the reaper looks, for a given idle timeout.
+/// How long one request may occupy a worker before the worker is killed.
 ///
-/// A quarter of it, so a worker is killed between one and one-and-a-quarter
-/// timeouts after its last use. Clamped at both ends: the floor keeps a
-/// harness's short timeout from spinning a thread, and the ceiling keeps the
-/// default's sweep at five seconds rather than seven and a half, which costs
-/// nothing --- a sweep is a lock and a subtraction per document.
+/// **This is the per-request CPU bound**, and it exists because nothing else
+/// here is one. `AGENTS.md` records that macOS accepts `RLIMIT_CPU` and gives it
+/// *lifetime* semantics --- under a 3 s limit a 1.72 s render succeeds and the
+/// next dies 1.30 s in --- so it can bound how long a worker lives and cannot
+/// bound a request. The parent's own deadline plus a kill is the shape that can,
+/// measured at 1.2 ms to kill and reap and 4.8 ms to respawn (spike 0.5).
+///
+/// Thirty seconds, chosen against what a *legitimate* request costs rather than
+/// against what feels responsive. The slowest measured in this repository are an
+/// open of the 337 MB scan, which is seconds, and a single tile of the A0 sheet
+/// at about 1.5 s; a search or a text extraction is milliseconds. Thirty is more
+/// than an order of magnitude above any of them.
+///
+/// Both directions of the number cost something real. Too short and a document
+/// that is merely large cannot be opened at all, with no way for the reader to
+/// ask for more time --- the worst failure available here, because it is
+/// indistinguishable from a corrupt file. Too long and one pathological page
+/// parks a service thread, of which there are `pool + 2`, for that long. The
+/// asymmetry is why the default sits far from the fast end.
+///
+/// What it is **not**: a bound on memory (there is none on macOS --- see
+/// `Worker::footprint` and `docs/THREAT-MODEL.md` §T3), and not a cancellation.
+/// The worker dies; the work is lost, not paused.
+pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How long a request may run, in milliseconds, from `TPDF_CALL_MS`.
+///
+/// Zero is **accepted and means zero**: every outstanding call is overdue at the
+/// first sweep. As with `TPDF_IDLE_MS` there is deliberately no spelling for
+/// "off" --- a caller that wants no deadline asks for a long one, which is a
+/// quantity rather than a special case, and `AGENTS.md` records what a sentinel
+/// drawn from a value's own range costs when the timing is right.
+///
+/// # Panics
+///
+/// Never: an unreadable value falls back to the default, for the same reason
+/// `TPDF_POOL` and `TPDF_IDLE_MS` do.
+#[must_use]
+pub fn call_deadline() -> Duration {
+    std::env::var("TPDF_CALL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(DEFAULT_DEADLINE, Duration::from_millis)
+}
+
+/// How often a sweeping thread looks, for a given timeout.
+///
+/// A quarter of it, so the thing being swept for is acted on between one and
+/// one-and-a-quarter timeouts after it became true. Clamped at both ends: the
+/// floor keeps a harness's short timeout from spinning a thread, and the ceiling
+/// keeps the default's sweep at five seconds rather than seven and a half, which
+/// costs nothing --- a sweep is a lock and a subtraction per document.
+///
+/// **Polling is sound for both callers**, by the argument written out under
+/// [`DEFAULT_IDLE`]: what is being swept for is a *state* rather than an event,
+/// so a coarse interval delays a kill and can never miss one. An overdue call is
+/// a state in exactly the way an idle worker is --- it does not stop being
+/// overdue between two samples.
 fn sweep_interval(idle_after: Duration) -> Duration {
     (idle_after / 4).clamp(Duration::from_millis(10), Duration::from_secs(5))
 }
@@ -240,6 +296,35 @@ impl SpareSlot {
             .chain(self.warming)
             .collect()
     }
+}
+
+/// A request currently inside a worker, and since when.
+///
+/// The pid is the whole point: the thread that made this entry is blocked in a
+/// read on that worker's pipe, so it cannot act on its own timeout, and the
+/// supervisor has nothing else to reach the process by. `Worker::pid` says
+/// signalling by pid races a reaped child whose number has been reused, and that
+/// is exactly right --- what makes it safe *here* is the entry's lifetime.
+/// It exists only between the send and the reply, during which the blocked
+/// thread owns the `Worker`, and therefore the `Child`, unreaped. The number
+/// still names that process, and the entry is gone before the worker can be
+/// dropped. Nothing else in this module signals by pid.
+///
+/// One gap in that argument, named rather than left to be discovered: a worker
+/// that sends an over-long line is killed and reaped by `Worker::read_reply`
+/// *inside* the call, so for the microseconds until this entry is removed the
+/// number is free. A sweep landing exactly there would signal a reaped pid ---
+/// which names something else only if the pid space wraps inside that window.
+struct InFlight {
+    pid: u32,
+    /// When the request was handed over.
+    since: Instant,
+    /// Set by [`Workers::kill_overdue`] just before it signals.
+    ///
+    /// The only way the waiting thread can learn *why* its worker stopped: a
+    /// child's pipe closes before the child becomes waitable, so asking the
+    /// kernel gives "still running" for a process that has just been killed.
+    killed: bool,
 }
 
 /// A worker waiting in a pool, and since when.
@@ -317,6 +402,17 @@ pub(crate) struct Workers {
     /// above: that is one process whose entire purpose is to be waiting, and
     /// retiring it would be retiring the mechanism.
     idle_after: Duration,
+    /// Requests currently inside a worker, for [`Workers::kill_overdue`].
+    ///
+    /// A lock of its own rather than a field on [`Held`], and not for
+    /// contention: the supervisor has to read this while the thread that wrote
+    /// it is blocked on a pipe, and it is not a fact about a document's pool ---
+    /// the entry outlives neither the document nor the worker, but it is keyed
+    /// on neither. Bounded by the number of service threads, so a `Vec` scanned
+    /// linearly is the whole structure.
+    calls: Mutex<Vec<InFlight>>,
+    /// How long one request may occupy a worker. See [`DEFAULT_DEADLINE`].
+    deadline: Duration,
     queue: SharedQueue,
 }
 
@@ -326,6 +422,7 @@ impl Workers {
         queue: SharedQueue,
         capacity: usize,
         idle_after: Duration,
+        deadline: Duration,
     ) -> Self {
         Self {
             spare: Spare::default(),
@@ -334,6 +431,8 @@ impl Workers {
             returned: Condvar::new(),
             capacity,
             idle_after,
+            calls: Mutex::new(Vec::new()),
+            deadline,
             queue,
         }
     }
@@ -611,15 +710,94 @@ impl Workers {
     /// of the process and a worker that has never seen one ignores it. With a
     /// pool that is more useful than before rather than less: the parent does
     /// not know which of a document's workers took the request.
+    ///
+    /// The senders are cloned under the lock and written to outside it. A
+    /// `WorkerSender` is a pipe to a child that is *inside a render*, which is
+    /// the case this call exists for --- so the write can block on a full pipe,
+    /// and holding the document table across it would stall every other
+    /// document's checkouts and check-ins on a withdrawal. Cloning is an `Arc`
+    /// bump per worker, and the module note above claims every critical section
+    /// here is bookkeeping; this is what keeps that true.
     pub(crate) fn broadcast_withdraw(&self, rid: u64) {
-        let docs = self.lock();
-        for held in docs.iter().flatten() {
-            for (_, sender) in &held.senders {
-                // A dead worker is not this call's problem: whichever thread is
-                // holding it will report that, with an epitaph.
-                let _ = sender.withdraw(rid);
-            }
+        let senders: Vec<WorkerSender> = {
+            let docs = self.lock();
+            docs.iter()
+                .flatten()
+                .flat_map(|held| held.senders.iter().map(|(_, sender)| sender.clone()))
+                .collect()
+        };
+        for sender in senders {
+            // A dead worker is not this call's problem: whichever thread is
+            // holding it will report that, with an epitaph.
+            let _ = sender.withdraw(rid);
         }
+    }
+
+    /// The in-flight table, poisoning recovered from as everywhere else here.
+    fn calls(&self) -> std::sync::MutexGuard<'_, Vec<InFlight>> {
+        self.calls.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Runs one exchange with the supervisor watching the clock on it, and says
+    /// whether the supervisor killed the worker while it ran.
+    ///
+    /// Every path that waits on a worker goes through here, which is the point:
+    /// only [`Request::Tile`] is withdrawable, so `Text`, `Search`, `Outline`
+    /// and `Open` have no way to give up on their own. A page that never
+    /// finishes parsing would otherwise hold this thread --- one of `pool + 2`,
+    /// shared by *every* open document --- until the process ended.
+    ///
+    /// The flag is returned rather than folded into the error because the two
+    /// are independent: a reply already in the pipe when the deadline expired
+    /// arrives intact, so `Ok` and "killed" is a reachable pair rather than a
+    /// contradiction, and the answer is worth keeping while the process is not.
+    fn watched<T>(
+        &self,
+        worker: &mut Worker,
+        exchange: impl FnOnce(&mut Worker) -> Result<T, String>,
+    ) -> (Result<T, String>, bool) {
+        let watch = CallWatch::start(self, worker.pid());
+        let outcome = exchange(worker);
+        (outcome, watch.end())
+    }
+
+    /// Kills every worker whose current request has outrun the deadline.
+    ///
+    /// The kill is the whole mechanism: there is no way to interrupt a thread
+    /// blocked in a read, so what ends the wait is the far end of the pipe
+    /// closing. `Worker::read_reply` then reports EOF, and
+    /// [`Workers::with_worker`] discards the corpse and answers the caller ---
+    /// on the strength of the flag set here rather than of the epitaph, which at
+    /// that instant still reads "still running". See [`CallWatch::end`].
+    ///
+    /// Collected under the lock and signalled outside it, as every other kill
+    /// here is. Returns how many were killed, for a caller that wants to say so.
+    fn kill_overdue(&self) -> usize {
+        let now = Instant::now();
+        let overdue = {
+            let mut calls = self.calls();
+            let overdue = overdue(&calls, self.deadline, now);
+            // Marked before the signal, and this is what the waiting thread
+            // reads: a killed worker cannot be recognised by looking at the
+            // process. See [`CallWatch::end`].
+            for call in calls.iter_mut() {
+                call.killed |= overdue.contains(&call.pid);
+            }
+            overdue
+        };
+
+        for pid in &overdue {
+            // Said out loud, because the caller sees only "worker stopped
+            // answering" and would otherwise have no way to tell a deadline kill
+            // from a crash --- and those are opposite diagnoses: one is a
+            // document doing too much, the other is PDFium falling over.
+            eprintln!(
+                "[render] worker {pid}: no reply in {:.0} s; killing it",
+                self.deadline.as_secs_f64()
+            );
+            kill_pid(*pid);
+        }
+        overdue.len()
     }
 
     /// Runs one exchange with one of a document's workers, replacing it if it
@@ -635,16 +813,40 @@ impl Workers {
     /// The trade it does make is that a death caused by the *previous* request,
     /// or by anything outside the document at all, is invisible to the caller.
     /// That is the point of restarting.
+    ///
+    /// **A deadline kill is the one death that is not retried**, and the
+    /// asymmetry is deliberate. A crash costs milliseconds to reproduce, so
+    /// trying again is nearly free and hides a death nobody needed to know
+    /// about; a request that hung has just spent its whole deadline, and running
+    /// it again would spend another one of a service thread to learn what the
+    /// first already established. The reader gets the error after one deadline
+    /// rather than two.
     fn with_worker<T>(
         &self,
         doc: u32,
         exchange: impl Fn(&mut Worker) -> Result<T, String>,
     ) -> Result<T, String> {
         let mut worker = self.checkout(doc)?;
+        // The flag is consulted before anything is decided, because **a deadline
+        // kill cannot be recognised by looking at the process.** A child's pipe
+        // closes on the way out and it becomes waitable slightly later, so
+        // `is_running` says "still running" of a worker `SIGKILL`ed microseconds
+        // ago --- observed end to end under `TPDF_CALL_MS=1`, where the epitaph
+        // read exactly that for a process the supervisor had just killed.
+        // Believing it would put the corpse back in the pool, where it would
+        // fail somebody else's request instead of this one.
+        let (outcome, killed) = self.watched(&mut worker, &exchange);
 
-        let error = match exchange(&mut worker) {
-            Ok(value) => {
+        let error = match outcome {
+            Ok(value) if !killed => {
                 self.checkin(doc, worker);
+                return Ok(value);
+            }
+            // A reply that arrived anyway, from a worker killed for taking too
+            // long. The answer is already copied out of the mapping and is worth
+            // having; the process it came from is not.
+            Ok(value) => {
+                self.discard(doc, worker);
                 return Ok(value);
             }
             Err(e) => e,
@@ -654,9 +856,19 @@ impl Workers {
         // an error answered: restarting on that would hide a bug here behind a
         // process that gets the next question right, and would cost a document
         // reopen per malformed request.
-        if worker.is_running() {
+        if !killed && worker.is_running() {
             self.checkin(doc, worker);
             return Err(error);
+        }
+
+        if killed {
+            // Named rather than given an epitaph, which would read `still
+            // running` here for the reason above --- and said out loud, because
+            // the error the caller receives is about a pipe rather than about a
+            // request that took too long.
+            eprintln!("[render] document {doc}: worker killed for exceeding its deadline");
+            self.discard(doc, worker);
+            return Err(format!("{error} --- the request exceeded its deadline"));
         }
 
         // Said out loud, once, because a successful retry makes the death
@@ -674,8 +886,15 @@ impl Workers {
         // is that it does not wait, because the thread holding the failed request
         // is the one that just made room.
         let mut replacement = self.checkout(doc).map_err(|e| format!("{error} --- {e}"))?;
-        let second = exchange(&mut replacement);
-        self.checkin(doc, replacement);
+        let (second, killed) = self.watched(&mut replacement, &exchange);
+        // Same rule as above, for the same reason: a worker the supervisor
+        // killed does not go back into the pool, whatever it managed to answer
+        // on its way out.
+        if killed {
+            self.discard(doc, replacement);
+        } else {
+            self.checkin(doc, replacement);
+        }
         second
     }
 
@@ -740,6 +959,101 @@ impl Workers {
         })
     }
 }
+
+/// Registers a call for the supervisor, and takes it off again.
+///
+/// A guard rather than a pair of calls, and the asymmetry is the reason: a
+/// missing registration costs a request its deadline, where a registration left
+/// behind is a pid that will be signalled *after* its `Worker` was dropped and
+/// reaped --- by which time the number may name anything on the machine. `?`,
+/// an early return and a panic inside the exchange all end the entry here.
+struct CallWatch<'a> {
+    workers: &'a Workers,
+    pid: u32,
+}
+
+impl<'a> CallWatch<'a> {
+    /// Starts the clock on a request to `pid`.
+    fn start(workers: &'a Workers, pid: u32) -> Self {
+        workers.calls().push(InFlight {
+            pid,
+            since: Instant::now(),
+            killed: false,
+        });
+        Self { workers, pid }
+    }
+
+    /// Ends the watch, reporting whether the supervisor killed this worker.
+    ///
+    /// The verdict has to come from here rather than from the process, because
+    /// the process cannot answer: a child's pipe closes on its way out and it
+    /// becomes waitable slightly later, so a `SIGKILL` sent microseconds ago is
+    /// indistinguishable from a worker that is still thinking.
+    fn end(self) -> bool {
+        // `Drop` runs immediately afterwards and finds nothing to remove, which
+        // is why the removal is written as "if present" rather than asserted.
+        self.take()
+    }
+
+    /// Removes this call's entry, returning whether it had been killed.
+    fn take(&self) -> bool {
+        // One entry, not every entry with this pid: a worker serves one request
+        // at a time, so there is exactly one --- and removing all of them would
+        // turn a bookkeeping slip into a silently unsupervised call.
+        let mut calls = self.workers.calls();
+        match calls.iter().position(|call| call.pid == self.pid) {
+            Some(index) => calls.remove(index).killed,
+            None => false,
+        }
+    }
+}
+
+impl Drop for CallWatch<'_> {
+    fn drop(&mut self) {
+        self.take();
+    }
+}
+
+/// Which outstanding calls have outrun the deadline.
+///
+/// `now` is a parameter rather than read here, so the decision can be exercised
+/// directly instead of by waiting for one. `AGENTS.md` records that a check
+/// whose failure mode is a wait cannot fail; a supervisor testable only by
+/// hanging a real worker is that check.
+///
+/// Strictly past the deadline, so a zero deadline is still a deadline and an
+/// exact hit is not a kill --- `Instant` ticks at 41.67 ns on this hardware, so
+/// "elapsed equals the deadline" is reachable rather than theoretical.
+fn overdue(calls: &[InFlight], deadline: Duration, now: Instant) -> Vec<u32> {
+    calls
+        .iter()
+        .filter(|call| now.saturating_duration_since(call.since) > deadline)
+        .map(|call| call.pid)
+        .collect()
+}
+
+/// Ends a worker process, so a read blocked on its pipe fails.
+///
+/// `SIGKILL` rather than a request to stop: this is the one process in the
+/// design that is *assumed hostile*, and a signal it could handle is a signal it
+/// could ignore. The same argument [`Workers::close`] makes about not sending a
+/// goodbye on the wire.
+#[cfg(unix)]
+fn kill_pid(pid: u32) {
+    // SAFETY: an ordinary signal, to a child of this process that the caller has
+    // established is still unreaped. A failure means it is already gone, which
+    // is the outcome being asked for.
+    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+}
+
+/// Ends a worker process. Unreachable off unix, where none can be spawned.
+///
+/// A silent no-op is safe only because [`Worker::spawn`] refuses on those
+/// platforms, so there is never anything registered to kill. If a worker ever
+/// starts on Windows this has to become `TerminateProcess`, or the deadline
+/// silently stops being one.
+#[cfg(not(unix))]
+fn kill_pid(_pid: u32) {}
 
 /// How many bytes of the shared mapping a reply is entitled to.
 ///
@@ -819,7 +1133,33 @@ impl Engine for Workers {
         // warming while this one is still parsing.
         self.prewarm();
 
-        let response = worker.call(&Request::Open { lazy_geometry })?;
+        // Watched like every pooled request, and this one most of all: the
+        // worker is not in a pool yet, so nothing else here would ever notice
+        // it, and a parse that never returns is the *first* thing a hostile
+        // document can do. A kill lands as a failed open rather than as a
+        // permanently occupied thread.
+        //
+        // The kill flag changes the *message* here and not the control flow,
+        // which is worth saying rather than leaving to be inferred from an
+        // ignored value. On the failure side the `?` drops the worker, and
+        // dropping one kills and reaps it --- but "worker stopped answering
+        // (still running)" is what a reader would be shown for a document too
+        // large to parse in time, which sends the next person to look for a
+        // crash. On the success side --- a reply already in the pipe when the
+        // deadline expired --- the document is real, and the dead worker is
+        // published into the pool where the first request to take it fails once
+        // and is replaced by the path that exists for a crashed worker. There is
+        // no third case.
+        let (response, killed) = self.watched(&mut worker, |worker| {
+            worker.call(&Request::Open { lazy_geometry })
+        });
+        let response = response.map_err(|e| {
+            if killed {
+                format!("{e} --- the document did not open within the deadline")
+            } else {
+                e
+            }
+        })?;
         if !response.ok {
             return Err(response.error);
         }
@@ -1004,11 +1344,215 @@ pub(crate) fn reap_idle(engine: &Arc<Workers>, idle_after: Duration) {
         .ok();
 }
 
+/// Kills workers whose request has outrun the deadline, until the service is
+/// gone.
+///
+/// A sibling of [`reap_idle`], holding a `Weak` for exactly the same reason: the
+/// supervisor must not be what keeps the pool --- and every document's mapping
+/// --- alive, so a failed upgrade is how it learns to stop.
+///
+/// A thread of its own rather than another job for the reaper, because the two
+/// cadences come from unrelated policies. Folding them together would tie a
+/// harness's short deadline to how promptly workers retire, and `AGENTS.md`
+/// records what it cost the last time two limits in this module were made equal
+/// for looking obviously related.
+///
+/// Failure to spawn is **not** silent, unlike the reaper's. Retirement is an
+/// optimisation; this is the only thing standing between a request that never
+/// returns and a service thread held for the life of the process, so a service
+/// running without it is running without its per-request bound and should say
+/// so.
+pub(crate) fn watch_calls(engine: &Arc<Workers>, deadline: Duration) {
+    let weak = Arc::downgrade(engine);
+    let interval = sweep_interval(deadline);
+    let spawned = std::thread::Builder::new()
+        .name("tpdf-deadline".into())
+        .spawn(move || loop {
+            std::thread::sleep(interval);
+            // Not `while let`, for the reason `reap_idle` gives: the upgraded
+            // handle has to be dropped before the next sleep, or the service
+            // outlives its last user by a whole interval.
+            let Some(engine) = weak.upgrade() else { return };
+            engine.kill_overdue();
+        });
+    if spawned.is_err() {
+        eprintln!("[render] no deadline supervisor: a request that hangs will hold its thread");
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::payload_length;
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    use super::{overdue, payload_length, CallWatch, InFlight, Workers, DEFAULT_IDLE};
+    use crate::queue::SharedQueue;
     use crate::render::{TileFormat, TileRequest};
     use crate::worker::Response;
+
+    /// A pool with nothing in it, for exercising the supervisor's bookkeeping.
+    ///
+    /// Nothing is spawned by construction --- a document has to be opened first
+    /// --- so the library path is never read and need not exist.
+    fn supervisor(deadline: Duration) -> Workers {
+        Workers::new(
+            PathBuf::from("/nonexistent"),
+            SharedQueue::default(),
+            1,
+            DEFAULT_IDLE,
+            deadline,
+        )
+    }
+
+    /// An entry that has been outstanding for `age`.
+    fn call(pid: u32, age: Duration) -> InFlight {
+        InFlight {
+            pid,
+            since: Instant::now()
+                .checked_sub(age)
+                .expect("the clock has not been running that briefly"),
+            killed: false,
+        }
+    }
+
+    #[test]
+    fn a_call_past_the_deadline_is_named_and_a_younger_one_is_not() {
+        // Both directions in one table, because they fail to opposite mistakes:
+        // a supervisor that names nothing is a deadline that does not exist,
+        // and one that names everything kills every request the moment a sweep
+        // runs. Only asserting the first is a check a broken comparison passes.
+        let now = Instant::now();
+        let calls = [call(11, Duration::from_secs(60)), call(22, Duration::ZERO)];
+        assert_eq!(overdue(&calls, Duration::from_secs(30), now), vec![11]);
+    }
+
+    #[test]
+    fn a_call_exactly_at_the_deadline_is_left_alone() {
+        // The boundary from the permitted side. `Instant` ticks at 41.67 ns on
+        // this hardware, so an exact hit is reachable rather than theoretical,
+        // and the direction that matters is the one that kills a request which
+        // was about to answer.
+        let now = Instant::now();
+        let calls = [InFlight {
+            pid: 11,
+            since: now,
+            killed: false,
+        }];
+        assert!(overdue(&calls, Duration::ZERO, now).is_empty());
+    }
+
+    #[test]
+    fn a_finished_call_stops_being_watched() {
+        // The property the guard exists for, and its failure is delayed rather
+        // than immediate: an entry left behind names a pid whose `Worker` has
+        // been dropped and reaped, so the next sweep past the deadline signals
+        // whatever now holds that number.
+        let workers = supervisor(Duration::from_secs(30));
+        assert_eq!(workers.calls().len(), 0);
+        {
+            let _watch = CallWatch::start(&workers, 4711);
+            assert_eq!(workers.calls().len(), 1, "the call was never registered");
+        }
+        assert_eq!(workers.calls().len(), 0, "the entry outlived its call");
+    }
+
+    /// A process that will not end on its own, standing in for a worker whose
+    /// request never comes back.
+    ///
+    /// Not a worker: spawning one needs PDFium and a document, and what is
+    /// under test is the supervisor's reach into the process table rather than
+    /// anything PDF. What it does share with a worker is the only thing that
+    /// matters here --- it is a child this process owns and has not reaped, so
+    /// its pid still names it.
+    /// Five seconds, not thirty: long enough that the control below cannot race
+    /// it, and short enough that a kill which never lands fails the test rather
+    /// than hanging the suite --- `wait` blocks, so an unkilled child would
+    /// otherwise turn a red into a timeout, and `AGENTS.md` records what a
+    /// verdict of "no result" costs a mutation run.
+    #[cfg(unix)]
+    fn sleeper() -> std::process::Child {
+        std::process::Command::new("/bin/sleep")
+            .arg("5")
+            .spawn()
+            .expect("/bin/sleep is present on every unix")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_supervisor_kills_the_process_holding_an_overdue_call() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let workers = supervisor(Duration::from_millis(1));
+        let mut child = sleeper();
+        let _watch = CallWatch::start(&workers, child.id());
+        // Past a 1 ms deadline by a margin that no scheduling delay can close
+        // from the wrong side.
+        std::thread::sleep(Duration::from_millis(50));
+
+        assert_eq!(workers.kill_overdue(), 1, "nothing was found to kill");
+        // And the process really is gone, which is the whole mechanism: a
+        // returned count is this function agreeing with itself, where an exit
+        // status comes from the kernel. A kill that never landed reaches this
+        // assertion five seconds later with a clean exit code, which is a
+        // failure rather than a hang --- see `sleeper`.
+        let status = child.wait().expect("the child can be reaped");
+        assert_eq!(
+            status.signal(),
+            Some(9),
+            "the process ended some other way: {status:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_deadline_kill_is_reported_to_the_thread_that_was_waiting() {
+        // The half of the mechanism the kernel cannot supply. `is_running` on a
+        // worker killed microseconds ago answers "still running" --- measured
+        // end to end --- so without this flag the corpse goes back into the pool
+        // and the next request to take it fails instead of this one.
+        let workers = supervisor(Duration::from_millis(1));
+        let mut child = sleeper();
+        let watch = CallWatch::start(&workers, child.id());
+        std::thread::sleep(Duration::from_millis(50));
+
+        assert_eq!(workers.kill_overdue(), 1);
+        assert!(
+            watch.end(),
+            "the thread was not told why its worker stopped"
+        );
+        child.wait().expect("the child can be reaped");
+    }
+
+    #[test]
+    fn a_call_that_ended_on_its_own_is_not_reported_as_killed() {
+        // The control, and the direction that matters more: reporting a killed
+        // worker that was not killed retires a healthy process on every request
+        // and answers the caller with a deadline error it never hit. No process
+        // here, because nothing is signalled --- which is the assertion.
+        let workers = supervisor(Duration::from_secs(3600));
+        let watch = CallWatch::start(&workers, 4711);
+        assert_eq!(workers.kill_overdue(), 0);
+        assert!(!watch.end());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_call_inside_its_deadline_is_left_running() {
+        // The control. Without it the test above is satisfied by a supervisor
+        // that kills every registered call on sight, which is the same as
+        // having no deadline at all and is far worse than a wedge.
+        let workers = supervisor(Duration::from_secs(3600));
+        let mut child = sleeper();
+        let _watch = CallWatch::start(&workers, child.id());
+
+        assert_eq!(workers.kill_overdue(), 0);
+        assert!(
+            matches!(child.try_wait(), Ok(None)),
+            "the child was killed inside its deadline"
+        );
+        child.kill().expect("tidying up the sleeper");
+        child.wait().expect("the child can be reaped");
+    }
 
     /// A tile request of a given size and format, with nothing else meaningful.
     fn request(width: u16, height: u16, format: TileFormat) -> TileRequest {

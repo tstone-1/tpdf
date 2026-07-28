@@ -53,7 +53,7 @@
  * reader is told this is a list of eleven things when it is a list of 775.
  */
 
-import { TIER1_WIDTH } from "./scroller";
+import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
 /** Width of a thumbnail as drawn, in CSS pixels. */
@@ -91,10 +91,12 @@ export interface Tier1Access {
   placeholderFor(page: number): ImageBitmap | null;
 }
 
-export interface PageSize {
-  width_pt: number;
-  height_pt: number;
-}
+/**
+ * Re-exported rather than declared again: the strip's rows have to be the shape
+ * the scroller lays a page out in, and two structurally identical interfaces are
+ * two places for that to stop being true silently.
+ */
+export type { PageSize };
 
 export interface ThumbnailOptions {
   doc: number;
@@ -148,26 +150,20 @@ export function nextWanted(
   return null;
 }
 
-/** Height of one row, thumbnail plus its number plus padding. */
+/**
+ * Height of one row, thumbnail plus its number plus padding.
+ *
+ * Sized from the page as *displayed* --- `scroller.ts`'s `displayedSize`, the
+ * same one the viewer lays out with --- because the strip follows the view's
+ * rotation: its thumbnails are the viewer's tier-1 placeholders, borrowed rather
+ * than re-rendered, and those are produced in whatever orientation the view is
+ * in. Rows sized from the file would leave a gap under every one of them while
+ * the borrowed bitmap overflowed.
+ */
 export function rowHeightFor(page: PageSize, turns = 0): number {
   const shown = displayedSize(page, turns);
   const scale = THUMB_WIDTH / Math.max(1, shown.width_pt);
   return Math.round(shown.height_pt * scale) + LABEL_HEIGHT + ROW_PADDING * 2;
-}
-
-/**
- * A page's size as displayed under `turns` quarter-turns clockwise.
- *
- * The strip follows the viewer's rotation rather than always showing the
- * document upright, because its thumbnails *are* the viewer's tier-1
- * placeholders --- borrowed, not re-rendered --- and those are rendered in
- * whatever orientation the view is in. A strip that ignored the rotation would
- * draw a landscape bitmap into a portrait canvas.
- */
-export function displayedSize(page: PageSize, turns: number): PageSize {
-  return ((turns % 4) + 4) % 4 % 2 === 0
-    ? page
-    : { width_pt: page.height_pt, height_pt: page.width_pt };
 }
 
 interface Outstanding {
@@ -272,6 +268,14 @@ export class Thumbnails {
 
   destroy(): void {
     this.observer.disconnect();
+    // Before the withdrawal, and load-bearing: `pump` refuses to issue anything
+    // while this is false, and a strip torn down with it still true keeps
+    // pumping. The settling request's `.then` calls `pump`, which starts the
+    // next page, whose reply starts the one after --- one render per reply until
+    // the window's rows run out, which is a screenful plus twice the overscan,
+    // all of it for a document nobody is looking at any more and all of it in
+    // front of the tiles for the one they are.
+    this.active = false;
     this.withdraw();
     for (const bitmap of this.bitmaps.values()) bitmap.close();
     this.bitmaps.clear();
@@ -504,8 +508,14 @@ export class Thumbnails {
         if (result) this.keep(page, result.bitmap);
         this.pump();
       })
-      .catch(() => {
+      .catch((reason: unknown) => {
         this.request = null;
+        // Once per page, which is every failure here --- the page is never
+        // retried --- and `tiles.ts` builds an error naming it. Dropping that
+        // left a strip with a blank row and nothing anywhere saying why.
+        if (!this.failed.has(page)) {
+          console.warn(`thumbnail for page ${page + 1} failed: ${String(reason)}`);
+        }
         this.failed.add(page);
         // Still pumped: the strip should carry on with the *other* pages rather
         // than stopping at the first one that cannot be drawn.

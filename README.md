@@ -4,12 +4,40 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
-**Status: Phase 0 complete, no viewer yet.** The feasibility spikes are done and every
-load-bearing assumption has a measured verdict; what exists in the tree is that evidence
-and its harnesses, not an application you can read a PDF in. See
+**Status: Phase 0 closed, Phase 1 in progress.** The feasibility spikes are done and every
+load-bearing assumption has a measured verdict; on top of that evidence there is now a
+viewer you can read a PDF in. It has been built and checked on macOS arm64 only ---
+Windows has never been built --- and nothing in it edits a document yet. See
 [`docs/PLAN.md`](docs/PLAN.md) for the architecture and roadmap,
 [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for the security position,
 [`BUILD.md`](BUILD.md) to build it, and [`AGENTS.md`](AGENTS.md) for project conventions.
+
+## What the viewer does today
+
+- Every document is parsed and rendered in **sandboxed worker processes** with no
+  filesystem or network authority --- a pool per document, and a worker that dies is
+  replaced and its request retried.
+- Tiled rendering behind a virtual scroller, zoom, view rotation, and page inversion for
+  reading on a dark screen.
+- Text selection and copy, find-in-document, an outline sidebar, a page-thumbnail strip,
+  and a text layer for screen readers.
+- Session restore: the document, page, zoom and rotation you left on.
+- Printing through the system print panel, on macOS.
+- Every command reachable from the command palette, which renders each shortcut from the
+  same table the key handler matches against, so a label cannot advertise a chord that
+  does nothing.
+
+All of that has run on macOS arm64 and nowhere else.
+
+## Not built yet
+
+- Page operations: reorder, rotate, delete, insert, extract, split, merge, crop --- in the
+  document, not only in the view
+- Annotations: highlight, ink, notes, shapes, stamps --- real PDF annotation objects
+- **True redaction** with an automatic post-save verification pass
+- Forms and visual signatures
+- In-place text editing
+- A Windows build. `BUILD.md` lists the three things known to be in the way.
 
 ## What Phase 0 established
 
@@ -28,18 +56,11 @@ and its harnesses, not an application you can read a PDF in. See
   content stream carries glyph ids rather than text. A verifier that cannot decode a
   carrier reports "not verified", never "clean".
 
-Known failure carried into Phase 1: on an A0 vector sheet the scroller holds a flawless
-60 fps over a screen that is 0--4% sharp. Frame rate cannot distinguish a viewer that is
-keeping up from one that has given up.
-
-## Planned capabilities
-
-- Viewer: tiled GPU-composited rendering, search-as-you-type, outline, thumbnails
-- Page operations: reorder, rotate, delete, insert, extract, split, merge, crop
-- Annotations: highlight, ink, notes, shapes, stamps --- real PDF annotation objects
-- **True redaction** with an automatic post-save verification pass
-- Forms and visual signatures
-- In-place text editing
+Known limit carried into Phase 1: on an A0 vector sheet the scroller holds a flawless
+60 fps over a screen that is 6--10% sharp while moving. Nothing goes blank --- the
+low-resolution page under it covers the rest, on the worst frame of every round measured
+--- but frame rate alone cannot distinguish a viewer that is keeping up from one that has
+given up, which is why coverage is now measured beside it.
 
 ## Stack
 

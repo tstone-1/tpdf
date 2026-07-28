@@ -1,7 +1,12 @@
 //! Which render requests are outstanding, and which have been withdrawn.
 //!
-//! The render service is one FIFO thread and requests arrive from another, so a
-//! withdrawal races the render it is withdrawing. This is the state machine that
+//! Renders run on the render service's own threads and requests arrive from
+//! another, so a withdrawal races the render it is withdrawing. Dequeue order is
+//! FIFO --- one channel --- but on the worker backend `pool + 2` threads take
+//! from it and several renders overlap, so the race is against *any* of them
+//! rather than against one. That is why `inflight` below is a map; see the note
+//! under it, which is the same fact arrived at the expensive way. This is the
+//! state machine that
 //! makes that race harmless, and it is deliberately separate from the rendering:
 //! it holds nothing but integers and a flag, touches no PDFium, and can
 //! therefore be tested by driving the orderings directly rather than by trying

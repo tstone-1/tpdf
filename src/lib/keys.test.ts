@@ -11,12 +11,12 @@ import { BINDINGS, label, matches, type BoundCommand } from "./keys";
  */
 function event(
   key: string,
-  { accel = false, shift = false } = {},
+  { accel = false, ctrl = false, shift = false } = {},
 ): KeyboardEvent {
   return {
     key,
     metaKey: accel,
-    ctrlKey: false,
+    ctrlKey: ctrl,
     shiftKey: shift,
   } as KeyboardEvent;
 }
@@ -76,6 +76,28 @@ describe("matches", () => {
     // page as well.
     expect(matches("nav.previousPage", event("p"))).toBe(true);
     expect(matches("nav.previousPage", event("p", { accel: true }))).toBe(false);
+  });
+
+  it("takes Ctrl as the accelerator as readily as Command", () => {
+    // The Windows half of one table: `matches` reads `metaKey || ctrlKey` so the
+    // same bindings serve both platforms. Nothing on the machine this is written
+    // on ever sends the Ctrl spelling, so it has to be asked for --- otherwise
+    // half the claim is untested and every shortcut fails on Windows.
+    expect(matches("edit.copy", event("c", { ctrl: true }))).toBe(true);
+    expect(
+      matches("find.previous", event("g", { ctrl: true, shift: true })),
+    ).toBe(true);
+  });
+
+  it("rejects Ctrl on a binding that asks for no accelerator", () => {
+    // The control for the arm above, and the direction that matters on
+    // Windows: Ctrl is an accelerator there, not a modifier to be ignored, so
+    // Ctrl-P must reach Print and not also turn the page.
+    expect(matches("nav.previousPage", event("p"))).toBe(true);
+    expect(matches("nav.previousPage", event("p", { ctrl: true }))).toBe(false);
+    expect(matches("edit.clearSelection", event("Escape", { ctrl: true }))).toBe(
+      false,
+    );
   });
 
   it("distinguishes a chord from the same chord with shift", () => {

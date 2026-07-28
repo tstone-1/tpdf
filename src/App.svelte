@@ -421,8 +421,14 @@
       // ⌘O was advertised in the palette and reached nothing at all: the label
       // was written by hand and no handler was ever added for it, which is the
       // exact disagreement the shared table exists to make impossible.
+      //
+      // Prevented whether or not an open is already running, but only issued
+      // when one is not --- the same guard the Open button carries as
+      // `disabled`. Without it the keyboard is the one path that can stack file
+      // dialogs, and the second chooser's document then waits behind the first
+      // on `openChain` for no reason anyone asked for.
       event.preventDefault();
-      void pickAndOpen();
+      if (!opening) void pickAndOpen();
     } else if (matches("find.open", event) && title) {
       event.preventDefault();
       focusFind();
@@ -589,6 +595,19 @@
   async function openDocument(path: string, resuming = false) {
     error = null;
     opening = true;
+    /**
+     * Whether this body has already torn the outgoing document down.
+     *
+     * What the `catch` is allowed to clear depends on how far the body got, and
+     * the two cases are opposites. A failure *before* this point --- an
+     * `open_document` that threw, which is the common one --- has touched
+     * nothing: the reader still has their document on screen, and clearing
+     * `title` there unmounts the body out from under a live viewer and sidebar
+     * while the backend still holds the file. A failure *after* it has no
+     * document left to keep, and leaving the singletons set would advertise one
+     * that is gone.
+     */
+    let replaced = false;
     try {
       const doc = await invoke<DocumentInfo>("open_document", { path });
 
@@ -618,6 +637,11 @@
 
       // Whatever the outgoing document was owed, before its path is replaced.
       places.flush();
+      // The debounced find is keyed to the viewer being destroyed on the next
+      // line: left armed, it fires a scan at the *new* document for a query the
+      // field no longer shows, because `query` is cleared below.
+      clearTimeout(findTimer);
+      replaced = true;
       viewer?.destroy();
       viewer = null;
       sidebar?.destroy();
@@ -683,6 +707,12 @@
           sidebar?.setPosition(at, top);
           notePlace();
         },
+        // Shown, for the same reason a failed print is: this fires only for a
+        // command the reader typed and is waiting on --- a copy that could not
+        // read every page it spans, or a clipboard that refused the write.
+        onError: (message) => {
+          error = message;
+        },
       });
       // Before the first paint, so the reader sees their page rather than page
       // one and then a jump --- and before `focus`, which does not move the view
@@ -696,18 +726,6 @@
 
       // After the viewer, deliberately not awaited, and deliberately not asked
       // for until the first screen is up.
-      //
-      // Not awaiting it was always right --- the outline shares the render
-      // thread with tiles and a document that opens instantly should not wait
-      // for its table of contents. Waiting for the first paint is newer, and is
-      // there because the walk stopped being free: resolving a destination on a
-      // page carrying `/Rotate` needs the page's rotation, `FPDFPage_GetRotation`
-      // needs the page loaded, and that measured 0.17 ms -> 7.5 ms on a
-      // twelve-page fixture, about 1 ms per distinct page named. On a book with
-      // a three-hundred-entry table of contents that is a third of a second of
-      // render thread, and the render thread is FIFO --- so asked for at open it
-      // would sit in front of the tiles for the page someone is looking at.
-      // Deliberately not awaited --- not the first paint, and not the outline.
       //
       // Not awaiting the *outline* was always right: it shares the render thread
       // with tiles and a document that opens instantly should not wait for its
@@ -746,9 +764,23 @@
           if (openDoc === wanted) sidebar?.setOutline(null);
         });
     } catch (e) {
-      openPathName = "";
-      openPageCount = 0;
-      title = "";
+      if (replaced) {
+        // Whatever half-built state got as far as existing. A viewer left alive
+        // while `title` is empty runs its frame loop against a detached surface
+        // and keeps writing `status`, which the header renders --- a page count
+        // and a zoom for a document with no body under them.
+        viewer?.destroy();
+        viewer = null;
+        sidebar?.destroy();
+        sidebar = null;
+        // Cleared together with `title`, always: `title` gates the body and
+        // `status` feeds the header, so one outliving the other is a header
+        // describing a document that is no longer on screen.
+        status = null;
+        title = "";
+        openPathName = "";
+        openPageCount = 0;
+      }
       // A document that was open last time and is not there now is not a
       // failure the reader caused, so the window simply comes up empty.
       if (!resuming) error = String(e);

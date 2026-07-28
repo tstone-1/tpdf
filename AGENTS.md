@@ -280,6 +280,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A descriptor without `FD_CLOEXEC` leaks into every later child, and keeps it alive
 - Two mechanisms with the same limit make one of them untestable
 - FIFO dequeue is not FIFO completion
+- A worker killed a moment ago still says it is running
+- The cleanup after an fd shuffle can close what it just installed
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
