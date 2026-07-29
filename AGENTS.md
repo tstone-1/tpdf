@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 107 entries
+The one thing this file does *not* carry in full is the trap list --- 111 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -202,10 +202,13 @@ scripts/gates.py --list
 ```
 
 Currently: a PDFium pin check, `cargo fmt --check`, `cargo clippy --all-targets -- -D
-warnings`, `cargo test --locked`, `npm run check`, `npm run test`, `npm run build`.
-`--all-targets` covers test code, `-D warnings` makes lints fatal, and `--locked` catches a
-`Cargo.lock` that was not committed after a `cargo update`; dropping any of them silently
-weakens the gate.
+warnings`, `cargo test --locked`, `cargo build --locked --bins`, `npm run check`,
+`npm run test`, `npm run build`. `--all-targets` covers test code, `-D warnings` makes lints
+fatal, and `--locked` catches a `Cargo.lock` that was not committed after a `cargo update`;
+dropping any of them silently weakens the gate. `--bins` is there because **none of the
+others links a binary** --- clippy stops at metadata and `cargo test` links each `[[bin]]`
+with `main` replaced by the harness's own, so a symbol reachable only from `main` is dropped
+as dead code. That gap let a 7/7 sweep sit beside a failing `npm run tauri build`.
 
 One honest note. The earlier plan listed `npm run lint` and `npm run test`, neither of
 which existed; adding an ESLint config and a test runner with nothing to lint or test is
@@ -220,13 +223,24 @@ does not catch first. When it is added (the natural trigger is the repo going pu
 second contributor) the workflow should *invoke* `scripts/gates.py` rather than re-list the
 commands in YAML.
 
-**Windows compiles and gates green; it is not supported.** `scripts/gates.py` reports 7/7 on
-`x86_64-pc-windows-msvc` as of 2026-07-29 --- which is a statement about compilation and unit
-tests and nothing else. No gate runs the viewer, nothing on Windows has ever rendered a page,
-and the platform is **unsandboxed**: the backend falls back to in-process there, so hostile
-input is parsed in the app process, and it fails open rather than refusing. `BUILD.md` has the
-detail and the list of what a real port still owes. Every *measurement* in this file remains
-macOS arm64.
+**Windows runs the viewer, and is still not supported.** On 2026-07-29 a Windows build opened
+documents and passed `viewer_check.py` on four corpora --- **86 check names** on each, the same
+invariant macOS holds to, with ran/skipped splits inside the ranges `BUILD.md` records. So the
+viewer works there; what is missing is not function.
+
+What is missing is **containment**. The platform is unsandboxed: `Backend::default_here()`
+selects in-process off macOS, so hostile input is parsed in the app process, and it **fails
+open** --- the refusal guards `TPDF_BACKEND=worker`, a path the default never takes, so there
+is no error to notice. A port owes a real answer (job objects, a restricted token, a separate
+desktop) before Windows can ship. `BUILD.md` has the detail.
+
+Two things a green sweep still does not say, both learned the same day. `scripts/gates.py`
+reported 7/7 while `npm run tauri build` failed, because nothing in the list linked a
+binary --- there is a `bins` gate now, and it was proved to fail before being trusted. And a
+`cargo build --release` binary is *not* a production build: the frontend is embedded by a
+cargo **feature**, not by the profile. Both are in `docs/TRAPS.md`.
+
+Every *measurement* in this file remains macOS arm64.
 
 ---
 
@@ -236,8 +250,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 107 of them and the full text
-was 93% of this file --- an instruction budget spent on the 106 traps that are not
+titles. Only the titles are here, because there are 111 of them and the full text
+was 93% of this file --- an instruction budget spent on the 110 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -380,6 +394,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An uninhabited type carries its impossibility into every caller
 - A directory that exists is not the library you need
 - A list of documented blockers can be wrong in the direction that looks thorough
+- A gate list that never links a binary cannot see a link error
+- A custom URI scheme is not spelled the same way on every platform
+- A release build is not a production build; a cargo *feature* decides that
+- A guard that degrades to a no-op off its platform stops being a guard
 
 ### Fixtures
 - The test fixtures are generated, not committed

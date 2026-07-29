@@ -193,10 +193,16 @@ Two of them are worth understanding rather than just running:
   most of the backend --- the request queue and the `tile://` parser, the worker protocol
   and the pool, rendering, text, search, outlines, printing, session and sweep --- with
   `npm run test` doing the same for the front-end logic beside it. What it deliberately
-  leaves to the harnesses under `scripts/` is everything that needs a live webview. What
-  nothing covers is a Windows *run* --- the suite compiles and passes there, and no gate has
-  ever opened a document on it --- and paper: a print job is checked by reading its bytes back
-  with PDFKit, which is a parser independent of the writer but still not a printer.
+  leaves to the harnesses under `scripts/` is everything that needs a live webview --- and a
+  Windows run is now one of those, `viewer_check.py` having passed there on 2026-07-29,
+  rather than something nothing covers at all. What no gate covers is paper: a print job is
+  checked by reading its bytes back with PDFKit, a parser independent of the writer but still
+  not a printer.
+- **`cargo build --locked --bins` is the only gate that links anything.** clippy stops at
+  metadata, and `cargo test` links each `[[bin]]` with its `main` replaced by the test
+  harness's, so a symbol reachable only from `main` is dropped as dead code rather than
+  reported as missing. Without this gate a 7/7 sweep sat beside a failing
+  `npm run tauri build`; see the trap.
 - **Wrap a batch of benchmark runs in `caffeinate -du`.** `scroll_bench.py` holds one for
   its own lifetime, but the gaps between runs --- and any headless bench running alongside
   it --- are unprotected, and a session that locks mid-batch fails the next frame-rate run
@@ -218,29 +224,43 @@ When CI is added --- the natural trigger is the repo going public, or a second c
 keeps the checklist and the gate the same object rather than two things that happen to
 agree today.
 
-### Windows builds and gates green. It is not supported.
+### Windows runs the viewer. It is still not supported.
 
-`scripts/gates.py` reports **7/7 on `x86_64-pc-windows-msvc`**, first on 2026-07-29. A clean
-clone bootstraps with no changes --- `npm install` and `scripts/fetch_pdfium.py` both do the
-right thing, the fetch script selects the `win-x64` asset and verifies its digest.
+`scripts/gates.py` reports **8/8 on `x86_64-pc-windows-msvc`**, and on 2026-07-29 a Windows
+build **opened documents and passed the full functional check**. A clean clone bootstraps
+with no changes --- `npm install` and `scripts/fetch_pdfium.py` both do the right thing, the
+fetch script selects the `win-x64` asset and verifies its digest.
 
-**That is a claim about compilation and unit tests, and about nothing else.** Two things are
-still true, and the first is the one that matters:
+`viewer_check.py` runs unmodified: `webview_guard` already returns early off darwin, and
+WebView2 needs no bundle identity, so a plain `target/release/tpdf.exe` is enough where macOS
+needs an `.app`. Four corpora, every one reporting the **86 check names** that are the
+invariant, with splits inside the ranges the table above records:
 
-- **There is no sandbox, therefore no worker.** `sandbox_init` is SBPL and macOS-only, so
-  `Worker::spawn` refuses off macOS and `Backend::default_here()` falls back to
-  `Backend::InProcess`. A Windows build would parse attacker-controlled PDF **in the app
-  process**, which is exactly what `AGENTS.md` and `docs/THREAT-MODEL.md` forbid. **It fails
-  open**: `Worker::spawn`'s refusal is asserted by tests, but only a caller that asks for
-  `TPDF_BACKEND=worker` ever reaches it --- the default selects in-process and renders
-  perfectly happily, so there is no error to notice. A port owes a real containment answer
-  (job objects, a restricted token, a separate desktop) before Windows can ship.
-- **Nothing has been run.** No gate executes the viewer, so a green sweep says the tree
-  compiles and 153 unit tests pass. Every behavioural harness is macOS-shaped: `viewer_check.py`,
-  `session_check.py` and `open_check.py` want an `.app` bundle, `open -a`, and an unlocked
-  screen. Every measurement in this file and in `AGENTS.md` remains macOS arm64.
+| fixture | ran | skipped | failed |
+|---|---|---|---|
+| `outline-simple.pdf` | 81 | 5 | 0 |
+| `outline-hostile.pdf` | 81 | 5 | 0 |
+| `rotated-90.pdf` | 75 | 11 | 0 |
+| `vector-heavy.pdf` | 52 | 34 | 0 |
 
-Do not claim a Windows build *works* until one has opened a document.
+Rendering, scrolling, zoom, pinch, view rotation, text selection, search, the palette, the
+accessibility tree, the outline sidebar, thumbnails, inversion and the print command's
+refusals all behave as they do on macOS.
+
+**What is missing is containment, not function.** `sandbox_init` is SBPL and macOS-only, so
+`Worker::spawn` refuses off macOS and `Backend::default_here()` falls back to
+`Backend::InProcess`. A Windows build parses attacker-controlled PDF **in the app process**,
+which is exactly what `AGENTS.md` and `docs/THREAT-MODEL.md` forbid. **It fails open**:
+`Worker::spawn`'s refusal is asserted by tests, but only a caller that asks for
+`TPDF_BACKEND=worker` ever reaches it --- the default selects in-process and renders perfectly
+happily, so there is no error to notice. A port owes a real containment answer (job objects,
+a restricted token, a separate desktop) before Windows can ship. That, and not the viewer, is
+now the whole gap.
+
+Still unmeasured and still macOS-shaped: every *number* in this file and in `AGENTS.md` is
+macOS arm64, `session_check.py` and `open_check.py` want `open -a` and an `.app`, and
+`webview_guard` checks nothing off darwin (see the trap --- Chromium throttles occluded
+windows too, so those runs were protected by nothing).
 
 #### What the port changed, so it is not rediscovered
 
@@ -258,6 +278,27 @@ Do not claim a Windows build *works* until one has opened a document.
   drive letter on Windows and refuses `file:///Users/...`, so the macOS fixture asserted only
   that refusal. Written that way rather than gated off Windows, deliberately --- a check that
   silently stops existing on a platform is the thing this file warns about elsewhere.
+
+#### What running it found, which no gate could
+
+Three defects, none of which any amount of compiling would have surfaced.
+
+- **`npm run tauri build` failed on a tree that gated 7/7.** `backend_probe.rs` called two
+  dyld symbols unguarded; clippy never links, and `cargo test` links a `[[bin]]` with `main`
+  replaced, which drops them as dead code. There is a **`bins` gate** now, and it was proved
+  to fail (5.7 s, debug profile) against the un-gated file before being trusted. The probe
+  itself is now a thin entry point over `backend_probe/imp.rs`, refusing off macOS the way
+  `fdpass_probe.rs` does --- every claim it makes is about a worker backend that cannot exist
+  there.
+- **Not one tile was ever painted.** `tiles.ts` fetched `tile://localhost/...`, which WebView2
+  cannot resolve; Tauri serves custom protocols at `http://tile.localhost/...` on Windows. The
+  origin now comes from Tauri's own `convertFileSrc`, and the CSP names
+  `http://tile.localhost` beside `tile:` --- it already named `http://ipc.localhost` beside
+  `ipc:`, so the convention was known and applied to one scheme and not the other.
+- **`cargo build --release` is not a production build.** It produced a window showing
+  *"localhost refused to connect"*: `frontendDist` is embedded by the cargo feature
+  `tauri/custom-protocol`, which the Tauri CLI passes and a bare cargo build does not, at any
+  optimisation level. Build through `npm run tauri build`, or pass the feature.
 
 **The old version of this section named the wrong blockers**, and the shape of the error is
 worth keeping. It listed `sanitize_rewrite.rs` and `tile_bench.rs` as the compile errors;

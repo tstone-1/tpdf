@@ -1,5 +1,14 @@
 /**
- * Tile fetching over the `tile://` custom scheme.
+ * Tile fetching over the `tile` custom scheme.
+ *
+ * **The scheme is not spelled the same way on every platform.** WKWebView
+ * registers a real URI scheme, so macOS fetches `tile://localhost/...`;
+ * WebView2 cannot, so on Windows Tauri serves every custom protocol at
+ * `http://tile.localhost/...` instead. A hardcoded `tile://localhost` therefore
+ * resolves to nothing on Windows --- every fetch fails, no tile is ever painted,
+ * and the viewer still boots, lays out the document and runs its frame loop, so
+ * the symptom is a permanently blank page rather than an error. See
+ * [`tileOrigin`], which asks Tauri rather than keeping a second copy of the rule.
  *
  * Two transfer paths are implemented so spike 0.1 can measure them against each
  * other rather than assume:
@@ -12,6 +21,8 @@
  * Note the audit claim that `createImageBitmap()` cannot consume raw pixels is
  * wrong --- it accepts an ImageData, which is what the raw path uses.
  */
+
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 export type TileFormat = "raw" | "png";
 
@@ -66,6 +77,35 @@ export interface TileResult {
   decodeMs: number;
 }
 
+let origin: string | undefined;
+
+/**
+ * Where the `tile` scheme lives on this platform, ending in a slash.
+ *
+ * Tauri's own `convertFileSrc` is the source of truth rather than a user-agent
+ * test of ours: it is the function the framework uses for exactly this
+ * translation, so a platform that picks a third shape is handled without an
+ * edit here. Passing an empty path yields the bare origin --- the only part
+ * that varies --- and the caller appends its own, already-integral path, which
+ * is why `convertFileSrc` is not used for the whole URL: it percent-encodes its
+ * argument, and would turn the separators into `%2F`.
+ *
+ * Memoised because it cannot change within a run, and looked up lazily rather
+ * than at module load so that importing this module does not require the Tauri
+ * internals to have been injected yet.
+ */
+export function tileOrigin(): string {
+  origin ??= convertFileSrc("", "tile");
+  return origin;
+}
+
+/**
+ * Forgets the memoised origin. Tests only.
+ */
+export function resetTileOrigin(): void {
+  origin = undefined;
+}
+
 /**
  * Builds the tile URL.
  *
@@ -81,7 +121,7 @@ export function tileUrl(req: TileRequest): string {
   // a stringified `false` reaching it would otherwise be a light page and look
   // exactly like the mode being switched off.
   const invert = req.invert ? "&invert=1" : "";
-  return `tile://localhost/${path}?fmt=${req.format}${rid}${turns}${invert}`;
+  return `${tileOrigin()}${path}?fmt=${req.format}${rid}${turns}${invert}`;
 }
 
 let lastRequestId = 0;
@@ -112,7 +152,7 @@ export function nextRequestId(): number {
  */
 export function cancelTile(rid: number): void {
   if (!rid) return;
-  void fetch(`tile://localhost/cancel/${rid}`).catch(() => {
+  void fetch(`${tileOrigin()}cancel/${rid}`).catch(() => {
     // The withdrawal is an optimisation. Losing one costs a render, not
     // correctness, and there is no useful recovery from here.
   });

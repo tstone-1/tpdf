@@ -51,6 +51,29 @@ experience.
 
 ### Added
 
+- **The viewer runs on Windows**, and `viewer_check.py` passes there unmodified. Four corpora,
+  each reporting the **86 check names** that are the invariant, with ran/skipped splits inside
+  the macOS ranges: `outline-simple` 81/5, `outline-hostile` 81/5, `rotated-90` 75/11,
+  `vector-heavy` 52/34, no failures. The harness needed no porting --- `webview_guard` already
+  returns early off darwin, and WebView2 wants no bundle identity, so a plain `tpdf.exe` runs
+  where macOS needs an `.app`. Windows is still **not supported**: it has no containment, the
+  backend falls back to in-process, and it fails open rather than refusing.
+
+- **A `bins` gate** (`cargo build --locked --bins`), because none of the other gates links a
+  binary. `scripts/gates.py` reported 7/7 while `npm run tauri build` failed on the same tree:
+  clippy stops at metadata, and `cargo test` links each `[[bin]]` with `main` replaced by the
+  harness's own, so `backend_probe.rs`'s two unguarded dyld symbols were dead code the linker
+  dropped. Proved to fail before being trusted --- red in 5.7 s against the un-gated file, in
+  the debug profile, checked separately from the release observation because the finding is
+  precisely that linking depends on how the target was built.
+
+- **Five checks on the tile origin** (`src/lib/tiles.test.ts`), asserting both platform
+  spellings. Four mutations, each matching its prediction: hardcoding the macOS scheme in the
+  URL turns one red, in the origin three, dropping the memo one, and encoding the whole path
+  two. The mutation harness's own cross-check fired on its first run --- it parsed twice as
+  many failures as vitest's summary, because `FAIL ` matches the file-level block as well as
+  each test --- and reported a broken run rather than either number.
+
 - **A print job is now checked against documents `lopdf` did not write.** Every other test
   of `print::build` feeds it a fixture the same serialiser produced, so the module was a
   writer tested against its own reader with only the read-back independent --- and printing
@@ -612,6 +635,23 @@ experience.
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **No tile was ever painted on Windows, and nothing reported an error.** `tiles.ts` fetched
+  `tile://localhost/...`, which WebView2 cannot resolve --- it registers no custom URI schemes,
+  so Tauri serves them at `http://tile.localhost/...` there. PDFium bound, the document parsed,
+  pages laid out, the frame loop ran and every coverage check read `sharp=0.0%`: everything
+  that does not need a tile worked. The origin now comes from Tauri's own `convertFileSrc`,
+  for the origin *only* --- handed a whole path it percent-encodes the separators the server
+  splits on. `shell.html` carried a second copy of the URL and now derives it the same way.
+  The CSP names `http://tile.localhost` beside `tile:`; it already named `http://ipc.localhost`
+  beside `ipc:`, so the convention was known and had been applied to one scheme and not the
+  other.
+
+- **`backend-probe` did not link off macOS**, which is what broke `npm run tauri build` on
+  Windows. It is now a thin entry point over `backend_probe/imp.rs` that refuses off macOS ---
+  the shape `fdpass_probe.rs` already used, and the honest one: every claim the probe makes is
+  about a worker backend that cannot exist there, so it exits 2 with a reason rather than
+  printing a table nobody should read.
 
 - **A tile or thumbnail that arrived after its owner was destroyed leaked its bitmap.**
   Three paths, all the same shape: teardown withdraws everything outstanding, but withdrawal
