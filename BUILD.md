@@ -233,8 +233,17 @@ fetch script selects the `win-x64` asset and verifies its digest.
 
 `viewer_check.py` runs unmodified: `webview_guard` already returns early off darwin, and
 WebView2 needs no bundle identity, so a plain `target/release/tpdf.exe` is enough where macOS
-needs an `.app`. Four corpora, every one reporting the **86 check names** that are the
-invariant, with splits inside the ranges the table above records:
+needs an `.app`. Two things about the invocation, both of which present as something other
+than what they are. The binary must come from `cargo build --release --features
+tauri/custom-protocol` or the window shows *"localhost refused to connect"* (see the trap ---
+the profile is not what embeds the frontend). And **pass it as a backslash path**:
+`CreateProcess` does not accept a relative forward-slash path, so
+`src-tauri/target/release/tpdf.exe` raises `FileNotFoundError: [WinError 2] The system cannot
+find the file specified` for a file that is plainly there, from inside Python's `subprocess`
+rather than from anything in this repository.
+
+Four corpora, every one reporting the **86 check names** that are the invariant, with splits
+inside the ranges the table above records:
 
 | fixture | ran | skipped | failed |
 |---|---|---|---|
