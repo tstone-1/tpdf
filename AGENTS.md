@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 124 entries
+The one thing this file does *not* carry in full is the trap list --- 126 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -118,19 +118,37 @@ is the stronger rung and is not reachable directly: the child dies at `STATUS_DL
 before `main`, because the loader's own reads are denied. Reaching it needs Chromium's
 initial-token / lockdown-token handover, which is a real piece of work rather than a flag.
 
-Two honest limits on that. Low integrity **does not stop reads**, so a contained worker could
+One honest limit on that: low integrity **does not stop reads**, so a contained worker could
 still read any file the user can --- which is why the document and the output are handed over
-as inherited handles rather than paths, the Windows analogue of the macOS `dup2`. And none of
-this is wired into `RenderService` yet, so **Windows still fails open today**.
+as inherited handles rather than paths, the Windows analogue of the macOS `dup2`.
 
-The pieces exist; the thing that assembles them does not. `Shm` is a nameless section,
-`worker_child` compiles and adopts its mappings from handle values in argv, `spawn_contained`
-gives a contained child pipes, and `Contained` can be watched and killed. What is missing is
-`Worker` itself: it holds a `std::process::Child`, `ChildStdin` and `ChildStdout`, none of
-them constructible from what `spawn_contained` returns, and `Worker::spawn_mapped` still
-returns `NO_WORKERS` off macOS. Until that lands, no argv can start a Windows worker ---
-`worker_child::main` is reachable, but `establish_boundary` refuses an uncontained process
-before any document is opened.
+**A Windows worker now exists and works** (2026-07-29). `Worker::spawn` builds one on Windows:
+the child is created suspended, dropped to low integrity, assigned to the job object before it
+executes an instruction, and given two pipes and the document and tile sections as inherited
+handles named in argv. `worker-probe` is the evidence --- 11/11 checks on `text-base14`,
+`text-cid`, `vector-heavy` and `rotated`, including **pixel-identical** tiles against the
+in-process render, text extraction, outlines and search across the boundary. The font
+substitution that the macOS sandbox caused, and that `win_sandbox_probe` predicted would not
+recur here, did not.
+
+`Worker` carries the two platforms as per-platform type aliases rather than an enum, so every
+macOS line in `worker.rs` is byte-identical to what it was --- deliberate, because none of this
+can be re-verified on macOS from a Windows machine and a diff that touches only Windows code is
+the strongest statement available about what cannot have regressed.
+
+**Windows still fails open, and one thing is why:** `Backend::default_here()` still selects
+in-process off macOS. The worker is reachable only by asking for it (`TPDF_BACKEND=worker`),
+so an ordinary launch still parses documents in the app process and still prints the
+`UNSANDBOXED_MARK` warning. Flipping that default is the next commit and wants its own
+evidence, because that warning is currently the only honest signal that the gap exists.
+
+Two smaller gaps behind it. **Pre-spawning is not implemented on Windows** --- a mapping reaches
+a child by inherited handle at `CreateProcess`, and a worker started before any file is chosen
+has no handle to be given; the macOS answer is a socket, the Windows one would be
+`DuplicateHandle` into a running child. `Worker::prespawn` refuses and says so. And the pool's
+memory poll (`Worker::footprint`) returns `None` there, which is not a gap in the same sense:
+the job object caps commit in the kernel, which is the bound macOS cannot have and polls for
+instead.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -291,8 +309,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 124 of them and the full text
-was 93% of this file --- an instruction budget spent on the 121 traps that are not
+titles. Only the titles are here, because there are 126 of them and the full text
+was 93% of this file --- an instruction budget spent on the 125 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -452,6 +470,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - "Inherit nothing" cannot be spelled as an empty handle list
 - A safe function taking a raw `HANDLE` has an unstated contract, and clippy says so
 - `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
+- A pipe reaches EOF before the process it belonged to is signalled
+- A test whose child never answers cannot see the pipes being crossed
 
 ### Fixtures
 - The test fixtures are generated, not committed

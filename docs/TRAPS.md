@@ -2798,3 +2798,43 @@ second is written in terms of the first so the two cannot drift.
 
 Testable, cheaply, and worth doing: spawn `cmd.exe /c exit 259` and assert `try_wait` returns
 `Some(259)`. The wrong implementation passes every other test in the file.
+
+### A pipe reaches EOF before the process it belonged to is signalled
+
+`read_reply` gets end of file, concludes the worker is gone, and asks for its epitaph --- which
+answers **"still running"**, about a process that has already exited. Both halves are correct
+and they disagree because they observe different objects: the pipe reaches EOF when the child's
+last write handle closes, which happens while the process is tearing itself down, and the
+process object becomes signalled only when that finishes. The gap is microseconds, and the
+epitaph is asked inside it every single time, because EOF is what prompts the question.
+
+"Still running" is the one answer that sends a reader in the wrong direction --- to look for a
+worker that is wedged rather than one that died. So the fix is a **bounded** wait rather than a
+zero-timeout poll: `Contained::epitaph` waits `EPITAPH_GRACE` (100 ms), which cannot hang, only
+runs on a path where something has already gone wrong, and still says "still running" about a
+worker that genuinely is one. Liveness polling (`is_running`) keeps the zero timeout; only the
+diagnostic gets the grace.
+
+Found by a test written for something else entirely --- it was checking that a dead child is
+reported rather than waited on forever, and it went red on the wording rather than on the wait.
+Related: *`GetExitCodeProcess` reports 259 for a live process*, which is the other half of "do
+not ask one mechanism a question the other should answer".
+
+### A test whose child never answers cannot see the pipes being crossed
+
+`spawn_mapped` hands the child the read end of one pipe and the write end of the other, and
+getting that backwards is a plausible edit --- four handles, two of them named for the side that
+does *not* own them. A mutation swapping the pair **survived the whole unit suite**.
+
+It survives for a reason worth generalising: under `cargo test`, `current_exe` is the test
+harness, which has no worker dispatch, so the child exits immediately. Every check that spawns
+one is therefore a check about the *lifecycle* --- does the parent notice, does it name the
+cause --- and a lifecycle is identical whichever way the pipes point. Nothing in a suite whose
+child never speaks can distinguish a channel from a crossed channel.
+
+What does catch it is `worker-probe`, where a real worker answers: the first request fails with
+a broken pipe and the run stops on check one. That was **measured, not assumed** --- the
+mutation was applied, the probe rebuilt, and the `[FAIL]` line read --- because "the integration
+probe covers it" is exactly the sort of claim that turns out to be false. So the division is
+real and should be stated where someone might otherwise add a redundant unit test: `cargo test`
+owns EOF propagation and epitaphs, the probe owns direction and content.

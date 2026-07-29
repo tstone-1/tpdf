@@ -37,6 +37,7 @@ use std::os::fd::FromRawFd;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::{Child, ChildStdin, ChildStdout};
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
@@ -61,8 +62,27 @@ pub const WORKER_ARGV: &str = "--render-worker";
 /// things to drift. Not a silent fallback to running unsandboxed: every claim in
 /// `docs/THREAT-MODEL.md` is `sandbox_init` SBPL, so a worker without it is a
 /// different thing wearing the same name.
-#[cfg(not(target_os = "macos"))]
-pub const NO_WORKERS: &str = "render workers are implemented on macOS only";
+#[cfg(not(any(target_os = "macos", windows)))]
+pub const NO_WORKERS: &str = "render workers are implemented on macOS and Windows only";
+
+/// Why the *pre-spawn* entry points refuse on Windows.
+///
+/// A second definition of the same name rather than a second name, so that every
+/// caller keeps compiling and none has to know which reason applies where. The
+/// reason genuinely differs: Windows has a boundary now --- [`Worker::spawn`]
+/// works --- and what it does not have is the *handover*, because a mapping
+/// reaches a Windows child by inherited handle at `CreateProcess` and a worker
+/// started before any file is chosen has no handle to be given. macOS passes one
+/// later over a socket; the Windows equivalent is `DuplicateHandle` into a
+/// running child, which is not written.
+///
+/// Saying "implemented on macOS only" here, as this once did for every platform,
+/// would now be false in the direction that matters --- it would send a reader
+/// looking for a missing sandbox rather than a missing handover.
+#[cfg(windows)]
+pub const NO_WORKERS: &str =
+    "pre-spawned workers are implemented on macOS only: a Windows worker is handed its document \
+     when it is spawned";
 
 /// Descriptor the document mapping is handed over on.
 ///
@@ -764,7 +784,12 @@ fn epitaph_of(child: &mut Child) -> String {
 /// signal 11" tell the unix version exists to preserve. A crash arrives as an
 /// exit code, and reporting one as the other would be the exact confusion
 /// `AGENTS.md` records this function was written to avoid.
-#[cfg(not(unix))]
+///
+/// Excluded on Windows, where [`Worker::epitaph`] delegates to
+/// [`Contained::epitaph`](crate::sandbox_win::Contained::epitaph) instead --- a
+/// worker there is not a `std::process::Child`, so this arm would have no caller
+/// and `-D warnings` would reject it as dead.
+#[cfg(not(any(unix, windows)))]
 fn epitaph_of(child: &mut Child) -> String {
     match child.try_wait() {
         Ok(None) => "still running".into(),
@@ -953,11 +978,51 @@ pub unsafe fn recv_document(socket: i32) -> Result<(OwnedFd, usize), String> {
 
 // -------------------------------------------------------------------- parent
 
+/// The child process a [`Worker`] owns.
+///
+/// Per-platform because the two are not the same object. On unix a worker is an
+/// ordinary `std::process::Child` that sandboxed *itself* after `exec`. On
+/// Windows it is a [`Contained`](crate::sandbox_win::Contained): a process inside
+/// a **job object**, where the job is the containment, the parent applied it
+/// before the child ran an instruction, and ending the worker means terminating
+/// the job rather than the process.
+///
+/// Aliases rather than an enum spanning both. An enum would put a runtime match
+/// on every call in a struct that can only ever hold one of them, and --- the
+/// reason that actually decided it --- adding the Windows arm would have edited
+/// every macOS line in this file, so nothing here could be re-verified on macOS
+/// by reading a diff.
+#[cfg(not(windows))]
+type WorkerProcess = Child;
+/// The child process a [`Worker`] owns. See the other arm.
+#[cfg(windows)]
+type WorkerProcess = crate::sandbox_win::Contained;
+
+/// What the parent writes requests to.
+///
+/// A `File` on Windows, because the child is not a `std::process::Child` and so
+/// there is no `ChildStdin` to take from it: the pipe end arrives from
+/// `CreatePipe` as a bare handle, and `File` is the standard library's owner for
+/// one. It writes, it closes on drop, and closing it is what the child sees as
+/// end of input --- all three of which this needs.
+#[cfg(not(windows))]
+type WorkerStdin = ChildStdin;
+/// What the parent writes requests to. See the other arm.
+#[cfg(windows)]
+type WorkerStdin = std::fs::File;
+
+/// What the parent reads replies from. See [`WorkerStdin`].
+#[cfg(not(windows))]
+type WorkerStdout = ChildStdout;
+/// What the parent reads replies from. See [`WorkerStdin`].
+#[cfg(windows)]
+type WorkerStdout = std::fs::File;
+
 /// A worker process serving one document.
 pub struct Worker {
-    child: Child,
+    child: WorkerProcess,
     stdin: WorkerSender,
-    stdout: BufReader<ChildStdout>,
+    stdout: BufReader<WorkerStdout>,
     /// Where tile payloads arrive.
     pub tile: Shm,
     /// Kept mapped for the worker's lifetime --- it is the document.
@@ -983,7 +1048,7 @@ pub struct Worker {
 /// keeps a withdrawal from being blocked behind the reply it is trying to
 /// pre-empt.
 #[derive(Clone)]
-pub struct WorkerSender(Arc<Mutex<ChildStdin>>);
+pub struct WorkerSender(Arc<Mutex<WorkerStdin>>);
 
 impl WorkerSender {
     /// Writes one request line.
@@ -1297,12 +1362,103 @@ impl Worker {
     /// # Errors
     ///
     /// As [`Worker::spawn`].
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn spawn_mapped(_doc: Arc<Shm>, _tile: Shm, _library_dir: &Path) -> Result<Self, String> {
         // Not a silent fallback to running unsandboxed. Every containment claim
-        // in docs/THREAT-MODEL.md is `sandbox_init` SBPL, so a worker without it
-        // is a different thing wearing the same name.
+        // in docs/THREAT-MODEL.md is a named boundary --- `sandbox_init` SBPL on
+        // macOS, a low-integrity token inside a job object on Windows --- so a
+        // worker without one is a different thing wearing the same name.
         Err(NO_WORKERS.into())
+    }
+
+    /// Spawns a worker over mappings the caller already made, contained.
+    ///
+    /// The Windows counterpart of the macOS arm below, and the differences are
+    /// all forced by what the two kernels offer rather than chosen:
+    ///
+    /// - **The child is contained by its parent, not by itself.** There is no
+    ///   `sandbox_init` to call after `exec`, so the token is dropped to low
+    ///   integrity and the job object applied *here*, while the child is still
+    ///   suspended. That is why it cannot be a `std::process::Command`: nothing
+    ///   in the standard library creates a process suspended, and a job applied
+    ///   to a process already running is a race the process can win.
+    /// - **The mappings travel by inherited handle, named in argv**, because
+    ///   Windows inherits handles by value and there is no descriptor number for
+    ///   the two sides to agree on in advance. A handle is not authority anyone
+    ///   else can use --- see [`DOC_HANDLE_ARGV`].
+    /// - **stdin and stdout are pipes we make**, since there is no `Child` to
+    ///   take them from. The parent's ends are wrapped in `File` immediately, so
+    ///   that every early return from here closes them instead of leaking four
+    ///   handles per failed spawn.
+    ///
+    /// # Errors
+    ///
+    /// Creating the pipes, containing or spawning the child, or resuming it.
+    #[cfg(windows)]
+    pub fn spawn_mapped(doc: Arc<Shm>, tile: Shm, library_dir: &Path) -> Result<Self, String> {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+
+        use windows_sys::Win32::Foundation::HANDLE;
+
+        use crate::sandbox_win::{pipe, spawn_contained, Containment, Stdio};
+
+        let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+        let command = command_line(&[
+            &exe.to_string_lossy(),
+            WORKER_ARGV,
+            "--doc-len",
+            &doc.len().to_string(),
+            "--lib",
+            &library_dir.to_string_lossy(),
+            DOC_HANDLE_ARGV,
+            &doc.raw_handle().to_string(),
+            TILE_HANDLE_ARGV,
+            &tile.raw_handle().to_string(),
+        ]);
+
+        // Two pipes, four ends, and which end goes where is the whole protocol:
+        // the child reads requests and writes replies, so it gets the *read* end
+        // of one and the *write* end of the other. Handing over the wrong half
+        // gives a worker that can read its own answers.
+        let (requests_read, requests_write) = pipe()?;
+        let (replies_read, replies_write) = pipe()?;
+        // SAFETY: four fresh handles from `CreatePipe`, owned by nothing else.
+        // Wrapped now rather than after the spawn so that an error between here
+        // and there closes them --- `File`'s drop is the only cleanup path that
+        // cannot be forgotten on a branch added later.
+        let (stdin, stdout, child_stdin, child_stdout) = unsafe {
+            (
+                std::fs::File::from_raw_handle(requests_write.cast()),
+                std::fs::File::from_raw_handle(replies_read.cast()),
+                std::fs::File::from_raw_handle(requests_read.cast()),
+                std::fs::File::from_raw_handle(replies_write.cast()),
+            )
+        };
+
+        let stdio = Stdio::with_inherited_stderr(
+            child_stdin.as_raw_handle().cast(),
+            child_stdout.as_raw_handle().cast(),
+        )?;
+        let handles = [doc.raw_handle() as HANDLE, tile.raw_handle() as HANDLE];
+        let contained = spawn_contained(&command, &handles, &Containment::default(), Some(&stdio))?;
+
+        // Closed in the parent *before* the child runs. Not hygiene: while this
+        // process holds a copy of the reply pipe's write end, that pipe never
+        // reaches end of file, so a worker that dies looks to `read_reply` like
+        // one that is taking a long time --- and the epitaph that would name the
+        // crash is never asked for. The macOS arm gets this for free, since
+        // `Command` closes the child's ends itself.
+        drop(child_stdin);
+        drop(child_stdout);
+
+        contained.resume()?;
+        Ok(Self {
+            child: contained,
+            stdin: WorkerSender(Arc::new(Mutex::new(stdin))),
+            stdout: BufReader::new(stdout),
+            tile,
+            _doc: Some(doc),
+        })
     }
 
     /// Spawns a worker over mappings the caller already made.
@@ -1433,7 +1589,14 @@ impl Worker {
     /// races a reaped child whose number has been reused.
     #[must_use]
     pub fn pid(&self) -> u32 {
-        self.child.id()
+        #[cfg(not(windows))]
+        {
+            self.child.id()
+        }
+        #[cfg(windows)]
+        {
+            self.child.pid
+        }
     }
 
     /// Whether the process is still there.
@@ -1456,7 +1619,19 @@ impl Worker {
     /// "exited with code 9" where a segfault should have said "killed by signal
     /// 11", and that difference was the whole tell.
     pub fn epitaph(&mut self) -> String {
-        epitaph_of(&mut self.child)
+        // On Windows the epitaph belongs to `Contained`, which already has to
+        // produce one for callers that never reach a `Worker` --- the probe
+        // binaries watch a child that has no protocol yet. Delegating rather
+        // than growing a third `epitaph_of` arm keeps one implementation of the
+        // rule that a live process is *not* diagnosed from its exit code.
+        #[cfg(not(windows))]
+        {
+            epitaph_of(&mut self.child)
+        }
+        #[cfg(windows)]
+        {
+            self.child.epitaph()
+        }
     }
 
     /// The worker's physical footprint in bytes, for supervision.
@@ -1473,7 +1648,7 @@ impl Worker {
     /// mapped.
     #[must_use]
     pub fn footprint(&self) -> Option<u64> {
-        phys_footprint(self.child.id())
+        phys_footprint(self.pid())
     }
 
     /// Kills the worker and reaps it.
@@ -1586,6 +1761,75 @@ pub fn doc_handle_arg(args: &[String]) -> Option<usize> {
 #[must_use]
 pub fn tile_handle_arg(args: &[String]) -> Option<usize> {
     value_of(args, TILE_HANDLE_ARGV).and_then(|v| v.parse().ok())
+}
+
+/// Joins arguments into the single command line `CreateProcess` takes.
+///
+/// Windows has no `argv`. A process is given one string and **the child** splits
+/// it, so quoting is the parent's job --- `std::process::Command` does this and
+/// `spawn_contained` cannot use `Command`, so it is done here.
+///
+/// The rule is the one `CommandLineToArgvW` and the MSVC runtime implement, and
+/// it is not "wrap in quotes if it has a space". A backslash is ordinary *except*
+/// immediately before a quote, where it escapes; so a run of backslashes that
+/// ends the argument must be doubled, or the closing quote we add becomes an
+/// escaped quote and the argument swallows the next one. That case is not
+/// exotic here: `--lib C:\Program Files\tpdf\` is a directory with a space and a
+/// trailing separator, which is exactly the input that breaks a naive quoter.
+///
+/// The executable is passed through the same way even though argv[0] obeys a
+/// simpler rule (quotes delimit, backslashes never escape). The two agree on
+/// every string that can be a Windows path, since `"` is not a legal filename
+/// character --- so the only divergence is unreachable.
+#[cfg(windows)]
+fn command_line(parts: &[&str]) -> String {
+    let mut line = String::new();
+    for part in parts {
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        quote_arg(part, &mut line);
+    }
+    line
+}
+
+/// Appends one argument to a command line, quoted if it needs to be.
+#[cfg(windows)]
+fn quote_arg(arg: &str, out: &mut String) {
+    // An empty argument still needs quotes, or it disappears entirely rather
+    // than arriving as an empty string.
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        out.push_str(arg);
+        return;
+    }
+    out.push('"');
+    let mut backslashes = 0usize;
+    for c in arg.chars() {
+        match c {
+            '\\' => {
+                backslashes += 1;
+                out.push(c);
+            }
+            // The run before a quote is doubled and the quote escaped: one extra
+            // backslash per backslash already written, plus one for the quote.
+            '"' => {
+                for _ in 0..=backslashes {
+                    out.push('\\');
+                }
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                backslashes = 0;
+                out.push(c);
+            }
+        }
+    }
+    // And the run before the *closing* quote, for the same reason.
+    for _ in 0..backslashes {
+        out.push('\\');
+    }
+    out.push('"');
 }
 
 /// The value following a flag.
@@ -1958,6 +2202,160 @@ mod tests {
         assert_eq!(super::split_u64(0x1_2345_6789), (1, 0x2345_6789));
     }
 
+    /// The command line is read back by the parser Windows itself uses.
+    ///
+    /// `CommandLineToArgvW` rather than a table of expected strings, because a
+    /// table would only restate the algorithm above and agree with it about
+    /// output that is wrong --- `AGENTS.md` records exactly that failure, where
+    /// every check on a generated file went through the library that wrote it.
+    /// This is the *consumer's* parser: the same rules the child's own
+    /// `std::env::args` implements.
+    ///
+    /// The awkward argument is the real one. `--lib C:\Program Files\tpdf\` has
+    /// a space *and* a trailing separator, so a quoter that handles spaces but
+    /// not the backslash run escapes its own closing quote, and the library path
+    /// silently swallows the flag that follows it.
+    #[cfg(windows)]
+    #[test]
+    fn a_command_line_survives_the_parser_windows_actually_uses() {
+        let parts = [
+            r"C:\Program Files\tpdf\tpdf.exe",
+            super::WORKER_ARGV,
+            "--doc-len",
+            "4096",
+            "--lib",
+            r"C:\Program Files\tpdf\",
+            super::DOC_HANDLE_ARGV,
+            "312",
+        ];
+        assert_eq!(parse_command_line(&super::command_line(&parts)), parts);
+    }
+
+    /// The control, and it is not optional: it shows the oracle can fail.
+    ///
+    /// A round trip through a *lenient* parser would pass on any joining rule at
+    /// all, and the check above would then be decoration. Joining the same parts
+    /// with plain spaces must therefore come back wrong --- which is the naive
+    /// implementation, so this also names what the quoting is for.
+    #[cfg(windows)]
+    #[test]
+    fn a_command_line_joined_naively_does_not_survive_it() {
+        let parts = [
+            r"C:\Program Files\tpdf\tpdf.exe",
+            "--lib",
+            r"C:\Program Files\tpdf\",
+        ];
+        let naive = parts.join(" ");
+        assert_ne!(parse_command_line(&naive), parts);
+    }
+
+    /// Splits a command line the way the child will, using Win32 itself.
+    #[cfg(windows)]
+    fn parse_command_line(line: &str) -> Vec<String> {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
+
+        let wide: Vec<u16> = std::ffi::OsStr::new(line)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let mut count: i32 = 0;
+        // SAFETY: `wide` is NUL-terminated and outlives the call; `count` is
+        // written by it. The returned array is owned by us until `LocalFree`.
+        let argv = unsafe { CommandLineToArgvW(wide.as_ptr(), &raw mut count) };
+        assert!(!argv.is_null(), "CommandLineToArgvW rejected {line:?}");
+        let mut out = Vec::new();
+        for i in 0..count as isize {
+            // SAFETY: `i` is below the count the call reported, and each entry
+            // is a NUL-terminated wide string it allocated.
+            unsafe {
+                let arg = *argv.offset(i);
+                let len = (0..).take_while(|n| *arg.offset(*n) != 0).count();
+                out.push(
+                    std::ffi::OsString::from_wide(std::slice::from_raw_parts(arg, len))
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        // SAFETY: the one allocation the call made, freed once.
+        unsafe { LocalFree(argv.cast()) };
+        out
+    }
+
+    /// A worker whose child dies is *reported* dead, not waited on forever.
+    ///
+    /// Under `cargo test` this is a real spawn with a fake worker: `current_exe`
+    /// is the test harness, which has no `--render-worker` dispatch, so the child
+    /// exits immediately. That is the point --- what is under test here is the
+    /// plumbing, not the protocol, and a child that dies at once exercises it
+    /// harder than one that answers.
+    ///
+    /// The specific defect it pins is the parent keeping its copy of the reply
+    /// pipe's *write* end. That pipe then never reaches end of file, so a dead
+    /// worker is indistinguishable from a slow one and `read_reply` blocks for
+    /// the life of the process. Which is why the read happens on another thread
+    /// behind a `recv_timeout`: `AGENTS.md` records that a test whose failure is
+    /// a hang reports a pass and a timeout in the same breath, and the whole
+    /// value of this check is that the failure it looks for *is* a hang.
+    ///
+    /// The reader thread is deliberately not joined --- on failure it is still
+    /// blocked in `read`, and joining it would reintroduce the hang this exists
+    /// to convert into a verdict. Process exit collects it.
+    #[cfg(windows)]
+    #[test]
+    fn a_worker_whose_child_dies_says_so_rather_than_blocking() {
+        let path = std::env::temp_dir().join(format!("tpdf-plumbing-{}", std::process::id()));
+        std::fs::write(&path, b"%PDF-1.7 not really").expect("write fixture");
+        let spawned = super::Worker::spawn(&path, std::path::Path::new("."));
+        let _ = std::fs::remove_file(&path);
+        // `map_err` first: a live child is not something to format into a panic.
+        let mut worker = match spawned {
+            Ok(w) => w,
+            Err(e) => panic!("Worker::spawn must start a contained child: {e}"),
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let answer = worker.call(&Request::Open {
+                lazy_geometry: false,
+            });
+            let _ = tx.send(answer.map(|_| ()));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(Ok(())) => panic!("a harness that is not a worker cannot have answered"),
+            Ok(Err(e)) => assert!(
+                // The epitaph, not merely "the pipe closed": a parent that
+                // cannot name how its worker died is the failure this whole
+                // module's error handling exists to avoid.
+                e.contains("exited with"),
+                "the failure must name how the child ended: {e}"
+            ),
+            Err(_) => panic!("the parent never noticed its child had exited"),
+        }
+    }
+
+    /// Pre-spawning is still refused on Windows, and for the stated reason.
+    ///
+    /// The reason is the assertion. Windows has a boundary now, so a refusal
+    /// citing the sandbox would send the next reader to the wrong missing piece
+    /// --- what is absent is the *handover* of a document to a child that is
+    /// already running.
+    #[cfg(windows)]
+    #[test]
+    fn prespawning_refuses_on_windows_because_the_handover_is_missing() {
+        let err = super::Worker::prespawn(std::path::Path::new("."))
+            .map(|_| ())
+            .expect_err("Worker::prespawn must refuse on Windows");
+        assert!(err.contains("pre-spawn"), "{err}");
+        assert!(
+            !err.contains("render workers are"),
+            "the refusal must not claim workers are unavailable here: {err}"
+        );
+    }
+
     /// And the entry point callers actually reach refuses too.
     ///
     /// Separate from the mapping check because they are different claims: this
@@ -1990,7 +2388,12 @@ mod tests {
     /// would have gone red for a reason that has nothing to do with containment.
     /// A real file is written so the call reaches `spawn_mapped`, which is the
     /// guard this is actually about, and the assertion now means what it says.
-    #[cfg(not(unix))]
+    ///
+    /// **No longer reachable on Windows**, where `spawn_mapped` is implemented
+    /// and the check above spawns a real contained child instead. Left in place
+    /// rather than deleted, because the claim is still true of a platform with
+    /// no boundary and this is where it is written down.
+    #[cfg(all(not(unix), not(windows)))]
     #[test]
     fn spawning_a_worker_refuses_off_macos() {
         let path = std::env::temp_dir().join(format!("tpdf-spawn-test-{}", std::process::id()));
