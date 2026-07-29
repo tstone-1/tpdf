@@ -3099,8 +3099,31 @@ test, and it said so instead of reporting either number.
 
 **Still open, and it is the whole of it:** Windows has no containment.
 `Backend::default_here()` selects in-process off macOS, so hostile input is parsed in the app
-process and it fails open rather than refusing. The viewer working there raises the stakes on that rather than
-settling anything.
+process and it fails open rather than refusing. The viewer working there raises the stakes on
+that rather than settling anything.
+
+It is at least no longer silent. The uncontained default records `UNSANDBOXED_MARK` on the
+startup timeline and prints a `[WARN]`, so an uncontained run is distinguishable after the
+fact — which it was not, and the timeline is what every harness here already reads. A mark
+rather than a refusal is deliberate: refusing makes the platform useless rather than
+uncontained, and that is a product decision, not a defect to fix while passing through.
+
+Adding it immediately exposed a second silence one level out. `viewer_check.py` echoed the
+child's stderr only when the run failed, so the new warning was invisible to a run that
+passed — a full-marks Windows run showed no trace of it, and the first reading was that the
+warning had not fired at all. The general form is worth carrying: a diagnostic whose whole
+purpose is *"this run was fine, but you should know X"* is precisely what the usual
+stderr-on-failure convention suppresses.
+
+**What a real answer needs, and why it did not start here.** Job objects, a restricted token
+and a separate desktop are all Win32, so the containment path needs a direct dependency
+(`windows-sys` is already in the tree transitively and is MIT/Apache, but `AGENTS.md` makes
+adding one a decision rather than a step) and a probe in the shape of spike 0.5: spawn a
+contained child, render a tile, and compare **pixels** against an in-process render — because
+the macOS work already recorded a sandboxed PDFium returning `ok` while silently substituting
+a typeface, and the Windows font path has no reason to be kinder. The cheap shortcut for
+testing a restricted token without FFI (`runas /trustlevel`) is blocked by this machine's
+permission classifier, so there is no version of this that avoids the dependency decision.
 
 ### Phase 2 — Editing foundation
 

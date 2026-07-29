@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 111 entries
+The one thing this file does *not* carry in full is the trap list --- 112 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -87,9 +87,17 @@ in-process --- the control, running PDFium in the app process with no containmen
 refusal is deliberate and asserted by tests, because a worker without the policy is a different
 thing wearing the same name --- but note what it does *not* buy: only a caller asking for
 `TPDF_BACKEND=worker` reaches that refusal, and the default never asks. Windows therefore
-**fails open**, rendering documents unsandboxed with no error to notice. This constraint is
-satisfied on **one** platform, and a Windows port owes a containment answer --- job objects, a
-restricted token, a separate desktop --- before it can ship rather than after.
+**fails open**, rendering documents unsandboxed. This constraint is satisfied on **one**
+platform, and a Windows port owes a containment answer --- job objects, a restricted token, a
+separate desktop --- before it can ship rather than after.
+
+It no longer does so *silently*: since 2026-07-29 the uncontained default records
+`render::UNSANDBOXED_MARK` on the startup timeline and prints a `[WARN]`, so a run that
+parsed a document in the app process is distinguishable from one that did not. That is
+visibility, not containment, and deliberately not a refusal --- refusing would make the
+platform useless rather than uncontained, which is a product decision rather than a defect to
+fix in passing. The warning matters more than it reads: the viewer **works** on Windows now,
+so the uncontained path is one real people can take.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -250,8 +258,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 111 of them and the full text
-was 93% of this file --- an instruction budget spent on the 110 traps that are not
+titles. Only the titles are here, because there are 112 of them and the full text
+was 93% of this file --- an instruction budget spent on the 111 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -386,6 +394,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mutation harness that dies leaves the mutation in the tree
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
+- A harness that prints stderr only on failure hides what a passing run said
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 - Repeating a race inside one process re-runs the first round, not the race
 

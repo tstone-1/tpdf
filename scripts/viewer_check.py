@@ -69,6 +69,16 @@ def main() -> int:
         print(completed.stderr, end="", file=sys.stderr)
         print(f"[FAIL] exit {completed.returncode}", file=sys.stderr)
         return completed.returncode
+
+    # A passing run's stderr was discarded entirely, which made every warning the
+    # app prints invisible to exactly the runs that succeed --- the uncontained
+    # backend announces itself there, and a full-marks Windows run showed nothing.
+    # The whole line is echoed rather than summarised, and only lines that
+    # announce themselves as warnings, so a passing run stays quiet about the
+    # webview's ordinary teardown noise.
+    for line in (completed.stderr or "").splitlines():
+        if "[WARN]" in line:
+            print(line, file=sys.stderr)
     return 0
 
 

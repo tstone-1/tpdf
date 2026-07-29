@@ -185,6 +185,13 @@ pub struct DocumentInfo {
     pub at_ms: f64,
 }
 
+/// Startup mark recorded when the platform default is the uncontained backend.
+///
+/// Named as a constant so a check can look for the same string the code writes.
+/// `AGENTS.md` records two copies of a distinction drifting until a mutation of
+/// one survived; a mark asserted by its spelling in two places is that shape.
+pub const UNSANDBOXED_MARK: &str = "unsandboxed: no worker on this platform";
+
 /// Where documents are parsed and rendered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
@@ -225,10 +232,37 @@ impl Backend {
     /// Worker on macOS, because that is where a sandbox exists. Everywhere else
     /// `Worker::spawn` refuses, and defaulting to something that cannot start is
     /// worse than defaulting to the control.
+    ///
+    /// **Off macOS this is the fail-open path, and it now says so.** The refusal
+    /// in `Worker::spawn` is asserted by tests, but only a caller that asks for
+    /// `TPDF_BACKEND=worker` ever reaches it --- the default never asks, so a
+    /// document was parsed in the app process with none of the containment
+    /// `docs/THREAT-MODEL.md` requires and nothing anywhere recorded that it had
+    /// been. That is not a warning about a hypothetical: `viewer_check.py`
+    /// passed on Windows on 2026-07-29, so the platform renders real documents
+    /// this way today.
+    ///
+    /// A mark rather than a refusal, deliberately. Refusing would make the
+    /// platform useless rather than uncontained, and that is a product decision
+    /// rather than a defect to fix in passing. What was wrong was the *silence*:
+    /// the startup timeline is printed by the watchdog and read by every harness
+    /// here, so an uncontained run is now distinguishable from a contained one
+    /// after the fact, which it was not.
     fn default_here() -> Self {
         if cfg!(target_os = "macos") {
             Self::Worker
         } else {
+            // Once per process: this is called per service, and a benchmark
+            // holding several would otherwise print the same warning per
+            // construction and bury it in its own repetition.
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| {
+                mark(UNSANDBOXED_MARK);
+                eprintln!(
+                    "[WARN] no sandbox on this platform: documents are parsed in the app \
+                     process, uncontained. See BUILD.md."
+                );
+            });
             Self::InProcess
         }
     }
@@ -985,6 +1019,33 @@ mod tests {
             Backend::InProcess
         };
         assert_eq!(Backend::parse(None), Ok(expected));
+    }
+
+    /// The uncontained default leaves a trace, and the contained one does not.
+    ///
+    /// Both halves are asserted on both platforms, from the same run, because
+    /// either alone passes with the code wrong: a mark recorded unconditionally
+    /// satisfies "it is marked", and one never recorded satisfies "it is not
+    /// marked where a sandbox exists". Only the pair pins the *condition*.
+    ///
+    /// It reads the real timeline rather than a return value, which is the point
+    /// --- the defect being fixed was that nothing observable said an uncontained
+    /// parse had happened, so asserting anything other than the observable would
+    /// re-create it.
+    #[test]
+    fn the_uncontained_default_says_so_and_the_contained_one_does_not() {
+        assert_eq!(Backend::parse(None), Ok(Backend::default_here()));
+        let marked = crate::startup::timeline()
+            .iter()
+            .any(|(name, _)| name == super::UNSANDBOXED_MARK);
+        if cfg!(target_os = "macos") {
+            assert!(
+                !marked,
+                "a sandboxed platform recorded an uncontained parse"
+            );
+        } else {
+            assert!(marked, "an uncontained parse left no trace on the timeline");
+        }
     }
 
     #[test]
