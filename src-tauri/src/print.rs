@@ -327,6 +327,7 @@ fn effective_rotation(doc: &Document, page: lopdf::ObjectId) -> i64 {
 mod tests {
     use super::{build, drop_pages, effective_rotation, Job, Pages};
     use lopdf::{dictionary, Document, Object, ObjectId, Stream};
+    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
     /// A scratch directory that removes itself.
@@ -888,6 +889,124 @@ mod tests {
 
         assert_eq!(out, std::fs::read(&path).expect("source"));
         assert_eq!(read_back(&out).pages.len(), 3);
+    }
+
+    /// `build` fed documents that no Rust code in this repository wrote.
+    ///
+    /// Every other check in this module builds its input with `fixture`, which
+    /// is `lopdf`'s own serialiser --- so the module tests a writer against its
+    /// own reader, and `read_back` makes only the *output* side independent.
+    /// A defect the writer and the loader share is invisible to that, which is
+    /// the trap `docs/TRAPS.md` records as "a writer and its own reader agree
+    /// about a document that is wrong", and printing is the one subsystem here
+    /// whose output leaves the process.
+    ///
+    /// So both ends are independent here. The inputs come from the hand-rolled
+    /// generators under `testdata/`, which assemble PDF bytes directly and
+    /// share no code with anything under test; the page list, the expected
+    /// rotations and the verdict all come from PDFKit. `lopdf` appears only as
+    /// the thing being tested --- deliberately, because a check that derives
+    /// its expectations from the library under test agrees with itself by
+    /// construction.
+    ///
+    /// The subset keeps the first and last page, so the dropped set is neither
+    /// a prefix nor a suffix and the `/Kids` surgery lands in the middle, and
+    /// it adds a quarter turn, so each surviving page's rotation has to be
+    /// resolved up its own `/Parent` chain and composed rather than written.
+    ///
+    /// What makes *which* pages survived observable is per-page rotation:
+    /// `rotated.pdf` carries 0/90/180/270 on four otherwise byte-identical
+    /// pages, so keeping the wrong two is a different rotation pair. On a
+    /// fixture whose pages all share one rotation only the count and the
+    /// composition are pinned, and the run says which case each fixture was
+    /// rather than leaving that to be assumed.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_third_parser_checks_a_job_built_from_a_document_we_did_not_write() {
+        let mut examined = 0;
+        for name in [
+            "rotated.pdf",
+            "text-heavy.pdf",
+            "vector-multi.pdf",
+            "outline-hostile.pdf",
+            "incr-scan-5p.pdf",
+            "hostile-filters.pdf",
+        ] {
+            let path = Path::new("../testdata").join(name);
+            if !path.exists() {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            }
+            let source = std::fs::read(&path).expect("read source");
+
+            // The baseline, from the parser that will read the print job --- not
+            // from the one that builds it.
+            let Some(before) = crate::print_macos::read(&source) else {
+                println!("[SKIP] {name}: PDFKit refused the source document");
+                continue;
+            };
+            let count = before.pages.len();
+            if count < 3 {
+                println!("[SKIP] {name}: {count} pages, too few to drop a middle");
+                continue;
+            }
+
+            let keep = [1u32, u32::try_from(count).expect("page count")];
+            let expected: Vec<i64> = keep
+                .iter()
+                .map(|number| {
+                    let at = usize::try_from(*number).expect("page number") - 1;
+                    (before.pages[at].rotation + 90).rem_euclid(360)
+                })
+                .collect();
+
+            let out = build(
+                &path,
+                &Job {
+                    pages: Pages::Only(keep.to_vec()),
+                    turns: 1,
+                },
+            )
+            .unwrap_or_else(|e| panic!("{name}: build failed: {e}"));
+
+            let after = crate::print_macos::read(&out)
+                .unwrap_or_else(|| panic!("{name}: PDFKit could not read the built job"));
+
+            assert_eq!(
+                after.pages.len(),
+                keep.len(),
+                "{name}: page count, {after:?}"
+            );
+            let got: Vec<i64> = after
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect();
+            assert_eq!(got, expected, "{name}: rotations");
+
+            // Says which of the two cases this fixture was, because a fixture
+            // with one rotation throughout cannot report a wrong *choice* of
+            // pages and a run that does not say so reads as if it had.
+            let distinct: HashSet<i64> = before
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect();
+            let discriminating = if distinct.len() > 1 {
+                "pins which pages survived"
+            } else {
+                "pins the count and the composition only"
+            };
+            println!("[OK] {name:20} {count} pages, rotations {distinct:?} --- {discriminating}");
+            examined += 1;
+        }
+
+        // A run where every fixture was absent prints six SKIP lines and
+        // otherwise looks exactly like a run where every one passed.
+        assert!(
+            examined > 0,
+            "no fixture was examined --- generate testdata/ (BUILD.md, Test fixtures)"
+        );
     }
 
     #[test]

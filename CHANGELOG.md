@@ -51,6 +51,27 @@ experience.
 
 ### Added
 
+- **A print job is now checked against documents `lopdf` did not write.** Every other test
+  of `print::build` feeds it a fixture the same serialiser produced, so the module was a
+  writer tested against its own reader with only the read-back independent --- and printing
+  is the one subsystem here whose output leaves the process. The new check builds a subset
+  with a quarter turn from five generated corpora, takes both the page list and the expected
+  rotations from PDFKit rather than from `lopdf`, and skips loudly per fixture, naming for
+  each whether its rotations discriminate *which* pages survived or only the count.
+  `rotated.pdf` is the one that does, carrying four rotations on four identical pages.
+
+  Shown to fail by three mutations: a composed rotation that ignores what the page carries
+  (`[90, 90]` where `[90, 0]` is right), a selection that keeps the first N pages instead of
+  the ones asked for (`[90, 180]`), and a `/Count` left contradicting its `/Kids` --- which
+  every `lopdf`-side check passes while PDFKit reports four pages for a two-page job, the
+  two real ones and two it manufactures to satisfy the count.
+
+- **`scripts/open_check.py` drives two overlapping opens** (`race`), the case `openPath`'s
+  queue exists for, issued from inside the app because Launch Services hands over one
+  document at a time. Four cold launches, since repeating the round *within* a launch was
+  measured and is worse --- only the first round is cold, and the rest run against warmed
+  workers and land in the same order every time.
+
 - **A per-request deadline on worker calls** (`TPDF_CALL_MS`, default 30 000 ms; zero means
   zero, unreadable values fall back). A request that does not answer within the deadline now
   kills its worker and returns an error --- previously it held one of the pool's service
@@ -414,6 +435,20 @@ experience.
 
 ### Changed
 
+- **Document opens are serialised by `src/lib/serial.ts`** rather than by four lines inside
+  `App.svelte`. The behaviour is unchanged --- one open at a time, in call order, a failure
+  never stopping the next --- but the invariant now has tests that can fail, which it could
+  not while it lived in a component with no harness. The end-to-end check that exercises it
+  through the running app is a race, and a race is a smoke test rather than a gate: measured
+  with the queue removed, it reports the defect in roughly two runs out of three.
+
+  Writing it turned up unreachable code of its own. The chain was built with both `then`
+  arms calling the body, copied from the original; a mutation reducing it to one survived
+  the whole suite, because the tail is assigned a promise with both outcomes flattened and
+  therefore can never reject. The arm is gone and the line that makes it impossible now says
+  so. Three mutations of what remains --- no queue, no flattening, a tail that never advances
+  --- each go red on the test aimed at them.
+
 - **The tile-retry backoff moved into its own module** (`src/lib/backoff.ts`), with unit
   tests for the properties the scroller relies on: a failed request is not reissued before
   its wait, each further failure doubles the wait up to 8 s, an already-due entry reports no
@@ -572,8 +607,8 @@ experience.
   opened while it is already running.
 
   A handed-over document beats a remembered one, since someone who double-clicked a file is
-  asking for that file. Checked by `scripts/open_check.py` across five launches and 11
-  checks, two of them controls --- and the checks themselves by eleven mutations, all of
+  asking for that file. Checked by `scripts/open_check.py` across nine launches and 31
+  checks, six of them controls --- and the checks themselves by eleven mutations, all of
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed

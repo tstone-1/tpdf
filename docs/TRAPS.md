@@ -2327,3 +2327,28 @@ The dup-first advice this file already carries is right; the trap is the cleanup
 it. A scratch is anything that is *not a target*, and the only safe way to say so is to
 derive the test from the same table that drives the installs (`is_scratch(fd, shuffle)`
 takes the `(source, target)` array itself), so the two can never drift apart.
+
+### Repeating a race inside one process re-runs the first round, not the race
+
+Found writing the `race` phase of `open_check.py` (2026-07-29), which issues two document
+opens without awaiting the first and asserts the second one wins. Mutated so the queue is
+gone, one round reported the defect in about two runs out of three --- which of two `invoke`
+round trips lands last is genuinely a race, and the run where the right one happened to win
+is indistinguishable from a correct build.
+
+The obvious fix is to repeat the round and demand every one of them pass. It made detection
+**worse**: five rounds per launch caught the same mutation in one run out of four. Only the
+first round is cold. By round two the workers are warm, a document is already open, and the
+two opens land in the same order every time --- so the extra rounds are not four more draws,
+they are four copies of a draw whose outcome was decided by the state the first round left
+behind. Pairing a slow document with a fast one did not help either, nor did a 336 MB one
+against a 4-page one: the ordering is decided by IPC scheduling, not by what either open
+costs.
+
+Two things to take from it. **Independent draws need independent processes** --- the
+repetition that buys something is separate launches, and it belongs in the driver, not in
+the phase. And **a probabilistic check has to say so where it is defined**, with the
+measured rate: this one is a smoke test that the application still routes opens through its
+queue, while the property itself is pinned deterministically by a unit test of the queue
+(`serial.test.ts`). Same family as the contaminated control already recorded here, arriving
+through repetition rather than through phase order.

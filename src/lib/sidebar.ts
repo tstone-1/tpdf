@@ -76,6 +76,16 @@ export interface SidebarOptions {
   pages?: ThumbnailOptions;
 }
 
+/**
+ * The class on the sidebar's own element.
+ *
+ * Exported because a check counts these to find out how many sidebars are in
+ * the document, and a second copy of the string would agree with this one right
+ * up until somebody renamed one of them --- at which point the count becomes
+ * zero and the check reports the good news that nothing was duplicated.
+ */
+export const SIDEBAR_CLASS = "tpdf-sidebar";
+
 export class Sidebar {
   private readonly host: HTMLElement;
   private readonly opts: SidebarOptions;
@@ -114,7 +124,7 @@ export class Sidebar {
     this.opts = opts;
 
     this.host = document.createElement("aside");
-    this.host.className = "tpdf-sidebar";
+    this.host.className = SIDEBAR_CLASS;
     this.host.setAttribute("aria-label", "Sidebar");
     this.host.style.cssText =
       "display:flex;flex-direction:column;height:100%;box-sizing:border-box;" +
