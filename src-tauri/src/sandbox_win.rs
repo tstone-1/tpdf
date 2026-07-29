@@ -40,12 +40,13 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT,
 };
 use windows_sys::Win32::Security::{
-    AllocateAndInitializeSid, DuplicateTokenEx, FreeSid, GetLengthSid, SecurityImpersonation,
-    SetTokenInformation, TokenIntegrityLevel, TokenPrimary, PSID, SID_AND_ATTRIBUTES,
-    SID_IDENTIFIER_AUTHORITY, TOKEN_ALL_ACCESS, TOKEN_MANDATORY_LABEL,
+    AllocateAndInitializeSid, DuplicateTokenEx, FreeSid, GetLengthSid, GetSidSubAuthority,
+    GetSidSubAuthorityCount, GetTokenInformation, SecurityImpersonation, SetTokenInformation,
+    TokenIntegrityLevel, TokenPrimary, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
+    TOKEN_ALL_ACCESS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
 };
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
     JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOB_OBJECT_LIMIT_PROCESS_MEMORY,
@@ -568,6 +569,138 @@ pub unsafe fn make_inheritable(handle: HANDLE) -> Result<(), String> {
     Ok(())
 }
 
+/// This process's own integrity level, as a mandatory-label RID.
+///
+/// The value to compare against is [`SECURITY_MANDATORY_LOW_RID`] and friends;
+/// they are ordered, so "at most low" is a `<=`.
+///
+/// # Errors
+///
+/// Any of the three token calls failing, or a label whose SID has no
+/// sub-authorities --- which cannot happen for a mandatory label, and is reported
+/// rather than indexed past.
+pub fn integrity_level() -> Result<u32, String> {
+    let mut token: HANDLE = std::ptr::null_mut();
+    // SAFETY: a pseudo-handle to self; `token` outlives the call.
+    let ok = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) };
+    if ok == 0 {
+        return Err(format!("OpenProcessToken failed: {}", last_error()));
+    }
+    let token = Token(token);
+
+    // Asked for its size first. The label is a header plus a variable-length SID,
+    // so there is no fixed struct to hand in --- and a fixed-size buffer here
+    // would work on every machine until it met an unusual label.
+    let mut needed: u32 = 0;
+    // SAFETY: a null buffer with zero length is the documented way to ask.
+    unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenIntegrityLevel,
+            std::ptr::null_mut(),
+            0,
+            &raw mut needed,
+        );
+    }
+    if needed == 0 {
+        return Err(format!("token label has no size: {}", last_error()));
+    }
+
+    let mut buffer = vec![0u8; needed as usize];
+    // SAFETY: `buffer` is `needed` bytes, which is what the call just asked for.
+    let ok = unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenIntegrityLevel,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &raw mut needed,
+        )
+    };
+    if ok == 0 {
+        return Err(format!("GetTokenInformation failed: {}", last_error()));
+    }
+
+    // SAFETY: on success the buffer holds a TOKEN_MANDATORY_LABEL whose `Sid`
+    // points into that same buffer, so it is live for as long as `buffer` is.
+    let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()).Label.Sid };
+    if sid.is_null() {
+        return Err("token label has no SID".into());
+    }
+    // SAFETY: `sid` is a valid SID for the lifetime of `buffer`.
+    let count = unsafe { *GetSidSubAuthorityCount(sid) };
+    if count == 0 {
+        return Err("token label SID has no sub-authorities".into());
+    }
+    // The RID is the last sub-authority: S-1-16-<level>.
+    // SAFETY: `count` is in range by the check above.
+    Ok(unsafe { *GetSidSubAuthority(sid, u32::from(count) - 1) })
+}
+
+/// Whether this process is inside **any** job object.
+///
+/// A *necessary* condition for containment rather than a sufficient one:
+/// `IsProcessInJob` with a null job answers "in any job at all", and a debugger, a
+/// container or a terminal host can put a process in one for reasons of their own.
+/// So `false` disproves containment and `true` does not prove it, which is how
+/// [`contained_verdict`] treats it.
+///
+/// # Errors
+///
+/// The query failing.
+pub fn in_any_job() -> Result<bool, String> {
+    let mut in_job: i32 = 0;
+    // SAFETY: a pseudo-handle to self, a null job meaning "any", and an out
+    // parameter that outlives the call.
+    let ok = unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &raw mut in_job) };
+    if ok == 0 {
+        return Err(format!("IsProcessInJob failed: {}", last_error()));
+    }
+    Ok(in_job != 0)
+}
+
+/// The containment policy, over facts that have already been gathered.
+///
+/// Split out from [`assert_contained`] because the two conditions cannot both be
+/// exercised through it. A test runner is not contained, so it fails the integrity
+/// check and returns --- and the job clause below is then unreachable, which is
+/// indistinguishable from its not being there. Deleting it was tried as a mutation
+/// and every test still passed. As a pure function of two values, all four
+/// combinations are reachable and each clause has to earn its place.
+///
+/// # Errors
+///
+/// Either condition not holding, naming which.
+pub fn contained_verdict(level: u32, in_job: bool) -> Result<(), String> {
+    if level > SECURITY_MANDATORY_LOW_RID {
+        return Err(format!(
+            "not contained: integrity level is 0x{level:04X}, expected at most \
+             0x{SECURITY_MANDATORY_LOW_RID:04X} (low)"
+        ));
+    }
+    if !in_job {
+        return Err("not contained: this process is in no job object".into());
+    }
+    Ok(())
+}
+
+/// Refuses unless this process is running contained.
+///
+/// **This is a verification, where macOS has an application**, and the difference
+/// is worth stating rather than smoothing over. `apply_sandbox` *causes* the macOS
+/// child to lose authority and fails loudly if it cannot; by the time a Windows
+/// child runs its first instruction the decision was already taken by whoever
+/// called [`spawn_contained`], and nothing it does can change it. All it can do is
+/// check --- but checking is what turns "the parent is supposed to contain us" into
+/// something that fails when the parent stopped doing so.
+///
+/// # Errors
+///
+/// Either query failing, or [`contained_verdict`] refusing what they say.
+pub fn assert_contained() -> Result<(), String> {
+    contained_verdict(integrity_level()?, in_any_job()?)
+}
+
 /// `size_of` as the `u32` every Win32 `cb`/length field wants.
 fn size_of_u32<T>() -> u32 {
     u32::try_from(std::mem::size_of::<T>()).unwrap_or(0)
@@ -675,6 +808,79 @@ mod tests {
         // is still greppable against a reference rather than a decimal nobody
         // would look up.
         assert!(describe_exit(0xDEAD_BEEF).contains("0xDEADBEEF"));
+    }
+
+    /// The test process reads its own integrity level, and it is above low.
+    ///
+    /// Deliberately not `== 0x2000`: an elevated run is high, and pinning medium
+    /// would make the check fail on a correct machine. What it does pin is that a
+    /// level is read at all --- a stub returning zero, or the sub-authority index
+    /// being off by one (which yields the authority, `16`), both land below low
+    /// and go red here.
+    #[test]
+    fn this_process_can_read_its_own_integrity_level() {
+        let level = integrity_level().expect("an integrity level");
+        assert!(
+            level > SECURITY_MANDATORY_LOW_RID,
+            "a test runner should not be low integrity, got 0x{level:04X}"
+        );
+    }
+
+    /// The containment check refuses this process, which is not contained.
+    ///
+    /// This is the whole value of `assert_contained`, and the only way to test it
+    /// from a runner that is by definition uncontained: prove it says **no** when
+    /// the answer is no. A version that returned `Ok` unconditionally --- the
+    /// shape this would most plausibly rot into --- fails here, which a test that
+    /// could only run inside a real worker would never catch.
+    #[test]
+    fn an_uncontained_process_is_told_so() {
+        let err = assert_contained().expect_err("a test runner is not contained");
+        assert!(err.contains("not contained"), "{err}");
+    }
+
+    /// Job membership can be read, whatever it says here.
+    ///
+    /// Deliberately asserts nothing about the value: a terminal host or a debugger
+    /// puts its children in a job, so both answers are correct depending on how
+    /// the suite was started, and an assertion either way would be a machine
+    /// property dressed as a code property. What it does pin is that the call
+    /// succeeds --- a wrong argument to `IsProcessInJob` errors rather than lying.
+    #[test]
+    fn job_membership_is_readable() {
+        in_any_job().expect("job membership is queryable");
+    }
+
+    /// Both containment conditions are load-bearing, over all four combinations.
+    ///
+    /// The reason this is a separate function rather than four calls to
+    /// `assert_contained`: through the real one, a test runner fails the integrity
+    /// check first and the job clause is never reached, so deleting that clause
+    /// passed every test. Here neither can hide behind the other.
+    #[test]
+    fn containment_needs_both_a_low_level_and_a_job() {
+        const LOW: u32 = SECURITY_MANDATORY_LOW_RID;
+        const MEDIUM: u32 = 0x2000;
+
+        contained_verdict(LOW, true).expect("low integrity inside a job is contained");
+
+        let err = contained_verdict(MEDIUM, true).expect_err("medium integrity is not contained");
+        assert!(err.contains("integrity level"), "{err}");
+
+        let err = contained_verdict(LOW, false).expect_err("no job is not contained");
+        assert!(err.contains("job object"), "{err}");
+
+        contained_verdict(MEDIUM, false).expect_err("neither condition holds");
+    }
+
+    /// A level below low still counts as contained.
+    ///
+    /// Untrusted is `0x0000`, and the comparison is `>` rather than `!=` precisely
+    /// so a *stricter* level than asked for passes. Worth pinning: `!=` reads as
+    /// the obvious spelling and would refuse the most contained process there is.
+    #[test]
+    fn a_level_stricter_than_low_is_still_contained() {
+        contained_verdict(0, true).expect("untrusted integrity is contained");
     }
 
     /// A null handle is refused rather than passed to Win32.
