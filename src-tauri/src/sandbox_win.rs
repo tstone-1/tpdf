@@ -38,7 +38,7 @@ use std::os::windows::ffi::OsStrExt;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT,
-    INVALID_HANDLE_VALUE,
+    INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::{
     AllocateAndInitializeSid, DuplicateTokenEx, FreeSid, GetLengthSid, GetSidSubAuthority,
@@ -49,17 +49,18 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-    JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
 use windows_sys::Win32::System::Threading::{
     CreateProcessAsUserW, CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess,
-    InitializeProcThreadAttributeList, OpenProcessToken, ResumeThread, UpdateProcThreadAttribute,
-    CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST,
-    PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    GetExitCodeProcess, InitializeProcThreadAttributeList, OpenProcessToken, ResumeThread,
+    UpdateProcThreadAttribute, WaitForSingleObject, CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT,
+    INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
 /// Low integrity, `S-1-16-4096`.
@@ -422,22 +423,103 @@ impl Contained {
     ///
     /// The wait failing, which leaves the child's state unknown.
     pub fn wait(&self) -> Result<u32, String> {
-        use windows_sys::Win32::Foundation::WAIT_FAILED;
-        use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, WaitForSingleObject, INFINITE,
-        };
-
         // SAFETY: a live process handle owned here.
         if unsafe { WaitForSingleObject(self.process, INFINITE) } == WAIT_FAILED {
             return Err(format!("WaitForSingleObject failed: {}", last_error()));
         }
+        self.exit_code()
+    }
+
+    /// The child's exit code if it has one, without blocking.
+    ///
+    /// `None` means still running. **Not `GetExitCodeProcess` alone**, which is
+    /// the trap this exists to avoid: that call succeeds on a live process and
+    /// reports `STILL_ACTIVE` (259), an ordinary `u32` that a process is
+    /// perfectly entitled to exit with. Distinguishing the two by value is
+    /// therefore wrong in exactly the case that matters --- a worker that really
+    /// did exit 259 would read as running forever. A zero-timeout wait answers
+    /// the liveness question on its own, and the code is only read once it has.
+    ///
+    /// # Errors
+    ///
+    /// Either call failing, which leaves the child's state unknown --- reported
+    /// rather than folded into "still running", since a lost error there becomes
+    /// a worker nothing ever reaps.
+    pub fn try_wait(&self) -> Result<Option<u32>, String> {
+        self.wait_timeout(0)
+    }
+
+    /// Waits up to `millis` for the child to exit. `None` means it is still
+    /// running when the time is up.
+    ///
+    /// Exists because [`Contained::wait`] cannot be used to *test* anything. A
+    /// caller asserting that some action ended the child has, with an unbounded
+    /// wait, exactly two outcomes: the assertion passes, or the process blocks
+    /// forever --- and a blocked test is not a failing test. It is a suite that
+    /// never finishes, reported by whatever timeout eventually notices, on a
+    /// harness that then cannot say which check was to blame. Found exactly that
+    /// way: a mutation making `kill` a no-op did not turn the lifecycle test red,
+    /// it made it take 177 seconds and hit the harness timeout, which printed a
+    /// pass and a hang in the same breath.
+    ///
+    /// # Errors
+    ///
+    /// The wait failing, or the exit code not being readable afterwards.
+    pub fn wait_timeout(&self, millis: u32) -> Result<Option<u32>, String> {
+        // SAFETY: a live process handle owned here.
+        match unsafe { WaitForSingleObject(self.process, millis) } {
+            WAIT_OBJECT_0 => self.exit_code().map(Some),
+            WAIT_TIMEOUT => Ok(None),
+            WAIT_FAILED => Err(format!("WaitForSingleObject failed: {}", last_error())),
+            other => Err(format!("WaitForSingleObject returned {other}")),
+        }
+    }
+
+    /// Reads the exit code of a child already known to have exited.
+    fn exit_code(&self) -> Result<u32, String> {
         let mut code: u32 = 0;
-        // SAFETY: as above; `code` outlives the call.
+        // SAFETY: a live process handle owned here; `code` outlives the call.
         let ok = unsafe { GetExitCodeProcess(self.process, &raw mut code) };
         if ok == 0 {
             return Err(format!("GetExitCodeProcess failed: {}", last_error()));
         }
         Ok(code)
+    }
+
+    /// Ends the child now.
+    ///
+    /// Terminating the *job* rather than the process, which is not a detail: the
+    /// job is what the containment is, so this ends everything inside it whether
+    /// or not the process this struct names is still the only member. A child
+    /// that has already exited is not an error --- the caller wants it gone, and
+    /// it is.
+    ///
+    /// # Errors
+    ///
+    /// The termination failing for a reason other than the job being empty.
+    pub fn kill(&self) -> Result<(), String> {
+        // SAFETY: a live job handle owned here. 1 is an arbitrary non-zero exit
+        // code; nothing reads it, since a killed worker's code is not a diagnosis.
+        let ok = unsafe { TerminateJobObject(self.job.0, 1) };
+        if ok == 0 {
+            return Err(format!("TerminateJobObject failed: {}", last_error()));
+        }
+        Ok(())
+    }
+
+    /// How the child died, in words, for a parent reporting an epitaph.
+    ///
+    /// Never fails: this is called *because* something already went wrong, and a
+    /// diagnostic that can itself fail to be produced is one more thing to
+    /// explain in the moment it is least wanted. An error becomes part of the
+    /// sentence.
+    #[must_use]
+    pub fn epitaph(&self) -> String {
+        match self.try_wait() {
+            Ok(None) => "still running".into(),
+            Ok(Some(code)) => format!("exited with {}", describe_exit(code)),
+            Err(e) => format!("could not be waited on: {e}"),
+        }
     }
 }
 
@@ -1026,6 +1108,106 @@ mod tests {
             "a contained child should still run and be heard, got {said:?}"
         );
         assert_eq!(child.wait().map(describe_exit).as_deref(), Ok("0"));
+    }
+
+    /// A suspended child is running; a killed one is not, and says how it died.
+    ///
+    /// The three observations a parent needs, on one child, in the order it needs
+    /// them. `try_wait` must say `None` while the child is alive --- and the child
+    /// here is *suspended*, which is the state a spawn returns and therefore the
+    /// one a mistaken "has it finished?" would be asked in first.
+    ///
+    /// `kill` goes through the job rather than the process, so this also pins
+    /// that the job really does contain the child: terminating it ends a process
+    /// the call never names.
+    #[test]
+    fn a_contained_child_reports_running_then_how_it_died() {
+        // `pause` reads stdin and blocks, so the child stays alive on its own
+        // without this test having to time anything.
+        let (their_stdin, my_stdin) = pipe().expect("a request pipe");
+        let (my_stdout, their_stdout) = pipe().expect("a reply pipe");
+        let stdio =
+            Stdio::with_inherited_stderr(their_stdin, their_stdout).expect("stdio for the child");
+        let child = spawn_contained(
+            "cmd.exe /c pause",
+            &[],
+            &Containment::default(),
+            Some(&stdio),
+        )
+        .expect("a contained child");
+
+        assert_eq!(
+            child.try_wait(),
+            Ok(None),
+            "a suspended child has not exited"
+        );
+        assert_eq!(child.epitaph(), "still running");
+
+        child.resume().expect("the child runs");
+        child.kill().expect("the child is killed");
+        // Bounded, and that is the point. `cmd /c pause` blocks on a stdin this
+        // test still holds the write end of, so a `kill` that did nothing would
+        // make an unbounded wait here hang rather than fail --- which is how this
+        // was found: the no-op mutation took 177 seconds and tripped the harness
+        // timeout instead of going red. Ten seconds is generous for a process
+        // whose job has just been terminated; a slow machine does not need more.
+        let code = child
+            .wait_timeout(10_000)
+            .expect("a wait after killing")
+            .expect("a killed child has exited within ten seconds");
+        assert_ne!(code, 0, "a killed child did not exit cleanly");
+        assert!(
+            child.epitaph().starts_with("exited with"),
+            "{}",
+            child.epitaph()
+        );
+
+        // SAFETY: live handles this process owns and closes once.
+        unsafe {
+            CloseHandle(their_stdin);
+            CloseHandle(their_stdout);
+            CloseHandle(my_stdin);
+            CloseHandle(my_stdout);
+        }
+    }
+
+    /// A child that exits 259 is finished, not "still active".
+    ///
+    /// `GetExitCodeProcess` reports `STILL_ACTIVE` --- which *is* 259 --- for a live
+    /// process, so code that tells the two apart by value is wrong for exactly
+    /// one input, and that input is a perfectly legal exit code. This is the test
+    /// for that one input. It is worth having precisely because the wrong version
+    /// passes every other check: a worker that really did exit 259 would read as
+    /// running forever, and the pool would wait on a process that is gone.
+    #[test]
+    fn a_child_that_exits_with_still_active_is_not_still_active() {
+        let (their_stdin, my_stdin) = pipe().expect("a request pipe");
+        let (my_stdout, their_stdout) = pipe().expect("a reply pipe");
+        let stdio =
+            Stdio::with_inherited_stderr(their_stdin, their_stdout).expect("stdio for the child");
+        let child = spawn_contained(
+            "cmd.exe /c exit 259",
+            &[],
+            &Containment::default(),
+            Some(&stdio),
+        )
+        .expect("a contained child");
+        child.resume().expect("the child runs");
+
+        assert_eq!(child.wait(), Ok(259), "the child chose this code");
+        assert_eq!(
+            child.try_wait(),
+            Ok(Some(259)),
+            "259 is an exit code, not a liveness flag"
+        );
+
+        // SAFETY: live handles this process owns and closes once.
+        unsafe {
+            CloseHandle(their_stdin);
+            CloseHandle(their_stdout);
+            CloseHandle(my_stdin);
+            CloseHandle(my_stdout);
+        }
     }
 
     /// A null handle is refused rather than passed to Win32.
