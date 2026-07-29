@@ -300,8 +300,13 @@ windows too, so those runs were protected by nothing).
   claimed since it was written, and which was not true. 38 error sites, all POSIX:
   `std::os::fd`, `mmap`/`munmap`, `File::from_raw_fd`, `ExitStatus::signal`. `Shm` off unix is
   a type with a private field and constructors that refuse.
-- `worker_child.rs` is `#[cfg(unix)]`, and the `--render-worker` argv **refuses** off unix
-  rather than falling through and opening a window for an argv that asked for a worker.
+- `worker_child.rs` was `#[cfg(unix)]`, with the `--render-worker` argv refusing off unix
+  rather than falling through. **Both are gone as of 2026-07-29.** The module compiles
+  everywhere; three functions know the platform (the two mapping handovers and
+  `establish_boundary`) and the rest is shared. The refusal that replaced the `cfg` is
+  `establish_boundary` itself, which fails where there is no boundary to establish and does
+  so *before* a document is opened --- the deleted one was never the load-bearing guard, and
+  keeping it would have suggested otherwise.
 - `pdfium_library_dir()` picks `bin/pdfium.dll` on Windows against `lib/libpdfium.dylib` on
   macOS, and now checks for the **library** rather than the directory. See the trap: on
   Windows `vendor/pdfium/lib` genuinely exists and holds the import library, so the old

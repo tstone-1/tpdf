@@ -100,6 +100,84 @@ experience.
   relevant rlimit and the substitute poll can bound a leak but never a burst. Nothing calls
   this module yet.
 
+- **The worker's child half compiles on Windows**, and a contained child can check that it
+  *is* contained. The module was `#[cfg(unix)]` and `lib.rs` refused `--render-worker`
+  anywhere else; both are gone. Exactly three functions knew the platform and each is now one
+  function with two bodies rather than the module being absent: `adopt_tile` and
+  `adopt_document`, because macOS inherits a mapping on a number agreed before `exec` while
+  Windows inherits a handle whose *value* has to be told to the child in argv; and
+  `establish_boundary`.
+
+  That last one is the asymmetry worth stating. macOS **applies** `sandbox_init` and fails
+  loudly if it cannot. Windows has nothing left to apply --- the token is chosen at
+  `CreateProcess` and is in force from the first instruction --- so it **verifies** instead:
+  `integrity_level` reads the process's own mandatory label, `in_any_job` answers
+  `IsProcessInJob`. Neither is sufficient alone, and the second is not sufficient even with
+  the first, because a debugger or a terminal host puts a process in a job for reasons of its
+  own; a `false` disproves containment and a `true` does not prove it.
+
+  A handle may travel in argv where a path may not: the value means nothing in another
+  process and inheritance is what makes it live, so it grants nothing, whereas a path would
+  be authority a low-integrity child could act on --- low integrity governs writes, not reads.
+  Parsed as `usize`, tested with a value above `u32::MAX`, because narrowing would not fail,
+  it would produce a *different* valid-looking handle.
+
+  Deleting the `cfg(not(unix))` refusal is the part that needed proving rather than the port.
+  It was never load-bearing; `establish_boundary` is, and now has a test that an uncontained
+  process is refused. That test does not run on macOS, deliberately: there the call would
+  *succeed*, leaving every later test in the process inside a sandbox with no filesystem and
+  failing for reasons unrelated to what they assert.
+
+  The containment policy is a pure function of the two facts, and that split is a finding
+  rather than tidiness. Written as one function it could not be tested --- a test runner fails
+  the integrity clause and returns, so the job clause was unreachable and deleting it outright
+  passed every test. Two further mutations were **identities** and read exactly like missing
+  coverage: a mandatory-label SID has one sub-authority, so indexing its first instead of its
+  last changes nothing; and `!=` versus `>` on the level differ only for a level *stricter*
+  than low, which is why a test now asserts untrusted integrity counts as contained.
+
+- **A contained child gets pipes, and one was heard.** `spawn_contained` takes an optional
+  `Stdio` and sets `STARTF_USESTDHANDLES`. `STARTUPINFO` cannot say "this stream, leave the
+  others alone" --- the flag makes the child take all three --- so a stream left null is a child
+  with no stderr rather than a child with the parent's, and `Stdio` has no per-stream
+  `Option`. stderr is shared rather than piped for the reason `worker_child.rs` gives:
+  nothing is reading a third pipe at the moment a worker dies.
+
+  The stdio handles are folded into the inherit list by `spawn_contained`, not by the caller;
+  with a handle list present, a standard handle the child is told to use and that is not in
+  the list is simply not inherited. `pipe()` marks **neither** end inheritable, because
+  `CreatePipe`'s security attributes would mark both and the end the parent keeps must never
+  reach the child --- a worker holding the read end of its own reply pipe can watch every
+  answer it gives.
+
+  The test is the result rather than the code: `cmd.exe` at low integrity inside a job runs
+  and a known string comes back. One test rather than four, because the four failure modes
+  are indistinguishable from outside --- wrong flag, handle missing from the list, handle not
+  inheritable, parent's copy of the write end left open --- and the last is a hang, not an
+  error.
+
+- **A parent can watch a contained child**: `try_wait`, `kill`, `wait_timeout`, `epitaph`,
+  matching what `std::process::Child` offers on the other platform. Two findings, both in
+  `docs/TRAPS.md`.
+
+  `GetExitCodeProcess` reports `STILL_ACTIVE` for a live process, and `STILL_ACTIVE` **is
+  259** --- an exit code any process may legitimately choose. Telling the two apart by value is
+  wrong for exactly that one input, and a worker that really exited 259 would read as running
+  forever while the pool waited on something already gone. Liveness comes from
+  `WaitForSingleObject` with a zero timeout instead, and the code is read only once that has
+  answered.
+
+  The lifecycle test could not fail, and how that surfaced is the more useful half. Mutating
+  `kill` into a no-op did not turn it red --- it made the run take **177 seconds** against a
+  180-second harness timeout, and the harness printed `test result: ok` and `[HUNG]` in the
+  same output without noticing those contradict. The assertion was "kill, then wait for the
+  exit code", and an unbounded wait has two outcomes: pass, or block forever. A blocked test
+  is not a failing test. With `wait_timeout` the same mutation fails in 10.02 seconds and
+  names the test.
+
+  Still nothing spawns a Windows worker: `Worker` holds a `std::process::Child`, and these
+  are the pieces its Windows half will be built from.
+
 - **`Shm` is real on Windows.** Every off-unix constructor previously returned "render
   workers are implemented on macOS only" --- which reads like a containment decision and was
   the absence of an implementation wearing the language of a policy. It is now a nameless

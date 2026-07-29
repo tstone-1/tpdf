@@ -486,12 +486,15 @@ fn warm_fonts(bindings: progressive::Bindings) {
     let _ = render::render_tile(bindings, &document, &request, &CancelToken::new());
 }
 
-// Moved to `progressive::bind` so the Windows containment probe can use the same
-// binding rather than a sixth copy of it --- this module is `#[cfg(unix)]`, which
-// made the one *public* binding the one a Windows probe could not reach. Re-exported
-// rather than relocated at the call sites: `fdpass_probe.rs` imports it from here
-// beside `apply_sandbox`, which genuinely is macOS-only, and splitting that import
-// would suggest the two have different homes for a reason a reader could find.
+// Moved to `progressive::bind` so the Windows containment probe could use the
+// same binding rather than a sixth copy of it. The reason it *had* to move is
+// gone --- this module was `#[cfg(unix)]` at the time, which made the one public
+// binding the one a Windows probe could not reach --- and the move is kept anyway:
+// `progressive` is where the thing being bound lives, and a re-export costs
+// nothing while moving it back would churn five call sites to no end. Re-exported
+// rather than relocated at those call sites because `fdpass_probe.rs` imports it
+// here beside `apply_sandbox`, which genuinely is macOS-only, and splitting that
+// import would suggest the two have different homes for a findable reason.
 pub use crate::progressive::bind;
 
 #[cfg(target_os = "macos")]

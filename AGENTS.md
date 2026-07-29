@@ -121,8 +121,16 @@ initial-token / lockdown-token handover, which is a real piece of work rather th
 Two honest limits on that. Low integrity **does not stop reads**, so a contained worker could
 still read any file the user can --- which is why the document and the output are handed over
 as inherited handles rather than paths, the Windows analogue of the macOS `dup2`. And none of
-this is wired into `RenderService` yet: the probe proves the mechanism, the worker that uses
-it does not exist, so Windows still fails open today.
+this is wired into `RenderService` yet, so **Windows still fails open today**.
+
+The pieces exist; the thing that assembles them does not. `Shm` is a nameless section,
+`worker_child` compiles and adopts its mappings from handle values in argv, `spawn_contained`
+gives a contained child pipes, and `Contained` can be watched and killed. What is missing is
+`Worker` itself: it holds a `std::process::Child`, `ChildStdin` and `ChildStdout`, none of
+them constructible from what `spawn_contained` returns, and `Worker::spawn_mapped` still
+returns `NO_WORKERS` off macOS. Until that lands, no argv can start a Windows worker ---
+`worker_child::main` is reachable, but `establish_boundary` refuses an uncontained process
+before any document is opened.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
