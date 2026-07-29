@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 102 entries
+The one thing this file does *not* carry in full is the trap list --- 103 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -220,8 +220,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 102 of them and the full text
-was 93% of this file --- an instruction budget spent on the 101 traps that are not
+titles. Only the titles are here, because there are 103 of them and the full text
+was 93% of this file --- an instruction budget spent on the 102 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -346,6 +346,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A check nested inside a lookup for the thing under test disappears with it
 - A check whose failure mode is a wait cannot fail
 - An unreachable guard is worth keeping if the type can carry it instead
+- A post-destroy guard that returns early leaks what it declined to take
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing

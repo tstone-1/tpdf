@@ -53,6 +53,7 @@
  * reader is told this is a list of eleven things when it is a list of 775.
  */
 
+import { Lifetime } from "./lifetime";
 import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
@@ -215,6 +216,17 @@ export class Thumbnails {
    * the reader asking for a different picture and so are owed a fresh attempt.
    */
   private readonly failed = new Set<number>();
+  /**
+   * Whether this strip is still alive, for its two arrivals to consult.
+   *
+   * Deliberately **not** {@link active}, which the arrivals could be read as
+   * already covering. That flag means "the strip is the visible tab" --- it goes
+   * false when the reader switches to the outline and true again when they
+   * switch back, so a continuation testing it would refuse a bitmap the strip
+   * still wants. Hidden and destroyed are different facts, and `keep` after
+   * teardown leaks into a map that has already been cleared. See `lifetime.ts`.
+   */
+  private readonly life = new Lifetime();
   /** Whether the strip is the visible tab. Nothing is rendered when it is not. */
   private active = false;
   /** Whether the viewer has work outstanding. See the class docs. */
@@ -267,6 +279,9 @@ export class Thumbnails {
   }
 
   destroy(): void {
+    // First, for the reason `scroller.ts` gives: a render landing mid-teardown
+    // must find a strip that is dead, not one that is partly dismantled.
+    this.life.end();
     this.observer.disconnect();
     // Before the withdrawal, and load-bearing: `pump` refuses to issue anything
     // while this is false, and a strip torn down with it still true keeps
@@ -467,16 +482,24 @@ export class Thumbnails {
       this.borrowed++;
       this.borrowing.add(page);
       void createImageBitmap(borrowed)
-        .then((copy) => {
-          // Not `delete` then `keep`: a rotation during the copy clears the set,
-          // and that is exactly the signal that this bitmap is the wrong way up.
-          if (!this.borrowing.delete(page)) {
-            copy.close();
-            return;
-          }
-          this.keep(page, copy);
-          this.pump();
-        })
+        .then(
+          this.life.claim(
+            (copy: ImageBitmap) => {
+              // Not `delete` then `keep`: a rotation during the copy clears the
+              // set, and that is exactly the signal that this bitmap is the
+              // wrong way up.
+              if (!this.borrowing.delete(page)) {
+                copy.close();
+                return;
+              }
+              this.keep(page, copy);
+              this.pump();
+            },
+            // `destroy` does not clear `borrowing`, so without this the copy
+            // passes the test above and is kept in a map that was emptied.
+            (copy) => copy.close(),
+          ),
+        )
         .catch(() => {
           this.borrowing.delete(page);
         });
@@ -500,14 +523,21 @@ export class Thumbnails {
       height: this.thumbPixels(),
       format: "raw",
     })
-      .then((result) => {
-        this.request = null;
-        // `null` is the withdrawal landing: the page keeps no thumbnail and is
-        // asked for again by the next pump, which is what makes yielding safe
-        // to do at any moment rather than only between requests.
-        if (result) this.keep(page, result.bitmap);
-        this.pump();
-      })
+      .then(
+        this.life.claim(
+          (result) => {
+            this.request = null;
+            // `null` is the withdrawal landing: the page keeps no thumbnail and
+            // is asked for again by the next pump, which is what makes yielding
+            // safe to do at any moment rather than only between requests.
+            if (result) this.keep(page, result.bitmap);
+            this.pump();
+          },
+          // Withdrawal races the renderer, so a thumbnail that had already
+          // finished still arrives after teardown --- into a cleared map.
+          (result) => result?.bitmap.close(),
+        ),
+      )
       .catch((reason: unknown) => {
         this.request = null;
         // Once per page, which is every failure here --- the page is never

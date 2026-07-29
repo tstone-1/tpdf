@@ -159,7 +159,7 @@ describe("rowHeightFor", () => {
 describe("Thumbnails lifetime", () => {
   let dom: FakeDom;
   /** Settles the one outstanding render, whenever the test wants it to. */
-  let deliver: (result: null) => void;
+  let deliver: (result: unknown) => void;
 
   beforeEach(() => {
     dom = installFakeDom();
@@ -203,6 +203,85 @@ describe("Thumbnails lifetime", () => {
     await settle();
 
     expect(tiles.fetchTile).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a borrowed copy that lands after it was destroyed", async () => {
+    // The strip's *other* arrival, and it was the one this fixture could not
+    // reach: `placeholderFor` returns null above, so nothing is ever borrowed
+    // and a mutation removing this disposal survived the whole suite.
+    //
+    // Worth stating why the copy needs releasing at all when the scroller owns
+    // the original: `createImageBitmap` produces a second GPU-backed bitmap, and
+    // `destroy` does not clear `borrowing` --- so the copy passes the staleness
+    // test inside the continuation and is kept in a map that was just emptied.
+    const close = vi.fn();
+    let finish: (bitmap: ImageBitmap) => void = () => {};
+    const created = globalThis.createImageBitmap;
+    globalThis.createImageBitmap = (() =>
+      new Promise<ImageBitmap>((resolve) => {
+        finish = resolve;
+      })) as typeof globalThis.createImageBitmap;
+
+    const borrowed = { close: vi.fn() } as unknown as ImageBitmap;
+    const pages = new Thumbnails(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 40,
+      page: { width_pt: 600, height_pt: 800 },
+      tier1: { placeholderFor: () => borrowed },
+      onNavigate: () => {},
+    });
+    pages.setActive(true);
+    // Borrowing, not rendering: no request should have gone out at all, which
+    // is also what says this test is exercising the path it claims to.
+    expect(tiles.fetchTile).not.toHaveBeenCalled();
+
+    pages.destroy();
+    expect(close).not.toHaveBeenCalled();
+
+    finish({ close } as unknown as ImageBitmap);
+    await settle();
+    expect(close).toHaveBeenCalledTimes(1);
+
+    globalThis.createImageBitmap = created;
+  });
+
+  it("releases a thumbnail that lands after it was destroyed", async () => {
+    // The other half of the teardown, and the half a `pump` guard cannot cover:
+    // `keep` puts the bitmap in a map that `destroy` has already emptied, so
+    // nothing will ever close it. Refusing to *pump* afterwards is not the same
+    // as refusing to *keep*, and the strip did the first only.
+    const close = vi.fn();
+    const bitmap = { close } as unknown as ImageBitmap;
+
+    const pages = strip();
+    pages.setActive(true);
+    pages.destroy();
+    // The control: the teardown itself closed every bitmap it held, and this one
+    // was not among them, so a `close` after this line is the delivery's doing.
+    expect(close).not.toHaveBeenCalled();
+
+    deliver({ bitmap, bytes: 1, renderUs: 1, decodeMs: 1 });
+    await settle();
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("still keeps a thumbnail that lands while it is alive", async () => {
+    // The control for the test above: a strip that closed every arrival would
+    // pass it while rendering an empty column.
+    const close = vi.fn();
+    const bitmap = { close } as unknown as ImageBitmap;
+
+    const pages = strip();
+    pages.setActive(true);
+    deliver({ bitmap, bytes: 1, renderUs: 1, decodeMs: 1 });
+    await settle();
+
+    expect(close).not.toHaveBeenCalled();
+    pages.destroy();
+    // And the teardown is what releases it, which is the pair of facts that
+    // says the bitmap was genuinely kept rather than quietly dropped.
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("names a thumbnail that failed, once", async () => {

@@ -31,6 +31,7 @@
 
 import { AccessibleText } from "./a11y";
 import { matches } from "./keys";
+import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import { Search, type Match } from "./search";
@@ -263,7 +264,7 @@ export class Viewer {
    * --- so a closed document keeps driving the sidebar and the header of the one
    * that replaced it.
    */
-  private destroyed = false;
+  private readonly life = new Lifetime();
   /**
    * Wake scheduled for a request whose backoff has not elapsed.
    *
@@ -371,7 +372,7 @@ export class Viewer {
 
   destroy(): void {
     // First, so anything that lands during the teardown below finds it set.
-    this.destroyed = true;
+    this.life.end();
     this.stop();
     clearTimeout(this.retryTimer);
     this.a11y.destroy();
@@ -437,10 +438,10 @@ export class Viewer {
    * the viewer is still alive, which is what the first line answers. That is the
    * whole of the post-destroy guard: every async continuation in this class ends
    * up here, so refusing here is refusing all of them at once. See
-   * {@link destroyed}.
+   * {@link life}.
    */
   wake(): void {
-    if (this.destroyed) return;
+    if (this.life.ended) return;
     this.tail = 2;
     clearTimeout(this.retryTimer);
     this.retryTimer = 0;
@@ -1051,7 +1052,7 @@ export class Viewer {
     const text = this.text.peek(page);
     if (!text) {
       void this.text.load(page).then((arrived) => {
-        if (arrived && !this.destroyed) this.selectPage();
+        if (arrived && !this.life.ended) this.selectPage();
       });
       return;
     }
@@ -1266,8 +1267,8 @@ export class Viewer {
     const text = await this.text.load(match.page);
     // The load outlives a document being closed --- it is an IPC round trip and
     // nothing withdraws it --- so the scroll below would run against a torn-down
-    // scroller. See `destroyed`.
-    if (!text || this.destroyed) return;
+    // scroller. See `life`.
+    if (!text || this.life.ended) return;
     const [first] = runsFor(text, match.start, match.end);
     const top =
       this.scroller.pageTopOf(match.page) + (first ? first.top * this.zoom : 0);

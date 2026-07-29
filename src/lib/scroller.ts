@@ -38,6 +38,7 @@
  */
 
 import { Backoff } from "./backoff";
+import { Lifetime } from "./lifetime";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
 export type Layout = "tiles" | "viewport";
@@ -298,6 +299,16 @@ export class Scroller {
    * which carries the reasoning and the failure it was written for.
    */
   private readonly backoff = new Backoff();
+  /**
+   * Whether this scroller is still alive, for the tile arrivals to consult.
+   *
+   * `destroy` withdraws everything outstanding, and a withdrawal that lands in
+   * time returns nothing --- but withdrawal races the renderer, so a tile that
+   * had already finished still arrives afterwards with its bitmap. Queued into
+   * `arrived` by a continuation that cannot tell, it is never drained, because
+   * the frame loop it was waiting for is gone. See `lifetime.ts`.
+   */
+  private readonly life = new Lifetime();
   /**
    * Tiles that have landed since the last frame.
    *
@@ -694,6 +705,9 @@ export class Scroller {
   }
 
   destroy(): void {
+    // First, before anything is released: a tile arriving mid-teardown must see
+    // a scroller that is dead rather than one that is half dismantled.
+    this.life.end();
     this.scheme.removeEventListener("change", this.onScheme);
 
     // Everything outstanding, unconditionally --- **not** through `withdraw`,
@@ -987,23 +1001,31 @@ export class Scroller {
       height: rect.height,
       format: "raw",
     })
-      .then((result) => {
-        this.inFlight.delete(id);
-        // Withdrawn in time: the renderer stopped, and there is nothing to
-        // count as delivered or as discarded because nothing was produced.
-        // Deliberately not treated as a success either --- the request never
-        // ran, so it says nothing about whether this tile can be rendered, and
-        // clearing the backoff on it would let a withdrawal reset the wait.
-        if (!result) {
-          this.stats.abandoned++;
-          return;
-        }
-        this.backoff.clear(id);
-        this.stats.bytes += result.bytes;
-        this.stats.renderMs += result.renderUs / 1000;
-        this.stats.decodeMs += result.decodeMs;
-        this.arrived.push({ key, rect, bitmap: result.bitmap, generation });
-      })
+      .then(
+        this.life.claim(
+          (result) => {
+            this.inFlight.delete(id);
+            // Withdrawn in time: the renderer stopped, and there is nothing to
+            // count as delivered or as discarded because nothing was produced.
+            // Deliberately not treated as a success either --- the request never
+            // ran, so it says nothing about whether this tile can be rendered,
+            // and clearing the backoff on it would let a withdrawal reset the
+            // wait.
+            if (!result) {
+              this.stats.abandoned++;
+              return;
+            }
+            this.backoff.clear(id);
+            this.stats.bytes += result.bytes;
+            this.stats.renderMs += result.renderUs / 1000;
+            this.stats.decodeMs += result.decodeMs;
+            this.arrived.push({ key, rect, bitmap: result.bitmap, generation });
+          },
+          // Landed after teardown: `arrived` is drained by a frame loop that no
+          // longer runs, so pushing it here is how the bitmap is lost.
+          (result) => result?.bitmap.close(),
+        ),
+      )
       .catch((reason: unknown) => {
         this.inFlight.delete(id);
         this.noteFailure(id, reason);
@@ -1109,23 +1131,30 @@ export class Scroller {
       height,
       format: "raw",
     })
-      .then((result) => {
-        this.inFlight.delete(id);
-        if (!result) {
-          this.stats.abandoned++;
-          return;
-        }
-        this.backoff.clear(id);
-        this.stats.delivered++;
-        this.stats.bytes += result.bytes;
-        this.stats.renderMs += result.renderUs / 1000;
-        this.stats.decodeMs += result.decodeMs;
-        this.arrivedPlaceholders.push({
-          page,
-          bitmap: result.bitmap,
-          generation,
-        });
-      })
+      .then(
+        this.life.claim(
+          (result) => {
+            this.inFlight.delete(id);
+            if (!result) {
+              this.stats.abandoned++;
+              return;
+            }
+            this.backoff.clear(id);
+            this.stats.delivered++;
+            this.stats.bytes += result.bytes;
+            this.stats.renderMs += result.renderUs / 1000;
+            this.stats.decodeMs += result.decodeMs;
+            this.arrivedPlaceholders.push({
+              page,
+              bitmap: result.bitmap,
+              generation,
+            });
+          },
+          // As the tier-2 arrival above: `destroy` empties this queue once and
+          // nothing drains it again.
+          (result) => result?.bitmap.close(),
+        ),
+      )
       .catch((reason: unknown) => {
         this.inFlight.delete(id);
         this.noteFailure(id, reason);

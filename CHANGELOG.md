@@ -613,6 +613,28 @@ experience.
 
 ### Fixed
 
+- **A tile or thumbnail that arrived after its owner was destroyed leaked its bitmap.**
+  Three paths, all the same shape: teardown withdraws everything outstanding, but withdrawal
+  races the renderer, so anything that had already finished still lands. The scroller pushed
+  it onto an arrival queue drained by a frame loop that no longer runs; the page strip kept
+  it in a map that had just been emptied, including a *copy* it makes of a bitmap the
+  scroller owns. An `ImageBitmap` is GPU-backed and released only by `close()`, so each of
+  those is memory held until the process exits, once per tile in the race window.
+
+  The guard is `src/lib/lifetime.ts`, and the reason it is a class rather than the boolean
+  the earlier fixes used is that a boolean would not have fixed these: a continuation that
+  sees a dead owner and merely returns early leaks exactly as much as one that queues the
+  bitmap. `Lifetime.claim(live, dispose)` makes the disposal a required argument, so the
+  guard cannot be written without saying what happens to the value it declines. The viewer's
+  own `destroyed` flag is now one of these, unchanged in behaviour.
+
+  Nine mutations, each caught by the test aimed at it --- except one that survived and was
+  the point of running them: the strip's borrow path was unreachable from its fixture, whose
+  `placeholderFor` returned null, so the disposal there had no test at all until a fixture
+  that actually borrows was written. Every disposal test is paired with a control asserting
+  a live arrival is still kept, since an owner that closed everything would pass the first
+  set perfectly while drawing nothing.
+
 - **A document closed while a text extraction was outstanding left the old viewer's frame
   loop running.** `destroy()` set no flag and `wake()` restarted the loop unconditionally, so
   a text load landing after destroy --- guaranteed, since the loader never rejects ---
