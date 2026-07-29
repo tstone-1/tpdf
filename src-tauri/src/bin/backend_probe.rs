@@ -13,27 +13,31 @@
 //! cargo run --release --bin backend-probe -- testdata/text-heavy.pdf
 //! ```
 
-// Not merely "does not build off macOS": every claim this probe makes is about
-// the worker backend, which `Worker::spawn` refuses to create off macOS. Running
-// it elsewhere could only report the refusal, and a probe whose checks cannot
-// run must say so rather than print a table nobody should read.
+// Not merely "does not build here": every claim this probe makes is about the
+// worker backend, which `Worker::spawn` refuses to create on a platform with no
+// process boundary. Running it there could only report the refusal, and a probe
+// whose checks cannot run must say so rather than print a table nobody should
+// read. Since 2026-07-29 that is neither macOS nor Windows.
 //
-// It fails to *link* off macOS rather than failing to compile, which is why a
-// green `cargo clippy --all-targets` and `cargo test` said nothing about it: the
-// two dyld symbols in `imp::mapped_images` are reachable only from `main`, and
-// `cargo test` replaces `main` with the test harness's own, so the linker drops
-// them as dead code. See `BUILD.md`.
-#[cfg(not(target_os = "macos"))]
+// It fails to *link* on an unsupported platform rather than failing to compile,
+// which is why a green `cargo clippy --all-targets` and `cargo test` said nothing
+// about it: the two dyld symbols in `imp::mapped_images` are reachable only from
+// `main`, and `cargo test` replaces `main` with the test harness's own, so the
+// linker drops them as dead code. See `BUILD.md`.
+#[cfg(not(any(target_os = "macos", windows)))]
 fn main() {
-    eprintln!("backend-probe compares the worker backend against in-process; macOS only");
+    eprintln!(
+        "backend-probe compares the worker backend against in-process; \
+         macOS and Windows only"
+    );
     std::process::exit(2);
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn main() {
     imp::main();
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 #[path = "backend_probe/imp.rs"]
 mod imp;

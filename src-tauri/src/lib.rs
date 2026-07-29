@@ -163,6 +163,32 @@ fn session_file(app: &tauri::AppHandle) -> PathBuf {
         .join("session.json")
 }
 
+/// The subdirectory of `vendor/pdfium/` holding the *loadable* library.
+///
+/// Public, and that is the whole point of it existing. Every spike binary used to
+/// carry its own `vendor/pdfium/lib`, which is right on macOS and wrong on
+/// Windows --- and wrong in the worst way, because `lib/` genuinely exists there
+/// and holds the import library, so the directory check passes and the bind fails
+/// much later pointing at a path that is right there. It has now cost two
+/// binaries on two separate days (`worker-probe`, then `backend-probe`), which is
+/// once more than a fact should be rediscovered.
+///
+/// Five spike binaries still hardcode `lib`. They have never been run on Windows;
+/// the next one that is should take this instead of adding a third copy.
+pub const PDFIUM_SUBDIR: &str = if cfg!(windows) { "bin" } else { "lib" };
+
+/// The file whose presence proves [`PDFIUM_SUBDIR`] is the right directory.
+///
+/// The *library*, not the directory that should contain it --- those are the same
+/// question everywhere except the platform this got wrong.
+pub const PDFIUM_LOADABLE: &str = if cfg!(windows) {
+    "pdfium.dll"
+} else if cfg!(target_os = "macos") {
+    "libpdfium.dylib"
+} else {
+    "libpdfium.so"
+};
+
 /// Locates the Pdfium dynamic library.
 ///
 /// In development it sits under `vendor/pdfium/` at the repo root. In a bundled
@@ -178,12 +204,7 @@ fn session_file(app: &tauri::AppHandle) -> PathBuf {
 /// right there. `scripts/fetch_pdfium.py` encodes the same split and its
 /// docstring names this function as the one that had it wrong.
 fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
-    #[cfg(windows)]
-    let (subdir, loadable) = ("bin", "pdfium.dll");
-    #[cfg(target_os = "macos")]
-    let (subdir, loadable) = ("lib", "libpdfium.dylib");
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let (subdir, loadable) = ("lib", "libpdfium.so");
+    let (subdir, loadable) = (PDFIUM_SUBDIR, PDFIUM_LOADABLE);
 
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

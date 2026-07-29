@@ -79,6 +79,35 @@ experience.
   `CreateProcess`, so one started before a file is chosen has nothing to be handed.
   `Worker::spawn_shared` takes every open instead, at the ~6.6 ms macOS saves.
 
+- **`backend-probe` runs on Windows, and found a defect.** The probe was `#[cfg(target_os =
+  "macos")]`; its four platform primitives now have Windows bodies --- Toolhelp for its own
+  module list and for finding its worker children in the process table, `GetProcessHandleCount`
+  for descriptors, and `TerminateProcess` for a hostile kill from outside the pool, which is
+  deliberately not `Contained::kill` because the pool has to notice a death it did not cause.
+
+  **34/41, 5 skipped.** The boundary, the pixel comparisons, capacity, crash restart,
+  replacement, close and descriptor return all pass. The 41 check *names* are unchanged, which
+  is the cross-platform invariant.
+
+  The two failures are one open defect: **the pool does not retain workers on Windows.** A burst
+  grows it to six and 1.2 s into a 4.0 s idle timeout one is left --- which reads as retirement
+  firing early and is not. The descriptor check beside it reports 144 handles with one worker,
+  144 grown, 144 retired, and five extra workers cannot cost zero handles, so they are created,
+  used and destroyed rather than pooled. Windows-only; the retirement predicate is shared and
+  passes on macOS. Recorded rather than tuned away --- those two checks are the only reason it
+  is known.
+
+  `worker_pids` matches a child on its **image name** there rather than on argv, because
+  Toolhelp reports a parent pid and an image but no command line. Weaker, and sufficient for a
+  stated reason rather than an assumed one: the `caffeinate` shape that forced the argv match is
+  a macOS wrapper with no Windows counterpart, and the `--spare-lifetime` child is never started
+  because pre-spawning is unimplemented. That check now skips with that reason instead of
+  failing.
+
+  `tpdf_lib::PDFIUM_SUBDIR` and `PDFIUM_LOADABLE` are public, because the "`lib/` exists on
+  Windows and holds the wrong thing" trap had by then cost two binaries on two separate days.
+  Four spike binaries still hardcode `lib`; the next one ported takes the constant.
+
 - **Windows stops failing open.** `Backend::default_here()` selects workers on both platforms
   that have a boundary, which is now macOS and Windows rather than macOS alone. One word of
   code; the rest of the work is the evidence, because the `[WARN]` this replaces was our own

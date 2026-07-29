@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 126 entries
+The one thing this file does *not* carry in full is the trap list --- 127 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -142,11 +142,22 @@ the strongest statement available about what cannot have regressed.
 **Windows no longer fails open.** `Backend::default_here()` selects workers there, proved by
 the external module check above rather than by the absence of our own warning.
 
-What Windows still owes is *pooled-worker* evidence, not a boundary. `backend-probe` --- which
-covers crash restart, capacity, retirement and the in-process comparison --- is still
-`#[cfg(target_os = "macos")]`, and five other probe binaries still refuse to act as a worker
-off unix. Until those run, the Windows claim is "one worker renders correctly and the app
-process never maps the parser", which is exactly what has been measured and no more.
+**`backend-probe` runs on Windows too** (2026-07-29), and it found something. 34/41 with 5
+skipped: the boundary, the pixel comparisons, capacity, crash restart, replacement, close and
+descriptor return all pass. Its Windows primitives are Toolhelp for the module list and the
+process table, `GetProcessHandleCount` for descriptors, and `TerminateProcess` for a hostile
+kill from outside the pool.
+
+**The two failures are one open defect: the pool does not retain workers on Windows.** A burst
+grows it to six and 1.2 s into a 4.0 s idle timeout only one is left. That reads as retirement
+firing early, and it is not --- the descriptor check beside it reports 144 handles with one
+worker, 144 grown, 144 retired, and five extra workers cannot cost zero handles. They are being
+destroyed rather than pooled. Windows-only; the retirement predicate is shared and passes on
+macOS, so the pooling path is where to look. See the trap of the same name.
+
+Four other probe binaries still refuse to act as a worker off unix (`pool-bench`,
+`prespawn-bench`, `worker-bench`, `tile-bench`), and pre-spawning is unimplemented, so the
+spare-lifetime check skips with that reason rather than failing.
 
 Two smaller gaps behind it. **Pre-spawning is not implemented on Windows** --- a mapping reaches
 a child by inherited handle at `CreateProcess`, and a worker started before any file is chosen
@@ -315,8 +326,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 126 of them and the full text
-was 93% of this file --- an instruction budget spent on the 125 traps that are not
+titles. Only the titles are here, because there are 127 of them and the full text
+was 93% of this file --- an instruction budget spent on the 126 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -478,6 +489,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
 - A pipe reaches EOF before the process it belonged to is signalled
 - A test whose child never answers cannot see the pipes being crossed
+- A pool that reports six workers can be holding one, and the handle count says so
 
 ### Fixtures
 - The test fixtures are generated, not committed

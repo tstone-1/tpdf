@@ -376,9 +376,8 @@ fn describe(result: &Result<tpdf_lib::worker::Response, String>) -> String {
 /// exactly this wrong. The other spike binaries still hardcode `lib`; they have
 /// never been run on Windows, and this one now is.
 fn library_dir() -> PathBuf {
-    let subdir = if cfg!(windows) { "bin" } else { "lib" };
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium").join(subdir))
+        .map(|root| root.join("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR))
         .unwrap_or_else(|| PathBuf::from("."))
 }
