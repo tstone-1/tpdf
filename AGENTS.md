@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 112 entries
+The one thing this file does *not* carry in full is the trap list --- 116 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -98,6 +98,31 @@ visibility, not containment, and deliberately not a refusal --- refusing would m
 platform useless rather than uncontained, which is a product decision rather than a defect to
 fix in passing. The warning matters more than it reads: the viewer **works** on Windows now,
 so the uncontained path is one real people can take.
+
+**What Windows containment can actually be is now measured, not guessed** (2026-07-29,
+`bin/win_sandbox_probe.rs`). Six rungs, each rendering the same tile from the same document
+in a re-exec'd child and compared **pixel for pixel** against an in-process render, with an
+uncontained child as the control over the harness itself:
+
+| rung | renders | identical | denies |
+|------|---------|-----------|--------|
+| `bare` (control) | yes | yes | nothing |
+| `job` object | yes | yes | runaway memory, extra processes, orphans |
+| `lowil` (job + low integrity) | **yes** | **yes** | writing the user profile, opening the parent process |
+| restricting SID (`S-1-5-12`) | **no** | --- | everything, including the loader |
+
+So the answer is **low integrity plus a job object**: PDFium renders byte-identically under
+it --- the font-substitution risk that the macOS work already caught did *not* materialise ---
+while losing the authority to write anything or reach into the app process. A restricting SID
+is the stronger rung and is not reachable directly: the child dies at `STATUS_DLL_NOT_FOUND`
+before `main`, because the loader's own reads are denied. Reaching it needs Chromium's
+initial-token / lockdown-token handover, which is a real piece of work rather than a flag.
+
+Two honest limits on that. Low integrity **does not stop reads**, so a contained worker could
+still read any file the user can --- which is why the document and the output are handed over
+as inherited handles rather than paths, the Windows analogue of the macOS `dup2`. And none of
+this is wired into `RenderService` yet: the probe proves the mechanism, the worker that uses
+it does not exist, so Windows still fails open today.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -258,8 +283,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 112 of them and the full text
-was 93% of this file --- an instruction budget spent on the 111 traps that are not
+titles. Only the titles are here, because there are 116 of them and the full text
+was 93% of this file --- an instruction budget spent on the 115 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -407,6 +432,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A custom URI scheme is not spelled the same way on every platform
 - A release build is not a production build; a cargo *feature* decides that
 - A guard that degrades to a no-op off its platform stops being a guard
+- `CreateProcessAsUser` waives a privilege only for a token it still recognises
+- A restricting SID stops the loader, and the code never runs
+- One failing rung cannot say which ingredient failed
+- A verdict that takes the last row that worked recommends the weakest one
 
 ### Fixtures
 - The test fixtures are generated, not committed

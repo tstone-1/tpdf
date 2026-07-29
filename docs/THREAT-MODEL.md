@@ -471,11 +471,28 @@ selects `Backend::InProcess`, which spawns a render thread and binds PDFium dire
 Windows user opening a PDF does not get an error; they get a working viewer with no
 containment at all. Nothing in this section is wired; the refusal guards a path nobody takes.
 
-The intended shape:
+**The Windows column below is no longer intent.** As of 2026-07-29 `bin/win_sandbox_probe.rs`
+has measured it: a **job object plus a low integrity level** renders pixel-identically to an
+uncontained render while denying writes to the user profile and `OpenProcess` on the parent.
+A **restricting SID** — the stronger rung, and the one that would deny reads too — kills the
+child in the loader with `STATUS_DLL_NOT_FOUND` before `main`, because on Windows the token
+is in force from the first instruction and there is no "before" in which to bind PDFium.
+Reaching it needs Chromium's initial-token / lockdown-token handover.
+
+So the row below is right about the *ingredients* and was optimistic about one of them. What
+low integrity buys is write-denial and process-isolation, **not** read-denial: a contained
+worker could still read any file the user can. That is why the probe hands the child its
+document and its output as inherited handles and never a path, and why a real worker must do
+the same rather than treating it as a convenience.
+
+None of it is wired. The probe proves the mechanism; `RenderService` still selects in-process
+off macOS, so everything above about failing open remains true today.
+
+The shape, with the Windows column now measured except where noted:
 
 | macOS | Windows |
 |---|---|
-| `sandbox_init` SBPL profile | Restricted token, low integrity level, job object |
+| `sandbox_init` SBPL profile | Job object + low integrity level (**measured**); restricted token blocked on the loader |
 | No memory rlimit; a `proc_pid_rusage` poll is measured and **not wired** (§T3) | `JOB_OBJECT_LIMIT_PROCESS_MEMORY` — a real kernel bound, no polling |
 | Parent deadline per request, **wired** (`workers::watch_calls`); `RLIMIT_CPU` measured and not set, being a lifetime budget | `JOB_OBJECT_LIMIT_JOB_TIME`, parent deadline |
 | Unlinked temp file passed by descriptor | Named section object, or an inherited handle |
@@ -508,7 +525,12 @@ before the architecture can be called cross-platform.
    process rather than the document.
 4. **Windows compiles and is entirely uncontained** (§6) — the tree gates green there, the
    default backend is in-process, and a document opens and renders in the app process. This
-   fails open: there is no error to notice.
+   fails open, though no longer silently: the uncontained default records
+   `render::UNSANDBOXED_MARK` and prints a `[WARN]`. Since 2026-07-29 the *remedy* is measured
+   rather than assumed — a job object plus low integrity renders pixel-identically and denies
+   writes (`bin/win_sandbox_probe.rs`) — but nothing uses it, so the risk is undiminished. Its
+   ceiling is now known too: low integrity does not deny reads, so even the wired version
+   would leave a contained worker able to read any file the user can.
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is
    exposed before any form feature exists.

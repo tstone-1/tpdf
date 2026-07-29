@@ -264,6 +264,31 @@ only on failure, which hid the warning from exactly the runs that succeed. Visib
 containment, and a mark is deliberately not a refusal: refusing would make Windows useless
 rather than uncontained, which is a decision rather than a defect.
 
+**And the fix is now measured rather than guessed.** `cargo run --release --bin
+win-sandbox-probe` runs six containment rungs, each rendering the same tile in a re-exec'd
+child and compared pixel for pixel against an in-process render, with an uncontained child as
+the control over the harness itself:
+
+```
+bare        yes   yes   0                       control: what Windows does today
+job         yes   yes   0                       memory cap, one process, kill-on-close
+lowil       yes   yes   0                       job + low integrity level
+noprivs     yes   yes   0                       diagnostic: privileges dropped only
+sidonly     no    -     STATUS_DLL_NOT_FOUND    diagnostic: restricting SID only
+restricted  no    -     STATUS_DLL_NOT_FOUND    job + restricted token
+```
+
+A **job object plus low integrity** renders byte-identically while denying writes to the user
+profile and `OpenProcess` on the parent. It does not deny *reads* --- an integrity level
+governs writes --- so the child is handed its document and its output as inherited handles
+rather than paths. A restricting SID is stronger and unreachable directly: the loader's own
+reads are denied and the child dies before `main`, which needs Chromium's initial-token /
+lockdown-token handover to get past.
+
+The probe proves the mechanism. **No worker uses it yet**, so Windows still fails open; what
+remains is a Windows worker transport (file mapping, `DuplicateHandle`) and an explicit
+inherited-handle list. `docs/PLAN.md` §"Spike 0.7" has the detail.
+
 Still unmeasured and still macOS-shaped: every *number* in this file and in `AGENTS.md` is
 macOS arm64, `session_check.py` and `open_check.py` want `open -a` and an `.app`, and
 `webview_guard` checks nothing off darwin (see the trap --- Chromium throttles occluded

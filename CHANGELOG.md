@@ -74,6 +74,35 @@ experience.
   that is stated rather than hidden, since the assertion that would catch it is in the macOS
   branch and no run on this machine reaches it.
 
+- **What Windows containment can be, measured** (`bin/win-sandbox-probe`). macOS gets its
+  boundary from `sandbox_init`; Windows has no counterpart, so containment there is assembled
+  from a job object, an integrity level and a restricted token, and which combination still
+  lets PDFium render is not documented anywhere. Six rungs, each rendering the same tile in a
+  re-exec'd child and compared **pixel for pixel** against an in-process render --- pixels
+  because the macOS work already caught a sandboxed PDFium returning `ok` while silently
+  substituting a typeface, and the default fixture is `text-base14.pdf` because base-14 faces
+  are not embedded and must be found on the system.
+
+  **A job object plus low integrity is the answer**: byte-identical output, and the child
+  loses the authority to write `%USERPROFILE%` or `OpenProcess` the parent. It does not lose
+  *reads* --- an integrity level governs writes --- which is why the child is handed its
+  document and its output as inherited handles and never a path, the Windows analogue of the
+  macOS `dup2`. A restricting SID is the stronger rung and dies in the loader at
+  `STATUS_DLL_NOT_FOUND` before `main`, needing Chromium's initial-token / lockdown-token
+  handover to reach.
+
+  Two rungs are marked diagnostic and excluded from the verdict, because with `restricted`
+  failing either ingredient was a plausible cause and one row cannot attribute it; the
+  restricting SID turned out to be the whole cause. Excluding them was not cosmetic --- the
+  verdict took the last row that worked, which was the one that denies nothing.
+
+  Both mutations went red at the assertion aimed at: disabling handle inheritance broke the
+  control and the probe said so in those words, and flipping one byte of the child's output
+  turned `identical` to `NO` and reported a one-byte difference. **Nothing uses this yet** ---
+  `RenderService` still selects in-process off macOS, so Windows fails open exactly as before.
+  `windows-sys` is MIT/Apache and was already in the tree transitively, so the dependency adds
+  no crate; checked with `cargo metadata` rather than assumed.
+
 - **A `bins` gate** (`cargo build --locked --bins`), because none of the other gates links a
   binary. `scripts/gates.py` reported 7/7 while `npm run tauri build` failed on the same tree:
   clippy stops at metadata, and `cargo test` links each `[[bin]]` with `main` replaced by the
@@ -661,6 +690,14 @@ experience.
   The CSP names `http://tile.localhost` beside `tile:`; it already named `http://ipc.localhost`
   beside `ipc:`, so the convention was known and had been applied to one scheme and not the
   other.
+
+- **`progressive::bind` was public so probes would not copy it, and lived where they could
+  not reach it.** The doc comment said as much --- *"public so a probe can exercise this
+  binding rather than a copy of it"* --- while the function sat in `worker_child`, which is
+  `#[cfg(unix)]`. So on Windows the one shared binding was the one unreachable, and three
+  probes had already written their own. Moved to `progressive`, re-exported from
+  `worker_child` so `fdpass_probe.rs` still imports it beside the genuinely macOS-only
+  `apply_sandbox`.
 
 - **`viewer_check.py` discarded a passing run's stderr**, so every warning the app prints was
   invisible to exactly the runs that succeed. Adding the uncontained-backend `[WARN]` and

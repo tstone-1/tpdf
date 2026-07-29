@@ -96,6 +96,27 @@ pub fn bindings_of(pdfium: &'static Pdfium) -> Bindings {
     pdfium.bindings()
 }
 
+/// Loads PDFium from `library_dir`. In a worker, must run *before* the sandbox.
+///
+/// Public so a probe can exercise *this* binding rather than a copy of it: a
+/// feasibility check that reimplements the thing it is checking measures the
+/// reimplementation.
+///
+/// It lives here rather than in `worker_child`, where it was written, because
+/// that module is `#[cfg(unix)]` --- so on Windows the one binding a probe was
+/// meant to share was the one it could not reach, and the intent above quietly
+/// inverted into an invitation to copy. Three probes had already copied it.
+///
+/// # Errors
+///
+/// The library being absent or unloadable at `library_dir`.
+pub fn bind(library_dir: &Path) -> Result<&'static Pdfium, String> {
+    let path = Pdfium::pdfium_platform_library_name_at_path(library_dir);
+    let bindings = Pdfium::bind_to_library(&path)
+        .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
+    Ok(Box::leak(Box::new(Pdfium::new(bindings))))
+}
+
 /// How many loaded pages a document keeps alive at once.
 ///
 /// A loaded page holds its parsed content, so caching every page of a 775-page
