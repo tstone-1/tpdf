@@ -229,27 +229,33 @@ impl Backend {
 
     /// The default where no one has asked for anything.
     ///
-    /// Worker on macOS, because that is where a sandbox exists. Everywhere else
-    /// `Worker::spawn` refuses, and defaulting to something that cannot start is
-    /// worse than defaulting to the control.
+    /// **Worker on both platforms that have a boundary**, which since 2026-07-29
+    /// is macOS and Windows: `sandbox_init` SBPL there, a low-integrity token
+    /// inside a job object here. Anywhere else `Worker::spawn` refuses, and
+    /// defaulting to something that cannot start is worse than defaulting to the
+    /// control.
     ///
-    /// **Off macOS this is the fail-open path, and it now says so.** The refusal
-    /// in `Worker::spawn` is asserted by tests, but only a caller that asks for
-    /// `TPDF_BACKEND=worker` ever reaches it --- the default never asks, so a
-    /// document was parsed in the app process with none of the containment
-    /// `docs/THREAT-MODEL.md` requires and nothing anywhere recorded that it had
-    /// been. That is not a warning about a hypothetical: `viewer_check.py`
-    /// passed on Windows on 2026-07-29, so the platform renders real documents
-    /// this way today.
+    /// Windows was the fail-open path until this line changed, and the change is
+    /// worth stating precisely because it is one word. The refusal in
+    /// `Worker::spawn` was asserted by tests the whole time, but only a caller
+    /// asking for `TPDF_BACKEND=worker` ever reached it --- the default never
+    /// asked, so every real launch parsed hostile input in the app process with
+    /// none of the containment `docs/THREAT-MODEL.md` requires.
     ///
-    /// A mark rather than a refusal, deliberately. Refusing would make the
-    /// platform useless rather than uncontained, and that is a product decision
-    /// rather than a defect to fix in passing. What was wrong was the *silence*:
-    /// the startup timeline is printed by the watchdog and read by every harness
-    /// here, so an uncontained run is now distinguishable from a contained one
-    /// after the fact, which it was not.
+    /// **The evidence is external, and the mark below is not it.** A milestone we
+    /// record says what our code believes it did; `scripts/win_modules.py` reads
+    /// the app process's module list from *outside* it while a document is open
+    /// and asserts `pdfium.dll` is absent, with the module count beside it so a
+    /// failed enumeration cannot read as containment. That check was run against
+    /// this function *before* the flip and reported the parser mapped --- a
+    /// control, and the reason the pass afterwards means anything.
+    ///
+    /// The remaining branch keeps the mark rather than becoming a refusal, for
+    /// the reason it always had: refusing would make a platform useless rather
+    /// than uncontained, and that is a product decision rather than a defect to
+    /// fix in passing.
     fn default_here() -> Self {
-        if cfg!(target_os = "macos") {
+        if cfg!(any(target_os = "macos", windows)) {
             Self::Worker
         } else {
             // Once per process: this is called per service, and a benchmark
@@ -1011,9 +1017,16 @@ pub(crate) fn run_outline(document: &RawDocument) -> Outline {
 mod tests {
     use super::Backend;
 
+    /// The platform list, spelled out a second time on purpose.
+    ///
+    /// Sharing a predicate with `default_here` would make this a check deriving
+    /// its expectation from the thing it tests --- it would agree with whatever
+    /// the code said. The duplication is the assertion. It is also what caught
+    /// the Windows flip: both tests here went red on that one-word change,
+    /// because they still said macOS was the only platform with a boundary.
     #[test]
     fn an_unset_backend_is_the_platform_default() {
-        let expected = if cfg!(target_os = "macos") {
+        let expected = if cfg!(target_os = "macos") || cfg!(windows) {
             Backend::Worker
         } else {
             Backend::InProcess
@@ -1032,20 +1045,34 @@ mod tests {
     /// --- the defect being fixed was that nothing observable said an uncontained
     /// parse had happened, so asserting anything other than the observable would
     /// re-create it.
+    ///
+    /// **Stated as an equivalence rather than per platform.** It used to name
+    /// macOS, which made it a second place the platform list had to be kept
+    /// current, and it duly went red on the Windows flip for a reason that had
+    /// nothing to do with what it asserts. The invariant does not mention a
+    /// platform at all: the mark is on the timeline exactly when the default is
+    /// the uncontained one.
+    ///
+    /// **What it can catch now depends on the platform, and only one half is
+    /// live here.** Measured rather than assumed, against the two mutations the
+    /// note above names. A mark recorded *unconditionally* fails it, on any
+    /// platform. A mark *never* recorded does not --- since both macOS and
+    /// Windows now default to a worker, the branch that would record it is never
+    /// executed, so its contents cannot be wrong in a way anything observes. The
+    /// check has not weakened; its precondition has stopped occurring, which is a
+    /// different thing and the reason it is written down rather than left to be
+    /// rediscovered on the platform where the branch comes back.
     #[test]
     fn the_uncontained_default_says_so_and_the_contained_one_does_not() {
         assert_eq!(Backend::parse(None), Ok(Backend::default_here()));
         let marked = crate::startup::timeline()
             .iter()
             .any(|(name, _)| name == super::UNSANDBOXED_MARK);
-        if cfg!(target_os = "macos") {
-            assert!(
-                !marked,
-                "a sandboxed platform recorded an uncontained parse"
-            );
-        } else {
-            assert!(marked, "an uncontained parse left no trace on the timeline");
-        }
+        assert_eq!(
+            marked,
+            Backend::default_here() == Backend::InProcess,
+            "the uncontained mark and the uncontained default must agree"
+        );
     }
 
     #[test]

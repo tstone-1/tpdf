@@ -75,10 +75,35 @@ experience.
   worker failing on its own, where unix has "killed by signal 11" to say otherwise --- so a kill
   now uses a customer-flagged NTSTATUS the epitaph names in words.
 
-  Windows **still fails open**: `Backend::default_here()` selects in-process off macOS, so only
-  `TPDF_BACKEND=worker` reaches any of this. Pre-spawning is also unimplemented there and says
-  why --- a Windows child is given its document at `CreateProcess`, so one started before a file
-  is chosen has nothing to be handed.
+  Pre-spawning is unimplemented there and says why --- a Windows child is given its document at
+  `CreateProcess`, so one started before a file is chosen has nothing to be handed.
+  `Worker::spawn_shared` takes every open instead, at the ~6.6 ms macOS saves.
+
+- **Windows stops failing open.** `Backend::default_here()` selects workers on both platforms
+  that have a boundary, which is now macOS and Windows rather than macOS alone. One word of
+  code; the rest of the work is the evidence, because the `[WARN]` this replaces was our own
+  bookkeeping and removing the line that prints it would have looked identical to fixing it.
+
+  `scripts/win_modules.py` reads the app process's loaded module list from **outside** it,
+  through Toolhelp, and `viewer_check.py` now launches the app rather than blocking on it so it
+  can sample throughout the run and take the union --- the parser is mapped only while a
+  document is open, so one look could miss it either way. The module count is printed beside
+  the verdict: an enumeration that read *nothing* reports "not mapped" exactly as containment
+  does, so a peak of zero is a broken observation and never a pass.
+
+  Run **before** the change it reported the parser mapped, 47 modules at peak. That control is
+  why the pass afterwards means anything. After: `outline-simple`, `outline-hostile`,
+  `rotated-90` and `vector-heavy` all green with unchanged ran/skipped splits (81/5, 81/5,
+  75/11, 52/34), no `[WARN]`, and 44--45 modules at peak with no `pdfium` among them.
+
+  Both `render.rs` tests went red on the one-word change, which is what they are for. One named
+  macOS as the only platform with a boundary and now states the platform list independently of
+  the code --- deliberate duplication, since sharing a predicate would make it agree with
+  whatever the code said. The other stopped naming a platform at all: the uncontained mark is on
+  the timeline exactly when the default is the uncontained backend. Mutating the mark to be
+  recorded unconditionally fails it; mutating it to never be recorded does **not**, on either
+  platform that now has a boundary, because the branch no longer executes --- measured, and
+  written down rather than left to be rediscovered.
 
 - **The viewer runs on Windows**, and `viewer_check.py` passes there unmodified. Four corpora,
   each reporting the **86 check names** that are the invariant, with ran/skipped splits inside
