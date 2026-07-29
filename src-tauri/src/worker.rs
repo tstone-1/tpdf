@@ -81,6 +81,26 @@ pub const TILE_FD: i32 = 4;
 /// well on a process that never sandboxed itself.
 pub const SOCK_FD: i32 = 5;
 
+/// The flag the document section's handle arrives on, on Windows.
+///
+/// Windows has no counterpart to [`DOC_FD`]: handles are inherited by *value*,
+/// not by number, so there is nothing for the two sides to agree on in advance
+/// and the value has to be told to the child. argv is where every Win32 sandbox
+/// does this, and `bin/win_sandbox_probe.rs` measured it working under the
+/// containment the worker uses.
+///
+/// A handle in argv is not authority anyone else can use: the value means nothing
+/// in another process, and inheritance is what makes it live here. That is why
+/// the *document* may travel this way while a *path* may not --- the path would be
+/// authority a low-integrity child could act on, and the handle is not.
+#[cfg(windows)]
+pub const DOC_HANDLE_ARGV: &str = "--doc-handle";
+
+/// The flag the tile section's handle arrives on, on Windows. See
+/// [`DOC_HANDLE_ARGV`].
+#[cfg(windows)]
+pub const TILE_HANDLE_ARGV: &str = "--tile-handle";
+
 /// The argv marker that starts a worker with no document.
 pub const PRESPAWN_ARGV: &str = "--prespawn";
 
@@ -1550,6 +1570,24 @@ pub fn doc_len_arg(args: &[String]) -> Option<usize> {
     value_of(args, "--doc-len").and_then(|v| v.parse().ok())
 }
 
+/// The document section handle the parent passed, on Windows.
+///
+/// `usize` rather than `i32`, for the reason [`Shm::raw_handle`] gives: a handle
+/// is pointer-sized, and an `i32` would truncate one silently into a value that
+/// still looks like a plausible handle.
+#[cfg(windows)]
+#[must_use]
+pub fn doc_handle_arg(args: &[String]) -> Option<usize> {
+    value_of(args, DOC_HANDLE_ARGV).and_then(|v| v.parse().ok())
+}
+
+/// The tile section handle the parent passed, on Windows.
+#[cfg(windows)]
+#[must_use]
+pub fn tile_handle_arg(args: &[String]) -> Option<usize> {
+    value_of(args, TILE_HANDLE_ARGV).and_then(|v| v.parse().ok())
+}
+
 /// The value following a flag.
 fn value_of<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.iter()
@@ -1598,6 +1636,41 @@ mod tests {
         let confusing = args(&["--doc-len", "--lib"]);
         assert_eq!(value_of(&confusing, "--doc-len"), Some("--lib"));
         assert_eq!(doc_len_arg(&confusing), None);
+    }
+
+    /// A handle survives argv, including one that does not fit an `i32`.
+    ///
+    /// The value that matters is the large one. A handle is pointer-sized, and
+    /// parsing it into anything narrower is the defect this is aimed at --- it
+    /// would not fail, it would produce a *different* handle, and mapping a
+    /// wrong-but-valid handle is a far worse outcome than mapping none. The two
+    /// flags are also checked not to answer each other's lookups, since they
+    /// differ by one word and are passed adjacently.
+    #[cfg(windows)]
+    #[test]
+    fn a_section_handle_survives_argv_at_full_width() {
+        use super::{doc_handle_arg, tile_handle_arg};
+
+        let wide = u32::MAX as usize + 4096;
+        let a = args(&[
+            "--doc-handle",
+            &wide.to_string(),
+            "--tile-handle",
+            "512",
+            "--lib",
+            "C:\\lib",
+        ]);
+        assert_eq!(doc_handle_arg(&a), Some(wide));
+        assert_eq!(tile_handle_arg(&a), Some(512));
+
+        let neither = args(&["--render-worker"]);
+        assert_eq!(doc_handle_arg(&neither), None);
+        assert_eq!(tile_handle_arg(&neither), None);
+
+        // A handle is unsigned: a negative value is a parse failure, not a
+        // wraparound into a plausible one.
+        let negative = args(&["--doc-handle", "-1"]);
+        assert_eq!(doc_handle_arg(&negative), None);
     }
 
     #[test]

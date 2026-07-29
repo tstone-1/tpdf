@@ -29,10 +29,13 @@ pub mod startup;
 pub mod sweep;
 pub mod text;
 pub mod worker;
-// The child half of the process boundary, and POSIX throughout: it is reached
-// only by `Worker::spawn`, which refuses off macOS, so off unix there is nothing
-// that could ever exec it.
-#[cfg(unix)]
+// The child half of the process boundary. POSIX and Windows both, since
+// 2026-07-29: the mapping handover and the boundary itself are what differ, and
+// each is one function with two implementations rather than a module that only
+// exists on one platform. Everything between them --- the request loop, the
+// queue, the render path --- was always portable and is now compiled as such,
+// which is the point: a Windows worker that shared no code with the macOS one
+// would be a second worker to keep correct.
 pub mod worker_child;
 pub mod workers;
 
@@ -765,16 +768,13 @@ pub fn run() {
     // would be wrong for it. It never returns.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
-        #[cfg(unix)]
+        // No platform gate here any more. The refusal that mattered was never
+        // this one --- it is `establish_boundary`, inside the worker, which fails
+        // where there is no boundary to establish and takes the process down
+        // before a document is opened. Refusing here as well would have looked
+        // like belt and braces while actually hiding which of the two is
+        // load-bearing.
         worker_child::main(&args);
-        // Off unix, refused rather than ignored. Falling through would open a
-        // window for an argv that asked for a worker --- the silent wrong answer,
-        // and the same reason `TPDF_BACKEND` refuses here instead of guessing.
-        #[cfg(not(unix))]
-        {
-            eprintln!("{}", worker::NO_WORKERS);
-            std::process::exit(2);
-        }
     }
 
     // Also before the watchdog, and for a reason the panic in `RenderService::start`
