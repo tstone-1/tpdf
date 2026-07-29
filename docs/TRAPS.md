@@ -2558,3 +2558,25 @@ platform's branch reads, at every call site, exactly like a guard that ran and p
 condition cannot be tested on a platform, saying so --- `[SKIP]` with a reason, or a printed
 warning --- is the difference between an unprotected run and an unprotected run nobody knows
 about.
+
+### A harness that prints stderr only on failure hides what a passing run said
+
+`viewer_check.py` echoed the child's stderr inside `if returncode != 0`, so a run that
+passed discarded it entirely. That is the ordinary shape --- stderr is noise until something
+goes wrong --- and it is wrong as soon as the program has anything to say about a run that
+*succeeded*.
+
+Found on 2026-07-29 immediately after adding a `[WARN]` for the uncontained backend: the
+warning fired correctly, and a full-marks Windows run showed no trace of it. The first
+reading was that the warning had not been emitted at all, which would have sent the next
+hour into `default_here`. Running the binary directly, with stderr redirected rather than
+captured by the harness, showed it on the first line.
+
+The general form is worth holding on to, because the incentive runs the wrong way: a warning
+is added precisely so that a *working* run announces something about itself, and the harness
+convention of surfacing stderr only on failure is exactly calibrated to suppress that. Any
+diagnostic whose purpose is "this run was fine, but you should know X" is invisible to a
+gate that treats stderr as a failure artifact.
+
+`viewer_check.py` now echoes `[WARN]` lines on a passing run and stays quiet about
+everything else, so the webview's ordinary teardown noise does not come back with it.

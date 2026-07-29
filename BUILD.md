@@ -253,9 +253,16 @@ refusals all behave as they do on macOS.
 which is exactly what `AGENTS.md` and `docs/THREAT-MODEL.md` forbid. **It fails open**:
 `Worker::spawn`'s refusal is asserted by tests, but only a caller that asks for
 `TPDF_BACKEND=worker` ever reaches it --- the default selects in-process and renders perfectly
-happily, so there is no error to notice. A port owes a real containment answer (job objects,
-a restricted token, a separate desktop) before Windows can ship. That, and not the viewer, is
-now the whole gap.
+happily, so nothing refuses. A port owes a real containment answer (job objects, a restricted
+token, a separate desktop) before Windows can ship. That, and not the viewer, is now the whole
+gap.
+
+It is at least **visible**: the uncontained default records `render::UNSANDBOXED_MARK` on the
+startup timeline and prints `[WARN] no sandbox on this platform ...` on stderr, and
+`viewer_check.py` echoes `[WARN]` lines even on a passing run --- it previously showed stderr
+only on failure, which hid the warning from exactly the runs that succeed. Visibility is not
+containment, and a mark is deliberately not a refusal: refusing would make Windows useless
+rather than uncontained, which is a decision rather than a defect.
 
 Still unmeasured and still macOS-shaped: every *number* in this file and in `AGENTS.md` is
 macOS arm64, `session_check.py` and `open_check.py` want `open -a` and an `.app`, and

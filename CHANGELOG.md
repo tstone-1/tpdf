@@ -59,6 +59,21 @@ experience.
   where macOS needs an `.app`. Windows is still **not supported**: it has no containment, the
   backend falls back to in-process, and it fails open rather than refusing.
 
+- **The uncontained backend announces itself.** Off macOS `Backend::default_here()` falls
+  back to in-process, and until now nothing recorded that a document had been parsed in the
+  app process --- the refusal in `Worker::spawn` guards `TPDF_BACKEND=worker`, a path the
+  default never takes. It now records `render::UNSANDBOXED_MARK` on the startup timeline and
+  prints a `[WARN]`, once per process. Visibility, not containment, and deliberately not a
+  refusal: refusing would make Windows useless rather than uncontained, which is a product
+  decision rather than a defect to fix in passing. It matters more now that the viewer
+  actually works there.
+
+  The check asserts both halves from one run --- marked where there is no sandbox, *not*
+  marked where there is --- because either alone passes with the code wrong. Two mutations:
+  removing the mark turns it red; recording it unconditionally **survives on Windows**, and
+  that is stated rather than hidden, since the assertion that would catch it is in the macOS
+  branch and no run on this machine reaches it.
+
 - **A `bins` gate** (`cargo build --locked --bins`), because none of the other gates links a
   binary. `scripts/gates.py` reported 7/7 while `npm run tauri build` failed on the same tree:
   clippy stops at metadata, and `cargo test` links each `[[bin]]` with `main` replaced by the
@@ -646,6 +661,12 @@ experience.
   The CSP names `http://tile.localhost` beside `tile:`; it already named `http://ipc.localhost`
   beside `ipc:`, so the convention was known and had been applied to one scheme and not the
   other.
+
+- **`viewer_check.py` discarded a passing run's stderr**, so every warning the app prints was
+  invisible to exactly the runs that succeed. Adding the uncontained-backend `[WARN]` and
+  then seeing a full-marks Windows run show no trace of it is how this surfaced; the first
+  reading was that the warning had not fired. `[WARN]` lines are now echoed on a passing run,
+  and nothing else is, so the webview's ordinary teardown noise does not come back with them.
 
 - **`backend-probe` did not link off macOS**, which is what broke `npm run tauri build` on
   Windows. It is now a thin entry point over `backend_probe/imp.rs` that refuses off macOS ---
