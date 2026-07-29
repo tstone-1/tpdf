@@ -341,9 +341,33 @@ Pre-spawning is still unimplemented there --- a Windows child is given its docum
 `Worker::prespawn` refuses and names that reason rather than the sandbox. `Worker::spawn_shared`
 takes every open instead, so the cost is the ~6.6 ms macOS saves, not a failure.
 
-What Windows still owes is **pooled**-worker evidence: `backend-probe` is `#[cfg(target_os =
-"macos")]` and five other probe binaries still refuse to act as a worker off unix, so crash
-restart, capacity and retirement are unmeasured there.
+### `backend-probe` on Windows, and the defect it found
+
+```
+cargo build --release --bin backend-probe
+./src-tauri/target/release/backend-probe.exe testdata/text-base14.pdf
+```
+
+**34/41, 5 skipped.** The boundary, the pixel comparisons, capacity, crash restart, replacement,
+close and descriptor return all pass. Its Windows primitives are Toolhelp for the module list
+and the process table, `GetProcessHandleCount` for descriptors, and `TerminateProcess` for a
+hostile kill from outside the pool --- deliberately not `Contained::kill`, since the pool has to
+notice a death it did not cause.
+
+**The two failures are one open defect: the pool does not retain workers.** A burst grows it to
+six; 1.2 s into a 4.0 s idle timeout, one is left. That reads as retirement firing early and is
+not --- the descriptor check beside it reports **144 handles with one worker, 144 grown, 144
+retired**, and five extra workers cannot cost zero handles. They are created, used and destroyed
+rather than pooled, and destroying a `Worker` closes its job, which is why they vanish cleanly
+enough to look like tidy retirement. Windows-only: the retirement predicate is shared with macOS
+and passes there, so the pooling path is where to look, not the predicate.
+
+Do not "fix" this by relaxing either check. They are the only reason it is known.
+
+Four probe binaries still refuse to act as a worker off unix (`pool-bench`, `prespawn-bench`,
+`worker-bench`, `tile-bench`), and four still hardcode `vendor/pdfium/lib` --- wrong on Windows,
+where the loadable DLL is in `bin/`. `tpdf_lib::PDFIUM_SUBDIR` exists so the next one ported
+takes it instead of adding a fifth copy; that mistake has already cost two binaries on two days.
 
 Still unmeasured and still macOS-shaped: every *number* in this file and in `AGENTS.md` is
 macOS arm64, `session_check.py` and `open_check.py` want `open -a` and an `.app`, and

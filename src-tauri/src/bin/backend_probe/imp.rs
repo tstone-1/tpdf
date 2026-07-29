@@ -35,8 +35,6 @@ use tpdf_lib::render::{
 use tpdf_lib::search::PageMatches;
 use tpdf_lib::startup;
 use tpdf_lib::worker;
-// The child half exists only on unix --- see the module note in `worker.rs`.
-#[cfg(unix)]
 use tpdf_lib::worker_child;
 
 /// Tiles are compared at this size: inside the useful range `AGENTS.md`
@@ -84,13 +82,10 @@ pub fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
-        #[cfg(unix)]
+        // No platform gate: `worker_child::main` establishes its own boundary and
+        // refuses to serve a document without one, which is checked at run time on
+        // the process that actually parses the PDF.
         worker_child::main(&args);
-        #[cfg(not(unix))]
-        {
-            eprintln!("{}", worker::NO_WORKERS);
-            std::process::exit(2);
-        }
     }
 
     // The first argument that is not a flag, so the child mode below can take
@@ -871,7 +866,21 @@ pub fn main() {
     let others = worker_pids();
     retiring_idle_workers(&mut report, &document, render_ms, &others);
 
-    spare_outlives_nothing(&mut report, &document);
+    // Skipped rather than absent where there are no spares to leak. Windows has
+    // no pre-spawning --- a child there is handed its document at
+    // `CreateProcess`, so a worker started before a file is chosen has nothing to
+    // receive --- and `Worker::prespawn` refuses. Run anyway, the check reports
+    // that the child service announced no spare, which is true and is not a
+    // defect; `AGENTS.md` records that a control which silently disappears on
+    // some inputs cannot be told apart from one that ran, so it says why.
+    if cfg!(target_os = "macos") {
+        spare_outlives_nothing(&mut report, &document);
+    } else {
+        report.skip(
+            SPARE_LIFETIME,
+            "not applicable --- this platform has no pre-spawned workers to leak",
+        );
+    }
 
     report.finish();
 }
@@ -1112,6 +1121,10 @@ const RETIRE_CHECKS: [&str; 7] = [
 /// watches, rather than as the probe.
 const LIFETIME_ARGV: &str = "--spare-lifetime";
 
+/// Named beside the other check names so the skip and the check cannot drift ---
+/// the same reason `RETIRE_CHECKS` exists.
+const SPARE_LIFETIME: &str = "a spare does not outlive the service that started it";
+
 /// A spare must not outlive the process that started it.
 ///
 /// This is the only check here that needs a **second process**, and it needs one
@@ -1134,7 +1147,7 @@ const LIFETIME_ARGV: &str = "--spare-lifetime";
 /// hang --- which is how this defect presented in the first place: a probe run
 /// that printed a complete report and then never exited. One line, then `wait`.
 fn spare_outlives_nothing(report: &mut Report, document: &Path) {
-    let name = "a spare does not outlive the service that started it";
+    let name = SPARE_LIFETIME;
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => return report.check(name, false, format!("cannot find this binary: {e}")),
@@ -1308,11 +1321,36 @@ fn withdrawal_needs_a_slow_page(render_ms: f64) -> String {
     )
 }
 
+/// How many kernel handles this process currently holds open.
+///
+/// The Windows counterpart of counting `/dev/fd`, and the same question: does
+/// closing a document give back what opening it took. A worker costs handles
+/// here exactly as it costs descriptors there --- two pipe ends, a process, a
+/// thread, a job, two sections --- so a leak shows up the same way.
+///
+/// `GetProcessHandleCount` is the kernel's own answer, which is the property
+/// that matters; enumerating them would be a larger and no more truthful way to
+/// arrive at a number that is only ever compared against another sample of
+/// itself.
+#[cfg(windows)]
+fn open_descriptors() -> usize {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+
+    let mut count: u32 = 0;
+    // SAFETY: a pseudo-handle to self, and `count` outlives the call.
+    let ok = unsafe { GetProcessHandleCount(GetCurrentProcess(), &raw mut count) };
+    if ok == 0 {
+        return 0;
+    }
+    count as usize
+}
+
 /// How many descriptors this process currently holds open.
 ///
 /// `/dev/fd` is the kernel's own answer, listing exactly what this process has.
 /// A count rather than a set because the question is whether closing a document
 /// gives back what opening it took, and the numbers themselves are reused.
+#[cfg(target_os = "macos")]
 fn open_descriptors() -> usize {
     // The read_dir handle is itself a descriptor and is counted, which is fine:
     // it is counted identically in both samples, so it cancels.
@@ -1339,6 +1377,71 @@ fn open_descriptors() -> usize {
 ///
 /// The probe's own `--spare-lifetime` child is excluded by the same filter, which
 /// it needed anyway.
+///
+/// The Windows twin below matches on the child's **image name** rather than on
+/// argv, because Toolhelp reports a parent pid and an image but no command line
+/// --- reaching that needs `NtQueryInformationProcess` and a read of the child's
+/// PEB, which is a great deal of machinery for a filter. It is genuinely weaker,
+/// and it is sufficient *here* for a reason worth stating rather than assuming:
+/// the artifact it would miss is a same-image child of ours that is not a worker,
+/// and nothing on this platform forks one --- the `caffeinate` shape that forced
+/// the argv match is a macOS wrapper with no Windows counterpart, and the
+/// `--spare-lifetime` child is never started because pre-spawning is not
+/// implemented here.
+#[cfg(windows)]
+fn worker_pids() -> Vec<u32> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    // Our own image name, so a child that re-exec'd `current_exe` matches and
+    // anything else does not. Compared case-insensitively: Windows paths are.
+    let ours = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+    let Some(ours) = ours else {
+        return Vec::new();
+    };
+    let us = std::process::id();
+
+    // SAFETY: a documented flag and a zero pid meaning "all processes"; the
+    // snapshot is closed on every path out.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    // SAFETY: zeroed is the documented initial state; `dwSize` is set as required.
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap_or(0);
+    // SAFETY: a live snapshot handle and an initialised entry.
+    if unsafe { Process32FirstW(snapshot, &raw mut entry) } != 0 {
+        loop {
+            if entry.th32ParentProcessID == us {
+                let len = entry
+                    .szExeFile
+                    .iter()
+                    .position(|c| *c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                if String::from_utf16_lossy(&entry.szExeFile[..len]).to_lowercase() == ours {
+                    found.push(entry.th32ProcessID);
+                }
+            }
+            // SAFETY: as above.
+            if unsafe { Process32NextW(snapshot, &raw mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+    // SAFETY: the snapshot handle, closed once.
+    unsafe { CloseHandle(snapshot) };
+    found
+}
+
+/// The worker processes this probe has spawned, from the OS process table.
+#[cfg(target_os = "macos")]
 fn worker_pids() -> Vec<u32> {
     let out = std::process::Command::new("pgrep")
         .arg("-P")
@@ -1542,7 +1645,57 @@ fn kill_a_worker(pid: Option<u32>) -> Result<(), String> {
 /// # Errors
 ///
 /// Always.
-#[cfg(not(unix))]
+/// Kills a worker and waits for the kernel to agree it is gone.
+///
+/// `TerminateProcess` rather than a signal, because Windows has none --- the
+/// exit code is the only channel, which is why `sandbox_win::KILLED_EXIT` exists.
+/// This is a *hostile* kill from outside the pool, standing in for a worker that
+/// crashed, so it deliberately does not go through `Contained::kill`: the pool
+/// must notice a death it did not cause.
+///
+/// The wait matters as much as the kill. `TerminateProcess` is asynchronous ---
+/// it returns once termination is *requested* --- so a probe that killed and
+/// immediately counted processes would race the kernel and see the worker still
+/// there, which reads exactly like a pool that failed to reap.
+#[cfg(windows)]
+fn kill_and_wait(pid: u32) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_FAILED};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
+        PROCESS_TERMINATE,
+    };
+
+    // SAFETY: a pid we spawned; the handle is closed on every path out.
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        return Err(format!(
+            "could not open pid {pid}: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: a live handle opened with PROCESS_TERMINATE.
+    let killed = unsafe { TerminateProcess(handle, 1) };
+    // SAFETY: opened with PROCESS_SYNCHRONIZE, so it can be waited on.
+    let waited = unsafe { WaitForSingleObject(handle, INFINITE) };
+    // SAFETY: opened above and closed once.
+    unsafe { CloseHandle(handle) };
+
+    if killed == 0 {
+        return Err(format!(
+            "could not terminate pid {pid}: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if waited == WAIT_FAILED {
+        return Err(format!(
+            "pid {pid} was terminated but could not be waited on: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 fn kill_and_wait(_pid: u32) -> Result<(), String> {
     Err(worker::NO_WORKERS.into())
 }
@@ -1737,10 +1890,62 @@ fn marked(name: &str) -> bool {
 
 /// Every dynamic library this process has mapped, by path.
 ///
+/// Toolhelp's module list, which is what the loader itself holds --- the Windows
+/// counterpart of dyld's image table below, and used for the same reason: a
+/// milestone says what our code believes it did, and the question here is what
+/// the process actually is.
+///
+/// Read of *this* process, unlike `scripts/win_modules.py`, which reads the app
+/// from outside it. Both exist and neither replaces the other: the script is the
+/// stronger oracle and can only watch a real application, while this one is
+/// available to a probe that is its own subject.
+#[cfg(windows)]
+fn mapped_images() -> Vec<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE,
+        TH32CS_SNAPMODULE32,
+    };
+
+    // SAFETY: our own pid; the snapshot is closed on every path out.
+    let snapshot = unsafe {
+        CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, std::process::id())
+    };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    // SAFETY: zeroed is the documented initial state; `dwSize` is set as the API
+    // requires and the entry outlives every call it is passed to.
+    let mut entry: MODULEENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = u32::try_from(std::mem::size_of::<MODULEENTRY32W>()).unwrap_or(0);
+    // SAFETY: a live snapshot handle and an initialised entry.
+    if unsafe { Module32FirstW(snapshot, &raw mut entry) } != 0 {
+        loop {
+            let len = entry
+                .szExePath
+                .iter()
+                .position(|c| *c == 0)
+                .unwrap_or(entry.szExePath.len());
+            found.push(String::from_utf16_lossy(&entry.szExePath[..len]));
+            // SAFETY: as above.
+            if unsafe { Module32NextW(snapshot, &raw mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+    // SAFETY: the snapshot handle, closed once.
+    unsafe { CloseHandle(snapshot) };
+    found
+}
+
+/// Every dynamic library this process has mapped, by path.
+///
 /// The dynamic linker's own table, rather than a mark of our own: a milestone
 /// says what our code believes it did, and the question here is what the process
 /// actually is. Same reason `print.rs` reads its output back with a parser that
 /// did not write it.
+#[cfg(target_os = "macos")]
 fn mapped_images() -> Vec<String> {
     // Declared here rather than taken from `libc`, which deprecates both in
     // favour of the `mach2` crate --- a dependency this repository would be
@@ -1871,7 +2076,7 @@ fn distinct_values(bytes: &[u8]) -> usize {
 fn library_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium/lib"))
+        .map(|root| root.join("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 

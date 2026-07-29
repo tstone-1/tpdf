@@ -2838,3 +2838,28 @@ mutation was applied, the probe rebuilt, and the `[FAIL]` line read --- because 
 probe covers it" is exactly the sort of claim that turns out to be false. So the division is
 real and should be stated where someone might otherwise add a redundant unit test: `cargo test`
 owns EOF propagation and epitaphs, the probe owns direction and content.
+
+### A pool that reports six workers can be holding one, and the handle count says so
+
+`backend-probe`, ported to Windows, reports **6 workers from 1** for a burst and then, 1.2 s
+into a 4.0 s idle timeout, finds **1 of 6** still alive. Read alone that looks like retirement
+firing early --- a clock problem, or a `since` that is never refreshed.
+
+It is not, and the check that says so is the descriptor one beside it: **144 handles with one
+worker, 144 grown, 144 retired.** Five extra worker processes cost the parent two pipe ends, a
+process, a thread, a job and two section handles each; growing to six could not leave the count
+unchanged. So the parent never held six workers' worth of handles at the moment it was sampled,
+even though the OS process table had six pids a moment earlier. The workers are being created,
+used, and **destroyed rather than pooled** --- and on Windows destroying a `Worker` closes its
+job, which is why the processes vanish so cleanly that it reads as tidy retirement.
+
+Two things to take from it beyond the bug. **A pid list and a handle count are independent
+observations of the same claim, and only together do they say which half is wrong**; the pid
+list alone supports a wrong diagnosis that is entirely plausible. And a check that looks like
+noise next to a louder failure --- "the numbers did not move" --- was the one carrying the
+answer, so a failing probe is worth reading whole rather than triaged down to its most alarming
+line.
+
+Unresolved as of 2026-07-29. It is Windows-only: the same probe passes both checks on macOS,
+which is what makes the pooling path the place to look rather than the retirement predicate,
+since that predicate is shared and untouched.
