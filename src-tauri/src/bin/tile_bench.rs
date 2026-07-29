@@ -96,6 +96,19 @@ fn parse_args() -> Result<Args, String> {
 ///
 /// Pdfium allocates on the native heap, so a Rust global-allocator hook would
 /// report close to nothing. On macOS ru_maxrss is bytes; on Linux, kilobytes.
+/// Not measurable off unix.
+///
+/// `NaN` rather than `0.0`, and deliberately: this is the value the unix path
+/// already returns when `getrusage` fails, it prints as `NaN`, and it cannot be
+/// mistaken for a measurement. A zero here would read as "PDFium allocated
+/// nothing", which is both false and exactly the kind of plausible number that
+/// gets quoted.
+#[cfg(not(unix))]
+fn peak_rss_mb() -> f64 {
+    f64::NAN
+}
+
+#[cfg(unix)]
 fn peak_rss_mb() -> f64 {
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {

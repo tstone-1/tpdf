@@ -165,11 +165,25 @@ mod tests {
 
     #[test]
     fn a_percent_encoded_url_becomes_the_name_it_stands_for() {
-        let url = tauri::Url::parse("file:///Users/x/my%20report.pdf").expect("url");
-        assert_eq!(
-            path_from_url(&url),
-            Some(PathBuf::from("/Users/x/my report.pdf"))
+        // The *fixture* is platform-shaped because `Url::to_file_path` is:
+        // on Windows it requires a drive letter and refuses `file:///Users/x/...`
+        // outright, so the macOS spelling asserts nothing there except that
+        // refusal --- which is a different claim, and one this test is not about.
+        //
+        // Written this way rather than gated off Windows on purpose. The property
+        // under test is the percent-decoding, it holds on both platforms, and a
+        // check that quietly stops existing on one of them is exactly what
+        // `BUILD.md` warns is worse than a check that skips out loud.
+        #[cfg(windows)]
+        let (text, want) = (
+            "file:///C:/Users/x/my%20report.pdf",
+            r"C:\Users\x\my report.pdf",
         );
+        #[cfg(not(windows))]
+        let (text, want) = ("file:///Users/x/my%20report.pdf", "/Users/x/my report.pdf");
+
+        let url = tauri::Url::parse(text).expect("url");
+        assert_eq!(path_from_url(&url), Some(PathBuf::from(want)));
     }
 
     #[test]

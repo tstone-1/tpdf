@@ -2380,3 +2380,80 @@ guard whose *call site* is unreachable from the fixture is untested however thor
 suite looks: the strip's borrow path never ran, because the test fixture's `placeholderFor`
 returned null, and the mutation removing that disposal survived everything until a fixture
 that actually borrows was written.
+
+### A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
+
+`fdpass_probe.rs` opened with `#![cfg(target_os = "macos")]`, which reads as "this file is
+macOS-only" and is exactly right for a module. For a binary target it is a trap: an inner
+attribute applies to the crate root, so on any other platform *every* item goes away
+including `main`, and cargo then says ``error[E0601]: `main` function not found in crate
+`fdpass_probe` ``. That names the one thing the file unambiguously does have, so the first
+reading is a parse failure or a misconfigured target rather than a gate that did its job
+too well.
+
+There is no attribute that fixes it in place: whatever removes the body removes the entry
+point beside it. What works is a gated `mod` holding the body, and two `main`s, one on each
+side of the gate. That means indenting the whole file --- let `cargo fmt` do it, rather than
+hand-editing three hundred lines and reviewing the result.
+
+### An uninhabited type carries its impossibility into every caller
+
+Making `Shm` an uninhabited `enum` off unix is the "move the impossibility into the type"
+move this file recommends elsewhere, and on its own terms it works perfectly: no mapping can
+be constructed, therefore no worker can be, and the compiler enforces it rather than a
+runtime check somebody could later forget to write.
+
+It still had to be reverted, and the reason is the general lesson. `Worker` holds a `Shm`,
+so an uninhabited mapping makes the *worker* uninhabited --- and uninhabitedness propagates
+through every type that embeds it. rustc then correctly reported the pool's `retire_idle`
+loop in `workers.rs` --- ordinary code, on a platform that never runs it --- as an
+unreachable definition, with `mut` bindings that no longer needed to be mutable beside it.
+Under `-D warnings` those are build failures, and the only repairs are `#[allow]`s scattered
+through production paths that have nothing to do with the platform.
+
+So the rule needs its second half: **move the impossibility into the type when that type is a
+leaf.** A type other types embed carries its uninhabitedness into all of them, and the
+diagnostics land where it is *used* rather than where the decision was made --- which is the
+opposite of what the technique is for. The replacement is dull and local: a struct with a
+private field, constructors that refuse, and accessors that panic rather than return a
+plausible zero.
+
+### A directory that exists is not the library you need
+
+`pdfium_library_dir()` joined `vendor/pdfium/lib` and returned it if it existed. On Windows
+that directory *does* exist --- the upstream archive puts the import library
+`pdfium.dll.lib` there and the loadable runtime in `bin/pdfium.dll` --- so the check passed,
+and the bind failed much later against a path that was sitting right there on disk. The
+failure mode is worse than a missing directory, which would at least have fallen through to
+the bundle branch.
+
+The weak check survived because on macOS the two questions are the same question: the
+directory that should hold the library does hold it. Ask for the **library**, not for the
+directory that ought to contain it.
+
+Note also which half of this a gate can see: none of it. `scripts/gates.py` compiles and
+runs unit tests, and this is a path chosen at runtime --- so a fully green Windows gate run
+says nothing whatever about it. `scripts/fetch_pdfium.py` had known the split all along and
+its docstring even named this function as the one getting it wrong, which is its own small
+lesson about where a fact gets written down versus where it is needed.
+
+### A list of documented blockers can be wrong in the direction that looks thorough
+
+`BUILD.md` carried three specific, checkable reasons the tree would not build on Windows,
+one of them naming two files and the exact `cfg` they were missing. Running the gates found
+something else: the **library** failed first with 18 errors in `worker.rs` --- `std::os::fd`,
+`mmap`, `File::from_raw_fd`, `ExitStatus::signal` --- clippy never reached either named
+binary, and the two `libc::` helpers were real but were the last thing to fix rather than
+the first.
+
+The list was not careless. It was written from reading the code and every item in it was
+true. What reading cannot establish is what fails *first*, because that is a property of the
+build graph rather than of the source, and a blocker list assembled by inspection reads
+exactly like one assembled by running the build. Only the second can order the work or size
+it.
+
+The same section also stated that `TPDF_BACKEND=in-process` was "the only thing that runs
+off macOS". That was false in a way inspection would not catch either: `pub mod worker;` was
+unconditional, so the crate carrying that very control did not compile, and *nothing* ran off
+macOS. A document describing a platform nobody has built on decays without anyone editing
+it --- the code moves underneath it, and there is no run to contradict it.

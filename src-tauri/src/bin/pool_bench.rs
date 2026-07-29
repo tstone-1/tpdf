@@ -36,8 +36,11 @@ use std::time::{Duration, Instant};
 use tpdf_lib::render::{
     Backend, DocumentInfo, PageSize, RenderService, TileFormat, TileOutcome, TileRequest,
 };
+use tpdf_lib::worker;
 use tpdf_lib::worker::phys_footprint;
-use tpdf_lib::{worker, worker_child};
+// The child half exists only on unix --- see the module note in `worker.rs`.
+#[cfg(unix)]
+use tpdf_lib::worker_child;
 
 /// An idle timeout no run of the speedup mode reaches.
 ///
@@ -61,7 +64,13 @@ fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
+        #[cfg(unix)]
         worker_child::main(&args);
+        #[cfg(not(unix))]
+        {
+            eprintln!("{}", worker::NO_WORKERS);
+            std::process::exit(2);
+        }
     }
 
     let Some(document) = args.get(1).map(PathBuf::from) else {

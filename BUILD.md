@@ -194,7 +194,8 @@ Two of them are worth understanding rather than just running:
   and the pool, rendering, text, search, outlines, printing, session and sweep --- with
   `npm run test` doing the same for the front-end logic beside it. What it deliberately
   leaves to the harnesses under `scripts/` is everything that needs a live webview. What
-  nothing covers is Windows, and paper: a print job is checked by reading its bytes back
+  nothing covers is a Windows *run* --- the suite compiles and passes there, and no gate has
+  ever opened a document on it --- and paper: a print job is checked by reading its bytes back
   with PDFKit, which is a parser independent of the writer but still not a printer.
 - **Wrap a batch of benchmark runs in `caffeinate -du`.** `scroll_bench.py` holds one for
   its own lifetime, but the gaps between runs --- and any headless bench running alongside
@@ -217,22 +218,54 @@ When CI is added --- the natural trigger is the repo going public, or a second c
 keeps the checklist and the gate the same object rather than two things that happen to
 agree today.
 
-### Windows is not verified
+### Windows builds and gates green. It is not supported.
 
-Every gate run and every spike measurement to date is macOS arm64, and the tree will not
-build on Windows as it stands. Three things are known to be in the way:
+`scripts/gates.py` reports **7/7 on `x86_64-pc-windows-msvc`**, first on 2026-07-29. A clean
+clone bootstraps with no changes --- `npm install` and `scripts/fetch_pdfium.py` both do the
+right thing, the fetch script selects the `win-x64` asset and verifies its digest.
 
-- **`libc::` is used without a `cfg` gate** in `sanitize_rewrite.rs` and `tile_bench.rs`.
-  `startup.rs`, `worker_bench.rs` and `incremental_save.rs` do gate their macOS-only code
-  behind `cfg(target_os = "macos")`; those two do not, so they are compile errors rather
-  than missing functionality.
-- **PDFium's loadable library is at `bin/pdfium.dll`** on Windows and
-  `lib/libpdfium.dylib` on macOS. `scripts/fetch_pdfium.py` knows both;
-  `pdfium_library_dir()` in `src-tauri/src/lib.rs` only knows the macOS shape.
-- **The sandbox is `sandbox_init` SBPL**, which has no Windows equivalent. The threat
-  model's containment argument is macOS-specific and needs its own answer there.
+**That is a claim about compilation and unit tests, and about nothing else.** Two things are
+still true, and the first is the one that matters:
 
-Do not claim a Windows build works until one has run.
+- **There is no sandbox, therefore no worker.** `sandbox_init` is SBPL and macOS-only, so
+  `Worker::spawn` refuses off macOS and `Backend::default_here()` falls back to
+  `Backend::InProcess`. A Windows build would parse attacker-controlled PDF **in the app
+  process**, which is exactly what `AGENTS.md` and `docs/THREAT-MODEL.md` forbid. **It fails
+  open**: `Worker::spawn`'s refusal is asserted by tests, but only a caller that asks for
+  `TPDF_BACKEND=worker` ever reaches it --- the default selects in-process and renders
+  perfectly happily, so there is no error to notice. A port owes a real containment answer
+  (job objects, a restricted token, a separate desktop) before Windows can ship.
+- **Nothing has been run.** No gate executes the viewer, so a green sweep says the tree
+  compiles and 153 unit tests pass. Every behavioural harness is macOS-shaped: `viewer_check.py`,
+  `session_check.py` and `open_check.py` want an `.app` bundle, `open -a`, and an unlocked
+  screen. Every measurement in this file and in `AGENTS.md` remains macOS arm64.
+
+Do not claim a Windows build *works* until one has opened a document.
+
+#### What the port changed, so it is not rediscovered
+
+- `worker.rs` now compiles everywhere and refuses off macOS --- which its own module doc had
+  claimed since it was written, and which was not true. 38 error sites, all POSIX:
+  `std::os::fd`, `mmap`/`munmap`, `File::from_raw_fd`, `ExitStatus::signal`. `Shm` off unix is
+  a type with a private field and constructors that refuse.
+- `worker_child.rs` is `#[cfg(unix)]`, and the `--render-worker` argv **refuses** off unix
+  rather than falling through and opening a window for an argv that asked for a worker.
+- `pdfium_library_dir()` picks `bin/pdfium.dll` on Windows against `lib/libpdfium.dylib` on
+  macOS, and now checks for the **library** rather than the directory. See the trap: on
+  Windows `vendor/pdfium/lib` genuinely exists and holds the import library, so the old
+  existence check passed and the bind failed later.
+- `launch.rs`'s percent-decoding test takes a platform-shaped URL. `Url::to_file_path` wants a
+  drive letter on Windows and refuses `file:///Users/...`, so the macOS fixture asserted only
+  that refusal. Written that way rather than gated off Windows, deliberately --- a check that
+  silently stops existing on a platform is the thing this file warns about elsewhere.
+
+**The old version of this section named the wrong blockers**, and the shape of the error is
+worth keeping. It listed `sanitize_rewrite.rs` and `tile_bench.rs` as the compile errors;
+both were real, but clippy never reached either, because the *library* failed first. A
+blocker list assembled by reading code cannot know what fails first --- that is a property of
+the build graph. It also said `TPDF_BACKEND=in-process` was "the only thing that runs off
+macOS", which was false: `pub mod worker;` was unconditional, so the crate carrying that
+control did not compile and nothing ran off macOS at all.
 
 ---
 

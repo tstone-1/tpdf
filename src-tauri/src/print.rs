@@ -327,6 +327,10 @@ fn effective_rotation(doc: &Document, page: lopdf::ObjectId) -> i64 {
 mod tests {
     use super::{build, drop_pages, effective_rotation, Job, Pages};
     use lopdf::{dictionary, Document, Object, ObjectId, Stream};
+    // Used only by the rotation test, which needs PDFKit to read the job back
+    // and so is macOS-only. The gate travels with the use, not with the import
+    // list, or the import is unused off macOS.
+    #[cfg(target_os = "macos")]
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
