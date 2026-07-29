@@ -79,6 +79,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Pipes",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
+    # For `CommandLineToArgvW`, used by a test as an *independent* parser of the
+    # command line `Worker::spawn_mapped` builds --- AGENTS.md records that a
+    # writer and its own reader agree about output that is wrong.
+    "Win32_UI_Shell",
 ] }
 
 [[bin]]

@@ -382,6 +382,31 @@ impl Drop for AttributeList {
     }
 }
 
+/// The exit code [`Contained::kill`] terminates a job with.
+///
+/// It used to be `1`, on the reasoning that nothing reads a killed worker's exit
+/// code. Something does: Windows has no signals, so "killed by signal 11" --- the
+/// tell `AGENTS.md` records a crash test turning on --- has no counterpart, and
+/// the *only* channel left for saying "this worker did not choose to exit" is the
+/// code itself. With `1`, a worker we terminated and a worker that failed on its
+/// own were the same sentence.
+///
+/// The 0xE0000000 bit is the NTSTATUS customer-code flag: reserved for
+/// application-defined values and never produced by Windows. That does not make
+/// the value impossible for a child to exit with --- nothing does, and
+/// `docs/TRAPS.md` records that every `u32` is a legal exit code --- but it does
+/// make it a value no ordinary failure path produces by accident.
+pub const KILLED_EXIT: u32 = 0xE000_0001;
+
+/// How long [`Contained::epitaph`] waits for a child it believes is dying.
+///
+/// Milliseconds, and the size is not load-bearing --- the gap being closed is
+/// the microseconds between a process's handles closing and its process object
+/// being signalled. It is bounded rather than generous on purpose: an epitaph is
+/// produced on an error path, and a diagnostic that can stall a UI thread is one
+/// nobody will leave in.
+const EPITAPH_GRACE: u32 = 100;
+
 /// A spawned child, still suspended, with the handles that reach it.
 pub struct Contained {
     pub process: HANDLE,
@@ -390,6 +415,16 @@ pub struct Contained {
     /// Kept so the job outlives the child: dropping it kills the child.
     pub job: Job,
 }
+
+// As [`Job`]: process and thread handles are ordinary kernel objects with no
+// thread affinity, so moving one between threads is fine and sharing a reference
+// is too --- every method here takes `&self` and none caches anything.
+//
+// Not decoration. `RenderService::prewarm` in `workers.rs` builds its workers
+// inside a spawned thread, so a `Worker` --- which owns one of these off unix ---
+// has to be `Send`, and a struct holding raw pointers is not one by default.
+unsafe impl Send for Contained {}
+unsafe impl Sync for Contained {}
 
 impl Contained {
     /// Lets the child run. Separate from spawning **on purpose**.
@@ -498,9 +533,8 @@ impl Contained {
     ///
     /// The termination failing for a reason other than the job being empty.
     pub fn kill(&self) -> Result<(), String> {
-        // SAFETY: a live job handle owned here. 1 is an arbitrary non-zero exit
-        // code; nothing reads it, since a killed worker's code is not a diagnosis.
-        let ok = unsafe { TerminateJobObject(self.job.0, 1) };
+        // SAFETY: a live job handle owned here.
+        let ok = unsafe { TerminateJobObject(self.job.0, KILLED_EXIT) };
         if ok == 0 {
             return Err(format!("TerminateJobObject failed: {}", last_error()));
         }
@@ -513,9 +547,22 @@ impl Contained {
     /// diagnostic that can itself fail to be produced is one more thing to
     /// explain in the moment it is least wanted. An error becomes part of the
     /// sentence.
+    ///
+    /// **Waits [`EPITAPH_GRACE`] rather than asking once**, and that is a fix
+    /// rather than a courtesy. A dying child's handles are closed before its
+    /// process object becomes signalled, so the parent sees its pipe reach end
+    /// of file *first* --- and the epitaph is asked precisely then, from the
+    /// `read_reply` that just got EOF. Asked with a zero timeout it answers
+    /// "still running" about a process that has already exited, which is the one
+    /// answer that sends a reader looking in the wrong place. Caught by
+    /// `a_worker_whose_child_dies_says_so_rather_than_blocking`, which failed on
+    /// exactly this and not on the plumbing it was written for.
+    ///
+    /// A live worker whose pipe broke for some other reason still reads as
+    /// running; the grace delays that answer, it does not change it.
     #[must_use]
     pub fn epitaph(&self) -> String {
-        match self.try_wait() {
+        match self.wait_timeout(EPITAPH_GRACE) {
             Ok(None) => "still running".into(),
             Ok(Some(code)) => format!("exited with {}", describe_exit(code)),
             Err(e) => format!("could not be waited on: {e}"),
@@ -891,6 +938,9 @@ fn last_error() -> String {
 pub fn describe_exit(code: u32) -> String {
     let name = match code {
         0 => return "0".to_owned(),
+        // Ours, and named so an epitaph can say a worker was killed rather than
+        // leaving a reader to recognise a magic number. See [`KILLED_EXIT`].
+        KILLED_EXIT => return "killed by its parent".to_owned(),
         0xC000_0135 => "STATUS_DLL_NOT_FOUND",
         0xC000_0142 => "STATUS_DLL_INIT_FAILED",
         0xC000_0022 => "STATUS_ACCESS_DENIED",

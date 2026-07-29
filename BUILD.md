@@ -294,9 +294,30 @@ rather than paths. A restricting SID is stronger and unreachable directly: the l
 reads are denied and the child dies before `main`, which needs Chromium's initial-token /
 lockdown-token handover to get past.
 
-The probe proves the mechanism. **No worker uses it yet**, so Windows still fails open; what
-remains is a Windows worker transport (file mapping, `DuplicateHandle`) and an explicit
-inherited-handle list. `docs/PLAN.md` §"Spike 0.7" has the detail.
+**A worker uses it now** (2026-07-29). `Worker::spawn` builds a contained child on Windows, and
+`worker-probe` is the standing proof:
+
+```
+cargo build --release --bin worker-probe
+./src-tauri/target/release/worker-probe.exe testdata/text-base14.pdf
+```
+
+**11/11 checks, 1 not applicable**, on `text-base14`, `text-cid`, `vector-heavy` and `rotated`
+--- tiles **pixel-identical** to the in-process render, plus text extraction, outlines and
+search across the boundary. The not-applicable one is the parent's memory poll: macOS has no
+rlimit and polls as a substitute, while here the job object caps commit in the kernel, so there
+is nothing to poll. It prints `[SKIP]` with that reason rather than vanishing.
+
+Two things that check does *not* cover, deliberately, because a `cargo test` child is the test
+harness and never answers: pipe **direction** and content. Both are the probe's job, measured
+by mutating the pipe pair and watching the probe go red --- see the trap *A test whose child
+never answers cannot see the pipes being crossed*.
+
+**Windows still fails open**, for one remaining reason: `Backend::default_here()` selects
+in-process off macOS, so only `TPDF_BACKEND=worker` reaches the contained path. Flipping that
+is the next step. Pre-spawning is also unimplemented there --- a Windows child is given its
+document at `CreateProcess`, so a worker started before a file is chosen has nothing to be
+handed; `Worker::prespawn` refuses and names that reason rather than the sandbox.
 
 Still unmeasured and still macOS-shaped: every *number* in this file and in `AGENTS.md` is
 macOS arm64, `session_check.py` and `open_check.py` want `open -a` and an `.app`, and

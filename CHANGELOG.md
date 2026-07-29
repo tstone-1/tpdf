@@ -51,6 +51,35 @@ experience.
 
 ### Added
 
+- **A Windows worker renders, contained.** `Worker::spawn` builds one off macOS for the first
+  time: created suspended, dropped to low integrity, assigned to its job object before it
+  executes an instruction, then handed two pipes and the document and tile sections as
+  inherited handles named in argv. `worker-probe` is the proof --- **11/11 checks** on
+  `text-base14`, `text-cid`, `vector-heavy` and `rotated`, tiles **pixel-identical** to the
+  in-process render, plus text extraction, outlines and search across the boundary. The font
+  substitution the macOS sandbox caused did not recur, as `win-sandbox-probe` predicted.
+
+  `Worker` carries both platforms as per-platform **type aliases**, not an enum: a `Contained`
+  where macOS has a `Child`, a `File` where it has `ChildStdin`/`ChildStdout`. Two methods have
+  two bodies (`pid`, `epitaph`) and the rest are unchanged, so every macOS line in `worker.rs`
+  is byte-identical --- which matters because none of this can be re-verified on macOS from a
+  Windows machine, and a diff touching only Windows code is the strongest available statement
+  about what cannot have regressed.
+
+  Three findings came out of testing it rather than writing it. The parent must close its copy
+  of the reply pipe's write end or a dead worker is indistinguishable from a slow one --- and
+  the check for that has to bound its own wait, because the failure it looks for *is* a hang.
+  An epitaph asked the instant a pipe reaches EOF says **"still running"**, since handles close
+  before the process object is signalled; `Contained::epitaph` now waits 100 ms, and liveness
+  polling still does not. And `TerminateJobObject` exited with `1`, indistinguishable from a
+  worker failing on its own, where unix has "killed by signal 11" to say otherwise --- so a kill
+  now uses a customer-flagged NTSTATUS the epitaph names in words.
+
+  Windows **still fails open**: `Backend::default_here()` selects in-process off macOS, so only
+  `TPDF_BACKEND=worker` reaches any of this. Pre-spawning is also unimplemented there and says
+  why --- a Windows child is given its document at `CreateProcess`, so one started before a file
+  is chosen has nothing to be handed.
+
 - **The viewer runs on Windows**, and `viewer_check.py` passes there unmodified. Four corpora,
   each reporting the **86 check names** that are the invariant, with ran/skipped splits inside
   the macOS ranges: `outline-simple` 81/5, `outline-hostile` 81/5, `rotated-90` 75/11,

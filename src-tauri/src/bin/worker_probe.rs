@@ -20,8 +20,6 @@ use std::time::Instant;
 use tpdf_lib::progressive::{self, RawDocument};
 use tpdf_lib::worker;
 use tpdf_lib::worker::{Request, Worker};
-// The child half exists only on unix --- see the module note in `worker.rs`.
-#[cfg(unix)]
 use tpdf_lib::worker_child;
 
 /// Tiles are compared at this size, which is inside the useful range AGENTS.md
@@ -32,13 +30,11 @@ fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
-        #[cfg(unix)]
+        // No platform gate: `worker_child::main` establishes its own boundary
+        // and refuses to serve a document without one, which is a stronger
+        // guarantee than a `cfg` here could make and is checked at run time on
+        // the process that actually parses the PDF.
         worker_child::main(&args);
-        #[cfg(not(unix))]
-        {
-            eprintln!("{}", worker::NO_WORKERS);
-            std::process::exit(2);
-        }
     }
 
     let Some(document) = args.get(1).map(PathBuf::from) else {
@@ -56,6 +52,7 @@ fn main() {
     let library_dir = library_dir();
     let mut failures = 0;
     let mut checks = 0;
+    let mut skipped = 0;
     let mut check = |name: &str, ok: bool, detail: String| {
         checks += 1;
         if !ok {
@@ -257,26 +254,51 @@ fn main() {
     );
 
     // ------------------------------------------------------------ containment
-    let footprint = worker.footprint();
-    check(
-        "the parent can read the worker's footprint",
-        footprint.is_some_and(|f| f > 0),
-        match footprint {
-            // Zero reads exactly like a permissions problem and is usually the
-            // `proc_pid_rusage` pointer mistake AGENTS.md records.
-            Some(bytes) => format!("{:.1} MB", bytes as f64 / 1e6),
-            None => "unavailable".into(),
-        },
-    );
+    //
+    // The two platforms bound a worker's memory by different mechanisms, and this
+    // follows the mechanism rather than asserting one exists where it does not.
+    // macOS refuses `RLIMIT_AS`, `RLIMIT_DATA` and `RLIMIT_RSS` outright, so a
+    // poll from the parent is the *only* bound there and being able to read it is
+    // the property. Windows caps commit in the kernel through the job object, so
+    // there is nothing to poll and nothing that a poll would add.
+    //
+    // Printed as a skip with the reason rather than dropped, because AGENTS.md
+    // records that a control which silently disappears on some inputs cannot be
+    // told apart from one that ran.
+    if cfg!(target_os = "macos") {
+        let footprint = worker.footprint();
+        check(
+            "the parent can read the worker's footprint",
+            footprint.is_some_and(|f| f > 0),
+            match footprint {
+                // Zero reads exactly like a permissions problem and is usually
+                // the `proc_pid_rusage` pointer mistake AGENTS.md records.
+                Some(bytes) => format!("{:.1} MB", bytes as f64 / 1e6),
+                None => "unavailable".into(),
+            },
+        );
+    } else {
+        skipped += 1;
+        println!(
+            "[SKIP] {:52} not applicable --- the job object caps memory in the kernel here",
+            "the parent can read the worker's footprint"
+        );
+    }
 
-    // Killing the worker must be visible as a *signal*, not an exit code. The
-    // crash test AGENTS.md records reported "exited with code 9" where a
+    // Killing the worker must be distinguishable from the worker exiting on its
+    // own. The crash test AGENTS.md records reported "exited with code 9" where a
     // segfault should have said "killed by signal 11", and that was the tell.
+    //
+    // The word differs because the mechanism does: unix kills with a signal, and
+    // Windows has none --- `TerminateJobObject` sets an exit *code*, so the tell
+    // has to be carried by a code no ordinary failure produces. Same property,
+    // same check name, different evidence. See `sandbox_win::KILLED_EXIT`.
     worker.kill();
     let epitaph = worker.epitaph();
+    let tell = if cfg!(windows) { "killed" } else { "signal" };
     check(
         "a killed worker is reported as killed, not as having exited",
-        epitaph.contains("signal"),
+        epitaph.contains(tell),
         epitaph,
     );
     let after_death = worker.call(&Request::Outline);
@@ -289,7 +311,10 @@ fn main() {
         },
     );
 
-    println!("\n{}/{checks} checks passed", checks - failures);
+    println!(
+        "\n{}/{checks} checks passed, {skipped} not applicable to this platform",
+        checks - failures
+    );
     std::process::exit(i32::from(failures > 0));
 }
 
@@ -343,9 +368,17 @@ fn describe(result: &Result<tpdf_lib::worker::Response, String>) -> String {
 }
 
 /// Where PDFium lives, matching the app's own resolution in development.
+///
+/// The subdirectory differs by platform and the difference is not cosmetic:
+/// Windows ships the loadable DLL in `bin/` and puts only the *import* library
+/// in `lib/`, so joining `lib` unconditionally finds a directory that exists and
+/// holds nothing loadable --- see `pdfium_library_dir` in `lib.rs`, which had
+/// exactly this wrong. The other spike binaries still hardcode `lib`; they have
+/// never been run on Windows, and this one now is.
 fn library_dir() -> PathBuf {
+    let subdir = if cfg!(windows) { "bin" } else { "lib" };
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium/lib"))
+        .map(|root| root.join("vendor/pdfium").join(subdir))
         .unwrap_or_else(|| PathBuf::from("."))
 }
