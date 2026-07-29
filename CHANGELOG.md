@@ -74,6 +74,32 @@ experience.
   that is stated rather than hidden, since the assertion that would catch it is in the macOS
   branch and no run on this machine reaches it.
 
+- **`sandbox_win`: the containment the probe measured, as a module.** A job object (memory
+  cap, one process, kill-on-close, die-on-unhandled-exception) and a low integrity level,
+  applied to a child that is created **suspended** so the job exists before the child runs an
+  instruction --- assigning a job to a running process is a race the process can win, and a
+  limit that is usually applied in time is not a limit.
+
+  It fixes the shortcut `bin/win_sandbox_probe.rs` documented in itself: inheritance is
+  narrowed by `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` to an explicit set rather than handing the
+  child every inheritable handle the parent holds. Marking handles inheritable and naming
+  them in the list are two halves of one decision, so `spawn_contained` does both and neither
+  can be forgotten separately.
+
+  Two checks were written asserting the opposite of what Windows does, and both were
+  corrected by running the call rather than by reasoning: an empty handle list is refused
+  (`ERROR_BAD_LENGTH`), so "inherit nothing" is modelled as `Option<AttributeList>` and
+  reaches `CreateProcess` as `bInheritHandles: FALSE`; and a zero memory cap is refused by
+  the kernel (`ERROR_INVALID_PARAMETER`), not silently accepted. `Job::assign` and
+  `make_inheritable` are `unsafe`, because a safe function over a raw `HANDLE` hides a real
+  liveness obligation --- a recycled handle value applies the operation to someone else's
+  object rather than failing cleanly.
+
+  `WORKER_MEMORY_CAP` is a **real** kernel bound, which is the one place the Windows story is
+  stronger than the macOS one: `docs/THREAT-MODEL.md` §T3 records that macOS refuses every
+  relevant rlimit and the substitute poll can bound a leak but never a burst. Nothing calls
+  this module yet.
+
 - **`Shm` is real on Windows.** Every off-unix constructor previously returned "render
   workers are implemented on macOS only" --- which reads like a containment decision and was
   the absence of an implementation wearing the language of a policy. It is now a nameless
