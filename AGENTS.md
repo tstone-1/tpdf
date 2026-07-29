@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 116 entries
+The one thing this file does *not* carry in full is the trap list --- 120 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -283,8 +283,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 116 of them and the full text
-was 93% of this file --- an instruction budget spent on the 115 traps that are not
+titles. Only the titles are here, because there are 120 of them and the full text
+was 93% of this file --- an instruction budget spent on the 119 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -420,6 +420,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
 - A harness that prints stderr only on failure hides what a passing run said
+- A mutation caught by an access violation produces no test results at all
+- A comment claimed an ordering mattered, and the mutation that should have hurt did not
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 - Repeating a race inside one process re-runs the first round, not the race
 
@@ -436,6 +438,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A restricting SID stops the loader, and the code never runs
 - One failing rung cannot say which ingredient failed
 - A verdict that takes the last row that worked recommends the weakest one
+- A refusal that exists because nobody wrote the code is not a guarantee
+- The kernel refuses a writable mapping of a read-only file, on both platforms
 
 ### Fixtures
 - The test fixtures are generated, not committed

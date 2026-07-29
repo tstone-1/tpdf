@@ -2654,3 +2654,68 @@ number, and only the second says what happened. The probe printed the first, so 
 most important result in the run looked like a value nobody would bother to look up. Decode
 what a platform hands back, in the units the platform meant --- otherwise the finding is
 present and unreadable, which is the same outcome as absent.
+
+### A refusal that exists because nobody wrote the code is not a guarantee
+
+`Shm`'s off-unix constructors all returned "render workers are implemented on macOS
+only", and a test asserted it. That reads like a containment decision and was nothing of
+the kind --- it was the absence of an implementation wearing the language of a policy. When
+the Windows mapping landed, the test asserting the refusal had to be **deleted**, and that
+deletion is the point rather than a casualty: what it pinned was the gap.
+
+The tell is worth naming, because the two look identical from the call site. A real refusal
+survives someone implementing the thing (`Worker::spawn` still refuses off macOS, because
+the *sandbox* is what is missing and no amount of Windows code changes that). A placeholder
+refusal disappears the moment the code exists. Ask which one a check is pinning before
+trusting that it is about security.
+
+The companion mistake was already latent in the suite. `spawning_a_worker_refuses_off_macos`
+passed `"nonexistent.pdf"`, which was fine while *every* constructor refused with the same
+sentence --- and became wrong the instant `map_file` worked, since a missing file then fails
+one step earlier with "could not open". Its own doc comment had predicted this ("would still
+have to hold if `Shm` ever grew a Windows implementation") without noticing that its fixture
+would not. A check whose input is invalid for the code under test can pass for years on the
+strength of an unrelated error.
+
+### The kernel refuses a writable mapping of a read-only file, on both platforms
+
+The POSIX side records that `mmap` rejects `PROT_WRITE` over a read-only descriptor with
+`EACCES`, and that the kernel refused it before the threat model did. Windows does the same
+thing through a different door: `CreateFileMapping` with `PAGE_READWRITE` over a handle
+opened by `File::open` fails with `ERROR_ACCESS_DENIED`.
+
+Worth writing down because it makes an otherwise untestable property testable. "A document
+mapping is read-only" sounds like it needs a write to prove, and a write to a read-only view
+is an access violation that takes the whole test process with it. It does not need one: the
+*constructor* fails, so a mutation swapping `PAGE_READONLY` for `PAGE_READWRITE` turns an
+ordinary round-trip check red with a legible message. Look for the layer that refuses early
+before concluding a safety property can only be demonstrated by violating it.
+
+### A mutation caught by an access violation produces no test results at all
+
+Stripping `FILE_MAP_WRITE` from a writable view is caught --- the check that writes to the
+mapping faults, `cargo test` exits `0xC0000005`, and the gate goes red. But it produces
+**zero** `test result:` lines, because the process dies before the harness can summarise.
+
+Grepping for `FAILED` therefore reports nothing, which is indistinguishable from a mutation
+that survived --- and "survived" is the most misleading verdict a mutation pass can give,
+since it reads as a gap in the tests rather than a crash in the run. This file already
+records that a harness needs positive evidence a run happened; this is the instance that
+proves the rule is not theoretical. Count the result lines and treat zero as a broken run,
+distinct from a clean one.
+
+### A comment claimed an ordering mattered, and the mutation that should have hurt did not
+
+`Shm::drop` unmaps the view before closing the section, and said the reverse order "leaks the
+view rather than failing, and nothing reports it". Reversing the two left all fifteen checks
+green --- and the comment, not the test suite, turned out to be what was wrong: Windows keeps
+a mapped view valid after its section handle is closed and holds the backing open until the
+last view is unmapped.
+
+The rule this file already carries is that a guard no mutation can break is usually a guard
+to delete, after asking where its impossibility is enforced. There is a fourth case, and it
+is this one: the guard is fine and the *justification* is false. Deleting the code would have
+been wrong, and leaving the claim would have been worse --- the next person reads a stated
+invariant, believes ordering is load-bearing, and preserves it somewhere it genuinely is not.
+The order is kept because it mirrors the POSIX side and reads acquisition-order, the comment
+now says exactly that, and it says no test pins it.

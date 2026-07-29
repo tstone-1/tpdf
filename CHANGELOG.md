@@ -74,6 +74,34 @@ experience.
   that is stated rather than hidden, since the assertion that would catch it is in the macOS
   branch and no run on this machine reaches it.
 
+- **`Shm` is real on Windows.** Every off-unix constructor previously returned "render
+  workers are implemented on macOS only" --- which reads like a containment decision and was
+  the absence of an implementation wearing the language of a policy. It is now a nameless
+  section object: `CreateFileMappingW` with a null `lpName`, so it is reachable only through
+  a handle, which is the same property the unlinked temp file buys on the POSIX side. A
+  section holds its own reference to what backs it, so `map_file` closes the file handle and
+  a child needs only the section --- there is no Windows analogue of passing a descriptor
+  alongside.
+
+  `raw_fd` is the one method not carried over: a `HANDLE` is pointer-sized and an `i32` is
+  not, so returning one would truncate on 64-bit into a value that still looks like a
+  plausible descriptor. `raw_handle` and `from_handle` replace it.
+
+  Four mutations. Swapping the halves of the 32-bit length split turns three checks red;
+  making the document mapping `PAGE_READWRITE` turns two red with `ERROR_ACCESS_DENIED`,
+  because Windows refuses a writable section over a read-only file handle exactly as `mmap`
+  refuses `PROT_WRITE` --- which is what makes an otherwise unprovable property provable
+  without a faulting write. Stripping `FILE_MAP_WRITE` is caught too, but as a
+  `0xC0000005` process death with **no** `test result:` lines at all, which is why the run
+  was checked for positive evidence rather than grepped for `FAILED`. The fourth survives:
+  reversing the drop order changes nothing, and the comment claiming it leaked was simply
+  wrong. The order is kept and the comment now says no test pins it.
+
+  `Worker::spawn` still refuses off macOS, which is the refusal that was always about the
+  sandbox rather than about missing code. Its check needed a real fixture to keep meaning
+  that: it passed `"nonexistent.pdf"`, which was fine while every constructor refused
+  identically and would have gone red at "could not open" the moment `map_file` worked.
+
 - **What Windows containment can be, measured** (`bin/win-sandbox-probe`). macOS gets its
   boundary from `sandbox_init`; Windows has no counterpart, so containment there is assembled
   from a job object, an integrity level and a restricted token, and which combination still
