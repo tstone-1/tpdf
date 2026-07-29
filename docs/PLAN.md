@@ -3115,15 +3115,55 @@ warning had not fired at all. The general form is worth carrying: a diagnostic w
 purpose is *"this run was fine, but you should know X"* is precisely what the usual
 stderr-on-failure convention suppresses.
 
-**What a real answer needs, and why it did not start here.** Job objects, a restricted token
-and a separate desktop are all Win32, so the containment path needs a direct dependency
-(`windows-sys` is already in the tree transitively and is MIT/Apache, but `AGENTS.md` makes
-adding one a decision rather than a step) and a probe in the shape of spike 0.5: spawn a
-contained child, render a tile, and compare **pixels** against an in-process render — because
-the macOS work already recorded a sandboxed PDFium returning `ok` while silently substituting
-a typeface, and the Windows font path has no reason to be kinder. The cheap shortcut for
-testing a restricted token without FFI (`runas /trustlevel`) is blocked by this machine's
-permission classifier, so there is no version of this that avoids the dependency decision.
+#### Spike 0.7 — what Windows containment can be (2026-07-29)
+
+`bin/win_sandbox_probe.rs`, in the shape spike 0.5 established: re-exec this binary as a
+contained child, render one tile, compare **pixels** against an in-process render. Pixels
+rather than exit codes, because the macOS work already recorded a sandboxed PDFium returning
+`ok` while silently substituting a typeface, and the Windows font path has no reason to be
+kinder — the default fixture is `text-base14.pdf` precisely because base-14 faces are not
+embedded and must be found on the system.
+
+Six rungs, four real and two diagnostic:
+
+| rung | renders | identical | exit | denies |
+|------|---------|-----------|------|--------|
+| `bare` (control) | yes | yes | 0 | nothing |
+| `job` | yes | yes | 0 | memory over 512 MB, a second process, orphans |
+| `lowil` | **yes** | **yes** | 0 | writing `%USERPROFILE%`, `OpenProcess` on the parent |
+| `noprivs` *(diagnostic)* | yes | yes | 0 | nothing |
+| `sidonly` *(diagnostic)* | no | — | `STATUS_DLL_NOT_FOUND` | — |
+| `restricted` | no | — | `STATUS_DLL_NOT_FOUND` | — |
+
+**The answer is a job object plus low integrity.** PDFium renders byte-identically under it,
+so the font risk did not materialise, and the process loses the authority to write anything
+or to reach into the app process. What it does *not* lose is the ability to **read** — an
+integrity level governs writes — which is why the child is handed its document and its output
+as inherited handles and never opens a path: that is the Windows analogue of the `dup2` the
+macOS worker does, and proving it works is half of what a real worker needs.
+
+**The stronger rung is not reachable by adding a flag.** A restricting SID (`S-1-5-12`) makes
+every access check consult the restricted list too, system DLLs grant it nothing, and the
+child dies in the loader before `main`. That is the exact inverse of the macOS ordering rule
+— there the process applies the boundary to itself and there is a "before" in which to bind
+PDFium; here the token is in force from the first instruction. Chromium's answer is an
+initial impersonation token for startup handed over to a lockdown token afterwards, and that
+is a piece of work rather than a parameter.
+
+Two diagnostics earned their place: with `restricted` failing, either ingredient was a
+plausible cause, and `sidonly` versus `noprivs` settled it in one run. See `docs/TRAPS.md`
+for that and for why `CreateProcessAsUser` rejected the first token derivation outright.
+
+**Still not wired in.** The probe proves the mechanism; no worker uses it. `RenderService`
+still selects in-process off macOS, so Windows fails open today exactly as it did this
+morning — with the difference that the shape of the fix is now measured rather than assumed.
+The remaining work is a Windows worker transport (file mapping for the shared buffer,
+`DuplicateHandle` where macOS passes an fd over a socket) and `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`
+so a contained child inherits only the two handles it is given rather than everything marked
+inheritable, which is what the probe does and says so.
+
+The dependency this needed is `windows-sys`, MIT/Apache and already in the tree transitively,
+so it adds no crate — checked with `cargo metadata` rather than assumed, per `AGENTS.md`.
 
 ### Phase 2 — Editing foundation
 

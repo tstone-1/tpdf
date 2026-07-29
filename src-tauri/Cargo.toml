@@ -61,6 +61,23 @@ objc2-pdf-kit = { version = "0.3", features = [
     "objc2-app-kit",
 ] }
 
+# Windows containment, for `bin/win_sandbox_probe.rs`. macOS gets its boundary
+# from `sandbox_init`, which has no counterpart here: job objects, integrity
+# levels and restricted tokens are all Win32, so there is no version of this that
+# avoids a direct dependency. `windows-sys 0.61` is already in the tree
+# transitively (Tauri, and several build scripts), so this adds no crate at all
+# --- and it is `MIT OR Apache-2.0`, checked with `cargo metadata` rather than
+# assumed, because one copyleft crate anywhere removes the option of making this
+# repository public (AGENTS.md).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
 [[bin]]
 name = "tile-bench"
 path = "src/bin/tile_bench.rs"
@@ -120,3 +137,7 @@ path = "src/bin/prespawn_bench.rs"
 [[bin]]
 name = "fdpass-probe"
 path = "src/bin/fdpass_probe.rs"
+
+[[bin]]
+name = "win-sandbox-probe"
+path = "src/bin/win_sandbox_probe.rs"

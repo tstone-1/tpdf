@@ -2580,3 +2580,77 @@ gate that treats stderr as a failure artifact.
 
 `viewer_check.py` now echoes `[WARN]` lines on a passing run and stays quiet about
 everything else, so the webview's ordinary teardown noise does not come back with it.
+
+### `CreateProcessAsUser` waives a privilege only for a token it still recognises
+
+`CreateProcessAsUser` normally needs `SE_ASSIGNPRIMARYTOKEN_NAME`, which an ordinary
+non-elevated account does not hold, and waives it when the token handed to it is a
+restricted version of the caller's own. So a restricted-token spawn is supposed to work
+without elevation --- and the first attempt failed with `ERROR_PRIVILEGE_NOT_HELD` (1314).
+
+The cause was the *order* of two calls that look interchangeable. Duplicating the process
+token and then calling `CreateRestrictedToken` on the duplicate produces a token Windows no
+longer recognises as derived from the caller, so the waiver does not apply. Restricting the
+process token first and duplicating the *result* --- which is Chromium's order, and looks
+like an arbitrary stylistic difference until it isn't --- spawns fine.
+
+Worth generalising past this API: when a documented waiver depends on a relationship
+between two objects ("a restricted version of the caller's token"), every intermediate step
+is a chance to break the relationship while preserving every visible property. Both tokens
+here are primary, both are restricted, both have the same SIDs and privileges; only one is
+accepted. `ERROR_PRIVILEGE_NOT_HELD` names the symptom and points at the wrong problem,
+which is why the first reading was "this machine cannot do it" rather than "this derivation
+cannot".
+
+### A restricting SID stops the loader, and the code never runs
+
+The rung above `lowil` does not fail *in* PDFium. It fails before `main`: a token carrying
+`S-1-5-12` (`RESTRICTED`) as a restricting SID passes every access check twice, once against
+the normal token and once against the restricted SID list, and system DLLs grant nothing to
+`RESTRICTED`. The child dies at `0xC0000135`, `STATUS_DLL_NOT_FOUND`.
+
+This is the exact inverse of the macOS ordering rule (`worker_child.rs`: bind PDFium
+*before* `sandbox_init`, open the document after). There the boundary is applied by the
+process to itself, so there is a "before" in which to load a library. On Windows the token
+is chosen at `CreateProcess` time and is in force from the first instruction, so there is no
+"before" at all --- which is why Chromium runs an *initial* impersonation token for startup
+and drops to the lockdown token only once the DLLs are in. Any Windows worker that wants a
+restricting SID owes that two-token dance; nothing simpler reaches it.
+
+`lowil` has no such problem, and that is the practical finding: an integrity level governs
+what a process may *write*, so the loader still reads. Measured on 2026-07-29, low integrity
+renders **pixel-identical** to an uncontained render, denies writing to the user profile and
+denies opening the parent process --- and still allows reading any path, which is stated in
+the probe's own output rather than left to be discovered, because a report showing all three
+denied would claim more than an integrity level buys.
+
+### One failing rung cannot say which ingredient failed
+
+The restricted-token rung combined two things: `DISABLE_MAX_PRIVILEGE` and a restricting SID.
+When it failed, either was a plausible cause, and a plausible cause written into a document
+becomes a fact nobody re-tests. Adding two diagnostic rungs that each differ from it by
+exactly one ingredient settled it in one run: privileges-dropped-only renders perfectly,
+SID-only fails identically to the pair. The restricting SID is the whole cause.
+
+The cost was about twenty lines. The alternative --- publishing "restricted tokens do not
+work" --- would have been wrong in the direction that looks thorough, which this file already
+records as its own trap from the other side.
+
+### A verdict that takes the last row that worked recommends the weakest one
+
+The probe printed a ladder and then named "the highest rung that renders identically" by
+taking the last successful row. With the two diagnostics inserted before `restricted`, that
+was `noprivs` --- which renders perfectly and denies **nothing**: it allows writing to the
+user profile, allows opening the parent process, allows reading any path. A verdict line
+recommending it would have read exactly like the real answer.
+
+Position in a list is not strength, and a summary that assumes it will confidently propose
+the one configuration that buys nothing. Rows that exist to attribute a failure are marked
+and excluded from the verdict; the ordering that makes them readable is not the ordering
+that ranks them.
+
+A relative of the same shape: `3221225781` and `0xC0000135 STATUS_DLL_NOT_FOUND` are the same
+number, and only the second says what happened. The probe printed the first, so the single
+most important result in the run looked like a value nobody would bother to look up. Decode
+what a platform hands back, in the units the platform meant --- otherwise the finding is
+present and unreadable, which is the same outcome as absent.

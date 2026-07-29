@@ -20,10 +20,7 @@
 //! undefined behaviour whatever the handles are (`AGENTS.md`).
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use std::sync::mpsc::{channel, Sender};
-
-use pdfium_render::prelude::Pdfium;
 
 use crate::progressive::{self, CancelToken, RawDocument};
 use crate::queue::{Claim, SharedQueue};
@@ -402,21 +399,13 @@ fn warm_fonts(bindings: progressive::Bindings) {
     let _ = render::render_tile(bindings, &document, &request, &CancelToken::new());
 }
 
-/// Loads PDFium. Must run before the sandbox.
-///
-/// Public so a probe can exercise *this* binding rather than a copy of it: a
-/// feasibility check that reimplements the thing it is checking measures the
-/// reimplementation.
-///
-/// # Errors
-///
-/// The library being absent or unloadable at `library_dir`.
-pub fn bind(library_dir: &Path) -> Result<&'static Pdfium, String> {
-    let path = Pdfium::pdfium_platform_library_name_at_path(library_dir);
-    let bindings = Pdfium::bind_to_library(&path)
-        .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
-    Ok(Box::leak(Box::new(Pdfium::new(bindings))))
-}
+// Moved to `progressive::bind` so the Windows containment probe can use the same
+// binding rather than a sixth copy of it --- this module is `#[cfg(unix)]`, which
+// made the one *public* binding the one a Windows probe could not reach. Re-exported
+// rather than relocated at the call sites: `fdpass_probe.rs` imports it from here
+// beside `apply_sandbox`, which genuinely is macOS-only, and splitting that import
+// would suggest the two have different homes for a reason a reader could find.
+pub use crate::progressive::bind;
 
 #[cfg(target_os = "macos")]
 extern "C" {
