@@ -3157,10 +3157,18 @@ for that and for why `CreateProcessAsUser` rejected the first token derivation o
 **Still not wired in.** The probe proves the mechanism; no worker uses it. `RenderService`
 still selects in-process off macOS, so Windows fails open today exactly as it did this
 morning — with the difference that the shape of the fix is now measured rather than assumed.
-The remaining work is a Windows worker transport (file mapping for the shared buffer,
-`DuplicateHandle` where macOS passes an fd over a socket) and `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`
-so a contained child inherits only the two handles it is given rather than everything marked
-inheritable, which is what the probe does and says so.
+
+The first piece of that landed the same day: **`Shm` is real on Windows** (a nameless
+section object; see the changelog). That is the shared-buffer half of the transport, and it
+removes a refusal that was never a policy — every off-unix constructor returned the
+worker-refusal sentence, which reads like containment and was the absence of code. What
+remains for a worker: handing the section to the child (`DuplicateHandle`, or inheritance
+with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` so a hostile child receives only the two handles it
+is given rather than everything marked inheritable, which is what the probe does and says
+so), un-gating `worker_child` from `#[cfg(unix)]`, and applying the job object and integrity
+level at spawn. `Worker::spawn` refuses off macOS throughout, and should keep refusing until
+all of that exists — that refusal *is* about the sandbox, which is the distinction worth
+holding on to.
 
 The dependency this needed is `windows-sys`, MIT/Apache and already in the tree transitively,
 so it adds no crate — checked with `cargo metadata` rather than assumed, per `AGENTS.md`.
