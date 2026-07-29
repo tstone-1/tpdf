@@ -18,6 +18,11 @@ pub mod progressive;
 mod protocol;
 mod queue;
 pub mod render;
+/// Windows containment, which is what `worker_child`'s `sandbox_init` is on the
+/// other platform. Gated because job objects, integrity levels and attribute
+/// lists are all Win32 with no portable counterpart.
+#[cfg(windows)]
+pub mod sandbox_win;
 pub mod search;
 pub mod session;
 pub mod startup;

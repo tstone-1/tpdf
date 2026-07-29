@@ -2719,3 +2719,36 @@ been wrong, and leaving the claim would have been worse --- the next person read
 invariant, believes ordering is load-bearing, and preserves it somewhere it genuinely is not.
 The order is kept because it mirrors the POSIX side and reads acquisition-order, the comment
 now says exactly that, and it says no test pins it.
+
+### "Inherit nothing" cannot be spelled as an empty handle list
+
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` narrows inheritance to an explicit set, so the obvious
+way to say "this child gets no handles" is an empty set. `UpdateProcThreadAttribute` refuses
+it with `ERROR_BAD_LENGTH` (24).
+
+That is not a quirk to route around, because the fallback is the dangerous direction:
+`bInheritHandles: TRUE` with no attribute list inherits **every** inheritable handle the
+parent holds, which for a viewer that has other documents open is the exact opposite of what
+was asked for. An empty request has to reach `CreateProcess` as `bInheritHandles: FALSE` and
+no extended startup info at all. It is modelled as `Option<AttributeList>` rather than an
+empty `Vec` so a caller cannot construct a request Win32 has no way to represent.
+
+Written here because the check asserting an empty list *would* build was written first, and
+was wrong. So was its neighbour: `SetInformationJobObject` rejects a zero
+`ProcessMemoryLimit` with `ERROR_INVALID_PARAMETER` (87), where the guess had been that the
+kernel would accept it and instantly kill every worker. Two assumptions about what Windows
+tolerates, both wrong in the same session, both cheap to settle by running the call.
+
+### A safe function taking a raw `HANDLE` has an unstated contract, and clippy says so
+
+`Job::assign(&self, process: HANDLE)` and `make_inheritable(handle: HANDLE)` were safe
+public functions over `*mut c_void`. `clippy::not_unsafe_ptr_arg_deref` denies that by
+default, and it is right in a way worth internalising rather than silencing: nothing in the
+type distinguishes a live handle from a closed or forged one, so the obligation is real and
+belongs in the signature where a caller has to acknowledge it.
+
+The tempting repair is `#[allow]`, on the reasoning that a `HANDLE` is "just an integer" and
+Win32 validates it. Win32 validating it is exactly the problem --- a closed handle value gets
+recycled, so the failure is not a clean error but an operation applied to *someone else's
+object*. Marking the function `unsafe` costs one `unsafe {}` at each of three call sites and
+turns an invisible assumption into a written one.
