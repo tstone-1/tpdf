@@ -38,6 +38,7 @@ use std::os::windows::ffi::OsStrExt;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::{
     AllocateAndInitializeSid, DuplicateTokenEx, FreeSid, GetLengthSid, GetSidSubAuthority,
@@ -45,18 +46,20 @@ use windows_sys::Win32::Security::{
     TokenIntegrityLevel, TokenPrimary, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
     TOKEN_ALL_ACCESS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
 };
+use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
     JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOB_OBJECT_LIMIT_PROCESS_MEMORY,
 };
+use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
 use windows_sys::Win32::System::Threading::{
     CreateProcessAsUserW, CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess,
     InitializeProcThreadAttributeList, OpenProcessToken, ResumeThread, UpdateProcThreadAttribute,
     CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST,
-    PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTUPINFOEXW,
+    PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
 /// Low integrity, `S-1-16-4096`.
@@ -450,12 +453,86 @@ impl Drop for Contained {
     }
 }
 
+/// An anonymous pipe, returned as `(read, write)`.
+///
+/// **Neither end is inheritable.** That is the whole reason this does not use
+/// `CreatePipe`'s security attributes to mark them: doing so marks *both*, and
+/// the end the parent keeps must never reach the child --- a worker holding the
+/// read end of its own reply pipe can watch every answer it gives, and one
+/// holding the write end of its own request pipe can feed itself. Only the end
+/// actually handed over is marked, by [`spawn_contained`], from the list.
+///
+/// # Errors
+///
+/// `CreatePipe` failing.
+pub fn pipe() -> Result<(HANDLE, HANDLE), String> {
+    let mut read: HANDLE = std::ptr::null_mut();
+    let mut write: HANDLE = std::ptr::null_mut();
+    // SAFETY: both out-parameters outlive the call; a null attribute pointer
+    // means default security and no inheritance.
+    let ok = unsafe { CreatePipe(&raw mut read, &raw mut write, std::ptr::null(), 0) };
+    if ok == 0 {
+        return Err(format!("CreatePipe failed: {}", last_error()));
+    }
+    Ok((read, write))
+}
+
+/// The three handles a contained child gets as its standard streams.
+///
+/// All three, always, with no `Option` per stream --- because `STARTUPINFO` has no
+/// way to say "this one, but leave the others alone". Setting
+/// `STARTF_USESTDHANDLES` makes the child take **all three** from this struct, so
+/// a stream left null is a child with no stderr rather than a child with the
+/// parent's. A caller that wants to keep one passes the parent's own handle for
+/// it; [`Stdio::with_inherited_stderr`] is that case, which is every case here.
+pub struct Stdio {
+    /// What the child reads requests from.
+    pub stdin: HANDLE,
+    /// What the child writes replies to.
+    pub stdout: HANDLE,
+    /// Where a dying worker's epitaph goes. See [`Stdio::with_inherited_stderr`].
+    pub stderr: HANDLE,
+}
+
+impl Stdio {
+    /// Two pipe ends plus this process's own stderr.
+    ///
+    /// stderr is shared rather than piped for the reason `worker_child.rs` gives
+    /// at length: a worker that dies silently is the hardest failure here to
+    /// diagnose, and nothing in the parent is reading a third pipe at the moment
+    /// a child dies. Sharing the console means the message lands wherever the
+    /// app's own messages land.
+    ///
+    /// # Errors
+    ///
+    /// `GetStdHandle` failing, which it does when there is no stderr at all.
+    pub fn with_inherited_stderr(stdin: HANDLE, stdout: HANDLE) -> Result<Self, String> {
+        // SAFETY: a documented constant; the call takes no pointers.
+        let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+        if stderr.is_null() || stderr == INVALID_HANDLE_VALUE {
+            return Err("this process has no stderr to share".into());
+        }
+        Ok(Self {
+            stdin,
+            stdout,
+            stderr,
+        })
+    }
+}
+
 /// Spawns `command` contained, suspended, reaching only `handles`.
 ///
 /// `handles` are made inheritable here rather than by the caller, because
 /// inheritability and list-membership are two halves of one decision and
 /// splitting them is how a handle ends up in the list but not inheritable ---
 /// which fails the spawn with a parameter error that names neither.
+///
+/// `stdio`, when given, is folded into that same set. It has to be: with a handle
+/// list present, a standard handle the child is told to use and that is *not* in
+/// the list is not inherited, and the child starts with a stream it cannot read.
+/// The caller therefore does not pass its stdio handles in `handles` --- doing so
+/// would be harmless but would suggest the two sets are independent, and they are
+/// not.
 ///
 /// # Errors
 ///
@@ -464,8 +541,13 @@ pub fn spawn_contained(
     command: &str,
     handles: &[HANDLE],
     containment: &Containment,
+    stdio: Option<&Stdio>,
 ) -> Result<Contained, String> {
-    for handle in handles {
+    let mut handles = handles.to_vec();
+    if let Some(stdio) = stdio {
+        handles.extend_from_slice(&[stdio.stdin, stdio.stdout, stdio.stderr]);
+    }
+    for handle in &handles {
         // SAFETY: the caller's obligation, restated on this function.
         unsafe { make_inheritable(*handle)? };
     }
@@ -478,11 +560,17 @@ pub fn spawn_contained(
     let job = Job::create(containment.memory_cap)?;
 
     let mut cmdline: Vec<u16> = OsStr::new(command).encode_wide().chain(Some(0)).collect();
-    let mut attributes = AttributeList::new(handles.to_vec())?;
+    let mut attributes = AttributeList::new(handles)?;
 
     // SAFETY: zeroed is the documented initial state; `cb` is set below.
     let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     startup.StartupInfo.cb = size_of_u32::<STARTUPINFOEXW>();
+    if let Some(stdio) = stdio {
+        startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = stdio.stdin;
+        startup.StartupInfo.hStdOutput = stdio.stdout;
+        startup.StartupInfo.hStdError = stdio.stderr;
+    }
 
     // With no handles to pass, inheritance is switched off entirely rather than
     // narrowed to nothing --- see `AttributeList::new`. Leaving `bInheritHandles`
@@ -881,6 +969,63 @@ mod tests {
     #[test]
     fn a_level_stricter_than_low_is_still_contained() {
         contained_verdict(0, true).expect("untrusted integrity is contained");
+    }
+
+    /// A contained child speaks through a pipe, end to end.
+    ///
+    /// The one test here that is not a unit test, and it earns that: the pipe
+    /// wiring has four parts that only fail *together*, and each failure looks
+    /// like the others from outside. `STARTF_USESTDHANDLES` without the handles
+    /// in the attribute list gives a child with unusable streams; handles in the
+    /// list but not marked inheritable fails the spawn with a parameter error
+    /// naming neither; and the parent forgetting to close its copy of the child's
+    /// write end gives a read that never sees EOF --- a hang, not an error. Only
+    /// reading a known string back proves all four.
+    ///
+    /// `cmd.exe` rather than a fixture binary, deliberately: it also answers
+    /// whether an ordinary program *runs at all* under this containment, which is
+    /// the question the whole rung turns on.
+    #[test]
+    fn a_contained_child_talks_back_through_a_pipe() {
+        use std::io::Read;
+        use std::os::windows::io::FromRawHandle;
+
+        let (their_stdin, my_stdin) = pipe().expect("a request pipe");
+        let (my_stdout, their_stdout) = pipe().expect("a reply pipe");
+        let stdio =
+            Stdio::with_inherited_stderr(their_stdin, their_stdout).expect("stdio for the child");
+
+        let child = spawn_contained(
+            "cmd.exe /c echo tpdf-contained",
+            &[],
+            &Containment::default(),
+            Some(&stdio),
+        )
+        .expect("a contained child");
+        child.resume().expect("the child runs");
+
+        // The parent's copies of the child's ends go now. Holding the write end
+        // of the reply pipe would keep it open forever and the read below would
+        // block rather than return.
+        // SAFETY: both are live handles this process owns and closes once.
+        unsafe {
+            CloseHandle(their_stdin);
+            CloseHandle(their_stdout);
+            CloseHandle(my_stdin);
+        }
+
+        // SAFETY: a live pipe end this process owns; `File` closes it on drop.
+        let mut replies = unsafe { std::fs::File::from_raw_handle(my_stdout.cast()) };
+        let mut said = String::new();
+        replies
+            .read_to_string(&mut said)
+            .expect("the child's output");
+
+        assert!(
+            said.contains("tpdf-contained"),
+            "a contained child should still run and be heard, got {said:?}"
+        );
+        assert_eq!(child.wait().map(describe_exit).as_deref(), Ok("0"));
     }
 
     /// A null handle is refused rather than passed to Win32.
