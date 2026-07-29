@@ -313,11 +313,37 @@ harness and never answers: pipe **direction** and content. Both are the probe's 
 by mutating the pipe pair and watching the probe go red --- see the trap *A test whose child
 never answers cannot see the pipes being crossed*.
 
-**Windows still fails open**, for one remaining reason: `Backend::default_here()` selects
-in-process off macOS, so only `TPDF_BACKEND=worker` reaches the contained path. Flipping that
-is the next step. Pre-spawning is also unimplemented there --- a Windows child is given its
-document at `CreateProcess`, so a worker started before a file is chosen has nothing to be
-handed; `Worker::prespawn` refuses and names that reason rather than the sandbox.
+**Windows no longer fails open** (2026-07-29). `Backend::default_here()` selects workers there,
+and the evidence is external rather than a mark of our own:
+
+```
+python scripts/win_modules.py <pid>          # on its own
+python scripts/viewer_check.py <exe> <pdf>   # samples it throughout a real run
+```
+
+`viewer_check.py` now launches the app rather than blocking on it, reads the loaded module list
+from outside the process while a document is open, and takes the **union** of its samples ---
+the parser is mapped only while a document is open, so a single look could miss it in either
+direction. The module count is printed beside the verdict, because an enumeration that read
+*nothing* reports "not mapped" exactly as containment does; a peak of zero is reported as a
+broken observation, never as a pass.
+
+Run **before** the flip it reported `[FAIL] the app process mapped the PDF parser, 47 modules
+at peak`. That control is why the pass afterwards means anything. After: four corpora green
+with unchanged ran/skipped splits, no `[WARN]`, 44--45 modules at peak, no `pdfium` among them.
+
+That line is printed *outside* the 86 check names on purpose --- those are `viewercheck.ts`'s
+and are the cross-platform invariant, and adding a Windows-only name to that set would make the
+two platforms look divergent when they are not.
+
+Pre-spawning is still unimplemented there --- a Windows child is given its document at
+`CreateProcess`, so a worker started before a file is chosen has nothing to be handed;
+`Worker::prespawn` refuses and names that reason rather than the sandbox. `Worker::spawn_shared`
+takes every open instead, so the cost is the ~6.6 ms macOS saves, not a failure.
+
+What Windows still owes is **pooled**-worker evidence: `backend-probe` is `#[cfg(target_os =
+"macos")]` and five other probe binaries still refuse to act as a worker off unix, so crash
+restart, capacity and retirement are unmeasured there.
 
 Still unmeasured and still macOS-shaped: every *number* in this file and in `AGENTS.md` is
 macOS arm64, `session_check.py` and `open_check.py` want `open -a` and an `.app`, and

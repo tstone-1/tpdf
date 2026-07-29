@@ -81,23 +81,26 @@ reason, and so must tpdf. **In place for the viewer's own render path since 2026
 `RenderService` defaults to worker processes on macOS, and `bin/backend_probe.rs` proves the
 app process never maps libpdfium by reading the dynamic linker's image table.
 
-**On macOS, and only there.** The profile is `sandbox_init` SBPL, which has no Windows
-equivalent, so `Worker::spawn` refuses off macOS and `Backend::default_here()` falls back to
-in-process --- the control, running PDFium in the app process with no containment at all. The
-refusal is deliberate and asserted by tests, because a worker without the policy is a different
-thing wearing the same name --- but note what it does *not* buy: only a caller asking for
-`TPDF_BACKEND=worker` reaches that refusal, and the default never asks. Windows therefore
-**fails open**, rendering documents unsandboxed. This constraint is satisfied on **one**
-platform, and a Windows port owes a containment answer --- job objects, a restricted token, a
-separate desktop --- before it can ship rather than after.
+**On both platforms since 2026-07-29.** macOS gets its boundary from `sandbox_init` SBPL,
+which the child applies to itself after `exec`; Windows has no counterpart, so the *parent*
+builds one --- a low-integrity token inside a job object, applied while the child is still
+suspended. `Backend::default_here()` selects workers on both, and a platform with neither
+still falls back to in-process and records `render::UNSANDBOXED_MARK` with a `[WARN]`, so an
+uncontained run stays distinguishable from a contained one. A mark rather than a refusal is
+deliberate: refusing would make a platform useless rather than uncontained.
 
-It no longer does so *silently*: since 2026-07-29 the uncontained default records
-`render::UNSANDBOXED_MARK` on the startup timeline and prints a `[WARN]`, so a run that
-parsed a document in the app process is distinguishable from one that did not. That is
-visibility, not containment, and deliberately not a refusal --- refusing would make the
-platform useless rather than uncontained, which is a product decision rather than a defect to
-fix in passing. The warning matters more than it reads: the viewer **works** on Windows now,
-so the uncontained path is one real people can take.
+**The Windows evidence is external, which is the part that matters.** A milestone we record
+says what our code believes it did. `scripts/win_modules.py` reads the app process's loaded
+module list from *outside* it, through Toolhelp, while a document is open, and asserts
+`pdfium.dll` is absent --- with the module count printed beside it, so a failed enumeration
+cannot read as containment. `viewer_check.py` samples it throughout the run and takes the
+union, since the parser is mapped only while a document is open.
+
+It was run **before** the flip and reported the parser mapped: 47 modules at peak, `[FAIL]`.
+That control is the reason the pass afterwards means anything. After: all four corpora green
+with the same ran/skipped splits as before (81/5, 81/5, 75/11, 52/34), the `[WARN]` gone, and
+44--45 modules at peak with no `pdfium` among them --- including `outline-hostile`, which is
+the corpus that most wants a boundary.
 
 **What Windows containment can actually be is now measured, not guessed** (2026-07-29,
 `bin/win_sandbox_probe.rs`). Six rungs, each rendering the same tile from the same document
@@ -136,11 +139,14 @@ macOS line in `worker.rs` is byte-identical to what it was --- deliberate, becau
 can be re-verified on macOS from a Windows machine and a diff that touches only Windows code is
 the strongest statement available about what cannot have regressed.
 
-**Windows still fails open, and one thing is why:** `Backend::default_here()` still selects
-in-process off macOS. The worker is reachable only by asking for it (`TPDF_BACKEND=worker`),
-so an ordinary launch still parses documents in the app process and still prints the
-`UNSANDBOXED_MARK` warning. Flipping that default is the next commit and wants its own
-evidence, because that warning is currently the only honest signal that the gap exists.
+**Windows no longer fails open.** `Backend::default_here()` selects workers there, proved by
+the external module check above rather than by the absence of our own warning.
+
+What Windows still owes is *pooled-worker* evidence, not a boundary. `backend-probe` --- which
+covers crash restart, capacity, retirement and the in-process comparison --- is still
+`#[cfg(target_os = "macos")]`, and five other probe binaries still refuse to act as a worker
+off unix. Until those run, the Windows claim is "one worker renders correctly and the app
+process never maps the parser", which is exactly what has been measured and no more.
 
 Two smaller gaps behind it. **Pre-spawning is not implemented on Windows** --- a mapping reaches
 a child by inherited handle at `CreateProcess`, and a worker started before any file is chosen

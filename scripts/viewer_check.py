@@ -23,6 +23,8 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
+import time
 
 from webview_guard import require_visible_session
 
@@ -46,11 +48,23 @@ def main() -> int:
 
     env = dict(os.environ, TPDF_VIEWERCHECK=args.pdf)
 
+    # Launched rather than run, so that something can look at the process *while*
+    # it holds a document open. `communicate` below gives back the timeout and
+    # partial-transcript behaviour `run` had, which the comments underneath are
+    # about and which is not being traded away for this.
+    process = subprocess.Popen(
+        [args.binary], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    watcher = _watch_modules(process)
+
     try:
-        completed = subprocess.run(
-            [args.binary], env=env, capture_output=True, text=True, timeout=args.timeout
+        stdout, stderr = process.communicate(timeout=args.timeout)
+        completed = subprocess.CompletedProcess(
+            [args.binary], process.returncode, stdout, stderr
         )
     except subprocess.TimeoutExpired as expired:
+        process.kill()
+        process.communicate()
         # The partial transcript, not just the verdict. `viewercheck.ts` prints
         # each result as it is recorded precisely so a run that stops midway can
         # say where --- and discarding it here threw that away again, leaving a
@@ -79,6 +93,65 @@ def main() -> int:
     for line in (completed.stderr or "").splitlines():
         if "[WARN]" in line:
             print(line, file=sys.stderr)
+    return _report_containment(watcher)
+
+
+def _watch_modules(process: "subprocess.Popen[str]"):
+    """Samples the app's loaded modules for as long as it runs. Windows only.
+
+    A thread rather than one look, because the parser is mapped at the moment a
+    document is opened and unmapped again when it is closed --- a single sample
+    could miss it in either direction and would then report containment that is
+    not there. What is accumulated is a *union*: the parser having been mapped at
+    any instant is the failure, so the check cannot be passed by sampling at a
+    quiet moment.
+    """
+    if sys.platform != "win32":
+        return None
+
+    from win_modules import maps_parser
+
+    state = {"mapped": False, "peak": 0, "samples": 0}
+
+    def sample() -> None:
+        while process.poll() is None:
+            mapped, count = maps_parser(process.pid)
+            state["samples"] += 1
+            state["mapped"] = state["mapped"] or mapped
+            state["peak"] = max(state["peak"], count)
+            time.sleep(0.05)
+
+    thread = threading.Thread(target=sample, daemon=True)
+    thread.start()
+    return state
+
+
+def _report_containment(state) -> int:
+    """Prints the one check this harness adds, and decides the exit code.
+
+    Reported separately from the viewer's own results and deliberately not folded
+    into them: `BUILD.md` records the count of check *names* `viewercheck.ts`
+    produces as the cross-platform invariant, and quietly adding a Windows-only
+    name to that set would make the two platforms look divergent when they are
+    not.
+    """
+    if state is None:
+        return 0
+    # The control first. An enumeration that read nothing reports "not mapped"
+    # exactly as containment does, so a peak of zero is a broken observation and
+    # must never be allowed to read as good news.
+    if state["peak"] == 0:
+        print(
+            f"[FAIL] the app process could not be read at all "
+            f"({state['samples']} samples, 0 modules seen)",
+            file=sys.stderr,
+        )
+        return 1
+    detail = f"{state['peak']} modules at peak over {state['samples']} samples"
+    if state["mapped"]:
+        print(f"[FAIL] the app process mapped the PDF parser   {detail}", file=sys.stderr)
+        return 1
+    print(f"[OK]   the app process never mapped the PDF parser {detail}")
     return 0
 
 
