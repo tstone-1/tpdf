@@ -2457,3 +2457,104 @@ off macOS". That was false in a way inspection would not catch either: `pub mod 
 unconditional, so the crate carrying that very control did not compile, and *nothing* ran off
 macOS. A document describing a platform nobody has built on decays without anyone editing
 it --- the code moves underneath it, and there is no run to contradict it.
+
+### A gate list that never links a binary cannot see a link error
+
+`scripts/gates.py` reported **7/7 on Windows** on 2026-07-29 while `npm run tauri build`
+failed outright, and the two ran on the same tree minutes apart. The failure was
+`backend_probe.rs` calling `_dyld_image_count` and `_dyld_get_image_name` --- dyld, so macOS
+only --- with no `cfg` around them.
+
+Neither of the two gates that look like they compile everything actually links one:
+
+- **clippy stops at metadata.** `cargo clippy --all-targets` type-checks every target and
+  never invokes the linker, so an unresolved external symbol is not a thing it can report.
+- **`cargo test` links each `[[bin]]`, but with a different `main`.** Under `--test` the
+  harness supplies its own entry point and the crate's `main` becomes unreachable, so
+  anything reachable *only* from `main` is dead code the linker drops. `mapped_images` is
+  called from `main`'s call graph and nowhere else, so the test-profile binary linked clean
+  and the real one did not.
+
+The gate list now carries `cargo build --locked --bins`, and the gate was proved to fail by
+restoring the un-gated file and running it: red in **5.7 s** in the debug profile, which was
+worth checking separately because the original observation was a release build and this whole
+entry is about linking depending on how the target was built.
+
+Two things generalise past this repository. **"It compiles" and "it links" are different
+claims**, and a gate list assembled from `check`/`clippy`/`test` makes only the first while
+appearing to make both. And a target that exists solely to be *run* by a human --- every
+`bin/*_probe.rs` here --- has no test that would notice it stopped building, so it is exactly
+where this hides.
+
+### A custom URI scheme is not spelled the same way on every platform
+
+`src/lib/tiles.ts` fetched `tile://localhost/...`. That is correct on macOS, where WKWebView
+registers a real URI scheme, and resolves to nothing on Windows, where WebView2 cannot and
+Tauri serves every custom protocol at `http://tile.localhost/...` instead.
+
+**The symptom is not an error.** On 2026-07-29 the Windows viewer bound PDFium at 262 ms,
+parsed the document, laid out twelve pages, fitted the page to the window, ran its frame
+loop, scrolled, and reported `sharp=0.0%` on every check that asked whether anything had been
+painted. Everything that does not need a tile worked. A blank page is what a viewer looks
+like when its only failing subsystem is the one that draws.
+
+The fix asks Tauri rather than keeping a second copy of the rule: `convertFileSrc("", "tile")`
+is the same call the framework makes for this translation and yields the bare origin. It is
+used for the origin *only* --- handed a whole path it percent-encodes the separators, and the
+server splits on them, so an encoded URL is refused rather than mis-parsed, but refused on
+every tile.
+
+Worth noting how close the project already was to knowing this: the CSP in
+`tauri.conf.json` **already carried `http://ipc.localhost`** beside `ipc:`. The convention was
+understood and applied to one scheme and not the other, which is what a
+platform-conditional spelling does when it is written out by hand in two places instead of
+derived once. `img-src` and `connect-src` now name `http://tile.localhost` too --- a fetch
+blocked by CSP fails exactly as invisibly as a scheme that does not resolve.
+
+### A release build is not a production build; a cargo *feature* decides that
+
+`cargo build --release` produced an optimised Windows binary that opened its window and
+displayed the webview's own *"can't reach this page --- localhost refused to connect"*,
+because it was still pointed at `devUrl` (`http://localhost:1420`).
+
+The profile has nothing to do with it. `tauri`'s `build.rs` computes
+
+```rust
+let dev = !has_feature("custom-protocol");
+```
+
+and `tauri-build` turns that into the `dev` cfg that decides whether `generate_context!`
+embeds `frontendDist` or points at the dev server. The Tauri CLI passes the feature; a bare
+`cargo build` does not, at any optimisation level. Verified both ways rather than read off the
+source: `cargo build --release --features tauri/custom-protocol` produced a binary that
+passed the full viewer check, **84/84**, from the same tree that had just produced a
+connection-refused window.
+
+Note this repository has no `[features]` section, so the usual template alias
+`custom-protocol = ["tauri/custom-protocol"]` does not exist here and the dependency feature
+has to be named in full.
+
+This is the Windows-shaped sibling of *A raw `cargo build` binary runs no webview content at
+all*, and the cause is **different** --- that entry is WKWebView refusing to run a page for a
+Mach-O with no bundle identity, this is the frontend never having been embedded. They are
+worth telling apart because the macOS symptom is a silent blank window and the Windows one
+names its own reason on screen, so the same mistake looks like two unrelated bugs.
+
+### A guard that degrades to a no-op off its platform stops being a guard
+
+`scripts/webview_guard.py` refuses to run a frame-driven check behind a lock screen, because
+WebKit suspends an occluded page and the run then cannot even time itself out. Both of its
+halves begin `if sys.platform != "darwin": return`, so on Windows `require_visible_session()`
+returns `True` having checked nothing.
+
+That is not obviously wrong --- the macOS mechanisms genuinely do not exist elsewhere --- but
+the *hazard* does: Chromium throttles `requestAnimationFrame` for occluded windows too, and
+WebView2 is Chromium. So the Windows runs in this session were protected by nothing, and a
+future one that stops mid-check will present as a viewer defect rather than as an occluded
+window. It has not bitten yet and is recorded before it does.
+
+The shape to recognise: a cross-platform guard whose implementation is entirely inside one
+platform's branch reads, at every call site, exactly like a guard that ran and passed. If the
+condition cannot be tested on a platform, saying so --- `[SKIP]` with a reason, or a printed
+warning --- is the difference between an unprotected run and an unprotected run nobody knows
+about.

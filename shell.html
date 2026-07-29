@@ -97,8 +97,12 @@
           const context = canvas.getContext("2d");
           if (!context) throw new Error("no 2d context");
 
+          // Same platform split as `src/lib/tiles.ts`: WebView2 cannot register
+          // a URI scheme, so Windows serves this at `http://tile.localhost`.
+          // Both ask Tauri rather than each keeping a copy of the rule.
+          const tileOrigin = window.__TAURI_INTERNALS__.convertFileSrc("", "tile");
           const url =
-            "tile://localhost/" +
+            tileOrigin +
             [info.id, 0, Math.round(scale * 1000), 0, 0, width, height].join("/") +
             "?fmt=raw";
           const response = await fetch(url);

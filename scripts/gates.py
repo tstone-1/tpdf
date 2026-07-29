@@ -29,6 +29,15 @@ on a `Cargo.lock` that was not committed after a `cargo update`, and it compiles
 the test targets, which is where `--all-targets` clippy findings and broken
 test-only code show up.
 
+`cargo build --bins` is there because **neither of the two gates above links a
+binary**, and on 2026-07-29 this sweep reported 7/7 on Windows while
+`npm run tauri build` failed outright. clippy stops at metadata and never calls
+the linker at all; `cargo test` does link each `[[bin]]`, but with its `main`
+replaced by the test harness's own, so anything reachable only from `main` is
+dead code the linker drops. `backend_probe.rs` referenced two dyld symbols that
+exist on no other platform, and both gates were blind to it for exactly that
+reason. A gate list that never links what it ships cannot see a link error.
+
 `vitest` covers the front-end logic that has an answer which can be *wrong*
 rather than merely ugly -- currently command ranking. Behaviour that needs a
 document and a window is asserted by `scripts/viewer_check.py` instead, which is
@@ -85,6 +94,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "test",
             ["cargo", "test", "--manifest-path", CARGO_MANIFEST, "--locked"],
             "a test failed, or Cargo.lock is stale",
+        ),
+        (
+            "bins",
+            ["cargo", "build", "--manifest-path", CARGO_MANIFEST, "--locked", "--bins"],
+            "a binary does not link (clippy and cargo test never link one)",
         ),
         (
             "check",

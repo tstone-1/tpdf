@@ -18,7 +18,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' tile: data: blob:; connect-src 'self' tile: ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' tile: http://tile.localhost data: blob:; connect-src 'self' tile: http://tile.localhost ipc: http://ipc.localhost"
     }
   },
   "bundle": {

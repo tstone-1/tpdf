@@ -3041,6 +3041,67 @@ than as either answer.
 
 **Still to come here:** nothing. Phase 1's worker backend is complete.
 
+#### The viewer runs on Windows — 2026-07-29
+
+The previous entry left Windows compiling and gating green with **nothing ever run** on it,
+and `BUILD.md` said not to claim a Windows build worked until one had opened a document. One
+has. Four corpora through `viewer_check.py`, every one reporting the **86 check names** that
+are the invariant, with ran/skipped splits inside the macOS ranges:
+
+| fixture | ran | skipped | failed |
+|---|---|---|---|
+| `outline-simple.pdf` | 81 | 5 | 0 |
+| `outline-hostile.pdf` | 81 | 5 | 0 |
+| `rotated-90.pdf` | 75 | 11 | 0 |
+| `vector-heavy.pdf` | 52 | 34 | 0 |
+
+The harness needed no changes: `webview_guard` already returns early off darwin, and WebView2
+wants no bundle identity, so a plain `tpdf.exe` runs where macOS needs an `.app`.
+
+**Three defects, and no amount of compiling would have found any of them.** That is the
+result worth carrying, more than the table: the platform had been green for a day, and each
+of these was on the critical path to a first painted pixel.
+
+**`npm run tauri build` failed on a tree that gated 7/7.** `backend_probe.rs` called
+`_dyld_image_count` and `_dyld_get_image_name` with no `cfg`. Neither gate could see it:
+clippy stops at metadata and never links, and `cargo test` *does* link each `[[bin]]` but with
+`main` replaced by the harness's own, so a symbol reachable only from `main` is dead code the
+linker drops. The gate list now carries `cargo build --locked --bins`, and it was proved to
+fail against the un-gated file — 5.7 s, red, in the **debug** profile, checked separately
+because the original observation was a release build and the entire finding is that linking
+depends on how the target was built. The probe is now a thin entry over `backend_probe/imp.rs`
+refusing off macOS, the shape `fdpass_probe.rs` already used.
+
+**Not one tile was ever painted, and nothing reported an error.** `tiles.ts` fetched
+`tile://localhost/...`; WebView2 cannot register a URI scheme, so Tauri serves custom
+protocols at `http://tile.localhost/...` there. PDFium bound at 262 ms, the document parsed,
+twelve pages laid out, the page fitted the window, the frame loop ran, scrolling worked — and
+every coverage check read `sharp=0.0%`. Everything that does not need a tile worked, which is
+what a viewer looks like when the only broken subsystem is the one that draws. The origin now
+comes from Tauri's own `convertFileSrc`, for the origin only: handed a whole path it
+percent-encodes the separators the server splits on. The CSP gained `http://tile.localhost` —
+and it **already carried `http://ipc.localhost`**, so the convention was understood and
+applied to one scheme and not the other, which is what a platform-conditional spelling does
+when it is written by hand in two places instead of derived once.
+
+**`cargo build --release` is not a production build.** It produced a window displaying the
+webview's own *"localhost refused to connect"*. `frontendDist` is embedded under the cargo
+feature `tauri/custom-protocol` — `tauri`'s `build.rs` computes `dev = !has_feature(..)` — and
+the profile has nothing to do with it. Verified in both directions rather than read off the
+source: the same tree built with that feature passed the check 84/84.
+
+Five checks were added for the tile origin, and four mutations run against them, each
+matching its prediction: hardcoding the macOS scheme in the URL turns one red, hardcoding it
+in the origin turns three, dropping the memo turns one, and encoding the whole path turns two.
+The harness's own cross-check earned its place immediately — it parsed twice as many failures
+as vitest's summary reported, because `FAIL ` matches the file-level block as well as each
+test, and it said so instead of reporting either number.
+
+**Still open, and it is the whole of it:** Windows has no containment.
+`Backend::default_here()` selects in-process off macOS, so hostile input is parsed in the app
+process and it fails open rather than refusing. The viewer working there raises the stakes on that rather than
+settling anything.
+
 ### Phase 2 — Editing foundation
 
 Working document, stable-ID entity graph, journal with preconditions and tombstones,
