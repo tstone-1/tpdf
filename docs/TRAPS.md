@@ -2352,3 +2352,31 @@ measured rate: this one is a smoke test that the application still routes opens 
 queue, while the property itself is pinned deterministically by a unit test of the queue
 (`serial.test.ts`). Same family as the contaminated control already recorded here, arriving
 through repetition rather than through phase order.
+
+### A post-destroy guard that returns early leaks what it declined to take
+
+The frontend's dominant defect class was a `.then` callback running after its object's
+`destroy()`, and the first fixes were a `destroyed` boolean checked at the choke point --- 
+correct for the continuations that carry nothing, which is how it was found (a viewer
+restarting its own frame loop, a select-all retry outliving its document).
+
+Applying the same shape to the *other* continuations would have been wrong, and it would
+have looked right. `ImageBitmap` holds GPU-backed memory that is released by `close()` and
+by nothing else, so a tile arrival that sees a dead scroller and merely returns leaks
+exactly as much as the version that pushed it onto a queue nothing drains --- the leak is
+the failure to release, not the queueing. Three such paths existed when this was written:
+both of the scroller's arrivals, and both of the strip's, one of which is a *copy* the
+strip makes of a bitmap the scroller owns.
+
+Hence `Lifetime.claim(live, dispose)` with the disposal a **required** argument: the guard
+cannot be written without saying what happens to the value it throws away. That is the
+same "move the impossibility into the type" move this file records elsewhere, applied to
+an omission rather than to a state.
+
+Two things the mutation pass added. A test that a late arrival is *disposed* needs its
+control --- an object that closed every arrival would pass it perfectly while drawing
+nothing, so each disposal test is paired with one asserting a live arrival is kept. And a
+guard whose *call site* is unreachable from the fixture is untested however thorough the
+suite looks: the strip's borrow path never ran, because the test fixture's `placeholderFor`
+returned null, and the mutation removing that disposal survived everything until a fixture
+that actually borrows was written.

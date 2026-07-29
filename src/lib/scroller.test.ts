@@ -153,6 +153,80 @@ describe("Scroller retries", () => {
   });
 });
 
+describe("Scroller teardown", () => {
+  let dom: FakeDom;
+  let scroller: Scroller;
+
+  /** A tile reply whose bitmap says whether anyone released it. */
+  function delivery() {
+    const bitmap = { close: vi.fn(), width: 64, height: 64 };
+    return {
+      bitmap: bitmap as unknown as ImageBitmap,
+      close: bitmap.close,
+      result: { bitmap: bitmap as unknown as ImageBitmap, bytes: 1, renderUs: 1, decodeMs: 1 },
+    };
+  }
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    scroller = new Scroller(dom.root as unknown as HTMLElement, options());
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  it("releases a tile that lands after it was destroyed", async () => {
+    // Withdrawal races the renderer: `destroy` cancels everything outstanding,
+    // but a tile that had already finished still arrives, and the queue it used
+    // to be pushed onto is drained by a frame loop that no longer runs. An
+    // `ImageBitmap` is GPU-backed and freed only by `close`, so a continuation
+    // that returned early here would leak exactly as much as one that queued it.
+    const late: Array<(value: unknown) => void> = [];
+    tiles.fetchTile.mockImplementation(
+      () => new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+    );
+
+    scroller.frame(0, performance.now());
+    // Both of them, because the two arrivals are separate call sites --- the
+    // tier-1 placeholder and the tier-2 tile --- and guarding one is what a
+    // half-done fix looks like. Which goes first is not worth depending on.
+    expect(late).toHaveLength(2);
+
+    const arrivals = [delivery(), delivery()];
+    scroller.destroy();
+    // The control for the assertions below: nothing has released these *yet*,
+    // so a `close` afterwards is the delivery's doing, not the teardown's.
+    for (const arrival of arrivals) expect(arrival.close).not.toHaveBeenCalled();
+
+    late[0]?.(arrivals[0]!.result);
+    late[1]?.(arrivals[1]!.result);
+    await settle();
+    for (const arrival of arrivals) expect(arrival.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("still keeps a tile that lands while it is alive", async () => {
+    // The control for the test above, and not a formality: a scroller that
+    // closed every arrival would pass that one perfectly while drawing nothing.
+    const late: Array<(value: unknown) => void> = [];
+    tiles.fetchTile.mockImplementation(
+      () => new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+    );
+
+    scroller.frame(0, performance.now());
+    const tile = delivery();
+    late[0]?.(tile.result);
+    await settle();
+
+    expect(tile.close).not.toHaveBeenCalled();
+    expect(scroller.stats.bytes).toBe(1);
+  });
+});
+
 describe("displayedSize", () => {
   const portrait = { width_pt: 612, height_pt: 792 };
   const landscape = { width_pt: 792, height_pt: 612 };
