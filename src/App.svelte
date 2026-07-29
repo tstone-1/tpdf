@@ -15,6 +15,7 @@
   import { clampPlace, loadSession, SessionWriter, type Session } from "./lib/session";
   import { runSessionCheckIfRequested } from "./lib/sessioncheck";
   import { runOpenCheckIfRequested } from "./lib/opencheck";
+  import { Serial } from "./lib/serial";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
 
   interface PageSize {
@@ -73,10 +74,13 @@
   /**
    * Serialises document opens. See {@link openPath}.
    *
-   * Every open is chained onto this, so no two bodies ever interleave and the
-   * document singletons above are only ever mutated by one of them.
+   * Every open is queued on this, so no two bodies ever interleave and the
+   * document singletons above are only ever mutated by one of them. The queue
+   * itself lives in `serial.ts`, where its properties have tests that can fail
+   * --- the end-to-end check that exercises this through the running app is a
+   * race, and a race is a smoke test rather than a gate.
    */
-  let openChain: Promise<void> = Promise.resolve();
+  const opens = new Serial();
 
   /**
    * Every command the application has, in one place.
@@ -426,7 +430,7 @@
       // when one is not --- the same guard the Open button carries as
       // `disabled`. Without it the keyboard is the one path that can stack file
       // dialogs, and the second chooser's document then waits behind the first
-      // on `openChain` for no reason anyone asked for.
+      // in `opens` for no reason anyone asked for.
       event.preventDefault();
       if (!opening) void pickAndOpen();
     } else if (matches("find.open", event) && title) {
@@ -527,7 +531,17 @@
       // reason --- see `sessioncheck.ts`. The open check goes first because its
       // `arrives` phase asserts that *nothing* opened, which the session check
       // would have to have finished with to be true.
-      if (await runOpenCheckIfRequested({ path: () => openPathName })) return;
+      if (
+        await runOpenCheckIfRequested({
+          path: () => openPathName,
+          // Through `openPath`, never `openDocument`: the chain is the thing
+          // the `race` phase exists to exercise, and a check that went around
+          // it would be testing a second implementation of the open.
+          open: (path) => openPath(path),
+          hasViewer: () => viewer !== null,
+        })
+      )
+        return;
 
       await runSessionCheckIfRequested({
         open: (path) => openPath(path),
@@ -572,12 +586,7 @@
    * on `firstPaint()` --- see the outline note at the end of it.
    */
   function openPath(path: string, resuming = false): Promise<void> {
-    // Both arms, so one document failing to open does not stop the next.
-    openChain = openChain.then(
-      () => openDocument(path, resuming),
-      () => openDocument(path, resuming),
-    );
-    return openChain;
+    return opens.run(() => openDocument(path, resuming));
   }
 
   /**

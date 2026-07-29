@@ -593,9 +593,19 @@ starts at 0 and increments within the month.
 3. `cargo check --manifest-path src-tauri/Cargo.toml` to refresh `Cargo.lock`.
 4. In `CHANGELOG.md`, replace `Unreleased` with the release date.
 5. `scripts/gates.py` --- all gates pass.
-6. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
+6. **Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
+   trusting anything else in this list --- §3's boundary table, §5's sandbox policy and
+   §6's macOS column especially. Every present-tense sentence there claims something is
+   *wired*, and a mitigation stated in prose and enforced nowhere reads exactly like one
+   that holds: three consecutive review rounds each found at least one claim that had
+   quietly become a description of an earlier phase, and the third of them was the CPU and
+   memory bounds in §T3. §8 lists the probes that answer the mechanical half
+   (`worker-probe`, `backend-probe`, and `worker-bench --mode engine|authority` after any
+   PDFium bump). The half no probe covers is reading each claim and naming the line that
+   keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
+7. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`.
-7. Commit as `Release vYY.M.MICRO: <summary>`.
+8. Commit as `Release vYY.M.MICRO: <summary>`.
 
 Verify the bump landed everywhere:
 

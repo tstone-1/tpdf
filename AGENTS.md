@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- ninety-nine entries
+The one thing this file does *not* carry in full is the trap list --- 102 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -220,9 +220,11 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are ninety-nine of them and the full text
-was 93% of this file --- an instruction budget spent on the ninety-eight traps that are not
-the one in front of you. What the index has to preserve is knowing that a trap *exists*;
+titles. Only the titles are here, because there are 102 of them and the full text
+was 93% of this file --- an instruction budget spent on the 101 traps that are not
+the one in front of you. Keep both numbers in this section current when adding an entry;
+they were already two behind when this one was written, which is how a count in prose
+fails. What the index has to preserve is knowing that a trap *exists*;
 the paragraphs matter once you are in that area.
 
 So: **before working in any area named below, read its entry.** A title is a claim, not
@@ -354,6 +356,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
+- Repeating a race inside one process re-runs the first round, not the race
 
 ### Fixtures
 - The test fixtures are generated, not committed

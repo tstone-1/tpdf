@@ -19,6 +19,10 @@ the delivery, which is the part that cannot be arranged from inside a process:
   * `control`      -- with nothing handed over, the remembered one opens; without
                       this, `beats` passes on an app that ignores the session
                       entirely.
+  * `race`         -- two opens issued without waiting for the first, the case
+                      `openPath`'s chain exists for. Issued from inside the app:
+                      Launch Services hands over one document at a time, so the
+                      overlap cannot be arranged from out here.
   * `running`      -- an Apple Event to an app that is *already up*, which is the
                       half that goes through the event rather than the queue.
 
@@ -119,6 +123,39 @@ def run_via_open(bundle: Path, mode: str, session: Path, pdf: str, timeout: floa
     return code, text + done.stdout + done.stderr
 
 
+"""How many launches the race phase gets.
+
+Each launch is one cold attempt at the interleaving, and a cold attempt is the
+only kind worth having: repeating the round *inside* a launch was measured and
+is worse than useless, because every round after the first runs against warmed
+workers and an already-open document and lands in the same order every time.
+
+A single cold attempt reports a removed queue about two runs in three, so four
+of them miss it roughly once in eighty. That is a smoke check and this file
+should not pretend otherwise -- the property itself is pinned deterministically
+by `src/lib/serial.test.ts`, which runs in the gates. What only this can say is
+that the application still routes its opens through that queue.
+"""
+RACE_LAUNCHES = 4
+
+
+def race_phase(binary: Path, pdf: str, other: str, room: Path, timeout: float) -> bool:
+    """Two overlapping opens, from a cold start, several times over.
+
+    No document handed over and no session, so each launch starts on the empty
+    state the phase's own control asserts. Both opens are issued from inside the
+    app: what is being tested is the serialisation of two calls that overlap,
+    which nothing out here can arrange, since Launch Services delivers one
+    document at a time.
+    """
+    ok = True
+    for launch in range(1, RACE_LAUNCHES + 1):
+        session = room / f"race-{launch}.json"
+        code, out = run_direct(binary, f"race:{pdf}|{other}", session, [], timeout)
+        ok &= report(f"two overlapping opens, launch {launch}/{RACE_LAUNCHES}", code, out)
+    return ok
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle")
@@ -162,9 +199,12 @@ def main() -> int:
             write_session(control, other)
             code, out = run_direct(binary, f"opened:{other}", control, [], args.timeout)
             ok &= report("control: with nothing handed over, the remembered one opens", code, out)
+            ok &= race_phase(binary, pdf, other, room, args.timeout)
         else:
             print("--- precedence ---")
             print("[SKIP] needs --other, a second document to remember")
+            print("--- overlapping opens ---")
+            print("[SKIP] needs --other, a second document to race against")
 
         ok &= running_phase(binary, bundle, pdf, room, args.timeout)
 
