@@ -48,6 +48,13 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
 
 use tpdf_lib::progressive::{self, CancelToken, RawDocument, TileSpec};
+// The one piece genuinely shared with the production path. The rest of the
+// Win32 below is deliberately NOT routed through `tpdf_lib::sandbox_win`:
+// this probe is the record of a measurement, and a record that changes when
+// the thing it measured is refactored has stopped being evidence. A decoder
+// is different --- two copies of a status table drift, and the copy that
+// drifts is the one nobody re-reads (`docs/TRAPS.md`).
+use tpdf_lib::sandbox_win::describe_exit;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT,
@@ -971,30 +978,6 @@ fn non_white(pixels: &[u8]) -> usize {
         .chunks_exact(4)
         .filter(|p| p[..3] != [255, 255, 255])
         .count()
-}
-
-/// Renders an exit code the way the thing that produced it meant it.
-///
-/// A child killed by the loader exits `3221225781`, which is `0xC0000135`,
-/// which is `STATUS_DLL_NOT_FOUND` --- and only the third spelling says what
-/// happened. Printing the decimal made the single most important result of this
-/// probe look like a number nobody would look up, which is the same failure as
-/// a harness that discards a passing run's stderr: the information was there and
-/// the presentation threw it away.
-fn describe_exit(code: u32) -> String {
-    // Only the statuses this probe can actually provoke. A lookup table
-    // pretending to cover NTSTATUS would rot and would still miss the next one.
-    let name = match code {
-        0 => return "0".to_owned(),
-        0xC000_0135 => "STATUS_DLL_NOT_FOUND",
-        0xC000_0142 => "STATUS_DLL_INIT_FAILED",
-        0xC000_0022 => "STATUS_ACCESS_DENIED",
-        0xC000_00FD => "STATUS_STACK_OVERFLOW",
-        0xC000_0005 => "STATUS_ACCESS_VIOLATION",
-        0xC000_0017 => "STATUS_NO_MEMORY",
-        _ => return format!("{code} (0x{code:08X})"),
-    };
-    format!("0x{code:08X} {name}")
 }
 
 fn diff_count(a: &[u8], b: &[u8]) -> usize {
