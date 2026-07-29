@@ -453,7 +453,25 @@ profile that is badly wrong.
 
 ## 6. Windows — a gap, not a policy
 
-Untested, and it shares no mechanism with any of the above. The intended shape:
+Untested, and it shares no mechanism with any of the above.
+
+**What is known, as of 2026-07-29**, and it is worth stating precisely because "untested"
+undersells it in the wrong direction. The tree now compiles on `x86_64-pc-windows-msvc` and
+all seven gates pass, so the *behaviour* there is no longer unknown — it is known and it is
+bad: `Worker::spawn` refuses off macOS, `Backend::default_here()` therefore selects
+`Backend::InProcess`, and PDFium would parse hostile input **in the app process** with none
+of §5's containment. Every threat in §3 that is answered by "the worker cannot do that"
+is unanswered on Windows.
+
+**This fails open, not closed, and the distinction is the whole point of writing it down.**
+`Worker::spawn`'s refusal is enforced rather than described — two tests in `worker.rs` assert
+it, and one was shown to go red under mutation — but that refusal is only reached by a caller
+that *asks* for the worker backend (`TPDF_BACKEND=worker`). The default never asks: it
+selects `Backend::InProcess`, which spawns a render thread and binds PDFium directly. So a
+Windows user opening a PDF does not get an error; they get a working viewer with no
+containment at all. Nothing in this section is wired; the refusal guards a path nobody takes.
+
+The intended shape:
 
 | macOS | Windows |
 |---|---|
@@ -488,7 +506,9 @@ before the architecture can be called cross-platform.
    bounded by anything smaller than the pool size. Isolation is unaffected: every worker is
    separately sandboxed and separately killable, and one dying costs its document one
    process rather than the document.
-4. **Windows is entirely untested** (§6).
+4. **Windows compiles and is entirely uncontained** (§6) — the tree gates green there, the
+   default backend is in-process, and a document opens and renders in the app process. This
+   fails open: there is no error to notice.
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is
    exposed before any form feature exists.

@@ -34,9 +34,13 @@
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(target_os = "macos")]
 use std::os::fd::FromRawFd;
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout};
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
+#[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -49,6 +53,16 @@ use serde::{Deserialize, Serialize};
 /// path that resolves in development and not in the bundle is exactly the class
 /// of defect `AGENTS.md` already records for the PDFium library directory.
 pub const WORKER_ARGV: &str = "--render-worker";
+
+/// Why every worker entry point refuses off macOS.
+///
+/// One constant rather than the same sentence written at each refusal, because
+/// the refusals are the containment argument and four copies of it are four
+/// things to drift. Not a silent fallback to running unsandboxed: every claim in
+/// `docs/THREAT-MODEL.md` is `sandbox_init` SBPL, so a worker without it is a
+/// different thing wearing the same name.
+#[cfg(not(target_os = "macos"))]
+pub const NO_WORKERS: &str = "render workers are implemented on macOS only";
 
 /// Descriptor the document mapping is handed over on.
 ///
@@ -235,10 +249,31 @@ impl Response {
 /// unlinked immediately after creation has neither problem --- the descriptor is
 /// the only handle that exists, and a descriptor survives a policy that denies
 /// opening files.
+#[cfg(unix)]
 pub struct Shm {
     file: std::fs::File,
     ptr: *mut libc::c_void,
     len: usize,
+}
+
+/// Off unix, a mapping that is never constructed.
+///
+/// The private field is the whole of the type: no caller outside this module can
+/// build one, and all three constructors refuse, so every `&self` method below
+/// is unreachable.
+///
+/// It was an **uninhabited** `enum` first, to carry the impossibility in the type
+/// the way `AGENTS.md` recommends and the way [`PreWorker`]/[`WarmWorker`] carry
+/// the readiness handshake. That is worth recording as a dead end: [`Worker`]
+/// holds a `Shm`, so an uninhabited mapping makes the *worker* uninhabited too,
+/// and the compiler then correctly reports the pool's `retire_idle` loop in
+/// `workers.rs` --- ordinary code, on a platform that never runs it --- as
+/// unreachable. Under `-D warnings` that is fatal, and the only repairs are
+/// `#[allow]`s scattered through production paths. The impossibility is real but
+/// it propagates further than the module that declared it.
+#[cfg(not(unix))]
+pub struct Shm {
+    _private: (),
 }
 
 // The pointer is an ordinary mapping; moving it between threads is fine.
@@ -254,6 +289,7 @@ unsafe impl Send for Shm {}
 // disciplined by the protocol above and predates this impl.
 unsafe impl Sync for Shm {}
 
+#[cfg(unix)]
 impl Shm {
     /// Creates a mapping of `len` bytes backed by an unlinked temp file.
     ///
@@ -406,10 +442,92 @@ impl Shm {
     }
 }
 
+#[cfg(unix)]
 impl Drop for Shm {
     fn drop(&mut self) {
         // SAFETY: unmapping exactly what was mapped.
         unsafe { libc::munmap(self.ptr, self.len) };
+    }
+}
+
+/// The same surface off unix, so callers compile unchanged.
+///
+/// The constructors refuse, so no value exists and the accessors below cannot be
+/// reached. They panic rather than returning an empty slice or a `-1` descriptor:
+/// a plausible-looking zero value is the silent wrong answer this module refuses
+/// everywhere else, and it would be indistinguishable from a real mapping of
+/// nothing. No `Drop`: there is nothing to unmap.
+#[cfg(not(unix))]
+impl Shm {
+    /// Always refuses --- see the type note.
+    ///
+    /// # Errors
+    ///
+    /// Always.
+    pub fn create(_len: usize) -> Result<Self, String> {
+        Err(NO_WORKERS.into())
+    }
+
+    /// Always refuses --- see the type note.
+    ///
+    /// # Errors
+    ///
+    /// Always.
+    pub fn map_file(_path: &Path) -> Result<Self, String> {
+        Err(NO_WORKERS.into())
+    }
+
+    /// Always refuses --- see the type note.
+    ///
+    /// # Errors
+    ///
+    /// Always.
+    ///
+    /// # Safety
+    ///
+    /// Nothing is dereferenced; the descriptor is ignored.
+    pub unsafe fn from_fd(_fd: i32, _len: usize, _writable: bool) -> Result<Self, String> {
+        Err(NO_WORKERS.into())
+    }
+
+    /// How many bytes the mapping covers.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        unreachable!("{NO_WORKERS}")
+    }
+
+    /// Whether the mapping is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        unreachable!("{NO_WORKERS}")
+    }
+
+    /// The mapping's descriptor, for handing to a child.
+    #[must_use]
+    pub fn raw_fd(&self) -> i32 {
+        unreachable!("{NO_WORKERS}")
+    }
+
+    /// Reads the mapping.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        unreachable!("{NO_WORKERS}")
+    }
+
+    /// Writes the mapping.
+    #[must_use]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unreachable!("{NO_WORKERS}")
+    }
+
+    /// Reborrows the mapping for the process lifetime.
+    ///
+    /// # Safety
+    ///
+    /// Unreachable.
+    #[must_use]
+    pub unsafe fn as_static(&self) -> &'static [u8] {
+        unreachable!("{NO_WORKERS}")
     }
 }
 
@@ -422,6 +540,7 @@ impl Drop for Shm {
 /// `AGENTS.md` records a crash test that reported "exited with code 9" where a
 /// segfault should have said "killed by signal 11", and that difference was the
 /// whole tell.
+#[cfg(unix)]
 fn epitaph_of(child: &mut Child) -> String {
     use std::os::unix::process::ExitStatusExt;
     match child.try_wait() {
@@ -430,6 +549,22 @@ fn epitaph_of(child: &mut Child) -> String {
             Some(signal) => format!("killed by signal {signal}"),
             None => format!("exited with code {}", status.code().unwrap_or(-1)),
         },
+        Err(e) => format!("could not be waited on: {e}"),
+    }
+}
+
+/// How a child died, in words --- off unix.
+///
+/// No signal arm, and that is a real difference rather than a stub: Windows does
+/// not kill a process with a signal, so there is no equivalent of the "killed by
+/// signal 11" tell the unix version exists to preserve. A crash arrives as an
+/// exit code, and reporting one as the other would be the exact confusion
+/// `AGENTS.md` records this function was written to avoid.
+#[cfg(not(unix))]
+fn epitaph_of(child: &mut Child) -> String {
+    match child.try_wait() {
+        Ok(None) => "still running".into(),
+        Ok(Some(status)) => format!("exited with code {}", status.code().unwrap_or(-1)),
         Err(e) => format!("could not be waited on: {e}"),
     }
 }
@@ -706,6 +841,11 @@ pub struct PreWorker {
     /// not written twice.
     worker: Worker,
     /// Our end of the pair the document descriptor is sent over.
+    ///
+    /// Gated with the handover itself: off macOS nothing constructs a
+    /// `PreWorker` and nothing reads this, so carrying the field there would be
+    /// a descriptor that exists only to be warned about.
+    #[cfg(target_os = "macos")]
     socket: OwnedFd,
 }
 
@@ -796,6 +936,7 @@ impl WarmWorker {
     /// The send failing, or the worker having died while it waited --- reported
     /// with its epitaph, because "the pipe is closed" and "killed by signal 11"
     /// are different diagnoses.
+    #[cfg(target_os = "macos")]
     pub fn adopt(mut self, doc: Arc<Shm>) -> Result<Worker, String> {
         send_document(self.pre.socket.as_raw_fd(), doc.raw_fd(), doc.len()).map_err(|e| {
             format!(
@@ -808,6 +949,21 @@ impl WarmWorker {
         // had no document; from here it is an ordinary one in every respect.
         self.pre.worker._doc = Some(doc);
         Ok(self.pre.worker)
+    }
+
+    /// Hands over the document --- refused off macOS.
+    ///
+    /// Unreachable in practice, since [`Worker::prespawn`] refuses first and is
+    /// the only route to a `WarmWorker`. Present so the type's surface does not
+    /// change by platform, and refusing rather than panicking so a future caller
+    /// that finds another route is told rather than aborted.
+    ///
+    /// # Errors
+    ///
+    /// Always.
+    #[cfg(not(target_os = "macos"))]
+    pub fn adopt(self, _doc: Arc<Shm>) -> Result<Worker, String> {
+        Err(NO_WORKERS.into())
     }
 
     /// The process id, for a probe that wants to prove one exists.
@@ -836,7 +992,7 @@ impl Worker {
     /// platform but macOS, always --- see the module note.
     #[cfg(not(target_os = "macos"))]
     pub fn prespawn(_library_dir: &Path) -> Result<PreWorker, String> {
-        Err("render workers are implemented on macOS only".into())
+        Err(NO_WORKERS.into())
     }
 
     /// Starts a worker with no document, to be given one later.
@@ -942,7 +1098,7 @@ impl Worker {
         // Not a silent fallback to running unsandboxed. Every containment claim
         // in docs/THREAT-MODEL.md is `sandbox_init` SBPL, so a worker without it
         // is a different thing wearing the same name.
-        Err("render workers are implemented on macOS only".into())
+        Err(NO_WORKERS.into())
     }
 
     /// Spawns a worker over mappings the caller already made.
@@ -1441,6 +1597,9 @@ mod tests {
         assert!(super::is_scratch(7, &shuffle));
     }
 
+    /// Off unix `Shm::create` refuses by design, so there is no mapping to
+    /// assert anything about --- the refusal itself is covered below.
+    #[cfg(unix)]
     #[test]
     fn a_mapping_is_readable_and_writable_and_unnamed() {
         let mut shm = Shm::create(4096).expect("create");
@@ -1452,5 +1611,65 @@ mod tests {
         // What is left is the descriptor, which is the whole reason a sandboxed
         // worker can reach it.
         assert!(shm.raw_fd() >= 0);
+    }
+
+    /// Off unix, the refusal is the containment argument, so it is asserted
+    /// rather than assumed.
+    ///
+    /// A constructor that quietly started succeeding here would hand the worker
+    /// path a mapping on a platform with no `sandbox_init`, which is the single
+    /// outcome this module exists to prevent --- and it would do it silently,
+    /// because every caller already handles a `Result`.
+    #[cfg(not(unix))]
+    #[test]
+    fn a_mapping_refuses_off_unix() {
+        // `map(|_| ())` because `expect_err` wants `Debug` on the success type,
+        // and neither `Shm` nor `Worker` has it --- a mapping and a live child
+        // process are not things to format into a panic message.
+        let err = Shm::create(4096)
+            .map(|_| ())
+            .expect_err("Shm::create must refuse off unix");
+        // A literal, not `super::NO_WORKERS`. Comparing against the constant the
+        // code returns is a check deriving its expectation from the thing it
+        // tests --- it compares a value to itself, and `AGENTS.md` records that
+        // shape as one that cannot fail. Substring rather than equality so that
+        // rewording the sentence does not break the check, while dropping the
+        // platform reason from it does.
+        assert!(err.contains("macOS"), "{err}");
+    }
+
+    /// And the entry point callers actually reach refuses too.
+    ///
+    /// Separate from the mapping check because they are different claims: this
+    /// one would still have to hold if `Shm` ever grew a Windows implementation,
+    /// which is exactly the change that would make the refusal above stop firing
+    /// without anyone noticing.
+    ///
+    /// **It is an end-to-end assertion and pins no single guard**, which is worth
+    /// stating because it looks like it pins one. `spawn` chains `map_file`,
+    /// `create` and `spawn_mapped`, and all three refuse with the same sentence,
+    /// so removing any *one* of them leaves this green --- measured, not assumed:
+    /// a mutation making `map_file` succeed changed nothing here. That is the
+    /// "an outcome two mechanisms can produce cannot test either one" shape from
+    /// `AGENTS.md`, and it is deliberate rather than overlooked: what this check
+    /// is for is the property that a worker cannot start, which is exactly the
+    /// thing that survives one guard going away. The guard-level claim is the
+    /// mapping test above, and that one does go red.
+    ///
+    /// Gated on `not(unix)` rather than `not(target_os = "macos")` because on a
+    /// unix that is not macOS the mapping succeeds and `spawn` refuses one layer
+    /// further down with a different message --- a real difference, not a
+    /// portability detail, and asserting the wrong one here would make this pass
+    /// for the wrong reason.
+    #[cfg(not(unix))]
+    #[test]
+    fn spawning_a_worker_refuses_off_macos() {
+        let err = super::Worker::spawn(
+            std::path::Path::new("nonexistent.pdf"),
+            std::path::Path::new("."),
+        )
+        .map(|_| ())
+        .expect_err("Worker::spawn must refuse off macOS");
+        assert!(err.contains("macOS"), "{err}");
     }
 }

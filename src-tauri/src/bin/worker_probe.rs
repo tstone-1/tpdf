@@ -18,8 +18,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::worker;
 use tpdf_lib::worker::{Request, Worker};
-use tpdf_lib::{worker, worker_child};
+// The child half exists only on unix --- see the module note in `worker.rs`.
+#[cfg(unix)]
+use tpdf_lib::worker_child;
 
 /// Tiles are compared at this size, which is inside the useful range AGENTS.md
 /// measured (1024²--2048²) and small enough that a fixture renders quickly.
@@ -29,7 +32,13 @@ fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
+        #[cfg(unix)]
         worker_child::main(&args);
+        #[cfg(not(unix))]
+        {
+            eprintln!("{}", worker::NO_WORKERS);
+            std::process::exit(2);
+        }
     }
 
     let Some(document) = args.get(1).map(PathBuf::from) else {

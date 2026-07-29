@@ -31,7 +31,10 @@ use tpdf_lib::render::{
 };
 use tpdf_lib::search::PageMatches;
 use tpdf_lib::startup;
-use tpdf_lib::{worker, worker_child};
+use tpdf_lib::worker;
+// The child half exists only on unix --- see the module note in `worker.rs`.
+#[cfg(unix)]
+use tpdf_lib::worker_child;
 
 /// Tiles are compared at this size: inside the useful range `AGENTS.md`
 /// measured, and small enough that a fixture renders quickly.
@@ -78,7 +81,13 @@ fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
+        #[cfg(unix)]
         worker_child::main(&args);
+        #[cfg(not(unix))]
+        {
+            eprintln!("{}", worker::NO_WORKERS);
+            std::process::exit(2);
+        }
     }
 
     // The first argument that is not a flag, so the child mode below can take
@@ -1521,6 +1530,21 @@ fn kill_a_worker(pid: Option<u32>) -> Result<(), String> {
 /// The wait is not a sleep, and is not optional either: a signal is delivered
 /// asynchronously, so asking the replacement question too early is answered by
 /// the worker that is still alive.
+/// Off unix there is no worker to kill, because none can be spawned.
+///
+/// Refuses rather than terminating by some other route: this check exists to
+/// prove a worker is *replaced* after dying, and there is nothing to replace on
+/// a platform where the pool never starts one.
+///
+/// # Errors
+///
+/// Always.
+#[cfg(not(unix))]
+fn kill_and_wait(_pid: u32) -> Result<(), String> {
+    Err(worker::NO_WORKERS.into())
+}
+
+#[cfg(unix)]
 fn kill_and_wait(pid: u32) -> Result<(), String> {
     // SAFETY: `kill` takes two integers and touches nothing this process owns.
     if unsafe { libc::kill(pid as i32, libc::SIGKILL) } != 0 {

@@ -298,6 +298,8 @@ fn fixture_report(
         let rss_after = child_peak_rss();
         if rss_after > rss_before {
             note = format!("{note} (a child process peaked at {} MiB)", rss_after >> 20);
+        } else if !RSS_MEASURED {
+            note = format!("{note} (child memory not measured on this platform)");
         }
 
         let after = verify(&output, &needles)?;
@@ -697,6 +699,26 @@ fn changed_pixels(before: &Render, after: &Render) -> Result<usize, String> {
 ///
 /// The external rewriters run out of process, so a bomb that costs a gigabyte to
 /// decode shows up here and nowhere else. Rust's allocator sees none of it.
+/// Whether [`child_peak_rss`] is a measurement on this platform.
+///
+/// Reported rather than assumed. Without it an unmeasured platform is
+/// indistinguishable from one where no child ever grew, which is the "unexamined
+/// reads as clean" failure `AGENTS.md` records --- and this figure exists to
+/// notice decompression bombs, so reading absence as safety is the worst
+/// available direction to be wrong in.
+const RSS_MEASURED: bool = cfg!(unix);
+
+/// Not measurable off unix.
+///
+/// There is no `getrusage`, and Windows reports a child's peak working set only
+/// through a job object this probe does not create. The zero is honest only
+/// because [`RSS_MEASURED`] is printed beside it.
+#[cfg(not(unix))]
+fn child_peak_rss() -> u64 {
+    0
+}
+
+#[cfg(unix)]
 fn child_peak_rss() -> u64 {
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut usage) } != 0 {

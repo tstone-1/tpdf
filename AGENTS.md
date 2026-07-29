@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 103 entries
+The one thing this file does *not* carry in full is the trap list --- 107 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -80,6 +80,16 @@ decompression bombs in it. Chrome sandboxes PDFium in a separate process for exa
 reason, and so must tpdf. **In place for the viewer's own render path since 2026-07-28** —
 `RenderService` defaults to worker processes on macOS, and `bin/backend_probe.rs` proves the
 app process never maps libpdfium by reading the dynamic linker's image table.
+
+**On macOS, and only there.** The profile is `sandbox_init` SBPL, which has no Windows
+equivalent, so `Worker::spawn` refuses off macOS and `Backend::default_here()` falls back to
+in-process --- the control, running PDFium in the app process with no containment at all. The
+refusal is deliberate and asserted by tests, because a worker without the policy is a different
+thing wearing the same name --- but note what it does *not* buy: only a caller asking for
+`TPDF_BACKEND=worker` reaches that refusal, and the default never asks. Windows therefore
+**fails open**, rendering documents unsandboxed with no error to notice. This constraint is
+satisfied on **one** platform, and a Windows port owes a containment answer --- job objects, a
+restricted token, a separate desktop --- before it can ship rather than after.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -210,7 +220,13 @@ does not catch first. When it is added (the natural trigger is the repo going pu
 second contributor) the workflow should *invoke* `scripts/gates.py` rather than re-list the
 commands in YAML.
 
-**Windows is unverified.** Every gate run and every measurement here is macOS arm64.
+**Windows compiles and gates green; it is not supported.** `scripts/gates.py` reports 7/7 on
+`x86_64-pc-windows-msvc` as of 2026-07-29 --- which is a statement about compilation and unit
+tests and nothing else. No gate runs the viewer, nothing on Windows has ever rendered a page,
+and the platform is **unsandboxed**: the backend falls back to in-process there, so hostile
+input is parsed in the app process, and it fails open rather than refusing. `BUILD.md` has the
+detail and the list of what a real port still owes. Every *measurement* in this file remains
+macOS arm64.
 
 ---
 
@@ -220,8 +236,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 103 of them and the full text
-was 93% of this file --- an instruction budget spent on the 102 traps that are not
+titles. Only the titles are here, because there are 107 of them and the full text
+was 93% of this file --- an instruction budget spent on the 106 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -358,6 +374,12 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A verdict that reads a timeout as "no result" throws away the finding
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 - Repeating a race inside one process re-runs the first round, not the race
+
+### Windows and portability
+- A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
+- An uninhabited type carries its impossibility into every caller
+- A directory that exists is not the library you need
+- A list of documented blockers can be wrong in the direction that looks thorough
 
 ### Fixtures
 - The test fixtures are generated, not committed

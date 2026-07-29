@@ -52,6 +52,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tpdf_lib::worker::{self, PreWorker, Request, Shm, WarmWorker, Worker};
+// The child half exists only on unix --- see the module note in `worker.rs`.
+#[cfg(unix)]
 use tpdf_lib::worker_child;
 
 /// Documents chosen to span the parse cost while sharing every fixed cost.
@@ -74,7 +76,13 @@ fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
+        #[cfg(unix)]
         worker_child::main(&args);
+        #[cfg(not(unix))]
+        {
+            eprintln!("{}", worker::NO_WORKERS);
+            std::process::exit(2);
+        }
     }
 
     let rounds = flag(&args, "--rounds").unwrap_or(6);

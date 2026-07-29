@@ -24,6 +24,10 @@ pub mod startup;
 pub mod sweep;
 pub mod text;
 pub mod worker;
+// The child half of the process boundary, and POSIX throughout: it is reached
+// only by `Worker::spawn`, which refuses off macOS, so off unix there is nothing
+// that could ever exec it.
+#[cfg(unix)]
 pub mod worker_child;
 pub mod workers;
 
@@ -153,16 +157,35 @@ fn session_file(app: &tauri::AppHandle) -> PathBuf {
 
 /// Locates the Pdfium dynamic library.
 ///
-/// In development it sits in `vendor/pdfium/lib` at the repo root. In a bundled
+/// In development it sits under `vendor/pdfium/` at the repo root. In a bundled
 /// app it will sit alongside the executable. Both are tried, dev first, because
 /// `cargo tauri dev` runs from `src-tauri`.
+///
+/// **The archive is not laid out the same way on both platforms.** macOS ships
+/// the loadable `lib/libpdfium.dylib`; Windows ships the runtime DLL in `bin/`
+/// and puts only the *import* library `pdfium.dll.lib` in `lib/`. Joining `lib`
+/// unconditionally therefore did not merely miss on Windows --- it found a
+/// directory that genuinely exists and holds nothing loadable, so the check
+/// below passed and the bind failed much later, pointing at a path that was
+/// right there. `scripts/fetch_pdfium.py` encodes the same split and its
+/// docstring names this function as the one that had it wrong.
 fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
+    #[cfg(windows)]
+    let (subdir, loadable) = ("bin", "pdfium.dll");
+    #[cfg(target_os = "macos")]
+    let (subdir, loadable) = ("lib", "libpdfium.dylib");
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let (subdir, loadable) = ("lib", "libpdfium.so");
+
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium/lib"));
+        .map(|root| root.join("vendor/pdfium").join(subdir));
 
+    // The *library*, not the directory that should contain it. Those are the
+    // same question everywhere except the one platform this got wrong, which is
+    // precisely why the weaker check survived so long.
     if let Some(dev) = dev {
-        if dev.exists() {
+        if dev.join(loadable).exists() {
             return dev;
         }
     }
@@ -737,7 +760,16 @@ pub fn run() {
     // would be wrong for it. It never returns.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
+        #[cfg(unix)]
         worker_child::main(&args);
+        // Off unix, refused rather than ignored. Falling through would open a
+        // window for an argv that asked for a worker --- the silent wrong answer,
+        // and the same reason `TPDF_BACKEND` refuses here instead of guessing.
+        #[cfg(not(unix))]
+        {
+            eprintln!("{}", worker::NO_WORKERS);
+            std::process::exit(2);
+        }
     }
 
     // Also before the watchdog, and for a reason the panic in `RenderService::start`
