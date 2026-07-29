@@ -2752,3 +2752,49 @@ Win32 validates it. Win32 validating it is exactly the problem --- a closed hand
 recycled, so the failure is not a clean error but an operation applied to *someone else's
 object*. Marking the function `unsafe` costs one `unsafe {}` at each of three call sites and
 turns an invisible assumption into a written one.
+
+### A test whose failure is a hang reports a pass and a timeout in one breath
+
+Windows containment, 2026-07-29. `Contained::kill` terminates the job; a lifecycle test
+killed a `cmd /c pause` child and then called `wait()` to read its exit code. Mutating `kill`
+into a no-op did not turn that test red. It made the run take **177 seconds** against a
+180-second harness timeout, and the harness then printed `test result: ok` *and* `[HUNG]` in
+the same output --- one line from the tests that did finish, one from the timeout that killed
+the process reading them.
+
+Two distinct defects, and only the second is about mutation testing.
+
+**The assertion could not fail.** `wait()` is unbounded, so "the child exited" has two
+outcomes: it passes, or it blocks forever. A blocked test is not a failing test --- it is a
+suite that never finishes, diagnosed eventually by whatever timeout notices, on a harness
+that by then cannot say which check was to blame. Any assertion of the form *do X, then wait
+for the consequence* needs a **bounded** wait, so the consequence not happening is a red and
+not a wall. `Contained::wait_timeout` exists for that and `wait()` is now the wrong tool for
+a test to reach for. Rerun with the bound: red in 10.02 seconds, naming the test.
+
+**The harness's own verdict was self-contradictory and it did not notice.** It grepped for
+failure lines and separately checked its exit code, then printed both findings without
+comparing them. `test result: ok` beside `[HUNG]` is not two facts, it is one broken run, and
+a harness that can derive the same fact two ways has to say so when they disagree --- the
+same cross-check `AGENTS.md` already records from the padded-column case, arriving from the
+timeout side instead of the parser side.
+
+Related: *A check whose failure mode is a wait cannot fail*, which is the same shape found in
+the viewer; *A timeout that discards the transcript recreates the failure it was added to
+diagnose*; and *A mutation harness needs the same control as the thing it is testing*.
+
+### `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
+
+`STILL_ACTIVE` is `259`. So the obvious way to ask whether a child has finished --- call
+`GetExitCodeProcess` and compare against `STILL_ACTIVE` --- is wrong for exactly one input,
+and that input is an exit code a process is entitled to choose. A worker that really did exit
+259 reads as running forever, and a pool waits on something that is gone.
+
+The fix is not a better sentinel, because there isn't one: liveness has to come from a
+*different* mechanism. `WaitForSingleObject` with a zero timeout answers it exactly
+(`WAIT_OBJECT_0` versus `WAIT_TIMEOUT`), and the code is only read once that has said the
+process is finished. `Contained::try_wait` is that, and `wait_timeout(0)` is that, and the
+second is written in terms of the first so the two cannot drift.
+
+Testable, cheaply, and worth doing: spawn `cmd.exe /c exit 259` and assert `try_wait` returns
+`Some(259)`. The wrong implementation passes every other test in the file.
