@@ -1015,6 +1015,20 @@ named check for it now (*"the document is long enough to test page restore"*), s
 which it is. `outline-simple.pdf` above has 12 pages; `incr-scan-20p.pdf` has 20 and renders
 faster than the A0 fixtures.
 
+**And the run now stops there rather than colouring the rest of the transcript** (2026-07-30).
+The named check alone did not settle it: it fails inside the `record` phase, and the driver
+launched the other three regardless, so a short fixture still produced eleven failures of which
+ten were `it opens on the remembered page: page 0, wanted 7` --- the signature of a broken
+restore, below the line that said otherwise, and these harnesses are read from the tail. The
+driver reads that check's verdict out of the transcript, skips the remaining phases by name and
+ends with `[FAIL] session restore was not tested: <fixture> has too few pages ...`. Measured on
+`text-base14.pdf`: eleven failures to one, three launches not made, exit code still 1.
+
+The check's name is duplicated into `session_check.py` to do that, which is a coupling rather
+than an assertion --- so a transcript that does not contain it is reported as a failure of the
+script, not read as "the fixture is fine". Proved by renaming it: a green run turns red with
+*"this script cannot find a check named ... it has been renamed in sessioncheck.ts"*.
+
 **Start from a clean process table, and this is not advice.** A leftover `tpdf.exe` hangs the
 next run outright: reproduced twice on 2026-07-30, where the launched app sat at **0.00 CPU**
 for minutes and no phase produced a summary, and both times it passed immediately after

@@ -1157,6 +1157,29 @@ experience.
   and reported "0 pages" for every document, because the status it comes from is published a frame
   later; it waits for the value and keeps "never became known" distinct from "too short".
 
+  **The named check did not finish the job, and the rest of it is fixed here.** It fails inside
+  the `record` phase, which returns --- but the Python driver cannot see that, accumulates with
+  `ok &= report(...)` and launched the other three phases anyway. So a short fixture still
+  produced eleven failures, ten of them describing a restore that was never attempted, and the
+  transcript still *ended* on `it opens on the remembered page: page 0, wanted 7` and `session
+  restore is not verified`. The correction was only visible above the noise it was meant to
+  correct, and these harnesses are redirected to a file and read from the tail --- which is why
+  `live_output.py` exists at all.
+
+  The driver now reads that check's verdict out of the transcript, skips the recorded-file
+  comparison and the remaining three phases *by name*, and ends with `[FAIL] session restore was
+  not tested: <fixture> has too few pages to reach page 7`. On `text-base14.pdf`: eleven failures
+  to one, three launches not made, exit code still 1. The good fixture is unchanged --- 19 checks,
+  same name list, exit 0.
+
+  The check's name is duplicated into `session_check.py` to make that possible, which is a
+  coupling rather than an assertion, so its *absence* from the transcript is reported as a failure
+  of the script rather than read as "the fixture is fine". Proved by mutation: renaming it turns a
+  green run red with *"this script cannot find a check named ... it has been renamed in
+  sessioncheck.ts, so the too-short-fixture path below is now dead code"*. Verdicts are matched by
+  splitting on the `[FAIL]` label rather than by column, because `Report` pads names to a fixed
+  width and a parser that encodes the padding breaks silently the day a name grows past it.
+
 - **The render deadline was not a deadline on Windows, and said it was.** `workers::kill_pid` ---
   the only thing that bounds a request that never comes back --- was `#[cfg(not(unix))] fn
   kill_pid(_pid: u32) {}`, and its own comment had named the trigger in advance: *"if a worker
