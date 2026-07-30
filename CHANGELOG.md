@@ -204,6 +204,42 @@ experience.
   The bump checklist in `BUILD.md` had the macOS-only `vendor/pdfium/lib` hardcoded; it now names
   both platforms.
 
+- **The last two macOS-only harnesses run on Windows, and one needed nothing.**
+  `session_check.py` passed all four phases on the first attempt, both controls included --- it
+  takes a binary rather than a bundle and `webview_guard` already returns early off darwin, so
+  there was nothing to port. `open_check.py` needed a real port and now runs **four of its six
+  phases** there (`argv`, `beats`, `control`, and all four launches of `race`). The two that
+  cannot print `[SKIP]` with the reason, so the phase-name list is identical on both platforms.
+
+  Those two skips record a **measured platform divergence** that was previously unstated in
+  either direction: `RunEvent::Opened` is macOS-only and no single-instance plugin is linked, so
+  on Windows **a second launch is a second process** --- two `tpdf.exe`, two windows, two worker
+  pools, where macOS produces one app that swaps documents. Whether that is the behaviour to want
+  is a product decision; the *emit* branch `running` exists to exercise is simply unreachable
+  there. `HANDS_OVER_TO_RUNNING` is the one place that distinction lives, and each branching
+  phase name is a constant rather than a literal at both call sites.
+
+  That makes **four** documented-blocker lists found wrong this week, always by over-reporting.
+  The trap now carries the tally: of six benchmarks and harnesses listed as macOS-only, two were
+  genuinely gated, one was trapped behind a `cfg` it never needed, one had only a hardcoded path,
+  one needed nothing at all, and one was two-thirds portable.
+
+- **A harness that prints as it goes wrote nothing until it exited.** `BUILD.md` claims these
+  scripts stream their results so a partial run names where it stopped. True in a terminal, false
+  under a redirect --- Python block-buffers stdout off a tty, so an `open_check.py` run held **zero
+  bytes** for twelve minutes, indistinguishable from one that died at import. `scripts/live_output.py`
+  makes all three line-buffered explicitly, called rather than left as an import side effect.
+  A/B'd at the same four-second mark: **0 bytes against 38**. The hazard was already written down
+  as a caution in the cross-repo memory and had been read in the same session --- which is the
+  argument for making it a line of code instead.
+
+  It paid for itself the same hour. With streaming, an `open_check.py` run finished in **45 s**;
+  the attempt immediately before it, without, sat at zero bytes for **17 minutes** while the app
+  it launched held **0.00 CPU** --- hung at the first phase. Both harnesses need a clean process
+  table on Windows: a leftover `tpdf.exe` hangs the next run, reproduced twice and cleared both
+  times by killing the strays. `webview_guard` returns early off darwin, so nothing guards
+  occlusion there, and the tell is the CPU figure rather than the clock.
+
   `worker_pids` matches a child on its **image name** there rather than on argv, because
   Toolhelp reports a parent pid and an image but no command line. Weaker, and sufficient for a
   stated reason rather than an assumed one: the `caffeinate` shape that forced the argv match is

@@ -2,11 +2,14 @@
 """Checks that a PDF handed to tpdf from outside actually opens.
 
 Usage:
-    scripts/open_check.py <app-bundle.app> <file.pdf> [--other OTHER.pdf] [--timeout SECONDS]
+    scripts/open_check.py <app-bundle.app|tpdf.exe> <file.pdf> [--other OTHER.pdf] [--timeout SECONDS]
 
-Note this takes the **`.app` bundle**, not the executable inside it, because two
-of the five phases go through Launch Services and there is nothing else to hand
-`open`.
+On macOS this takes the **`.app` bundle**, not the executable inside it, because
+two of the six phases go through Launch Services and there is nothing else to
+hand `open`. On Windows it takes the **executable**: there is no bundle, WebView2
+needs no bundle identity, and those two phases have no route to test --- see
+`HANDS_OVER_TO_RUNNING`. They print `[SKIP]` with the reason rather than
+disappearing, so the phase names are the same list on both platforms.
 
 What each phase asserts is in `src/lib/opencheck.ts`. What this script adds is
 the delivery, which is the part that cannot be arranged from inside a process:
@@ -30,9 +33,13 @@ The environment does reach an app that Launch Services started --- verified, and
 it is what makes the double-click phase testable rather than merely argued. Both
 `open` phases capture the app's stdout with `open --stdout`.
 
-Requires an unlocked screen for the same reason the viewer check does, and a
-bundle rather than a raw binary: WKWebView needs the bundle identity or the page
-never runs.
+Requires an unlocked screen for the same reason the viewer check does. On macOS it
+also needs a bundle rather than a raw binary, because WKWebView needs the bundle
+identity or the page never runs; on Windows it needs a binary built with
+`--features tauri/custom-protocol`, or the window shows "localhost refused to
+connect" and no phase produces a summary. Note `webview_guard` returns early off
+darwin, so on Windows nothing here protects against an *occluded* window --- and
+Chromium throttles those too. Keep the window visible; see the trap.
 """
 
 import argparse
@@ -45,14 +52,54 @@ import tempfile
 import time
 from pathlib import Path
 
+from live_output import stream_results
 from webview_guard import require_visible_session
 
 SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed", re.M)
 
 
-def executable(bundle: Path) -> Path:
-    """The binary inside a `.app`, for the phases that do not need `open`."""
-    return bundle / "Contents/MacOS" / bundle.stem
+COLD_CLICK = "double-click (Apple Event, cold)"
+"""The cold-launch phase's name, written once.
+
+Two call sites use it --- `report` where the route exists and `skip` where it does
+not --- and a phase name is what a reader diffs across platforms to see that the
+list is the same one. Two copies of it would eventually differ, and the diff would
+then show a check that had vanished on one platform when nothing had.
+"""
+
+RUNNING_HANDOVER = "a document handed to a running app"
+"""The running-handover phase's name. See [`COLD_CLICK`]."""
+
+HANDS_OVER_TO_RUNNING = sys.platform == "darwin"
+"""Whether this platform delivers a document to an app that is already running.
+
+macOS does, by Apple Event, which `RunEvent::Opened` receives --- and that arm is
+`#[cfg(target_os = "macos")]`, so Windows has no such route. Measured rather than
+inferred: two launches there produce **two independent processes**, each with its
+own window and its own worker pool, where macOS produces one app that swaps
+documents.
+
+Named once because two phases branch on it --- the cold double-click and the
+handover to a running app --- and `AGENTS.md` records what becomes of two copies
+of a platform distinction. It is not a verdict on the behaviour: two windows for
+two documents is a defensible product choice. It is a statement that the *route*
+these two phases test does not exist here, which is why they skip rather than
+fail.
+"""
+
+
+def executable(target: Path) -> Path:
+    """The binary to launch directly, given a bundle or a bare executable.
+
+    Takes either, because the two platforms hand over different things. macOS
+    needs the `.app` --- Launch Services has nothing else to accept, and WKWebView
+    needs the bundle identity or the page never runs. Windows has no bundle:
+    WebView2 needs no identity, so a `target/release/tpdf.exe` built with
+    `--features tauri/custom-protocol` is the whole story.
+    """
+    if target.suffix == ".app":
+        return target / "Contents/MacOS" / target.stem
+    return target
 
 
 def write_session(path: Path, pdf: str) -> None:
@@ -85,6 +132,19 @@ def report(phase: str, code: int, out: str) -> bool:
     if not green:
         print(f"[FAIL] {phase}: {total - passed} of {total} checks failed")
         return False
+    return True
+
+
+def skip(phase: str, reason: str) -> bool:
+    """Records a phase that cannot run here, in the same shape as one that did.
+
+    Returns `True`: a phase with no route on this platform is not a failure. But
+    it is printed, with its name and its reason --- `AGENTS.md` records that a
+    check which silently stops existing on some inputs cannot be told apart from
+    one that ran, and the name is what a reader diffs across platforms.
+    """
+    print(f"--- {phase} ---")
+    print(f"[SKIP] {reason}")
     return True
 
 
@@ -157,6 +217,9 @@ def race_phase(binary: Path, pdf: str, other: str, room: Path, timeout: float) -
 
 
 def main() -> int:
+    # Before anything prints: a redirected run is block-buffered otherwise,
+    # and then a partial transcript is an empty file. See `live_output`.
+    stream_results()
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle")
     parser.add_argument("pdf")
@@ -170,7 +233,11 @@ def main() -> int:
     bundle = Path(args.bundle).resolve()
     binary = executable(bundle)
     if not binary.exists():
-        print(f"[FAIL] no executable at {binary} -- pass the .app, not the binary")
+        hint = "pass the .app, not the binary" if HANDS_OVER_TO_RUNNING else "pass the .exe"
+        print(f"[FAIL] no executable at {binary} -- {hint}")
+        return 1
+    if HANDS_OVER_TO_RUNNING and bundle.suffix != ".app":
+        print(f"[FAIL] {bundle} is not a .app -- two phases go through Launch Services")
         return 1
 
     pdf = str(Path(args.pdf).resolve())
@@ -186,8 +253,17 @@ def main() -> int:
         code, out = run_direct(binary, f"opened:{pdf}", room / "argv.json", [pdf], args.timeout)
         ok &= report("argv", code, out)
 
-        code, out = run_via_open(bundle, f"opened:{pdf}", room / "click.json", pdf, args.timeout, room)
-        ok &= report("double-click (Apple Event, cold)", code, out)
+        if HANDS_OVER_TO_RUNNING:
+            code, out = run_via_open(
+                bundle, f"opened:{pdf}", room / "click.json", pdf, args.timeout, room
+            )
+            ok &= report(COLD_CLICK, code, out)
+        else:
+            ok &= skip(
+                COLD_CLICK,
+                "no such route here --- an Explorer double-click hands the path over in argv, "
+                "which the phase above already covers, so there is no second mechanism to test",
+            )
 
         if other != pdf:
             remembered = room / "beats.json"
@@ -221,6 +297,16 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
     about the event's name. Started with no document so the check's own control
     -- nothing open before one is handed over -- can hold.
     """
+    if not HANDS_OVER_TO_RUNNING:
+        return skip(
+            RUNNING_HANDOVER,
+            "there is no handover on this platform: `RunEvent::Opened` is macOS-only and no "
+            "single-instance plugin is linked, so a second launch is a second process. "
+            "Measured, not assumed --- two launches leave two tpdf processes with two windows "
+            "and two worker pools. Whether that is the behaviour to want is a product "
+            "decision; what is certain is that the emit branch this phase tests is unreachable",
+        )
+
     env = dict(os.environ, TPDF_OPENCHECK=f"arrives:{pdf}", TPDF_SESSION_FILE=str(room / "run.json"))
     app = subprocess.Popen(
         [str(binary)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -235,7 +321,7 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
     except subprocess.TimeoutExpired:
         app.kill()
         out, code = "[FAIL] run timed out\n", 1
-    return report("a document handed to a running app", code, out)
+    return report(RUNNING_HANDOVER, code, out)
 
 
 if __name__ == "__main__":

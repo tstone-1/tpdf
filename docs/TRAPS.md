@@ -2458,6 +2458,24 @@ unconditional, so the crate carrying that very control did not compile, and *not
 macOS. A document describing a platform nobody has built on decays without anyone editing
 it --- the code moves underneath it, and there is no run to contradict it.
 
+**It has now happened four times, and the ratio is what makes it a rule rather than an
+anecdote.** Later lists in `AGENTS.md` and `BUILD.md` named the harnesses and benchmarks that
+were macOS-only. Running each one, on 2026-07-30:
+
+| listed as blocked | actually |
+|---|---|
+| `pool-bench`, `prespawn-bench` | genuinely gated, on `#[cfg(unix)]` --- and *unrunnable* rather than degraded, since each re-execs itself as its own worker |
+| `tile-bench` | never refused anything; failed only at `LoadLibraryExW` on a hardcoded `vendor/pdfium/lib` |
+| `worker-bench` | seven modes genuinely blocked; the eighth (`--mode engine`) needs no worker at all and was trapped behind the module's `cfg` |
+| `session_check.py` | needed **nothing** --- passed all four phases on the first attempt |
+| `open_check.py` | four of six phases ran unmodified; two have no route and now skip with reasons |
+
+So a documented blocker is roughly as likely to be absent as present, and the error is always
+in the same direction --- over-reporting, because a list written by reading counts everything
+that *looks* platform-shaped. **Run the thing before writing it down as blocked, and run it
+again before believing an entry someone else wrote.** The cost of being wrong is asymmetric:
+a false blocker hides work that is already done, and nobody goes looking for it.
+
 ### A gate list that never links a binary cannot see a link error
 
 `scripts/gates.py` reported **7/7 on Windows** on 2026-07-29 while `npm run tauri build`
@@ -2997,3 +3015,37 @@ Rust source contained one long line with the indent baked in as spaces.
 - And the meta-lesson, which cost the smaller half of the time: **verify the tool before blaming
   it.** The accusation was one command from being disproved, and "the formatter corrupts string
   literals" would have been a memorable and completely false trap in this file.
+
+### A harness that prints as it goes writes nothing until it exits, under a redirect
+
+`BUILD.md` says of the check scripts that "results otherwise print as they are produced, so a
+run that stops partway names the last check it completed". That property is real in a terminal
+and **false the way these are actually run.** Python switches stdout from line-buffered to 4 KB
+block-buffered the moment it is not a tty, which a redirect guarantees, so
+`open_check.py > out.txt` held **zero bytes** for its entire twelve-minute run --- indistinguishable
+from a script that died at import.
+
+This is the sibling of *A harness that prints only at the end cannot say where it stopped*, and
+the distinction matters: there the harness was at fault, here the harness is right and the
+**producer's buffering** undoes it. Both end at the same place --- a partial run that cannot say
+where it stopped --- so a reader chasing one will not think to check the other.
+
+- **The fix is four characters of intent**: `sys.stdout.reconfigure(line_buffering=True)`, in
+  `scripts/live_output.py`, called explicitly by each harness rather than as an import side
+  effect. `python -u` and `PYTHONUNBUFFERED=1` also work and are worse, because they are
+  properties of the invocation and every future caller has to remember them.
+- **A/B it rather than reasoning about it.** Same script, same 4 s mark, one env flag apart:
+  **0 bytes against 38**. That took one command and is the difference between a fix and a
+  plausible change.
+- And the meta-point, because this hazard was *already written down* in the cross-repo memory
+  and was walked into anyway: **a caution that has to be recalled at the right moment loses to
+  a line of code that cannot be forgotten.** The note had been read in this same session.
+
+**And the very next run paid for it, in the direction that matters.** With the fix in place an
+`open_check.py` run streamed its phases and finished in **45 s**. The attempt immediately before
+it --- same script, same arguments, no buffering --- sat at zero bytes for **17 minutes** before it
+was inspected, and the app it had launched was using **0.00 CPU**: hung at the first phase, almost
+certainly the occluded-window suspension this file warns about for that script. Without streaming,
+"hung at phase one" and "still working through four race launches" produce the identical empty
+file, so the natural move is to keep waiting. The process table is what settled it --- **a child
+holding 0.00 CPU is the tell**, and it is worth checking before extending a timeout.

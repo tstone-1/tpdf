@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 131 entries
+The one thing this file does *not* carry in full is the trap list --- 132 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -175,7 +175,21 @@ four refusing binaries had it in, and running it showed no refusal --- only a ha
 That is the trap of the same name arriving in this file rather than in the code: a blocker list
 is written by reading, and reading over-reports. `worker-bench` is the one genuine refusal left,
 and its reason is real --- it carries its own POSIX worker implementation, fd passing and SBPL
-profiles included, and shares no mechanism with the Windows model.
+profiles included, and shares no mechanism with the Windows model. Seven of its eight modes; the
+eighth needs no worker, was trapped behind the module's `cfg`, and now runs --- see the symbol-scan
+trap for what it found.
+
+**The two viewer harnesses run there too** (2026-07-30). `session_check.py` needed no porting at
+all and passes its four phases with both controls. `open_check.py` runs four of six; the two that
+skip record a measured divergence --- `RunEvent::Opened` is macOS-only and no single-instance
+plugin is linked, so **a second launch on Windows is a second process**, two windows and two
+worker pools, where macOS hands the document to the running app. That is a product decision to
+make, not a defect, but it was unstated in either direction until it was measured.
+
+So the tally on documented blockers is **four lists wrong this week, always by over-reporting**:
+of six benchmarks and harnesses called macOS-only, two were genuinely gated, one was trapped
+behind a `cfg` it never needed, one had only a hardcoded path, one needed nothing, and one was
+two-thirds portable. Run it before writing it down as blocked.
 
 **Pre-spawning works on Windows too** (2026-07-30), so both platforms now start a worker before
 a file is chosen. The handover is the only part that differs and it had to: a macOS parent
@@ -328,16 +342,21 @@ does not catch first. When it is added (the natural trigger is the repo going pu
 second contributor) the workflow should *invoke* `scripts/gates.py` rather than re-list the
 commands in YAML.
 
-**Windows runs the viewer, and is still not supported.** On 2026-07-29 a Windows build opened
-documents and passed `viewer_check.py` on four corpora --- **86 check names** on each, the same
-invariant macOS holds to, with ran/skipped splits inside the ranges `BUILD.md` records. So the
-viewer works there; what is missing is not function.
+**Windows runs the viewer, and is contained.** On 2026-07-29 a Windows build opened documents
+and passed `viewer_check.py` on four corpora --- **86 check names** on each, the same invariant
+macOS holds to, with ran/skipped splits inside the ranges `BUILD.md` records; re-run on
+2026-07-30 with pre-spawning live and still green.
 
-What is missing is **containment**. The platform is unsandboxed: `Backend::default_here()`
-selects in-process off macOS, so hostile input is parsed in the app process, and it **fails
-open** --- the refusal guards `TPDF_BACKEND=worker`, a path the default never takes, so there
-is no error to notice. A port owes a real answer (job objects, a restricted token, a separate
-desktop) before Windows can ship. `BUILD.md` has the detail.
+This paragraph said the opposite until 2026-07-30 --- "the platform is unsandboxed", "it fails
+open" --- which had been true and was fixed the day before by the commit that selects workers
+there. It is left recorded rather than quietly deleted, because it is the file contradicting
+itself: the constraints section above had the corrected version the whole time, and a reader
+who happened to start here would have concluded that hostile input is parsed in the app
+process. **A document with two accounts of the same fact is worse than one with none**, and
+the failure mode is that whichever section a reader reaches first wins.
+
+What is actually missing is smaller and is listed under the harnesses below: `worker-bench`'s
+seven POSIX modes, and two `open_check.py` phases whose route does not exist here.
 
 Two things a green sweep still does not say, both learned the same day. `scripts/gates.py`
 reported 7/7 while `npm run tauri build` failed, because nothing in the list linked a
@@ -372,7 +391,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 131 of them and the full text
+titles. Only the titles are here, because there are 132 of them and the full text
 was 93% of this file --- an instruction budget spent on the 126 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
@@ -507,6 +526,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A timeout that discards the transcript recreates the failure it was added to diagnose
 - Restoring a mutated file by *moving* a backup over it tests the mutated binary
 - A harness that prints only at the end cannot say where it stopped
+- A harness that prints as it goes writes nothing until it exits, under a redirect
 - A mutation harness that dies leaves the mutation in the tree
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
