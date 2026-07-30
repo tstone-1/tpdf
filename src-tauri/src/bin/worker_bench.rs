@@ -49,31 +49,304 @@
 //! SBPL beginning with `(`, so a policy can be bisected from the shell without a
 //! rebuild. That is how `PROFILE_WORKER` below was arrived at.
 
-/// Refuses, and names the Windows model that actually got built.
+use std::path::Path;
+
+/// Runs the one mode that needs no worker, or refuses and says what is missing.
 ///
-/// The refusal itself is still right --- this harness carries its own POSIX
-/// worker, with `dup2` handover, a socket pair and SBPL profile bisection, and
-/// none of that has a Windows counterpart to point at. What was wrong is the
-/// *reason* it gave, and a wrong reason on a refusal is worse than a vague one
-/// because it is a design instruction: it named "restricted tokens" and "named
-/// section objects", and `bin/win_sandbox_probe.rs` measured both out of the
-/// design. A restricting SID stops the loader before `main`, so containment is a
-/// **low-integrity token inside a job object**; and the sections are
-/// **anonymous**, inherited by handle, because a name is something another
-/// process can open. Someone reading this to build the spike would have built
-/// the two things that were rejected.
+/// `--mode engine` reads the library file and never spawns anything, so it is the
+/// only mode that has any business running here. It was unreachable off unix
+/// purely because it lived inside a `#[cfg(unix)]` module, and the threat-model
+/// claim it checks is the most load-bearing one in the project --- so being
+/// unable to run it on a platform meant the claim was untested there rather than
+/// merely unmeasured.
+///
+/// The refusal for every other mode names the model that was actually built.
+/// It previously cited "restricted tokens" and "named section objects", both of
+/// which `bin/win_sandbox_probe.rs` measured *out* of the design, and a wrong
+/// reason on a refusal is worse than a vague one: it reads as a design
+/// instruction, and someone building the spike from it would have built the two
+/// rejected things.
 #[cfg(not(unix))]
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let value_of = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|at| args.get(at + 1))
+            .cloned()
+    };
+    if value_of("--mode").as_deref() == Some("engine") {
+        let Some(dir) = value_of("--lib") else {
+            eprintln!(
+                "[ERROR] --mode engine needs --lib DIR: it reads the library, it does not bind it"
+            );
+            std::process::exit(2);
+        };
+        if let Err(e) = engine_report(Path::new(&dir)) {
+            eprintln!("[ERROR] {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     eprintln!(
-        "[ERROR] worker-bench is a POSIX harness --- its own worker, dup2 handover, socket \
-         pair and SBPL profile bisection, none of which has a Windows counterpart. The \
-         Windows model is a low-integrity token inside a job object, with anonymous \
-         sections inherited by handle; see bin/win_sandbox_probe.rs for why it is not a \
-         restricting SID. This needs its own spike, not a port. What it would measure that \
-         nothing else does: latency and parallel scaling are covered by pool-bench, the \
-         authority rungs by win-sandbox-probe, crash and timeout by backend-probe."
+        "{}",
+        concat!(
+            "[ERROR] worker-bench is a POSIX harness: its own worker, dup2 handover, ",
+            "socket pair and SBPL profile bisection, none of which has a Windows ",
+            "counterpart. Only --mode engine runs here, and it does.
+",
+            "The Windows model is a low-integrity token inside a job object, with ",
+            "anonymous sections inherited by handle; see bin/win_sandbox_probe.rs for ",
+            "why it is not a restricting SID.
+",
+            "The rest needs its own spike, not a port. What a spike would measure that ",
+            "nothing else does is the per-tile overhead decomposition of latency mode. ",
+            "Parallel scaling is pool-bench, the authority rungs are win-sandbox-probe, ",
+            "crash and timeout are backend-probe, and limits and footprint are answered ",
+            "by the job object capping commit in the kernel.",
+        )
     );
     std::process::exit(2);
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// What the bound Pdfium build is *capable* of, read out of the binary.
+///
+/// "Document JavaScript is disabled by default" is the single most
+/// load-bearing sentence in the threat model, and as a statement about
+/// configuration it is weak --- a default can be changed, and a call that
+/// enables it is one line. As a statement about the build it is much
+/// stronger, and it is checkable: a Pdfium without V8 linked cannot run a
+/// script whatever it is asked to do.
+///
+/// **JavaScript cannot be tested behaviourally.** A document whose script does
+/// nothing looks exactly like a document whose script never ran, so the absence
+/// of an effect is not evidence of the absence of an engine. The symbol table is
+/// the only thing that discriminates, which is why the controls below decide
+/// whether this method works on a given binary at all.
+///
+/// **And on Windows it does not.** Moved to file scope 2026-07-30 so it can run
+/// off unix --- it needs no worker, it reads a file --- and the first Windows run
+/// established that the shipped `pdfium.dll` carries **no local C++ symbols**:
+/// `CPDF_Document` is absent, so `v8::` and `CXFA_` being absent means nothing.
+/// The second control catches that and the verdict is `[NOT VERIFIED]`, which is
+/// correct and is the point --- but it means `docs/THREAT-MODEL.md`'s promotion of
+/// "JavaScript is disabled" to "there is no engine to disable" is established on
+/// **macOS only**. That is recorded there rather than left implied.
+///
+/// The export table is reported beside the scan because it is the one dimension
+/// that survives stripping. Read it as *surface*, not as a verdict: the Windows
+/// DLL exports four XFA-named functions, and three of them
+/// (`FPDF_GetXFAPacket{Count,Name,Content}`) read the `/XFA` streams out of an
+/// AcroForm dictionary and need no XFA implementation behind them. Whether
+/// `FPDF_LoadXFA` is a stub is the open question; see the note printed at the end.
+pub fn engine_report(dir: &Path) -> Result<(), String> {
+    let path = ["libpdfium.dylib", "pdfium.dll", "libpdfium.so"]
+        .iter()
+        .map(|name| dir.join(name))
+        .find(|p| p.exists())
+        .ok_or_else(|| format!("no Pdfium library in {}", dir.display()))?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    println!("{} ({} bytes)", path.display(), bytes.len());
+    println!();
+
+    // Two controls, because a scan that cannot fail proves nothing. The
+    // first says the file really is Pdfium; the second says its local
+    // symbols survived, without which every absence below is "not
+    // verified" rather than "not present" --- the same rule §6 applies to a
+    // carrier a redaction verifier cannot decode.
+    let is_pdfium = contains(&bytes, b"FPDF_LoadDocument");
+    let has_locals = contains(&bytes, b"CPDF_Document");
+    println!("  control: exported Pdfium symbols  {}", yes_no(is_pdfium));
+    println!("  control: local C++ symbols kept   {}", yes_no(has_locals));
+    if !is_pdfium {
+        println!("\n[FAIL] this is not a Pdfium library; nothing below means anything.");
+        return Ok(());
+    }
+
+    // Before the stripped-binary exit, not after. The export table is the only
+    // dimension that survives stripping, so the run that *cannot* do the symbol
+    // scan is exactly the run where it is worth having --- and printing it after
+    // the early return meant Windows saw nothing at all.
+    println!();
+    exported_surface(&bytes);
+
+    if !has_locals {
+        println!(
+            "\n[NOT VERIFIED] the binary is stripped of local symbols, so the absence \
+             of a JavaScript engine or of XFA cannot be established this way. What is \
+             above is surface, not a verdict."
+        );
+        println!(
+            "to settle XFA on a stripped binary the test is behavioural and needs a \
+             control: a document carrying an /XFA packet, where FPDF_GetXFAPacketCount > 0 \
+             proves the packet reader works, so FPDF_LoadXFA returning false then means the \
+             implementation is absent rather than the document empty. Not written --- that \
+             fixture does not exist yet."
+        );
+        return Ok(());
+    }
+
+    let v8 = contains(&bytes, b"_ZN2v8") || contains(&bytes, b"v8::");
+    let real_js = contains(&bytes, b"_ZN11CJS_Runtime");
+    let stub_js = contains(&bytes, b"CJS_RuntimeStub");
+    let xfa = contains(&bytes, b"CXFA_");
+    println!();
+    println!("  V8 engine linked                  {}", yes_no(v8));
+    println!("  CJS_Runtime (real JS bridge)      {}", yes_no(real_js));
+    println!("  CJS_RuntimeStub (no-op bridge)    {}", yes_no(stub_js));
+    println!("  XFA implementation (CXFA_*)       {}", yes_no(xfa));
+    println!();
+
+    let js_absent = !v8 && !real_js && stub_js;
+    println!(
+        "document JavaScript: {}",
+        if js_absent {
+            "[OK] cannot run --- there is no engine to run it, only the stub"
+        } else if v8 || real_js {
+            "[FAIL] AN ENGINE IS PRESENT; policy is now the only thing stopping it"
+        } else {
+            "[NOT VERIFIED] neither an engine nor the stub was found"
+        }
+    );
+    println!(
+        "XFA forms:           {}",
+        if xfa {
+            "[FAIL] PRESENT; §6's XFA refusal is a policy, not a property"
+        } else {
+            "[OK] not built in"
+        }
+    );
+    println!();
+    println!(
+        "note this is a property of the vendored build, not of Pdfium, so it has to be \
+         re-checked after every bump --- and it says nothing about the code paths that \
+         ARE present. `FPDFDOC_InitFormFillEnvironment` runs on every document open in \
+         pdfium-render, so the form-fill machinery is reachable surface even with no \
+         engine behind it."
+    );
+    Ok(())
+}
+
+fn yes_no(flag: bool) -> &'static str {
+    if flag {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+/// The library's exported names, and the XFA-named ones among them.
+///
+/// The one dimension that survives stripping: exports are always named, because
+/// a loader has to find them. So where the symbol scan above goes
+/// `[NOT VERIFIED]` this still says something --- just something narrower.
+///
+/// **A count, not only matches.** `AGENTS.md` records a probe that reported
+/// "found nothing" when it had in fact enumerated nothing, which is the same
+/// answer for opposite reasons. If the table cannot be parsed, that is said.
+///
+/// Windows-shaped, and deliberately not generalised: a Mach-O export trie needs
+/// different code, and macOS has local symbols so this dimension buys nothing
+/// there. Off Windows it says so rather than printing a zero.
+fn exported_surface(bytes: &[u8]) {
+    let Some(names) = pe_exports(bytes) else {
+        println!("  exported names: not a PE image, so the export table is not read here");
+        return;
+    };
+    let xfa: Vec<&String> = names.iter().filter(|n| n.contains("XFA")).collect();
+    println!("  exported functions                {}", names.len());
+    println!("  ... XFA-named among them          {}", xfa.len());
+    for name in &xfa {
+        println!("      {name}");
+    }
+    if !xfa.is_empty() {
+        println!(
+            "  (surface, not a verdict: FPDF_GetXFAPacket* read /XFA streams out of an \
+             AcroForm dict and need no XFA engine behind them)"
+        );
+    }
+}
+
+/// Every name in a PE image's export directory, or `None` if it is not one.
+///
+/// Hand-rolled rather than a crate, for the reason every dependency here is
+/// weighed: this reads ~40 bytes of headers and walks one array, and a PE parser
+/// is a licence and a supply-chain surface for that. It refuses rather than
+/// guesses on anything it does not recognise --- `None` means "not read", and the
+/// caller prints that instead of a count.
+fn pe_exports(bytes: &[u8]) -> Option<Vec<String>> {
+    /// Reads a little-endian `u32` at `at`, if it is in bounds.
+    fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
+        bytes
+            .get(at..at + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+    /// Reads a little-endian `u16` at `at`, if it is in bounds.
+    fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
+        bytes
+            .get(at..at + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    }
+
+    if bytes.get(..2)? != b"MZ" {
+        return None;
+    }
+    let pe = u32_at(bytes, 0x3C)? as usize;
+    if bytes.get(pe..pe + 4)? != b"PE\0\0" {
+        return None;
+    }
+    let coff = pe + 4;
+    let sections = u16_at(bytes, coff + 2)? as usize;
+    let opt_size = u16_at(bytes, coff + 16)? as usize;
+    let opt = coff + 20;
+    // The data-directory offset is the only thing that differs between PE32 and
+    // PE32+, and getting it wrong reads a neighbouring field as an address.
+    let dirs = match u16_at(bytes, opt)? {
+        0x20b => opt + 112,
+        0x10b => opt + 96,
+        _ => return None,
+    };
+    let export_rva = u32_at(bytes, dirs)?;
+    if export_rva == 0 {
+        return Some(Vec::new());
+    }
+
+    // Section table, so an RVA can be turned into a file offset. A directory
+    // address is a virtual address; reading it as a file offset lands in
+    // unrelated bytes and yields plausible garbage.
+    let table = opt + opt_size;
+    let mut spans = Vec::with_capacity(sections);
+    for index in 0..sections {
+        let entry = table + index * 40;
+        let virtual_size = u32_at(bytes, entry + 8)? as usize;
+        let virtual_address = u32_at(bytes, entry + 12)? as usize;
+        let raw_size = u32_at(bytes, entry + 16)? as usize;
+        let raw = u32_at(bytes, entry + 20)? as usize;
+        spans.push((virtual_address, virtual_size.max(raw_size), raw));
+    }
+    let offset_of = |rva: usize| -> Option<usize> {
+        spans
+            .iter()
+            .find(|(va, size, _)| rva >= *va && rva < va.saturating_add(*size))
+            .map(|(va, _, raw)| raw + (rva - va))
+    };
+
+    let directory = offset_of(export_rva as usize)?;
+    let count = u32_at(bytes, directory + 24)? as usize;
+    let names_rva = u32_at(bytes, directory + 32)? as usize;
+    let names = offset_of(names_rva)?;
+    let mut found = Vec::with_capacity(count);
+    for index in 0..count {
+        let rva = u32_at(bytes, names + index * 4)? as usize;
+        let at = offset_of(rva)?;
+        let end = bytes.get(at..)?.iter().position(|b| *b == 0)? + at;
+        found.push(String::from_utf8_lossy(&bytes[at..end]).into_owned());
+    }
+    Some(found)
 }
 
 #[cfg(unix)]
@@ -1932,105 +2205,12 @@ mod imp {
     // --------------------------------------------------------- mode: engine
 
     /// Does `haystack` contain `needle` anywhere?
-    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-        needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w == needle)
-    }
-
-    /// What the bound Pdfium build is *capable* of, read out of the binary.
-    ///
-    /// "Document JavaScript is disabled by default" is the single most
-    /// load-bearing sentence in the threat model, and as a statement about
-    /// configuration it is weak --- a default can be changed, and a call that
-    /// enables it is one line. As a statement about the build it is much
-    /// stronger, and it is checkable: a Pdfium without V8 linked cannot run a
-    /// script whatever it is asked to do.
-    ///
-    /// This cannot be tested behaviourally. A document whose JavaScript does
-    /// nothing looks exactly like a document whose JavaScript was never run, so
-    /// the absence of an effect is not evidence of the absence of an engine.
-    /// The symbol table is the only thing that discriminates.
     fn mode_engine(args: &Args, _spec: &Spawn) -> Result<(), String> {
         let dir = args
             .library_dir
             .clone()
             .ok_or("--lib DIR is required: this mode reads the library, it does not bind it")?;
-        let path = ["libpdfium.dylib", "pdfium.dll", "libpdfium.so"]
-            .iter()
-            .map(|name| dir.join(name))
-            .find(|p| p.exists())
-            .ok_or_else(|| format!("no Pdfium library in {}", dir.display()))?;
-        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        println!("{} ({} bytes)", path.display(), bytes.len());
-        println!();
-
-        // Two controls, because a scan that cannot fail proves nothing. The
-        // first says the file really is Pdfium; the second says its local
-        // symbols survived, without which every absence below is "not
-        // verified" rather than "not present" --- the same rule §6 applies to a
-        // carrier a redaction verifier cannot decode.
-        let is_pdfium = contains(&bytes, b"FPDF_LoadDocument");
-        let has_locals = contains(&bytes, b"CPDF_Document");
-        println!("  control: exported Pdfium symbols  {}", yes_no(is_pdfium));
-        println!("  control: local C++ symbols kept   {}", yes_no(has_locals));
-        if !is_pdfium {
-            println!("\n[FAIL] this is not a Pdfium library; nothing below means anything.");
-            return Ok(());
-        }
-        if !has_locals {
-            println!(
-                "\n[NOT VERIFIED] the binary is stripped of local symbols, so the absence \
-                 of a JavaScript engine or of XFA cannot be established this way."
-            );
-            return Ok(());
-        }
-
-        let v8 = contains(&bytes, b"_ZN2v8") || contains(&bytes, b"v8::");
-        let real_js = contains(&bytes, b"_ZN11CJS_Runtime");
-        let stub_js = contains(&bytes, b"CJS_RuntimeStub");
-        let xfa = contains(&bytes, b"CXFA_");
-        println!();
-        println!("  V8 engine linked                  {}", yes_no(v8));
-        println!("  CJS_Runtime (real JS bridge)      {}", yes_no(real_js));
-        println!("  CJS_RuntimeStub (no-op bridge)    {}", yes_no(stub_js));
-        println!("  XFA implementation (CXFA_*)       {}", yes_no(xfa));
-        println!();
-
-        let js_absent = !v8 && !real_js && stub_js;
-        println!(
-            "document JavaScript: {}",
-            if js_absent {
-                "[OK] cannot run --- there is no engine to run it, only the stub"
-            } else if v8 || real_js {
-                "[FAIL] AN ENGINE IS PRESENT; policy is now the only thing stopping it"
-            } else {
-                "[NOT VERIFIED] neither an engine nor the stub was found"
-            }
-        );
-        println!(
-            "XFA forms:           {}",
-            if xfa {
-                "[FAIL] PRESENT; §6's XFA refusal is a policy, not a property"
-            } else {
-                "[OK] not built in"
-            }
-        );
-        println!();
-        println!(
-            "note this is a property of the vendored build, not of Pdfium, so it has to be \
-             re-checked after every bump --- and it says nothing about the code paths that \
-             ARE present. `FPDFDOC_InitFormFillEnvironment` runs on every document open in \
-             pdfium-render, so the form-fill machinery is reachable surface even with no \
-             engine behind it."
-        );
-        Ok(())
-    }
-
-    fn yes_no(flag: bool) -> &'static str {
-        if flag {
-            "yes"
-        } else {
-            "no"
-        }
+        super::engine_report(&dir)
     }
 
     // ------------------------------------------------------ mode: footprint

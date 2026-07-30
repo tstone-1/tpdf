@@ -52,9 +52,15 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin remove-probe -- \
     testdata/text-truetype.pdf c
 
 # The V8 and XFA symbol scan. This mode reads the library rather than binding it,
-# so --lib is required even though every other mode defaults it.
+# so --lib is required even though every other mode defaults it -- and the directory
+# is platform-shaped: lib/ on macOS, bin/ on Windows, where the loadable DLL lives.
+# macOS is the only platform where this can currently answer: the Windows DLL is
+# stripped of local symbols and the check correctly reports [NOT VERIFIED]. Run both;
+# the Windows one still reports the export surface, which stripping cannot hide.
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin worker-bench -- \
-    testdata/text-heavy.pdf --mode engine --lib vendor/pdfium/lib
+    testdata/text-heavy.pdf --mode engine --lib vendor/pdfium/lib   # macOS
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin worker-bench -- \
+    --mode engine --lib vendor/pdfium/bin                           # Windows
 
 # Progressive rendering still agrees with the safe path, byte for byte. Slow:
 # roughly 20 s, because the point is the page that takes seconds to render.
@@ -443,9 +449,43 @@ direction a list written by reading always errs --- see the trap. What was actua
   rather than degraded. Ported 2026-07-30, along with the hardcoded library path.
 - `tile-bench` --- **never refused anything.** It ran on the first try and failed at
   `LoadLibraryExW` on the hardcoded path. Ported the same day; numbers below.
-- `worker-bench` --- the one genuine refusal, and its stated reason is accurate: it carries its
-  own POSIX worker implementation, fd passing and SBPL profile bisection included, and shares no
-  mechanism with the job-object model. That one needs its own spike, not a port.
+- `worker-bench` --- seven of its eight modes genuinely refuse, and the reason is accurate: it
+  carries its own POSIX worker implementation, fd passing and SBPL profile bisection included,
+  and shares no mechanism with the job-object model. Those need a spike, not a port, and the
+  refusal now says what such a spike would measure that nothing else does (the per-tile overhead
+  decomposition of `latency` mode --- parallel scaling is `pool-bench`, the authority rungs are
+  `win-sandbox-probe`, crash and timeout are `backend-probe`, and `limits`/`footprint` are
+  answered by the job object capping commit in the kernel).
+
+  **The eighth mode ran here for the first time, and it does not say what the threat model does.**
+
+```
+./src-tauri/target/release/worker-bench.exe --mode engine --lib vendor/pdfium/bin
+```
+
+  `--mode engine` spawns nothing --- it reads the library file --- and was unreachable off unix only
+  because it sat inside a `#[cfg(unix)]` module. It is at file scope now, and on Windows it
+  reports **`[NOT VERIFIED]`**: the shipped `pdfium.dll` carries no local C++ symbols
+  (`CPDF_Document` is absent), so `v8::` and `CXFA_` being absent from it means nothing. That is
+  the harness's second control working exactly as written --- and it means
+  `docs/THREAT-MODEL.md`'s promotion of "JavaScript is disabled" to "there is no engine to
+  disable" is established on **macOS only**. On Windows it rests on the asset name and pinned
+  digest `fetch_pdfium.py` asserts, which is a claim about which file was fetched rather than
+  about what is in it. The threat model now says so.
+
+  It also prints the one dimension that survives stripping, because exports are always named:
+  **460 exported functions, four of them XFA-named** --- `FPDF_LoadXFA` and
+  `FPDF_GetXFAPacket{Count,Name,Content}`. Surface, not a contradiction: the three
+  `GetXFAPacket*` calls read `/XFA` streams out of an AcroForm dictionary and need no XFA engine.
+  Whether `FPDF_LoadXFA` is a stub there is open, and unlike JavaScript it is behaviourally
+  decidable --- a fixture carrying an `/XFA` packet makes `FPDF_GetXFAPacketCount > 0` a positive
+  control, so `FPDF_LoadXFA` returning false on it would mean the implementation is absent rather
+  than the document empty. Not written; that fixture does not exist.
+
+  Both numbers were cross-checked against a throwaway Python PE parse before being written down
+  --- two independent parsers, same 460 and same four names. Every branch was exercised: a
+  non-PDFium file `[FAIL]`s, a file that passes both controls but is not a PE reports "not a PE
+  image" rather than a zero, a missing `--lib` exits 2, and another mode still refuses.
 
 **Numbers are macOS arm64 unless a Windows one says so.** The pre-spawn table above and the
 tile-bench section below are the sets taken on Windows and are labelled as such; everything else

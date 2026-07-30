@@ -2941,3 +2941,59 @@ Three things follow, and the third is the one that generalises furthest:
   like corruption, it looks like a *finding* --- a worker with an empty error. A channel that can
   drop half a message will eventually drop the half that carried the meaning, and what arrives is
   a plausible bug report about something else.
+
+### A symbol scan needs symbols, and the Windows PDFium has none
+
+`worker-bench --mode engine` is the check behind the threat model's strongest sentence: the
+vendored PDFium has zero `v8::` symbols and zero `CXFA_` symbols, so "document JavaScript is
+disabled" is not a policy but a property of the binary. It lived inside a `#[cfg(unix)]` module
+for no reason --- it spawns nothing, it reads a file --- so it had **never been run on Windows**,
+and the claim was untested there rather than merely unmeasured.
+
+Moved to file scope and run, it reports `[NOT VERIFIED]`. The shipped `pdfium.dll` carries no
+local C++ symbols: `CPDF_Document` is absent, so `v8::` and `CXFA_` being absent from it says
+nothing at all. The harness's own second control catches this exactly as designed --- the entry
+above it says "without the second, every absence is *not verified*, not *not present*" --- which
+is the check working, and also the finding. On Windows the no-engine property rests on the asset
+name and pinned digest, which is a claim about *which file was fetched* rather than about what is
+in it.
+
+Four things worth keeping:
+
+- **A check that cannot run on a platform is not neutral there; it is a claim nobody has
+  tested.** The `cfg` gate was on the *module*, so the one mode that needed no worker went with
+  the seven that did. Look for portable pieces trapped behind a platform gate they never needed.
+- **Print the dimension that survives, and print it before the early return.** The export table
+  is always named, because a loader must find it. It was originally printed *after* the
+  stripped-binary exit, so the one run that most needed it showed nothing.
+- **Windows exports four XFA-named functions**, and they are surface rather than a
+  contradiction: `FPDF_GetXFAPacket{Count,Name,Content}` read `/XFA` streams out of an AcroForm
+  dictionary and need no XFA engine. Whether `FPDF_LoadXFA` is a stub is open --- and it is
+  behaviourally decidable, unlike JavaScript, because a fixture with an `/XFA` packet gives
+  `FPDF_GetXFAPacketCount > 0` as a positive control. The entry above says the property "cannot
+  be tested behaviourally"; that is true of JS and over-generalised to XFA.
+- **Two independent parsers agreeing is the cheapest confirmation available.** The Rust export
+  reader and a throwaway Python PE parse both said 460 exports and the same four XFA names. That
+  took a minute and is worth more than re-reading the Rust.
+
+### `cargo fmt` was blamed for mangling a string, and it was innocent
+
+A refusal message came out with ten-space runs inside it --- `socket          pair` --- and the
+obvious suspect was the formatter, since the string had been written with `\`-continuations and
+`cargo fmt` had just run. Testing that took one command: a file with the same shape, `rustfmt`
+run on it, `diff` clean. **rustfmt does not touch string contents.**
+
+The mangling was self-inflicted, from generating Rust *through* a Python heredoc. A `\` before a
+newline is a line-continuation in a Rust string literal **and** in a Python one, so a fragment
+crossing three escaping layers --- shell heredoc, Python literal, Rust literal --- can have its
+continuation consumed by the wrong one. Python ate the newline and left the indentation, so the
+Rust source contained one long line with the indent baked in as spaces.
+
+- **`concat!` with one literal per line is immune**, has no continuations to lose, and is stable
+  under the formatter. Use it for any long message, and especially for one being written by a
+  script.
+- **The failure is silent and plausible.** The string still compiles, still reads correctly at a
+  glance, and only prints wrong. Nothing fails.
+- And the meta-lesson, which cost the smaller half of the time: **verify the tool before blaming
+  it.** The accusation was one command from being disproved, and "the formatter corrupts string
+  literals" would have been a memorable and completely false trap in this file.
