@@ -44,7 +44,7 @@ use crate::progressive::{self, CancelToken, RawDocument};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{self, PageSize, TileFormat, TileRequest};
 #[cfg(windows)]
-use crate::worker::{doc_handle_arg, tile_handle_arg};
+use crate::worker::{doc_handle_arg, tile_handle_arg, Handover};
 use crate::worker::{
     doc_len_arg, library_dir_arg, Request, Response, Shm, PRESPAWN_ARGV, TILE_CAPACITY,
 };
@@ -447,10 +447,46 @@ fn wait_for_document() -> Result<Shm, String> {
     unsafe { Shm::from_fd(raw, len, false) }
 }
 
-/// Not reachable: a worker refuses to start at all off macOS.
-#[cfg(not(target_os = "macos"))]
+/// Blocks until the parent hands over a document mapping.
+///
+/// Read off **stdin**, which is the same pipe every later request arrives on,
+/// and that is safe for exactly one reason worth stating: [`spawn_reader`] is
+/// not started until `serve` has a document, so at this point nothing else in
+/// the process is reading. Both readers go through `std::io::stdin()`, so any
+/// bytes over-read into its buffer here are still there for the reader thread
+/// --- a private `BufReader` on the raw handle would swallow a request that
+/// arrived promptly behind the handover.
+///
+/// The handle in the message is already this process's: the parent duplicated
+/// it here before writing. See [`Handover`].
+///
+/// # Errors
+///
+/// The pipe closing --- which is how a pre-spawned worker that is never given a
+/// file learns to exit rather than waiting forever --- or a malformed handover.
+#[cfg(windows)]
 fn wait_for_document() -> Result<Shm, String> {
-    Err("pre-spawned workers are implemented on macOS only".into())
+    use std::io::BufRead;
+
+    let mut line = String::new();
+    let read = std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| format!("reading the document handover: {e}"))?;
+    if read == 0 {
+        return Err("the parent closed the pipe before handing over a document".into());
+    }
+    let handover: Handover = serde_json::from_str(line.trim())
+        .map_err(|e| format!("unreadable document handover {line:?}: {e}"))?;
+    // SAFETY: the parent duplicated this section into our table before naming it,
+    // and nothing else in this process owns it.
+    unsafe { Shm::from_handle(handover.handle, handover.len, false) }
+}
+
+/// Not reachable: a worker refuses to start at all on this platform.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn wait_for_document() -> Result<Shm, String> {
+    Err("pre-spawned workers are implemented on macOS and Windows only".into())
 }
 
 /// Makes PDFium build its system font list, before any document needs it.

@@ -2839,27 +2839,77 @@ probe covers it" is exactly the sort of claim that turns out to be false. So the
 real and should be stated where someone might otherwise add a redundant unit test: `cargo test`
 owns EOF propagation and epitaphs, the probe owns direction and content.
 
-### A pool that reports six workers can be holding one, and the handle count says so
+### A wait for a condition that cannot hold spends its whole bound, and retires the pool it was about to measure
 
-`backend-probe`, ported to Windows, reports **6 workers from 1** for a burst and then, 1.2 s
-into a 4.0 s idle timeout, finds **1 of 6** still alive. Read alone that looks like retirement
-firing early --- a clock problem, or a `since` that is never refreshed.
+`backend-probe`, ported to Windows, reported **6 workers from 1** for a burst and then, 1.2 s
+into a 4.0 s idle timeout, **1 of 6** still alive. Beside it the descriptor check reported
+**144 handles with one worker, 144 grown, 144 retired** --- and five extra worker processes,
+each costing the parent two pipe ends, a process, a thread, a job and two section handles,
+cannot cost zero. Two independent observations, agreeing, and the conclusion drawn from them
+was that the workers were created, used and **destroyed rather than pooled**.
 
-It is not, and the check that says so is the descriptor one beside it: **144 handles with one
-worker, 144 grown, 144 retired.** Five extra worker processes cost the parent two pipe ends, a
-process, a thread, a job and two section handles each; growing to six could not leave the count
-unchanged. So the parent never held six workers' worth of handles at the moment it was sampled,
-even though the OS process table had six pids a moment earlier. The workers are being created,
-used, and **destroyed rather than pooled** --- and on Windows destroying a `Worker` closes its
-job, which is why the processes vanish so cleanly that it reads as tidy retirement.
+That conclusion was wrong, and it was written into three documents as an open defect for a day.
 
-Two things to take from it beyond the bug. **A pid list and a handle count are independent
-observations of the same claim, and only together do they say which half is wrong**; the pid
-list alone supports a wrong diagnosis that is entirely plausible. And a check that looks like
-noise next to a louder failure --- "the numbers did not move" --- was the one carrying the
-answer, so a failing probe is worth reading whole rather than triaged down to its most alarming
-line.
+Both readings were honest. What neither could say is **when** it was taken. The sample sat
+behind `settled_descriptors`, whose wait is `!spare_pids().is_empty() && spares_settled()` under
+a five-second bound. Windows never pre-spawns --- `Worker::prespawn` refuses, because a child
+there is handed its document at `CreateProcess` and one started before a file is chosen has
+nothing to receive --- so `spare_pids` is empty for the life of the process and that wait could
+never succeed. It spent its full bound on every call. Five seconds is longer than the phase's
+own four-second idle timeout, so **the instrument retired the pool it was measuring, and then
+measured it.** One worker of six, and a handle count back at its lean value, are exactly what a
+correctly working pool looks like five seconds after a burst. Guarding the pid clause behind the
+platform turned 34/41 into 36/41 with nothing in `workers.rs` touched.
 
-Unresolved as of 2026-07-29. It is Windows-only: the same probe passes both checks on macOS,
-which is what makes the pooling path the place to look rather than the retirement predicate,
-since that predicate is shared and untouched.
+Four things worth keeping, and the first is the one that would have ended it in a minute:
+
+- **A helper that polls until a deadline returns a verdict, and discarding it converts "never
+  happened" into "took a while".** `settle_for` returned `false` three times per run and nobody
+  asked. A timing print was all it took --- `false after 5.00 s, spares []` --- and it was the
+  first thing tried after the conclusion was doubted rather than the last. Any wait whose
+  expiry is not an error should say so out loud; `settled_descriptors` now prints a `[WARN]`
+  naming the bound it waited out.
+- **Two agreeing observations still share every assumption the sampling makes.** The pid list
+  and the handle count are genuinely independent of each other and were taken through the same
+  five-second delay, so their agreement measured the delay, not the pool. Independence is a
+  property of the *observation*, not of the two quantities.
+- **Cross-check the elapsed time, not only the values.** A phase that reasons about a 4.0 s
+  timeout and a 1.2 s control is making a claim about a clock, and nothing in it read a clock.
+- **A `cfg!` for a platform fact wants a name, because a second reader will appear.** The same
+  distinction --- this platform does not pre-spawn --- was already spelled out inline where the
+  spare-lifetime check is skipped, correctly, and was simply missing here. It is
+  `PRESPAWNS` now, in one place. See the trap about two copies of a distinction drifting; this
+  is that trap arriving as a copy that was never made.
+
+Resolved 2026-07-29. The pre-fix run is the red control for both checks: they were observed
+failing and are now observed passing, with `RETIRE_DOWN` (retirement still happens: 1 of 6 left)
+green on both sides, so the fix did not simply make them unable to fail.
+
+### A check that wins a race on one platform has not been shown to pass on it
+
+`backend-probe`'s descriptor check opens one document, closes it, and asserts the count comes
+back to where it started. It sampled with a raw `open_descriptors()` and had passed on macOS
+since it was written. Pre-spawning reached Windows and it went red the same hour: **137 quiet,
+145 with it open, 142 after closing it** --- five handles, which is one spare's worth.
+
+Nothing leaked. An `open` **consumes** the pool's warmed spare and starts a replacement on
+another thread, so whether a sample includes one spare's handles depends on how far that thread
+has got. On macOS the replacement is a `fork` and is up before the next sample; on Windows it is
+a `CreateProcess`, a token, a job and a fresh map of `pdfium.dll`, and it is not. The check had
+been reading a race it happened to win.
+
+The fix was the wait that already existed for exactly this --- `settled_descriptors`, whose own
+doc comment describes the miss as "a leak of exactly that size" --- applied to three call sites
+that predated it. What is worth carrying past the instance:
+
+- **"It passes on macOS" is evidence about macOS's timing, not about the check.** A concurrency
+  bug in a test is invisible until something changes the timing, and a second platform is the
+  cheapest thing that ever will. Treat a check that goes red *only* on the new platform as a
+  question about the check first and the platform second --- here the platform was innocent
+  twice in two days, and the first time cost a phantom defect in the pool.
+- **A helper written to bracket a race has to be used at every sample, not at the alarming
+  one.** The three raw calls were older than the helper and nothing pointed from one to the
+  other. If a sampling helper exists because a naive sample is wrong, the naive call is the
+  thing to grep for when it is written.
+- **The delta that shows up is the size of the thing you forgot**, which is the fastest way to
+  identify it: five handles is one worker, and one worker that nobody asked for is a spare.

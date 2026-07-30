@@ -39,7 +39,6 @@ use tpdf_lib::render::{
 use tpdf_lib::worker;
 use tpdf_lib::worker::phys_footprint;
 // The child half exists only on unix --- see the module note in `worker.rs`.
-#[cfg(unix)]
 use tpdf_lib::worker_child;
 
 /// An idle timeout no run of the speedup mode reaches.
@@ -64,13 +63,12 @@ fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
-        #[cfg(unix)]
+        // No `cfg` here: `worker_child::main` compiles on every platform and
+        // refuses inside `establish_boundary` where there is no boundary to
+        // establish. A gate on `unix` here dated from when this module did not
+        // build on Windows, and left the binary unable to act as its own worker
+        // on a platform where a worker now exists.
         worker_child::main(&args);
-        #[cfg(not(unix))]
-        {
-            eprintln!("{}", worker::NO_WORKERS);
-            std::process::exit(2);
-        }
     }
 
     let Some(document) = args.get(1).map(PathBuf::from) else {
@@ -507,6 +505,6 @@ fn flag(args: &[String], name: &str) -> Option<usize> {
 fn library_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium/lib"))
+        .map(|root| root.join("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR))
         .unwrap_or_else(|| PathBuf::from("."))
 }
