@@ -1780,8 +1780,45 @@ rediscovering — a test that cannot distinguish its own silence from a pass.
   and nothing was comparing them; they are compared now.
 
 Not done: regular expressions, a results sidebar, search within a selection, and matching
-across a page boundary. Nor is there a bound on the front-end text cache, which a reader
-stepping through hits on a thousand pages would find.
+across a page boundary.
+
+##### A bound on the text cache --- 2026-07-30
+
+Named twice above as missing, and search is what made it matter --- though not in the
+obvious way. A whole-document scan never touches the front-end cache at all: the matching is
+in Rust and only the hits cross. What fills it is a reader **stepping through** the results,
+because each jump loads the page it lands on to know where to scroll. 5,712 matches over 775
+pages is 775 pages of characters retained by somebody holding down ⌘G.
+
+Least-recently-used, bounded at **400,000 characters** --- about 16 MB, since a character
+costs a code point plus four box coordinates --- with a floor of **8 pages** kept whatever
+they cost. Characters rather than pages because that is what the memory tracks and page size
+varies by three orders of magnitude across this repository's own corpus: 177 characters a
+page on `text-base14`, none at all on `vector-heavy`. The floor is what stops a single page
+larger than the whole budget emptying the cache on arrival and then being dropped itself,
+turning a memory concern into an IPC storm on every frame.
+
+`peek` counts as a use, which is the part worth stating: it is the paint path, so the pages
+on screen are continuously the youngest and are the last things that could be dropped.
+
+8 unit tests, and the first run of them found **two that could not fail** --- which is the
+whole point of running it and is the more interesting half of this entry:
+
+- The re-arrival correction in `remember` was **unreachable**. `load` returns from the cache
+  before it issues a request and `pending` dedupes a race, so `remember` is only ever called
+  for a page the cache does not hold. Deleted, and the test with it.
+- **A stale turned view is invisible.** Eviction has to drop the rotated copy too, or the
+  leak moves rather than closing --- and on a rotated document that map is the larger of the
+  two. But `view` consults `pages` first and never reaches `turned` for a page that has gone,
+  so "an evicted page reads as null" passes whether or not the view was dropped. The claim is
+  only testable against a *count*, so the cache exposes one.
+
+The second is the general shape and it is now a trap entry: a leak that no behavioural
+assertion can fail on needs an accounting observable, not a cleverer behavioural assertion.
+
+Deliberately **no functional check**. The scenario the bound exists for needs a few hundred
+page visits to reach on a real document, which is minutes in `viewer_check.py` to re-assert
+what eight unit tests already prove by mutation.
 
 ##### Matching case and whole words --- 2026-07-30
 

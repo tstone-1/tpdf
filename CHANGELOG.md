@@ -637,6 +637,20 @@ experience.
   of by a `reset()` call at each of those sites. Units are found from the character under the
   pointer rather than the caret beside it: the caret after a word's last glyph names the
   following space, and a word selection built on that selects the gap.
+- **A bound on the front-end text cache.** Least-recently-used, 400,000 characters --- about
+  16 MB --- with a floor of eight pages kept whatever they cost. It was unbounded, and search
+  is what made that matter: a whole-document scan never touches it, but *stepping through* the
+  results loads every page a hit lands on, so 5,712 matches over 775 pages is 775 pages of
+  characters retained by somebody holding down ⌘G. `peek` counts as a use, so the pages on
+  screen are always the youngest and are the last that could be dropped.
+
+  Two of the eight tests written for it could not fail, and both are recorded. One covered a
+  correction in `remember` that is unreachable --- `load` returns from the cache before it
+  issues a request --- so the code went with the test. The other asserted that an evicted page
+  reads as null, which passes whether or not the *rotated* copy of it was dropped too, because
+  nothing reaches that map for a page `pages` has lost. A leak no behaviour can see needs an
+  accounting observable, not a cleverer assertion.
+
 - **Matching case and whole words, in find.** ⌥⌘C and ⌥⌘W, two toggles beside the find field,
   or the palette. Both default to off, so a reader who never touches them gets the search that
   was there before. A toggle rescans the current query rather than filtering what it found:
