@@ -35,6 +35,14 @@ use tpdf_lib::render::{
 use tpdf_lib::search::PageMatches;
 use tpdf_lib::startup;
 use tpdf_lib::worker;
+// Whether this platform starts workers before a document is chosen. Taken from
+// the module that owns the fact rather than restated: two checks here branch on
+// it --- the spare-lifetime one, which has nothing to leak, and
+// `settled_descriptors`, which has nothing to wait for --- and a local
+// `cfg!(target_os = "macos")` covering only the first was wrong for a day. The
+// wait it left uncovered spent its whole bound and retired the pool it was about
+// to measure, which was recorded as a defect in the pool. See the trap.
+use tpdf_lib::worker::PRESPAWNS;
 use tpdf_lib::worker_child;
 
 /// Tiles are compared at this size: inside the useful range `AGENTS.md`
@@ -743,14 +751,23 @@ pub fn main() {
             // amount that depends on timing, so only a freshly opened one --- one
             // worker, by the laziness this file asserts separately --- gives a
             // deterministic delta.
-            let quiet = open_descriptors();
+            // Every sample through `settled_descriptors`, not the raw count.
+            // An `open` **consumes** the spare and prewarms a replacement on
+            // another thread, so a raw sample can be taken with one spare's
+            // worth of handles present or absent depending on how far that
+            // thread has got --- and the miss resurfaces here as a leak of
+            // exactly one spare, which is what this check is looking for. It was
+            // raw until pre-spawning reached Windows, where the replacement is
+            // slower to appear than on macOS; the race was always here and macOS
+            // was winning it.
+            let quiet = settled_descriptors(&workers);
             let throwaway = wait(|reply| workers.open(document.clone(), true, reply));
-            let opened_fds = open_descriptors();
+            let opened_fds = settled_descriptors(&workers);
             let released = match &throwaway {
                 Ok(info) => wait(|reply| workers.close(info.id, reply)),
                 Err(e) => Err(e.clone()),
             };
-            let settled = open_descriptors();
+            let settled = settled_descriptors(&workers);
             report.check(
                 "closing gives back every descriptor opening took",
                 released.is_ok() && opened_fds > quiet && settled == quiet,
@@ -866,14 +883,14 @@ pub fn main() {
     let others = worker_pids();
     retiring_idle_workers(&mut report, &document, render_ms, &others);
 
-    // Skipped rather than absent where there are no spares to leak. Windows has
-    // no pre-spawning --- a child there is handed its document at
-    // `CreateProcess`, so a worker started before a file is chosen has nothing to
-    // receive --- and `Worker::prespawn` refuses. Run anyway, the check reports
-    // that the child service announced no spare, which is true and is not a
-    // defect; `AGENTS.md` records that a control which silently disappears on
-    // some inputs cannot be told apart from one that ran, so it says why.
-    if cfg!(target_os = "macos") {
+    // Skipped rather than absent where there are no spares to leak, and it says
+    // why: `AGENTS.md` records that a control which silently disappears on some
+    // inputs cannot be told apart from one that ran. Both platforms that have a
+    // worker now pre-spawn, so in practice this runs everywhere the rest of the
+    // file does --- the branch is kept because the *reason* it could skip is a
+    // property of the platform rather than of the corpus, and a `PRESPAWNS` that
+    // is always true is not a claim this file should be making on its own.
+    if PRESPAWNS {
         spare_outlives_nothing(&mut report, &document);
     } else {
         report.skip(
@@ -1505,10 +1522,34 @@ fn pool_pids_besides(service: &RenderService, others: &[u32]) -> Vec<u32> {
 /// slot, so a sample taken in that first window misses all four, and the miss
 /// resurfaces later as a leak of exactly that size. Waiting for a pid as well as
 /// for the claim brackets both windows.
+///
+/// **The pid clause is asked for only where a spare can exist**, and the reason
+/// is worth more than the guard. Windows never pre-spawns, so `spare_pids` is
+/// empty for the life of the process and this wait spent its whole five-second
+/// bound on every call --- silently, because `settle_for`'s verdict was
+/// discarded. Five seconds is longer than [`RETIRE_IDLE`], so the sample taken
+/// to measure the grown pool *retired* it, and the phase then reported one
+/// worker of six 1.2 s into the timeout and an unchanged handle count. Both
+/// readings were true, and neither was about the pool: they described a pool
+/// left alone for five seconds by its own instrument. It was recorded as a
+/// pooling defect for a day.
+///
+/// So the verdict is no longer discarded. A wait that expires where it was meant
+/// to succeed is a broken sample rather than a slow one, and the next platform
+/// without spares must not be able to reintroduce this quietly.
 fn settled_descriptors(service: &RenderService) -> usize {
-    settle_for(Duration::from_secs(5), || {
-        !service.spare_pids().is_empty() && service.spares_settled()
+    let bound = Duration::from_secs(5);
+    let settled = settle_for(bound, || {
+        (!PRESPAWNS || !service.spare_pids().is_empty()) && service.spares_settled()
     });
+    if !settled {
+        eprintln!(
+            "[WARN] the descriptor sample waited out its {:.0} s bound; every count below \
+             was taken {:.0} s after the state it is meant to describe",
+            bound.as_secs_f64(),
+            bound.as_secs_f64()
+        );
+    }
     open_descriptors()
 }
 

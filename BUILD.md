@@ -247,10 +247,16 @@ inside the ranges the table above records:
 
 | fixture | ran | skipped | failed |
 |---|---|---|---|
-| `outline-simple.pdf` | 81 | 5 | 0 |
+| `outline-simple.pdf` | 81--82 | 4--5 | 0 |
 | `outline-hostile.pdf` | 81 | 5 | 0 |
 | `rotated-90.pdf` | 75 | 11 | 0 |
 | `vector-heavy.pdf` | 52 | 34 | 0 |
+
+Re-run 2026-07-30 with pre-spawning live, since that changes the app's own behaviour --- every
+open now consumes a warmed process and starts another. All four green, no `[WARN]`, 44 modules
+at peak with no `pdfium` among them over 27--978 samples. `outline-simple` reported 82/4 that
+time against 81/5 before: the **86 names** are what is invariant, and one of them stopped
+skipping. A split that moves is information; a name that disappears would not be.
 
 Rendering, scrolling, zoom, pinch, view rotation, text selection, search, the palette, the
 accessibility tree, the outline sidebar, thumbnails, inversion and the print command's
@@ -336,41 +342,111 @@ That line is printed *outside* the 86 check names on purpose --- those are `view
 and are the cross-platform invariant, and adding a Windows-only name to that set would make the
 two platforms look divergent when they are not.
 
-Pre-spawning is still unimplemented there --- a Windows child is given its document at
-`CreateProcess`, so a worker started before a file is chosen has nothing to be handed;
-`Worker::prespawn` refuses and names that reason rather than the sandbox. `Worker::spawn_shared`
-takes every open instead, so the cost is the ~6.6 ms macOS saves, not a failure.
+#### Pre-spawning, and what it is worth here
 
-### `backend-probe` on Windows, and the defect it found
+Implemented 2026-07-30, so both platforms start a worker before a file is chosen. Only the
+handover differs. A macOS parent sends a descriptor as `SCM_RIGHTS`; a Windows parent
+`DuplicateHandle`s the document section **into the running child's handle table** and then sends
+a `Handover` line naming the number it wrote. Writing into a low-integrity child is the direction
+integrity levels permit, so this crosses the boundary for the same structural reason the macOS
+one does. `Handover` is deliberately not a `Request` variant --- a handover is legal exactly once,
+and keeping it out of the request vocabulary makes a second one unsayable rather than something
+the child has to refuse.
+
+```
+cargo run --release --bin prespawn-bench -- --rounds 6 \
+    text-base14.pdf text-truetype.pdf text-cid.pdf vector-heavy.pdf
+```
+
+| fixture | size | spawn now (min/med/max) | pre-spawned | saved |
+|---|---|---|---|---|
+| `text-base14.pdf` | 888 B | 10.10 / 10.38 / 10.62 ms | 0.69 ms | **+9.64** |
+| `text-truetype.pdf` | 20 KB | 8.70 / 8.87 / 9.75 ms | 0.44 ms | **+8.42** |
+| `text-cid.pdf` | 22 KB | 8.51 / 8.99 / 9.46 ms | 0.45 ms | **+8.55** |
+| `vector-heavy.pdf` | 2 MB | 75.09 / 75.78 / 76.54 ms | 66.77 ms | **+9.15** |
+
+**The shape of the saving is not the macOS one, and that is the finding.** There the interval
+splits into a ~6.6 ms floor plus ~7.4 ms of system-font enumeration paid only by documents that
+embed nothing. Here the saving is nearly constant at ~9 ms and the font component is **~1.4 ms**
+--- `text-base14`, which embeds nothing, costs 10.38 ms against 8.87/8.99 ms for the two that do.
+So on Windows pre-spawning buys almost entirely the fixed floor: `CreateProcess`, the loader,
+mapping `pdfium.dll`, the token and the job.
+
+Read that 1.4 ms as a between-document comparison, not as the warm/no-warm control. The bench's
+own `a warmed worker does not pay the font walk` check needs `text-heavy.pdf`, which this machine
+has not generated, and it `[SKIP]`s with that reason rather than quietly not running.
+
+### `backend-probe` on Windows, and the defect it found in itself
 
 ```
 cargo build --release --bin backend-probe
 ./src-tauri/target/release/backend-probe.exe testdata/text-base14.pdf
+./src-tauri/target/release/backend-probe.exe testdata/vector-heavy.pdf
 ```
 
-**34/41, 5 skipped.** The boundary, the pixel comparisons, capacity, crash restart, replacement,
-close and descriptor return all pass. Its Windows primitives are Toolhelp for the module list
-and the process table, `GetProcessHandleCount` for descriptors, and `TerminateProcess` for a
-hostile kill from outside the pool --- deliberately not `Contained::kill`, since the pool has to
-notice a death it did not cause.
+| fixture | passed | skipped | failed |
+|---|---|---|---|
+| `text-base14.pdf` | 37/41 | 4 | 0 |
+| `text-cid.pdf` | 37/41 | 4 | 0 |
+| `outline-hostile.pdf` | 38/41 | 3 | 0 |
+| `vector-heavy.pdf` | 40/41 | 1 | 0 |
 
-**The two failures are one open defect: the pool does not retain workers.** A burst grows it to
-six; 1.2 s into a 4.0 s idle timeout, one is left. That reads as retirement firing early and is
-not --- the descriptor check beside it reports **144 handles with one worker, 144 grown, 144
-retired**, and five extra workers cannot cost zero handles. They are created, used and destroyed
-rather than pooled, and destroying a `Worker` closes its job, which is why they vanish cleanly
-enough to look like tidy retirement. Windows-only: the retirement predicate is shared with macOS
-and passes there, so the pooling path is where to look, not the predicate.
+The skips are a slow enough render for the three withdrawal checks (only `vector-heavy` has one)
+and a second page to confuse a page number with. The boundary, the pixel comparisons, capacity,
+crash restart, replacement, retirement, close, descriptor return **and the spare's lifetime** all
+pass. Its Windows primitives are Toolhelp for the module list and the process table,
+`GetProcessHandleCount` for descriptors, and `TerminateProcess` for a hostile kill from outside
+the pool --- deliberately not `Contained::kill`, since the pool has to notice a death it did not
+cause.
 
-Do not "fix" this by relaxing either check. They are the only reason it is known.
+This is also where the Windows spare is proved end to end, and the detail says more than the
+count: `at open: pool [18840], children [2672, 18840], spares [2672]` --- a warmed child exists,
+is excluded from the pool rather than miscounted into it, and `opened with 1` beside it keeps the
+laziness claim. `a spare does not outlive the service that started it` reports
+`its 1 spare process(es) [58096] went with it`.
 
-Four probe binaries still refuse to act as a worker off unix (`pool-bench`, `prespawn-bench`,
-`worker-bench`, `tile-bench`), and four still hardcode `vendor/pdfium/lib` --- wrong on Windows,
-where the loadable DLL is in `bin/`. `tpdf_lib::PDFIUM_SUBDIR` exists so the next one ported
-takes it instead of adding a fifth copy; that mistake has already cost two binaries on two days.
+**It first reported 34/41, and the two failures were the probe's own.** They said a burst grew
+the pool to six and 1.2 s into a 4.0 s idle timeout one was left, with **144 handles with one
+worker, 144 grown, 144 retired** beside it --- and five extra workers cannot cost zero handles.
+Two independent observations agreeing, and the diagnosis drawn from them (created, used and
+**destroyed rather than pooled**) was recorded here as an open defect for a day. It was wrong.
 
-Still unmeasured and still macOS-shaped: every *number* in this file and in `AGENTS.md` is
-macOS arm64, `session_check.py` and `open_check.py` want `open -a` and an `.app`, and
+Both numbers were honest; neither could say *when* it was taken. `settled_descriptors` waits up
+to five seconds for a pre-spawned spare to appear, Windows has none, and the verdict of that wait
+was discarded --- so it spent its whole bound on every call, which is longer than the idle timeout
+the phase runs at. The instrument retired the pool and then measured it. One worker of six and a
+lean handle count are precisely what a correct pool looks like five seconds after a burst. The
+pid clause is now asked for only where a spare can exist, and a wait that expires says so with a
+`[WARN]`. Nothing in `workers.rs` changed.
+
+Do not "fix" a failure here by relaxing a check --- but do check the clock before believing one.
+The pre-fix run remains the red control for both: they were observed failing, are now observed
+passing, and `an idle pool is retired down to one worker` is green on both sides, so retirement
+was never the thing that broke.
+
+**A second check went red the day pre-spawning landed, and it was the same shape.** `closing
+gives back every descriptor opening took` reported *137 quiet, 145 with it open, 142 after
+closing it* --- five handles, one spare's worth. Nothing leaked: an `open` consumes the warmed
+spare and starts a replacement on another thread, so a raw sample includes one spare or not
+depending on how far that thread has got. macOS forks and wins that race; Windows creates a
+process, a token, a job and a fresh map of `pdfium.dll`, and does not. Its three samples now go
+through `settled_descriptors`, which exists for exactly this and predated them. See the trap ---
+the lesson is that passing on one platform was evidence about that platform's timing.
+
+`pool-bench` and `prespawn-bench` were two of four probe binaries refusing to act as a worker
+off unix and hardcoding `vendor/pdfium/lib`; both are ported (2026-07-30) and both now take
+`tpdf_lib::PDFIUM_SUBDIR`. `worker-bench` and `tile-bench` still carry the `#[cfg(unix)]` gate
+and the hardcoded path. That gate is worth understanding before copying it: it dated from before
+`worker_child` compiled on Windows, and what it produced was a binary that could not be the thing
+it measures --- `prespawn-bench` re-execs itself as a worker, so gating that re-exec made the
+whole benchmark unrunnable rather than degraded.
+
+**Numbers are macOS arm64 unless a Windows one says so.** The pre-spawn table above is the first
+set taken on Windows and is labelled as such; everything else in this file and in `AGENTS.md`
+still is not, and the two platforms are far enough apart on that one measurement --- a ~1.4 ms
+font walk against ~7.4 ms --- that carrying a macOS figure over is a guess, not an estimate.
+
+Still macOS-shaped: `session_check.py` and `open_check.py` want `open -a` and an `.app`, and
 `webview_guard` checks nothing off darwin (see the trap --- Chromium throttles occluded
 windows too, so those runs were protected by nothing).
 

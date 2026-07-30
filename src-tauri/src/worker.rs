@@ -65,25 +65,6 @@ pub const WORKER_ARGV: &str = "--render-worker";
 #[cfg(not(any(target_os = "macos", windows)))]
 pub const NO_WORKERS: &str = "render workers are implemented on macOS and Windows only";
 
-/// Why the *pre-spawn* entry points refuse on Windows.
-///
-/// A second definition of the same name rather than a second name, so that every
-/// caller keeps compiling and none has to know which reason applies where. The
-/// reason genuinely differs: Windows has a boundary now --- [`Worker::spawn`]
-/// works --- and what it does not have is the *handover*, because a mapping
-/// reaches a Windows child by inherited handle at `CreateProcess` and a worker
-/// started before any file is chosen has no handle to be given. macOS passes one
-/// later over a socket; the Windows equivalent is `DuplicateHandle` into a
-/// running child, which is not written.
-///
-/// Saying "implemented on macOS only" here, as this once did for every platform,
-/// would now be false in the direction that matters --- it would send a reader
-/// looking for a missing sandbox rather than a missing handover.
-#[cfg(windows)]
-pub const NO_WORKERS: &str =
-    "pre-spawned workers are implemented on macOS only: a Windows worker is handed its document \
-     when it is spawned";
-
 /// Descriptor the document mapping is handed over on.
 ///
 /// Fixed numbers because they must be agreed before `exec`, and there is no
@@ -121,8 +102,48 @@ pub const DOC_HANDLE_ARGV: &str = "--doc-handle";
 #[cfg(windows)]
 pub const TILE_HANDLE_ARGV: &str = "--tile-handle";
 
+/// The document handed to a Windows worker that was started without one.
+///
+/// The counterpart of the macOS `SCM_RIGHTS` handover, and it has to be a
+/// different mechanism rather than a different encoding: a Windows handle is a
+/// number in one process's table and means nothing in another, so there is no
+/// value the parent could simply *name*. What crosses is a `DuplicateHandle`
+/// into the running child, which is a write the parent performs on the child's
+/// handle table --- allowed because the parent is the more privileged of the two,
+/// and the direction low integrity does not block. `handle` is therefore already
+/// the child's number by the time this message says it.
+///
+/// **A message of its own rather than a [`Request`] variant**, and the type is
+/// the argument. A handover is legal exactly once, before there is a document;
+/// `Request` is the vocabulary of a worker that already has one. Folding it in
+/// would make "adopt a second document" something the child has to *refuse* at
+/// runtime, where keeping it out makes it something that cannot be said. It is
+/// read off the same pipe requests later arrive on, at the one point in the
+/// child's life where nothing else is reading that pipe.
+#[cfg(windows)]
+#[derive(Serialize, Deserialize)]
+pub struct Handover {
+    /// The document section, as a handle in the *child's* table.
+    pub handle: usize,
+    /// How much of it to map. A handle says nothing about length.
+    pub len: usize,
+}
+
 /// The argv marker that starts a worker with no document.
 pub const PRESPAWN_ARGV: &str = "--prespawn";
+
+/// Whether this build can start a worker before a document has been chosen.
+///
+/// Exported because callers *outside* this module have to branch on it --- a
+/// probe skips its spare checks, a harness stops waiting for a spare that can
+/// never appear --- and the alternative is each of them restating the platform
+/// list. That is not hypothetical: `backend-probe` restated it, the two copies
+/// disagreed for one day, and the half that was missing produced a five-second
+/// wait that read as a defect in the pool. See the trap.
+///
+/// Kept beside [`Worker::prespawn`] and sharing its `cfg` exactly, so the
+/// constant and the refusal cannot say different things.
+pub const PRESPAWNS: bool = cfg!(any(target_os = "macos", windows));
 
 /// Bytes reserved for one tile payload.
 ///
@@ -725,6 +746,56 @@ fn inheritable_attributes() -> windows_sys::Win32::Security::SECURITY_ATTRIBUTES
 ///
 /// Separate and tested because the shift is the kind of arithmetic that is
 /// wrong only above 4 GB, where no ordinary run would notice.
+/// Copies a handle from this process into another one's table.
+///
+/// The Windows half of the document handover. Returns the value the handle has
+/// **in the target**, which is the only form the child can use --- a handle
+/// number is meaningful in exactly one process.
+///
+/// `DUPLICATE_SAME_ACCESS` rather than a named access mask on purpose: the
+/// document section is created `PAGE_READONLY` by `Shm::map_file`, so "the same
+/// access" is read-only, and re-stating the mask here would be a second place
+/// for the worker's read-only guarantee to live. The one that matters is where
+/// the section is made.
+///
+/// # Safety
+///
+/// Both handles must be live and owned by this process for the call.
+///
+/// # Errors
+///
+/// The duplication failing, which on a target that has exited is the usual case.
+#[cfg(windows)]
+unsafe fn duplicate_into(
+    target: windows_sys::Win32::Foundation::HANDLE,
+    handle: usize,
+) -> Result<usize, String> {
+    use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let mut out: HANDLE = std::ptr::null_mut();
+    // SAFETY: the caller's contract, plus a pseudo-handle to self and an out
+    // pointer that outlives the call.
+    let ok = unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            handle as HANDLE,
+            target,
+            &raw mut out,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if ok == 0 {
+        return Err(format!(
+            "DuplicateHandle: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(out as usize)
+}
+
 #[cfg(windows)]
 fn split_u64(value: u64) -> (u32, u32) {
     #[allow(clippy::cast_possible_truncation)]
@@ -1059,7 +1130,21 @@ impl WorkerSender {
     /// epitaph, because reaping the child needs the [`Worker`] this was split
     /// from and a caller holding only the sender has no business waiting on it.
     pub fn send(&self, request: &Request) -> Result<(), String> {
-        let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
+        self.write_line(request)
+    }
+
+    /// Writes one JSON line of whatever the child is expecting next.
+    ///
+    /// Generic over the message because the pipe carries two vocabularies in
+    /// sequence: on Windows a pre-spawned worker reads a [`Handover`] first and
+    /// [`Request`]s forever after. Sharing the write is what keeps the framing
+    /// --- one line, flushed --- from being stated twice and drifting once.
+    ///
+    /// # Errors
+    ///
+    /// Serialising, or the pipe being closed.
+    fn write_line<T: Serialize>(&self, value: &T) -> Result<(), String> {
+        let mut line = serde_json::to_string(value).map_err(|e| e.to_string())?;
         line.push('\n');
         let mut stdin = self.0.lock().unwrap_or_else(|e| e.into_inner());
         stdin
@@ -1111,9 +1196,11 @@ pub struct PreWorker {
     worker: Worker,
     /// Our end of the pair the document descriptor is sent over.
     ///
-    /// Gated with the handover itself: off macOS nothing constructs a
-    /// `PreWorker` and nothing reads this, so carrying the field there would be
-    /// a descriptor that exists only to be warned about.
+    /// Gated with the handover itself, and macOS is now the only platform that
+    /// needs a field at all: the Windows handover is a `DuplicateHandle` into the
+    /// child followed by a line down the request pipe, and both of those are
+    /// reachable from `worker` above. Carrying an unused descriptor elsewhere
+    /// would be a resource that exists only to be warned about.
     #[cfg(target_os = "macos")]
     socket: OwnedFd,
 }
@@ -1220,7 +1307,55 @@ impl WarmWorker {
         Ok(self.pre.worker)
     }
 
-    /// Hands over the document --- refused off macOS.
+    /// Hands over the document and returns the worker now serving it.
+    ///
+    /// The Windows counterpart, and the difference from the macOS arm is where
+    /// the authority is exercised. There the parent *sends* a descriptor and the
+    /// kernel installs it in the receiver; here the parent **writes into the
+    /// child's handle table** with `DuplicateHandle` and then tells the child
+    /// which number it wrote. That direction is the one integrity levels permit
+    /// --- a medium-integrity parent may reach into a low-integrity child, never
+    /// the reverse --- so the handover survives the containment for the same
+    /// structural reason the macOS one does, not by coincidence.
+    ///
+    /// The child's copy is left owned by the child: it is duplicated, not moved,
+    /// and closing the parent's own handle is [`Shm`]'s business as before.
+    ///
+    /// # Errors
+    ///
+    /// The duplication failing, or the send failing --- reported with the child's
+    /// epitaph, since "the pipe is closed" and "died at the loader" are different
+    /// diagnoses.
+    #[cfg(windows)]
+    pub fn adopt(mut self, doc: Arc<Shm>) -> Result<Worker, String> {
+        // SAFETY: a live process handle owned by the child struct, and a live
+        // section handle owned by `doc`, which outlives this call.
+        let handle = unsafe {
+            duplicate_into(self.pre.worker.child.process, doc.raw_handle()).map_err(|e| {
+                format!(
+                    "could not reach a pre-spawned worker's handle table: {e} --- {}",
+                    self.pre.worker.epitaph()
+                )
+            })?
+        };
+        let len = doc.len();
+        self.pre
+            .worker
+            .stdin
+            .write_line(&Handover { handle, len })
+            .map_err(|e| {
+                format!(
+                    "could not hand the document to a pre-spawned worker: {e} --- {}",
+                    self.pre.worker.epitaph()
+                )
+            })?;
+
+        // Kept mapped for as long as the worker lives, as on macOS.
+        self.pre.worker._doc = Some(doc);
+        Ok(self.pre.worker)
+    }
+
+    /// Hands over the document --- refused where there is no worker at all.
     ///
     /// Unreachable in practice, since [`Worker::prespawn`] refuses first and is
     /// the only route to a `WarmWorker`. Present so the type's surface does not
@@ -1230,7 +1365,7 @@ impl WarmWorker {
     /// # Errors
     ///
     /// Always.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn adopt(self, _doc: Arc<Shm>) -> Result<Worker, String> {
         Err(NO_WORKERS.into())
     }
@@ -1258,10 +1393,46 @@ impl Worker {
     /// # Errors
     ///
     /// Creating the tile buffer, the socket pair, or spawning; and on any
-    /// platform but macOS, always --- see the module note.
-    #[cfg(not(target_os = "macos"))]
+    /// platform but macOS and Windows, always --- see the module note.
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn prespawn(_library_dir: &Path) -> Result<PreWorker, String> {
         Err(NO_WORKERS.into())
+    }
+
+    /// Starts a worker with no document, to be given one later.
+    ///
+    /// Identical in purpose to the macOS arm and different in one mechanism: the
+    /// document arrives by [`Handover`] over the request pipe rather than as
+    /// ancillary data on a socket, so there is no socket to make here and the
+    /// child is spawned with a tile handle and nothing else.
+    ///
+    /// What it does **not** change is when containment happens. The child is
+    /// created suspended, dropped to low integrity and put in its job before it
+    /// runs an instruction, exactly as a document-carrying worker is --- a
+    /// pre-spawned worker is not a worker that gets contained later.
+    ///
+    /// # Errors
+    ///
+    /// Creating the tile buffer, the pipes, containing or spawning the child.
+    #[cfg(windows)]
+    pub fn prespawn(library_dir: &Path) -> Result<PreWorker, String> {
+        let tile = Shm::create(TILE_CAPACITY)?;
+        let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+        let worker = Self::spawn_contained_worker(
+            &[
+                &exe.to_string_lossy(),
+                WORKER_ARGV,
+                PRESPAWN_ARGV,
+                "--lib",
+                &library_dir.to_string_lossy(),
+                TILE_HANDLE_ARGV,
+                &tile.raw_handle().to_string(),
+            ],
+            &[tile.raw_handle() as windows_sys::Win32::Foundation::HANDLE],
+            tile,
+            None,
+        )?;
+        Ok(PreWorker { worker })
     }
 
     /// Starts a worker with no document, to be given one later.
@@ -1396,25 +1567,55 @@ impl Worker {
     /// Creating the pipes, containing or spawning the child, or resuming it.
     #[cfg(windows)]
     pub fn spawn_mapped(doc: Arc<Shm>, tile: Shm, library_dir: &Path) -> Result<Self, String> {
-        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+        let handles = [
+            doc.raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+            tile.raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+        ];
+        Self::spawn_contained_worker(
+            &[
+                &exe.to_string_lossy(),
+                WORKER_ARGV,
+                "--doc-len",
+                &doc.len().to_string(),
+                "--lib",
+                &library_dir.to_string_lossy(),
+                DOC_HANDLE_ARGV,
+                &doc.raw_handle().to_string(),
+                TILE_HANDLE_ARGV,
+                &tile.raw_handle().to_string(),
+            ],
+            &handles,
+            tile,
+            Some(doc),
+        )
+    }
 
-        use windows_sys::Win32::Foundation::HANDLE;
+    /// Spawns a contained child and wraps it as a worker.
+    ///
+    /// The shared half of [`Worker::spawn_mapped`] and [`Worker::prespawn`] on
+    /// Windows, which differ only in their argv and in whether a document is
+    /// inherited at `CreateProcess` or arrives later. Everything below --- the
+    /// pipes, which end goes where, closing the child's ends in the parent, and
+    /// resuming only once all of that is done --- is identical for both, and each
+    /// line of it is load-bearing in a way a second copy would eventually get
+    /// wrong.
+    ///
+    /// # Errors
+    ///
+    /// Creating the pipes, containing or spawning the child, or resuming it.
+    #[cfg(windows)]
+    fn spawn_contained_worker(
+        args: &[&str],
+        handles: &[windows_sys::Win32::Foundation::HANDLE],
+        tile: Shm,
+        doc: Option<Arc<Shm>>,
+    ) -> Result<Self, String> {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
 
         use crate::sandbox_win::{pipe, spawn_contained, Containment, Stdio};
 
-        let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-        let command = command_line(&[
-            &exe.to_string_lossy(),
-            WORKER_ARGV,
-            "--doc-len",
-            &doc.len().to_string(),
-            "--lib",
-            &library_dir.to_string_lossy(),
-            DOC_HANDLE_ARGV,
-            &doc.raw_handle().to_string(),
-            TILE_HANDLE_ARGV,
-            &tile.raw_handle().to_string(),
-        ]);
+        let command = command_line(args);
 
         // Two pipes, four ends, and which end goes where is the whole protocol:
         // the child reads requests and writes replies, so it gets the *read* end
@@ -1439,8 +1640,7 @@ impl Worker {
             child_stdin.as_raw_handle().cast(),
             child_stdout.as_raw_handle().cast(),
         )?;
-        let handles = [doc.raw_handle() as HANDLE, tile.raw_handle() as HANDLE];
-        let contained = spawn_contained(&command, &handles, &Containment::default(), Some(&stdio))?;
+        let contained = spawn_contained(&command, handles, &Containment::default(), Some(&stdio))?;
 
         // Closed in the parent *before* the child runs. Not hygiene: while this
         // process holds a copy of the reply pipe's write end, that pipe never
@@ -1457,7 +1657,7 @@ impl Worker {
             stdin: WorkerSender(Arc::new(Mutex::new(stdin))),
             stdout: BufReader::new(stdout),
             tile,
-            _doc: Some(doc),
+            _doc: doc,
         })
     }
 
@@ -2337,22 +2537,37 @@ mod tests {
         }
     }
 
-    /// Pre-spawning is still refused on Windows, and for the stated reason.
+    /// The exported [`PRESPAWNS`] and what `prespawn` actually does agree.
     ///
-    /// The reason is the assertion. Windows has a boundary now, so a refusal
-    /// citing the sandbox would send the next reader to the wrong missing piece
-    /// --- what is absent is the *handover* of a document to a child that is
-    /// already running.
-    #[cfg(windows)]
+    /// This replaced a test asserting that `prespawn` refuses on Windows, and
+    /// that replacement is itself the evidence the behaviour changed: the old
+    /// test went red on its own when the handover landed, which is the strongest
+    /// verdict a removed assertion can get.
+    ///
+    /// What it pins is the thing this repository has now paid for twice --- a
+    /// platform fact that callers branch on, restated somewhere else, drifting.
+    /// `backend-probe` held its own copy of this predicate for a day; the copies
+    /// disagreed, and the wait that followed read as a defect in the pool. A
+    /// constant nothing compares against the behaviour it describes is a comment.
+    ///
+    /// It asserts the **spawn**, not the worker, and that limit is the platform's
+    /// rather than a shortcut: under `cargo test` the child is the libtest
+    /// harness, which never dispatches `--render-worker`, so it cannot warm or
+    /// answer --- the same reason `a harness that is not a worker cannot have
+    /// answered` exists above. That a pre-spawned worker warms *inside* its
+    /// containment is `backend-probe`'s to say, where the child is a real one.
+    /// `prespawn` waits for nothing, so "a process was started" is exactly what
+    /// it promises here. The child is killed by `PreWorker`'s drop.
     #[test]
-    fn prespawning_refuses_on_windows_because_the_handover_is_missing() {
-        let err = super::Worker::prespawn(std::path::Path::new("."))
-            .map(|_| ())
-            .expect_err("Worker::prespawn must refuse on Windows");
-        assert!(err.contains("pre-spawn"), "{err}");
-        assert!(
-            !err.contains("render workers are"),
-            "the refusal must not claim workers are unavailable here: {err}"
+    fn the_prespawn_constant_matches_what_prespawn_does() {
+        let started = super::Worker::prespawn(std::path::Path::new(".")).is_ok();
+        assert_eq!(
+            started,
+            super::PRESPAWNS,
+            "PRESPAWNS says {}, Worker::prespawn {} --- a caller branching on the \
+             constant would do the wrong thing",
+            super::PRESPAWNS,
+            if started { "started one" } else { "refused" }
         );
     }
 

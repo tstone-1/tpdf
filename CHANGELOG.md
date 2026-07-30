@@ -79,23 +79,63 @@ experience.
   `CreateProcess`, so one started before a file is chosen has nothing to be handed.
   `Worker::spawn_shared` takes every open instead, at the ~6.6 ms macOS saves.
 
-- **`backend-probe` runs on Windows, and found a defect.** The probe was `#[cfg(target_os =
-  "macos")]`; its four platform primitives now have Windows bodies --- Toolhelp for its own
-  module list and for finding its worker children in the process table, `GetProcessHandleCount`
-  for descriptors, and `TerminateProcess` for a hostile kill from outside the pool, which is
-  deliberately not `Contained::kill` because the pool has to notice a death it did not cause.
+- **`backend-probe` runs on Windows, and passes.** The probe was `#[cfg(target_os = "macos")]`;
+  its four platform primitives now have Windows bodies --- Toolhelp for its own module list and
+  for finding its worker children in the process table, `GetProcessHandleCount` for descriptors,
+  and `TerminateProcess` for a hostile kill from outside the pool, which is deliberately not
+  `Contained::kill` because the pool has to notice a death it did not cause.
 
-  **34/41, 5 skipped.** The boundary, the pixel comparisons, capacity, crash restart,
-  replacement, close and descriptor return all pass. The 41 check *names* are unchanged, which
-  is the cross-platform invariant.
+  **36/41, 5 skipped** on `text-base14`; **39/41, 2 skipped** on `vector-heavy`, where a tile is
+  slow enough for the withdrawal checks to run rather than skip. No failures. The boundary, the
+  pixel comparisons, capacity, crash restart, replacement, retirement, close and descriptor
+  return all pass, and the 41 check *names* are unchanged, which is the cross-platform invariant.
 
-  The two failures are one open defect: **the pool does not retain workers on Windows.** A burst
-  grows it to six and 1.2 s into a 4.0 s idle timeout one is left --- which reads as retirement
-  firing early and is not. The descriptor check beside it reports 144 handles with one worker,
-  144 grown, 144 retired, and five extra workers cannot cost zero handles, so they are created,
-  used and destroyed rather than pooled. Windows-only; the retirement predicate is shared and
-  passes on macOS. Recorded rather than tuned away --- those two checks are the only reason it
-  is known.
+  **The two failures it first reported were its own, and the correction is the point.** They read
+  as a pool grown to six that keeps one, beside a handle count that never moved --- two
+  independent observations agreeing on "created, used and destroyed rather than pooled", which
+  was written into three documents as an open defect. Both were honest and neither could say
+  *when* it was taken: `settled_descriptors` waits up to five seconds for a pre-spawned spare,
+  Windows has none, and the wait's verdict was discarded, so it spent its whole bound every call
+  --- longer than the four-second idle timeout the phase runs at. The instrument retired the pool
+  and then measured it. The spare clause is now asked for only where a spare can exist, under a
+  single named `PRESPAWNS` shared with the spare-lifetime skip, and a wait that expires prints a
+  `[WARN]` instead of passing for a slow one. **Nothing in `workers.rs` changed.**
+
+- **Windows pre-spawns workers too.** A worker can now be started, contained and warmed before
+  a file is chosen on both platforms. The handover is the only part that differs: macOS sends a
+  descriptor as `SCM_RIGHTS`, Windows `DuplicateHandle`s the document section **into the running
+  child's handle table** and sends a `Handover` line naming the number it wrote --- the direction
+  integrity levels permit, so it crosses the boundary structurally rather than by luck. A message
+  of its own rather than a `Request` variant, which makes a second handover unsayable instead of
+  something the child must refuse. Containment is unchanged and unconditional: the child is
+  created suspended, dropped to low integrity and put in its job before it executes an
+  instruction, whether or not it has a document yet.
+
+  Measured with `prespawn-bench`: **8.4--9.6 ms saved per open**. The saving has a different
+  *shape* from macOS and that is the finding --- there ~7.4 ms of it is the system-font walk, here
+  ~1.4 ms is, so on Windows pre-spawning buys the fixed floor (`CreateProcess`, the loader,
+  mapping `pdfium.dll`, the token, the job) rather than font enumeration. First Windows numbers
+  in the repository, labelled as such.
+
+  `backend-probe` now runs the spare checks there: **37/41** on `text-base14` and `text-cid`,
+  **38/41** on `outline-hostile`, **40/41** on `vector-heavy`, no failures, with the spare
+  identified and excluded from the pool at open and taken with its service at the end.
+  `viewer_check.py` re-run on four corpora, since this changes the app's own behaviour --- all
+  green, 44 modules at peak, no `pdfium` among them.
+
+  Two things it broke on the way, both in checks rather than in code. `closing gives back every
+  descriptor opening took` went red at *137 / 145 / 142* --- one spare's worth --- because its
+  three samples were raw and an `open` starts a replacement spare on another thread; macOS was
+  winning that race and Windows does not, so they go through `settled_descriptors` now. And the
+  test asserting that `prespawn` refuses on Windows failed on its own, which is the evidence the
+  behaviour changed; it is replaced by one pinning `PRESPAWNS` against what `prespawn` actually
+  does, proved able to fail by restoring the stale value.
+
+- **`pool-bench` and `prespawn-bench` can act as their own worker on Windows.** Both gated the
+  `--render-worker` re-exec on `#[cfg(unix)]`, left from before `worker_child` compiled there,
+  and both hardcoded `vendor/pdfium/lib` where the loadable DLL is in `bin/`. A binary that
+  re-execs itself as a worker and then refuses to be one is not degraded, it is unrunnable.
+  `worker-bench` and `tile-bench` still carry both.
 
   `worker_pids` matches a child on its **image name** there rather than on argv, because
   Toolhelp reports a parent pid and an image but no command line. Weaker, and sufficient for a

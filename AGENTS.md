@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 127 entries
+The one thing this file does *not* carry in full is the trap list --- 128 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -142,30 +142,51 @@ the strongest statement available about what cannot have regressed.
 **Windows no longer fails open.** `Backend::default_here()` selects workers there, proved by
 the external module check above rather than by the absence of our own warning.
 
-**`backend-probe` runs on Windows too** (2026-07-29), and it found something. 34/41 with 5
-skipped: the boundary, the pixel comparisons, capacity, crash restart, replacement, close and
-descriptor return all pass. Its Windows primitives are Toolhelp for the module list and the
-process table, `GetProcessHandleCount` for descriptors, and `TerminateProcess` for a hostile
-kill from outside the pool.
+**`backend-probe` runs on Windows too, and passes** (2026-07-30): **37/41** on `text-base14` and
+`text-cid`, **38/41** on `outline-hostile`, **40/41** on `vector-heavy`, which is where a render
+is slow enough for the withdrawal checks to run rather than skip. No failures on any. The
+boundary, the pixel comparisons, capacity, crash restart, replacement, retirement, close,
+descriptor return **and the spare's lifetime** all pass. Its Windows primitives are Toolhelp for
+the module list and the process table, `GetProcessHandleCount` for descriptors, and
+`TerminateProcess` for a hostile kill from outside the pool.
 
-**The two failures are one open defect: the pool does not retain workers on Windows.** A burst
-grows it to six and 1.2 s into a 4.0 s idle timeout only one is left. That reads as retirement
-firing early, and it is not --- the descriptor check beside it reports 144 handles with one
-worker, 144 grown, 144 retired, and five extra workers cannot cost zero handles. They are being
-destroyed rather than pooled. Windows-only; the retirement predicate is shared and passes on
-macOS, so the pooling path is where to look. See the trap of the same name.
+That run is also the end-to-end evidence for the Windows spare, and it is worth reading the
+detail rather than the count: `at open: pool [18840], children [2672, 18840], spares [2672]` ---
+a warmed child exists, is correctly *excluded* from the pool, and the laziness claim beside it
+still says `opened with 1`.
 
-Four other probe binaries still refuse to act as a worker off unix (`pool-bench`,
-`prespawn-bench`, `worker-bench`, `tile-bench`), and pre-spawning is unimplemented, so the
-spare-lifetime check skips with that reason rather than failing.
+**The two failures it first reported were the probe's, not the pool's**, and the correction is
+worth more than the result. They read as a pool that grows to six and keeps one, with a handle
+count that never moved --- two independent observations agreeing on "created, used and destroyed
+rather than pooled", which is what was recorded here for a day. Both readings were honest and
+neither could say *when* it was taken: the sample sat behind a five-second wait for a
+pre-spawned spare, and Windows has none, so it spent its whole bound on every call --- longer
+than the phase's own four-second idle timeout. The instrument retired the pool and then measured
+it. Nothing in `workers.rs` was touched. See the trap, which is now about the wait rather than
+about the pool.
 
-Two smaller gaps behind it. **Pre-spawning is not implemented on Windows** --- a mapping reaches
-a child by inherited handle at `CreateProcess`, and a worker started before any file is chosen
-has no handle to be given; the macOS answer is a socket, the Windows one would be
-`DuplicateHandle` into a running child. `Worker::prespawn` refuses and says so. And the pool's
-memory poll (`Worker::footprint`) returns `None` there, which is not a gap in the same sense:
-the job object caps commit in the kernel, which is the bound macOS cannot have and polls for
-instead.
+`pool-bench` and `prespawn-bench` act as their own worker on Windows now --- their `#[cfg(unix)]`
+gate on the re-exec dated from before `worker_child` compiled there, and left each binary unable
+to be the thing it measures. `worker-bench` and `tile-bench` still carry it.
+
+**Pre-spawning works on Windows too** (2026-07-30), so both platforms now start a worker before
+a file is chosen. The handover is the only part that differs and it had to: a macOS parent
+*sends* a descriptor over a socket, and a Windows parent **writes into the child's handle table**
+with `DuplicateHandle` and then names the number it wrote. That direction is the one integrity
+levels permit --- medium may reach into low, never the reverse --- so the handover survives the
+containment structurally rather than by luck. The message is a `Handover` of its own rather than
+a `Request` variant, which is what makes "adopt a second document" unsayable instead of something
+the child must refuse.
+
+Measured, not assumed, by `prespawn-bench`: **8.4--9.6 ms saved per open**, on a spawn-to-first-reply
+of 8.9--10.4 ms for small documents. The saving is nearly constant, and that is the difference
+from macOS worth knowing --- there the system-font walk is ~7.4 ms of it, here it is **~1.4 ms**,
+so on Windows what pre-spawning buys is almost entirely the fixed floor (`CreateProcess`, the
+loader, mapping `pdfium.dll`, the token and the job) rather than font enumeration.
+
+One smaller gap remains: the pool's memory poll (`Worker::footprint`) returns `None` there, which
+is not a gap in the same sense --- the job object caps commit in the kernel, which is the bound
+macOS cannot have and polls for instead.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -316,7 +337,9 @@ binary --- there is a `bins` gate now, and it was proved to fail before being tr
 `cargo build --release` binary is *not* a production build: the frontend is embedded by a
 cargo **feature**, not by the profile. Both are in `docs/TRAPS.md`.
 
-Every *measurement* in this file remains macOS arm64.
+Every *measurement* in this file is macOS arm64 unless it says otherwise --- the pre-spawn
+figures above are the first Windows ones, and they are labelled. The two platforms differ enough
+on that measurement that carrying a macOS number over is a guess rather than an estimate.
 
 ---
 
@@ -326,7 +349,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 127 of them and the full text
+titles. Only the titles are here, because there are 128 of them and the full text
 was 93% of this file --- an instruction budget spent on the 126 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
@@ -489,7 +512,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
 - A pipe reaches EOF before the process it belonged to is signalled
 - A test whose child never answers cannot see the pipes being crossed
-- A pool that reports six workers can be holding one, and the handle count says so
+- A wait for a condition that cannot hold spends its whole bound, and retires the pool it was about to measure
+- A check that wins a race on one platform has not been shown to pass on it
 
 ### Fixtures
 - The test fixtures are generated, not committed
