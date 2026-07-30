@@ -326,12 +326,14 @@ async fn search_page(
     doc: u32,
     page: u32,
     query: String,
+    options: search::Options,
 ) -> Result<search::PageMatches, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     service.search(
         doc,
         page,
         query,
+        options,
         Box::new(move |result| {
             let _ = tx.send(result);
         }),

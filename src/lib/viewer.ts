@@ -34,7 +34,7 @@ import { matches } from "./keys";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
-import { Search, type Match } from "./search";
+import { PLAIN_SEARCH, Search, sameOptions, type Match, type SearchOptions } from "./search";
 import { Selection } from "./selection";
 import {
   caretAt,
@@ -55,6 +55,15 @@ export type SelectUnit = "char" | "word" | "line";
 export interface SearchStatus {
   /** The query being scanned for, or "". */
   query: string;
+  /**
+   * How a scan matches. What the toggles show.
+   *
+   * There is deliberately no second field for "how the results below were
+   * matched": a rescan clears the matches in the same synchronous step that it
+   * takes the new options, so the two could never be observed to disagree and a
+   * check on them would be one that holds by construction.
+   */
+  options: SearchOptions;
   /** Matches found so far. */
   total: number;
   /** One-based position of the current match, or 0 when there is none. */
@@ -208,6 +217,11 @@ export class Viewer {
   private readonly a11y: AccessibleText;
 
   private readonly searcher: Search;
+  /**
+   * How the *next* scan will match, which is not always how the current results
+   * were matched --- see {@link Search.options}.
+   */
+  private searchOptions: SearchOptions = PLAIN_SEARCH;
   /**
    * Index into `searcher.matches` of the match the viewport is on, or -1.
    *
@@ -1282,6 +1296,7 @@ export class Viewer {
   private searchStatus(): SearchStatus {
     return {
       query: this.searcher.query,
+      options: this.searchOptions,
       total: this.searcher.matches.length,
       index: this.currentMatch < 0 ? 0 : this.currentMatch + 1,
       scanned: this.searcher.scanned,
@@ -1300,8 +1315,28 @@ export class Viewer {
    */
   search(query: string): void {
     this.currentMatch = -1;
-    void this.searcher.run(query, this.currentPage());
+    void this.searcher.run(query, this.currentPage(), this.searchOptions);
     this.wake();
+  }
+
+  /**
+   * Changes how the query is matched, rescanning if there is one.
+   *
+   * A toggle with no query is remembered rather than refused --- the next search
+   * uses it --- but nothing is asked of the backend, because there is nothing to
+   * ask about and a scan of 775 pages for `""` is not free just because it finds
+   * nothing.
+   */
+  setSearchOptions(options: SearchOptions): void {
+    if (sameOptions(options, this.searchOptions)) return;
+    this.searchOptions = options;
+    if (this.searcher.query) this.search(this.searcher.query);
+    else this.wake();
+  }
+
+  /** How a query is currently matched. */
+  get searchOptionsNow(): SearchOptions {
+    return this.searchOptions;
   }
 
   /** Drops the query and its results. */

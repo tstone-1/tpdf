@@ -96,9 +96,15 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin backend-probe -- 
 The count that matters there is the count of **names**, not the split between passed and
 skipped: the split moves with the corpus and with a thumbnail's timing, and chasing a
 documented split back to its value is how a condition that keeps a check honest gets
-deleted. What holds on every corpus is that all 41 names appear --- diff the name sets
+deleted. What holds on every corpus is that all 42 names appear --- diff the name sets
 across two fixtures rather than comparing their totals, which is what caught a check that
 had stopped existing on one-page documents.
+
+One of the 42 **skips itself** rather than passing, and it is the pattern to copy. *"A
+search option crosses the worker boundary"* compares a whole-word search on both backends
+against an unrestricted one; where the option changes nothing --- a page with no extractable
+text --- it says so and skips, because two backends agreeing on the same result is exactly
+what a worker that *dropped* the option would also produce.
 
 **Do not run it under `caffeinate`.** `caffeinate -d -u <utility>` `exec`s the utility in
 its own process and leaves a helper behind as that process's *child*, and every observation
@@ -258,8 +264,8 @@ rather than from anything in this repository.
 Four corpora, every one reporting the **86 check names** that were the invariant then, with
 splits inside the ranges the table above records. Word and line selection took that to **89**
 on 2026-07-30, after this run; the splits below are left as measured rather than adjusted by
-arithmetic, and a Windows re-run should expect 94 names: three more running on the two text corpora,
-and five that run on every document:
+arithmetic, and a Windows re-run should expect 97 names: six more running on the two text
+corpora, and five that run on every document:
 
 | fixture | ran | skipped | failed |
 |---|---|---|---|
@@ -895,24 +901,32 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **94 check names**; what differs is how
+Run all six corpora. Every run reports the same **97 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch:
+bug this arrangement exists to catch. The splits below were all measured on 2026-07-30:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 78--79 | 10--11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 84--85 | 4--5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 84 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 52 | 37 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 59 | 30 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 78 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 86 | 11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 93 | 4 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 92 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 56 | 41 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 64 | 33 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 86 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
 
-**86 until 2026-07-30**, when word and line selection added three and the palette's
-argument mode added five. The three run on every
+**86 until 2026-07-30**, when word and line selection added three, the palette's argument
+mode added five, and the two find options added three. The selection three run on every
 corpus with extractable text, rotated included --- line grouping follows the page's own
 reading axis, so there is nothing in them that assumes lines advance downwards --- and skip
-together on the two vector fixtures, which is why those gained three skips and no runs.
+together on the two vector fixtures, which is why those gained three skips and no runs. The
+find-option three are the same shape: they need a word taken from page 1, so they run
+wherever search does. One of them skips on a fixture whose needle is already upper case,
+there being no spelling of it that matching case would reject --- and it says so rather than
+passing on nothing.
+
+**The single values in that table are one sample each**, not a claim that nothing moves. One
+check races (see below) and can swing a run by one in either direction; a `78--79` style
+range in an earlier revision of this table was that check being honest.
 
 **`vector-multi` takes about 4m40s**, and everything else a fraction of that --- twelve A0
 pages is what it is for. The default timeout was 300 s, which sat close enough to that to
@@ -936,7 +950,7 @@ Absolute counts are deliberately not quoted in this paragraph: they move wheneve
 added, and a stale number here would send someone looking for a regression that is a
 changelog entry. The table above is the one place they are written down.
 
-**So the ran/skipped columns are not the invariant** --- the **94 names** are. A count chased
+**So the ran/skipped columns are not the invariant** --- the **97 names** are. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that
@@ -1181,7 +1195,21 @@ starts at 0 and increments within the month.
    (`worker-probe`, `backend-probe`, and `worker-bench --mode engine|authority` after any
    PDFium bump). The half no probe covers is reading each claim and naming the line that
    keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
-7. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
+7. Re-run the two mutation harnesses if any of the code they cover changed. They are not
+   gates --- each takes minutes and rebuilds per mutation --- and they are the only thing that
+   says the tests can fail:
+
+   ```
+   scripts/mutate_rust.py          # search.rs, 16 mutations, `cargo test --lib search::`
+   scripts/mutate_frontend.py      # text/clicks/commands/keys/search.ts, 27 mutations
+   ```
+
+   Each mutation names the test expected to notice, and a mutation nothing caught is
+   reported as a defect in the **suite**. Both cross-check the failure count two ways and
+   treat a run with no summary line as broken rather than as a survivor. `--list` prints the
+   pairs without running anything.
+
+8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
    `print-probe` (§8), which is the only check that reaches a real spooler.
 
@@ -1197,7 +1225,7 @@ starts at 0 and increments within the month.
    including a sandbox prober. That follows from declaring them `[[bin]]` in the bundled
    crate, is identical on macOS, and wants a separate workspace crate or `[[example]]`
    targets before a real release.
-8. Commit as `Release vYY.M.MICRO: <summary>`.
+9. Commit as `Release vYY.M.MICRO: <summary>`.
 
 Verify the bump landed everywhere:
 

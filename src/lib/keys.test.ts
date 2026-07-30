@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BINDINGS, label, matches, type BoundCommand } from "./keys";
+import { BINDINGS, label, matches, render, type BoundCommand } from "./keys";
 
 /**
  * The minimal shape {@link matches} reads.
@@ -46,6 +46,15 @@ describe("label", () => {
     // `-` reads as a hyphen next to `+`; the palette wants a minus sign.
     expect(label("view.zoomOut")).toBe("⌘−");
     expect(label("view.zoomIn")).toBe("⌘+");
+  });
+
+  it("orders the modifiers as the platform does, Option before Shift", () => {
+    // Not reachable through `label`: no command holds both, so the ordering
+    // between them was decided by a line of code that no id could exercise ---
+    // and it disagreed with the comment two lines above it. `render` takes a
+    // binding so that a combination nothing uses can still be asserted.
+    expect(render({ keys: ["k"], accel: true, shift: true, alt: true })).toBe("⌥⇧⌘K");
+    expect(render({ keys: ["k"], shift: true, alt: true })).toBe("⌥⇧K");
   });
 });
 

@@ -69,6 +69,16 @@ export const BINDINGS = {
   "find.open": { keys: ["f"], accel: true },
   "find.next": { keys: ["g", "G"], accel: true },
   "find.previous": { keys: ["g", "G"], accel: true, shift: true },
+  // The Option chords list what Option *produces* as well as the plain letter,
+  // and that is not belt and braces. macOS translates Option+letter to another
+  // character on a US layout --- ⌥C is `ç`, ⌥W is `∑`, ⌥G is `©` --- and whether
+  // that translation survives Command being held as well is a WebKit detail
+  // nothing here can assert: a synthetic event carries whatever `key` the
+  // harness put in it, so the check harness cannot see this either way. Listing
+  // both spellings is correct under both answers, which is what `keys` being a
+  // list is for.
+  "find.matchCase": { keys: ["c", "ç"], accel: true, alt: true },
+  "find.wholeWord": { keys: ["w", "∑"], accel: true, alt: true },
   "view.zoomIn": { keys: ["+", "="], accel: true, shown: "+" },
   "view.zoomOut": { keys: ["-"], accel: true, shown: "−" },
   "view.fitWidth": { keys: ["0"], accel: true },
@@ -80,7 +90,7 @@ export const BINDINGS = {
   "nav.previousPage": { keys: ["p"] },
   "nav.firstPage": { keys: ["Home"] },
   "nav.lastPage": { keys: ["End"] },
-  "nav.goToPage": { keys: ["g", "G"], accel: true, alt: true },
+  "nav.goToPage": { keys: ["g", "G", "©"], accel: true, alt: true },
   "edit.selectAll": { keys: ["a"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },
   "edit.clearSelection": { keys: ["Escape"], shown: "Esc" },
@@ -93,19 +103,28 @@ export type BoundCommand = keyof typeof BINDINGS;
  * The string the palette shows for a binding.
  *
  * Rendered from the modifiers rather than written beside them, so ⇧⌘G cannot
- * come to mean something the handler does not accept. Order follows the macOS
- * convention, which puts Shift before Command.
+ * come to mean something the handler does not accept.
+ *
+ * Takes a binding rather than an id so that the ordering below can be tested
+ * against combinations no command currently uses. It had one --- the comment
+ * inside said "Option, Shift, Command" while the code emitted Shift first ---
+ * and nothing could go red, because no binding held both and `label` accepted
+ * only ids that exist.
  */
-export function label(id: BoundCommand): string {
-  const binding: Binding = BINDINGS[id];
+export function render(binding: Binding): string {
   const modified = Boolean(binding.accel || binding.shift || binding.alt);
   const first = binding.keys[0] ?? "";
   // A letter in a chord is capitalised and a bare one is not, which is what
   // every menu on this platform does: ⌘O, but `n` for the unmodified key.
   const key =
     binding.shown ?? (modified && first.length === 1 ? first.toUpperCase() : first);
-  // macOS order: Control, Option, Shift, Command, then the key.
-  return `${binding.shift ? "⇧" : ""}${binding.alt ? "⌥" : ""}${binding.accel ? "⌘" : ""}${key}`;
+  // macOS order, which is Control, Option, Shift, Command, then the key.
+  return `${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}${binding.accel ? "⌘" : ""}${key}`;
+}
+
+/** The string the palette shows for a bound command. */
+export function label(id: BoundCommand): string {
+  return render(BINDINGS[id]);
 }
 
 /**

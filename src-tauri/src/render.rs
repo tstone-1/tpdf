@@ -340,6 +340,7 @@ pub(crate) enum Job {
         doc: u32,
         page: u32,
         query: String,
+        options: search::Options,
         reply: Reply<PageMatches>,
     },
     Outline {
@@ -606,13 +607,21 @@ impl RenderService {
     /// of the six a document may have. At page granularity a search interleaves
     /// with rendering, and the caller stops asking to cancel it --- there is
     /// nothing to withdraw.
-    pub fn search(&self, doc: u32, page: u32, query: String, reply: Reply<PageMatches>) {
+    pub fn search(
+        &self,
+        doc: u32,
+        page: u32,
+        query: String,
+        options: search::Options,
+        reply: Reply<PageMatches>,
+    ) {
         if self
             .tx
             .send(Job::Search {
                 doc,
                 page,
                 query,
+                options,
                 reply,
             })
             .is_err()
@@ -704,7 +713,13 @@ pub(crate) trait Engine {
     fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String>;
     fn tile(&self, request: &TileRequest) -> Result<TileOutcome, String>;
     fn text(&self, doc: u32, page: u32) -> Result<PageText, String>;
-    fn search(&self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String>;
+    fn search(
+        &self,
+        doc: u32,
+        page: u32,
+        query: &str,
+        options: search::Options,
+    ) -> Result<PageMatches, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 }
@@ -723,8 +738,9 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             doc,
             page,
             query,
+            options,
             reply,
-        } => reply(engine.search(doc, page, &query)),
+        } => reply(engine.search(doc, page, &query, options)),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
     }
@@ -858,8 +874,14 @@ impl Engine for InProcess {
         run_text(open_slot(&self.docs.borrow(), doc)?, page)
     }
 
-    fn search(&self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String> {
-        run_search(open_slot(&self.docs.borrow(), doc)?, page, query)
+    fn search(
+        &self,
+        doc: u32,
+        page: u32,
+        query: &str,
+        options: search::Options,
+    ) -> Result<PageMatches, String> {
+        run_search(open_slot(&self.docs.borrow(), doc)?, page, query, options)
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
@@ -1004,8 +1026,14 @@ pub(crate) fn run_search(
     document: &RawDocument,
     page: u32,
     query: &str,
+    options: search::Options,
 ) -> Result<PageMatches, String> {
-    Ok(search::search_page(&run_text(document, page)?, page, query))
+    Ok(search::search_page(
+        &run_text(document, page)?,
+        page,
+        query,
+        options,
+    ))
 }
 
 /// Walks a document's outline on the render thread.

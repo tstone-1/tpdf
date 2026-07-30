@@ -136,6 +136,23 @@
       run: () => viewer?.prevMatch(),
     },
     {
+      // Titled by what pressing it does, not by what the setting is called: a
+      // palette lists verbs, and "Match case" beside a checkbox that is already
+      // on reads as a description of the state rather than as a command.
+      id: "find.matchCase",
+      title: "Find: match case on or off",
+      keys: label("find.matchCase"),
+      enabled: withDocument,
+      run: () => toggleSearchOption("matchCase"),
+    },
+    {
+      id: "find.wholeWord",
+      title: "Find: whole words on or off",
+      keys: label("find.wholeWord"),
+      enabled: withDocument,
+      run: () => toggleSearchOption("wholeWord"),
+    },
+    {
       id: "view.zoomIn",
       title: "Zoom in",
       keys: label("view.zoomIn"),
@@ -412,6 +429,35 @@
    */
   const FIND_DEBOUNCE_MS = 150;
 
+  /**
+   * Flips one matching option and rescans if there is a query.
+   *
+   * The viewer owns the setting rather than this component, because it is the
+   * viewer that has to rescan when it changes and because the check harness
+   * mounts the viewer without any of this. What is here is the toggle.
+   */
+  function toggleSearchOption(which: "matchCase" | "wholeWord") {
+    const now = viewer?.searchOptionsNow;
+    if (!now) return;
+    viewer?.setSearchOptions({ ...now, [which]: !now[which] });
+  }
+
+  /**
+   * The toolbar button's version, which also puts the caret back.
+   *
+   * Clicking a button takes focus, and a reader who flips whole-word mid-search
+   * is still typing a query. Not folded into {@link toggleSearchOption}: the
+   * keyboard route reaches the same toggle from the document, and yanking focus
+   * into the find field there would be a shortcut that moves the caret.
+   *
+   * `focus()` without `select()`, unlike `focusFind`: the query is not being
+   * replaced, it is being refined.
+   */
+  function toggleSearchOptionFromToolbar(which: "matchCase" | "wholeWord") {
+    toggleSearchOption(which);
+    findField?.focus();
+  }
+
   function onFindInput() {
     clearTimeout(findTimer);
     const wanted = query;
@@ -486,6 +532,12 @@
     } else if (matches("view.invertPages", event) && title) {
       event.preventDefault();
       toggleInvert();
+    } else if (matches("find.matchCase", event) && title) {
+      event.preventDefault();
+      toggleSearchOption("matchCase");
+    } else if (matches("find.wholeWord", event) && title) {
+      event.preventDefault();
+      toggleSearchOption("wholeWord");
     }
   }
 
@@ -880,6 +932,20 @@
         oninput={onFindInput}
         onkeydown={onFindKey}
       />
+      <button
+        class="toggle"
+        class:on={status?.search.options.matchCase}
+        aria-pressed={status?.search.options.matchCase ?? false}
+        title="Match case ({label('find.matchCase')})"
+        onclick={() => toggleSearchOptionFromToolbar("matchCase")}>Aa</button
+      >
+      <button
+        class="toggle"
+        class:on={status?.search.options.wholeWord}
+        aria-pressed={status?.search.options.wholeWord ?? false}
+        title="Whole words ({label('find.wholeWord')})"
+        onclick={() => toggleSearchOptionFromToolbar("wholeWord")}>|ab|</button
+      >
       {#if findLabel}<span class="stat">{findLabel}</span>{/if}
     {/if}
     {#if status}
@@ -954,6 +1020,20 @@
     font: inherit;
     width: 14ch;
     padding: 0.15rem 0.5rem;
+  }
+  .toggle {
+    font: inherit;
+    font-size: 0.85em;
+    padding: 0.1rem 0.35rem;
+    opacity: 0.6;
+  }
+  .toggle.on {
+    /* The pressed state has to survive both themes and both platforms' native
+       button chrome, so it is drawn rather than left to `:active`-like colours
+       that a dark appearance inverts out of existence. */
+    opacity: 1;
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px currentColor;
   }
   .spacer {
     flex: 1;

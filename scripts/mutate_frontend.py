@@ -220,6 +220,31 @@ MUTATIONS = [
         "renders the modifiers the binding actually declares",
     ),
     Mutation(
+        # Reachable only through `render`, not through `label`: no command holds
+        # Shift and Option at once, which is how the order between them stayed
+        # wrong -- and disagreeing with the comment beside it -- until a test
+        # could name a binding that does not exist.
+        "keys: put Shift before Option in a rendered label",
+        "src/lib/keys.ts",
+        '  return `${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}',
+        '  return `${binding.shift ? "⇧" : ""}${binding.alt ? "⌥" : ""}',
+        "orders the modifiers as the platform does",
+    ),
+    Mutation(
+        "search: compare only the first of the two options",
+        "src/lib/search.ts",
+        "  return a.matchCase === b.matchCase && a.wholeWord === b.wholeWord;",
+        "  return a.matchCase === b.matchCase;",
+        "is true only when both options agree",
+    ),
+    Mutation(
+        "search: let the plain search match case",
+        "src/lib/search.ts",
+        "export const PLAIN_SEARCH: SearchOptions = { matchCase: false, wholeWord: false };",
+        "export const PLAIN_SEARCH: SearchOptions = { matchCase: true, wholeWord: false };",
+        "describes the plain search as neither option",
+    ),
+    Mutation(
         "nearest: count a character PDFium gave no box",
         "src/lib/text.ts",
         "    if (!isPlaced(quad)) continue;\n\n    const dx = Math.max(quad.left - x, 0, x - quad.right);",
@@ -243,6 +268,7 @@ def run_tests() -> tuple[set[str], int | None, str]:
             "src/lib/clicks.test.ts",
             "src/lib/commands.test.ts",
             "src/lib/keys.test.ts",
+            "src/lib/search.test.ts",
         ],
         cwd=ROOT,
         capture_output=True,
@@ -282,9 +308,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="tpdf-mutate-") as scratch:
         for mutation in MUTATIONS:
             target = ROOT / mutation.path
-            # Copied aside and copied *back*, never moved: a move replaces the
-            # file the tooling may already be watching, and AGENTS.md records a
-            # restore-by-move that left the mutated build in place.
+            # Copied aside and written *back*, never moved: a move replaces
+            # the file the tooling may already be watching, and docs/TRAPS.md
+            # records a restore-by-move that left the mutated build in place.
+            #
+            # And written back rather than copied back: `shutil.copy2` preserves
+            # the backup's mtime, which is enough to make a build system believe
+            # the mutated artifact is current. It bit `mutate_rust.py`, where
+            # cargo then served the last mutation to every later run.
             backup = Path(scratch) / f"{len(list(Path(scratch).iterdir()))}.bak"
             shutil.copy2(target, backup)
             try:
@@ -300,7 +331,7 @@ def main() -> int:
                 target.write_text(source.replace(mutation.before, mutation.after))
                 names, counted, out = run_tests()
             finally:
-                shutil.copy2(backup, target)
+                target.write_text(backup.read_text())
 
             if counted is None:
                 print(f"[FAIL] {mutation.name}: no summary line -- the run did not finish")

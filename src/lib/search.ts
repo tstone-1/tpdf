@@ -35,6 +35,26 @@ export interface Match {
   end: number;
 }
 
+/**
+ * How a query is matched. Mirrors `search::Options` in Rust, which is where the
+ * matching happens and where what each one means is written down.
+ *
+ * Both off is the plain search, and is what a reader who has never touched the
+ * toggles gets.
+ */
+export interface SearchOptions {
+  matchCase: boolean;
+  wholeWord: boolean;
+}
+
+/** Neither option. */
+export const PLAIN_SEARCH: SearchOptions = { matchCase: false, wholeWord: false };
+
+/** Whether two option sets ask for the same thing. */
+export function sameOptions(a: SearchOptions, b: SearchOptions): boolean {
+  return a.matchCase === b.matchCase && a.wholeWord === b.wholeWord;
+}
+
 /** What one page contributed. */
 interface PageMatches {
   page: number;
@@ -115,12 +135,17 @@ export class Search {
   /**
    * Scans the whole document, starting at `from` and wrapping.
    *
+   * `options` is passed to the backend rather than applied to the results here:
+   * a whole-word filter over hits the backend already found would need the
+   * page's text on this side to see what is next to them, which is the whole of
+   * a 775-page document's characters to answer a question about a dozen hits.
+   *
    * Resolves when the scan finishes or is superseded. Matches appear in
    * `matches` as they are found, and `onChange` fires for every page --- a
    * search over a long document has to be visibly working, not silently
    * pending.
    */
-  async run(query: string, from: number): Promise<void> {
+  async run(query: string, from: number, options: SearchOptions = PLAIN_SEARCH): Promise<void> {
     this.cancel();
     const generation = ++this.generation;
 
@@ -146,6 +171,7 @@ export class Search {
           doc: this.doc,
           page,
           query,
+          options,
         });
       } catch {
         // A page that cannot be read is skipped rather than abandoning the

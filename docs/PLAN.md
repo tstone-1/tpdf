@@ -1779,9 +1779,50 @@ rediscovering — a test that cannot distinguish its own silence from a pass.
   while the summary line in the same output said 28 of 29 passed. The two numbers disagreed
   and nothing was comparing them; they are compared now.
 
-Not done: whole-word and case-sensitive options, regular expressions, a results sidebar,
-search within a selection, and matching across a page boundary. Nor is there a bound on the
-front-end text cache, which a reader stepping through hits on a thousand pages would find.
+Not done: regular expressions, a results sidebar, search within a selection, and matching
+across a page boundary. Nor is there a bound on the front-end text cache, which a reader
+stepping through hits on a thousand pages would find.
+
+##### Matching case and whole words --- 2026-07-30
+
+Two options, `search::Options`, defaulting to off so that a reader who never opens the
+toggles gets exactly the search described above. They are passed to the matcher rather than
+applied to its results, which is not an optimisation but the only workable place: a
+whole-word filter on this side would need each hit's *neighbours*, which is the page's text,
+which is the whole document's characters to answer a question about a dozen hits.
+
+**Matching case turns off half the fold and nothing else.** Whitespace still collapses and
+soft hyphens still disappear, because neither is about case --- someone who wants `Raster`
+rather than `raster` has not asked for a phrase to stop matching across a line break.
+
+**Whole word is `\b`**: a boundary sits between two characters when one is a word character
+and the other is not, and the ends of the page are boundaries. It is tested on the *folded*
+sequence, which is what makes a soft hyphen not break a word --- it is gone by then --- and a
+line break count as one.
+
+Two things in it are not obvious and both have a test named for them. A rejected candidate
+advances the scan by **one character, not by the needle's length**: `ab-a` occurs twice in
+`ab-ab-a`, overlapping, and only the second is a whole word, so skipping the span walks past
+it. And the word class is letters, digits and underscore --- **not** combining marks, which
+`src/lib/text.ts` does count, so a whole-word search for `cafe` still matches a decomposed
+`café`. That divergence is deliberate: the standard library exposes no general-category
+data, and the consequence is a case the unrestricted search matches anyway.
+
+10 new unit tests, and `scripts/mutate_rust.py` is new with them --- the backend had no
+mutation harness at all, and `search.rs` is its densest piece of pure logic. 16 mutations,
+every one caught by the test named for it, after three rounds: one mutation was a no-op
+(`to_ascii_lowercase().to_lowercase()` is `to_lowercase`), one predicted the wrong test, and
+one anchored on text `rustfmt` had reflowed. Three functional checks take `viewer_check.py`
+to 97 names; `backend-probe` gains one that fails if the options do not cross the worker
+boundary, and *skips* --- naming why --- on a page where the option changes nothing, since
+agreement there would not show the option arriving.
+
+Writing it turned up two defects that had nothing to do with search. `keys.ts` rendered
+Shift before Option while the comment inside it said the opposite, unreachable because no
+binding held both; splitting `render(binding)` out of `label(id)` makes it assertable, and
+the mutation now goes red. And `mutate_rust.py` reproduced, through `shutil.copy2`, the
+mtime-restore defect this document records two paragraphs above as a `mv` problem --- it was
+never a `mv` problem. Both are in `docs/TRAPS.md`.
 
 #### The command palette, and the registry under it — 2026-07-27
 

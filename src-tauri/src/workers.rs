@@ -1265,12 +1265,19 @@ impl Engine for Workers {
         self.ask(doc, &Request::Text { page })
     }
 
-    fn search(&self, doc: u32, page: u32, query: &str) -> Result<PageMatches, String> {
+    fn search(
+        &self,
+        doc: u32,
+        page: u32,
+        query: &str,
+        options: crate::search::Options,
+    ) -> Result<PageMatches, String> {
         self.ask(
             doc,
             &Request::Search {
                 page,
                 query: query.to_string(),
+                options,
             },
         )
     }

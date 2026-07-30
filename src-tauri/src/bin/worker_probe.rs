@@ -246,6 +246,7 @@ fn main() {
     let matches = worker.call(&Request::Search {
         page: 0,
         query: "the".into(),
+        options: Default::default(),
     });
     check(
         "a search crosses the boundary",

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 148 entries
+The one thing this file does *not* carry in full is the trap list --- 150 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -505,7 +505,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 148 of them and the full text
+titles. Only the titles are here, because there are 150 of them and the full text
 was 93% of this file --- an instruction budget spent on the 147 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
@@ -634,6 +634,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A check whose failure mode is a wait cannot fail
 - A test whose failure is a hang reports a pass and a timeout in one breath
 - An unreachable guard is worth keeping if the type can carry it instead
+- A label rendered only from real ids cannot be tested on a combination none of them uses
 - A post-destroy guard that returns early leaks what it declined to take
 - A print check that counts pages cannot see a blank page
 - A page count read too early is 0, and 0 is not a count
@@ -642,10 +643,11 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
-- Restoring a mutated file by *moving* a backup over it tests the mutated binary
+- Restoring a mutated file by *moving* a backup over it tests the mutated binary (the title names the wrong mechanism --- see the entry below it)
 - A harness that prints only at the end cannot say where it stopped
 - A harness that prints as it goes writes nothing until it exits, under a redirect
 - A mutation harness that dies leaves the mutation in the tree
+- A restored file with its original timestamp leaves the build serving the mutation
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
 - A harness that prints stderr only on failure hides what a passing run said
