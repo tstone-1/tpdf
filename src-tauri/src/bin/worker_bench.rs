@@ -49,12 +49,29 @@
 //! SBPL beginning with `(`, so a policy can be bisected from the shell without a
 //! rebuild. That is how `PROFILE_WORKER` below was arrived at.
 
+/// Refuses, and names the Windows model that actually got built.
+///
+/// The refusal itself is still right --- this harness carries its own POSIX
+/// worker, with `dup2` handover, a socket pair and SBPL profile bisection, and
+/// none of that has a Windows counterpart to point at. What was wrong is the
+/// *reason* it gave, and a wrong reason on a refusal is worse than a vague one
+/// because it is a design instruction: it named "restricted tokens" and "named
+/// section objects", and `bin/win_sandbox_probe.rs` measured both out of the
+/// design. A restricting SID stops the loader before `main`, so containment is a
+/// **low-integrity token inside a job object**; and the sections are
+/// **anonymous**, inherited by handle, because a name is something another
+/// process can open. Someone reading this to build the spike would have built
+/// the two things that were rejected.
 #[cfg(not(unix))]
 fn main() {
     eprintln!(
-        "[ERROR] worker-bench is a POSIX harness. The Windows worker model --- job \
-         objects, restricted tokens, named section objects --- shares no mechanism \
-         with this one and needs its own spike."
+        "[ERROR] worker-bench is a POSIX harness --- its own worker, dup2 handover, socket \
+         pair and SBPL profile bisection, none of which has a Windows counterpart. The \
+         Windows model is a low-integrity token inside a job object, with anonymous \
+         sections inherited by handle; see bin/win_sandbox_probe.rs for why it is not a \
+         restricting SID. This needs its own spike, not a port. What it would measure that \
+         nothing else does: latency and parallel scaling are covered by pool-bench, the \
+         authority rungs by win-sandbox-probe, crash and timeout by backend-probe."
     );
     std::process::exit(2);
 }

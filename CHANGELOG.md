@@ -155,6 +155,29 @@ experience.
   ms/Mpixel, no floor), which confirms the asymmetry the plan bets on but is **not** a
   cross-platform comparison --- macOS measured a fixture this machine has not generated.
 
+- **A pool buys a screenful 3.6x on Windows, and nothing past six.** `pool-bench` on six 1024²
+  tiles of the A0 page: monotone gains to six workers and nothing at eight, the same shape as
+  macOS's 3.22x-and-nothing, with six stable to 0.01x across two runs. The intermediate sizes are
+  reported as **not** conclusions --- pool 4 moved 1.99x to 2.29x between identical runs and the
+  per-round warm figures span 20%, so only the six and the flat eight are outside the spread.
+
+- **A dying worker's diagnostic is one write.** Rust's stderr is unbuffered and `write_fmt`
+  issues a write per format piece, so with every worker of every pool inheriting one handle the
+  pieces interleave --- a `pool-bench` run of ~120 workers ended holding `[worker] ` with no
+  message, which is indistinguishable from a worker that failed with an empty reason and is the
+  one thing that line exists to rule out. It is a `format!` and a single `write_all` now, verified
+  by making a worker fail and reading its message back. Every error path reaching it produces
+  non-empty text, checked; the fragment did not recur on a stderr channel of its own, which is
+  also why the capture channel is now part of the trap.
+
+- **`worker-bench`'s refusal named a Windows design that was measured out.** It cited "restricted
+  tokens" and "named section objects"; `win-sandbox-probe` established that a restricting SID
+  stops the loader before `main`, so containment is a low-integrity token in a job object, and the
+  sections are anonymous because a name is something another process can open. A wrong reason on a
+  refusal is worse than a vague one --- it is a design instruction, and someone reading it to build
+  the spike would have built the two rejected things. It now also says what a spike would measure
+  that nothing else does. Two stale `// The child half exists only on unix` comments removed.
+
   `worker_pids` matches a child on its **image name** there rather than on argv, because
   Toolhelp reports a parent pid and an image but no command line. Weaker, and sufficient for a
   stated reason rather than an assumed one: the `caffeinate` shape that forced the argv match is

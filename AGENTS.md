@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 128 entries
+The one thing this file does *not* carry in full is the trap list --- 129 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -358,6 +358,12 @@ absolute number is **1.5--1.8× worse**, so a latency budget written against the
 optimistic here by about a third. `BUILD.md` has the table, the caveats and the independent
 cross-check that says the numbers are the document's rather than the harness's.
 
+**So does the reason to have a pool.** `pool-bench` on the same page: **3.6× on six workers** and
+nothing at eight, against 3.22× and nothing on macOS --- the same shape, the ceiling doing its job,
+and six stable to 0.01× across two runs. The intermediate sizes are *not* stable enough to read
+(pool 4 moved 1.99× → 2.29× between identical runs, and the per-round warm figures span ±20%), so
+only the six and the flat eight are conclusions. `BUILD.md` says which is which.
+
 ---
 
 ## Known traps
@@ -366,7 +372,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 128 of them and the full text
+titles. Only the titles are here, because there are 129 of them and the full text
 was 93% of this file --- an instruction budget spent on the 126 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
@@ -528,6 +534,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A safe function taking a raw `HANDLE` has an unstated contract, and clippy says so
 - `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
 - A pipe reaches EOF before the process it belonged to is signalled
+- `eprintln!` is not one write, and every worker shares the parent's stderr
 - A test whose child never answers cannot see the pipes being crossed
 - A wait for a condition that cannot hold spends its whole bound, and retires the pool it was about to measure
 - A check that wins a race on one platform has not been shown to pass on it
