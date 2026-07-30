@@ -51,6 +51,33 @@ experience.
 
 ### Added
 
+- **Text comes off a multi-column page in the order it is read.** A PDF carries no reading
+  order --- only glyphs at positions, in whatever sequence its producer emitted them --- so a
+  two-column page whose producer wrote line by line across the gutter copied as `alpha one
+  beta one alpha two beta two`. `src/lib/reading.ts` recovers the order from the geometry by
+  recursive XY-cut, which handles a heading spanning both columns as the same operation on
+  the other axis. Wired into copy and into the screen-reader tree.
+
+  Rotation is carried inside it: every rule is written over "along a line" and "across the
+  lines", with the direction each runs derived from the backend's own coordinate mapping.
+  Without the directions the order is right at 0° and 90° and exactly reversed at 180° and
+  270°. On `rotated-90.pdf`, where PDFium extracts the lines backwards, 493 of 534
+  characters now come out in a different --- and correct --- position; on a single-column
+  document, none do.
+
+  A drag still selects a contiguous range of character *indices*, so on such a page it takes
+  in more than was dragged over. Making the drag geometric means carets carrying a reading
+  position, which is a change to the selection model and is deliberately not in this.
+
+  20 unit tests, 12 mutations, and two functional checks against a manifest written by the
+  fixture's generator rather than by anything under test --- plus a differential one that
+  needs no manifest, two pages laid out alike and emitted oppositely having to read alike.
+  `viewer_check.py` is at **109 names** across seven corpora.
+
+  Two existing checks rested on the assumption this removes, and were corrected rather than
+  quietly relaxed; a third turned out to be decoration, and a precondition was wrong twice
+  before it was right. All in `docs/TRAPS.md`.
+
 - **Fit page, actual size, and a zoom you can type.** `⌘9` fits the whole page in the
   window, `⌘1` is 100%, and `⌥⌘Z` asks for a percentage through the same palette argument
   the page jump uses --- the zoom ladder is deliberately coarse, so 175% was previously

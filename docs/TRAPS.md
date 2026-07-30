@@ -3712,3 +3712,60 @@ decoration. Nothing but running the mutation could have told those two apart.
 - The constant is now exported from `viewer.ts` and imported by the check rather than written
   out again, because a second copy of 12 is a number that drifts silently and in this same
   direction.
+
+### A synthetic heading that does not reach the second column tests nothing
+
+The fixture for multi-column reading order has a page with a heading spanning both
+columns, which exists to defeat the obvious implementation --- cluster the lines by x
+position and read the clusters left to right. A heading belongs to neither cluster.
+
+Written first as a short heading sitting above column one, it left the region between the
+columns empty for the *whole* height of the text. So a vertical cut separated the columns
+perfectly well, the heading was filed as the top of column one, and the page came out in
+the right order by a route that had nothing to do with the case being tested. It was
+caught only by dumping the fragment boxes: the heading ran from x=100 to x=170 and column
+two started at 400.
+
+Then it happened **again**, in the same session, in the unit test written for the same
+case --- `word("HEADING", ...)` is seven ten-point characters, which reaches 170 on a page
+whose second column starts at 400. The fixture generator had a comment about exactly this
+by then and the unit test still repeated it.
+
+- **A fixture for a spanning element has to be measured, not described.** "The heading
+  spans both columns" is a claim about coordinates; assert it, or print the boxes once and
+  look.
+- **The mutation is what exposed it**, not the passing test: with the heading not
+  spanning, a whole branch of the algorithm was never reached, so a mutation to that
+  branch survived. A branch that no test reaches and no mutation kills is invisible from
+  the transcript, which shows only green.
+- Generalises past headings to any fixture built to defeat a heuristic: a table that
+  straddles a gutter, a footnote rule, a full-width figure. If it does not actually
+  straddle, the heuristic it was built to defeat is never invoked.
+
+### A mutation that survives may be a variant, not a gap --- check before strengthening
+
+Fourteen mutations were written against the reading-order module and three survived. The
+instinct, and this repository's own standing rule, is that a surviving mutation means a
+test that cannot fail. For one of the three that was exactly right. For the other two it
+was wrong, and acting on it would have added tests asserting an implementation detail.
+
+Both survivors were **behaviour-preserving**:
+
+- Banding characters in arrival order rather than sorted by position. `readingLines` merges
+  fragments that share a band within a block, so a mis-banded line is put back together
+  before anything can observe it.
+- Splitting a band at *any* gap rather than at a gutter-sized one. `blocksOf` re-applies
+  the threshold when it decides where the columns are, so over-splitting is repaired and
+  only under-splitting loses information --- and the under-splitting mutation is caught, by
+  six tests.
+
+The design turns out to be self-repairing in one direction, which is worth knowing and is
+not what anyone would guess from reading the functions in isolation.
+
+- **Establish what a surviving mutation changed before deciding what it means.** Apply it
+  by hand, print the intermediate structure, and look. Ten minutes here; a fabricated test
+  pinning an internal ordering would have outlived the code.
+- **Record the ones deliberately left out, and why.** They are absent from
+  `scripts/mutate_frontend.py` with a note, so the next person to spot the gap learns it
+  was measured rather than overlooked.
+- The third survivor was the real thing and is the entry above.

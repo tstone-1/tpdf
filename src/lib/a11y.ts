@@ -37,7 +37,8 @@
  * claim is made about it.
  */
 
-import { linesOf, textOf, type PageText } from "./text";
+import { readingLines, textOfRanges } from "./reading";
+import { type PageText } from "./text";
 
 /**
  * Hidden visually, present in the accessibility tree.
@@ -148,8 +149,12 @@ export class AccessibleText {
     article.tabIndex = -1;
     article.dataset.page = String(page);
 
-    for (const line of linesOf(content)) {
-      const text = textOf(content, line.from, line.to).trim();
+    // `readingLines` rather than `linesOf`: a screen reader is handed the page
+    // in the order it is read, which on a two-column page is not the order the
+    // producer emitted it in. `linesOf` groups by index adjacency, so on such a
+    // page it reads one line from each column in turn --- which is what it did.
+    for (const line of readingLines(content)) {
+      const text = textOfRanges(content, line.ranges).trim();
       if (!text) continue;
       const paragraph = document.createElement("p");
       paragraph.textContent = text;

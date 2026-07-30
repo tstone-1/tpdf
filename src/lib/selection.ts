@@ -22,7 +22,8 @@
  * string --- are both answerable without it.
  */
 
-import { runsFor, textOf, type Caret, type Quad, type TextCache } from "./text";
+import { readingTextOf } from "./reading";
+import { runsFor, type Caret, type Quad, type TextCache } from "./text";
 
 /** Which of two carets comes first in reading order. */
 function precedes(a: Caret, b: Caret): boolean {
@@ -93,7 +94,10 @@ export class Selection {
       const range = this.rangeOn(page);
       const text = range && cache.peek(page);
       if (!range || !text) continue;
-      parts.push(textOf(text, range.from, range.to));
+      // In the order the page reads rather than the order the file was written
+      // in --- see `readingTextOf`. The two differ only where a producer
+      // interleaved its columns, and there the difference is the whole point.
+      parts.push(readingTextOf(text, range.from, range.to));
     }
     return parts.join("\n");
   }

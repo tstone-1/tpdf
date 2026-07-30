@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 154 entries
+The one thing this file does *not* carry in full is the trap list --- 156 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -505,8 +505,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 154 of them and the full text
-was 93% of this file --- an instruction budget spent on the 148 traps that are not
+titles. Only the titles are here, because there are 156 of them and the full text
+was 93% of this file --- an instruction budget spent on the 150 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -629,6 +629,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A control can be contaminated by the phase that ran before it
 - A check that derives its inputs from the thing it is testing cannot fail
 - A page fitted to the element's own width is measured under the scrollbar
+- A synthetic heading that does not reach the second column tests nothing
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion
 - An outcome two mechanisms can produce cannot test either one
 - A length bound cannot be tested by the verdict it produces
@@ -654,6 +655,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
 - A mutation naming a test the harness cannot run reports SURVIVED
+- A mutation that survives may be a variant, not a gap --- check before strengthening
 - A harness that prints stderr only on failure hides what a passing run said
 - A mutation caught by an access violation produces no test results at all
 - A comment claimed an ordering mattered, and the mutation that should have hurt did not

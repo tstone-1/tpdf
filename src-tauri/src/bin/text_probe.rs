@@ -28,7 +28,7 @@
 //!   every page, and those are very different budgets.
 //!
 //! Usage:
-//!   text-probe <file.pdf> [--page N] [--scale F] [--mode align|extract]
+//!   text-probe <file.pdf> [--page N] [--scale F] [--mode align|extract|order]
 //!              [--view-turns 0|1|2|3] [--rounds N] [--lib DIR]
 
 use std::path::{Path, PathBuf};
@@ -41,6 +41,7 @@ use tpdf_lib::text;
 enum Mode {
     Align,
     Extract,
+    Order,
 }
 
 struct Args {
@@ -96,6 +97,7 @@ fn parse_args() -> Result<Args, String> {
                 parsed.mode = match value()?.as_str() {
                     "align" => Mode::Align,
                     "extract" => Mode::Extract,
+                    "order" => Mode::Order,
                     other => return Err(format!("unknown mode: {other}")),
                 }
             }
@@ -131,6 +133,7 @@ fn run(args: &Args) -> Result<bool, String> {
     match args.mode {
         Mode::Align => align(args, &document, bindings),
         Mode::Extract => extract(args, &document),
+        Mode::Order => order(args, &document),
     }
 }
 
@@ -445,6 +448,59 @@ fn align(
     }
 
     Ok(agrees && discriminates && turn_discriminates)
+}
+
+/// Prints a page's characters in the order PDFium hands them back.
+///
+/// Not a check --- there is no right answer for it to assert, because the order
+/// is a property of whoever produced the file. It exists because a claim about
+/// extraction order is otherwise unfalsifiable from outside the viewer, and
+/// `src/lib/reading.ts` is built entirely on that order not being reading order.
+///
+/// Lines are broken wherever the vertical band changes, which is the same rule
+/// `linesOf` uses in the front end and is deliberately naive: on an interleaved
+/// two-column page it produces one line per *fragment*, which is exactly the
+/// output that shows the problem.
+fn order(args: &Args, document: &RawDocument) -> Result<bool, String> {
+    let page = document.page(args.page)?;
+    let text = text::extract(&page)?;
+
+    println!(
+        "page {} of {}, {} characters, in PDFium's own index order:",
+        args.page,
+        document.page_count(),
+        text.len()
+    );
+
+    let mut line = String::new();
+    let mut band: Option<(f32, f32)> = None;
+    for index in 0..text.len() {
+        let quad = &text.boxes[index * 4..index * 4 + 4];
+        let (top, bottom) = (quad[1], quad[3]);
+        let placed = quad[2] > quad[0] || bottom > top;
+        let same = match band {
+            Some((was_top, was_bottom)) => {
+                let overlap = was_bottom.min(bottom) - was_top.max(top);
+                let shorter = (was_bottom - was_top).min(bottom - top);
+                !placed || (shorter > 0.0 && overlap / shorter > 0.5)
+            }
+            None => true,
+        };
+        if !same {
+            println!("  {line}");
+            line.clear();
+        }
+        if placed {
+            band = Some((top, bottom));
+        }
+        if let Some(ch) = char::from_u32(text.codes[index]) {
+            line.push(ch);
+        }
+    }
+    if !line.is_empty() {
+        println!("  {line}");
+    }
+    Ok(true)
 }
 
 fn extract(args: &Args, document: &RawDocument) -> Result<bool, String> {
