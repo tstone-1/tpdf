@@ -81,6 +81,9 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_JobObjects",
     "Win32_System_Memory",
     "Win32_System_Pipes",
+    # `GetProcessMemoryInfo`, so `tile-bench` can report a peak on Windows
+    # instead of the `NaN` that stands in for "not measurable here".
+    "Win32_System_ProcessStatus",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
     # For `CommandLineToArgvW`, used by a test as an *independent* parser of the
