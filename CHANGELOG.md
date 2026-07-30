@@ -637,6 +637,22 @@ experience.
   of by a `reset()` call at each of those sites. Units are found from the character under the
   pointer rather than the caret beside it: the caret after a word's last glyph names the
   following space, and a word selection built on that selects the gap.
+- **Recent documents in the command palette.** ⌘K, then type part of a name. The list itself
+  is not new --- `session.rs` has kept every document read, most recent first, since session
+  restore needed it --- but reaching the second entry has never been possible, so a reader
+  who wanted yesterday's *other* document went through the file dialog for a file tpdf
+  already knew about.
+
+  They are commands rather than a menu, because §8 says every command is reachable in two
+  keystrokes through the palette. The registry gained `replace(prefix, commands)` to swap the
+  group when it changes, which also drops the replaced ids from the recently-run list --- inert
+  today and wrong the moment an id is reused for a different document, which is what these
+  ids do.
+
+  Labels show the basename and lengthen **only where two collide**, one directory at a time.
+  `report.pdf` in three client folders is the normal case, and three identical rows are worse
+  than no list; a full path is unique and unreadable at a glance.
+
 - **A search-results sidebar tab.** Every hit in the document, one row each: the page number
   and the words around the match, with the match emboldened. Picking a row moves the document
   to it. `12 of 5712` in the find bar says how much there is and nothing about what is in it.

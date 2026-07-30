@@ -123,6 +123,20 @@ export class Palette {
     this.input.focus();
   }
 
+  /**
+   * Re-ranks against the registry as it is now, if that is what is on screen.
+   *
+   * For a command list that can change while the palette is open --- the recent
+   * documents are refreshed from disk when it opens, and the answer lands a
+   * moment later. Ignored in argument mode for the same reason {@link refresh}
+   * is: the input is a value there, and rebuilding under it would run whatever
+   * had risen to the top instead of the command being answered.
+   */
+  reload(): void {
+    if (!this.isOpen || this.asking) return;
+    this.refresh();
+  }
+
   close(): void {
     if (!this.isOpen) return;
     this.backdrop.style.display = "none";

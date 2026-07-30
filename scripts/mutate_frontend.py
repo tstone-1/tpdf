@@ -245,6 +245,69 @@ MUTATIONS = [
         "describes the plain search as neither option",
     ),
     Mutation(
+        "recents: show only the basename, whatever collides",
+        "src/lib/recents.ts",
+        "        if ((depth[index] ?? 1) < (longest[index] ?? 1)) {\n          depth[index] = (depth[index] ?? 1) + 1;\n          grew = true;\n        }",
+        "",
+        "lengthens a colliding pair until it is distinct",
+    ),
+    Mutation(
+        "recents: lengthen every label, not only the colliding ones",
+        "src/lib/recents.ts",
+        "      if (group.length < 2) continue;",
+        "",
+        "lengthens only the labels that collide",
+    ),
+    Mutation(
+        "recents: give up after one extra directory",
+        "src/lib/recents.ts",
+        "    if (!grew) return labels;",
+        "    return labels;",
+        "keeps lengthening while a pair is still ambiguous",
+    ),
+    Mutation(
+        "recents: rewrite every separator as a slash",
+        "src/lib/recents.ts",
+        '  const separator = path.includes("\\\\") && !path.includes("/") ? "\\\\" : "/";',
+        '  const separator = "/";',
+        "keeps the separator the path was written with",
+    ),
+    Mutation(
+        "recents: number every recent command the same",
+        "src/lib/recents.ts",
+        "  return `${RECENT_PREFIX}${index}`;",
+        "  return RECENT_PREFIX;",
+        "shares the prefix the registry replaces by",
+    ),
+    Mutation(
+        "registry: replace by substring rather than by prefix",
+        "src/lib/commands.ts",
+        "      if (this.commands[i]?.id.startsWith(prefix)) this.commands.splice(i, 1);",
+        "      if (this.commands[i]?.id.includes(prefix)) this.commands.splice(i, 1);",
+        "does not remove a command whose id merely contains the prefix",
+    ),
+    Mutation(
+        "registry: keep the recents of commands that no longer exist",
+        "src/lib/commands.ts",
+        "      if (id?.startsWith(prefix)) this.recent.splice(i, 1);",
+        "",
+        "forgets that a replaced command was recent",
+    ),
+    Mutation(
+        "registry: clear every recent when a group is replaced",
+        "src/lib/commands.ts",
+        "      if (id?.startsWith(prefix)) this.recent.splice(i, 1);",
+        "      this.recent.splice(i, 1);",
+        "leaves the recents of commands it did not replace",
+    ),
+    Mutation(
+        "registry: append the group instead of replacing it",
+        "src/lib/commands.ts",
+        "      if (this.commands[i]?.id.startsWith(prefix)) this.commands.splice(i, 1);",
+        "      void this.commands[i];",
+        "swaps the group and leaves everything else alone",
+    ),
+    Mutation(
         "results: rebuild the whole list on every reply",
         "src/lib/results.ts",
         "    for (let i = this.built; i < matches.length && i < MAX_RESULT_ROWS; i++) {",
@@ -368,6 +431,7 @@ TEST_FILES = [
     "src/lib/search.test.ts",
     "src/lib/textcache.test.ts",
     "src/lib/results.test.ts",
+    "src/lib/recents.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

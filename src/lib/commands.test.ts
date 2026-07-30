@@ -270,3 +270,67 @@ describe("commands that take an argument", () => {
     expect(spec?.preview("400")).toBe("Go to page 400 of 775");
   });
 });
+
+describe("replace", () => {
+  /** A registry holding two fixed commands and a replaceable group. */
+  function registry(): { reg: CommandRegistry; ran: string[] } {
+    const ran: string[] = [];
+    const reg = new CommandRegistry();
+    reg.register(
+      { id: "view.zoomIn", title: "Zoom in", run: () => void ran.push("view.zoomIn") },
+      { id: "file.open", title: "Open…", run: () => void ran.push("file.open") },
+    );
+    return { reg, ran };
+  }
+
+  it("swaps the group and leaves everything else alone", () => {
+    const { reg } = registry();
+    reg.replace("file.recent.", [
+      { id: "file.recent.0", title: "Open a.pdf", run: () => {} },
+      { id: "file.recent.1", title: "Open b.pdf", run: () => {} },
+    ]);
+    reg.replace("file.recent.", [
+      { id: "file.recent.0", title: "Open c.pdf", run: () => {} },
+    ]);
+    expect(reg.all().map((c) => c.id)).toEqual([
+      "view.zoomIn",
+      "file.open",
+      "file.recent.0",
+    ]);
+    expect(reg.find("file.recent.0")?.title).toBe("Open c.pdf");
+  });
+
+  it("does not remove a command whose id merely contains the prefix", () => {
+    // `startsWith`, not `includes`: an id is a path from general to specific and
+    // a prefix match is the only one that means "this group".
+    const { reg } = registry();
+    reg.register({ id: "x.file.recent.0", title: "Decoy", run: () => {} });
+    reg.replace("file.recent.", []);
+    expect(reg.find("x.file.recent.0")).toBeDefined();
+  });
+
+  it("forgets that a replaced command was recent", () => {
+    // These ids are reused for different documents, so a stale entry would rank
+    // the *new* document at position 3 because the *old* one was run.
+    const { reg } = registry();
+    reg.replace("file.recent.", [
+      { id: "file.recent.0", title: "Open a.pdf", run: () => {} },
+    ]);
+    reg.run("file.recent.0");
+    expect(reg.recents()).toContain("file.recent.0");
+    reg.replace("file.recent.", [
+      { id: "file.recent.0", title: "Open b.pdf", run: () => {} },
+    ]);
+    expect(reg.recents()).not.toContain("file.recent.0");
+  });
+
+  it("leaves the recents of commands it did not replace", () => {
+    // The control: a `recent` list cleared wholesale would satisfy the test
+    // above and lose the ranking the palette exists to provide.
+    const { reg } = registry();
+    reg.run("view.zoomIn");
+    reg.replace("file.recent.", []);
+    expect(reg.recents()).toContain("view.zoomIn");
+  });
+});
+

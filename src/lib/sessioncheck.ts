@@ -101,6 +101,17 @@ export interface SessionCheckHost {
   toggleSidebar: () => void;
   /** Writes any outstanding place now. */
   flush: () => void;
+  /**
+   * Titles of the recent-document commands the palette is currently offering.
+   *
+   * The one thing about the recents list that no unit test can reach. The label
+   * logic and the registry's group replacement are covered in `recents.test.ts`
+   * and `commands.test.ts`; what is only true at runtime is that the chain
+   * exists at all --- the session file Rust wrote, read back, turned into
+   * commands, and registered. Each link is right on its own and none of them is
+   * wired to the next by anything a compiler checks.
+   */
+  recentCommands: () => string[];
 }
 
 /** Dispatches a keydown at the viewer's root, the way the window would. */
@@ -342,6 +353,19 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
       }
       await settle(() => host.viewer()?.idle === true);
       checkRestored(host, argument);
+
+      // The document that was just restored is by definition the most recently
+      // read one, so it must be offered. Asserted on the *first* entry rather
+      // than on membership: the list is most-recent-first, and a list that
+      // merely contains it would pass for one in an arbitrary order.
+      const offered = host.recentCommands();
+      const name = host.path().split(/[\\/]+/).pop() ?? "";
+      check(
+        "the document just restored is offered as a recent one",
+        offered[0]?.endsWith(name) === true && name !== "",
+        `${offered.length} recent commands, first is ${offered[0] ?? "(none)"}; ` +
+          `the open document is ${name || "(none)"}`,
+      );
       break;
     }
 
@@ -352,6 +376,16 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
         "no document opens when nothing is remembered",
         host.viewer() === null,
         describe(host),
+      );
+      // The control for the check above. A recents list that was populated from
+      // somewhere other than the session --- or one built once and never
+      // replaced --- would offer something here, where the session file has
+      // been removed and there is nothing to offer.
+      check(
+        "nothing is offered as recent when nothing is remembered",
+        host.recentCommands().length === 0,
+        `${host.recentCommands().length} recent commands: ` +
+          `${host.recentCommands().join(", ") || "(none)"}`,
       );
       break;
     }

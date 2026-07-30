@@ -3656,3 +3656,29 @@ Three things worth carrying:
 - **Prove the guard fires.** Pointing one `expect` at a name that does not exist and watching
   the harness refuse takes ten seconds, and this repository has already recorded the cost of
   a safety net whose only evidence was that it kept passing.
+
+### A verification chained after a failed edit reports success for work that is not there
+
+Nine mutations were added to `mutate_frontend.py` by a script whose second assertion tripped
+--- an anchor written with twelve spaces of indent for a list that had been moved to module
+level and now had four. Python raised, `p.write_text` never ran, and **neither** change was
+saved. The command chained on with `;`, so the harness ran anyway and printed
+`[OK] all 42 mutations caught by the test named for them`.
+
+Every word of that is true and it is the wrong answer. The nine mutations did not exist, and
+the line that says so is a number nobody was comparing against an expectation: 42 where 51
+was wanted. It read as a clean pass of work just completed.
+
+- **Chain with `&&`, not `;`, whenever a later step verifies an earlier one.** A failed edit
+  must not be followed by a green run of the code as it was.
+- **Grep for the new thing, not for the verdict.** `grep -E "recents:|registry:"` over the
+  transcript returned nothing, which is what actually exposed it; the summary line was
+  perfect. Confirm the work is *present* before believing a report that it passes.
+- **Write to a file, then assert, then write once.** A script that mutates a document in
+  several steps should do all its `assert`s before its first `write_text`, so a failure
+  leaves the file untouched rather than half-edited --- which is what saved this one from
+  being worse than confusing.
+
+The same shape as the harness traps above and arriving from outside them: the check was
+sound, the instrument was sound, and the thing being measured was not the thing that had been
+built. A total is only evidence when something knows what it should be.
