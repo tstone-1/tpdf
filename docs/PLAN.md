@@ -1663,9 +1663,46 @@ The mutation harness needed a control of its own first. It looked for `[FAIL]` l
 run that never produced a report has none either — so two results read as "nothing went red"
 when the truth was "nothing ran". It now requires the summary line.
 
-Not done, and not pretended otherwise: word and line selection by double- and triple-click,
-selection across a column boundary in reading order rather than index order, and any
-handling of rotated or vertical text.
+Not done, and not pretended otherwise: selection across a column boundary in reading order
+rather than index order, and any handling of rotated or vertical text.
+
+#### Word and line selection — done 2026-07-30
+
+Double-click selects a word, triple-click the line it is on, and a drag begun with either
+extends by whole units rather than dropping back to characters. `wordAt` and `lineAt` in
+`text.ts` are the units; `clicks.ts` counts the presses; the viewer holds the granularity for
+the length of the drag and flips which end of the anchor's unit is fixed when the drag
+reverses.
+
+Three decisions worth keeping, because each replaced something that looked fine.
+
+**The units take a character index, not a caret.** A caret is a position *between*
+characters, so double-clicking a word's last glyph yields the caret after it — which names
+the following space, and a word selection built on that selects the gap. `caretAt` and the
+new `nearestChar` are now the same search asking two different questions, rather than one
+answer used for both.
+
+**The click counter is keyed on document coordinates, not screen ones.** A click belongs to a
+run only if it lands on the same *text*, and between two clicks a reader can scroll, zoom,
+rotate or jump. Fed screen coordinates this needs a `reset()` at every one of those call
+sites and is silently wrong the day a fifth is added; fed document coordinates each of them
+breaks the run by construction. There is no `reset`, deliberately.
+
+**Runs of letters, not dictionary words.** Correct wherever words are separated by something,
+and wrong for Chinese, Japanese and Thai, where a double-click will take a whole clause.
+`Intl.Segmenter` knows better and is not used: it segments a *string*, and this module works
+in code-point indices precisely because `FPDFText_GetText` drops characters and desynchronises
+the two spaces. Adopting it means building that index mapping, which is the work.
+
+19 unit tests, each proved by mutation — 18 mutations, every one caught by the test named for
+it, and four of those tests were rewritten because the first mutation run showed they could
+not fail. Three functional checks in `viewer_check.py` cover the wiring, taking it to 89 names.
+Both of the traps they cost are in `docs/TRAPS.md`: the harness had to reset the click counter
+between gestures, and the word-drag check had to *search* for a drag distance that ends inside
+a word rather than assume a fixed one does.
+
+Still not done: selecting by paragraph, and a fourth click has no larger unit to reach for, so
+it wraps back to a caret.
 
 #### Find in document — 2026-07-27
 

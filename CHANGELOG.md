@@ -619,6 +619,24 @@ experience.
   for any page whose text has not arrived --- a fast drag can reach the clipboard before the
   extraction does, and silently copying the loaded part is a bug found in someone else's
   document.
+
+  **Double-click selects a word and triple-click the line it is on**, and a drag begun with
+  either extends by whole units instead of dropping back to characters --- which is what makes
+  dragging out a sentence land on word boundaries the way it does everywhere else. A fourth
+  click has no larger unit to reach for, so it wraps back to a caret rather than repeating the
+  line.
+
+  Word edges are runs of letters, digits and combining marks: correct wherever words are
+  separated by something, and wrong for Chinese, Japanese and Thai, where a double-click takes
+  a whole clause. `Intl.Segmenter` would know better and is deliberately not used --- it
+  segments a *string*, and this layer works in code-point indices precisely because
+  `FPDFText_GetText` drops characters and desynchronises the two spaces.
+
+  The click counter is keyed on where the *document* was clicked rather than the screen, so a
+  scroll, zoom, rotation or page jump between two clicks ends the run by construction instead
+  of by a `reset()` call at each of those sites. Units are found from the character under the
+  pointer rather than the caret beside it: the caret after a word's last glyph names the
+  following space, and a word selection built on that selects the gap.
 - **Find in document.** Cmd-F, search-as-you-type, Enter and Cmd-G to step through hits,
   Shift for backwards, Escape to drop it. Every hit on a visible page is highlighted and the
   current one differently. The scan starts at the page being read and wraps, so a reader on

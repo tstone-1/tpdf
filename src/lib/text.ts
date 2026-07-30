@@ -257,6 +257,35 @@ function isPlaced(quad: Quad): boolean {
  * character at the far end of the *next* line than to the one directly above it.
  */
 export function caretAt(text: PageText, x: number, y: number): number {
+  const best = nearestChar(text, x, y);
+  const sideways = linesRunSideways(text);
+
+  if (best < 0) return 0;
+  const quad = charQuad(text, best);
+  // Past the middle of the glyph, along the direction the text reads, means the
+  // caret belongs after it --- which is what makes a drag include the character
+  // under the pointer.
+  return sideways
+    ? y > (quad.top + quad.bottom) / 2
+      ? best + 1
+      : best
+    : x > (quad.left + quad.right) / 2
+      ? best + 1
+      : best;
+}
+
+/**
+ * The index of the character nearest a point, or -1 if the page places none.
+ *
+ * Split out of {@link caretAt} rather than duplicated, because a caret and a
+ * character are different answers to the same search and only one of them is
+ * right per question. A caret is a position *between* characters, so
+ * double-clicking the last glyph of a word yields the caret after it --- which
+ * names the space, and a word selection built on that selects the gap rather
+ * than the word. Selecting by unit therefore asks which character was clicked;
+ * dragging a caret asks where the pointer fell between two.
+ */
+export function nearestChar(text: PageText, x: number, y: number): number {
   let best = -1;
   let bestDistance = Infinity;
   // The weight belongs on the axis that separates lines, not on `y`. On a
@@ -279,18 +308,7 @@ export function caretAt(text: PageText, x: number, y: number): number {
     }
   }
 
-  if (best < 0) return 0;
-  const quad = charQuad(text, best);
-  // Past the middle of the glyph, along the direction the text reads, means the
-  // caret belongs after it --- which is what makes a drag include the character
-  // under the pointer.
-  return sideways
-    ? y > (quad.top + quad.bottom) / 2
-      ? best + 1
-      : best
-    : x > (quad.left + quad.right) / 2
-      ? best + 1
-      : best;
+  return best;
 }
 
 /**
@@ -394,6 +412,85 @@ function onSameLine(a: Quad, b: Quad, sideways: boolean): boolean {
   const overlap = Math.min(aEnd, bEnd) - Math.max(aStart, bStart);
   const shorter = Math.min(aEnd - aStart, bEnd - bStart);
   return shorter > 0 && overlap / shorter > 0.5;
+}
+
+/** A half-open range of character indices. */
+export interface IndexRange {
+  from: number;
+  /** Exclusive. */
+  to: number;
+}
+
+/**
+ * What class of character this is, for the purpose of finding a word's edges.
+ *
+ * Three classes rather than two, because the run a double-click should select
+ * depends on which one was hit: letters and digits run together into a word,
+ * whitespace runs together into a gap, and a punctuation mark is its own unit.
+ * Collapsing the last two would make double-clicking a full stop select the
+ * sentence's trailing space with it.
+ */
+type CharClass = "word" | "space" | "mark";
+
+/** Letters, digits, combining marks and the underscore. */
+const WORD_CHARACTER = /[\p{L}\p{N}\p{M}_]/u;
+const WHITESPACE = /\s/u;
+
+function classOf(code: number): CharClass {
+  const char = String.fromCodePoint(code);
+  if (WORD_CHARACTER.test(char)) return "word";
+  if (WHITESPACE.test(char)) return "space";
+  return "mark";
+}
+
+/**
+ * The range of the word containing a character, for a double-click.
+ *
+ * Takes a *character* index, not a caret --- see {@link nearestChar} for why the
+ * distinction is load-bearing here rather than pedantic.
+ *
+ * **Runs of letters, not dictionary words**, and the difference matters on
+ * exactly one family of scripts. Word edges are found by walking outwards while
+ * the character class does not change, which is correct wherever words are
+ * separated by something: spaces, punctuation, or a change of class. It is not
+ * correct for Chinese, Japanese or Thai, where a run of Han or Thai characters
+ * is a whole clause and a double-click will select all of it. `Intl.Segmenter`
+ * knows better and is deliberately not used: it segments a *string*, and this
+ * module works in code-point indices precisely because `FPDFText_GetText` drops
+ * characters and desynchronises the two spaces --- so adopting it would mean
+ * reintroducing the index mapping that the module docs exist to warn about, to
+ * fix a case no fixture currently covers. Stated rather than hidden; if it
+ * becomes worth doing, the mapping is the work, not the call.
+ */
+export function wordAt(text: PageText, index: number): IndexRange {
+  const codes = text.codes;
+  if (codes.length === 0) return { from: 0, to: 0 };
+
+  const at = Math.min(Math.max(index, 0), codes.length - 1);
+  const kind = classOf(codes[at] ?? 0);
+  if (kind === "mark") return { from: at, to: at + 1 };
+
+  let from = at;
+  while (from > 0 && classOf(codes[from - 1] ?? 0) === kind) from--;
+  let to = at + 1;
+  while (to < codes.length && classOf(codes[to] ?? 0) === kind) to++;
+  return { from, to };
+}
+
+/**
+ * The range of the line containing a character, for a triple-click.
+ *
+ * Built on {@link linesOf} rather than on a second grouping rule, so a
+ * triple-click and a screen reader agree about what a line is --- two rules
+ * would eventually disagree, and the one a user can see is not the one that
+ * gets tested.
+ */
+export function lineAt(text: PageText, index: number): IndexRange {
+  const at = Math.min(Math.max(index, 0), Math.max(text.codes.length - 1, 0));
+  for (const line of linesOf(text)) {
+    if (at >= line.from && at < line.to) return line;
+  }
+  return { from: 0, to: text.codes.length };
 }
 
 /**

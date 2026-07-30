@@ -36,7 +36,20 @@ import { DESTINATION_MARGIN_PT } from "./outline";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import { Search, type Match } from "./search";
 import { Selection } from "./selection";
-import { caretAt, runsFor, TextCache, type Caret, type PageText } from "./text";
+import {
+  caretAt,
+  lineAt,
+  nearestChar,
+  runsFor,
+  TextCache,
+  wordAt,
+  type Caret,
+  type PageText,
+} from "./text";
+import { ClickCounter } from "./clicks";
+
+/** What a drag extends the selection by. */
+export type SelectUnit = "char" | "word" | "line";
 
 /** What the search box should be showing. */
 export interface SearchStatus {
@@ -207,6 +220,25 @@ export class Viewer {
   private selection: Selection | null = null;
   /** Whether a pointer is currently extending the selection. */
   private selecting = false;
+  /** Counts clicks, so a double- and triple-click can be told apart. */
+  private readonly clicks = new ClickCounter();
+  /**
+   * What a drag extends by: a character, a word, or a line.
+   *
+   * Set from the click count at the press and held for the whole drag, which is
+   * what makes dragging after a double-click extend word by word rather than
+   * dropping back to characters the moment the pointer moves.
+   */
+  private selectUnit: SelectUnit = "char";
+  /**
+   * The unit the drag started in, kept whole.
+   *
+   * A word- or line-granular selection has to cover the unit it *began* in
+   * however far the pointer travels, and which end of that unit is the anchor
+   * flips depending on the direction. Storing the caret alone loses the
+   * information needed to flip it back.
+   */
+  private anchorUnit: { page: number; from: number; to: number } | null = null;
   /**
    * Pages whose text has been asked for.
    *
@@ -974,7 +1006,10 @@ export class Viewer {
     return this.text.peek(page);
   }
 
-  private caretFrom(event: PointerEvent): Caret | null {
+  /** Where a pointer event falls, in one page's own point space. */
+  private pointFrom(
+    event: PointerEvent,
+  ): { page: number; text: PageText; x: number; y: number } | null {
     const bounds = this.root.getBoundingClientRect();
     const docY = event.clientY - bounds.top + this.scrollTop;
     const page = this.scroller.pageAt(docY);
@@ -986,9 +1021,34 @@ export class Viewer {
     }
 
     const origin = this.scroller.pageOrigin(page);
-    const x = (event.clientX - bounds.left - origin.left) / this.zoom;
-    const y = (docY - origin.top) / this.zoom;
-    return { page, index: caretAt(text, x, y) };
+    return {
+      page,
+      text,
+      x: (event.clientX - bounds.left - origin.left) / this.zoom,
+      y: (docY - origin.top) / this.zoom,
+    };
+  }
+
+  private caretFrom(event: PointerEvent): Caret | null {
+    const point = this.pointFrom(event);
+    if (!point) return null;
+    return { page: point.page, index: caretAt(point.text, point.x, point.y) };
+  }
+
+  /**
+   * The word or line under a pointer, for a granular drag.
+   *
+   * Asks for the character under the pointer rather than the caret beside it:
+   * the caret after a word's last glyph names the space that follows, so a word
+   * selection built on one selects the gap. See `nearestChar`.
+   */
+  private unitFrom(event: PointerEvent): { page: number; from: number; to: number } | null {
+    const point = this.pointFrom(event);
+    if (!point) return null;
+    const index = nearestChar(point.text, point.x, point.y);
+    if (index < 0) return null;
+    const range = this.selectUnit === "line" ? lineAt(point.text, index) : wordAt(point.text, index);
+    return { page: point.page, from: range.from, to: range.to };
   }
 
   private readonly onSelectStart = (event: PointerEvent): void => {
@@ -999,9 +1059,35 @@ export class Viewer {
     if (this.track.contains(event.target as Node)) return;
     this.root.focus();
 
-    const caret = this.caretFrom(event);
-    this.selection = caret ? new Selection(caret) : null;
-    this.selecting = caret !== null;
+    // Document coordinates, not viewport ones: a scroll, zoom or page jump
+    // between two clicks moves the text out from under a still pointer, and
+    // keying the run on where the *document* was clicked ends it automatically.
+    const bounds = this.root.getBoundingClientRect();
+    const count = this.clicks.press(
+      event.clientX - bounds.left,
+      event.clientY - bounds.top + this.scrollTop,
+      performance.now(),
+    );
+    this.selectUnit = count === 2 ? "word" : count === 3 ? "line" : "char";
+
+    if (this.selectUnit === "char") {
+      const caret = this.caretFrom(event);
+      this.selection = caret ? new Selection(caret) : null;
+      this.selecting = caret !== null;
+      this.anchorUnit = null;
+    } else {
+      // The unit is read with the granularity already set, so a triple-click
+      // asks for a line rather than widening the word a double-click found.
+      const unit = this.unitFrom(event);
+      this.anchorUnit = unit;
+      this.selecting = unit !== null;
+      if (unit) {
+        this.selection = new Selection({ page: unit.page, index: unit.from });
+        this.selection.focus = { page: unit.page, index: unit.to };
+      } else {
+        this.selection = null;
+      }
+    }
 
     capture(this.root, event.pointerId);
     this.root.addEventListener("pointermove", this.onSelectMove);
@@ -1012,6 +1098,24 @@ export class Viewer {
 
   private readonly onSelectMove = (event: PointerEvent): void => {
     if (!this.selecting || !this.selection) return;
+
+    const anchor = this.anchorUnit;
+    if (this.selectUnit !== "char" && anchor) {
+      const unit = this.unitFrom(event);
+      if (!unit) return;
+      // Which end of the *anchor's* unit is the fixed one flips with the
+      // direction of travel, or dragging backwards would leave the word the
+      // drag started in half-selected --- from its start to the pointer, rather
+      // than from its end back to where the pointer now is.
+      const before =
+        unit.page < anchor.page || (unit.page === anchor.page && unit.to <= anchor.from);
+      this.selection.anchor = { page: anchor.page, index: before ? anchor.to : anchor.from };
+      this.selection.focus = { page: unit.page, index: before ? unit.from : unit.to };
+      this.requestText(unit.page);
+      this.wake();
+      return;
+    }
+
     const caret = this.caretFrom(event);
     if (!caret) return;
     this.selection.focus = caret;

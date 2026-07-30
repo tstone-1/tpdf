@@ -27,6 +27,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { CommandRegistry } from "./commands";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
@@ -181,6 +182,44 @@ function drag(root: HTMLElement, from: [number, number], to: [number, number]): 
     pointer(root, "pointermove", from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t);
   }
   pointer(root, "pointerup", to[0], to[1]);
+}
+
+/**
+ * Clicks a point `times` in a row, as one double- or triple-click gesture.
+ *
+ * Each click is a full press and release at the same point, which is what the
+ * counter in `clicks.ts` is watching for. No delay between them: they are
+ * dispatched synchronously, so `performance.now()` barely advances and the run
+ * is well inside the multi-click window.
+ *
+ * **It breaks any run already in progress first**, and that is the whole
+ * reason this is a function rather than two lines at the call site. The counter
+ * does not know a check has moved on to the next gesture: dispatched back to
+ * back, a click, then a double-click, then a triple-click at one point is
+ * *six consecutive clicks* at that point, and the counter --- correctly ---
+ * reads them as one run cycling 1,2,3,1,2,3. Every reading is then off by
+ * however many clicks the previous check made.
+ *
+ * It cost all three granularity checks on the first run, including the control:
+ * the "single" click reported seven characters selected, because the drag in
+ * the check before it had pressed at the same point a few milliseconds earlier
+ * and this was that run's *second* click. Nothing was wrong with the viewer.
+ * The trap of a control contaminated by the phase before it, arriving through a
+ * counter that neither phase mentions.
+ *
+ * Breaking the run by distance rather than by waiting keeps the check
+ * deterministic --- a sleep long enough to be safe is a sleep in every run, and
+ * one just short of the window is a flake that only appears on a loaded
+ * machine.
+ */
+function click(root: HTMLElement, x: number, y: number, times: number): void {
+  const away = y + 4 * MULTI_CLICK_SLOP_PX;
+  pointer(root, "pointerdown", x, away);
+  pointer(root, "pointerup", x, away);
+  for (let n = 0; n < times; n++) {
+    pointer(root, "pointerdown", x, y);
+    pointer(root, "pointerup", x, y);
+  }
 }
 
 /** Dispatches a keydown the way the window would. */
@@ -459,6 +498,7 @@ async function selectionChecks(
     skip("Escape clears the selection", "there is no text to select and clear");
     skip("dragging nowhere selects nothing", "there is no text a drag could select");
     skip("a drag selects text from where it was dragged", "the page has no extractable text");
+    skipGranularity("the page has no extractable text");
     return;
   }
 
@@ -485,6 +525,8 @@ async function selectionChecks(
     viewer.selectedText === "",
     `selected ${viewer.selectedText.length} characters`,
   );
+
+  granularityChecks(root, viewer, whole);
 
   if (!ok || !whole) {
     skip("a drag selects text from where it was dragged", "the page has no extractable text");
@@ -526,6 +568,162 @@ async function selectionChecks(
         (highAt < lowAt ? "" : " -- the page reads bottom to top, which it does not"),
   );
 }
+
+/** The names {@link granularityChecks} reports, so a skip can list them all. */
+const GRANULARITY_CHECKS = [
+  "a double-click selects a word rather than a character",
+  "a triple-click selects the line the word is on",
+  "a drag after a double-click ends on a word boundary",
+] as const;
+
+function skipGranularity(why: string): void {
+  for (const name of GRANULARITY_CHECKS) skip(name, why);
+}
+
+/**
+ * Double- and triple-click selection.
+ *
+ * Deliberately relational rather than literal: every assertion here compares
+ * one selection against another taken from the same point, so none of them
+ * needs to know a word the fixture happens to contain. A check that named
+ * "Hello" would pass on one corpus and skip on five.
+ *
+ * These run on every page including a rotated one, unlike the ordering check
+ * above. Line grouping follows the page's own reading axis, so a triple-click
+ * on a `/Rotate 90` page selects the line that runs down the screen --- there
+ * is nothing here that assumes lines advance downwards.
+ */
+function granularityChecks(root: HTMLElement, viewer: Viewer, whole: string): void {
+  const at: [number, number] = [MID_X, HIGH_Y];
+
+  // The control, and it has to come first: if a single click already selected
+  // a word, every assertion below would pass against a viewer with no notion
+  // of granularity at all.
+  click(root, at[0], at[1], 1);
+  const single = viewer.selectedText;
+
+  click(root, at[0], at[1], 2);
+  const word = viewer.selectedText;
+
+  check(
+    GRANULARITY_CHECKS[0],
+    single === "" && word.length > 1 && !/\s/u.test(word),
+    single !== ""
+      ? `a single click already selected ${single.length} characters, so this proves nothing`
+      : `"${preview(word)}" (${word.length} characters)` +
+        (/\s/u.test(word) ? " -- which contains whitespace, so it is not one word" : ""),
+  );
+
+  click(root, at[0], at[1], 3);
+  const line = viewer.selectedText;
+
+  if (word && line === word) {
+    // Honest rather than green: on a line holding a single word the two
+    // selections are legitimately identical and the check cannot discriminate.
+    skip(GRANULARITY_CHECKS[1], "the line under the pointer holds a single word");
+  } else {
+    check(
+      GRANULARITY_CHECKS[1],
+      word !== "" && line.includes(word) && line.length > word.length,
+      `"${preview(line)}" (${line.length}) against the word "${preview(word)}" (${word.length})`,
+    );
+  }
+
+  // A drag that begins with a double-click must extend by whole words.
+  //
+  // The precondition is *found*, not assumed, and that is the whole design of
+  // this check. Written first as a fixed 240 px drag asserting the result ends
+  // on a word boundary, it passed with the granular branch of `onSelectMove`
+  // mutated to `false` --- because 240 px happens to land on a boundary in this
+  // fixture, so a character drag and a word drag return the identical string.
+  // An outcome two mechanisms can produce cannot test either one.
+  //
+  // So a distance is searched for whose *character*-granular end falls inside a
+  // word. At that distance the two mechanisms must differ: the character drag
+  // stops mid-word and the word drag rounds outwards to the word's end.
+  const clean = (edge: string) => edge === "" || !WORD_CHARACTER.test(edge);
+  const edgesOf = (text: string) => {
+    const foundAt = whole.indexOf(text);
+    return {
+      foundAt,
+      before: foundAt > 0 ? (whole[foundAt - 1] ?? "") : "",
+      after: foundAt >= 0 ? (whole[foundAt + text.length] ?? "") : "",
+    };
+  };
+
+  // Short distances first, and they are the ones that work. The list began at
+  // 240 px --- what the ordering check drags --- and every candidate near it
+  // ended on a boundary for a reason that has nothing to do with words: from
+  // x=300 a drag that long runs off the end of the line, so the selection ends
+  // at its last character however far past it the pointer goes.
+  let midWordAt = 0;
+  let charDrag = "";
+  for (const candidate of [40, 48, 56, 64, 72, 80, 88, 96, 120, 160, 200, 240]) {
+    dragAfterClicks(root, at, candidate, 1);
+    const text = viewer.selectedText;
+    const edges = edgesOf(text);
+    if (text.length > 0 && edges.foundAt >= 0 && !clean(edges.after)) {
+      midWordAt = candidate;
+      charDrag = text;
+      break;
+    }
+  }
+
+  if (!midWordAt) {
+    // Honest rather than green: with no distance that ends inside a word, the
+    // two mechanisms agree and the check would be asserting nothing.
+    skip(GRANULARITY_CHECKS[2], "no drag distance tried ends inside a word on this page");
+    return;
+  }
+
+  dragAfterClicks(root, at, midWordAt, 2);
+  const extended = viewer.selectedText;
+  const edges = edgesOf(extended);
+
+  check(
+    GRANULARITY_CHECKS[2],
+    extended.length > charDrag.length &&
+      edges.foundAt >= 0 &&
+      clean(edges.before) &&
+      clean(edges.after),
+    edges.foundAt < 0
+      ? `"${preview(extended)}" was not found in the page's own text`
+      : `"${preview(extended)}" against the same drag without the double-click, ` +
+        `"${preview(charDrag)}", which stopped before "${edgesOf(charDrag).after}"` +
+        (extended.length > charDrag.length ? "" : " -- the double-click changed nothing") +
+        (clean(edges.before) ? "" : " -- it began inside a word") +
+        (clean(edges.after) ? "" : " -- it stopped inside a word"),
+  );
+}
+
+/**
+ * Presses `times` at a point, then drags right without releasing the last one.
+ *
+ * The run is broken first, for the reason {@link click} gives. Spelled out
+ * rather than built on `click` because the final press must stay down.
+ */
+function dragAfterClicks(
+  root: HTMLElement,
+  at: [number, number],
+  dx: number,
+  times: number,
+): void {
+  const away = at[1] + 4 * MULTI_CLICK_SLOP_PX;
+  pointer(root, "pointerdown", at[0], away);
+  pointer(root, "pointerup", at[0], away);
+  for (let n = 0; n < times - 1; n++) {
+    pointer(root, "pointerdown", at[0], at[1]);
+    pointer(root, "pointerup", at[0], at[1]);
+  }
+  pointer(root, "pointerdown", at[0], at[1]);
+  for (let step = 1; step <= 4; step++) {
+    pointer(root, "pointermove", at[0] + (dx * step) / 4, at[1]);
+  }
+  pointer(root, "pointerup", at[0] + dx, at[1]);
+}
+
+/** Letters, digits, marks and the underscore --- the word class in `text.ts`. */
+const WORD_CHARACTER = /[\p{L}\p{N}\p{M}_]/u;
 
 /** Where the selection drags run, in viewport CSS pixels. */
 const MID_X = 300;

@@ -255,8 +255,11 @@ the profile is not what embeds the frontend). And **pass it as a backslash path*
 find the file specified` for a file that is plainly there, from inside Python's `subprocess`
 rather than from anything in this repository.
 
-Four corpora, every one reporting the **86 check names** that are the invariant, with splits
-inside the ranges the table above records:
+Four corpora, every one reporting the **86 check names** that were the invariant then, with
+splits inside the ranges the table above records. Word and line selection took that to **89**
+on 2026-07-30, after this run; the splits below are left as measured rather than adjusted by
+arithmetic, and a Windows re-run should expect 89 names with three more running on the two
+text corpora:
 
 | fixture | ran | skipped | failed |
 |---|---|---|---|
@@ -268,8 +271,8 @@ inside the ranges the table above records:
 Re-run 2026-07-30 with pre-spawning live, since that changes the app's own behaviour --- every
 open now consumes a warmed process and starts another. All four green, no `[WARN]`, 44 modules
 at peak with no `pdfium` among them over 27--978 samples. `outline-simple` reported 82/4 that
-time against 81/5 before: the **86 names** are what is invariant, and one of them stopped
-skipping. A split that moves is information; a name that disappears would not be.
+time against 81/5 before: the **name set** is what is invariant, not the split, and one of
+them stopped skipping. A split that moves is information; a name that disappears would not be.
 
 Rendering, scrolling, zoom, pinch, view rotation, text selection, search, the palette, the
 accessibility tree, the outline sidebar, thumbnails, inversion and the print command's
@@ -352,7 +355,7 @@ Run **before** the flip it reported `[FAIL] the app process mapped the PDF parse
 at peak`. That control is why the pass afterwards means anything. After: four corpora green
 with unchanged ran/skipped splits, no `[WARN]`, 44--45 modules at peak, no `pdfium` among them.
 
-That line is printed *outside* the 86 check names on purpose --- those are `viewercheck.ts`'s
+That line is printed *outside* the check names on purpose --- those are `viewercheck.ts`'s
 and are the cross-platform invariant, and adding a Windows-only name to that set would make the
 two platforms look divergent when they are not.
 
@@ -892,18 +895,23 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **86 check names**; what differs is how
+Run all six corpora. Every run reports the same **89 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 75--76 | 10--11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 81--82 | 4--5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 81 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 52 | 34 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 59 | 27 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 75 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 78--79 | 10--11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 84--85 | 4--5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 84 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 52 | 37 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 59 | 30 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 78 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+
+**86 until 2026-07-30**, when word and line selection added three. The three run on every
+corpus with extractable text, rotated included --- line grouping follows the page's own
+reading axis, so there is nothing in them that assumes lines advance downwards --- and skip
+together on the two vector fixtures, which is why those gained three skips and no runs.
 
 **`vector-multi` takes about 4m40s**, and everything else a fraction of that --- twelve A0
 pages is what it is for. The default timeout was 300 s, which sat close enough to that to
@@ -927,7 +935,7 @@ Absolute counts are deliberately not quoted in this paragraph: they move wheneve
 added, and a stale number here would send someone looking for a regression that is a
 changelog entry. The table above is the one place they are written down.
 
-**So the ran/skipped columns are not the invariant** --- the **86 names** are. A count chased
+**So the ran/skipped columns are not the invariant** --- the **89 names** are. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that

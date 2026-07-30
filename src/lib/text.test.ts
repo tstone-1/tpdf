@@ -13,11 +13,15 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  caretAt,
+  lineAt,
   linesOf,
   linesRunSideways,
+  nearestChar,
   textOf,
   turnedView,
   turnQuad,
+  wordAt,
   type PageText,
 } from "./text";
 
@@ -325,5 +329,202 @@ describe("turnedView", () => {
   it("returns the page itself when nothing is rotated", () => {
     const text = twoShortLines();
     expect(turnedView(text, 0)).toBe(text);
+  });
+});
+
+/**
+ * A line of real words, laid out left to right with 10-point cells.
+ *
+ * `"Hello, world!"` --- two words, a comma, a space and a bang, which is enough
+ * to exercise every class boundary a double-click can land on.
+ */
+function sentence(): PageText {
+  const chars: [string, [number, number, number, number] | null][] = [];
+  let x = 10;
+  for (const char of "Hello, world!") {
+    chars.push([char, [x, 10, x + 10, 22]]);
+    x += 10;
+  }
+  return page(chars);
+}
+
+describe("wordAt", () => {
+  it("selects the run of letters a character sits in", () => {
+    // Every index inside the word gives the same answer, including its first
+    // and last: a rule that walked in one direction only would pass at the
+    // start and fail at the end, or the reverse.
+    for (const index of [0, 2, 4]) {
+      expect(wordAt(sentence(), index)).toEqual({ from: 0, to: 5 });
+    }
+  });
+
+  it("selects the second word, not the whole line", () => {
+    expect(wordAt(sentence(), 8)).toEqual({ from: 7, to: 12 });
+  });
+
+  it("selects a punctuation mark on its own", () => {
+    // The comma at 5. It must not join the word before it, and must not take
+    // the space after it either -- a double-click on a full stop that swallows
+    // the following space copies a trailing space nobody asked for.
+    expect(wordAt(sentence(), 5)).toEqual({ from: 5, to: 6 });
+  });
+
+  it("selects one mark of a run of punctuation, not the run", () => {
+    // The only case the single-mark rule decides: a lone mark comes out the
+    // same whether it is returned directly or walked outwards from, because
+    // its neighbours are a different class either way. Found by mutation --
+    // deleting the rule changed nothing any other test could see.
+    const trailing = page(
+      [..."ah..."].map((c, i): [string, [number, number, number, number]] => [
+        c,
+        [10 + i * 10, 10, 20 + i * 10, 22],
+      ]),
+    );
+    expect(wordAt(trailing, 3)).toEqual({ from: 3, to: 4 });
+  });
+
+  it("selects a run of whitespace as a unit", () => {
+    expect(wordAt(sentence(), 6)).toEqual({ from: 6, to: 7 });
+  });
+
+  it("does not run past the ends of the page", () => {
+    const one = page([["a", [10, 10, 20, 22]]]);
+    expect(wordAt(one, 0)).toEqual({ from: 0, to: 1 });
+    // A caret index of `codes.length` is a legal position and names no
+    // character; it has to resolve to the last word rather than to nothing.
+    expect(wordAt(one, 1)).toEqual({ from: 0, to: 1 });
+  });
+
+  it("has no word to find on a page with no text", () => {
+    expect(wordAt(page([]), 0)).toEqual({ from: 0, to: 0 });
+  });
+
+  it("keeps digits and letters together, and splits on a hyphen", () => {
+    // `A4-size`: one hyphen makes three units, which is the behaviour a reader
+    // expects from double-clicking either half of a hyphenated word.
+    const hyphenated = page(
+      [..."A4-size"].map((c, i): [string, [number, number, number, number]] => [
+        c,
+        [10 + i * 10, 10, 20 + i * 10, 22],
+      ]),
+    );
+    expect(wordAt(hyphenated, 0)).toEqual({ from: 0, to: 2 });
+    expect(wordAt(hyphenated, 2)).toEqual({ from: 2, to: 3 });
+    expect(wordAt(hyphenated, 4)).toEqual({ from: 3, to: 7 });
+  });
+
+  it("treats a combining mark as part of the word", () => {
+    // Written first with "Grüße", which proved nothing: that ü is precomposed
+    // U+00FC, a plain letter, so dropping `\p{M}` from the word class left the
+    // test green. A PDF may carry either form -- extraction returns whatever
+    // the font's ToUnicode says -- so the decomposed one is the case that needs
+    // the class, and it is spelled explicitly here rather than typed.
+    const decomposed = page(
+      [..."u\u0308ber"].map((c, i): [string, [number, number, number, number]] => [
+        c,
+        [10 + i * 10, 10, 20 + i * 10, 22],
+      ]),
+    );
+    expect(decomposed.codes.length).toBe(5);
+    expect(wordAt(decomposed, 0)).toEqual({ from: 0, to: 5 });
+  });
+});
+
+describe("lineAt", () => {
+  it("selects the line a character is on", () => {
+    expect(lineAt(twoLines(), 1)).toEqual({ from: 0, to: 3 });
+    expect(lineAt(twoLines(), 4)).toEqual({ from: 3, to: 5 });
+  });
+
+  it("selects the whole line, not the word under the pointer", () => {
+    // The discriminating case: on a page whose line holds several words, a
+    // rule that returned the word would pass every check above that has one
+    // word per line.
+    expect(lineAt(sentence(), 8)).toEqual({ from: 0, to: 13 });
+  });
+
+  it("includes the first character of a line", () => {
+    // The boundary the loop's lower bound decides, and nothing else reached
+    // it: every other index here sits strictly inside its line, so `>=` and
+    // `>` agree. With `>` the second line's opening character matches no line
+    // at all and falls through to the whole page.
+    expect(lineAt(twoLines(), 0)).toEqual({ from: 0, to: 3 });
+    expect(lineAt(twoLines(), 3)).toEqual({ from: 3, to: 5 });
+  });
+
+  it("clamps an index past the end onto the last line", () => {
+    expect(lineAt(twoLines(), 5)).toEqual({ from: 3, to: 5 });
+  });
+
+  it("has no line to find on a page with no text", () => {
+    expect(lineAt(page([]), 0)).toEqual({ from: 0, to: 0 });
+  });
+});
+
+describe("nearestChar and caretAt", () => {
+  it("finds the character a point falls inside", () => {
+    expect(nearestChar(sentence(), 25, 16)).toBe(1);
+  });
+
+  it("finds the nearest character to a point in the margin", () => {
+    // Landing nowhere is what makes a selection feel broken, so a click past
+    // the end of the line still names the last character on it.
+    expect(nearestChar(sentence(), 400, 16)).toBe(12);
+  });
+
+  it("weights distance across the lines, not along them", () => {
+    // A short first line, and a second line with a character far to the right
+    // of where the first one ends. The point sits *on* the first line's band,
+    // past its last character, directly above the second line's outlier.
+    //
+    // Both metrics were computed by hand before choosing the point, because the
+    // obvious ones do not discriminate: unweighted, the outlier is 196 away and
+    // the correct character 4,225, so the caret lands a line below; weighted,
+    // the outlier costs 12,544 and the correct character still 4,225. Picking a
+    // point between the two lines instead gives the same answer either way,
+    // which is a test that cannot fail.
+    const spread = page([
+      ["a", [10, 10, 20, 22]],
+      ["b", [20, 10, 30, 22]],
+      ["c", [30, 10, 40, 22]],
+      ["d", [100, 30, 110, 42]],
+    ]);
+    expect(nearestChar(spread, 105, 16)).toBe(2);
+  });
+
+  it("has no character to find on a page that places none", () => {
+    expect(nearestChar(page([["a", null]]), 10, 10)).toBe(-1);
+  });
+
+  it("puts the caret before a character the pointer is left of centre on", () => {
+    // Boxes are 10 wide from x=10, so 12 is inside the first and left of its
+    // middle.
+    expect(caretAt(sentence(), 12, 16)).toBe(0);
+  });
+
+  it("puts the caret after a character the pointer is past the middle of", () => {
+    // The other side of the same box. Both directions, because a comparison
+    // that always answers one way passes any test that only checks the other
+    // -- and this is what makes a drag include the character under the pointer.
+    expect(caretAt(sentence(), 18, 16)).toBe(1);
+  });
+
+  it("puts the caret at the start of a page that places no characters", () => {
+    expect(caretAt(page([["a", null]]), 10, 10)).toBe(0);
+  });
+
+  it("splits on the reading axis when the page is turned", () => {
+    // A quarter-turned page reads down the screen, so it is `y` that decides
+    // which side of a glyph the caret falls on. Weighting or splitting on `x`
+    // there is the same defect rotated ninety degrees.
+    const sideways = page(
+      [
+        ["a", [10, 10, 22, 20]],
+        ["b", [10, 20, 22, 30]],
+      ],
+      1,
+    );
+    expect(caretAt(sideways, 16, 12)).toBe(0);
+    expect(caretAt(sideways, 16, 18)).toBe(1);
   });
 });
