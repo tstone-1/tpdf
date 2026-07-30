@@ -21,6 +21,16 @@ and the app reading one back are different halves, and a check that only ran the
 second would pass on a session file that was never written -- it would simply
 find nothing to restore and say so somewhere else.
 
+**A fixture too short to test stops the run, rather than colouring it.** The
+`record` phase refuses a document with fewer than `EXPECTED_PAGE + 1` pages, and
+that refusal used to be the *first* of eleven failures: the other three phases
+launched anyway and duly reported `it opens on the remembered page: page 0,
+wanted 7`, which is the signature of a broken restore and not of a wrong
+fixture. The named check said which -- at the top, where a redirected run's tail
+is what gets read. So the driver now reads that check's verdict and skips the
+rest by name, and the verdict line says the fixture was the problem. See the
+trap of the same name.
+
 Like `viewer_check.py` this needs a *bundle*, not a raw `cargo build` binary: a
 bare Mach-O opens a window and never runs a line of JavaScript.
 """
@@ -45,6 +55,30 @@ from webview_guard import require_visible_session
 EXPECTED_PAGE = 7
 EXPECTED_TURNS = 1
 
+# The phase labels, as constants because each is now written at two call sites --
+# `report` where the phase ran and the skip path where it did not. `open_check.py`
+# names its two branching phases the same way and for the same reason: a name
+# written twice eventually differs, and the diff then shows a phase that vanished
+# on one input when nothing had.
+PHASE_RECORD = "record"
+PHASE_DEFAULT = "control: opening without a session"
+PHASE_VERIFY = "verify"
+PHASE_EMPTY = "control: launching with nothing remembered"
+
+# The precondition check inside `record`, by name, so its verdict can be read.
+#
+# Duplicated from `src/lib/sessioncheck.ts` -- and unlike EXPECTED_PAGE above,
+# where the duplication *is* the assertion, this copy is a coupling and would
+# rot silently. A rename there would leave the skip path below unreachable and
+# quietly restore the eleven-failure transcript it exists to prevent, which is a
+# guard that stops firing without saying so. So its absence is reported as a
+# failure of this script rather than treated as "the fixture is fine".
+PRECONDITION = "the document is long enough to test page restore"
+
+# The names `check_recorded_file` prints, in order, shared with the skip path so
+# the two cannot drift apart.
+RECORDED_FIELDS = ("path", "page", "turns", "fitting", "sidebar")
+
 
 def launch(binary: str, mode: str, session_file: Path, timeout: float) -> tuple[int, str]:
     """Runs one phase, returning its exit code and transcript."""
@@ -59,6 +93,24 @@ def launch(binary: str, mode: str, session_file: Path, timeout: float) -> tuple[
 
 
 SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed", re.M)
+RESULT = re.compile(r"^\[(OK|FAIL|SKIP)\]\s+(.*)$")
+
+
+def outcome_of(out: str, name: str) -> str | None:
+    """The verdict recorded for a named check, or None when it is absent.
+
+    Found by splitting on the label and matching the rest of the line, never by
+    a fixed column. `Report` pads names to a width nobody remembers, so a
+    pattern that encodes the padding stops matching the day a name grows past it
+    -- silently, and in the direction that reads as good news. `AGENTS.md`
+    records exactly that: a mutation harness that printed SURVIVED while its own
+    summary line, four lines below in the same buffer, said a check had failed.
+    """
+    for line in out.splitlines():
+        found = RESULT.match(line)
+        if found and found.group(2).startswith(name):
+            return found.group(1)
+    return None
 
 
 def report(phase: str, code: int, out: str) -> bool:
@@ -117,18 +169,33 @@ def check_recorded_file(session_file: Path, pdf: str) -> bool:
         return False
 
     place = places[0]
+    wanted = {
+        "path": str(Path(pdf).resolve()),
+        "page": EXPECTED_PAGE,
+        "turns": EXPECTED_TURNS,
+        "fitting": False,
+        "sidebar": True,
+    }
     ok = True
-    for name, got, want in (
-        ("path", place.get("path"), str(Path(pdf).resolve())),
-        ("page", place.get("page"), EXPECTED_PAGE),
-        ("turns", place.get("turns"), EXPECTED_TURNS),
-        ("fitting", place.get("fitting"), False),
-        ("sidebar", place.get("sidebar"), True),
-    ):
-        good = got == want
+    for name in RECORDED_FIELDS:
+        got = place.get(name)
+        good = got == wanted[name]
         ok &= good
         print(f"{'[OK]  ' if good else '[FAIL]'} recorded {name:<10} {got!r}")
     return bool(ok)
+
+
+def skip_recorded_file(why: str) -> None:
+    """Prints the names `check_recorded_file` would have, as skips.
+
+    The app returned before driving to the target, so the file holds a fresh
+    document's place -- page 0, upright, fitted. Comparing it would produce four
+    failures describing a restore that was never attempted, which is the whole
+    defect this path exists to remove.
+    """
+    print("--- the file the app wrote ---")
+    for name in RECORDED_FIELDS:
+        print(f"[SKIP] recorded {name:<10} {why}")
 
 
 def main() -> int:
@@ -166,17 +233,47 @@ def main() -> int:
 
         ok = True
         code, out = launch(args.binary, f"record:{pdf}", recorded, args.timeout)
-        ok &= report("record", code, out)
+        ok &= report(PHASE_RECORD, code, out)
+
+        # Read before anything else is launched, because what it decides is
+        # whether launching anything else can mean anything.
+        verdict = outcome_of(out, PRECONDITION)
+        if verdict is None:
+            print(
+                f"[FAIL] this script cannot find a check named {PRECONDITION!r} in the "
+                "record transcript -- it has been renamed in sessioncheck.ts, so the "
+                "too-short-fixture path below is now dead code"
+            )
+            ok = False
+
+        if verdict == "FAIL":
+            why = f"{Path(args.pdf).name} is too short -- see the record phase"
+            skip_recorded_file(why)
+            # The phases are named even though they did not launch, so the phase
+            # list is the same shape on a fixture that cannot be tested as on one
+            # that can. Their individual checks are necessarily absent: the app
+            # never ran, so there was nothing to report them.
+            for phase in (PHASE_DEFAULT, PHASE_VERIFY, PHASE_EMPTY):
+                print(f"--- {phase} ---")
+                print(f"[SKIP] {phase}: {why}")
+            print()
+            print(
+                f"[FAIL] session restore was not tested: {Path(args.pdf).name} has too "
+                f"few pages to reach page {EXPECTED_PAGE}. Rerun with a document of at "
+                f"least {EXPECTED_PAGE + 1} pages."
+            )
+            return 1
+
         ok &= check_recorded_file(recorded, pdf)
 
         code, out = launch(args.binary, f"default:{pdf}", no_default, args.timeout)
-        ok &= report("control: opening without a session", code, out)
+        ok &= report(PHASE_DEFAULT, code, out)
 
         code, out = launch(args.binary, f"verify:{pdf}", recorded, args.timeout)
-        ok &= report("verify", code, out)
+        ok &= report(PHASE_VERIFY, code, out)
 
         code, out = launch(args.binary, "empty", no_empty, args.timeout)
-        ok &= report("control: launching with nothing remembered", code, out)
+        ok &= report(PHASE_EMPTY, code, out)
 
     print()
     print("[OK] session restore verified" if ok else "[FAIL] session restore is not verified")

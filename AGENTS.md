@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 145 entries
+The one thing this file does *not* carry in full is the trap list --- 146 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -160,10 +160,23 @@ in-process render, text extraction, outlines and search across the boundary. The
 substitution that the macOS sandbox caused, and that `win_sandbox_probe` predicted would not
 recur here, did not.
 
-`Worker` carries the two platforms as per-platform type aliases rather than an enum, so every
-macOS line in `worker.rs` is byte-identical to what it was --- deliberate, because none of this
-can be re-verified on macOS from a Windows machine and a diff that touches only Windows code is
-the strongest statement available about what cannot have regressed.
+`Worker` carries the two platforms as per-platform type aliases rather than an enum, so the
+macOS *types* are what they were: `WorkerProcess`, `WorkerStdin` and `WorkerStdout` resolve
+there to `Child`, `ChildStdin` and `ChildStdout` exactly as before. The reasoning was that none
+of this can be re-verified on macOS from a Windows machine, so a diff touching only Windows code
+is the strongest statement available about what cannot have regressed.
+
+**It is not literally a Windows-only diff, and this said it was** (corrected 2026-07-30, from
+the macOS side). The struct fields, the `use`, `WorkerSender`'s inner type and three accessors
+were all renamed onto the aliases, and two `#[cfg(not(target_os = "macos"))]` refusal arms were
+deleted --- macOS lines, changed. The behaviour is identical because the aliases resolve to the
+same types, but that is a claim about what a compiler does, not the "nothing on that platform
+was touched" the sentence promised, and the two are only the same thing until one of them is
+wrong. What actually stands behind macOS here is that the harnesses were re-run there: `gates`
+8/8 with 168 tests, `backend-probe` 41 names across four corpora with identical name sets,
+`worker-probe` 12/12 on four, `viewer_check` 86 names across all six, `session_check` and
+`open_check` green. Worth stating because the original phrasing invites the next session to
+skip exactly that.
 
 **Windows no longer fails open.** `Backend::default_here()` selects workers there, proved by
 the external module check above rather than by the absence of our own warning.
@@ -492,8 +505,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 145 of them and the full text
-was 93% of this file --- an instruction budget spent on the 144 traps that are not
+titles. Only the titles are here, because there are 146 of them and the full text
+was 93% of this file --- an instruction budget spent on the 145 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -640,6 +653,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A comment claimed an ordering mattered, and the mutation that should have hurt did not
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 - Repeating a race inside one process re-runs the first round, not the race
+- A precondition that names the cause still lets the symptom print
 
 ### Windows and portability
 - A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`

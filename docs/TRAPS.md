@@ -3405,3 +3405,53 @@ installer ships all **17 probe and benchmark executables**, about 35 MB of devel
 including a sandbox prober and a hostile-document harness. That is a property of declaring them as
 `[[bin]]` in the bundled crate, it is identical on macOS, and moving them to a separate workspace
 crate or to `[[example]]` targets is the real fix.
+
+### A precondition that names the cause still lets the symptom print
+
+Found 2026-07-30, on the macOS side, one day after the guard it is about was written --- which
+is the useful part: the guard was a correct and deliberate fix, and it removed the *diagnosis*
+while leaving the *evidence that caused the misdiagnosis* exactly where it was.
+
+`session_check.py` drives four launches of the real app. `TARGET.page` is 7, and
+`Viewer.goToPage` clamps to the last page, so on a document shorter than eight pages the
+`record` phase drove to page 0 and every phase after it reported `it opens on the remembered
+page: page 0, wanted 7`. That is the signature of a broken session restore, it is stable and
+reproducible, and it cost a real diagnosis on a restore that was working perfectly. The repair
+was a named check --- *"the document is long enough to test page restore"* --- which fails
+first, in the record phase, with the fixture and the required page count in its detail column.
+
+It is a good check and it did not fix the problem. `if (!longEnough) return;` returns from the
+phase running inside the webview; the Python driver does not know that happened, accumulates
+with `ok &= report(...)` and launches the other three phases regardless. So the run still
+produced **eleven** failures, of which ten described a restore that was never attempted, and
+still ended:
+
+```
+[FAIL] it opens on the remembered page     page 0, wanted 7
+[FAIL] verify: 5 of 7 checks failed
+[FAIL] session restore is not verified
+```
+
+The check tells the truth to a reader who starts at the top. These harnesses are run redirected
+to a file, where the **tail and the summary line** are what get read --- which is why
+`live_output.py` exists at all. A guard whose correction is only visible above the noise it was
+meant to correct has not removed the trap, it has added a line to it.
+
+So the shape to watch for: **a precondition that stops one phase of a multi-phase run, where
+the later phases are launched by something that cannot see the precondition.** The fix is not in
+the check, it is in whatever owns the sequencing --- the driver reads the named check's verdict
+out of the transcript, skips the remaining phases *by name*, and ends with a verdict that says
+the fixture was the problem rather than the restore. Ten misleading failures to zero, and three
+launches not made.
+
+Two details worth copying, both of which this repository has paid for elsewhere:
+
+- **Read the verdict by splitting on the label, never by a fixed column.** `Report` pads names
+  to a width nobody remembers, and a pattern encoding that padding stops matching the day a name
+  grows past it --- silently, in the direction that reads as good news.
+- **A constant duplicated across a language boundary is a coupling, not an assertion**, and the
+  distinction matters within one file: `EXPECTED_PAGE` is duplicated *so that* the two sides can
+  disagree, while the check's *name* must match or the skip path becomes unreachable and the
+  eleven-failure transcript quietly returns. So its absence from the transcript is reported as a
+  failure of the driver. Proved by mutation: renaming it turns a green run into
+  `[FAIL] this script cannot find a check named ... it has been renamed in sessioncheck.ts`.
