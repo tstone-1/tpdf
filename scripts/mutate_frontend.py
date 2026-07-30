@@ -633,13 +633,23 @@ TEST_NAME = re.compile(r"^\s*[✓x×]\s+\S+\.test\.ts\s*>\s*(.*?)(?:\s+\d+ms)?$"
 SUMMARY = re.compile(r"^\s*Tests\s+(?:(\d+) failed)?.*?(\d+) passed", re.M)
 
 
+def npx() -> str:
+    """Resolves npx, which is `npx.cmd` on Windows and not on PATH as `npx`."""
+    return shutil.which("npx") or "npx"
+
+
 def run_tests() -> tuple[set[str], int | None, str]:
     """Runs the suite, returning the failed test names, the summary's count and the log."""
     done = subprocess.run(
-        ["npx", "vitest", "run", *TEST_FILES],
+        [npx(), "vitest", "run", *TEST_FILES],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        # vitest marks a test with U+2713/U+00D7, and `text=True` alone decodes
+        # with the locale codec -- cp1252 on Windows, where those bytes become
+        # mojibake and every mark-keyed regex silently matches nothing.
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     out = done.stdout + done.stderr
@@ -653,10 +663,12 @@ def run_tests() -> tuple[set[str], int | None, str]:
 def all_test_names() -> set[str]:
     """Every test name the suite defines, from the verbose reporter."""
     done = subprocess.run(
-        ["npx", "vitest", "run", "--reporter=verbose", *TEST_FILES],
+        [npx(), "vitest", "run", "--reporter=verbose", *TEST_FILES],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     out = done.stdout + done.stderr
@@ -717,7 +729,20 @@ def main() -> int:
             backup = Path(scratch) / f"{len(list(Path(scratch).iterdir()))}.bak"
             shutil.copy2(target, backup)
             try:
-                source = target.read_text()
+                # Bytes, decoded explicitly: `read_text` uses the locale codec,
+                # which is cp1252 on Windows, and an anchor holding a glyph like
+                # the Option sign then matches nothing -- reported as "the
+                # mutation is not the one described", which reads as drift in
+                # the source rather than in this harness.
+                #
+                # Its newline translation was doing real work, though, and
+                # removing it alone takes three failures to twelve: a Windows
+                # checkout is CRLF and every anchor here is written with "\n".
+                # So normalise for matching and put the file's own convention
+                # back, leaving the mutation as the only difference on disk.
+                raw = target.read_bytes().decode("utf-8")
+                crlf = "\r\n" in raw
+                source = raw.replace("\r\n", "\n") if crlf else raw
                 if source.count(mutation.before) != 1:
                     print(
                         f"[FAIL] {mutation.name}: its anchor appears "
@@ -726,10 +751,13 @@ def main() -> int:
                     )
                     problems += 1
                     continue
-                target.write_text(source.replace(mutation.before, mutation.after))
+                mutated = source.replace(mutation.before, mutation.after)
+                if crlf:
+                    mutated = mutated.replace("\n", "\r\n")
+                target.write_bytes(mutated.encode("utf-8"))
                 names, counted, out = run_tests()
             finally:
-                target.write_text(backup.read_text())
+                target.write_bytes(backup.read_bytes())
 
             if counted is None:
                 print(f"[FAIL] {mutation.name}: no summary line -- the run did not finish")

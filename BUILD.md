@@ -289,6 +289,38 @@ at peak with no `pdfium` among them over 27--978 samples. `outline-simple` repor
 time against 81/5 before: the **name set** is what is invariant, not the split, and one of
 them stopped skipping. A split that moves is information; a name that disappears would not be.
 
+#### The 109-name re-run, measured
+
+Done 2026-07-30 after the reading-order work landed, on the **six** corpora this machine can
+generate --- `text-heavy.pdf` is a real document rather than a generated fixture and has never
+been on this box, which is the same reason `prespawn-bench` skips one of its checks here.
+
+Every corpus reports the same **109** names and, more usefully than the count, **the same
+split as macOS on every single one**:
+
+| fixture | Windows ran / skipped | macOS table | failed |
+|---|---|---|---|
+| `outline-simple.pdf` | 102 / 7 | 102 / 7 | 0 |
+| `outline-hostile.pdf` | 102 / 7 | 102 / 7 | 0 |
+| `rotated-90.pdf` | 95 / 14 | 95 / 14 | 0 |
+| `vector-heavy.pdf` | 62 / 47 | 62 / 47 | 0 |
+| `vector-multi.pdf` | 70 / 39 | 70 / 39 | 0 |
+| `columns.pdf` | 93 / 16 | 93 / 16 | 0 |
+
+The name sets were diffed pairwise with the `cut -c8-47` recipe above rather than compared by
+count, and all six are byte-identical to each other. Each extracts **110** lines, not 109: the
+`the app process never mapped the PDF parser` line is a Windows-only observation printed
+outside the check set, exactly as intended, and it is the only difference. 43--45 modules at
+peak, no `pdfium` among them, over 32--1324 samples.
+
+**One run of `vector-multi` failed before this and is worth reading rather than discarding.**
+`activating a thumbnail goes to its page` reported `from page 1 to 1, wanted 7`, and the three
+withdrawal checks beside it skipped --- which looks like two findings and is one, since nothing
+navigated, so no new thumbnail was ever requested to be in flight. It did not reproduce in two
+later runs, including one under deliberate concurrent CPU load, which is the explanation that
+was guessed first and tested second. The check now prints whether focus actually landed, so
+the next occurrence says which half failed; see the trap of that name.
+
 Rendering, scrolling, zoom, pinch, view rotation, text selection, search, the palette, the
 accessibility tree, the outline sidebar, thumbnails, inversion and the print command's
 refusals all behave as they do on macOS.
@@ -1265,6 +1297,18 @@ starts at 0 and increments within the month.
    suite does not define --- derived from the runner's own listing, since a name that cannot
    go red reports SURVIVED and reads as a gap in the tests. `--list` prints the pairs without
    running anything.
+
+   **Both run on Windows as of 2026-07-30 --- 22/22 and 75/75 --- and neither did before.**
+   `mutate_rust.py` had never started here at all: it read each target with `read_text()`,
+   whose locale codec on Windows is cp1252, and `search.rs` holds characters whose UTF-8
+   encoding contains the byte `0x81`, which cp1252 leaves undefined, so it raised
+   `UnicodeDecodeError` on the first mutation. `mutate_frontend.py` ran and reported three
+   anchors it could not find, because the same mis-decoding hid the glyphs in them. Both now
+   read bytes and decode UTF-8, normalise newlines **for matching only** against a CRLF
+   checkout, and restore from the backup as bytes. Fixing the encoding alone took the
+   front-end harness from three failures to twelve, because the discarded `read_text` had
+   been quietly translating line endings for the anchors that span lines --- the trap of that
+   name has it, and it is also a correction to what an earlier entry prescribed.
 
 8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
