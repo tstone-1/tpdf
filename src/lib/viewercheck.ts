@@ -438,7 +438,7 @@ async function run(path: string): Promise<void> {
 
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
-  await paletteChecks(viewer);
+  await paletteChecks(viewer, doc.page_count);
   await accessibilityChecks(root, viewer, doc, seen);
   await outlineChecks(viewer, sidebar, doc);
   await thumbnailChecks(root, viewer, sidebar, doc, page);
@@ -1158,7 +1158,7 @@ function flatten(text: string): string {
  * the control this repository keeps needing --- the viewer is asserted not to be
  * at the end of the document before the command that takes it there.
  */
-async function paletteChecks(viewer: Viewer): Promise<void> {
+async function paletteChecks(viewer: Viewer, pageCount: number): Promise<void> {
   const registry = new CommandRegistry();
   registry.register(
     { id: "view.fitWidth", title: "Fit width", keys: "⌘0", run: () => viewer.fitWidth() },
@@ -1254,7 +1254,135 @@ async function paletteChecks(viewer: Viewer): Promise<void> {
     );
   }
 
+  await argumentChecks(viewer, palette, registry, pageCount, type, press);
+
   palette.destroy();
+}
+
+/**
+ * A command that asks for a value before it runs.
+ *
+ * The page jump is the reason this exists --- a 775-page document had no way to
+ * reach page 400 --- so every assertion here ties the typed value to where the
+ * viewer ends up, not merely to the palette's own state. A prompt that opened,
+ * validated and closed while jumping nowhere would pass a check on the panel.
+ */
+async function argumentChecks(
+  viewer: Viewer,
+  palette: Palette,
+  registry: CommandRegistry,
+  pages: number,
+  type: (text: string) => void,
+  press: (key: string) => void,
+): Promise<void> {
+  let went = -1;
+  registry.register({
+    id: "nav.goToPage",
+    title: "Go to page…",
+    keys: "⌥⌘G",
+    argument: {
+      placeholder: "Page number",
+      problem: (raw) => {
+        const trimmed = raw.trim();
+        if (trimmed === "") return `Page number, 1 to ${pages}`;
+        if (!/^[0-9]+$/.test(trimmed)) return `"${trimmed}" is not a page number`;
+        const page = Number(trimmed);
+        return page < 1 || page > pages ? `This document has ${pages} pages` : null;
+      },
+      preview: (raw) => `Go to page ${Number(raw.trim())} of ${pages}`,
+      run: (raw) => {
+        went = Number(raw.trim()) - 1;
+        viewer.goToPage(went);
+      },
+    },
+  });
+
+  palette.open();
+  type("go to page");
+  press("Enter");
+  check(
+    "choosing a command that takes a value asks for it",
+    palette.isOpen && palette.isAsking && palette.prompt === "Page number",
+    `open=${palette.isOpen}, asking=${palette.isAsking}, prompt="${palette.prompt}"`,
+  );
+
+  type("not a number");
+  press("Enter");
+  check(
+    "a value the command refuses does not run it",
+    palette.isOpen && palette.isAsking && went === -1,
+    // Every term reported, not just the one that usually fails. Written as
+    // "still asking" when `went === -1` and it lied: with the palette's own
+    // validation mutated away the *registry* still refused the value, so `went`
+    // stayed -1 while the panel closed --- the check failed correctly and its
+    // detail described a state that was not the case.
+    `asking=${palette.isAsking}, open=${palette.isOpen}, ` +
+      (went === -1 ? "did not run" : `ran with page ${went + 1}`),
+  );
+
+  press("Escape");
+  check(
+    "Escape leaves the value, not the palette",
+    palette.isOpen && !palette.isAsking,
+    `open=${palette.isOpen}, asking=${palette.isAsking}`,
+  );
+
+  // The jump itself, and its control. A target near the end so "it moved" is
+  // not satisfied by where the document already was --- and a document with too
+  // few pages to have a distant one says so rather than passing on nothing.
+  const target = Math.min(pages, 8);
+  if (pages < 2) {
+    skip("a typed page number goes to that page", "the document has one page");
+  } else {
+    viewer.goToStart();
+    await settle(() => viewer.idle);
+    const from = viewer.position.page;
+    palette.open();
+    type("go to page");
+    press("Enter");
+    type(String(target));
+    press("Enter");
+    await settle(() => viewer.idle);
+    // `position.page` is the page at the *top edge*, and the last page of a
+    // short document cannot get there: the scroller stops at maximum scroll
+    // with earlier pages still above it. Found on `rotated-90`, which has four
+    // landscape pages, so the target was the last one and the viewer honestly
+    // showed page 3 for a correct jump to page 4. Excused only in exactly that
+    // case --- the target is the final page and the document is scrolled as far
+    // as it goes --- rather than by weakening the assertion everywhere.
+    const atTop = viewer.position.page === target - 1;
+    const pinned = target === pages && viewer.offset >= viewer.maxOffset - 1;
+    check(
+      "a typed page number goes to that page",
+      !palette.isOpen && went === target - 1 && from !== target - 1 && (atTop || pinned),
+      from === target - 1
+        ? `already on page ${target} before the jump, so this proves nothing`
+        : `typed ${target}, ran with page ${went + 1}, viewer shows page ${viewer.position.page + 1}` +
+          ` (from ${from + 1})` +
+          (atTop || !pinned ? "" : ", scrolled to the end since it is the last page"),
+    );
+  }
+
+  // Out of range is refused rather than clamped: a reader who types 900 into a
+  // 775-page document has made a mistake, and silently landing on the last page
+  // hides it. Asserted against the viewer, because "the palette stayed open" is
+  // also true of a prompt that jumped and forgot to close.
+  const settled = viewer.position.page;
+  went = -1;
+  palette.open();
+  type("go to page");
+  press("Enter");
+  type(String(pages + 1));
+  press("Enter");
+  await settle(() => viewer.idle);
+  check(
+    "a page number past the end is refused, not clamped",
+    palette.isAsking && went === -1 && viewer.position.page === settled,
+    `asked for page ${pages + 1} of ${pages}: ran=${went + 1}, ` +
+      `page ${settled + 1} -> ${viewer.position.page + 1}`,
+  );
+  press("Escape");
+  palette.close();
 }
 
 /**

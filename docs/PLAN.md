@@ -1830,9 +1830,49 @@ expected victim written down first. All fourteen were caught. Two results worth 
 Not done, and unchecked rather than merely unfinished: **Cmd-K itself and the command list
 `App.svelte` registers are covered by nothing.** The check builds its own registry, so what
 it proves is that the palette works, not that the application's commands are wired to it.
-Also absent: user-rebindable keys, commands that take an argument (go to page *n*),
-persisted recents, and any verification that a command's displayed keybinding matches the
-handler that implements it — a wrong label there teaches a wrong shortcut.
+Also absent: user-rebindable keys and persisted recents.
+
+Two items listed here are now done and are recorded where they were closed rather than
+struck out: a command's displayed keybinding cannot disagree with its handler, because
+`keys.ts` renders the label *from* the binding the handler matches — see the paragraph above
+this one. Arguments landed 2026-07-30, below.
+
+#### Commands that take a value, and going to a page — done 2026-07-30
+
+A 775-page document had no way to reach page 400: Home, End, and one page at a time. ⌥⌘G or
+"Go to page…" now opens the palette's input as a value field — placeholder, live validation,
+and a preview of what Enter will do — and Escape steps back to the command list rather than
+closing, so a mistyped number does not cost the palette as well.
+
+The mechanism is general rather than a page-number dialog. A command declares a
+`CommandArgument` with `placeholder`, `problem`, `preview` and `run`, and the palette does
+the typing. `Command` became a **union** so a command cannot be declared with neither `run`
+nor `argument` — a shape that would type-check, list, and do nothing when chosen.
+
+Three things worth keeping.
+
+**Out of range is refused, not clamped.** A reader who types 900 into a 775-page document has
+made a mistake; landing silently on the last page hides it. The message says how many pages
+there are.
+
+**The registry re-checks the value it is given**, rather than trusting the palette to have
+validated it. That is not redundant: it is what makes the registry safe to call from a
+keybinding or a restored session, and a mutation removing the palette's own check was caught
+partly *by* it — the panel closed but nothing ran.
+
+**Adding ⌥⌘G required fixing `matches`, which never looked at `altKey` at all.** Every binding
+in the table matched with Option held as well as without, so ⌥⌘F opened find and ⌥⌘G was
+find-next. The same both-directions bug the Shift check exists to prevent, sitting one
+modifier over, and it had to be fixed before the new binding could exist: whichever arm of
+the handler came first would have won. The collision test in `keys.test.ts` failed correctly
+the moment the binding was added, because its chord identity did not include Option either.
+
+7 unit tests on the argument mechanism and 2 more on Option, all proved by mutation (the
+harness is at 24, every one caught by the test named for it). 5 functional checks take
+`viewer_check.py` to 94 names. One of those checks had a *detail message* that lied under
+mutation — it reported "the palette is still asking" when the panel had closed, because the
+registry's own validation kept the command from running — so it now reports every term it
+tests rather than the one that usually fails.
 
 #### The accessibility tree — 2026-07-27
 

@@ -258,8 +258,8 @@ rather than from anything in this repository.
 Four corpora, every one reporting the **86 check names** that were the invariant then, with
 splits inside the ranges the table above records. Word and line selection took that to **89**
 on 2026-07-30, after this run; the splits below are left as measured rather than adjusted by
-arithmetic, and a Windows re-run should expect 89 names with three more running on the two
-text corpora:
+arithmetic, and a Windows re-run should expect 94 names: three more running on the two text corpora,
+and five that run on every document:
 
 | fixture | ran | skipped | failed |
 |---|---|---|---|
@@ -895,7 +895,7 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **89 check names**; what differs is how
+Run all six corpora. Every run reports the same **94 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch:
 
@@ -908,7 +908,8 @@ bug this arrangement exists to catch:
 | `vector-multi.pdf` | 59 | 30 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
 | `rotated-90.pdf` | 78 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
 
-**86 until 2026-07-30**, when word and line selection added three. The three run on every
+**86 until 2026-07-30**, when word and line selection added three and the palette's
+argument mode added five. The three run on every
 corpus with extractable text, rotated included --- line grouping follows the page's own
 reading axis, so there is nothing in them that assumes lines advance downwards --- and skip
 together on the two vector fixtures, which is why those gained three skips and no runs.
@@ -935,7 +936,7 @@ Absolute counts are deliberately not quoted in this paragraph: they move wheneve
 added, and a stale number here would send someone looking for a regression that is a
 changelog entry. The table above is the one place they are written down.
 
-**So the ran/skipped columns are not the invariant** --- the **89 names** are. A count chased
+**So the ran/skipped columns are not the invariant** --- the **94 names** are. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that

@@ -24,8 +24,8 @@
  * than none.
  */
 
-/** One thing the application can do. */
-export interface Command {
+/** What every command has, whether or not it takes an argument. */
+interface CommandBase {
   /** Stable identity, e.g. `view.zoomIn`. Used for recents, never displayed. */
   id: string;
   /** What the palette shows. */
@@ -35,14 +35,53 @@ export interface Command {
    *
    * Displayed by the palette so it teaches shortcuts as a side effect --- which
    * is the reason a palette makes a keyboard-first application *more* keyboard
-   * driven rather than less. It is a label: the binding itself lives in the
-   * handler, and nothing checks that the two agree.
+   * driven rather than less. Derived from the binding by `keys.ts`'s `label`,
+   * so it cannot come to disagree with the handler.
    */
   keys?: string;
   /** Whether it can run right now. A command with no document is not offered. */
   enabled?: () => boolean;
-  run: () => void | Promise<void>;
 }
+
+/**
+ * A value the reader types before the command can run.
+ *
+ * "Go to page" is the case that forced this: a 775-page document has no other
+ * way to reach page 400, and a command with no argument cannot express it. The
+ * palette handles the typing, so a command declares what it needs rather than
+ * building a dialog.
+ *
+ * {@link problem} and {@link preview} are separate on purpose. A palette that
+ * only said "invalid" would be no better than an input that rejects; saying
+ * *what* is wrong, and showing what will happen when it is right, is the same
+ * argument that puts the keybinding next to every command.
+ */
+export interface CommandArgument {
+  /** Shown in the palette's input while the value is being typed. */
+  placeholder: string;
+  /**
+   * Why this value cannot be used, or null if it can.
+   *
+   * Called on every keystroke, so it must be cheap and must not act. An empty
+   * string is a value like any other and must be handled --- the palette asks
+   * before anything is typed.
+   */
+  problem: (raw: string) => string | null;
+  /** What running it will do, shown once {@link problem} is happy. */
+  preview: (raw: string) => string;
+  run: (raw: string) => void | Promise<void>;
+}
+
+/**
+ * One thing the application can do.
+ *
+ * A union rather than one shape with two optional halves, so a command cannot
+ * be declared with neither `run` nor `argument` --- which would type-check,
+ * list in the palette, and do nothing when chosen.
+ */
+export type Command =
+  | (CommandBase & { run: () => void | Promise<void>; argument?: undefined })
+  | (CommandBase & { argument: CommandArgument; run?: undefined });
 
 /** A command matched against a query, with where it matched. */
 export interface Ranked {
@@ -200,23 +239,46 @@ export class CommandRegistry {
     return rank(query, this.commands, this.recent);
   }
 
+  /** A command by id, or undefined. */
+  find(id: string): Command | undefined {
+    return this.commands.find((c) => c.id === id);
+  }
+
   /**
    * Runs a command and records it as recent.
    *
    * A disabled command is not run. The palette does not offer one, but a
    * keybinding can still reach a command whose document has just been closed,
    * and "the shortcut did nothing" is a better outcome than a stack trace.
+   *
+   * A command that takes an argument is refused without one, and refused again
+   * if the value it is given is one its own {@link CommandArgument.problem}
+   * rejects. The palette will not offer a bad value, but this is what makes the
+   * registry safe to call from anywhere --- and it is checked here rather than
+   * trusted to the caller, because the caller that skips the check is the one
+   * that will exist later.
    */
-  run(id: string): boolean {
-    const command = this.commands.find((c) => c.id === id);
+  run(id: string, argument?: string): boolean {
+    const command = this.find(id);
     if (!command || !(command.enabled?.() ?? true)) return false;
+
+    if (command.argument) {
+      if (argument === undefined) return false;
+      if (command.argument.problem(argument) !== null) return false;
+    } else if (argument !== undefined) {
+      // Refused rather than ignored: a caller passing a value to a command that
+      // takes none has misunderstood something, and silently dropping it hides
+      // that until someone wonders why the value had no effect.
+      return false;
+    }
 
     const already = this.recent.indexOf(id);
     if (already >= 0) this.recent.splice(already, 1);
     this.recent.unshift(id);
     this.recent.length = Math.min(this.recent.length, CommandRegistry.RECENTS);
 
-    void command.run();
+    if (command.argument) void command.argument.run(argument as string);
+    else void command.run();
     return true;
   }
 }

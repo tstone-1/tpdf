@@ -18,10 +18,13 @@
  * cannot afford to rebuild.
  */
 
-import type { CommandRegistry, Ranked } from "./commands";
+import type { Command, CommandRegistry, Ranked } from "./commands";
 
 /** Rows shown at once. More than this and the list scrolls. */
 const MAX_ROWS = 12;
+
+/** The placeholder shown while a command is being searched for. */
+const SEARCH_PLACEHOLDER = "Run a command";
 
 export class Palette {
   private readonly registry: CommandRegistry;
@@ -33,6 +36,15 @@ export class Palette {
   private selected = 0;
   /** What to focus when the palette closes, so Escape does not lose the page. */
   private returnFocus: HTMLElement | null = null;
+  /**
+   * The command whose argument is being typed, or null when searching.
+   *
+   * The palette has two modes and one input. Holding the command here rather
+   * than a boolean is what lets Escape go *back* to the list instead of closing
+   * outright: a reader who picked the wrong command should not lose the palette
+   * as well.
+   */
+  private asking: Command | null = null;
 
   constructor(registry: CommandRegistry) {
     this.registry = registry;
@@ -104,6 +116,8 @@ export class Palette {
     this.returnFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.backdrop.style.display = "flex";
+    this.asking = null;
+    this.input.placeholder = SEARCH_PLACEHOLDER;
     this.input.value = "";
     this.refresh();
     this.input.focus();
@@ -112,24 +126,98 @@ export class Palette {
   close(): void {
     if (!this.isOpen) return;
     this.backdrop.style.display = "none";
+    this.asking = null;
     this.returnFocus?.focus();
   }
 
-  /** Runs the highlighted command and closes. */
+  /** Whether a value is being typed rather than a command searched for. */
+  get isAsking(): boolean {
+    return this.asking !== null;
+  }
+
+  /** What the input is asking for, or "". For the check harness. */
+  get prompt(): string {
+    return this.asking ? this.input.placeholder : "";
+  }
+
+  /**
+   * Opens the palette straight into a command's argument.
+   *
+   * This is what a keybinding for such a command calls. Routing it through the
+   * palette rather than giving the command a `run` that opens a dialog keeps
+   * one implementation of "ask for a value": two would drift, and the one
+   * reached by the shortcut is the one nobody checks.
+   */
+  askFor(id: string): void {
+    const command = this.registry.find(id);
+    if (!command?.argument || !(command.enabled?.() ?? true)) return;
+    if (!this.isOpen) this.open();
+    this.ask(command);
+  }
+
+  /** Switches the input to collecting a command's argument. */
+  private ask(command: Command): void {
+    if (!command.argument) return;
+    this.asking = command;
+    this.input.value = "";
+    this.input.placeholder = command.argument.placeholder;
+    this.paint();
+    this.input.focus();
+  }
+
+  /** Leaves argument mode, back to the command list. */
+  private stopAsking(): void {
+    this.asking = null;
+    this.input.placeholder = SEARCH_PLACEHOLDER;
+    this.input.value = "";
+    this.refresh();
+  }
+
+  /**
+   * Runs the highlighted command, or asks for its argument first.
+   *
+   * A command that needs a value does not close the palette --- there would be
+   * nowhere left to type it.
+   */
   runSelected(): void {
+    if (this.asking) {
+      this.submitArgument();
+      return;
+    }
     const chosen = this.results[this.selected];
+    if (chosen?.command.argument) {
+      this.ask(chosen.command);
+      return;
+    }
     // Close first: a command that moves focus --- the find field, a dialog ---
     // must not have it taken back by `returnFocus` a moment later.
     this.close();
     if (chosen) this.registry.run(chosen.command.id);
   }
 
+  /** Runs the command being asked about, if the value is usable. */
+  private submitArgument(): void {
+    const command = this.asking;
+    if (!command?.argument) return;
+    const raw = this.input.value;
+    // A refused value leaves the palette exactly as it is, still showing why.
+    // Closing on a bad value would discard what was typed and say nothing.
+    if (command.argument.problem(raw) !== null) return;
+    this.close();
+    this.registry.run(command.id, raw);
+  }
+
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === "ArrowDown") this.move(1);
     else if (event.key === "ArrowUp") this.move(-1);
     else if (event.key === "Enter") this.runSelected();
-    else if (event.key === "Escape") this.close();
-    else return;
+    else if (event.key === "Escape") {
+      // One level at a time. Escaping out of a mistyped page number should
+      // leave the palette open on the command list, not send the reader back
+      // to the document to start again.
+      if (this.asking) this.stopAsking();
+      else this.close();
+    } else return;
     event.preventDefault();
     // The palette owns these keys entirely; letting them reach the viewer
     // underneath would scroll the page behind the open panel.
@@ -144,6 +232,13 @@ export class Palette {
   }
 
   private refresh(): void {
+    if (this.asking) {
+      // In argument mode the input is a value, not a query: searching on it
+      // would rebuild the command list underneath and, on Enter, run whatever
+      // had risen to the top instead of the command being answered.
+      this.paint();
+      return;
+    }
     this.results = this.registry.search(this.input.value).slice(0, 64);
     this.selected = 0;
     this.paint();
@@ -151,6 +246,17 @@ export class Palette {
 
   private paint(): void {
     this.list.replaceChildren();
+
+    if (this.asking?.argument) {
+      const raw = this.input.value;
+      const problem = this.asking.argument.problem(raw);
+      const row = document.createElement("div");
+      row.setAttribute("role", "status");
+      row.style.cssText = `padding:0.6rem 0.9rem;${problem ? "opacity:0.55;" : ""}`;
+      row.textContent = problem ?? this.asking.argument.preview(raw);
+      this.list.appendChild(row);
+      return;
+    }
 
     if (this.results.length === 0) {
       const empty = document.createElement("div");

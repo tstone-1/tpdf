@@ -205,6 +205,36 @@
       run: () => viewer?.goToEnd(),
     },
     {
+      // The first command that takes a value. On a 775-page document there was
+      // no way to reach page 400 at all: Home, End and one page at a time.
+      //
+      // Numbers here are the ones printed on the page --- one-based --- and
+      // `goToPage` is zero-based, so the conversion happens once, here, next to
+      // the text that says "of {pageCount}". `problem` refuses out of range
+      // rather than clamping: a reader who types 900 in a 775-page document has
+      // made a mistake, and silently going to the last page hides it.
+      id: "nav.goToPage",
+      title: "Go to page…",
+      keys: label("nav.goToPage"),
+      enabled: withDocument,
+      argument: {
+        placeholder: "Page number",
+        problem: (raw: string) => {
+          const pages = status?.pageCount ?? 0;
+          const trimmed = raw.trim();
+          if (trimmed === "") return `Page number, 1 to ${pages}`;
+          if (!/^[0-9]+$/.test(trimmed)) return `"${trimmed}" is not a page number`;
+          const page = Number(trimmed);
+          if (page < 1 || page > pages) {
+            return `This document has ${pages} page${pages === 1 ? "" : "s"}`;
+          }
+          return null;
+        },
+        preview: (raw: string) => `Go to page ${Number(raw.trim())} of ${status?.pageCount ?? 0}`,
+        run: (raw: string) => viewer?.goToPage(Number(raw.trim()) - 1),
+      },
+    },
+    {
       id: "edit.selectAll",
       title: "Select all on page",
       keys: label("edit.selectAll"),
@@ -421,6 +451,12 @@
       // to get rid of it, not to clear the query someone is halfway through.
       if (palette?.isOpen) palette.close();
       else palette?.open();
+    } else if (matches("nav.goToPage", event) && title) {
+      // Straight into the palette's argument mode. The shortcut and the palette
+      // row reach the same code, which is the point of `askFor` -- a second way
+      // to ask for a page number is a second thing to keep right.
+      event.preventDefault();
+      palette?.askFor("nav.goToPage");
     } else if (matches("file.open", event)) {
       // ⌘O was advertised in the palette and reached nothing at all: the label
       // was written by hand and no handler was ever added for it, which is the

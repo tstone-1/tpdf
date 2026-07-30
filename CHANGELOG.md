@@ -637,6 +637,25 @@ experience.
   of by a `reset()` call at each of those sites. Units are found from the character under the
   pointer rather than the caret beside it: the caret after a word's last glyph names the
   following space, and a word selection built on that selects the gap.
+- **Go to page, and commands that take a value.** ⌥⌘G, or "Go to page…" in the palette, turns
+  the palette's input into a value field with a placeholder, live validation and a preview of
+  what Enter will do. A 775-page document previously had no way to reach page 400 at all:
+  Home, End, and one page at a time.
+
+  The mechanism is general. A command declares a `CommandArgument` --- `placeholder`,
+  `problem`, `preview`, `run` --- and the palette does the typing; `Command` became a union so
+  one can no longer be declared with neither `run` nor `argument`, a shape that would
+  type-check, list in the palette and do nothing when chosen. Escape steps back to the command
+  list rather than closing, so a mistyped number does not cost the palette as well.
+
+  A page past the end is **refused, not clamped**: someone typing 900 into a 775-page document
+  has made a mistake, and silently landing on the last page hides it. The registry re-checks
+  the value the palette gives it, which is what makes it safe to call from a keybinding.
+
+  Adding ⌥⌘G required fixing `matches`, which **never looked at `altKey`**: every binding
+  matched with Option held as well as without, so ⌥⌘F opened find and ⌥⌘G ran find-next. The
+  same both-directions bug the Shift check exists to prevent, one modifier over.
+
 - **Find in document.** Cmd-F, search-as-you-type, Enter and Cmd-G to step through hits,
   Shift for backwards, Escape to drop it. Every hit on a visible page is highlighted and the
   current one differently. The scan starts at the page being read and wraps, so a reader on
