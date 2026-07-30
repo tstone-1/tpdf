@@ -264,8 +264,8 @@ rather than from anything in this repository.
 Four corpora, every one reporting the **86 check names** that were the invariant then, with
 splits inside the ranges the table above records. Word and line selection took that to **89**
 on 2026-07-30, after this run; the splits below are left as measured rather than adjusted by
-arithmetic, and a Windows re-run should expect 101 names: ten more running on the two text
-corpora, and five that run on every document:
+arithmetic. A Windows re-run should expect **107** names --- 21 added since, and the macOS
+table further down says which of them skip on which document:
 
 | fixture | ran | skipped | failed |
 |---|---|---|---|
@@ -838,8 +838,9 @@ rm -rf ~/Library/"Saved Application State"/com.timostein.tpdf.savedState
 ### Checking the viewer
 
 The reading surface is asserted rather than eyeballed. This opens a document in a real
-webview, dispatches real wheel and key events at it, and checks fit-width, scrolling, End
-and Home, the zoom ladder, a pinch, resize, text selection and copy, find-in-document, the
+webview, dispatches real wheel and key events at it, and checks fit-width, fit-page, actual
+size, scrolling, End and Home, the zoom ladder, a pinch, resize, text selection and copy,
+find-in-document, the
 command palette, the screen-reader text layer, the outline sidebar, the page-thumbnail
 strip, page inversion, and that the frame loop idles when there is nothing to do:
 
@@ -901,21 +902,36 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **101 check names**; what differs is how
+Run all six corpora. Every run reports the same **107 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch. The splits below were all measured on 2026-07-30:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 90 | 11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 96 | 5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 96 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 56 | 45 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 64 | 37 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 90 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 96 | 11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 102 | 5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 102 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 62 | 45 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 70 | 37 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 95 | 12 | every page at `/Rotate 90`, which nothing else in the corpus has |
+
+**Diff the names mechanically, and not with a naive split.** `record` pads each name to 40
+characters and then prints the detail, so a name *longer* than that is followed by a single
+space and any pattern keyed on "two or more spaces" swallows the whole line --- the padded-column
+trap, walked into again on 2026-07-30 while checking this very invariant. The label is seven
+characters wide and the padded name forty, so a fixed slice is exactly right:
+
+```
+grep -E "^\[(OK|FAIL|SKIP)\]" run.log | cut -c8-47 | sort > names.txt
+```
+
+Six of those, diffed pairwise, is the invariant in one command. It also reports the count,
+which must equal the number of unique lines --- two checks whose first forty characters
+coincide would otherwise merge silently.
 
 **86 until 2026-07-30**, when word and line selection added three, the palette's argument
-mode added five, the two find options added three, and the results sidebar added four. The
+mode added five, the two find options added three, the results sidebar added four, and the
+fit modes added six. The
 results four skip together on a document with no extractable text, which is why the two
 vector fixtures gained four skips and no runs. The selection three run on every
 corpus with extractable text, rotated included --- line grouping follows the page's own
@@ -925,6 +941,13 @@ find-option three are the same shape: they need a word taken from page 1, so the
 wherever search does. One of them skips on a fixture whose needle is already upper case,
 there being no spelling of it that matching case would reject --- and it says so rather than
 passing on nothing.
+
+The fit six run on every corpus but one, and the exception is the informative part:
+`rotated-90` skips *"fitting the page shows less of it than fitting the width"*, because its
+pages are landscape and already fit the window vertically at fit-width. That check is the
+control on the one beside it --- without it, "fit page shows the whole page" would be
+satisfied there by doing nothing --- so it prints the measurement that made it inapplicable
+(`495px in 700px`) rather than passing.
 
 **The single values in that table are one sample each**, not a claim that nothing moves. One
 check races (see below) and can swing a run by one in either direction; a `78--79` style
@@ -952,7 +975,7 @@ Absolute counts are deliberately not quoted in this paragraph: they move wheneve
 added, and a stale number here would send someone looking for a regression that is a
 changelog entry. The table above is the one place they are written down.
 
-**So the ran/skipped columns are not the invariant** --- the **101 names** are. A count chased
+**So the ran/skipped columns are not the invariant** --- the **107 names** are. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that

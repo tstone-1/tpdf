@@ -36,9 +36,32 @@ use serde::{Deserialize, Serialize};
 /// microseconds.
 const CAPACITY: usize = 32;
 
-/// Zoom bounds, matching the clamp in `viewer.ts`'s `setZoom`.
+/// Zoom bounds, matching `MIN_ZOOM`/`MAX_ZOOM` in `src/lib/zoom.ts`.
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 16.0;
+
+/// What the zoom was following, if anything.
+///
+/// The wire spelling of `FitMode` in `src/lib/zoom.ts`, and it replaced a
+/// `fitting: bool` when fit-page arrived --- a boolean cannot hold three
+/// answers, and keeping it beside this one would be two records of one fact.
+///
+/// Nothing has shipped, so there is no session file in anyone's hands written
+/// with the old field. One written by an earlier build of this repository loses
+/// only the distinction between a fixed zoom and fit-width, and reopens fitted
+/// to the window, which is what [`Place::sanitized`] already does with a zoom it
+/// cannot read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Fit {
+    /// A zoom the reader set, which stays where they put it.
+    None,
+    /// The page fills the window's width. The default a document opens at.
+    #[default]
+    Width,
+    /// The whole page is visible at once.
+    Page,
+}
 
 /// Where one document was left.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -54,9 +77,9 @@ pub struct Place {
     /// CSS pixels per PDF point.
     #[serde(default = "unit_zoom")]
     pub zoom: f32,
-    /// Whether the zoom was following the window width rather than a stop.
-    #[serde(default = "yes")]
-    pub fitting: bool,
+    /// What the zoom was following, if anything.
+    #[serde(default)]
+    pub fit: Fit,
     /// Quarter-turns clockwise, 0 to 3.
     #[serde(default)]
     pub turns: u8,
@@ -76,10 +99,6 @@ fn unit_zoom() -> f32 {
     1.0
 }
 
-fn yes() -> bool {
-    true
-}
-
 impl Place {
     /// Forces every field into a range the viewer can act on.
     ///
@@ -96,7 +115,7 @@ impl Place {
         self.turns %= 4;
         if !self.zoom.is_finite() || self.zoom <= 0.0 {
             self.zoom = 1.0;
-            self.fitting = true;
+            self.fit = Fit::Width;
         }
         self.zoom = self.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
         if !self.top_pt.is_finite() || self.top_pt < 0.0 {
@@ -206,7 +225,7 @@ fn temp_beside(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{Place, Session, CAPACITY};
+    use super::{Fit, Place, Session, CAPACITY};
     use std::path::PathBuf;
 
     /// A directory that removes itself, so a failing test cannot leave litter.
@@ -237,7 +256,7 @@ mod tests {
             page: 3,
             top_pt: 12.5,
             zoom: 2.0,
-            fitting: false,
+            fit: Fit::None,
             turns: 1,
             sidebar: true,
             page_count: 10,
@@ -299,6 +318,26 @@ mod tests {
     }
 
     #[test]
+    fn a_fit_is_written_with_the_spelling_the_frontend_reads() {
+        // The one field here whose two ends are in different languages, so
+        // nothing but this asserts they agree: `FitMode` in `src/lib/zoom.ts` is
+        // a union of these three strings, and a `rename_all` that produced
+        // `"Width"` would deserialize on this side and be an unknown mode on
+        // that one --- where TypeScript cannot see it either, since a value off
+        // the IPC is whatever the annotation claims.
+        for (fit, spelling) in [
+            (Fit::None, "none"),
+            (Fit::Width, "width"),
+            (Fit::Page, "page"),
+        ] {
+            let json = serde_json::to_string(&fit).expect("serialize");
+            assert_eq!(json, format!("\"{spelling}\""));
+            let back: Fit = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, fit);
+        }
+    }
+
+    #[test]
     fn the_most_recent_document_is_the_one_remembered_last() {
         let mut session = Session::default();
         session.remember(place("/tmp/a.pdf"));
@@ -348,10 +387,14 @@ mod tests {
     fn a_zoom_that_is_not_a_number_falls_back_to_fitting() {
         let mut broken = place("/tmp/a.pdf");
         broken.zoom = 0.0;
-        broken.fitting = false;
+        broken.fit = Fit::None;
 
         let fixed = broken.sanitized();
-        assert!(fixed.fitting, "an unusable zoom means the size is unknown");
+        assert_eq!(
+            fixed.fit,
+            Fit::Width,
+            "an unusable zoom means the size is unknown"
+        );
         assert!(fixed.zoom > 0.0);
     }
 
@@ -399,8 +442,9 @@ mod tests {
         let loaded = Session::load(&dir.file());
         let only = &loaded.places[0];
         assert_eq!(only.page, 0);
-        assert!(
-            only.fitting,
+        assert_eq!(
+            only.fit,
+            Fit::Width,
             "a place with no zoom recorded should fit the window"
         );
         assert_eq!(only.zoom, 1.0);

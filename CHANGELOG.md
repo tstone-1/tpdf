@@ -51,6 +51,26 @@ experience.
 
 ### Added
 
+- **Fit page, actual size, and a zoom you can type.** `⌘9` fits the whole page in the
+  window, `⌘1` is 100%, and `⌥⌘Z` asks for a percentage through the same palette argument
+  the page jump uses --- the zoom ladder is deliberately coarse, so 175% was previously
+  unreachable. The toolbar's zoom readout is now the button that opens it, and its tooltip
+  says what the zoom is following.
+
+  Under it, the fit stopped being a boolean. Both fits have to survive a resize *and* a
+  rotation, so the viewer remembers *which* one to re-apply rather than merely that it is
+  fitting something; the old `fitting` flag is gone rather than kept beside the mode,
+  including out of the session file, because two records of one fact drift. The arithmetic
+  moved to `src/lib/zoom.ts`, which needs no DOM: 18 unit tests and 12 mutations, each
+  caught by the test named for it. Six functional checks take `viewer_check.py` to **107
+  names**, identical across all six corpora.
+
+  One of those six could not fail, and the mutation is what said so --- it measured the page
+  against the element's own width, which is 12 px wider than the width a page is fitted into,
+  the scrollbar sitting in a gutter over that edge. The run still went red, through an
+  *older* check, which is exactly why a count is not evidence for a new one. In
+  `docs/TRAPS.md`.
+
 - **A Windows distributable builds** --- an MSI and an NSIS installer from `npm run tauri build`.
   It did not before, and the cause is a rule about this repository's layout rather than a Tauri
   bug: **`src/bin/` must contain only declared bin sources.** The bundler enumerates that

@@ -44,7 +44,7 @@ const SIDEBAR_TABS = 3;
 import { Sidebar } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor } from "./thumbnails";
-import { Viewer, type ViewerStatus } from "./viewer";
+import { SCROLLBAR_WIDTH, Viewer, type ViewerStatus } from "./viewer";
 
 /** Size of the surface the check mounts, in CSS pixels. */
 const WIDTH = 900;
@@ -447,6 +447,7 @@ async function run(path: string): Promise<void> {
     () => `zoom=${viewer.currentZoom.toFixed(3)}, ${pct()}`,
   );
 
+  await fitChecks(root, viewer);
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
   await resultsChecks(viewer, sidebar, doc, seen);
@@ -481,6 +482,113 @@ async function run(path: string): Promise<void> {
  * even returned real words; it was simply the wrong words. Nothing about a
  * property that holds by construction can be evidence of anything.
  */
+/**
+ * Fitting the page, and the two ways a fit stops.
+ *
+ * `zoom.test.ts` proves the arithmetic against numbers. What it cannot say is
+ * that the numbers reach the layout: every assertion here reads the page box
+ * the scroller actually laid out, against the element's real height, so a fit
+ * computed correctly and applied to nothing fails.
+ *
+ * The state is put back to fit-width at the end, and that is not tidiness ---
+ * `rotationChecks` derives its expected zoom from the page's aspect ratio,
+ * which is only the answer while the width is what is being fitted.
+ */
+async function fitChecks(root: HTMLElement, viewer: Viewer): Promise<void> {
+  /** How much of the window the laid-out page covers, on each axis. */
+  const box = (): { width: number; height: number } => viewer.pageBoxCss;
+  /**
+   * The width a page is fitted into, which is not the element's.
+   *
+   * The scrollbar sits in a gutter over the right-hand edge, so a page as wide
+   * as `clientWidth` has its last 12 px underneath it. Written as the element's
+   * own width first, and the mutation that deletes the refit on rotation then
+   * *passed*: an upright A4 fitted by its height is 700 px wide when turned, and
+   * 700 is exactly `clientWidth` --- so the check was reading a page that
+   * overflowed the readable area as one that fitted.
+   */
+  const usable = (): number => root.clientWidth - SCROLLBAR_WIDTH;
+  // A pixel of slack on each bound: the box is a float and `clientHeight` is a
+  // rounded integer, so an exact fit can land a fraction over. It cannot hide
+  // what is being tested --- a page fitted to the wrong axis overshoots by
+  // hundreds of pixels.
+  const fits = (): boolean =>
+    box().height <= root.clientHeight + 1 && box().width <= usable() + 1;
+
+  key(root, "0", true);
+  await settle(() => viewer.idle);
+  const wide = box();
+
+  key(root, "9", true);
+  await frame();
+  check(
+    "Cmd-9 fits the whole page in the window",
+    viewer.fitMode === "page" && fits(),
+    `${viewer.fitMode}: page ${box().width.toFixed(0)}x${box().height.toFixed(0)} ` +
+      `in ${root.clientWidth}x${root.clientHeight}`,
+  );
+
+  // The control. On a page short enough to fit the window at fit-width already,
+  // the check above is satisfied by doing nothing at all, and a silently
+  // vacuous check is the thing this repository keeps finding.
+  if (wide.height <= root.clientHeight) {
+    skip(
+      "fitting the page shows less of it than fitting the width",
+      `the page already fitted the window at fit width (${wide.height.toFixed(0)}px ` +
+        `in ${root.clientHeight}px)`,
+    );
+  } else {
+    check(
+      "fitting the page shows less of it than fitting the width",
+      box().height < wide.height,
+      `${wide.height.toFixed(0)}px tall at fit width, ${box().height.toFixed(0)}px at fit page`,
+    );
+  }
+
+  // A rotation changes the page's aspect, so the fit computed a moment ago is
+  // the wrong one now. This is the assertion that fails if `rotateBy` stops
+  // re-applying the fit --- under fit-width that shows up as a zoom, but under
+  // fit-page it is the difference between the turned page and a third of it.
+  key(root, "r", true);
+  await frame();
+  check(
+    "a fitted page is refitted when the view is rotated",
+    viewer.rotation === 1 && viewer.fitMode === "page" && fits(),
+    `turns=${viewer.rotation}, page ${box().width.toFixed(0)}x${box().height.toFixed(0)} ` +
+      `in ${usable()}x${root.clientHeight}`,
+  );
+  key(root, "l", true);
+  await frame();
+
+  const fitted = viewer.currentZoom;
+  key(root, "+", true);
+  await frame();
+  check(
+    "a zoom step stops the zoom following the window",
+    viewer.fitMode === "none" && viewer.currentZoom > fitted,
+    `${viewer.fitMode} at ${viewer.currentZoom.toFixed(3)}, was fitted at ${fitted.toFixed(3)}`,
+  );
+
+  key(root, "1", true);
+  await frame();
+  check(
+    "Cmd-1 is actual size, and follows nothing",
+    viewer.fitMode === "none" && Math.abs(viewer.currentZoom - 1) < 1e-9,
+    `${viewer.fitMode} at ${viewer.currentZoom.toFixed(3)}`,
+  );
+
+  key(root, "0", true);
+  await settle(() => viewer.idle);
+  check(
+    "Cmd-0 puts the zoom back to following the width",
+    // Compared against the box measured at the top of this function rather than
+    // against a zoom: the window has not changed size in between, so fit-width
+    // has to lay the page out at exactly the width it did then.
+    viewer.fitMode === "width" && Math.abs(box().width - wide.width) < 1,
+    `${viewer.fitMode}, page ${box().width.toFixed(0)}px wide, was ${wide.width.toFixed(0)}px`,
+  );
+}
+
 async function selectionChecks(
   root: HTMLElement,
   viewer: Viewer,
@@ -1406,7 +1514,7 @@ function flatten(text: string): string {
 async function paletteChecks(viewer: Viewer, pageCount: number): Promise<void> {
   const registry = new CommandRegistry();
   registry.register(
-    { id: "view.fitWidth", title: "Fit width", keys: "⌘0", run: () => viewer.fitWidth() },
+    { id: "view.fitWidth", title: "Fit width", keys: "⌘0", run: () => viewer.setFit("width") },
     { id: "nav.lastPage", title: "Go to end", keys: "End", run: () => viewer.goToEnd() },
     { id: "nav.firstPage", title: "Go to start", keys: "Home", run: () => viewer.goToStart() },
     { id: "edit.copy", title: "Copy selection", enabled: () => false, run: () => {} },

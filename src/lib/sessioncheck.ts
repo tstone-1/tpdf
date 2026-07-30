@@ -55,8 +55,14 @@ const check = (name: string, ok: boolean, detail: string) => report.check(name, 
 const TARGET = {
   /** Zero-based, and far enough in that no default lands on it. */
   page: 7,
-  /** A zoom stop, reached by stepping, so `fitting` ends up false. */
-  fitting: false,
+  /**
+   * A zoom stop, reached by stepping, so the fit ends up following nothing.
+   *
+   * Deliberately not `"page"`, which would also differ from the default: under
+   * a fit the zoom is recomputed from the window on restore, so the stored
+   * number is never read and the round trip of `zoom` itself goes untested.
+   */
+  fit: "none" as const,
   /** One quarter turn clockwise. */
   turns: 1,
   /** Open, where a fresh window has it closed. */
@@ -150,7 +156,7 @@ function describe(host: SessionCheckHost): string {
   return (
     `${file} page ${viewer.position.page} zoom ${viewer.currentZoom.toFixed(2)} ` +
     `turns ${viewer.rotation} sidebar ${host.sidebarShown() ? "open" : "closed"}` +
-    `${viewer.inverted ? " inverted" : ""}${viewer.isFitting ? " fitting" : ""}`
+    `${viewer.inverted ? " inverted" : ""}${viewer.fitMode === "none" ? "" : ` ${viewer.fitMode}`}`
   );
 }
 
@@ -200,8 +206,8 @@ function checkRestored(host: SessionCheckHost, expectedPath: string): void {
   );
   check(
     "it opens at a fixed zoom, not fitted",
-    viewer.isFitting === TARGET.fitting,
-    `${viewer.isFitting ? "fitting" : "fixed"} at ${viewer.currentZoom.toFixed(2)}`,
+    viewer.fitMode === TARGET.fit,
+    `${viewer.fitMode} at ${viewer.currentZoom.toFixed(2)}`,
   );
   check(
     "it opens with the sidebar as it was left",
@@ -231,7 +237,7 @@ function checkNotAlreadyThere(host: SessionCheckHost): void {
   const same: string[] = [];
   if (viewer.position.page === TARGET.page) same.push("page");
   if (viewer.rotation === TARGET.turns) same.push("rotation");
-  if (viewer.isFitting === TARGET.fitting) same.push("zoom mode");
+  if (viewer.fitMode === TARGET.fit) same.push("zoom mode");
   if (host.sidebarShown() === TARGET.sidebar) same.push("sidebar");
   if (viewer.inverted === TARGET.invert) same.push("inversion");
 
@@ -319,7 +325,7 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
         driven !== null &&
           driven.position.page === TARGET.page &&
           driven.rotation === TARGET.turns &&
-          driven.isFitting === TARGET.fitting &&
+          driven.fitMode === TARGET.fit &&
           host.sidebarShown() === TARGET.sidebar &&
           driven.inverted === TARGET.invert,
         describe(host),

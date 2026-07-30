@@ -2033,6 +2033,45 @@ mutation — it reported "the palette is still asking" when the panel had closed
 registry's own validation kept the command from running — so it now reports every term it
 tests rather than the one that usually fails.
 
+#### Fitting the page, and typing a zoom — done 2026-07-30
+
+Fit-width was the only fit there was, `⌘0` reached it, and everything else was the zoom
+ladder --- which is deliberately coarse, since each stop throws away every tier-2 tile, so a
+reader who wanted 175% could not get there at all. Three commands and a mode close it:
+**fit page** (`⌘9`), **actual size** (`⌘1`), and **zoom to…** (`⌥⌘Z`), which is the second
+command to take a value and goes through the same palette argument the page jump does.
+
+**The fit became a mode rather than a flag, and that is the substance of the change.** It was
+`fitting: boolean`, and a boolean cannot hold three answers. Both fits have to survive a
+resize *and* a rotation, so the viewer has to remember which one to re-apply, not merely that
+it is applying something --- and the boolean is gone rather than kept beside the mode,
+including out of the session file, because two records of one fact drift and only one of them
+is the one the viewer reads.
+
+The arithmetic moved to `src/lib/zoom.ts`, which needs no DOM and is therefore unit-testable:
+the fits, the ladder, the clamp, and the parse behind the typed value. **Fit-page is the
+smaller of the two fits** and nothing more --- fitted to its height alone a page is cut off at
+the sides in any wide window, and fitted to its width alone it is what fit-width already does.
+There is no vertical margin, unlike the horizontal one, because pages are laid out flush and
+there is no air at the top of the first one to leave room for.
+
+18 unit tests, and 12 mutations against them, every one caught by the test named for it. Six
+functional checks take `viewer_check.py` to **107 names**, identical across all six corpora.
+
+**One of those six could not fail, and only a mutation said so.** It asserted the laid-out
+page box against `root.clientWidth` --- which is 12 px wider than the width a page is fitted
+into, because the scrollbar sits in a gutter over that edge. Deleting the refit on rotation
+left an upright A4 at 700 px wide when turned, exactly `clientWidth`, and the check passed. The
+run still went red: the *existing* rotation check caught it at once. So the suite was working
+and the new check was decoration, and nothing but reading which names went red could have
+distinguished those two. The bound is now the one the code fits into, the constant is imported
+rather than copied, and the trap is in `docs/TRAPS.md`.
+
+The control beside it is the one this repository keeps having to add: on a page short enough
+to fit the window at fit-width already, "fit page shows the whole page" is satisfied by doing
+nothing. It skips there, naming the measurement --- which is what `rotated-90` does, its pages
+being landscape.
+
 #### The accessibility tree — 2026-07-27
 
 §8 states this as an architectural constraint and the virtual-scrolling section repeats it:
@@ -2448,7 +2487,7 @@ this is scope rather than polish: the phase's exit criterion is "tpdf is the dai
 for reading", and forgetting the document is a direct answer to it.
 
 `src-tauri/src/session.rs` keeps one *place* per document — path, page, offset down it,
-zoom, whether the zoom was fitting, rotation, sidebar — most recently read first, bounded at
+zoom, what the zoom was following, rotation, sidebar — most recently read first, bounded at
 32 and written through a temp file and a rename. `src/lib/session.ts` decides when to write.
 Launching with nothing on the command line reopens the top entry; opening a document you
 have read before puts you back where you were in it.

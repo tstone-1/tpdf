@@ -81,7 +81,15 @@ export const BINDINGS = {
   "find.wholeWord": { keys: ["w", "∑"], accel: true, alt: true },
   "view.zoomIn": { keys: ["+", "="], accel: true, shown: "+" },
   "view.zoomOut": { keys: ["-"], accel: true, shown: "−" },
+  // ⌘0 for fit-width was here first and stays, which is why the other two are
+  // not Acrobat's or Preview's: both of those give ⌘0 to a different fit, and
+  // moving a binding a reader already has is worse than not matching an
+  // application they may not use. ⌘9 sits next to it and reads as the wider
+  // fit; ⌘1 for actual size is the one Acrobat spelling that does not collide.
   "view.fitWidth": { keys: ["0"], accel: true },
+  "view.fitPage": { keys: ["9"], accel: true },
+  "view.actualSize": { keys: ["1"], accel: true },
+  "view.zoomTo": { keys: ["z", "Ω"], accel: true, alt: true },
   "view.rotateClockwise": { keys: ["r", "R"], accel: true },
   "view.rotateCounterClockwise": { keys: ["l", "L"], accel: true },
   "view.toggleSidebar": { keys: ["\\"], accel: true },

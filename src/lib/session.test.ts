@@ -9,7 +9,7 @@ function place(overrides: Partial<Place> = {}): Place {
     page: 4,
     top_pt: 120,
     zoom: 1.5,
-    fitting: false,
+    fit: "none",
     turns: 1,
     sidebar: true,
     page_count: 10,
@@ -62,7 +62,7 @@ describe("samePlace", () => {
     ["page", { page: 5 }],
     ["top_pt", { top_pt: 121 }],
     ["zoom", { zoom: 2 }],
-    ["fitting", { fitting: true }],
+    ["fit", { fit: "width" }],
     ["turns", { turns: 2 }],
     ["sidebar", { sidebar: false }],
   ];
