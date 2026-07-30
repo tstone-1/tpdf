@@ -178,6 +178,32 @@ experience.
   the spike would have built the two rejected things. It now also says what a spike would measure
   that nothing else does. Two stale `// The child half exists only on unix` comments removed.
 
+- **The threat model's strongest claim is unverified on Windows, and now says so.**
+  `worker-bench --mode engine` is the check behind "there is no engine to disable" and "XFA is not
+  built in". It spawns nothing --- it reads the library file --- yet sat inside a `#[cfg(unix)]`
+  module, so it had never run on Windows and the claim was untested there rather than merely
+  unmeasured. Moved to file scope; on Windows it reports **`[NOT VERIFIED]`**, because the shipped
+  `pdfium.dll` carries no local C++ symbols (`CPDF_Document` absent), so `v8::` and `CXFA_` being
+  absent from it means nothing. That is the harness's second control working as designed.
+  `docs/THREAT-MODEL.md` now scopes both claims to macOS and states that on Windows they rest on
+  the asserted asset name and pinned digest --- a claim about which file was fetched, not about
+  what is in it.
+
+  It also reads the **PE export table**, the one dimension stripping cannot hide, and prints it
+  *before* the stripped-binary exit rather than after --- the run that most needs it was showing
+  nothing. **460 exports, four XFA-named**: `FPDF_LoadXFA` and `FPDF_GetXFAPacket{Count,Name,
+  Content}`. Surface, not a contradiction --- the three `GetXFAPacket*` calls read `/XFA` streams
+  out of an AcroForm dict and need no XFA engine. Whether `FPDF_LoadXFA` is a stub is open, and
+  unlike JavaScript it is behaviourally decidable: an `/XFA` fixture makes
+  `FPDF_GetXFAPacketCount > 0` a positive control. The old text said the property "cannot be
+  tested behaviourally", which is true of JS and over-generalised to XFA.
+
+  Both counts cross-checked against an independent Python PE parse before being written down, and
+  every branch exercised: non-PDFium `[FAIL]`s, a non-PE file that passes both controls says "not
+  a PE image" rather than printing a zero, a missing `--lib` exits 2, other modes still refuse.
+  The bump checklist in `BUILD.md` had the macOS-only `vendor/pdfium/lib` hardcoded; it now names
+  both platforms.
+
   `worker_pids` matches a child on its **image name** there rather than on argv, because
   Toolhelp reports a parent pid and an image but no command line. Weaker, and sufficient for a
   stated reason rather than an assumed one: the `caffeinate` shape that forced the argv match is

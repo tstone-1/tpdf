@@ -154,11 +154,27 @@ PDFium build cannot.
 
 **Evidence** (`worker-bench --mode engine`, and a read of `pdfium-render` 0.9.3):
 
-- The build contains **zero `v8::` symbols and no real `CJS_Runtime`** — only
+- The macOS build contains **zero `v8::` symbols and no real `CJS_Runtime`** — only
   `CJS_RuntimeStub`, whose `ExecuteScript` disassembles to three instructions that zero
   the output and return. There is no engine to disable.
 - It contains **zero `CXFA_` symbols**. XFA is not built in, so §6's XFA refusal is a
   property of the binary rather than a policy that could be forgotten.
+- **On Windows neither of those is established, and the check says so.** The shipped
+  `pdfium.dll` carries no local C++ symbols — `CPDF_Document` is absent — so `v8::` and
+  `CXFA_` being absent from it means nothing, and `worker-bench --mode engine` reports
+  `[NOT VERIFIED]` rather than a clean bill. That is the second control doing its job, and
+  it is the honest state: on Windows the no-engine property rests on the **asset name and
+  the pinned digest** that `scripts/fetch_pdfium.py` asserts, which is a claim about
+  *which file was fetched* rather than about what is in it. Weaker, and stated as weaker.
+- The Windows DLL **exports four XFA-named functions** — `FPDF_LoadXFA` and
+  `FPDF_GetXFAPacket{Count,Name,Content}` — which the export table shows and stripping
+  cannot hide. Read as surface, not as a contradiction: the three `GetXFAPacket*` calls
+  read the `/XFA` streams out of an AcroForm dictionary and need no XFA implementation
+  behind them. Whether `FPDF_LoadXFA` is a stub there is **open**, and it is the one part
+  of this section that *is* behaviourally decidable: a fixture carrying an `/XFA` packet
+  makes `FPDF_GetXFAPacketCount > 0` a positive control, so `FPDF_LoadXFA` returning false
+  on it would mean the implementation is absent rather than the document empty. Not
+  written — that fixture does not exist.
 - `pdfium-render` never calls any `FORM_Do*` function — not `FORM_DoDocumentOpenAction`,
   not `FORM_DoDocumentJSAction`, not `FORM_DoDocumentAAction`. Those are the only entry
   points through which PDFium executes document script.
@@ -166,10 +182,15 @@ PDFium build cannot.
   even a fired action has no platform to open a URL, launch a file, mail, upload, or
   download with.
 
-This cannot be tested behaviourally. A document whose JavaScript does nothing looks
-exactly like a document whose JavaScript was never run, so the absence of an effect is not
+**JavaScript** cannot be tested behaviourally. A document whose script does nothing looks
+exactly like a document whose script was never run, so the absence of an effect is not
 evidence of the absence of an engine. The symbol table is the only thing that
-discriminates, which is why the check reads the binary.
+discriminates, which is why the check reads the binary — and why a platform whose binary
+has no symbol table to read leaves this at `[NOT VERIFIED]`.
+
+**XFA** is the exception, and the earlier text over-generalised by lumping the two
+together. It has a return value and an independent positive control, per the bullet above,
+so it can be settled behaviourally where the symbol scan cannot reach.
 
 **Residual, and it is real.** `FPDFDOC_InitFormFillEnvironment` *is* called on every
 document open by `pdfium-render`, so the form-fill machinery is reachable attack surface

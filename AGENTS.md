@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 129 entries
+The one thing this file does *not* carry in full is the trap list --- 131 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -372,7 +372,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 129 of them and the full text
+titles. Only the titles are here, because there are 131 of them and the full text
 was 93% of this file --- an instruction budget spent on the 126 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
@@ -424,6 +424,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `proc_pid_rusage` takes the struct's address, not a pointer to it
 - The vendored PDFium has no JavaScript engine and no XFA --- verify it, do not assume it
 - The no-V8 property is one word in a URL, so the fetch asserts it
+- A symbol scan needs symbols, and the Windows PDFium has none
 - PDFium ships its loadable library in a different directory on Windows
 - A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
 - The linker's image table is an observable; a milestone of ours is a claim
@@ -538,6 +539,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test whose child never answers cannot see the pipes being crossed
 - A wait for a condition that cannot hold spends its whole bound, and retires the pool it was about to measure
 - A check that wins a race on one platform has not been shown to pass on it
+- `cargo fmt` was blamed for mangling a string, and it was innocent
 
 ### Fixtures
 - The test fixtures are generated, not committed
