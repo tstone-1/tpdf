@@ -3682,3 +3682,33 @@ was wanted. It read as a clean pass of work just completed.
 The same shape as the harness traps above and arriving from outside them: the check was
 sound, the instrument was sound, and the thing being measured was not the thing that had been
 built. A total is only evidence when something knows what it should be.
+
+### A page fitted to the element's own width is measured under the scrollbar
+
+The check for fit-page was written first as *"the laid-out page box is no larger than
+`root.clientWidth` by `root.clientHeight`"*, which is what "the whole page is visible" means
+in words. The mutation that deletes the refit on rotation --- the exact defect it was added
+to catch --- **passed** it.
+
+The reason is a dozen pixels. The scrollbar sits in a gutter over the right-hand edge, so the
+width a page is actually fitted into is `clientWidth - SCROLLBAR_WIDTH`, and on the text
+corpus that is 688 against an element of 700. An upright A4 fitted by its *height* is 541 x
+700; turned a quarter and left at that zoom it becomes 700 x 541 --- which overflows the
+readable width by 12 px and is exactly `clientWidth`. The check was reading a page whose last
+column was underneath the scrollbar as one that fitted.
+
+What makes it worth an entry rather than a fix is that the run *did* go red: the existing
+rotation check, which derives the expected zoom from the page's aspect ratio, caught the
+mutation immediately. So the transcript said `1 failed` and the suite was working --- and the
+new check, the one written for this feature and reported as passing beside it, was
+decoration. Nothing but running the mutation could have told those two apart.
+
+- **Assert against the bound the code fits into, not the one the eye sees.** The element's
+  width, the viewport's width and the width available to content are three numbers, and a
+  check that picks the wrong one is loose in the direction that passes.
+- **A mutation caught by an older check is not evidence for the new one.** Read *which* names
+  went red, not the count --- an aimed-at check that stayed green while its neighbour fired is
+  the same result as no check at all.
+- The constant is now exported from `viewer.ts` and imported by the check rather than written
+  out again, because a second copy of 12 is a number that drifts silently and in this same
+  direction.

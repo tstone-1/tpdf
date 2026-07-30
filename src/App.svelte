@@ -18,6 +18,13 @@
   import { runOpenCheckIfRequested } from "./lib/opencheck";
   import { Serial } from "./lib/serial";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
+  import {
+    describeFit,
+    MAX_ZOOM,
+    MIN_ZOOM,
+    parseZoomPercent,
+    percentOf,
+  } from "./lib/zoom";
 
   interface PageSize {
     width_pt: number;
@@ -172,7 +179,50 @@
       title: "Fit width",
       keys: label("view.fitWidth"),
       enabled: withDocument,
-      run: () => viewer?.fitWidth(),
+      run: () => viewer?.setFit("width"),
+    },
+    {
+      id: "view.fitPage",
+      title: "Fit page",
+      keys: label("view.fitPage"),
+      enabled: withDocument,
+      run: () => viewer?.setFit("page"),
+    },
+    {
+      // 100% means one CSS pixel per PDF point, which is not the same as one
+      // inch on the desk --- that would need the display's physical size, which
+      // no browser reports honestly. Every other reader calls this number
+      // "actual size" and means the same thing by it.
+      id: "view.actualSize",
+      title: "Actual size",
+      keys: label("view.actualSize"),
+      enabled: withDocument,
+      run: () => viewer?.setZoomFixed(1),
+    },
+    {
+      // The second command that takes a value. The zoom ladder is deliberately
+      // coarse --- each stop throws away every tile --- so a reader who wants
+      // 175% cannot step to it, and before this there was nothing to type it
+      // into either.
+      id: "view.zoomTo",
+      title: "Zoom to…",
+      keys: label("view.zoomTo"),
+      enabled: withDocument,
+      argument: {
+        placeholder: "Zoom, in percent",
+        problem: (raw: string) => {
+          if (raw.trim() === "") return `Zoom, ${percentOf(MIN_ZOOM)} to ${percentOf(MAX_ZOOM)}%`;
+          if (parseZoomPercent(raw) === null) {
+            return `"${raw.trim()}" is not a zoom between ${percentOf(MIN_ZOOM)}% and ${percentOf(MAX_ZOOM)}%`;
+          }
+          return null;
+        },
+        preview: (raw: string) => `Zoom to ${percentOf(parseZoomPercent(raw) ?? 1)}%`,
+        run: (raw: string) => {
+          const zoom = parseZoomPercent(raw);
+          if (zoom !== null) viewer?.setZoomFixed(zoom);
+        },
+      },
     },
     {
       // Preview's bindings, not Acrobat's: Acrobat rotates on Shift-Cmd-+ and
@@ -378,7 +428,7 @@
       page: where.page,
       top_pt: where.top,
       zoom: viewer.currentZoom,
-      fitting: viewer.isFitting,
+      fit: viewer.fitMode,
       turns: viewer.rotation,
       sidebar: sidebarShown,
       page_count: openPageCount,
@@ -548,6 +598,9 @@
       // to ask for a page number is a second thing to keep right.
       event.preventDefault();
       palette?.askFor("nav.goToPage");
+    } else if (matches("view.zoomTo", event) && title) {
+      event.preventDefault();
+      palette?.askFor("view.zoomTo");
     } else if (matches("file.open", event)) {
       // ⌘O was advertised in the palette and reached nothing at all: the label
       // was written by hand and no handler was ever added for it, which is the
@@ -1030,7 +1083,18 @@
         <span class="stat">{status.selected} selected</span>
       {/if}
       <span class="stat">{status.page} / {status.pageCount}</span>
-      <span class="stat">{Math.round(status.zoom * 100)}%</span>
+      <!--
+        A button rather than a readout, because the number is exactly what a
+        reader wants to change when they look at it --- and it opens the same
+        palette argument the shortcut does, so there is one implementation of
+        "ask for a zoom" rather than a second one nobody checks.
+      -->
+      <button
+        class="stat zoom"
+        title="{describeFit(status.fit)} — click to set ({label('view.zoomTo')})"
+        onclick={() => palette?.askFor("view.zoomTo")}
+        >{percentOf(status.zoom)}%</button
+      >
     {/if}
   </header>
 
@@ -1114,6 +1178,22 @@
   .degraded {
     font-variant-numeric: tabular-nums;
     opacity: 0.65;
+  }
+  /* Reads as the other stats do until it is pointed at: a toolbar of buttons
+     drawn as buttons is the ribbon this application exists to not be. */
+  .zoom {
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    background: none;
+    border: none;
+    padding: 0.1rem 0.2rem;
+    color: inherit;
+    cursor: default;
+  }
+  .zoom:hover {
+    opacity: 1;
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+    border-radius: 4px;
   }
   .body {
     flex: 1;

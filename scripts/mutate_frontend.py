@@ -419,6 +419,90 @@ MUTATIONS = [
         "    const dx = Math.max(quad.left - x, 0, x - quad.right);",
         "has no character to find on a page that places none",
     ),
+    Mutation(
+        "zoom: fit the page to the larger of the two fits",
+        "src/lib/zoom.ts",
+        "  return clampZoom(Math.min(wide, viewport.height / page.height_pt));",
+        "  return clampZoom(Math.max(wide, viewport.height / page.height_pt));",
+        "fits a page by its height when the window is wide",
+    ),
+    Mutation(
+        "zoom: fit the page to its height alone",
+        "src/lib/zoom.ts",
+        "  return clampZoom(Math.min(wide, viewport.height / page.height_pt));",
+        "  return clampZoom(viewport.height / page.height_pt);",
+        "fits a page by its width when the window is tall",
+    ),
+    Mutation(
+        "zoom: subtract the horizontal margin vertically too",
+        "src/lib/zoom.ts",
+        "  return clampZoom(Math.min(wide, viewport.height / page.height_pt));",
+        "  return clampZoom(Math.min(wide, (viewport.height - FIT_MARGIN * 2) / page.height_pt));",
+        "fits a page by its height when the window is wide",
+    ),
+    Mutation(
+        "zoom: fit the width with no margin either side",
+        "src/lib/zoom.ts",
+        "  const wide = (viewport.width - FIT_MARGIN * 2) / page.width_pt;",
+        "  const wide = viewport.width / page.width_pt;",
+        "leaves a margin either side when fitting the width",
+    ),
+    Mutation(
+        "zoom: let fit-width bound itself by the height as well",
+        "src/lib/zoom.ts",
+        '  if (mode === "width") return clampZoom(wide);\n',
+        "",
+        "ignores the viewport height when fitting the width",
+    ),
+    Mutation(
+        "zoom: clamp a zoom that is not a number the arithmetic way",
+        "src/lib/zoom.ts",
+        "  if (!Number.isFinite(zoom)) return MIN_ZOOM;\n",
+        "",
+        "turns a zoom that is not a number into the smallest one",
+    ),
+    Mutation(
+        "zoom: hand back the end stop instead of saying there is none",
+        "src/lib/zoom.ts",
+        "  return stop ?? null;",
+        "  return stop ?? zoom;",
+        "says there is no next stop rather than returning the last one again",
+    ),
+    Mutation(
+        "zoom: let a step find the stop it is standing on",
+        "src/lib/zoom.ts",
+        "      ? ZOOM_STEPS.find((z) => z > zoom + 1e-6)",
+        "      ? ZOOM_STEPS.find((z) => z >= zoom)",
+        "does not find the stop it is standing on",
+    ),
+    Mutation(
+        "zoom: parse a typed zoom the way `Number` would",
+        "src/lib/zoom.ts",
+        "  if (!/^[0-9]+(\\.[0-9]+)?$/.test(trimmed)) return null;\n",
+        "",
+        "refuses what `Number` would have accepted",
+    ),
+    Mutation(
+        "zoom: accept a typed zoom outside the range",
+        "src/lib/zoom.ts",
+        "  if (zoom < MIN_ZOOM || zoom > MAX_ZOOM) return null;\n",
+        "",
+        "refuses a zoom outside the range rather than clamping it",
+    ),
+    Mutation(
+        "zoom: truncate the percentage instead of rounding it",
+        "src/lib/zoom.ts",
+        "  return Math.round(zoom * 100);",
+        "  return Math.floor(zoom * 100);",
+        "rounds to whole percent",
+    ),
+    Mutation(
+        "zoom: give two fit modes the same words",
+        "src/lib/zoom.ts",
+        '  if (mode === "page") return "Fit page";',
+        '  if (mode === "page") return "Fit width";',
+        "gives each mode its own words",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -432,6 +516,7 @@ TEST_FILES = [
     "src/lib/textcache.test.ts",
     "src/lib/results.test.ts",
     "src/lib/recents.test.ts",
+    "src/lib/zoom.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

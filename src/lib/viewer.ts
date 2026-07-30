@@ -47,6 +47,13 @@ import {
   type PageText,
 } from "./text";
 import { ClickCounter } from "./clicks";
+import {
+  clampZoom,
+  fitZoom,
+  nextStop,
+  type FitMode,
+  type Fitted,
+} from "./zoom";
 
 /** What a drag extends the selection by. */
 export type SelectUnit = "char" | "word" | "line";
@@ -88,6 +95,14 @@ export interface ViewerStatus {
   pageCount: number;
   /** CSS pixels per PDF point. */
   zoom: number;
+  /**
+   * What the zoom is following, if anything.
+   *
+   * Beside the zoom rather than instead of it: the number is what a reader
+   * wants to know, and the mode is why it changed by itself when they last
+   * resized the window.
+   */
+  fit: FitMode;
   /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
   turns: number;
   /** Whether the page's lightness is inverted, for reading in the dark. */
@@ -141,17 +156,15 @@ export interface ViewerOptions {
 }
 
 /**
- * Zoom stops, in CSS pixels per PDF point.
+ * Width of the scrollbar gutter, in CSS pixels.
  *
- * A ladder rather than a continuous zoom because every step throws away every
- * tier-2 tile: on the A0 sheet each one costs about a second to replace, so a
- * zoom bound to a trackpad's pinch resolution would queue work faster than the
- * renderer can retire it and never converge on anything.
+ * Exported for `viewercheck.ts`, which needs the width a page is actually
+ * fitted into rather than the element's own. The difference is what made a
+ * check on fit-page unable to fail: at the element's full width, a page that
+ * had *not* been refitted after a rotation still appeared to fit, because the
+ * 12 px it overflowed by was the gutter it was hiding under.
  */
-const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4, 6, 8];
-
-/** Width of the scrollbar gutter, in CSS pixels. */
-const SCROLLBAR_WIDTH = 12;
+export const SCROLLBAR_WIDTH = 12;
 
 /** Shortest the scrollbar thumb may get on a long document. */
 const MIN_THUMB = 24;
@@ -164,9 +177,6 @@ const ARROW_STEP = 60;
 
 /** Fraction of a screen that Page Up/Down moves, leaving context behind. */
 const PAGE_OVERLAP = 0.9;
-
-/** Margin either side of the page in fit-width, in CSS pixels. */
-const FIT_MARGIN = 24;
 
 /**
  * Overlay fills, all painted with `multiply` so the glyphs stay legible.
@@ -278,15 +288,19 @@ export class Viewer {
    */
   private invert = false;
   /**
-   * Whether the zoom is still tracking the window width.
+   * What the zoom is tracking, if anything.
    *
-   * Fit-width has to survive a resize, and the first resize is not optional:
-   * the constructor runs before the layout that gives `root` a width, so the
-   * zoom it computes is against a viewport of one pixel. Anchoring the initial
-   * fit to a flag rather than to a measurement means the correction arrives
-   * through the same path every later resize uses.
+   * A fit has to survive a resize, and the first resize is not optional: the
+   * constructor runs before the layout that gives `root` a width, so the zoom
+   * it computes is against a viewport of one pixel. Anchoring the initial fit
+   * to a mode rather than to a measurement means the correction arrives through
+   * the same path every later resize uses.
+   *
+   * It was a boolean until fit-page existed, and the change is not cosmetic:
+   * two fits both have to be re-applied on a resize and a rotation, so the
+   * viewer has to remember *which* one, not merely that it is fitting.
    */
-  private fitting = true;
+  private fit: FitMode = "width";
 
   private frameHandle = 0;
   private running = false;
@@ -381,7 +395,7 @@ export class Viewer {
     this.track.appendChild(this.thumb);
     root.appendChild(this.track);
 
-    this.zoom = this.fitWidthZoom(this.viewportSize().width);
+    this.zoom = this.zoomFor("width");
     this.scroller = new Scroller(this.surfaceHost, {
       doc: opts.doc,
       pageCount: opts.pageCount,
@@ -564,6 +578,7 @@ export class Viewer {
       page: this.currentPage() + 1,
       pageCount: this.opts.pageCount,
       zoom: this.zoom,
+      fit: this.fit,
       turns: this.turns,
       invert: this.invert,
       sharp: stats.sharp,
@@ -576,6 +591,7 @@ export class Viewer {
     const summary = [
       status.page,
       status.zoom,
+      status.fit,
       status.turns,
       status.invert,
       Math.round(status.sharp * 100),
@@ -607,9 +623,27 @@ export class Viewer {
     return displayedSize(this.opts.page, this.turns);
   }
 
-  /** The zoom at which the page fills the viewport's width. */
-  private fitWidthZoom(width: number): number {
-    return Math.max(0.05, (width - FIT_MARGIN * 2) / this.displayedPage().width_pt);
+  /** The zoom `mode` asks for, against the viewport and page as they are now. */
+  private zoomFor(mode: Fitted): number {
+    return fitZoom(mode, this.viewportSize(), this.displayedPage());
+  }
+
+  /**
+   * Re-applies the current fit, if there is one.
+   *
+   * The single place a fit is recomputed, called from the four events that
+   * invalidate one: a resize, a rotation, a restore, and the command that asks
+   * for the fit in the first place.
+   *
+   * It goes through {@link setZoom}, so the reader's place is anchored on the
+   * viewport centre --- which is what a resize wants. A rotation and a restore
+   * overwrite the scroll offset immediately afterwards with a place they have
+   * computed themselves, so the anchoring is discarded there rather than
+   * fighting them, and they need no separate path.
+   */
+  private applyFit(): void {
+    if (this.fit === "none") return;
+    this.setZoom(this.zoomFor(this.fit));
   }
 
   private scrollBy(delta: number): void {
@@ -631,7 +665,7 @@ export class Viewer {
    * and the whole document just changed length underneath it.
    */
   setZoom(zoom: number): void {
-    const next = Math.max(0.05, Math.min(zoom, 16));
+    const next = clampZoom(zoom);
     if (next === this.zoom) return;
 
     const half = this.viewportSize().height / 2;
@@ -647,19 +681,32 @@ export class Viewer {
 
   /** Steps to the next zoom stop in `direction`. */
   zoomStep(direction: 1 | -1): void {
-    const next =
-      direction > 0
-        ? ZOOM_STEPS.find((z) => z > this.zoom + 1e-6)
-        : [...ZOOM_STEPS].reverse().find((z) => z < this.zoom - 1e-6);
-    if (next === undefined) return;
-    this.fitting = false;
-    this.setZoom(next);
+    const next = nextStop(this.zoom, direction);
+    // At either end of the ladder there is no step to take, and pinning the fit
+    // off for a keypress that changed nothing would silently stop the zoom
+    // following the next resize.
+    if (next === null) return;
+    this.setZoomFixed(next);
   }
 
-  /** Sets the zoom so the page fills the viewport's width, and keeps it there. */
-  fitWidth(): void {
-    this.fitting = true;
-    this.setZoom(this.fitWidthZoom(this.viewportSize().width));
+  /** Sets a zoom that stays put: the fit stops following the window. */
+  setZoomFixed(zoom: number): void {
+    this.fit = "none";
+    this.setZoom(zoom);
+    this.wake();
+  }
+
+  /**
+   * Fits the page to the window, and keeps it fitted.
+   *
+   * One entry point for both fits rather than a method each, because the only
+   * difference between them is which zoom {@link fitZoom} returns --- everything
+   * about surviving a resize and a rotation is shared, and two copies of that
+   * is how one of them ends up not surviving a rotation.
+   */
+  setFit(mode: Fitted): void {
+    this.fit = mode;
+    this.applyFit();
     this.wake();
   }
 
@@ -723,13 +770,12 @@ export class Viewer {
       before > 0 ? (this.scrollTop - this.scroller.pageTopOf(page)) / before : 0;
 
     this.applyTurns(next);
-    // A rotation changes the page's aspect, so a view that was fitted to the
-    // width is no longer fitted to anything. Refitting is what makes the
-    // command feel like turning a sheet of paper rather than cropping one.
-    if (this.fitting) {
-      this.zoom = this.fitWidthZoom(this.viewportSize().width);
-      this.scroller.setZoom(this.zoom);
-    }
+    // A rotation changes the page's aspect, so a view that was fitted is no
+    // longer fitted to anything. Refitting is what makes the command feel like
+    // turning a sheet of paper rather than cropping one --- and under fit-page
+    // it is the difference between seeing the turned page and seeing a third of
+    // it, since a landscape page fitted upright is far too tall.
+    this.applyFit();
 
     this.scrollTop = Math.max(
       0,
@@ -759,9 +805,9 @@ export class Viewer {
     this.scroller.setTurns(next);
   }
 
-  /** Whether the zoom is following the window width rather than a fixed stop. */
-  get isFitting(): boolean {
-    return this.fitting;
+  /** What the zoom is following, if anything. */
+  get fitMode(): FitMode {
+    return this.fit;
   }
 
   /**
@@ -782,18 +828,17 @@ export class Viewer {
     page: number;
     top_pt: number;
     zoom: number;
-    fitting: boolean;
+    fit: FitMode;
     turns: number;
   }): void {
     this.applyTurns(((place.turns % 4) + 4) % 4);
 
-    this.fitting = place.fitting;
-    if (place.fitting) {
-      this.zoom = this.fitWidthZoom(this.viewportSize().width);
-      this.scroller.setZoom(this.zoom);
-    } else {
-      this.setZoom(place.zoom);
-    }
+    this.fit = place.fit;
+    // The remembered zoom is used only when nothing was being followed. Under a
+    // fit it is stale by construction --- it was computed against the window
+    // the reader had last time, and this one is a different size.
+    if (this.fit === "none") this.setZoom(place.zoom);
+    else this.applyFit();
 
     const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
     const offset = this.turns === 0 ? Math.max(0, place.top_pt) : 0;
@@ -880,7 +925,7 @@ export class Viewer {
     const viewport = this.viewportSize();
     this.scroller.resize(viewport);
     this.sizeOverlay();
-    if (this.fitting) this.setZoom(this.fitWidthZoom(viewport.width));
+    this.applyFit();
     this.scrollTo(Math.min(this.scrollTop, this.scroller.maxScroll));
     this.wake();
   }
@@ -893,8 +938,7 @@ export class Viewer {
     // A trackpad pinch arrives as a wheel event with `ctrlKey` set --- there is
     // no separate gesture event here --- and Cmd-wheel is the mouse equivalent.
     if (event.ctrlKey || event.metaKey) {
-      this.fitting = false;
-      this.setZoom(this.zoom * Math.exp(-event.deltaY / 300));
+      this.setZoomFixed(this.zoom * Math.exp(-event.deltaY / 300));
       return;
     }
 
@@ -928,7 +972,11 @@ export class Viewer {
     } else if (matches("view.zoomOut", event)) {
       this.zoomStep(-1);
     } else if (matches("view.fitWidth", event)) {
-      this.fitWidth();
+      this.setFit("width");
+    } else if (matches("view.fitPage", event)) {
+      this.setFit("page");
+    } else if (matches("view.actualSize", event)) {
+      this.setZoomFixed(1);
     } else if (matches("view.rotateClockwise", event)) {
       // Preview's bindings. Acrobat puts these on Shift-Cmd-+/-, which on this
       // keyboard is the same `key` as Cmd-+ and would collide with zoom.

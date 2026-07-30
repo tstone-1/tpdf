@@ -21,6 +21,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import type { FitMode } from "./zoom";
+
 /** Where one document was left. Field names match the Rust struct. */
 export interface Place {
   path: string;
@@ -29,8 +31,8 @@ export interface Place {
   /** Points down that page. A rotated view reports 0 --- see `viewer.ts`. */
   top_pt: number;
   zoom: number;
-  /** Whether the zoom was following the window width rather than a stop. */
-  fitting: boolean;
+  /** What the zoom was following, if anything. Matches Rust's `Fit`. */
+  fit: FitMode;
   /** Quarter-turns clockwise, 0 to 3. */
   turns: number;
   sidebar: boolean;
@@ -92,7 +94,7 @@ export function samePlace(a: Place, b: Place): boolean {
     a.page === b.page &&
     a.top_pt === b.top_pt &&
     a.zoom === b.zoom &&
-    a.fitting === b.fitting &&
+    a.fit === b.fit &&
     a.turns === b.turns &&
     a.sidebar === b.sidebar
   );
