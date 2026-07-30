@@ -1046,13 +1046,61 @@ fn kill_pid(pid: u32) {
     unsafe { libc::kill(pid as i32, libc::SIGKILL) };
 }
 
-/// Ends a worker process. Unreachable off unix, where none can be spawned.
+/// Ends a worker process, so a read blocked on its pipe fails.
 ///
-/// A silent no-op is safe only because [`Worker::spawn`] refuses on those
-/// platforms, so there is never anything registered to kill. If a worker ever
-/// starts on Windows this has to become `TerminateProcess`, or the deadline
-/// silently stops being one.
-#[cfg(not(unix))]
+/// `TerminateProcess` is the whole mechanism, because Windows has no signals: it
+/// is unconditional, the target cannot decline it, and it closes the child's
+/// handles --- which is what actually unblocks the thread waiting on the pipe.
+/// [`sandbox_win::KILLED_EXIT`] rather than `1` so the corpse can say it did not
+/// choose to exit; a code is the only channel left where a signal number would be.
+///
+/// **This was a no-op until 2026-07-30, and its own comment had predicted the
+/// consequence**: *"if a worker ever starts on Windows this has to become
+/// `TerminateProcess`, or the deadline silently stops being one."* Workers started
+/// on Windows the day before. The failure was worse than an absent deadline ---
+/// [`Workers::kill_overdue`] counted the pid, set `killed`, and logged *"worker
+/// killed for exceeding its deadline"*, so the caller got a deadline error, the
+/// log claimed a kill, and the process went on holding a hung render forever. One
+/// leaked worker per hung document, with a line in the log saying otherwise. It is
+/// the [`docs/TRAPS.md`] entry *"a guard that degrades to a no-op off its platform
+/// stops being a guard"*, fired for real rather than in the abstract.
+///
+/// No wait, deliberately, and unlike `backend_probe`'s `kill_and_wait`: that one
+/// then *counts processes*, so it has to outlast the kernel's asynchrony. Here the
+/// only thing wanted is that the blocked read stops blocking, and waiting would
+/// put the sweep thread to sleep on a process it has just declared hostile.
+///
+/// Killing by pid is sound for the same reason [`InFlight`] gives, arriving by a
+/// different route: the blocked thread owns the `Worker`, which owns the
+/// `Contained`, which holds an open handle to the process --- and Windows will not
+/// recycle a pid while any handle to it is open. That is stronger than the unix
+/// argument, which has a window between reap and removal.
+#[cfg(windows)]
+fn kill_pid(pid: u32) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    // SAFETY: a pid the caller has established still names a live child of this
+    // process. A null handle means it is already gone, which is the outcome being
+    // asked for --- the same degradation the unix arm gets from a failed `kill`.
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    if handle.is_null() {
+        return;
+    }
+    // SAFETY: a live handle opened with PROCESS_TERMINATE, closed on the next line.
+    unsafe { TerminateProcess(handle, crate::sandbox_win::KILLED_EXIT) };
+    // SAFETY: opened above, closed exactly once, not used again.
+    unsafe { CloseHandle(handle) };
+}
+
+/// Ends a worker process. Unreachable on a platform that spawns none.
+///
+/// A silent no-op is safe only because [`Worker::spawn`] refuses where there is no
+/// containment to spawn into, so nothing is ever registered to kill. Both
+/// platforms that *do* spawn have a real implementation above; if a third one is
+/// added, it needs one here before it needs anything else, because the deadline is
+/// the only bound on a render that never returns.
+#[cfg(not(any(unix, windows)))]
 fn kill_pid(_pid: u32) {}
 
 /// How many bytes of the shared mapping a reply is entitled to.
@@ -1469,19 +1517,60 @@ mod tests {
     /// than hanging the suite --- `wait` blocks, so an unkilled child would
     /// otherwise turn a red into a timeout, and `AGENTS.md` records what a
     /// verdict of "no result" costs a mutation run.
-    #[cfg(unix)]
+    ///
+    /// Un-gated on 2026-07-30, and that is the point of the change rather than a
+    /// tidy-up: `kill_pid` was a no-op on Windows, and these three tests were the
+    /// ones that would have said so. Being `#[cfg(unix)]` they did not run there,
+    /// so the platform where the deadline had stopped working was also the platform
+    /// where nothing tested it, and the suite was green. A check that quietly stops
+    /// existing on one platform is worse than one that skips out loud.
     fn sleeper() -> std::process::Child {
-        std::process::Command::new("/bin/sleep")
-            .arg("5")
+        #[cfg(unix)]
+        let mut command = {
+            let mut c = std::process::Command::new("/bin/sleep");
+            c.arg("5");
+            c
+        };
+        // No `sleep` on Windows, and `timeout.exe` refuses to run without a console
+        // of its own --- it reads the keyboard, so under a redirected stdin it exits
+        // immediately with "input redirection is not supported", which would make
+        // every assertion below pass for the wrong reason. `ping` waits between
+        // packets on a timer and needs no console: six pings to loopback is five
+        // intervals, so about five seconds, matching the unix arm.
+        #[cfg(windows)]
+        let mut command = {
+            let mut c = std::process::Command::new("ping.exe");
+            c.args(["-n", "6", "127.0.0.1"]);
+            c
+        };
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn()
-            .expect("/bin/sleep is present on every unix")
+            .expect("the platform's sleeper is present")
     }
 
-    #[cfg(unix)]
+    /// Whether a status says the process was killed rather than that it finished.
+    ///
+    /// The two platforms answer in different currencies and neither accepts the
+    /// other's: unix has a signal number and no exit code, Windows has an exit code
+    /// and no signals. Both directions are checked --- a sleeper that ran to
+    /// completion exits 0 on either, so this cannot be satisfied by a kill that
+    /// never landed.
+    fn killed(status: &std::process::ExitStatus) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            status.signal() == Some(9)
+        }
+        #[cfg(windows)]
+        {
+            status.code() == Some(crate::sandbox_win::KILLED_EXIT as i32)
+        }
+    }
+
     #[test]
     fn the_supervisor_kills_the_process_holding_an_overdue_call() {
-        use std::os::unix::process::ExitStatusExt;
-
         let workers = supervisor(Duration::from_millis(1));
         let mut child = sleeper();
         let _watch = CallWatch::start(&workers, child.id());
@@ -1496,20 +1585,25 @@ mod tests {
         // assertion five seconds later with a clean exit code, which is a
         // failure rather than a hang --- see `sleeper`.
         let status = child.wait().expect("the child can be reaped");
-        assert_eq!(
-            status.signal(),
-            Some(9),
+        assert!(
+            killed(&status),
             "the process ended some other way: {status:?}"
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_deadline_kill_is_reported_to_the_thread_that_was_waiting() {
         // The half of the mechanism the kernel cannot supply. `is_running` on a
         // worker killed microseconds ago answers "still running" --- measured
         // end to end --- so without this flag the corpse goes back into the pool
         // and the next request to take it fails instead of this one.
+        //
+        // Deliberately *not* a check on the kill, and the mutation that proved the
+        // test above confirmed it: with `kill_pid` reverted to a no-op this one
+        // still passes, because the flag is set whether or not the signal lands.
+        // That decoupling is not a flaw in the test, it is the shape of the defect
+        // the no-op produced --- the caller is told its worker was killed while the
+        // process goes on rendering. The kill needs its own assertion, and has one.
         let workers = supervisor(Duration::from_millis(1));
         let mut child = sleeper();
         let watch = CallWatch::start(&workers, child.id());
@@ -1535,7 +1629,6 @@ mod tests {
         assert!(!watch.end());
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_call_inside_its_deadline_is_left_running() {
         // The control. Without it the test above is satisfied by a supervisor

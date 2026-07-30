@@ -16,7 +16,7 @@
 //! over an already-open handle is the Windows analogue of the `dup2` the macOS
 //! worker does and is the only way a contained child reaches anything.
 //!
-//! The body lives in `win_sandbox_probe/imp.rs` rather than here because a
+//! The body lives in `../probes/win_sandbox_probe.rs` rather than here because a
 //! `#![cfg]` at the crate root cannot express "Windows only" for a `[[bin]]`: it
 //! removes every item including `main`, and cargo then reports "`main` function
 //! not found", which reads like a missing entry point rather than a deliberately
@@ -43,5 +43,8 @@ fn main() {
 }
 
 #[cfg(windows)]
-#[path = "win_sandbox_probe/imp.rs"]
+// Moved out of `src/bin/win_sandbox_probe/` --- see the note in
+// `bin/backend_probe.rs` and the trap it points at: a directory under `src/bin/`
+// becomes a phantom binary in the Windows installer.
+#[path = "../probes/win_sandbox_probe.rs"]
 mod imp;

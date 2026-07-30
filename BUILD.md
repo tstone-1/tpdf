@@ -465,6 +465,13 @@ direction a list written by reading always errs --- see the trap. What was actua
   `win-sandbox-probe`, crash and timeout are `backend-probe`, and `limits`/`footprint` are
   answered by the job object capping commit in the kernel).
 
+  That last clause was an assertion when it was written and is a measurement as of 2026-07-30:
+  `win-sandbox-probe` now probes the job's own two limits, which it had promised in its table
+  and never tested. `bare` commits 1 GB and starts a second process; every rung with a job is
+  refused with 1455 (commit charge) and 1816 (process quota). So `limits` and `footprint` are
+  retired on Windows honestly rather than by hand-waving, and `latency` is the only mode left
+  whose question nothing here answers.
+
   **The eighth mode ran here for the first time, and it does not say what the threat model does.**
 
 ```
@@ -576,11 +583,24 @@ Cold and warm are indistinguishable here (5155 vs 5105 ms at pool 1, 1100 vs 109
 because a ~9 ms spawn is noise against a 5 s screenful. That is a property of this corpus, not
 a finding about spawn cost.
 
-Still macOS-shaped: `open_check.py`'s two Launch Services phases, which skip with stated
-reasons rather than failing --- `session_check.py` needed no porting at all and
-`open_check.py`'s other four phases run --- and
-`webview_guard` checks nothing off darwin (see the trap --- Chromium throttles occluded
-windows too, so those runs were protected by nothing).
+Still macOS-shaped, but less than it was: **`open_check.py` runs five of six phases** since the
+single-instance plugin closed the document-handover gap. The one that stays macOS-only is the cold
+double-click, and that is not a gap --- an Explorer double-click arrives in `argv`, which the
+`argv` phase already covers. It skips with its reason rather than disappearing.
+
+`session_check.py` needed no porting at all. It does need a document of **at least eight pages**,
+since its target page is 7 and `goToPage` clamps; on a shorter one it now says so as a named check
+rather than reporting a wrong page, which is what it used to do. `incr-scan-20p.pdf` is the quick
+fixture for it; `text-base14.pdf` (1 page) and `rotated.pdf` (4) are not long enough.
+
+Both now call `clear_strays` before their first launch. That is not tidiness: on Windows a
+leftover instance **silently absorbs** every later launch through the single-instance plugin, so
+the next phase reports `run timed out` with no output --- which reads as the app hanging. It prints
+a `[WARN]` naming the pids when it finds any, because a run that needed it is a run whose earlier
+phases are suspect.
+
+`webview_guard` still checks nothing off darwin (see the trap --- Chromium throttles occluded
+windows too, so those runs are protected by nothing).
 
 #### What the port changed, so it is not rediscovered
 
@@ -701,6 +721,81 @@ reader as nothing at all --- but it is never silent in the terminal: the parent 
 worker's own stderr is inherited. Seeing that line repeatedly on one document means the
 document is faulting PDFium on a page the reader keeps asking for, which is the one case a
 single retry cannot make cheap.
+
+### Printing on Windows, and how to check it without paper
+
+`print_win.rs` reads a job back with `Windows.Data.Pdf` --- the OS's own PDF stack, the PDFKit
+counterpart --- then rasterises each page onto a printer DC. Windows has no in-box PDF print
+API, so rasterising is what every Windows PDF viewer does; the output is **raster at 300 dpi**
+where macOS is vector.
+
+`present` opens a modal dialog, so that last step is the one thing no automatic check can
+reach. Everything before it can be, because **"Microsoft Print to PDF" is a real driver with a
+real spooler**, and naming an output file in `DOCINFOW.lpszOutput` stops it raising a save
+dialog:
+
+```
+cargo run --release --bin print-probe
+cargo run --release --bin print-probe -- testdata/rotated.pdf
+cargo run --release --bin print-probe -- testdata/vector-multi.pdf "Microsoft Print to PDF"
+```
+
+Eight checks, and three of them are the ones worth understanding:
+
+- **Ink, not the page count.** A wrong `BITMAPINFO`, a DC in the wrong mapping mode and a bad
+  `StretchDIBits` rectangle all produce the right number of perfectly blank sheets. Proved
+  rather than assumed: mutating the blit away leaves *"the printed output has the pages that
+  were sent"* green and only the ink red, at `[0, 0]` --- and the output file drops from 598,694
+  bytes to 1,183. The pages that were *sent* are the control, because "both zero" would
+  otherwise pass on a completely broken path.
+- **Ink extent against a predicted geometry, not an ink ratio.** This is the check that found a
+  real defect, and the history is the useful part. It began as printed-ink-over-sent-ink with an
+  order-of-magnitude band, which read `0.49` and **passed** while every page was going to paper
+  at half physical size (a DIB rendered at 300 dpi placed unit-for-unit onto a 600 dpi printer
+  DC). The same formula then failed at `0.01` on an A0 page for no reason but the paper being
+  16× smaller in area. What holds for both is predicting where the ink should land --- the source
+  page's ink extent scaled by the page-to-sheet ratio --- which reports 1% error on the reference
+  run and **48%** against the reverted bug. See the trap of the same name.
+- **Its own module table**, which is where the boundary claim gets its honest caveat: 80 modules
+  mapped, none named pdfium, and `Windows.Data.Pdf.dll` printed beside it as what *is* mapped.
+  Printing parses in the app process on both platforms; what the boundary buys is that the
+  parser doing it is not ours.
+
+Reference run, `testdata/rotated.pdf`, pages 1--2 with a quarter turn:
+
+```
+  pages    : 4 in the source, printing [1, 2] with a quarter turn
+
+[OK]   the job we built is readable by the OS parser        2 pages
+[OK]   control: the pages we sent have ink on them          non-white pixels per page: [5012, 5012]
+[OK]   the spooler accepted every page                      2 pages spooled
+[OK]   the printer produced a file                          598694 bytes
+[OK]   the printed output has the pages that were sent      2 pages
+[OK]   every printed page has ink ...                       non-white pixels per page: [4777, 6850]
+[OK]   printed ink lands where the page geometry says ...   got 0.27x0.28, 0.45x0.27,
+                                                            predicted 0.27x0.27, 0.45x0.27
+                                                            (worst axis off by 1%, 0%)
+       ... printed/sent ink, for information                [0.953, 1.367]
+[OK]   the printing process never mapped our PDF parser     80 modules mapped, none named pdfium
+       ... the OS PDF component it maps instead             Windows.Data.Pdf.dll
+```
+
+`outline-hostile.pdf` is the second shape worth running --- A4-sized pages rather than small ones,
+so the predicted extent is 0.72x0.47 instead of 0.27x0.27 and a wrong *fit* would show where a
+wrong *scale* does not. Also 8/8.
+
+**Do not run it on `vector-heavy.pdf` or `vector-multi.pdf` casually.** One A0 page of 200,000
+vector operations takes **2m51s** end to end, essentially all of it inside
+`Windows.Data.Pdf`'s rasteriser and largely independent of resolution. That is a real property of
+a raster print path and not a defect --- see the trap *"the OS's PDF rasteriser is not fast"* ---
+but it makes those fixtures unsuitable for a quick check.
+
+Beyond the probe, `cargo test --lib print::` runs **18** checks on Windows where it ran 14, because
+three of the four third-parser checks are no longer macOS-only. The fourth asserts the page count
+and prints a `[SKIP]`: it needs per-page *text* to say which pages survived, and
+`Windows.Data.Pdf` has no text API at all. `a_third_parser_checks_a_job_built_from_a_document_we_-`
+`did_not_write` covers that property on both platforms instead, using per-page rotation ---
+`rotated.pdf` carries 0/90/180/270, so keeping the wrong two pages is a different rotation pair.
 
 ### The "reopen its windows" dialog
 
@@ -913,6 +1008,13 @@ from the remembered one, and nothing opened when nothing was remembered. Expect
 `Failed to unregister class Chrome_WidgetWin_0. Error = 1412` on each shutdown: that is
 WebView2 teardown noise on a *passing* run, not a failure.
 
+**The fixture must have at least eight pages.** The target page is 7 and `Viewer.goToPage` clamps
+to the last page, so a shorter document reports a wrong page rather than a wrong fixture ---
+`text-base14.pdf` gave *"page 0, wanted 7"*, stably, on a restore that was working. There is a
+named check for it now (*"the document is long enough to test page restore"*), so the run says
+which it is. `outline-simple.pdf` above has 12 pages; `incr-scan-20p.pdf` has 20 and renders
+faster than the A0 fixtures.
+
 **Start from a clean process table, and this is not advice.** A leftover `tpdf.exe` hangs the
 next run outright: reproduced twice on 2026-07-30, where the launched app sat at **0.00 CPU**
 for minutes and no phase produced a summary, and both times it passed immediately after
@@ -1057,7 +1159,21 @@ starts at 0 and increments within the month.
    PDFium bump). The half no probe covers is reading each claim and naming the line that
    keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
 7. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
-   it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`.
+   it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
+   `print-probe` (§8), which is the only check that reaches a real spooler.
+
+   **Windows produces an MSI and an NSIS installer**, since 2026-07-30. It did not until
+   then, and the rule that came out of it is worth knowing before adding a probe:
+   **`src/bin/` must contain only declared bin sources.** The bundler enumerates that
+   directory and registers the first entry no `[[bin]]` `path =` claims --- a `.rs` file is
+   always claimed, a *subdirectory* never is --- so `src/bin/backend_probe/`, which held only
+   `imp.rs`, became a phantom binary and failed WiX. Those bodies now live in `src/probes/`.
+   See the trap of that name for the four theories that were wrong first.
+
+   The installer ships all **17 probe and benchmark executables**, about 35 MB of spikes
+   including a sandbox prober. That follows from declaring them `[[bin]]` in the bundled
+   crate, is identical on macOS, and wants a separate workspace crate or `[[example]]`
+   targets before a real release.
 8. Commit as `Release vYY.M.MICRO: <summary>`.
 
 Verify the bump landed everywhere:

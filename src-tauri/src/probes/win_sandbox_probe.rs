@@ -34,6 +34,17 @@
 //! embedded, so PDFium must go and find a system face, which is the first thing
 //! any containment breaks and the failure that does not announce itself.
 //!
+//! **What the `job` column claims is now measured, two thirds of it.** That row
+//! promised "a bomb, a fork bomb, an orphan" from the day it was written and
+//! probed none of the three: the three original authority probes are all
+//! *integrity level* properties, so every row was reporting on `lowil` and above
+//! while the job's own two limits went unexercised. `commit_past_cap` and
+//! `second_process` close that, and the control earns its keep --- `bare` commits
+//! 1 GB and spawns a process, every rung with a job is refused with 1455
+//! (commit charge) and 1816 (process quota). The third, an orphan outliving the
+//! parent, is `KILL_ON_JOB_CLOSE` and is still only claimed: testing it means
+//! killing *this* process, which a probe cannot do and then report.
+//!
 //! **Handles, not paths.** The child is handed its document and its output as
 //! inherited handles and never opens a path for either. That is not incidental
 //! --- a contained child *cannot* open a path, so this is the only transport
@@ -582,7 +593,95 @@ fn probe_authority(doc_path: &str, parent_pid: u32) -> serde_json::Value {
         "write_home": write_home,
         "read_path": read_path,
         "open_parent": open_parent,
+        "commit_past_cap": commit_past_cap(),
+        "second_process": second_process(),
     })
+}
+
+/// Whether this process can commit more memory than the job object allows.
+///
+/// **The two probes below exist because the table at the top of this file listed
+/// three things the `job` rung stops --- "a bomb, a fork bomb, an orphan" --- and
+/// only ever tested none of them.** `write_home`, `read_path` and `open_parent`
+/// are all *integrity level* properties, so every row of the ladder was reporting
+/// on `lowil` and above while the job's own two limits, set thirty lines below in
+/// `Job::create`, went unexercised. `AGENTS.md` calls this the shape that matters:
+/// a documented guarantee with no check behind it reads as measured. It was the
+/// stated answer for two of `worker-bench`'s POSIX modes on Windows (`limits` and
+/// `footprint`), which made it load-bearing rather than decorative.
+///
+/// **Commit, not touch, and that is the interesting half.** The macOS balloon has
+/// to write to every page it takes, because the bound there is on *resident*
+/// memory and an untouched allocation is invisible to it. `JOB_OBJECT_LIMIT_-`
+/// `PROCESS_MEMORY` bounds **committed** memory, which the kernel charges at
+/// `VirtualAlloc` time --- so a single `MEM_COMMIT` past the cap is refused before
+/// a byte of it exists. Windows therefore stops a decompression bomb one step
+/// earlier than macOS can, and the probe is correspondingly cheaper and safer: it
+/// never makes the machine find the pages.
+///
+/// Non-fatal by construction, which is what makes it reportable at all. A failed
+/// commit returns null; it does not raise, so the child lives to say so. Had this
+/// been written as a Rust allocation it would have hit `handle_alloc_error` and
+/// aborted, and the row would have read "no report: the child exited ..." --- a
+/// dead child cannot distinguish a working limit from a broken probe.
+fn commit_past_cap() -> String {
+    use windows_sys::Win32::System::Memory::{
+        VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
+    };
+
+    // Twice the cap, so the request is unambiguous rather than marginal: the
+    // child already holds the document and PDFium, and a request of exactly the
+    // cap could fail for that reason instead of because of the limit.
+    let want = JOB_MEMORY_CAP * 2;
+    // SAFETY: a reserve-and-commit of a non-zero size at an address of the
+    // kernel's choosing. Null on failure is the documented result and the answer
+    // being asked for.
+    let at = unsafe {
+        VirtualAlloc(
+            std::ptr::null(),
+            want,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        )
+    };
+    if at.is_null() {
+        return format!("denied ({})", std::io::Error::last_os_error());
+    }
+    // SAFETY: releasing exactly the reservation just returned; `MEM_RELEASE`
+    // requires a zero size and the base address, which is what is passed.
+    unsafe { VirtualFree(at, 0, MEM_RELEASE) };
+    format!("ALLOWED ({} MB committed)", want / 1024 / 1024)
+}
+
+/// Whether this process can start another one.
+///
+/// `ActiveProcessLimit = 1` is the fork-bomb half of the job, and the same
+/// argument as above applies: a render worker has no business spawning anything,
+/// so a limit that turns out not to apply would matter and nothing was asking.
+///
+/// The error is reported rather than reduced to allowed/denied, because this probe
+/// can be refused for two unrelated reasons and only one of them is the job's.
+/// `ERROR_NOT_ENOUGH_QUOTA` (1816) is the limit doing its work; an access denial
+/// would be the integrity level, which is a different claim on a different rung.
+/// The ladder exists precisely so that one failing row can name its ingredient.
+///
+/// Cleaned up on the path where it succeeds --- at the `bare` control it will ---
+/// so the probe cannot leave a stray process behind. `ping` exits on its own in
+/// milliseconds and needs no console; see `workers.rs` for why `timeout.exe` is
+/// not usable as a stand-in here.
+fn second_process() -> String {
+    match std::process::Command::new("ping.exe")
+        .args(["-n", "1", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            let _ = child.wait();
+            "ALLOWED".to_owned()
+        }
+        Err(e) => format!("denied ({e})"),
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -92,6 +92,51 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Shell",
 ] }
 
+# The Windows print path, `print_win.rs`. Two things are needed that `windows-sys`
+# structurally cannot give:
+#
+# * **WinRT.** `Windows.Data.Pdf` is the operating system's own PDF parser and
+#   rasteriser --- the direct counterpart of PDFKit on macOS, and the one Windows
+#   itself uses for PDF thumbnails and preview. `windows-sys` binds Win32 only, so
+#   reaching it needs the projected `windows` crate and `windows-future` for the
+#   async operations. It is the *independent* parser this repository's print
+#   checks are built around: `lopdf` writes the job and PDFium drew what the reader
+#   saw, so neither can say the output is readable by something else.
+# * **GDI printing.** Windows has no in-box "print this PDF" API at any layer, so
+#   the job is rasterised page by page onto a printer DC, which is what every
+#   Windows PDF viewer does. `PrintDlg` for the panel, `StretchDIBits` for the page.
+#
+# Same licensing and no-new-crate argument as `windows-sys` above: `windows 0.61`
+# is already in `Cargo.lock` transitively through Tauri's WebView2 stack, with
+# `windows-future` and `windows-core` beside it, and it is `MIT OR Apache-2.0`.
+windows = { version = "0.61", features = [
+    # PdfDocument, PdfPage, PdfPageRenderOptions.
+    "Data_Pdf",
+    # Blocking on the WinRT async operations the loader returns.
+    "Foundation",
+    # `BitmapEncoder::BmpEncoderId`, which is the load-bearing choice here: asking
+    # for BMP rather than the default PNG means the rendered page arrives as a DIB
+    # that `StretchDIBits` accepts as-is, so the print path needs no image decoder
+    # and gains no dependency for one.
+    "Graphics_Imaging",
+    # InMemoryRandomAccessStream and DataWriter, to get bytes in and out of WinRT.
+    "Storage_Streams",
+    "Win32_Foundation",
+    # StretchDIBits, GetDeviceCaps, CreateDC, DeleteDC.
+    "Win32_Graphics_Gdi",
+    # StartDoc/StartPage/EndPage/EndDoc and DOCINFOW. Not in `Graphics_Gdi`, which
+    # is where they read as though they belong: Windows files the document-level
+    # printing calls under the XPS print stack even though they are the same
+    # decades-old GDI escape sequences.
+    "Win32_Storage_Xps",
+    # Toolhelp, so `print-probe` can read its own module table and say which PDF
+    # parser the printing process actually mapped -- see `boundary` there.
+    "Win32_System_Diagnostics_ToolHelp",
+    # PrintDlgW, and the CommDlg error code that distinguishes Cancel from failure.
+    "Win32_UI_Controls_Dialogs",
+] }
+tauri-plugin-single-instance = "2.4.3"
+
 [[bin]]
 name = "tile-bench"
 path = "src/bin/tile_bench.rs"
@@ -155,3 +200,7 @@ path = "src/bin/fdpass_probe.rs"
 [[bin]]
 name = "win-sandbox-probe"
 path = "src/bin/win_sandbox_probe.rs"
+
+[[bin]]
+name = "print-probe"
+path = "src/bin/print_probe.rs"

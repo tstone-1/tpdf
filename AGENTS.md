@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 132 entries
+The one thing this file does *not* carry in full is the trap list --- 145 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -125,6 +125,32 @@ One honest limit on that: low integrity **does not stop reads**, so a contained 
 still read any file the user can --- which is why the document and the output are handed over
 as inherited handles rather than paths, the Windows analogue of the macOS `dup2`.
 
+**The `job` row's denials are measured as of 2026-07-30, and were not before.** That row
+promised "runaway memory, extra processes, orphans" from the day it was written and the probe
+tested none of the three: its three authority probes are all *integrity level* properties, so
+every rung reported on `lowil` and above while the job's own two limits went unexercised. Two
+more probes close it, and the control earns its keep --- `bare` commits 1 GB and starts a
+process; every rung with a job is refused with **1455** (commit charge) and **1816** (process
+quota). The third, an orphan outliving the parent, is `KILL_ON_JOB_CLOSE` and is still only
+claimed: testing it means killing the probe itself.
+
+Worth knowing rather than inferring, because it is a real asymmetry with macOS: the Windows
+bound is on **committed** memory, which the kernel charges at `VirtualAlloc` time, so a
+decompression bomb is refused *before* a byte of it exists. macOS bounds *resident* memory, so
+its balloon has to write to every page it takes. That is why `Worker::footprint` returning
+`None` on Windows is not the gap it looks like --- there is a kernel bound there instead of a
+poll, and it is now the measured kind. (Nothing in production reads `footprint` on either
+platform; only `pool-bench` does.)
+
+**And the render deadline is real on Windows as of the same day, having silently not been.**
+`kill_pid` was a `#[cfg(not(unix))]` no-op whose own comment predicted exactly this, and the
+three tests that would have caught it were `#[cfg(unix)]`, so the platform where the guard had
+stopped working was also the platform where nothing tested it. It did not merely fail to
+enforce: `kill_overdue` set the killed flag and logged a kill, so the caller got a deadline
+error while the process went on holding a hung render. The trap index entry *"a guard that
+degrades to a no-op off its platform stops being a guard"* carries the detail and the mutation
+that proves the fix.
+
 **A Windows worker now exists and works** (2026-07-29). `Worker::spawn` builds one on Windows:
 the child is created suspended, dropped to low integrity, assigned to the job object before it
 executes an instruction, and given two pipes and the document and tile sections as inherited
@@ -180,11 +206,21 @@ eighth needs no worker, was trapped behind the module's `cfg`, and now runs --- 
 trap for what it found.
 
 **The two viewer harnesses run there too** (2026-07-30). `session_check.py` needed no porting at
-all and passes its four phases with both controls. `open_check.py` runs four of six; the two that
-skip record a measured divergence --- `RunEvent::Opened` is macOS-only and no single-instance
-plugin is linked, so **a second launch on Windows is a second process**, two windows and two
-worker pools, where macOS hands the document to the running app. That is a product decision to
-make, not a defect, but it was unstated in either direction until it was measured.
+all and passes its four phases with both controls --- note it needs a document of **at least eight
+pages**, since its target page is 7; on a shorter one it now says so rather than reporting a wrong
+page, which is what it used to do.
+
+`open_check.py` runs **five of six**. It ran four until the last gap was closed: a second launch on
+Windows was a second process, two windows and two worker pools, where macOS hands the document to
+the running app. `tauri-plugin-single-instance` closes it --- the second process forwards its argv
+to the first and exits --- and the callback feeds the same `Launch` queue and emits the same
+`OPEN_EVENT` as every other route in, so there is one path for "open this document" rather than
+two that can drift. Proved by mutation: disabling the plugin turns the phase red with *"nothing
+ever arrived"* while its control still passes.
+
+The one phase that stays macOS-only is the cold double-click, and that is not a gap: an Explorer
+double-click arrives in `argv`, which the `argv` phase already covers, so there is no second
+mechanism there to test.
 
 So the tally on documented blockers is **four lists wrong this week, always by over-reporting**:
 of six benchmarks and harnesses called macOS-only, two were genuinely gated, one was trapped
@@ -206,9 +242,70 @@ from macOS worth knowing --- there the system-font walk is ~7.4 ms of it, here i
 so on Windows what pre-spawning buys is almost entirely the fixed floor (`CreateProcess`, the
 loader, mapping `pdfium.dll`, the token and the job) rather than font enumeration.
 
-One smaller gap remains: the pool's memory poll (`Worker::footprint`) returns `None` there, which
-is not a gap in the same sense --- the job object caps commit in the kernel, which is the bound
-macOS cannot have and polls for instead.
+**Printing works on Windows** (2026-07-30), which was the last user-facing capability the
+platform did not have --- `present_job` returned `Err("printing is implemented on macOS only")`,
+and its comment still justified that with "everything in this repository is macOS-only until a
+Windows build has actually run", which had stopped being true two days earlier.
+
+The half that corresponds exactly is the **readback**. macOS refuses to open a panel for a job
+PDFKit cannot read; Windows now refuses for one `Windows.Data.Pdf` cannot read. Both are the
+platform's own PDF stack, so both are independent of the `lopdf` that wrote the job and the
+PDFium that drew what the reader saw --- which is the property the whole print subsystem is built
+on, and the same standard `docs/PLAN.md` §6 sets for a redaction.
+
+The half that does **not** correspond is the printing itself, and it is not a shortcut. macOS
+hands PDF bytes to `NSPrintOperation` and the OS paginates and prints them as vectors. Windows
+has no in-box "print this PDF" API at any layer --- not Win32, not WinRT --- so every Windows PDF
+viewer, SumatraPDF included, rasterises each page onto a printer device context itself, and that
+is what `print_win.rs` does. Two consequences to state rather than discover: Windows output is
+**raster at 300 dpi** where macOS is vector, so text is not selectable in a print-to-PDF result;
+and `Windows.Data.Pdf` reports page sizes in **DIPs at 96 to the inch**, not PDF points, which is
+a trap with an entry because getting it wrong renders every page 1.33x too large and still looks
+fine.
+
+Three things came free with it, and the third is the one worth noticing:
+
+- **`bin/print_probe.rs` verifies the whole path without paper.** "Microsoft Print to PDF" is a
+  real driver and a real spooler, and naming an output file in `DOCINFOW.lpszOutput` stops it
+  raising a save dialog --- so everything except the panel is driven end to end and the result is
+  re-read by the OS parser. 8/8, including **ink per page** rather than a page count, because a
+  broken blit produces the right number of blank sheets (proved: mutating the blit away leaves
+  the count green and only the ink red).
+- **Three of `print.rs`'s four third-parser checks now run on Windows**, where they were
+  `#[cfg(target_os = "macos")]` because PDFKit used to be the only independent parser available.
+  Proved to buy real coverage rather than merely existing: breaking `effective_rotation` turns
+  both rotation checks red here, including `rotated.pdf`'s *which-pages-survived* case. The
+  fourth needs text, which `Windows.Data.Pdf` has none of, so it asserts the page count and
+  prints a `[SKIP]` naming what it could not check.
+- **Printing maps a PDF parser into the app process, on both platforms.** That is the honest
+  complication in "the app process never maps the PDF parser", and it is now measured instead of
+  glossed: `print-probe` reads its own module table and reports 80 modules with none named
+  pdfium, and `Windows.Data.Pdf.dll` beside it as what it mapped instead. The boundary's real
+  guarantee is narrower than the sentence sounds --- no *our* PDFium, and the parser that is
+  there is patched by Windows Update rather than pinned in `Cargo.lock`.
+
+The `windows` crate this needs adds no crate to the tree: it is already there transitively
+through Tauri's WebView2 stack, and it is `MIT OR Apache-2.0`, checked rather than assumed.
+
+**A Windows distributable builds** (2026-07-30): an MSI and an NSIS installer, from
+`npm run tauri build`. It did not, and the cause is worth knowing because it is a rule about
+this repository's layout rather than a Tauri bug: **`src/bin/` must contain only declared bin
+sources.** The bundler enumerates that directory and registers the first entry no `[[bin]]`
+`path =` claims; a `.rs` file is always claimed, a *subdirectory* never is. So
+`src/bin/backend_probe/`, which existed only to hold `imp.rs`, became a phantom binary named
+`backend_probe`, colliding with the component id WiX derives from the real `backend-probe.exe`
+and failing `light.exe`. The two `imp.rs` bodies now live in `src/probes/`, reached by
+`#[path]`, which leaves module parentage and every `super::` in them unchanged.
+
+It had never been caught because Windows packaging had never been attempted --- `BUILD.md`
+mentioned neither MSI nor WiX. The trap entry records the four theories that were wrong first,
+including an experiment whose control was placed where it could not fire.
+
+One thing that is *not* fixed and is a decision rather than an oversight: the installer ships all
+**17 probe and benchmark executables**, about 35 MB of development spikes including a sandbox
+prober and a hostile-document harness. That follows from declaring them `[[bin]]` in the bundled
+crate, it is identical on macOS, and the real fix is a separate workspace crate or `[[example]]`
+targets.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -242,7 +339,8 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | **Settled** --- renders, extracts and sandboxes correctly; not usable for redaction (spikes 0.1, 0.3, 0.5) |
 | Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | **Settled** --- surgical rewriting and sanitation both work, with our own mark-and-sweep and an encryption guard (spikes 0.3, 0.4, 0.6) |
 | Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite; still wanted for preserving encryption and for object streams |
-| macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled on macOS** --- paginates and runs the panel; also the independent parser every print job is read back with. Windows not written |
+| macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** --- paginates and runs the panel; also the independent parser every print job is read back with |
+| Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** --- reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
 
 The PDFium pin is `chromium/7881`, installed by `scripts/fetch_pdfium.py` and verified by
 digest. Every measurement in this file was taken against that build, so bumping it
@@ -251,10 +349,13 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
-`tauri-plugin-dialog` (Apache-2.0 OR MIT) is the only plugin linked, for the file-open
-dialog; it pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT). Checked against the
-licensing constraint above rather than assumed --- every dependency added has to be, because
-one copyleft crate anywhere in the tree removes the option of making this repository public.
+Two plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open dialog,
+which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT); and, on Windows only,
+`tauri-plugin-single-instance` (Apache-2.0 OR MIT), which is what gives that platform the
+document handover macOS gets from `RunEvent::Opened`. Checked against the licensing constraint
+above rather than assumed --- every dependency added has to be, because one copyleft crate
+anywhere in the tree removes the option of making this repository public. The check is
+`cargo metadata` over the whole tree, not a glance at the crate's own README.
 
 ### What each library is, and is not
 
@@ -391,8 +492,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 132 of them and the full text
-was 93% of this file --- an instruction budget spent on the 126 traps that are not
+titles. Only the titles are here, because there are 145 of them and the full text
+was 93% of this file --- an instruction budget spent on the 144 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -436,6 +537,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - PDFium cannot create digital signatures
 
 ### The worker boundary, the sandbox and the pool
+- Printing maps a PDF parser into the app process, on both platforms
 - `thread_safe` does not serialize PDFium --- there is no mutex, and threads crash
 - A worker process is nearly free; the webview boundary is not
 - macOS has no memory rlimit, and `RLIMIT_CPU` is a lifetime budget
@@ -520,6 +622,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test whose failure is a hang reports a pass and a timeout in one breath
 - An unreachable guard is worth keeping if the type can carry it instead
 - A post-destroy guard that returns early leaks what it declined to take
+- A print check that counts pages cannot see a blank page
+- A page count read too early is 0, and 0 is not a count
+- A DIB pixel is not a device unit, and every page printed at half size while a check passed
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -543,6 +648,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A list of documented blockers can be wrong in the direction that looks thorough
 - A gate list that never links a binary cannot see a link error
 - A custom URI scheme is not spelled the same way on every platform
+- One constant standing for two platform distinctions breaks the moment they diverge
 - A release build is not a production build; a cargo *feature* decides that
 - A guard that degrades to a no-op off its platform stops being a guard
 - `CreateProcessAsUser` waives a privilege only for a token it still recognises
@@ -559,6 +665,14 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test whose child never answers cannot see the pipes being crossed
 - A wait for a condition that cannot hold spends its whole bound, and retires the pool it was about to measure
 - A check that wins a race on one platform has not been shown to pass on it
+- Single-instance turns a stray process into a launch that succeeds and does nothing
+- A `DataWriter` closes the stream it was created over, so a helper that returns the stream returns a closed one
+- WinRT reports a PDF page's size in DIPs, not points
+- A BMP's DIB header is never 4-byte aligned, so reading it in place is undefined behaviour
+- A print DPI relative to the page is the wrong quantity, and A4 is the example that hides it
+- The OS's PDF rasteriser is not fast, and a raster print path inherits that
+- A directory under `src/bin/` becomes a phantom binary in the Windows installer
+- A green gate list can sit beside a distributable that cannot be built
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 
 ### Fixtures

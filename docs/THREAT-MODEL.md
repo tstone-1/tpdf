@@ -96,6 +96,32 @@ the print system will use itself, which is the whole argument for reading the jo
 it (`print_macos`). What *can* move is `print::build`'s `lopdf` rewrite and the verification
 read, and neither has. Reaching this needs no more than ⌘P on an open document.
 
+**Windows is the same exposure with a different parser, since 2026-07-30.** `print_win::read`
+and `print_win::spool` both parse in the coordinator, using `Windows.Data.Pdf` where macOS uses
+PDFKit — and `spool` additionally *rasterises* every page there, because Windows has no in-box
+PDF print API and the pages have to reach a printer DC as bitmaps. So the Windows print path
+touches attacker-controlled bytes in the coordinator more than the macOS one does, not less.
+
+Three things bound how much that is worth:
+
+- The parser is a Microsoft component serviced by Windows Update, not a library pinned in
+  `Cargo.lock`. It is the same trade as PDFKit and it is the reason a third parser is used at
+  all: `lopdf` wrote the job and PDFium drew what the reader saw, so neither can attest that
+  the output is readable by anything else.
+- **PDFium is not there, and that is measured rather than argued.** `bin/print_probe.rs` reads
+  its own module table after parsing, rendering and printing a document, and reports 80 modules
+  with none named pdfium — with the count printed, so a failed enumeration cannot read as an
+  absence. A PDFium bug reachable from a crafted document is therefore not reachable through
+  printing on either platform.
+- It is still a `[NOT MOVED]`, not a mitigation. The honest statement is that §3's "the
+  coordinator parses no PDF syntax" holds on the *viewing* path on both platforms and has never
+  held on the printing path on either.
+
+The one thing that does **not** carry over is `print_macos::read_with_text`. `Windows.Data.Pdf`
+has no text API at all, so the Windows readback pins page count and rotation only; the check in
+`print.rs` that used text to say *which* pages survived skips out loud there rather than
+quietly not existing.
+
 What is bounded rather than moved: both graph walks the rewrite performs — `sweep::references`
 and `print::forget_in_object` — are recursive and now refuse past `sweep::MAX_NESTING` (256)
 rather than descending until the stack runs out. They **refuse** rather than truncate, which
@@ -204,14 +230,30 @@ would silently move this threat from "impossible" back to "policy".
 **The threat.** A decompression bomb, an A0 CAD page, a 25,000-object graph, or a page
 that simply takes forever. None of these requires a vulnerability.
 
-**CPU is bounded per request, by the coordinator's own deadline — wired in the app.** A
-request outstanding longer than `TPDF_CALL_MS` (default **30 s**) has its worker killed:
-`workers::watch_calls` sweeps the in-flight table on a timer, `kill_pid` sends `SIGKILL`,
-the read blocked on that worker's pipe reaches EOF, and `Workers::with_worker` discards the
-corpse and answers the caller with an error. Started by `RenderService::start_tuned` beside
-the idle reaper, since 2026-07-29. It covers every request that waits on a worker, `Open`
-included — that one is not served through the pool and would otherwise be watched by
-nothing.
+**CPU is bounded per request, by the coordinator's own deadline — wired in the app, on both
+platforms since 2026-07-30.** A request outstanding longer than `TPDF_CALL_MS` (default
+**30 s**) has its worker killed: `workers::watch_calls` sweeps the in-flight table on a timer,
+`kill_pid` ends the process, the read blocked on that worker's pipe reaches EOF, and
+`Workers::with_worker` discards the corpse and answers the caller with an error. Started by
+`RenderService::start_tuned` beside the idle reaper, since 2026-07-29. It covers every request
+that waits on a worker, `Open` included — that one is not served through the pool and would
+otherwise be watched by nothing.
+
+**This paragraph was false on Windows for a day, and the way it was false is the reason to
+record it here rather than only in the trap index.** `kill_pid` was `#[cfg(not(unix))] fn
+kill_pid(_pid: u32) {}`, so from the moment workers started on Windows (2026-07-29) until it was
+fixed, the platform had **no CPU bound on a request at all** — while this section said it did.
+Worse than absent: `kill_overdue` still counted the pid, set the killed flag and logged *"worker
+killed for exceeding its deadline"*, so the caller received a deadline error and the log recorded
+a kill that had not happened, leaving one process per hung document rendering forever. The three
+tests covering the mechanism were `#[cfg(unix)]` as well, so the suite was green.
+
+It is now `OpenProcess` + `TerminateProcess(sandbox_win::KILLED_EXIT)` — a distinct exit code
+because Windows has no signal number to carry "did not choose to exit" — with those tests
+un-gated and shown to fail against the no-op. The general lesson for this document, which
+`BUILD.md`'s review step already states and which this instance is the strongest evidence for:
+**a mitigation written in the present tense is a claim about a specific line, and a `cfg` on that
+line can retire it without touching the sentence.**
 
 One detail is worth recording because it looks like an implementation choice and is not: the
 supervisor marks the request it is about to kill, and the waiting thread reads that mark
@@ -250,6 +292,22 @@ the cooperative alternative and is exercised for tiles only (`progressive.rs`) �
 mechanism for cancelling without discarding the work, and so for not occupying a worker's
 only PDFium thread through a long render. The deadline is the blunt version: it ends the
 process, and the work is lost rather than paused.
+
+**Memory *does* have a kernel bound on Windows, and it is measured.** The job object every
+worker is created into sets `JOB_OBJECT_LIMIT_PROCESS_MEMORY` with a cap, plus
+`ActiveProcessLimit = 1`. Both were claimed by `win_sandbox_probe`'s own table and tested by
+nothing until 2026-07-30, which is the shape this document exists to catch: its three authority
+probes are all integrity-level properties, so every rung reported on `lowil` and above while the
+job's limits went unexercised. Now probed, with the uncontained rung as the control — `bare`
+commits 1 GB and starts a second process; every rung with a job is refused with `1455`
+(`ERROR_COMMITMENT_LIMIT`) and `1816` (`ERROR_NOT_ENOUGH_QUOTA`).
+
+The asymmetry with macOS is worth stating precisely, because it makes the Windows bound the
+*stronger* of the two rather than merely the different one: Windows charges **committed** memory
+at `VirtualAlloc` time, so an allocation past the cap is refused before a byte of it exists. A
+decompression bomb is stopped one step earlier than any sampling scheme can manage, and the
+"polling bounds a leak, not a burst" negative result below does not apply there. It is also why
+`Worker::footprint` returning `None` on Windows is not the gap it resembles.
 
 **Memory has no kernel bound on macOS, and the substitute is designed, measured, and NOT
 wired.** `setrlimit` refuses `RLIMIT_AS`, `RLIMIT_DATA` and `RLIMIT_RSS` outright with

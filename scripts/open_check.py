@@ -4,11 +4,16 @@
 Usage:
     scripts/open_check.py <app-bundle.app|tpdf.exe> <file.pdf> [--other OTHER.pdf] [--timeout SECONDS]
 
-On macOS this takes the **`.app` bundle**, not the executable inside it, because
-two of the six phases go through Launch Services and there is nothing else to
-hand `open`. On Windows it takes the **executable**: there is no bundle, WebView2
-needs no bundle identity, and those two phases have no route to test --- see
-`HANDS_OVER_TO_RUNNING`. They print `[SKIP]` with the reason rather than
+On macOS this takes the **`.app` bundle**, not the executable inside it, because the
+cold-double-click phase goes through Launch Services and there is nothing else to hand
+`open`. On Windows it takes the **executable**: there is no bundle and WebView2 needs no
+bundle identity.
+
+**Five of the six phases run on both platforms.** Only the cold double-click is macOS-only,
+and for a reason that is not a gap: an Explorer double-click hands the path over in `argv`,
+which the `argv` phase already covers, so there is no second mechanism there to test. The
+handover to a *running* app used to skip on Windows too and no longer does --- see
+`HANDS_OVER_TO_RUNNING`. A phase with no route prints `[SKIP]` with its reason rather than
 disappearing, so the phase names are the same list on both platforms.
 
 What each phase asserts is in `src/lib/opencheck.ts`. What this script adds is
@@ -53,6 +58,7 @@ import time
 from pathlib import Path
 
 from live_output import stream_results
+from stray import clear_strays
 from webview_guard import require_visible_session
 
 SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed", re.M)
@@ -70,21 +76,38 @@ then show a check that had vanished on one platform when nothing had.
 RUNNING_HANDOVER = "a document handed to a running app"
 """The running-handover phase's name. See [`COLD_CLICK`]."""
 
-HANDS_OVER_TO_RUNNING = sys.platform == "darwin"
+USES_LAUNCH_SERVICES = sys.platform == "darwin"
+"""Whether launching goes through Launch Services and an `.app` bundle.
+
+Split out from [`HANDS_OVER_TO_RUNNING`] on 2026-07-30, because that constant had been
+standing for two different facts and flipping it for Windows broke the run instantly:
+the harness demanded a `.app` on a platform that has none. They coincided only while
+macOS was the only platform with a handover.
+
+The two are genuinely independent. This one governs *how a launch is spelled* --- an
+`.app` bundle, `open -a`, an Apple Event for a double-click. The other governs *whether a
+second launch reaches the first process*, which Windows now does through argv forwarding
+with no Launch Services anywhere in it.
+"""
+
+HANDS_OVER_TO_RUNNING = True
 """Whether this platform delivers a document to an app that is already running.
 
-macOS does, by Apple Event, which `RunEvent::Opened` receives --- and that arm is
-`#[cfg(target_os = "macos")]`, so Windows has no such route. Measured rather than
-inferred: two launches there produce **two independent processes**, each with its
-own window and its own worker pool, where macOS produces one app that swaps
-documents.
+**Both platforms do, since 2026-07-30, by different routes.** macOS receives an Apple
+Event in `RunEvent::Opened`, which is `#[cfg(target_os = "macos")]`. Windows had no
+counterpart and this constant was `sys.platform == "darwin"` --- measured, not inferred:
+two launches produced **two independent processes**, each with its own window and its own
+worker pool, where macOS produced one app that swapped documents. That is now closed by
+`tauri-plugin-single-instance`, whose callback forwards the second process's argv to the
+first and exits, feeding the same `Launch` queue and emitting the same `OPEN_EVENT`.
 
-Named once because two phases branch on it --- the cold double-click and the
-handover to a running app --- and `AGENTS.md` records what becomes of two copies
-of a platform distinction. It is not a verdict on the behaviour: two windows for
-two documents is a defensible product choice. It is a statement that the *route*
-these two phases test does not exist here, which is why they skip rather than
-fail.
+Kept as a named constant rather than deleted along with the skip. It is the thing to flip
+if a third platform arrives without a handover route, and it documents that the phase
+below tests one *property* reached two ways rather than two different properties.
+
+Named once rather than inlined, because `AGENTS.md` records what becomes of two copies
+of a platform distinction --- and this file has just paid for the opposite mistake, one
+name standing for two distinctions. See [`USES_LAUNCH_SERVICES`].
 """
 
 
@@ -232,18 +255,34 @@ def main() -> int:
 
     bundle = Path(args.bundle).resolve()
     binary = executable(bundle)
+    # See `stray`. This harness is the one that *depends* on the single-instance
+    # forwarding for its handover phase, which makes it the one a leftover instance
+    # misleads most: the handover would appear to work while going to the wrong
+    # process entirely.
+    clear_strays(binary)
     if not binary.exists():
-        hint = "pass the .app, not the binary" if HANDS_OVER_TO_RUNNING else "pass the .exe"
+        hint = "pass the .app, not the binary" if USES_LAUNCH_SERVICES else "pass the .exe"
         print(f"[FAIL] no executable at {binary} -- {hint}")
         return 1
-    if HANDS_OVER_TO_RUNNING and bundle.suffix != ".app":
+    if USES_LAUNCH_SERVICES and bundle.suffix != ".app":
         print(f"[FAIL] {bundle} is not a .app -- two phases go through Launch Services")
         return 1
 
     pdf = str(Path(args.pdf).resolve())
     other = str(Path(args.other).resolve()) if args.other else pdf
 
-    with tempfile.TemporaryDirectory(prefix="tpdf-open-check-") as scratch:
+    # `ignore_cleanup_errors` because the handover phase redirects the app's stdout to a
+    # file in here, and the app's render workers **inherit that handle** --- so on Windows
+    # the file can still be locked for a moment after every check has passed, and
+    # `PermissionError: [WinError 32]` would fail a run whose phases were all green.
+    #
+    # Worth noting which way that traded, because it is the same inheritance in both
+    # directions: with a *pipe* the consequence was a silent timeout with no transcript
+    # before any result; with a *file* it is a loud unlink error after every result. The
+    # second is strictly the better failure, and this line downgrades it to nothing.
+    with tempfile.TemporaryDirectory(
+        prefix="tpdf-open-check-", ignore_cleanup_errors=True
+    ) as scratch:
         room = Path(scratch)
         ok = True
 
@@ -253,7 +292,7 @@ def main() -> int:
         code, out = run_direct(binary, f"opened:{pdf}", room / "argv.json", [pdf], args.timeout)
         ok &= report("argv", code, out)
 
-        if HANDS_OVER_TO_RUNNING:
+        if USES_LAUNCH_SERVICES:
             code, out = run_via_open(
                 bundle, f"opened:{pdf}", room / "click.json", pdf, args.timeout, room
             )
@@ -300,27 +339,65 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
     if not HANDS_OVER_TO_RUNNING:
         return skip(
             RUNNING_HANDOVER,
-            "there is no handover on this platform: `RunEvent::Opened` is macOS-only and no "
-            "single-instance plugin is linked, so a second launch is a second process. "
-            "Measured, not assumed --- two launches leave two tpdf processes with two windows "
-            "and two worker pools. Whether that is the behaviour to want is a product "
-            "decision; what is certain is that the emit branch this phase tests is unreachable",
+            "this platform has no route for delivering a document to an app already "
+            "running, so a second launch is a second process with its own window and its "
+            "own worker pool, and the emit branch this phase tests is unreachable. macOS "
+            "routes an Apple Event to `RunEvent::Opened`; Windows forwards argv through "
+            "`tauri-plugin-single-instance`. A third platform needs one of the two before "
+            "this phase can mean anything",
         )
 
     env = dict(os.environ, TPDF_OPENCHECK=f"arrives:{pdf}", TPDF_SESSION_FILE=str(room / "run.json"))
-    app = subprocess.Popen(
-        [str(binary)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+    # **A file, not a pipe, and this is the one phase where that matters.** tpdf's
+    # render workers are re-execs of the same binary and **inherit the app's stdout**,
+    # so a pipe reaches EOF only once every worker has also gone. `communicate()` waits
+    # for EOF as well as for exit, so a worker that outlives the app by a moment turns
+    # this phase into a timeout that prints *nothing at all* --- observed, and it reads
+    # exactly like the app hanging. `docs/TRAPS.md` records the pipe-versus-process
+    # distinction from the Rust side; this is the same hazard from the harness side.
+    #
+    # A file has no EOF to wait for: the process is waited on, then the file is read.
+    log = room / "running.log"
+    handle = log.open("w", encoding="utf-8", errors="replace")
+    app = subprocess.Popen([str(binary)], env=env, stdout=handle, stderr=subprocess.STDOUT)
     try:
         # Long enough to be past the check's own quiet window, so the document
         # genuinely arrives at a running app rather than racing the boot.
         time.sleep(6)
-        subprocess.run(["open", "-a", str(bundle), pdf], capture_output=True, timeout=30)
-        out, _ = app.communicate(timeout=timeout)
-        code = app.returncode
+        # The second launch, spelled the way each platform spells it. `open -a` asks
+        # Launch Services to route to the running app; on Windows the plain
+        # executable *is* the route --- the single-instance plugin makes the second
+        # process forward its argv and exit, so what looks like a fresh launch is the
+        # handover. Running the second process without waiting for it is deliberate:
+        # on Windows it terminates on its own, and blocking on it would be waiting for
+        # the process whose job is to disappear.
+        if sys.platform == "darwin":
+            subprocess.run(["open", "-a", str(bundle), pdf], capture_output=True, timeout=30)
+        else:
+            second = subprocess.Popen(
+                [str(binary), pdf],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                second.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                second.kill()
+        code = app.wait(timeout=timeout)
+        handle.close()
+        out = log.read_text(encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         app.kill()
-        out, code = "[FAIL] run timed out\n", 1
+        handle.close()
+        # The partial transcript, not just the word "timeout". A run that stopped
+        # partway names the last thing it completed, and discarding that is the failure
+        # `docs/TRAPS.md` records under a timeout throwing away its evidence --- it is
+        # also what made this phase's own flake take three runs to understand, since
+        # `no summary line` was all it ever said. Writing to a file rather than a pipe is
+        # what makes the partial output available here at all.
+        out = log.read_text(encoding="utf-8", errors="replace")
+        out += f"[FAIL] run timed out after {timeout:.0f} s\n"
+        code = 1
     return report(RUNNING_HANDOVER, code, out)
 
 
