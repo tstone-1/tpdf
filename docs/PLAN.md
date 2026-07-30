@@ -2072,6 +2072,77 @@ to fit the window at fit-width already, "fit page shows the whole page" is satis
 nothing. It skips there, naming the measurement --- which is what `rotated-90` does, its pages
 being landscape.
 
+#### Reading order, where the file's order is not the page's — done 2026-07-30
+
+A PDF carries no reading order. It carries glyphs at positions, in whatever sequence its
+producer emitted them, and everything built on `text.rs` had treated that sequence as the
+order of the page. On one column it is. `testdata/make_columns_pdf.py` builds two pages
+that look identical and extract as
+
+```
+alpha one / alpha two / ...          (the columns emitted one after the other)
+alpha one beta one / alpha two beta two / ...   (emitted line by line across the gutter)
+```
+
+The second is what landed on the clipboard and what a screen reader read aloud. It was
+**measured before anything was built** --- `text-probe --mode order` is new and prints a
+page's characters in PDFium's own order --- because the whole feature rests on the claim
+that the two differ, and that claim is about PDFium rather than about us.
+
+**`src/lib/reading.ts` recovers the order by recursive XY-cut.** The page is split at a
+band of whitespace no fragment touches, and each half split again; a gutter and the space
+under a heading are the same operation on different axes, which is what handles the
+heading case that defeats clustering by x position. Two rules make it behave: a column cut
+is taken whenever one exists, and row cuts are taken one at a time at the widest gap.
+Taking every row cut is precisely what produces `alpha one beta one` --- every band of
+whitespace between two lines crosses the page, so each band ends up holding one line from
+each column.
+
+Its limit is stated rather than discovered: a spanning heading is told from the body by
+having more air under it than the body's leading. Where those are equal the page is
+genuinely ambiguous, and what it degrades to is each part ordered correctly within itself
+and the parts interleaved with each other.
+
+**Rotation is carried in the algorithm rather than around it.** Every rule is written over
+two axes --- along a line, across the lines --- with which screen axis each is, *and which
+direction each runs*, derived from `to_device` in `text.rs`. The signs are the part that
+is easy to omit and impossible to see: without them the order is right at 0 and 1 and
+exactly reversed at 2 and 3, which reads as a document with its paragraphs shuffled rather
+than as a rotation bug. The test never restates the table --- it asserts that the same
+document viewed at all four rotations reads the same, which only the right signs satisfy.
+
+**Wired into copy and the accessibility tree, and not into the drag.** Select-all then copy
+is the dominant case and now comes out column by column; `a11y.ts` builds its paragraphs
+from `readingLines`. A drag still selects a *contiguous range of character indices*, which
+on such a page is not the region dragged over --- making it so means carets that carry a
+reading position rather than a character index, which is a change to the selection model
+and is the next step rather than part of this one.
+
+20 unit tests and 12 mutations, each caught by the test named for it. Two functional checks
+take `viewer_check.py` to **109 names** across seven corpora, and they are the ones with an
+external oracle: the fixture's generator writes a manifest of what each page should read
+as, and the check asserts against that rather than against anything this process computed.
+Beside it is the differential assertion, which needs no manifest --- two pages laid out
+identically and emitted oppositely must read the same, and no amount of self-consistency
+can satisfy that.
+
+Three things this turned up that were not the feature:
+
+- **`text-heavy` reads identically before and after** (`0 in another position`), which is
+  the control that says a single column is undisturbed. `rotated-90` moves **493 of 534
+  characters** --- PDFium extracts that document's lines backwards, which `docs/TRAPS.md`
+  had already recorded from the other side, and the corrected order is now what a screen
+  reader gets.
+- **Two existing checks rested on the assumption this feature removes.** The drag-ordering
+  check compares character indices and expects text higher on the page to come earlier;
+  that is false for *any* multi-column layout, however sensibly written. It now stands
+  aside when the page has lines side by side. The accessibility check compared the spoken
+  text against the extraction as a string, which reading order legitimately breaks; it
+  compares character multisets now and reports how many moved, with the order asserted by
+  the checks above instead.
+- **A precondition guarding the first of those was wrong twice before it was right**, and
+  survived only because it printed what it measured. See the traps.
+
 #### The accessibility tree — 2026-07-27
 
 §8 states this as an architectural constraint and the virtual-scrolling section repeats it:

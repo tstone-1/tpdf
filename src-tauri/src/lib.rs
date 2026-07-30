@@ -684,6 +684,18 @@ fn viewercheck_path() -> Option<String> {
     spike_env("TPDF_VIEWERCHECK")
 }
 
+/// The reading-order expectations a check should assert against, if any.
+///
+/// Returns the *contents* of the file named by `TPDF_READING_MANIFEST`, because
+/// the webview has no filesystem and the manifest is written by whatever
+/// generated the fixture --- which is the point of it. A missing or unreadable
+/// file is `None`, and the check then says it had nothing to compare against
+/// rather than passing.
+#[tauri::command]
+fn reading_manifest() -> Option<String> {
+    std::fs::read_to_string(spike_env("TPDF_READING_MANIFEST")?).ok()
+}
+
 /// Path to time a cold open of on startup, from `TPDF_STARTUP` (spike 0.2).
 #[tauri::command]
 fn startup_path() -> Option<String> {
@@ -1016,6 +1028,7 @@ pub fn run() {
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,
+            reading_manifest,
             sessioncheck_mode,
             opencheck_mode,
             startup_path,

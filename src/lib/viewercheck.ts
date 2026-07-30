@@ -32,6 +32,8 @@ import { CommandRegistry } from "./commands";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { MAX_RESULT_ROWS } from "./results";
+import { hasSideBySideLines, readingLines } from "./reading";
+import { TextCache } from "./text";
 
 /**
  * Tabs the sidebar has: outline, pages, results.
@@ -447,6 +449,7 @@ async function run(path: string): Promise<void> {
     () => `zoom=${viewer.currentZoom.toFixed(3)}, ${pct()}`,
   );
 
+  await readingChecks(doc);
   await fitChecks(root, viewer);
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
@@ -482,6 +485,101 @@ async function run(path: string): Promise<void> {
  * even returned real words; it was simply the wrong words. Nothing about a
  * property that holds by construction can be evidence of anything.
  */
+/** What a fixture's generator says each of its pages should read as. */
+interface ReadingManifest {
+  pages: { page: number; name: string; lines: string[] }[];
+}
+
+/**
+ * Reading order, against expectations this process did not write.
+ *
+ * The one check in this file whose answer comes from outside: the fixture's
+ * generator states the lines of each page, in the order they are meant to be
+ * read, and that file is passed in by `viewer_check.py`. Comparing against it
+ * is therefore not the writer agreeing with its own reader --- which
+ * `docs/TRAPS.md` records as the shape that passes on output that is wrong.
+ *
+ * The strongest assertion is the differential one underneath it, and it needs
+ * no manifest at all: `columns.pdf` carries two pages laid out identically and
+ * emitted in opposite orders, so a correct implementation cannot tell them
+ * apart. That one cannot be satisfied by any amount of self-consistency,
+ * because self-consistency is exactly what produces two different answers.
+ */
+async function readingChecks(doc: DocumentInfo): Promise<void> {
+  const raw = await invoke<string | null>("reading_manifest");
+  if (!raw) {
+    skip("a page reads in the order its generator laid it out", "no manifest for this fixture");
+    skip("two pages laid out alike read alike, whatever their order in the file", "no manifest");
+    return;
+  }
+
+  let manifest: ReadingManifest;
+  try {
+    manifest = JSON.parse(raw) as ReadingManifest;
+  } catch (e) {
+    check("a page reads in the order its generator laid it out", false, `unreadable manifest: ${e}`);
+    return;
+  }
+
+  const cache = new TextCache(doc.id);
+  /** A page's non-empty lines, trimmed, in reading order. */
+  const read = async (at: number): Promise<string[]> => {
+    const text = await cache.load(at);
+    if (!text) return [];
+    return readingLines(text)
+      .map((line) =>
+        line.ranges
+          .flatMap((range) =>
+            Array.from({ length: range.to - range.from }, (_, i) =>
+              String.fromCodePoint(text.codes[range.from + i] ?? 0),
+            ),
+          )
+          .join("")
+          .trim(),
+      )
+      .filter((line) => line.length > 0);
+  };
+
+  const wrong: string[] = [];
+  for (const expected of manifest.pages) {
+    const got = await read(expected.page);
+    if (got.join("\n") !== expected.lines.join("\n")) {
+      const at = got.findIndex((line, i) => line !== expected.lines[i]);
+      wrong.push(
+        `${expected.name}: line ${at} is "${got[at] ?? "(missing)"}", ` +
+          `wanted "${expected.lines[at] ?? "(nothing)"}"`,
+      );
+    }
+  }
+  check(
+    "a page reads in the order its generator laid it out",
+    wrong.length === 0,
+    wrong.length === 0
+      ? `${manifest.pages.length} pages, ${manifest.pages[0]?.lines.length ?? 0} lines each`
+      : wrong.join("; "),
+  );
+
+  // Named rather than found by index: a differential check whose two sides are
+  // whichever pages happened to be first would compare a page with itself the
+  // day the fixture gains one.
+  const natural = manifest.pages.find((p) => p.name === "natural");
+  const shuffled = manifest.pages.find((p) => p.name === "interleaved");
+  if (!natural || !shuffled) {
+    skip(
+      "two pages laid out alike read alike, whatever their order in the file",
+      "the manifest has no natural/interleaved pair",
+    );
+    return;
+  }
+  const [first, second] = [await read(natural.page), await read(shuffled.page)];
+  check(
+    "two pages laid out alike read alike, whatever their order in the file",
+    first.length > 0 && first.join("\n") === second.join("\n"),
+    `${first.length} lines vs ${second.length}: ` +
+      `"${first[0] ?? ""}..." vs "${second[0] ?? ""}..."`,
+  );
+}
+
 /**
  * Fitting the page, and the two ways a fit stops.
  *
@@ -665,6 +763,44 @@ async function selectionChecks(
     skip(
       "a drag selects text from where it was dragged",
       "this page's lines advance sideways, so a horizontal drag crosses all of them",
+    );
+    return;
+  }
+
+  // The same assertion has a second premise, and `columns.pdf` is the fixture
+  // that falsifies it: it compares *character indices*, so it assumes the page
+  // was written in the order it is read. A producer that emitted its two
+  // columns line by line breaks that --- the text at the top of column two has
+  // a higher index than the text at the bottom of column one --- and the check
+  // then reports "the page reads bottom to top", which is a true statement
+  // about the file and not about the drag.
+  //
+  // Tested here from the *boxes*, not from `reading.ts`: a precondition
+  // computed by the code under test is one a defect in that code can switch
+  // off, and `docs/TRAPS.md` has that entry. This asks the question directly ---
+  // does the extraction advance down the page? -- and needs nothing but the
+  // geometry the backend already sent.
+  // The same assertion has a second premise, and `columns.pdf` falsifies it: on
+  // more than one column the top of column two is read *after* the bottom of
+  // column one, so "higher on the page" does not mean "earlier in the text" for
+  // any two-column layout, however sensibly its producer wrote it.
+  //
+  // Measured first as "does the extraction travel back up the page", which was
+  // the wrong instrument twice over --- it read PDFium's glyph boxes, whose tops
+  // move with every ascender, and reported 45% on a strictly top-to-bottom
+  // single-column document. It survived only because the fraction was printed.
+  // This asks the structural question instead, and has no threshold to mis-set.
+  //
+  // It does come from `reading.ts`, which a defect there could therefore switch
+  // off --- the trap of that name. It is guarded rather than ignored: two checks
+  // above assert reading order directly against a manifest this process did not
+  // write, and fourteen unit tests cover the same code, so a `reading.ts` broken
+  // enough to silence this one does not get to be silent.
+  const shown = viewer.textOn(0);
+  if (shown && hasSideBySideLines(shown)) {
+    skip(
+      "a drag selects text from where it was dragged",
+      "this page has lines side by side, so being higher up does not mean being read sooner",
     );
     return;
   }
@@ -1394,11 +1530,23 @@ async function accessibilityChecks(
     // Compared against an independent extraction, not against the viewer's
     // cache, so the layer cannot be confirmed by agreeing with itself.
     const expected = flatten(String.fromCodePoint(...extracted.codes));
+    // Compared as a *multiset*, not as a string, and that is a real weakening
+    // made for a real reason: the tree is now built in reading order, and on
+    // `rotated-90.pdf` PDFium's extraction runs the other way --- so exact
+    // equality started failing against a layer that had just been made correct.
+    //
+    // What survives is what this check is named for: the text read out is this
+    // page's, entire, and not invented. What it can no longer say is anything
+    // about the order, which is asserted instead by the two reading-order checks
+    // against the fixture's own manifest and by `reading.test.ts`.
+    const sorted = (text: string): string => [...text].sort().join("");
+    const same = sorted(spoken) === sorted(expected);
+    const moved = [...spoken].filter((char, at) => char !== expected[at]).length;
     check(
       "the text read out is the page's own text",
-      spoken === expected,
-      spoken === expected
-        ? `${spoken.length} characters match the extraction`
+      same,
+      same
+        ? `${spoken.length} characters match the extraction, ${moved} in another position`
         : `reads ${spoken.length} characters, extraction has ${expected.length}: ` +
           `"${preview(spoken)}" vs "${preview(expected)}"`,
     );
@@ -2359,8 +2507,16 @@ async function rotatedDragCheck(
 ): Promise<void> {
   const name = "the same lines come back out of a rotated page";
 
-  if (!before || before.early.length < 8 || before.late.length < 8) {
-    skip(name, "the upright page yielded no two lines to drag out of it");
+  // The bound `sameLine` actually needs, derived from it rather than guessed
+  // beside it: a sample shorter than this has no comparable core, and the check
+  // below would call that a failed rotation.
+  const enough = CORE_CHARS + 4;
+  if (!before || before.early.length < enough || before.late.length < enough) {
+    skip(
+      name,
+      `the upright page yielded no two lines of ${enough} characters to drag out of it ` +
+        `(got ${before?.early.length ?? 0} and ${before?.late.length ?? 0})`,
+    );
     return;
   }
   if (before.early === before.late) {
@@ -2776,9 +2932,25 @@ async function identical(a: ImageBitmap, b: ImageBitmap): Promise<boolean> {
  * line: a one-line error returns a different line number entirely.
  */
 function sameLine(a: string, b: string): boolean {
-  const core = (text: string): string => text.slice(2, -2);
-  return core(a).length >= 8 && (b.includes(core(a)) || a.includes(core(b)));
+  return core(a).length >= CORE_CHARS && (b.includes(core(a)) || a.includes(core(b)));
 }
+
+/** The comparable middle of a sample, with an edge character trimmed each end. */
+function core(text: string): string {
+  return text.slice(2, -2);
+}
+
+/**
+ * How much of a sample has to survive trimming for a comparison to mean anything.
+ *
+ * Shared with the precondition that guards it, which is the point: written as a
+ * bare `8` here and a bare `8` there, the guard admitted a nine-character sample
+ * that `sameLine` then rejected for having a five-character core --- so a
+ * fixture with short lines reported a **failed** rotation rather than a sample
+ * it could not use. `columns.pdf` is that fixture, and the symptom was a check
+ * whose own detail line showed the two strings being identical.
+ */
+const CORE_CHARS = 8;
 
 /** The box enclosing every character that has one, in the view's own space. */
 function inkBounds(

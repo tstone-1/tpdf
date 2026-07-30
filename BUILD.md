@@ -168,10 +168,19 @@ python3 testdata/make_vector_pdf.py testdata/vector-multi.pdf 200000 12
 uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testdata
 python3 testdata/make_outline_pdf.py testdata
 python3 testdata/make_rotated_pdf.py testdata
+python3 testdata/make_columns_pdf.py testdata
 ```
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
 300 MB file is near-instant" can be tested at 300 MB.
+
+`make_columns_pdf.py` is the only fixture whose *content-stream order* is the point. Its
+three pages are two columns emitted column by column, the same two columns emitted line by
+line across the gutter, and a heading spanning both over the second of those. The first two
+look identical and must read identically, which is an assertion neither page can satisfy by
+agreeing with itself. It writes `columns-manifest.json` beside the PDF, and
+`viewer_check.py` passes any `<stem>-manifest.json` it finds through to the check --- so
+what reading order is compared against is a file a different program wrote.
 
 ---
 
@@ -264,7 +273,7 @@ rather than from anything in this repository.
 Four corpora, every one reporting the **86 check names** that were the invariant then, with
 splits inside the ranges the table above records. Word and line selection took that to **89**
 on 2026-07-30, after this run; the splits below are left as measured rather than adjusted by
-arithmetic. A Windows re-run should expect **107** names --- 21 added since, and the macOS
+arithmetic. A Windows re-run should expect **109** names --- 23 added since, and the macOS
 table further down says which of them skip on which document:
 
 | fixture | ran | skipped | failed |
@@ -902,18 +911,19 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **107 check names**; what differs is how
+Run all seven corpora. Every run reports the same **109 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch. The splits below were all measured on 2026-07-30:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 96 | 11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 102 | 5 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 102 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 62 | 45 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 70 | 37 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 95 | 12 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 96 | 13 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 102 | 7 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 102 | 7 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 62 | 47 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 70 | 39 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 95 | 14 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 93 | 16 | the only one whose content-stream order is not its reading order |
 
 **Diff the names mechanically, and not with a naive split.** `record` pads each name to 40
 characters and then prints the detail, so a name *longer* than that is followed by a single
@@ -930,8 +940,8 @@ which must equal the number of unique lines --- two checks whose first forty cha
 coincide would otherwise merge silently.
 
 **86 until 2026-07-30**, when word and line selection added three, the palette's argument
-mode added five, the two find options added three, the results sidebar added four, and the
-fit modes added six. The
+mode added five, the two find options added three, the results sidebar added four, the fit
+modes added six, and reading order added two. The
 results four skip together on a document with no extractable text, which is why the two
 vector fixtures gained four skips and no runs. The selection three run on every
 corpus with extractable text, rotated included --- line grouping follows the page's own
@@ -941,6 +951,12 @@ find-option three are the same shape: they need a word taken from page 1, so the
 wherever search does. One of them skips on a fixture whose needle is already upper case,
 there being no spelling of it that matching case would reject --- and it says so rather than
 passing on nothing.
+
+The reading-order two run only where a manifest exists, which today is `columns.pdf` alone;
+everywhere else they skip together, which is why every other corpus gained two skips and no
+runs. `columns.pdf` in turn skips two that no other corpus does --- the drag-ordering check,
+whose premise is false on any multi-column layout, and the rotated-lines check, whose samples
+are shorter than it can compare. Both say so.
 
 The fit six run on every corpus but one, and the exception is the informative part:
 `rotated-90` skips *"fitting the page shows less of it than fitting the width"*, because its
@@ -975,7 +991,7 @@ Absolute counts are deliberately not quoted in this paragraph: they move wheneve
 added, and a stale number here would send someone looking for a regression that is a
 changelog entry. The table above is the one place they are written down.
 
-**So the ran/skipped columns are not the invariant** --- the **107 names** are. A count chased
+**So the ran/skipped columns are not the invariant** --- the **109 names** are. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that
@@ -1015,6 +1031,19 @@ done
 src-tauri/target/release/outline-probe testdata/rotated-90.pdf --mode check \
     --manifest testdata/rotated-manifest.json
 ```
+
+`--mode order` is the third mode and asserts nothing --- there is no right answer for it to
+check, because the order a page's characters arrive in is a property of whoever produced the
+file. It prints them, which is the only way to see from outside the viewer that the file's
+order is not the page's:
+
+```
+src-tauri/target/release/text-probe testdata/columns.pdf --page 1 --mode order
+```
+
+On page 1 of that fixture it prints `alpha one beta one`, `alpha two beta two`, and so on ---
+two columns merged line by line, which is what `src/lib/reading.ts` exists to undo, and what
+the clipboard used to get.
 
 `--view-turns` rotates the *view* on top of the page's own `/Rotate`, which is what Cmd-R
 does. All sixteen combinations should report 100% of character boxes on ink with every wrong

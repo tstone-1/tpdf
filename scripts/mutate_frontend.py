@@ -48,6 +48,22 @@ class Mutation:
     expect: str
 
 
+#: Two mutations that belong here and are deliberately absent, because running
+#: them established they are *not* defects --- and a variant that changes no
+#: behaviour looks exactly like a test that cannot fail:
+#:
+#:   * banding `reading.ts`'s characters in arrival order rather than sorted by
+#:     position, and
+#:   * splitting a band at any gap at all rather than at a gutter-sized one.
+#:
+#: Both survive because the design repairs them downstream: `blocksOf` re-applies
+#: the threshold when it decides where the columns are, and `readingLines` merges
+#: fragments that share a band within a block. So over-splitting and mis-banding
+#: are both recoverable, and only *under*-splitting loses information --- which is
+#: the mutation immediately below the two, and which is caught.
+#:
+#: Recorded rather than deleted silently: the next person to notice the gap
+#: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
         "word: do not walk left from the clicked character",
@@ -503,6 +519,98 @@ MUTATIONS = [
         '  if (mode === "page") return "Fit width";',
         "gives each mode its own words",
     ),
+    Mutation(
+        "reading: cut rows before columns",
+        "src/lib/reading.ts",
+        "  const columns = split(spans, (s) => [s.extents.alongStart, s.extents.alongEnd], gap);",
+        "  const columns: Span[][] = [];",
+        "reads two columns down and then across, however they were emitted",
+    ),
+    Mutation(
+        "reading: cut at every row gap rather than the widest",
+        "src/lib/reading.ts",
+        "  const rows = splitOnce(spans, (s) => [s.extents.crossStart, s.extents.crossEnd]);",
+        "  const rows = split(spans, (s) => [s.extents.crossStart, s.extents.crossEnd], gap);",
+        # Predicted as the two-column test and caught by the heading one, which
+        # is the right answer: a row cut only ever happens where no column cut
+        # is available, and a plain two-column page always has one.
+        "keeps a heading that spans the columns above both of them",
+    ),
+    Mutation(
+        "reading: never split a band, however wide the gap",
+        "src/lib/reading.ts",
+        "      if (current.length > 0 && item.extents.alongStart - reach > gap) {",
+        "      if (false) {",
+        "splits a band where the gap is wider than a few characters",
+    ),
+    Mutation(
+        "reading: forget which way a line runs when the page is turned",
+        "src/lib/reading.ts",
+        "    alongSign: at === 2 || at === 3 ? -1 : 1,",
+        "    alongSign: 1,",
+        "reads a rotated page the same way it reads an upright one",
+    ),
+    Mutation(
+        "reading: forget which way the lines advance when the page is turned",
+        "src/lib/reading.ts",
+        "    crossSign: at === 1 || at === 2 ? -1 : 1,",
+        "    crossSign: 1,",
+        "reads a rotated page the same way it reads an upright one",
+    ),
+    Mutation(
+        "reading: take every page as reading left to right",
+        "src/lib/reading.ts",
+        "    sideways: at % 2 === 1,",
+        "    sideways: false,",
+        "puts lines across the page when it is turned a quarter",
+    ),
+    Mutation(
+        "reading: average the character widths rather than taking the median",
+        "src/lib/reading.ts",
+        "  const median = widths[Math.floor(widths.length / 2)] ?? 0;",
+        "  const median = widths.reduce((sum, w) => sum + w, 0) / (widths.length || 1);",
+        "is not moved by one enormous character",
+    ),
+    Mutation(
+        "reading: cut at a fixed distance instead of a multiple of the type",
+        "src/lib/reading.ts",
+        "  return median * CUT_CHARS;",
+        "  return 30;",
+        "scales with the type rather than with the page",
+    ),
+    Mutation(
+        "reading: drop the characters PDFium placed nowhere",
+        "src/lib/reading.ts",
+        """    if (!placed(box)) {
+      const at = trailing.get(last) ?? [];
+      at.push(index);
+      trailing.set(last, at);
+      continue;
+    }""",
+        "    if (!placed(box)) continue;",
+        "returns every character exactly once",
+    ),
+    Mutation(
+        "reading: never notice two lines side by side",
+        "src/lib/reading.ts",
+        "      if (sameBand(bands[a] as Extents, bands[b] as Extents)) return true;",
+        "      if (false) return true;",
+        "is true where two lines sit at the same height",
+    ),
+    Mutation(
+        "reading: copy a range in the order the file was written",
+        "src/lib/reading.ts",
+        "  const wanted = readingOrder(text).filter((index) => index >= start && index < end);",
+        "  const wanted = readingOrder(text)\n    .filter((index) => index >= start && index < end)\n    .sort((a, b) => a - b);",
+        "emits a range in reading order rather than index order",
+    ),
+    Mutation(
+        "reading: sort a line's ranges instead of keeping them ordered",
+        "src/lib/reading.ts",
+        "  for (const range of ranges) {",
+        "  for (const range of [...ranges].sort((a, b) => a.from - b.from)) {",
+        "concatenates the ranges in the order it is given them",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -517,6 +625,7 @@ TEST_FILES = [
     "src/lib/results.test.ts",
     "src/lib/recents.test.ts",
     "src/lib/zoom.test.ts",
+    "src/lib/reading.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

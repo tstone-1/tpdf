@@ -52,6 +52,15 @@ def main() -> int:
 
     env = dict(os.environ, TPDF_VIEWERCHECK=args.pdf)
 
+    # A fixture generated with a manifest states what each of its pages should
+    # read as, and the reading-order checks assert against that rather than
+    # against anything the viewer computed. Passed as a path and read in Rust:
+    # the webview has no filesystem, and the point of the file is that a
+    # different program wrote it.
+    manifest = os.path.splitext(args.pdf)[0] + "-manifest.json"
+    if os.path.exists(manifest):
+        env["TPDF_READING_MANIFEST"] = manifest
+
     # Launched rather than run, so that something can look at the process *while*
     # it holds a document open. `communicate` below gives back the timeout and
     # partial-transcript behaviour `run` had, which the comments underneath are

@@ -36,4 +36,5 @@ testdata/hostile-manifest.json
 testdata/incr-manifest.json
 testdata/outline-manifest.json
 testdata/rotated-manifest.json
+testdata/columns-manifest.json
 __pycache__/
