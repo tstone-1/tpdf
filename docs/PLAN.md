@@ -3105,10 +3105,15 @@ The harness's own cross-check earned its place immediately — it parsed twice a
 as vitest's summary reported, because `FAIL ` matches the file-level block as well as each
 test, and it said so instead of reporting either number.
 
-**Still open, and it is the whole of it:** Windows has no containment.
-`Backend::default_here()` selects in-process off macOS, so hostile input is parsed in the app
-process and it fails open rather than refusing. The viewer working there raises the stakes on
-that rather than settling anything.
+**Was open, and closed on 2026-07-29:** Windows had no containment ---
+`Backend::default_here()` selected in-process off macOS, so hostile input was parsed in the app
+process and it failed open rather than refusing. It now selects workers there, contained by a
+low-integrity token inside a job object, and the evidence is external: `scripts/win_modules.py`
+reads the app process's loaded-module list through Toolhelp and finds no `pdfium`. The control
+that makes that mean anything is the same check *before* the flip, which reported the parser
+mapped. Left as a correction rather than a rewrite, because the paragraph below it is about the
+mark that an uncontained run still records, and that mark is why the two states are
+distinguishable at all.
 
 It is at least no longer silent. The uncontained default records `UNSANDBOXED_MARK` on the
 startup timeline and prints a `[WARN]`, so an uncontained run is distinguishable after the

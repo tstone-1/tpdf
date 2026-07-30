@@ -230,7 +230,14 @@ When CI is added --- the natural trigger is the repo going public, or a second c
 keeps the checklist and the gate the same object rather than two things that happen to
 agree today.
 
-### Windows runs the viewer. It is still not supported.
+### Windows runs the viewer, and how it came to be contained
+
+**Read this section as a timeline, not as a status.** It opens with the state before
+2026-07-29 --- uncontained, failing open --- because the controls taken then are what make the
+later evidence mean anything. The present state is at *Windows no longer fails open* below:
+workers are selected there, proved from outside the process. `AGENTS.md` carried the
+pre-flip wording in its own gates section for a day after the flip, in flat contradiction of
+its own constraints section, which is the hazard this note exists to prevent here.
 
 `scripts/gates.py` reports **8/8 on `x86_64-pc-windows-msvc`**, and on 2026-07-29 a Windows
 build **opened documents and passed the full functional check**. A clean clone bootstraps
@@ -268,10 +275,11 @@ Rendering, scrolling, zoom, pinch, view rotation, text selection, search, the pa
 accessibility tree, the outline sidebar, thumbnails, inversion and the print command's
 refusals all behave as they do on macOS.
 
-**What is missing is containment, not function.** `sandbox_init` is SBPL and macOS-only, so
-`Worker::spawn` refuses off macOS and `Backend::default_here()` falls back to
-`Backend::InProcess`. A Windows build parses attacker-controlled PDF **in the app process**,
-which is exactly what `AGENTS.md` and `docs/THREAT-MODEL.md` forbid. **It fails open**:
+**What was missing then was containment, not function** (superseded 2026-07-29 --- see below).
+`sandbox_init` is SBPL and macOS-only, so `Worker::spawn` refused off macOS and
+`Backend::default_here()` fell back to `Backend::InProcess`. A Windows build parsed
+attacker-controlled PDF **in the app process**, which is exactly what `AGENTS.md` and
+`docs/THREAT-MODEL.md` forbid. **It failed open**:
 `Worker::spawn`'s refusal is asserted by tests, but only a caller that asks for
 `TPDF_BACKEND=worker` ever reaches it --- the default selects in-process and renders perfectly
 happily, so nothing refuses. A port owes a real containment answer (job objects, a restricted
@@ -568,7 +576,9 @@ Cold and warm are indistinguishable here (5155 vs 5105 ms at pool 1, 1100 vs 109
 because a ~9 ms spawn is noise against a 5 s screenful. That is a property of this corpus, not
 a finding about spawn cost.
 
-Still macOS-shaped: `session_check.py` and `open_check.py` want `open -a` and an `.app`, and
+Still macOS-shaped: `open_check.py`'s two Launch Services phases, which skip with stated
+reasons rather than failing --- `session_check.py` needed no porting at all and
+`open_check.py`'s other four phases run --- and
 `webview_guard` checks nothing off darwin (see the trap --- Chromium throttles occluded
 windows too, so those runs were protected by nothing).
 
@@ -772,6 +782,13 @@ Confirm independently with `TPDF_STARTUP=<file> <binary>`, which fails the same 
 and settles "environmental or mine" in one command. Results otherwise print as they are
 produced, so a run that stops partway names the last check it completed.
 
+**That was false under a redirect until 2026-07-30, which is how these are always run.** Python
+block-buffers stdout the moment it is not a tty, so `open_check.py > out.txt` held **zero bytes**
+for a twelve-minute run --- indistinguishable from a script that died at import, and exactly the
+ambiguity printing-as-you-go exists to remove. `scripts/live_output.py` makes the three harnesses
+line-buffered explicitly; A/B'd at the same four-second mark, 0 bytes against 38. Prefer that over
+`python -u`, which is a property of the invocation that every future caller has to remember.
+
 Two of its assertions carry the weight, and both tie a position to specific content rather
 than checking that something happened. For **selection**, text dragged near the top of the
 page must come from earlier in the page's text than text dragged further down --- a substring
@@ -882,6 +899,29 @@ scripts/session_check.py \
     src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf testdata/text-heavy.pdf
 ```
 
+**It runs unmodified on Windows** (2026-07-30), and did on the first attempt --- another
+harness this file listed as macOS-shaped that never was. `webview_guard` already returns early
+off darwin, and the script takes a binary rather than a bundle, so nothing needed porting:
+
+```
+cargo build --release --features tauri/custom-protocol --bin tpdf
+python scripts/session_check.py src-tauri/target/release/tpdf.exe testdata/outline-simple.pdf
+```
+
+All four phases green, both controls included --- the default state differed in all five fields
+from the remembered one, and nothing opened when nothing was remembered. Expect
+`Failed to unregister class Chrome_WidgetWin_0. Error = 1412` on each shutdown: that is
+WebView2 teardown noise on a *passing* run, not a failure.
+
+**Start from a clean process table, and this is not advice.** A leftover `tpdf.exe` hangs the
+next run outright: reproduced twice on 2026-07-30, where the launched app sat at **0.00 CPU**
+for minutes and no phase produced a summary, and both times it passed immediately after
+`Get-Process tpdf,python | Stop-Process -Force`. Same shape as the occlusion warning below for
+`open_check.py`, and worse here because `webview_guard` returns early off darwin, so **nothing
+guards it on Windows** --- Chromium suspends an occluded page exactly as WebKit does. The tell is
+the CPU figure, not the clock: a child holding 0.00 CPU is hung, and a run that is genuinely
+working through four launches is not. Check that before extending a timeout.
+
 Four launches, and the two labelled `control:` are what make the other two mean anything:
 
 | phase | session | argument | asserts |
@@ -926,8 +966,32 @@ scripts/open_check.py \
     --other testdata/outline-simple.pdf
 ```
 
-Note it takes the **`.app` bundle**, not the executable inside it: two phases go through
-Launch Services and there is nothing else to hand `open`.
+Note it takes the **`.app` bundle** on macOS, not the executable inside it: two phases go
+through Launch Services and there is nothing else to hand `open`. **On Windows it takes the
+executable**, built with `--features tauri/custom-protocol`:
+
+```
+python scripts/open_check.py src-tauri/target/release/tpdf.exe \
+    testdata/outline-simple.pdf --other testdata/rotated-90.pdf
+```
+
+Four of the six phases run there and pass --- `argv`, `beats`, `control`, and all four launches
+of `race`. The two that cannot print `[SKIP]` **with the reason**, so the phase-name list is the
+same on both platforms and a reader can diff it:
+
+- `double-click` has no second mechanism to test. An Explorer double-click hands the path over
+  in argv, which `argv` already covers; there is no Launch Services layer to go through.
+- `running` has no route at all. `RunEvent::Opened` is `#[cfg(target_os = "macos")]` and no
+  single-instance plugin is linked, so **a second launch is a second process** --- measured, not
+  inferred: two launches leave two `tpdf.exe` processes with two windows and two worker pools,
+  where macOS produces one app that swaps documents. Whether that is the behaviour to want is a
+  product decision; what is certain is that the *emit* branch this phase exists to exercise is
+  unreachable there, and that was previously unstated in either direction.
+
+`HANDS_OVER_TO_RUNNING` is the single place that distinction lives, and each of the two
+branching phase names is a constant rather than a literal at both call sites --- a name written
+twice eventually differs, and the diff then shows a check that vanished on one platform when
+nothing had.
 
 | phase | delivery | asserts |
 |---|---|---|

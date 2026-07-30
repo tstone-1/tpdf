@@ -26,10 +26,14 @@ import sys
 import threading
 import time
 
+from live_output import stream_results
 from webview_guard import require_visible_session
 
 
 def main() -> int:
+    # Before anything prints: a redirected run is block-buffered otherwise,
+    # and then a partial transcript is an empty file. See `live_output`.
+    stream_results()
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
     parser.add_argument("pdf")

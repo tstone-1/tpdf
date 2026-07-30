@@ -34,6 +34,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from live_output import stream_results
 from webview_guard import require_visible_session
 
 # Kept in step with TARGET in `src/lib/sessioncheck.ts`. Duplicated on purpose:
@@ -130,6 +131,9 @@ def check_recorded_file(session_file: Path, pdf: str) -> bool:
 
 
 def main() -> int:
+    # Before anything prints: a redirected run is block-buffered otherwise,
+    # and then a partial transcript is an empty file. See `live_output`.
+    stream_results()
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
     parser.add_argument("pdf")
