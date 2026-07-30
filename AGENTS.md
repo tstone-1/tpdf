@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 156 entries
+The one thing this file does *not* carry in full is the trap list --- 158 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -239,6 +239,15 @@ So the tally on documented blockers is **four lists wrong this week, always by o
 of six benchmarks and harnesses called macOS-only, two were genuinely gated, one was trapped
 behind a `cfg` it never needed, one had only a hardcoded path, one needed nothing, and one was
 two-thirds portable. Run it before writing it down as blocked.
+
+**The error has a second direction, found 2026-07-30, and it is the quieter one.** The two
+mutation harnesses were on nobody's blocked list --- and `scripts/mutate_rust.py` had never
+executed a single mutation on Windows, dying on `read_text()` before its first one, while
+`scripts/mutate_frontend.py` silently could not find three of its anchors. Both are fixed and
+now report 22/22 and 75/75. Over-reporting a blocker costs a capability nobody uses;
+**under-reporting one costs a check everybody believes ran**, which is the more expensive of
+the two. A harness that has never run on a platform produces no failures there, and neither
+does one that passes.
 
 **Pre-spawning works on Windows too** (2026-07-30), so both platforms now start a worker before
 a file is chosen. The handover is the only part that differs and it had to: a macOS parent
@@ -505,8 +514,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 156 of them and the full text
-was 93% of this file --- an instruction budget spent on the 150 traps that are not
+titles. Only the titles are here, because there are 158 of them and the full text
+was 93% of this file --- an instruction budget spent on the 157 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -628,6 +637,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test for an atomic write must plant the intermediate it is meant to prove
 - A control can be contaminated by the phase that ran before it
 - A check that derives its inputs from the thing it is testing cannot fail
+- A check that navigates from the strip's own focus cannot tell lost focus from lost navigation
 - A page fitted to the element's own width is measured under the scrollbar
 - A synthetic heading that does not reach the second column tests nothing
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion
@@ -662,6 +672,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 - Repeating a race inside one process re-runs the first round, not the race
 - A precondition that names the cause still lets the symptom print
+- A text-mode restore is not a byte restore, and the locale codec cannot even read the file
 - A harness that synthesises input must reset the input's own state machine
 - The last page cannot reach the top of the viewport
 

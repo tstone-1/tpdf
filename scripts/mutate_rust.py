@@ -323,7 +323,22 @@ def main() -> int:
             backup = Path(scratch) / f"{len(list(Path(scratch).iterdir()))}.bak"
             shutil.copy2(target, backup)
             try:
-                source = target.read_text()
+                # Bytes, decoded explicitly. `read_text` uses the locale codec,
+                # and on Windows that is cp1252, which does not merely mangle
+                # this file -- it *cannot read it*: search.rs holds `İ` and `ﬁ`
+                # for the case-folding tests, whose UTF-8 encodings contain the
+                # byte 0x81, and cp1252 leaves 0x81 undefined. So this raised
+                # UnicodeDecodeError on the first mutation and the harness never
+                # ran here at all.
+                #
+                # The newlines are normalised for matching only, because a
+                # Windows checkout is CRLF while the anchors are written with
+                # "\n" -- eight of them span lines. The file's own convention
+                # goes back on the way out, and the restore below is bytes, as
+                # docs/TRAPS.md requires.
+                raw = target.read_bytes().decode("utf-8")
+                crlf = "\r\n" in raw
+                source = raw.replace("\r\n", "\n") if crlf else raw
                 if source.count(mutation.before) != 1:
                     print(
                         f"[FAIL] {mutation.name}: its anchor appears "
@@ -332,10 +347,13 @@ def main() -> int:
                     )
                     problems += 1
                     continue
-                target.write_text(source.replace(mutation.before, mutation.after))
+                mutated = source.replace(mutation.before, mutation.after)
+                if crlf:
+                    mutated = mutated.replace("\n", "\r\n")
+                target.write_bytes(mutated.encode("utf-8"))
                 names, counted, out = run_tests()
             finally:
-                target.write_text(backup.read_text())
+                target.write_bytes(backup.read_bytes())
 
             if counted is None:
                 # Almost always a compile error, which produces no failing-test

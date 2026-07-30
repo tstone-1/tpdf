@@ -3769,3 +3769,82 @@ not what anyone would guess from reading the functions in isolation.
   `scripts/mutate_frontend.py` with a note, so the next person to spot the gap learns it
   was measured rather than overlooked.
 - The third survivor was the real thing and is the entry above.
+
+### A text-mode restore is not a byte restore, and the locale codec cannot even read the file
+
+The entry *Restoring a mutated file by moving a backup over it tests the mutated binary*
+ends by prescribing `target.write_text(backup.read_text())`. Its title says **bytes**; its
+code is a text round trip through the **locale** codec. On macOS those are the same thing,
+because the locale codec is UTF-8. On Windows they are not, and both mutation harnesses
+were wrong in a different way for it.
+
+`scripts/mutate_rust.py` had never run on Windows **at all**. `search.rs` carries `Turkish
+dotted I` (U+0130) and the `fi` ligature (U+FB01) for the case-folding tests; their UTF-8
+encodings contain the byte `0x81`, and cp1252 leaves `0x81` **undefined**. So `read_text()`
+did not mangle the file, it raised `UnicodeDecodeError` on the first mutation and the
+harness died before doing any work.
+
+`scripts/mutate_frontend.py` did run, and reported *3 of 75 mutations were not caught as
+described* --- "its anchor appears 0 times". Two of those anchors hold the Option sign
+(U+2325, one of them the Shift sign beside it) and the third an ellipsis (U+2026), and
+cp1252 had mis-decoded the file, so none of the three could be found in it. That verdict is the honest one and is the only reason any of this was visible: a
+harness that reports "the mutation is not the one described" rather than SURVIVED is saying
+*I could not do the thing*, which is a different claim from *the tests did not notice*.
+
+**And fixing the encoding alone made it worse --- three failures became twelve.** The
+discarded `read_text` was also translating CRLF to LF, and every anchor in both harnesses is
+written with a bare newline while a Windows checkout is CRLF; eight of the Rust anchors and
+several front-end ones span lines. The universal-newline translation had been doing load-bearing
+work that nothing named, on the same call that was breaking everything else.
+
+So the shape that is actually right, and it is three separate decisions rather than one:
+
+- **Read bytes and decode UTF-8 explicitly.** The file's encoding is a property of the file,
+  never of the machine reading it.
+- **Normalise newlines for matching only**, then put the file's own convention back, so the
+  mutation is the sole difference on disk.
+- **Restore from the backup as bytes** --- which is what the earlier entry meant, and now
+  says in code as well as in its title. It must still be a *write*, because that entry's
+  whole point is that `copy2` preserves an mtime and cargo then serves the last mutation.
+
+Verified rather than assumed, in both directions: `Path('src-tauri/src/search.rs').read_text()`
+raises here, and after the change both harnesses report **22/22** and **75/75** caught, with
+every touched file digest-identical to `HEAD`.
+
+The lesson worth carrying past this file: **a harness that has never run on a platform looks
+exactly like one that passes there**, because neither produces a failure. Four documented
+Windows blockers had already been found wrong by over-reporting; this is the same error with
+the sign flipped --- two harnesses nobody had listed as blocked, one of which could not start.
+
+### A check that navigates from the strip's own focus cannot tell lost focus from lost navigation
+
+`activating a thumbnail goes to its page` failed once in three Windows runs of
+`vector-multi`, with `from page 1 to 1, wanted 7`, and passed on every other corpus and on
+the two later runs of that one.
+
+The strip's Enter handler is `this.opts.onNavigate(this.focused)` --- its **own** focus, not
+the element the event reached. `focused` starts at 0 and is synced from the DOM only by a
+`focusin` listener. So a `focus()` that does not land leaves it at 0, Enter navigates to
+page 1, and the detail line is **character for character** what "Enter never reached the
+handler" would print. One symptom, two causes, and they want opposite fixes.
+
+Three explanations were ruled out before touching anything, and the third is the useful one:
+
+- The row cannot be detached: `mount` does `appendChild` *before* `rows.set`, so nothing in
+  the map is ever out of the document.
+- Nothing resets `focused` to 0 --- there are exactly three assignments and none of them can.
+- **Contention was tested rather than assumed, and the guess was wrong.** The failing run had
+  a mutation harness running beside it, which is an obvious explanation for a timing-sensitive
+  check; re-running `vector-multi` under deliberate concurrent load passed 70/39, identical to
+  the quiet run. Had that not been tried, "it was CPU load" would have been written down here
+  as the cause.
+
+The check now records whether `document.activeElement` is the row and prints it beside the
+failure. Proved by mutation, not by inspection: deleting the `focus()` call yields
+`from page 1 to 1, wanted 2, and focus never landed on the row (connected=true)` --- the same
+symptom with its cause named, and `connected=true` disposing of the detachment theory in the
+transcript itself rather than in someone's memory.
+
+**The intermittent is not explained, and is recorded here as open.** It was seen once, on the
+first --- and therefore cold --- open of that fixture on this machine, and has not recurred in
+two later runs. What has changed is that the next occurrence will say which half failed.

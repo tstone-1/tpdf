@@ -3049,12 +3049,20 @@ async function navigateFromStrip(
   }
 
   element.focus();
+  // Focus is this check's *precondition*, not part of what it asserts: the
+  // strip navigates to its own focused row, so a `focus()` that did not land
+  // leaves that row at page 0 and Enter goes to page 1 --- which prints as
+  // "from page 1 to 1" and reads as a broken navigation rather than as lost
+  // focus. Recorded rather than asserted, because the two failures want
+  // different fixes and the detail line is what says which one happened.
+  const landed = document.activeElement === element;
   key(element, "Enter");
   await settle(() => viewer.position.page === target);
   check(
     name,
     viewer.position.page === target,
-    `from page ${here + 1} to ${viewer.position.page + 1}, wanted ${target + 1}`,
+    `from page ${here + 1} to ${viewer.position.page + 1}, wanted ${target + 1}` +
+      (landed ? "" : `, and focus never landed on the row (connected=${element.isConnected})`),
   );
 }
 
