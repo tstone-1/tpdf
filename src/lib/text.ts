@@ -136,24 +136,67 @@ export interface Quad {
 }
 
 /**
- * Per-page text, fetched once.
+ * Characters held across every cached page before the least recently used are
+ * dropped.
+ *
+ * A character costs about 40 bytes here --- one code point plus four box
+ * coordinates, each a JavaScript number --- so this is roughly 16 MB. A page of
+ * ordinary prose is two to three thousand characters, which makes the bound
+ * something like 150 pages of a book and rather more of a technical manual.
+ *
+ * Counted in characters rather than in pages because characters are what the
+ * memory actually tracks, and page size varies by three orders of magnitude
+ * across this repository's own corpus: `text-base14` has 177 characters a page
+ * and `vector-heavy` has none at all. A bound of "128 pages" would mean sixteen
+ * megabytes on one document and a few kilobytes on another.
+ */
+export const TEXT_CACHE_CHARS = 400_000;
+
+/**
+ * Pages kept whatever they cost, so the bound cannot evict what is on screen.
+ *
+ * Without it a single page larger than the whole budget would empty the cache
+ * on arrival and then be dropped itself, and a viewport spanning two pages would
+ * re-fetch both on every frame --- a bound that turns a memory concern into an
+ * IPC storm. Eight covers a viewport and its overscan.
+ */
+export const TEXT_CACHE_FLOOR = 8;
+
+/**
+ * Per-page text, fetched once and dropped when the cache outgrows its bound.
  *
  * Extraction measured 1.4 ms on a dense page and the page's own load dominates
  * on a complex one (`text-probe --mode extract`), so the cache is about avoiding
- * an IPC round trip during a drag, not about avoiding PDFium. It is unbounded:
- * a page's characters are a few hundred kilobytes at worst and a reader visits
- * tens of pages, not thousands.
+ * an IPC round trip during a drag, not about avoiding PDFium. Re-fetching an
+ * evicted page is therefore cheap; holding every page a reader ever visits is
+ * what is not.
  *
- * Search does not change that --- the matching happens in Rust and only the hits
- * cross, so a whole-document scan never touches this. What can still grow it is
- * a reader stepping through hits on a thousand different pages, since each jump
- * loads the page it lands on to know where to scroll. That wants a bound and
- * does not have one.
+ * Search is what made a bound necessary, and not in the obvious way. The
+ * matching happens in Rust and only the hits cross, so a whole-document scan
+ * never touches this at all. What grows it is a reader **stepping through** the
+ * hits: each jump loads the page it lands on to know where to scroll, so 5,712
+ * matches over 775 pages is 775 pages of characters retained by a reader holding
+ * down Cmd-G.
+ *
+ * Eviction is least-recently-used, with `peek` counting as a use --- it is what
+ * the paint path calls, so the pages on screen are continuously the youngest and
+ * are the last things that could be dropped. The newest page is never evicted
+ * while any other remains, because the scan starts at the old end and a page
+ * just inserted is at the young one.
  */
 export class TextCache {
   private readonly doc: number;
+  /**
+   * Cached pages, in **least-recently-used order**.
+   *
+   * A `Map` iterates in insertion order and re-inserting a key moves it to the
+   * end, which is the whole of the LRU bookkeeping: {@link touch} deletes and
+   * re-sets, and the eviction scan takes keys from the front.
+   */
   private readonly pages = new Map<number, PageText>();
   private readonly pending = new Map<number, Promise<PageText | null>>();
+  /** Characters across `pages`, maintained rather than recomputed. */
+  private chars = 0;
   /**
    * Pages already turned into the current view, so a drag does not re-turn a
    * few thousand boxes on every pointer move. Dropped whole when the view
@@ -181,9 +224,70 @@ export class TextCache {
     this.turned.clear();
   }
 
+  /** Pages held. For the check harness and the tests. */
+  get cachedPages(): number {
+    return this.pages.size;
+  }
+
+  /** Characters held across those pages. For the check harness and the tests. */
+  get cachedChars(): number {
+    return this.chars;
+  }
+
+  /**
+   * Turned views held. For the tests.
+   *
+   * Exposed because it is the only way to see this half of the cache at all: a
+   * turned view left behind by an eviction is unreachable through {@link peek},
+   * which asks `pages` first and never reaches `turned` for a page that is gone.
+   * The entry would sit there for the life of the document, invisible, which is
+   * exactly a leak that no behavioural assertion can fail on.
+   */
+  get retainedViews(): number {
+    return this.turned.size;
+  }
+
   /** A page's text if it has already arrived, without asking for it. */
   peek(page: number): PageText | null {
-    return this.view(page, this.pages.get(page));
+    const text = this.pages.get(page);
+    // Counted as a use. This is the paint path, so what is on screen stays the
+    // youngest entry and cannot be evicted out from under the frame drawing it.
+    if (text !== undefined) this.touch(page);
+    return this.view(page, text);
+  }
+
+  /** Moves a page to the young end of the eviction order. */
+  private touch(page: number): void {
+    const text = this.pages.get(page);
+    if (text === undefined) return;
+    this.pages.delete(page);
+    this.pages.set(page, text);
+  }
+
+  /**
+   * Takes a newly arrived page into the cache and drops the oldest until it fits.
+   *
+   * Only ever called for a page the cache does **not** hold: {@link load}
+   * returns from `pages` before it issues a request, and `pending` dedupes two
+   * callers racing for the same one. A `chars` correction for an entry being
+   * replaced was written here first and no mutation of it could go red, which is
+   * what says it was unreachable rather than merely untested.
+   */
+  private remember(page: number, text: PageText): void {
+    this.pages.set(page, text);
+    this.chars += text.codes.length;
+
+    // Deleting during iteration is defined for a Map, and iterating from the
+    // front is what makes this least-recently-used rather than arbitrary.
+    for (const oldest of this.pages.keys()) {
+      if (this.chars <= TEXT_CACHE_CHARS || this.pages.size <= TEXT_CACHE_FLOOR) break;
+      this.chars -= this.pages.get(oldest)?.codes.length ?? 0;
+      this.pages.delete(oldest);
+      // The turned view is derived from the page and keyed the same way. Leaving
+      // it behind would move the leak rather than fix it, and on a rotated
+      // document it is the *larger* of the two maps.
+      this.turned.delete(oldest);
+    }
   }
 
   /** The cached view of a page, turning and memoising it on first use. */
@@ -207,14 +311,17 @@ export class TextCache {
    */
   async load(page: number): Promise<PageText | null> {
     const cached = this.pages.get(page);
-    if (cached) return this.view(page, cached);
+    if (cached) {
+      this.touch(page);
+      return this.view(page, cached);
+    }
 
     const existing = this.pending.get(page);
     if (existing) return existing;
 
     const request = invoke<PageText>("page_text", { doc: this.doc, page })
       .then((text) => {
-        this.pages.set(page, text);
+        this.remember(page, text);
         // Turned on the way out rather than on the way in, so a rotation that
         // lands while the request is in flight is still honoured: the view is
         // read at the moment it is asked for, not at the moment it was sent.

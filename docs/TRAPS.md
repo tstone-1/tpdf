@@ -3592,3 +3592,37 @@ rule keyed by SKU, a permission string keyed by role. **The lookup restricts the
 the inputs that happen to exist today**, and the combination nobody uses is exactly where a
 disagreement can sit undisturbed. Split the computation from the lookup and the coverage
 follows.
+
+### A leak no behaviour can see needs an accounting observable, not a cleverer assertion
+
+`TextCache` holds two maps: the pages as extracted, and the rotated views derived from them.
+Evicting a page has to drop both, or the leak moves rather than closing --- and on a rotated
+document the derived map is the larger of the two.
+
+The test written for it asserted the obvious behavioural consequence: after eviction,
+`peek(evicted)` is null. It passed. It also passed with the `turned.delete` line removed,
+and it could never have done anything else, because `view` consults `pages` first and never
+reaches `turned` for a page that has gone. The stale entry sits there for the life of the
+document, unreachable by any caller, invisible to every assertion about what the cache
+*returns*. That is what a leak is: memory nothing can observe through the front door.
+
+**The tell is that the property is about retention, and every assertion available was about
+results.** No amount of rewriting a behavioural check reaches it. What does is exposing the
+count --- `retainedViews` --- and asserting it stays equal to the number of pages held. One
+getter, and the mutation goes red.
+
+Two things worth taking from it beyond this class:
+
+- **A cache with a derived second tier has two things to evict**, and only the primary one is
+  visible in the API. The same shape appears in a memo keyed by the same id, a rendered-string
+  cache beside an object cache, a prepared-statement map beside a connection map. Grep for
+  every `Map` keyed by the thing being evicted, not just the one being read.
+- **Exposing an internal count for a test is not always a leaky seam.** It is when the count
+  is an implementation detail standing in for behaviour. It is not when the *claim itself* is
+  about resources --- there is no other language for "this does not grow", and refusing the
+  getter means shipping the claim untested.
+
+Its sibling in the same review is the other direction: a guard that no mutation could break
+because the path reaching it had already excluded its condition. That one is deleted; this
+one is kept and made observable. Which of the two applies is decided by asking whether the
+code does anything --- not by how untestable it looks.
