@@ -38,7 +38,6 @@ use tpdf_lib::render::{
 };
 use tpdf_lib::worker;
 use tpdf_lib::worker::phys_footprint;
-// The child half exists only on unix --- see the module note in `worker.rs`.
 use tpdf_lib::worker_child;
 
 /// An idle timeout no run of the speedup mode reaches.

@@ -497,6 +497,37 @@ ms/Mpixel at every tile size and scale, with no per-call floor at all. Read that
 result on its own and **not** as a comparison --- macOS measured `text-heavy.pdf`, which this
 machine has not generated, so the two cheap-page numbers are different fixtures.
 
+### `pool-bench` on Windows: what a pool buys a screenful
+
+```
+cargo run --release --bin pool-bench -- testdata/vector-heavy.pdf --tiles 6 --rounds 4 --sizes 1,2,4,6,8
+```
+
+Six 1024² tiles of the A0 page, which is what one screenful is. Two runs, so the stable
+conclusions can be told from the noisy ones:
+
+| pool | run A | run B | macOS (spike 0.5) |
+|---|---|---|---|
+| 1 | 5105 ms, 1.00× | 5176 ms, 1.00× | 1.00× |
+| 2 | 1.34× | 1.52× | --- |
+| 4 | 1.99× | 2.29× | 2.56× |
+| 6 | **3.59×** | **3.60×** | **3.22×** |
+| 8 | 3.60× | 3.54× | nothing further |
+
+**The shape reproduces exactly**: monotone gains to six and nothing at eight, which is the
+capacity ceiling doing its job. Six is stable to within 0.01× across runs and is slightly
+*better* than macOS.
+
+**Do not read the middle rows as a platform difference.** Pool 2 moved 1.34 → 1.52× and pool 4
+1.99 → 2.29× between two identical runs, and the per-round warm figures span ±20% (pool 2: 2625
+to 3894 ms). Only the pool-6 result and the flat pool-8 result are outside that spread. The
+per-round table is printed for exactly this reason --- a single speedup column would have made
+the intermediate points look like measurements.
+
+Cold and warm are indistinguishable here (5155 vs 5105 ms at pool 1, 1100 vs 1094 at pool 6),
+because a ~9 ms spawn is noise against a 5 s screenful. That is a property of this corpus, not
+a finding about spawn cost.
+
 Still macOS-shaped: `session_check.py` and `open_check.py` want `open -a` and an `.app`, and
 `webview_guard` checks nothing off darwin (see the trap --- Chromium throttles occluded
 windows too, so those runs were protected by nothing).

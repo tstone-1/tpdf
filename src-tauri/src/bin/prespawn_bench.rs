@@ -52,7 +52,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tpdf_lib::worker::{self, PreWorker, Request, Shm, WarmWorker, Worker};
-// The child half exists only on unix --- see the module note in `worker.rs`.
 use tpdf_lib::worker_child;
 
 /// Documents chosen to span the parse cost while sharing every fixed cost.

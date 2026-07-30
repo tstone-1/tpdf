@@ -61,7 +61,22 @@ pub fn main(args: &[String]) -> ! {
             // stderr is inherited from the parent precisely so this is visible.
             // A worker that dies silently is the hardest failure here to
             // diagnose, and the parent can only report an epitaph.
-            eprintln!("[worker] {message}");
+            //
+            // **One write, not `eprintln!`**, and the difference is not style.
+            // Rust's stderr is unbuffered and `write_fmt` issues a separate
+            // write per format piece --- the literal, then the argument, then the
+            // newline. Every worker of every pool inherits *this* handle, so with
+            // a pool of six across five services those writes interleave, and a
+            // reader can be left holding `[worker] ` with no message after it.
+            // That is indistinguishable from a worker that failed with an empty
+            // reason, which is the one thing this line exists to rule out. Seen
+            // once during a `pool-bench` run of ~120 workers; every error path
+            // that reaches here produces non-empty text, and it did not recur on
+            // a stderr channel of its own.
+            let line = format!("[worker] {message}\n");
+            // Best effort by design: this is the last thing the process does and
+            // there is nowhere to report a failed report to.
+            let _ = std::io::stderr().write_all(line.as_bytes());
             1
         }
     };

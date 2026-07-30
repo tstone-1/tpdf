@@ -2913,3 +2913,31 @@ that predated it. What is worth carrying past the instance:
   thing to grep for when it is written.
 - **The delta that shows up is the size of the thing you forgot**, which is the fastest way to
   identify it: five handles is one worker, and one worker that nobody asked for is a spare.
+
+### `eprintln!` is not one write, and every worker shares the parent's stderr
+
+A `pool-bench` run of about 120 worker processes ended with a line reading exactly `[worker] `
+--- the prefix of the diagnostic a dying worker prints, with no message behind it. That reads as
+a worker that failed with an empty reason, which is precisely the silent death the line exists to
+rule out.
+
+It is not. Every error path reaching that `eprintln!` was checked and all of them produce
+non-empty text, and it did not recur across two runs with stderr on a handle of its own,
+including the same corpus and the same pool sizes. The mechanism is the macro: Rust's stderr is
+**unbuffered**, and `write_fmt` issues a separate write per format piece --- the literal, then the
+argument, then the newline. Every worker of every pool inherits the same handle, so those writes
+interleave between processes and a reader can be left holding one piece.
+
+Three things follow, and the third is the one that generalises furthest:
+
+- **A diagnostic that must survive is one `write_all` of one `String`.** `format!` first, write
+  once. It costs an allocation on a path that is about to call `exit`.
+- **Two capture channels are not equivalent, and the convenient one is the worse one.** The
+  fragment appeared under PowerShell `> file 2>&1`; `Start-Process -RedirectStandardError` on a
+  handle of its own did not show it. When a diagnostic looks malformed, re-capture before
+  believing it --- `AGENTS.md` already records piping through `tail` for the same reason, and this
+  is that hazard arriving through a shell redirect instead.
+- **The failure mode is the worst-shaped one available**: an interleaved fragment does not look
+  like corruption, it looks like a *finding* --- a worker with an empty error. A channel that can
+  drop half a message will eventually drop the half that carried the meaning, and what arrives is
+  a plausible bug report about something else.
