@@ -1356,6 +1356,23 @@ export class Viewer {
     void this.goToMatch(this.currentMatch - 1);
   }
 
+  /**
+   * Moves to a particular match, by its index in {@link searchMatches}.
+   *
+   * What the results panel calls. Out-of-range wraps rather than being refused,
+   * which is the same rule the two steppers get and matters here for the same
+   * reason: the list a row was clicked in can be one reply older than the list
+   * the index is resolved against.
+   */
+  showMatch(index: number): void {
+    void this.goToMatch(index);
+  }
+
+  /** Index of the current match in {@link searchMatches}, or -1. */
+  get matchIndex(): number {
+    return this.currentMatch;
+  }
+
   /** Matches found so far. For the check harness. */
   get searchMatches(): readonly Match[] {
     return this.searcher.matches;

@@ -264,7 +264,7 @@ rather than from anything in this repository.
 Four corpora, every one reporting the **86 check names** that were the invariant then, with
 splits inside the ranges the table above records. Word and line selection took that to **89**
 on 2026-07-30, after this run; the splits below are left as measured rather than adjusted by
-arithmetic, and a Windows re-run should expect 97 names: six more running on the two text
+arithmetic, and a Windows re-run should expect 101 names: ten more running on the two text
 corpora, and five that run on every document:
 
 | fixture | ran | skipped | failed |
@@ -901,21 +901,23 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all six corpora. Every run reports the same **97 check names**; what differs is how
+Run all six corpora. Every run reports the same **101 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch. The splits below were all measured on 2026-07-30:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 86 | 11 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 93 | 4 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 92 | 5 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 56 | 41 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 64 | 33 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 86 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `text-heavy.pdf` | 90 | 11 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 96 | 5 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 96 | 5 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 56 | 45 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 64 | 37 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 90 | 11 | every page at `/Rotate 90`, which nothing else in the corpus has |
 
 **86 until 2026-07-30**, when word and line selection added three, the palette's argument
-mode added five, and the two find options added three. The selection three run on every
+mode added five, the two find options added three, and the results sidebar added four. The
+results four skip together on a document with no extractable text, which is why the two
+vector fixtures gained four skips and no runs. The selection three run on every
 corpus with extractable text, rotated included --- line grouping follows the page's own
 reading axis, so there is nothing in them that assumes lines advance downwards --- and skip
 together on the two vector fixtures, which is why those gained three skips and no runs. The
@@ -950,7 +952,7 @@ Absolute counts are deliberately not quoted in this paragraph: they move wheneve
 added, and a stale number here would send someone looking for a regression that is a
 changelog entry. The table above is the one place they are written down.
 
-**So the ran/skipped columns are not the invariant** --- the **97 names** are. A count chased
+**So the ran/skipped columns are not the invariant** --- the **101 names** are. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that
@@ -1200,14 +1202,17 @@ starts at 0 and increments within the month.
    says the tests can fail:
 
    ```
-   scripts/mutate_rust.py          # search.rs, 16 mutations, `cargo test --lib search::`
-   scripts/mutate_frontend.py      # text/clicks/commands/keys/search.ts, 27 mutations
+   scripts/mutate_rust.py          # search.rs, 22 mutations, `cargo test --lib search::`
+   scripts/mutate_frontend.py      # text/clicks/commands/keys/search/results.ts, 42 mutations
    ```
 
    Each mutation names the test expected to notice, and a mutation nothing caught is
-   reported as a defect in the **suite**. Both cross-check the failure count two ways and
-   treat a run with no summary line as broken rather than as a survivor. `--list` prints the
-   pairs without running anything.
+   reported as a defect in the **suite**. Three properties keep that verdict honest: both
+   cross-check the failure count two ways, both treat a run with no summary line as broken
+   rather than as a survivor, and both **refuse to start** if a mutation names a test the
+   suite does not define --- derived from the runner's own listing, since a name that cannot
+   go red reports SURVIVED and reads as a gap in the tests. `--list` prints the pairs without
+   running anything.
 
 8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run

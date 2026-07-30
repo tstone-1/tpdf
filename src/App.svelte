@@ -767,6 +767,12 @@
           viewer?.goToDestination(target, top);
           viewer?.focus();
         },
+        results: {
+          // Focus stays where it was, unlike an outline row. A reader picking
+          // hits off this list is comparing them, and taking focus to the page
+          // after each one means clicking back into the panel to try the next.
+          onPick: (index) => viewer?.showMatch(index),
+        },
         pages: {
           doc: doc.id,
           pageCount: doc.page_count,
@@ -799,6 +805,18 @@
           // Same reasoning as the rotation above: the strip follows the view
           // however the inversion was reached, rather than only via the command.
           sidebar?.setInvert(next.invert);
+          // Same reasoning again, and it is the whole wiring for the results
+          // tab: the panel follows the scan through the status, so it is fed
+          // whether the search came from the find field, the palette, or a
+          // toggle rescanning what was already there.
+          if (viewer) {
+            sidebar?.results.update(
+              viewer.searchMatches,
+              viewer.matchIndex,
+              next.search.query,
+              next.search.running,
+            );
+          }
           notePlace();
         },
         onPosition: (at, top) => {

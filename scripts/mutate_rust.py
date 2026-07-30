@@ -107,8 +107,8 @@ MUTATIONS = [
     Mutation(
         "match: end the span by arithmetic instead of through the source map",
         "src/search.rs",
-        "            end: hay.source[end - 1] + 1,",
-        "            end: hay.source[at] + needle.chars.len() as u32,",
+        "        let stop = hay.source[end - 1] as usize + 1;",
+        "        let stop = start + needle.chars.len();",
         "a_multi_character_lowercase_still_maps_back",
     ),
     Mutation(
@@ -182,6 +182,48 @@ MUTATIONS = [
         "a_whole_word_search_skips_the_word_it_is_part_of",
     ),
     Mutation(
+        "context: take the words after the hit from before it",
+        "src/search.rs",
+        "            before: slice_of(&text.codes, start.saturating_sub(CONTEXT_CHARS)..start),",
+        "            before: slice_of(&text.codes, start..(start + CONTEXT_CHARS).min(text.codes.len())),",
+        "a_hit_carries_the_words_on_either_side_of_it",
+    ),
+    Mutation(
+        "context: run off the end of the page instead of clamping",
+        "src/search.rs",
+        "                stop..(stop + CONTEXT_CHARS).min(text.codes.len()),",
+        "                stop..(stop + CONTEXT_CHARS),",
+        "context_stops_at_the_ends_of_the_page",
+    ),
+    Mutation(
+        "context: take everything before the hit, not a bounded window",
+        "src/search.rs",
+        "start.saturating_sub(CONTEXT_CHARS)..start",
+        "0..start",
+        "context_is_bounded_and_the_hit_is_not",
+    ),
+    Mutation(
+        "context: show the query instead of what the page says",
+        "src/search.rs",
+        "            hit: exact_of(&text.codes, start..stop),",
+        "            hit: query.to_string(),",
+        "the_hit_is_the_page_text_and_not_the_query",
+    ),
+    Mutation(
+        "context: collapse the whitespace inside the hit as well",
+        "src/search.rs",
+        "            hit: exact_of(&text.codes, start..stop),",
+        "            hit: slice_of(&text.codes, start..stop),",
+        "context_collapses_line_breaks_but_the_hit_keeps_them",
+    ),
+    Mutation(
+        "context: leave the line breaks in the words around the hit",
+        "src/search.rs",
+        "        if ch.is_whitespace() {\n            if !out.ends_with(' ') {\n                out.push(' ');\n            }\n            continue;\n        }",
+        "",
+        "context_collapses_line_breaks_but_the_hit_keeps_them",
+    ),
+    Mutation(
         "page: report the query's length rather than the page's",
         "src/search.rs",
         "        chars: text.len() as u32,",
@@ -193,6 +235,8 @@ MUTATIONS = [
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.
 FAILED_TEST = re.compile(r"^test (\S+) \.\.\. FAILED$", re.M)
 SUMMARY = re.compile(r"^test result: \w+\. \d+ passed; (\d+) failed", re.M)
+#: `--list` prints `search::tests::a_match_is_found_where_it_is: test`.
+LISTED_TEST = re.compile(r"^(\S+): test$", re.M)
 
 
 def run_tests() -> tuple[set[str], int | None, str]:
@@ -210,6 +254,19 @@ def run_tests() -> tuple[set[str], int | None, str]:
     summary = SUMMARY.search(out)
     counted = int(summary.group(1)) if summary else None
     return names, counted, out
+
+
+def all_test_names() -> set[str]:
+    """Every test the filter selects, from libtest's own listing."""
+    done = subprocess.run(
+        ["cargo", "test", "--lib", FILTER, "--", "--list"],
+        cwd=CRATE,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    out = done.stdout + done.stderr
+    return {m for m in LISTED_TEST.findall(out)}
 
 
 def main() -> int:
@@ -232,6 +289,21 @@ def main() -> int:
         print(f"[FAIL] the control run is not green: {counted} failed, {sorted(names)}")
         return 1
     print("[OK]   control green", flush=True)
+
+    # The same cross-check the front-end harness carries, and for the same
+    # reason: an `expect` naming a test that does not exist cannot go red, so the
+    # run prints SURVIVED and the fault reads as a gap in the suite. Derived from
+    # libtest's own list rather than from a hand-kept table.
+    known = all_test_names()
+    unknown = [m for m in MUTATIONS if not any(m.expect in name for name in known)]
+    if unknown:
+        for mutation in unknown:
+            print(
+                f"[FAIL] {mutation.name}: no test here is named {mutation.expect!r} -- "
+                "it cannot go red, so this mutation would report SURVIVED"
+            )
+        return 1
+    print(f"[OK]   every mutation names one of the {len(known)} tests", flush=True)
 
     problems = 0
     with tempfile.TemporaryDirectory(prefix="tpdf-mutate-rs-") as scratch:

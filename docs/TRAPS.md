@@ -3626,3 +3626,33 @@ Its sibling in the same review is the other direction: a guard that no mutation 
 because the path reaching it had already excluded its condition. That one is deleted; this
 one is kept and made observable. Which of the two applies is decided by asking whether the
 code does anything --- not by how untestable it looks.
+
+### A mutation naming a test the harness cannot run reports SURVIVED
+
+`mutate_frontend.py` runs vitest. One of its mutations --- page numbers drawn from zero
+instead of one --- named *"a row shows the words around its hit"* as the test that should
+notice, and that is a check in `viewer_check.py`, which runs a real webview and is not part
+of this harness at all. The mutation was applied, vitest went green, and the run printed
+**SURVIVED**.
+
+That is the most misleading verdict a mutation pass can produce, and this file already says
+so about a different cause: it reads as *"your tests have a hole"* and sends the next hour
+into writing a test that already exists somewhere else. Here the code was fine, the coverage
+was fine, and the harness was pointed at the wrong suite.
+
+The fix is a cross-check the harness can make against itself, and it costs four lines: derive
+the set of test names from the control run --- vitest's `--reporter=verbose`, libtest's
+`--list` --- and refuse to start if any `expect` does not appear in it. Both harnesses now do
+this, and both print the number of tests they matched against, so a listing that silently
+returned nothing cannot read as "all names valid".
+
+Three things worth carrying:
+
+- **A hand-written name that refers to something in another system is a foreign key with no
+  constraint on it.** Test names, fixture ids, feature flags, translation keys, metric names.
+  Whatever enumerates them at runtime is the constraint; wire it up rather than being careful.
+- **Validate before running, not while running.** The check is in the control phase, so the
+  answer arrives in a second rather than after a twelve-minute pass whose result is void.
+- **Prove the guard fires.** Pointing one `expect` at a name that does not exist and watching
+  the harness refuse takes ten seconds, and this repository has already recorded the cost of
+  a safety net whose only evidence was that it kept passing.
