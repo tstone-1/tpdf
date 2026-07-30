@@ -35,6 +35,7 @@ import tempfile
 from pathlib import Path
 
 from live_output import stream_results
+from stray import clear_strays
 from webview_guard import require_visible_session
 
 # Kept in step with TARGET in `src/lib/sessioncheck.ts`. Duplicated on purpose:
@@ -142,6 +143,11 @@ def main() -> int:
 
     if not require_visible_session():
         return 1
+
+    # Before the first launch, not between phases: each phase already waits for its
+    # own process to exit, so a stray here came from an *earlier* run. See `stray`
+    # for why one silently absorbs every later launch on Windows.
+    clear_strays(Path(args.binary))
 
     pdf = str(Path(args.pdf).resolve())
 

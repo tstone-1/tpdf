@@ -14,6 +14,8 @@ pub mod outline;
 pub mod print;
 #[cfg(target_os = "macos")]
 pub mod print_macos;
+#[cfg(windows)]
+pub mod print_win;
 pub mod progressive;
 mod protocol;
 mod queue;
@@ -467,19 +469,73 @@ fn present_job(
     .map_err(|e| e.to_string())
 }
 
-/// The Windows side, which is not written.
+/// Hands built bytes to Windows, having first read them back.
 ///
-/// An error rather than a no-op: everything in this repository is macOS-only
-/// until a Windows build has actually run, and a print command that quietly
-/// does nothing is the worse of the two failures.
-#[cfg(not(target_os = "macos"))]
+/// Structurally the same as the macOS arm above and for the same reasons: an
+/// independent parser reads the job, the page count is checked against what was
+/// asked for, and only then does a panel open. `Windows.Data.Pdf` stands where
+/// PDFKit stands --- the operating system's own PDF stack, independent of the
+/// `lopdf` that wrote the job and of the PDFium that drew what the reader saw.
+/// Refusing here costs a dialog; not refusing costs paper.
+///
+/// Two differences from macOS, both real and neither a shortcut. Windows has no
+/// in-box PDF print API, so `print_win::present` rasterises each page onto the
+/// printer's device context --- see that module for what raster output costs. And
+/// the dialog is modal on the calling thread, so it runs on a blocking task rather
+/// than through `run_on_main_thread`: `PrintDlgW` pumps its own message loop, and
+/// occupying Tauri's main thread with it would freeze the window behind it for as
+/// long as the panel is open.
+#[cfg(windows)]
+fn present_job(
+    app: &tauri::AppHandle,
+    bytes: Vec<u8>,
+    title: String,
+    expected: Option<usize>,
+) -> Result<(), String> {
+    let reading = print_win::read(&bytes)
+        .ok_or("the print job could not be read back, so it will not be printed")?;
+    print::expect_pages(reading.pages.len(), expected)?;
+
+    // The owner window, so the panel is modal to the document rather than floating
+    // free. `None` is degradation and not failure: a print dialog with no owner is
+    // still a print dialog, where refusing to print because a window handle could
+    // not be found would be a worse outcome than a slightly misplaced panel.
+    // Carried across the thread boundary as an integer, not as an `HWND`. A raw
+    // handle is a `*mut c_void` and therefore not `Send`, and the compiler is right
+    // to say so in general --- but a window handle is a process-wide kernel-managed
+    // value with no thread affinity for this use, and `PrintDlgW` only ever reads
+    // it to parent a dialog. Reconstructed on the far side rather than smuggled
+    // through a wrapper type, so the one unsound-looking step is one line and is
+    // where the reasoning is written down.
+    let owner = {
+        use tauri::Manager;
+        app.get_webview_window("main")
+            .and_then(|w| w.hwnd().ok())
+            .map(|h| h.0 as isize)
+    };
+
+    std::thread::spawn(move || {
+        let owner = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void));
+        if let Err(e) = print_win::present(&bytes, &title, owner) {
+            eprintln!("[print] {e}");
+        }
+    });
+    Ok(())
+}
+
+/// The remaining platforms, where nothing is written.
+///
+/// An error rather than a no-op: a print command that quietly does nothing is the
+/// worse of the two failures. Both shipping targets have an implementation above,
+/// so this arm exists for a Linux build that does not yet exist.
+#[cfg(not(any(target_os = "macos", windows)))]
 fn present_job(
     _app: &tauri::AppHandle,
     _bytes: Vec<u8>,
     _title: String,
     _expected: Option<usize>,
 ) -> Result<(), String> {
-    Err("printing is implemented on macOS only".into())
+    Err("printing is implemented on macOS and Windows only".into())
 }
 
 /// Milliseconds since process exec, so the frontend can place its own marks on
@@ -837,6 +893,48 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .manage(launch)
         .plugin(tauri_plugin_dialog::init());
+
+    // The Windows counterpart of the `RunEvent::Opened` arm at the bottom of this
+    // file, and the reason it exists is parity rather than tidiness: without it a
+    // second launch is a **second process**, with its own window and its own worker
+    // pool, where macOS hands the document to the app already running. That was
+    // measured by `open_check.py` before it was fixed --- two phases skipped there
+    // with exactly that reason printed.
+    //
+    // Registered first, before anything else can run, because the plugin's job is
+    // partly to *not* start: in the second process it forwards argv to the first and
+    // then exits. A plugin registered after something with side effects would let
+    // the doomed process do that work first.
+    //
+    // The callback deliberately goes through the same `Launch` queue and the same
+    // `OPEN_EVENT` as every other route into the app. A second mechanism for "open
+    // this document" is a second place for the queue-versus-emit decision to drift,
+    // and `docs/TRAPS.md` records what two copies of one distinction cost.
+    #[cfg(windows)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::{Emitter, Manager};
+            // `try_state`, for the same reason the macOS arm gives: a panic inside a
+            // plugin callback is invisible, and the degradation is one document not
+            // opening rather than a window with nothing in it.
+            let Some(launch) = app.try_state::<launch::Launch>() else {
+                return;
+            };
+            // Raising the window is the visible half. A handover that silently
+            // loaded the document behind whatever the reader was looking at would
+            // read as "the double-click did nothing", which is the failure this
+            // whole path exists to avoid.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            for path in launch::paths_from_args(argv) {
+                if let launch::Delivery::Emit(path) = launch.deliver(path) {
+                    let _ = app.emit(launch::OPEN_EVENT, path.to_string_lossy().into_owned());
+                }
+            }
+        }));
+    }
     if std::env::var_os("TPDF_EMPTY_MENU").is_some() {
         // Tauri installs a full default application menu on macOS. Building it
         // means constructing every item and submenu through AppKit, which is

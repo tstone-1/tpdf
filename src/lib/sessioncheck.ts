@@ -83,6 +83,18 @@ export interface SessionCheckHost {
   root: () => HTMLElement | null;
   /** Path of the open document, or "". */
   path: () => string;
+  /**
+   * Pages in the open document, or 0 when nothing is open.
+   *
+   * Needed only to state a precondition, and it earns its place in this interface
+   * by how the absence of it read. {@link TARGET.page} is 7, so this check cannot
+   * run on a document with fewer than eight pages --- and without the guard below
+   * it did not say so: `Viewer.goToPage` clamps to the last page, so a one-page
+   * fixture reported *"it opens on the remembered page: page 0, wanted 7"* and a
+   * four-page one *"page 2, wanted 7"*. Both read as a broken session restore,
+   * stably and reproducibly, on a session restore that was working perfectly.
+   */
+  pageCount: () => number;
   /** Whether the sidebar is showing. */
   sidebarShown: () => boolean;
   /** Toggles it, through the same function the command and the key use. */
@@ -252,6 +264,37 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
       const opened = await settle(() => host.viewer() !== null);
       check("the document opened", opened, describe(host));
       if (!opened) return;
+
+      // The precondition, stated before anything can misattribute it. `goToPage`
+      // clamps to the last page, so on a short document every later phase reports
+      // the *wrong page* rather than the wrong fixture --- see `pageCount` on the
+      // host interface for what that looked like. Named as a check so it appears in
+      // the summary rather than only on the console: a run that cannot test page
+      // restore has to say so where the counts are read.
+      // Waited for, because the status the count comes from is published a frame or
+      // two after the viewer exists --- so reading it straight after `opened` gives
+      // **0 for every document**, and the guard then refuses the long fixtures it was
+      // written to admit. Caught by running it: `text-base14.pdf` reported "0 pages"
+      // where 1 is the truth, and 0 is not a page count, it is "not yet".
+      //
+      // The three outcomes are kept distinct on purpose. "Never became known" is not
+      // "too short": one is a fixture to swap, the other is a viewer that did not
+      // finish opening, and collapsing them would send a reader to the wrong place.
+      const known = await settle(() => host.pageCount() > 0);
+      const pages = host.pageCount();
+      const longEnough = known && pages > TARGET.page;
+      check(
+        "the document is long enough to test page restore",
+        longEnough,
+        !known
+          ? "the page count never became known, so this cannot be judged --- the " +
+              "document did not finish opening"
+          : longEnough
+            ? `${pages} pages, and page ${TARGET.page} is the target`
+            : `${pages} pages, but page ${TARGET.page} is the target --- rerun with a ` +
+              `document of at least ${TARGET.page + 1} pages`,
+      );
+      if (!longEnough) return;
 
       await driveToTarget(host);
       // Asserted, not assumed. Written as `check(..., true, ...)` first, which

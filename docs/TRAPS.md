@@ -2577,6 +2577,40 @@ condition cannot be tested on a platform, saying so --- `[SKIP]` with a reason, 
 warning --- is the difference between an unprotected run and an unprotected run nobody knows
 about.
 
+**It has bitten now, on 2026-07-30, and the real instance is worse than the one above.**
+`workers.rs`'s `kill_pid` --- the *only* thing that enforces the render deadline --- was
+`#[cfg(not(unix))] fn kill_pid(_pid: u32) {}`. Its own doc comment had named the trigger in
+advance: *"a silent no-op is safe only because `Worker::spawn` refuses on those platforms ...
+if a worker ever starts on Windows this has to become `TerminateProcess`, or the deadline
+silently stops being one."* Workers started on Windows the day before, and nothing connected
+the two.
+
+Three things make it the sharpest version of this trap:
+
+- **It lied rather than merely doing nothing.** `kill_overdue` counted the pid, set the
+  `killed` flag, and printed *"worker killed for exceeding its deadline"*. So the caller got a
+  deadline error, the log recorded a kill, and the process went on holding a hung PDFium render
+  forever --- one leaked worker per hung document, with a line in the log saying otherwise. A
+  no-op that stayed silent would have been easier to find.
+- **The three tests that would have caught it were `#[cfg(unix)]` too.** So the platform where
+  the guard had stopped working was also the platform where nothing tested it, and the suite
+  was green. That correlation is not a coincidence: the same reflex writes both gates.
+- **Nothing was inspecting it, and the prediction was in the source.** The comment did not need
+  to be cleverer; it needed something mechanical to notice that its precondition had changed.
+
+The fix was `OpenProcess` + `TerminateProcess(KILLED_EXIT)`, and un-gating the tests --- with a
+`ping`-based sleeper, because Windows has no `sleep` and `timeout.exe` exits immediately under a
+redirected stdin, which would have made every assertion pass for the wrong reason. Proved by
+mutation: reverting `kill_pid` to the no-op turns
+`the_supervisor_kills_the_process_holding_an_overdue_call` red with `ExitStatus(0)` --- the
+sleeper ran to completion --- and takes the suite from 0.06 s to 5.08 s, which is the sleeper's
+own lifetime and exactly what the test was designed to do instead of hanging.
+
+One further finding from that mutation, worth keeping because it was a wrong prediction:
+`a_deadline_kill_is_reported_to_the_thread_that_was_waiting` stayed **green** under it. That is
+correct --- it checks the flag, which is set whether or not the signal lands --- but it means
+that test is not a check on the kill, and the decoupling it reveals *is* the defect's shape.
+
 ### A harness that prints stderr only on failure hides what a passing run said
 
 `viewer_check.py` echoed the child's stderr inside `if returncode != 0`, so a run that
@@ -3049,3 +3083,325 @@ certainly the occluded-window suspension this file warns about for that script. 
 "hung at phase one" and "still working through four race launches" produce the identical empty
 file, so the natural move is to keep waiting. The process table is what settled it --- **a child
 holding 0.00 CPU is the tell**, and it is worth checking before extending a timeout.
+
+### A `DataWriter` closes the stream it was created over, so a helper that returns the stream returns a closed one
+
+WinRT has no "load a PDF from a byte slice" entry point: everything goes through
+`IRandomAccessStream`. So `print_win.rs` has a `to_stream(bytes) -> Option<InMemoryRandomAccessStream>`
+that creates a stream, wraps it in a `DataWriter`, writes, stores, flushes and returns the
+stream. Every document was then refused by `PdfDocument::LoadFromStreamAsync`.
+
+A `DataWriter` **owns** the output stream it was constructed over and closes it when released
+--- which, in Rust, is the end of that function. The stream handed back was closed, and the
+only symptom is the loader saying it cannot read the document. `DetachStream()` before
+returning is the fix, and it is one line that looks like tidying up.
+
+Two things about *how* it was found are the transferable part:
+
+- **The identical code worked when written inline in a probe**, because there the writer was
+  still alive when the stream was used. Moving working code into a helper broke it. Any WinRT
+  type that wraps a stream (`DataReader` too) has this lifetime, and Rust's `Drop` hides the
+  moment it fires.
+- **The failure was first observed on our own hand-rolled test PDF, and believing that would
+  have sent the fix into the fixture generator.** What settled it in one command was retrying
+  with a known-good fixture and then with the raw calls inline: `LoadFromStreamAsync` returned
+  `Ok(Ok(1))` on the same bytes the module refused. "Our test input is malformed" and "our
+  helper is broken" produce the same error message, and only an input you did not write can
+  separate them.
+
+### WinRT reports a PDF page's size in DIPs, not points
+
+`PdfPage::Size()` answers in device-independent pixels at **96** to the inch. A PDF page is
+defined in points at **72**. So A4 --- 595x842 by definition --- comes back as 793.33x1122.67,
+and computing a render scale as `dpi / 72.0` asks for a page 96/72 too large in each dimension.
+It obliges: a 200x100 page rendered 267x133.
+
+What makes this worth an entry rather than being an arithmetic slip is that **it is invisible
+downstream.** The error is a uniform 1.33x, so the page still renders, still has the right
+aspect ratio, and is still scaled down to fit the sheet by the print path --- so the printed
+output would have been very slightly soft and nothing else, on a path whose only honest
+verification is paper.
+
+Caught by asserting pixel dimensions at **two** resolutions, which is a check on the *units*
+rather than on the picture: with the constant wrong both rows are 1.33x out, with it right both
+are exact. A single row cannot tell a wrong scale from a wrong unit.
+
+### A BMP's DIB header is never 4-byte aligned, so reading it in place is undefined behaviour
+
+The Windows print path asks WinRT for a **BMP** rather than the default PNG, because a BMP is a
+DIB with a 14-byte `BITMAPFILEHEADER` in front of it --- so the bytes after that header go
+straight to `StretchDIBits` and the module needs no image decoder. The obvious way to get the
+`BITMAPINFO*` that GDI wants is to cast a pointer into the buffer at offset 14.
+
+Offset 14 is never a multiple of 4, and `BITMAPINFO` is a struct of `u32` fields. Rust's debug
+assertions caught it immediately --- *"misaligned pointer dereference: address must be a
+multiple of 0x4"* --- and the way it reports is the part to remember: it is a
+**non-unwinding** panic, so it aborted the entire test binary with `STATUS_STACK_BUFFER_OVERRUN`
+rather than failing one test. A whole suite disappearing is a much worse signal than one red
+line, and on x86 the read would have "worked" in release.
+
+The fix is to copy the header into storage that is aligned by construction --- a `Vec<u32>` ---
+and copy up to the header's own **declared** `biSize` plus whatever sits between it and the
+pixels, not a fixed 40 bytes: `BITMAPV4HEADER` and `BITMAPV5HEADER` are longer, and the colour
+masks of a 32-bit image live in that gap and are read through the same pointer.
+
+### A DIB pixel is not a device unit, and every page printed at half size while a check passed
+
+`StretchDIBits` takes a destination rectangle in the DC's own units. A printer DC's units are its
+device dots --- 600 per inch on a typical laser --- and the DIB handed to it was rendered at
+`PRINT_DPI = 300`. The first version of `draw_bmp` computed the destination as
+`min(sheet / dib_size, 1.0) × dib_size`, i.e. one DIB pixel per device unit, so **every page came
+out at exactly half its physical size**, centred, with a wide even margin. It looks deliberate.
+For a page small enough that the fit-scale never engages there is nothing to correct it either.
+
+The reason this is the most useful entry from that session is not the arithmetic, it is that a
+check was watching and said nothing:
+
+- `print-probe` compared **printed ink against sent ink** and read `0.49`. That is an entirely
+  plausible number for a path that rasterises twice and scales down, so it passed. An oracle
+  whose expected value is "roughly less" cannot distinguish correct from half.
+- The same oracle then read `0.01` on one A0 page and *failed* --- for no reason but the paper
+  being 16× smaller in area than the page raster (1192x1685 at 99.9% saturation against 298x421).
+  So it produced a false pass on a real defect and a false failure on correct behaviour, in the
+  same session, from the same formula.
+- Replacing it with "ink spans more than 0.7 of the sheet" then failed `rotated.pdf` **for being
+  right**: this path prints a page at its true size and only shrinks it to fit, so a small page
+  occupying a third of an A4 sheet is the correct answer, not a clipped one.
+
+What works is a **prediction**: the printed ink extent should equal the source ink extent scaled
+by the page-to-sheet ratio, with the same down-only uniform fit. Margins cancel, because both
+sides measure ink rather than page edges; it is scale-invariant; and it is derived from the source
+page's inches and the driver's own sheet size rather than from the drawing code, so it is not a
+restatement of the thing under test. It reports 1% and 0% error on the two `rotated.pdf` pages,
+and **48%** against the reverted bug --- one half, named as such.
+
+The general shape, worth carrying past printing: when a transformation should preserve a
+*geometric* relationship, assert the relationship against a computed expectation. A tolerance band
+on a *quantity* ("within an order of magnitude", "roughly conserved") admits every scale error,
+which is usually the family of bug being made.
+
+### A print check that counts pages cannot see a blank page
+
+`bin/print_probe.rs` drives the whole Windows print path to a real spooler --- "Microsoft Print
+to PDF", with `DOCINFOW.lpszOutput` naming a file so the driver writes instead of raising a save
+dialog --- which makes everything except the panel itself verifiable without paper.
+
+The temptation is to check the page count of what came out. It is exactly the wrong check: a
+wrong `BITMAPINFO`, a DC in the wrong mapping mode and a bad `StretchDIBits` rectangle all
+produce **the right number of perfectly empty sheets**. Proved rather than argued --- mutating
+`draw_bmp` to skip the blit leaves *"the printed output has the pages that were sent"* green,
+and only the ink checks go red, at `[0, 0]`. The output file shrank from 721,222 bytes to 1,183,
+which is the same tell from the other side.
+
+So each printed page is rendered back and its ink counted, with **the pages that were sent as
+the control**: source pages with no ink would make the printed pages' ink unfalsifiable, and
+"both zero" is precisely how this check would otherwise pass on a completely broken path. The
+comparison is an order-of-magnitude band and not an equality, because the page is legitimately
+scaled onto the sheet and rasterised twice (measured at 0.49 of the source's ink).
+
+### Printing maps a PDF parser into the app process, on both platforms
+
+`docs/THREAT-MODEL.md` and `AGENTS.md` say the app process never maps the PDF parser, proved by
+reading the loader's image table from outside. That claim is about **PDFium** and it stays true
+--- but printing parses the job *in the app process* on both platforms, with PDFKit on macOS and
+`Windows.Data.Pdf` here, so a PDF parser is mapped in whenever someone prints.
+
+That is deliberate and it is the same trade on both sides: the readback wants a parser
+independent of the `lopdf` that wrote the job and the PDFium that drew what the reader saw, and
+the platform's own stack is the only such parser available. What the boundary actually buys is
+narrower than the sentence suggests, and worth stating in exactly these terms: the process
+holding the print job never maps **our** PDFium, so a PDFium bug reachable from a crafted
+document is not reachable through printing, and the parser that *is* mapped is patched by
+Windows Update rather than pinned in our `Cargo.lock`.
+
+Measured rather than asserted, since a containment claim that nobody checked is the thing this
+file exists to prevent: `print-probe` reads its own module table after parsing, rendering and
+printing, and reports **80 modules mapped, none named pdfium** with `Windows.Data.Pdf.dll`
+printed beside it as what it mapped instead. The count is there for the reason recorded
+elsewhere here --- an enumeration that returned nothing looks exactly like an absence.
+
+### A print DPI relative to the page is the wrong quantity, and A4 is the example that hides it
+
+`print_win.rs` rasterises each page at `PRINT_DPI = 300`, and the constant's doc comment
+justified the number against A4: 2480x3508 pixels, about 35 MB as 32-bit BGRA, which is a
+reasonable buffer for a page.
+
+A0 is 33x47 inches. At 300 dpi that is 9933x14043 --- **532 MB per page** --- for a sheet that
+can display 9 MB of it, because the page is scaled down to fit the paper and every pixel beyond
+what the sheet holds is rendered, paid for, and thrown away by the scaler. `print-probe` on
+`vector-multi.pdf`, twelve A0 pages, did not finish in two minutes.
+
+The fix is not a cap but the right quantity: **render at the resolution that yields `PRINT_DPI`
+after the fit.** A page twice the sheet's size renders at half, and lands on paper at exactly
+the same density as one that fits. With a floor, because a pathological page must still print
+something legible rather than a thumbnail stretched over a sheet.
+
+The transferable part is how the mistake survived review: the doc comment did the arithmetic,
+and did it for the page size that makes the constant look sensible. Any per-item buffer sized
+from *input* dimensions wants its worst realistic input in the comment, not its typical one ---
+and this repository has an A0 fixture precisely because A0 is the case that breaks things.
+
+### The OS's PDF rasteriser is not fast, and a raster print path inherits that
+
+Measured with `print-probe` after the DPI fix above, so this is not the buffer problem: one A0
+page of `vector-heavy.pdf` --- 200,000 vector operations --- takes **minutes** for
+`Windows.Data.Pdf` to rasterise, at ~75 effective dpi, with a working set of about 110 MB. It is
+compute-bound on the operation count, essentially independent of resolution.
+
+For scale, `tile-bench` measures PDFium at **35.1 s** for a full A0 page at 1x on this machine,
+so the numbers are the same order and the content is the problem rather than the API. But the
+architectural consequence is one-sided: macOS hands PDF bytes to `NSPrintOperation` and the print
+system consumes them as **vectors**, so it never rasterises at all and pays none of this.
+Windows has no in-box PDF print API, so the raster path is not a choice and neither is its cost.
+
+What follows, stated so it is not rediscovered as a bug: **printing a large-format CAD drawing on
+Windows takes minutes and macOS does not.** The route out is not a faster rasteriser but avoiding
+rasterisation --- `IPrintDocumentPackageTarget` and the XPS pipeline can hand PDF to a printer
+that understands it directly, which GDI cannot express. That is a real piece of work and is not
+started.
+
+### A page count read too early is 0, and 0 is not a count
+
+`session_check.py` drives a document to `TARGET.page = 7` and then asserts the restore lands
+there. `Viewer.goToPage` **clamps** to the last page, so on a document with fewer than eight pages
+the check reported *"it opens on the remembered page: page 0, wanted 7"* on a one-page fixture and
+*"page 2, wanted 7"* on a four-page one. Stably, reproducibly, and on a session restore that was
+working perfectly — verified afterwards at 7/7 on a twenty-page document.
+
+So the check needed to state its precondition. The first attempt read the count straight after
+waiting for the viewer to exist, and reported **"0 pages"** for a document with 1 — because the
+status the count comes from is published a frame or two later. A guard that reports 0 for every
+document refuses exactly the long fixtures it was written to admit, and it would have been very
+easy to ship: the check *fired*, and its message was plausible.
+
+Two rules out of it:
+
+- **Wait for the value, and keep "not yet known" as its own outcome.** `0 pages` and `1 page` are
+  different facts and neither is `the document did not finish opening`; collapsing them sends a
+  reader to swap a fixture when the viewer is what failed.
+- **A clamping accessor turns a precondition failure into a wrong answer.** Anywhere a setter
+  silently clamps, a caller asserting the value it asked for is really asserting the input was in
+  range. The clamp is right — `goToPage(9999)` should not throw — which is why the check has to
+  carry the range itself.
+
+### Single-instance turns a stray process into a launch that succeeds and does nothing
+
+Giving Windows the document handover macOS gets from `RunEvent::Opened` means
+`tauri-plugin-single-instance`: a second launch forwards its argv to the first process and then
+**exits**. That is what a reader wants and it is poison for a harness, because a stray instance
+left by an earlier run — a killed check, a timeout, an aborted build — silently absorbs every
+later launch. The new process writes nothing and exits at once.
+
+The failure surfaces one phase later and in the wrong shape. `session_check.py`'s
+*control: opening without a session* reported `run timed out` / `no summary line, so the run did
+not finish`, while `verify` on the same document passed **7/7 in the same run** — which reads as
+the app hanging on one particular phase. Four stray processes were on the machine. Cleared table,
+same code, and the phase passes; nothing was wrong with the app.
+
+Two things make this worth an entry rather than a note about tidiness:
+
+- **The mechanism inverts the usual reasoning.** A stray process normally causes a *conflict* —
+  a port in use, a lock held — which announces itself. Here it causes a **success**: the launch
+  returns 0 and the harness waits for output that was already delivered somewhere else.
+- **It is invisible on the platform that has no plugin.** macOS gets its handover from Launch
+  Services and has no single-instance plugin linked, so a stray instance there is merely untidy.
+  The same harness is reliable on one platform and intermittently mysterious on the other.
+
+`scripts/stray.py` clears instances of the binary under test before the first launch, and prints
+a `[WARN]` when it found any — a run that needed it is a run whose earlier phases are suspect, and
+a helper that tidied up silently would turn that into someone else's mystery. Matched on the
+**executable path**, never the process name: a harness that killed every `tpdf` would kill the copy
+the person at the keyboard is reading, which is a harness that cannot be run on a working machine.
+
+### One constant standing for two platform distinctions breaks the moment they diverge
+
+`open_check.py` had `HANDS_OVER_TO_RUNNING = sys.platform == "darwin"`, and branched on it for
+four things: whether to demand an `.app` bundle, what hint to print when the binary is missing,
+whether to run the cold-double-click phase, and whether to run the handover-to-a-running-app
+phase. Its own docstring even said it was named once *because* two phases branch on it, citing
+the entry here about two copies of a distinction drifting.
+
+That was the opposite mistake, and it was invisible while macOS was the only platform with a
+handover: the constant was standing for **"this is macOS"** and **"a second launch reaches the
+first process"** at the same time. Giving Windows a handover via
+`tauri-plugin-single-instance` and flipping the constant to `True` made the harness demand a
+`.app` on a platform that has none — one line into the run, before any phase executed.
+
+The two facts are independent and now have separate names. `USES_LAUNCH_SERVICES` governs *how a
+launch is spelled* — an `.app`, `open -a`, an Apple Event. `HANDS_OVER_TO_RUNNING` governs
+*whether a second launch reaches the first process*, which Windows does by forwarding argv with no
+Launch Services anywhere near it.
+
+The rule that would have caught it: **a boolean named after a capability must not be defined as a
+platform test.** `sys.platform == "darwin"` on the right-hand side of something called
+`HANDS_OVER_TO_RUNNING` is the tell — it says the author knew only one platform did it, not what
+the property was. Where a capability genuinely coincides with a platform today, define it as the
+capability (`True`, or a feature probe) and let the platform test live in a separate constant that
+is *about* the platform.
+
+### A directory under `src/bin/` becomes a phantom binary in the Windows installer
+
+`npm run tauri build` produces a working `tpdf.exe` and then fails bundling the MSI: WiX
+`light.exe` reports `LGHT0091 Duplicate symbol 'Component:backend_probe'`. The generated
+`main.wxs` carries 20 file entries where 19 are expected, the extra one being
+`backend_probe.exe` with an underscore --- a path that does not exist on disk, alongside the
+real `backend-probe.exe`.
+
+**The cause: a *directory* under `src/bin/` becomes a phantom binary.** `tauri build` enumerates
+`src/bin/` and registers the first entry that no `[[bin]]` `path =` claims. A `.rs` file there is
+always claimed; a **subdirectory** never is. So `src/bin/backend_probe/`, which existed only to
+hold `imp.rs`, was registered as a binary named `backend_probe` — pointing at a
+`backend_probe.exe` that does not exist, and colliding with the component id WiX derives from the
+real `backend-probe.exe` (`-` sanitised to `_`).
+
+The fix is that **`src/bin/` must contain only declared bin sources.** The two `imp.rs` bodies
+moved to `src/probes/`, reached by `#[path = "../probes/<name>.rs"]`, which changes nothing about
+module parentage so every `super::` in them still resolves. `main.wxs` then carries 19 entries for
+19 targets and both an MSI and an NSIS installer build.
+
+Getting there took four wrong theories, and how each died is the transferable part:
+
+- **A stale artifact.** Deleting `target/release/backend_probe.pdb` and rebuilding reproduces it
+  — but cargo *relinks* when you delete a build output, so that test is inconclusive rather than
+  negative. It dies properly on `print_probe.pdb` and `win_sandbox_probe.pdb` existing without
+  duplicates of their own.
+- **Cargo.** `cargo metadata` lists exactly 18 bin targets, all hyphenated, no `backend_probe`;
+  17 `[[bin]]` blocks with no duplicate names and no name/path-stem mismatches.
+- **Configuration.** The only `backend_probe` string outside `src/` is that bin's `path =`, and
+  `tauri.conf.json` declares no `externalBin` or resources.
+- **The main-binary slot.** The phantom is appended *after* all 17 declared bins, so it looked
+  like the app's own entry being misidentified — `tpdf` comes from `src/main.rs` and no `[[bin]]`
+  claimed it. Declaring `tpdf` explicitly changed nothing, which is what killed it.
+
+**And one experiment was worthless because its control could not have fired.** A marker directory
+`src/bin/ztest_marker/` produced no phantom, which read as "directories are not the cause" and
+sent the investigation elsewhere for several rounds. `ztest_marker` sorts **last**; under a
+"first unclaimed entry" rule it could never have appeared. Re-running it as `aaa_marker/` — sorting
+first — produced `aaa_marker.exe` immediately and `backend_probe.exe` vanished. A control has to be
+placed where the mechanism being tested can reach it, and "nothing happened" from a control that
+was out of reach is not evidence of anything. That is the same family as the entries here about
+checks whose preconditions are already satisfied, arriving through a diagnostic rather than a test.
+
+Two smaller facts worth keeping:
+
+- The phantom breaks the build **either way**, and which error you get is a red herring. When its
+  name collides with a real bin you get `LGHT0091 Duplicate symbol`; when it does not, you get
+  `LGHT0103 The system cannot find the file`. Chasing the duplicate specifically was time spent on
+  the wrong half.
+- `light.exe` run by hand needs `-loc`, or it reports five `LGHT0102 unknown localization variable`
+  errors that have nothing to do with the problem. Read tauri's own invocation via
+  `npm run tauri build -- --verbose` instead of reconstructing it.
+
+### A green gate list can sit beside a distributable that cannot be built
+
+The general point the gate list cannot make on its own still stands. `gates.py` has a `bins` gate
+because *nothing else linked a binary*; this was the next ring out — nothing **packaged** one, so a
+Windows release would have discovered it at the point where reacting is most expensive. It was
+found only because a Windows package was attempted for the first time; `BUILD.md` had mentioned
+neither MSI nor WiX.
+
+One thing the fix does **not** address, recorded so it is a decision rather than an oversight: the
+installer ships all **17 probe and benchmark executables**, about 35 MB of development spikes
+including a sandbox prober and a hostile-document harness. That is a property of declaring them as
+`[[bin]]` in the bundled crate, it is identical on macOS, and moving them to a separate workspace
+crate or to `[[example]]` targets is the real fix.

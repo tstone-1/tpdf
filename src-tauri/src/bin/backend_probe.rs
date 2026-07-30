@@ -1,7 +1,7 @@
 //! Proves that moving every document behind a process boundary changed nothing
 //! the reader can see --- and that it really moved. macOS only; see [`imp`].
 //!
-//! The body lives in `backend_probe/imp.rs` rather than here because it is
+//! The body lives in `../probes/backend_probe.rs` rather than here because it is
 //! macOS-only and a `#![cfg]` at the crate root cannot express that for a
 //! `[[bin]]`: it removes every item including `main`, and cargo then reports
 //! "`main` function not found", which reads like a missing entry point rather
@@ -39,5 +39,11 @@ fn main() {
 }
 
 #[cfg(any(target_os = "macos", windows))]
-#[path = "backend_probe/imp.rs"]
+// `../probes/`, not `backend_probe/`, and the location is load-bearing rather
+// than tidy: a **directory** under `src/bin/` has no `[[bin]]` path claiming it,
+// and `tauri build` scans that directory and registers the first such entry as a
+// binary of its own. The MSI was then generated with a component pointing at a
+// `backend_probe.exe` that does not exist, and WiX refused the whole package.
+// See `docs/TRAPS.md`; `src/bin/` must contain only declared bin sources.
+#[path = "../probes/backend_probe.rs"]
 mod imp;

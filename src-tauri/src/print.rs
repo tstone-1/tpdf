@@ -327,12 +327,37 @@ fn effective_rotation(doc: &Document, page: lopdf::ObjectId) -> i64 {
 mod tests {
     use super::{build, drop_pages, effective_rotation, Job, Pages};
     use lopdf::{dictionary, Document, Object, ObjectId, Stream};
-    // Used only by the rotation test, which needs PDFKit to read the job back
-    // and so is macOS-only. The gate travels with the use, not with the import
-    // list, or the import is unused off macOS.
-    #[cfg(target_os = "macos")]
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
+
+    /// The operating system's own PDF parser, whichever platform this is.
+    ///
+    /// PDFKit on macOS, `Windows.Data.Pdf` on Windows. Both are the platform's own
+    /// PDF stack, so both are independent of the `lopdf` that writes these jobs and
+    /// of the PDFium that draws what the reader sees --- which is the whole property
+    /// these checks are built on. The two modules deliberately expose the same
+    /// `Reading` shape so that one set of expectations covers both.
+    ///
+    /// **The four checks below were macOS-only until 2026-07-30, and three of them
+    /// had no reason to be.** They were written when PDFKit was the only independent
+    /// parser available, and the gate then said "no third parser here" rather than
+    /// anything about the property under test. Printing is the one subsystem whose
+    /// output leaves the process, so the platform without a third parser was also
+    /// the platform where nothing checked that its jobs were readable at all.
+    #[cfg(target_os = "macos")]
+    use crate::print_macos as os_pdf;
+    #[cfg(windows)]
+    use crate::print_win as os_pdf;
+
+    /// Whether the OS parser on this platform can extract text.
+    ///
+    /// PDFKit can; `Windows.Data.Pdf` renders and reports geometry and has no text
+    /// API at all. A runtime constant rather than a `cfg` on the test, so the check
+    /// that needs text still *runs* on Windows --- it asserts everything it can and
+    /// prints a `[SKIP]` naming what it could not. `BUILD.md`'s rule: a check that
+    /// quietly stops existing on one platform is worse than one that skips out loud,
+    /// because a vanished check and a passing one look identical in a summary.
+    const OS_PARSER_HAS_TEXT: bool = cfg!(target_os = "macos");
 
     /// A scratch directory that removes itself.
     struct TempDir(PathBuf);
@@ -788,23 +813,27 @@ mod tests {
             .is_err());
     }
 
-    /// What PDFKit makes of built bytes.
+    /// What the OS's own PDF parser makes of built bytes.
     ///
-    /// A **third** parser, on CoreGraphics: independent of `lopdf`, which wrote
-    /// the job, and of PDFium, which drew what the reader was looking at. Every
-    /// other check in this module asks `lopdf` to read back a file `lopdf`
-    /// produced, which cannot distinguish "the document says this" from "our
-    /// serialiser and our loader agree about this" --- and it is the second that
-    /// a printer does not care about. It is also not a neutral third party: it
-    /// is the parser the print system itself will use.
-    #[cfg(target_os = "macos")]
-    fn read_back(bytes: &[u8]) -> crate::print_macos::Reading {
-        // The text-carrying variant: these checks assert *which* pages survived,
-        // and the print path deliberately does not pay for that (see `read`).
-        crate::print_macos::read_with_text(bytes).expect("PDFKit could not read the print job")
+    /// A **third** parser: independent of `lopdf`, which wrote the job, and of
+    /// PDFium, which drew what the reader was looking at. Every other check in this
+    /// module asks `lopdf` to read back a file `lopdf` produced, which cannot
+    /// distinguish "the document says this" from "our serialiser and our loader
+    /// agree about this" --- and it is the second that a printer does not care
+    /// about. Neither platform's choice is a neutral third party either, which is
+    /// the point: each is the parser that platform's own print path uses.
+    fn read_back(bytes: &[u8]) -> os_pdf::Reading {
+        // macOS asks for text as well, because the checks below assert *which*
+        // pages survived and PDFKit can say. The print path deliberately does not
+        // pay for that (see `print_macos::read`), and Windows cannot supply it at
+        // any price.
+        #[cfg(target_os = "macos")]
+        return crate::print_macos::read_with_text(bytes)
+            .expect("the OS parser could not read the print job");
+        #[cfg(windows)]
+        return crate::print_win::read(bytes).expect("the OS parser could not read the print job");
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_third_parser_reads_back_exactly_the_pages_that_were_kept() {
         let dir = TempDir::new("pdfkit-range");
@@ -821,7 +850,23 @@ mod tests {
         .expect("build");
 
         let reading = read_back(&out);
+        // The portable half: *how many* pages a parser that did not write them can
+        // find. Asserted on both platforms.
         assert_eq!(reading.pages.len(), 2, "{reading:?}");
+
+        if !OS_PARSER_HAS_TEXT {
+            // Said out loud rather than gated away. The count above is a real check
+            // and this is a real hole in it: a subset that kept pages 1 and 3 would
+            // satisfy everything asserted here. `a_third_parser_checks_a_job_built_-`
+            // `from_a_document_we_did_not_write` covers the same property on both
+            // platforms by using per-page rotation instead of text, which is why
+            // this gap is acceptable rather than merely admitted.
+            println!(
+                "[SKIP] which pages survived: this platform's OS parser extracts no \
+                 text, so only the count is pinned here"
+            );
+            return;
+        }
         // Which pages, read by something that did not write them.
         assert!(
             reading.pages[0]
@@ -841,7 +886,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_third_parser_sees_the_rotation_the_page_inherited_and_the_one_we_added() {
         // The pair is the point. `effective_rotation` returning 0 instead of
@@ -871,7 +915,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_third_parser_accepts_the_handed_over_file_tail_and_all() {
         // The passthrough fixture carries bytes past `%%EOF` so a rewrite is
@@ -924,7 +967,6 @@ mod tests {
     /// fixture whose pages all share one rotation only the count and the
     /// composition are pinned, and the run says which case each fixture was
     /// rather than leaving that to be assumed.
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_third_parser_checks_a_job_built_from_a_document_we_did_not_write() {
         let mut examined = 0;
@@ -945,8 +987,8 @@ mod tests {
 
             // The baseline, from the parser that will read the print job --- not
             // from the one that builds it.
-            let Some(before) = crate::print_macos::read(&source) else {
-                println!("[SKIP] {name}: PDFKit refused the source document");
+            let Some(before) = os_pdf::read(&source) else {
+                println!("[SKIP] {name}: the OS parser refused the source document");
                 continue;
             };
             let count = before.pages.len();
@@ -973,8 +1015,8 @@ mod tests {
             )
             .unwrap_or_else(|e| panic!("{name}: build failed: {e}"));
 
-            let after = crate::print_macos::read(&out)
-                .unwrap_or_else(|| panic!("{name}: PDFKit could not read the built job"));
+            let after = os_pdf::read(&out)
+                .unwrap_or_else(|| panic!("{name}: the OS parser could not read the built job"));
 
             assert_eq!(
                 after.pages.len(),

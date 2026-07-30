@@ -51,6 +51,102 @@ experience.
 
 ### Added
 
+- **A Windows distributable builds** --- an MSI and an NSIS installer from `npm run tauri build`.
+  It did not before, and the cause is a rule about this repository's layout rather than a Tauri
+  bug: **`src/bin/` must contain only declared bin sources.** The bundler enumerates that
+  directory and registers the first entry no `[[bin]]` `path =` claims; a `.rs` file is always
+  claimed, a *subdirectory* never is. So `src/bin/backend_probe/`, which held only `imp.rs`,
+  became a phantom binary named `backend_probe` --- pointing at an executable that does not exist
+  and colliding with the component id WiX derives from the real `backend-probe.exe`. Those two
+  `imp.rs` bodies now live in `src/probes/`, reached by `#[path]`, which leaves module parentage
+  and every `super::` in them unchanged.
+
+  It had never been caught because Windows packaging had never been attempted. The installer does
+  ship all 17 probe and benchmark executables, about 35 MB of spikes; that follows from declaring
+  them `[[bin]]` in the bundled crate, is identical on macOS, and wants its own change.
+
+- **A second launch on Windows hands its document to the running app**, as it does on macOS.
+  It used to be a second process with its own window and its own worker pool ---
+  `RunEvent::Opened` is macOS-only and nothing filled the gap. `tauri-plugin-single-instance`
+  (Apache-2.0 OR MIT, no new crate refused by the licensing rule) now forwards the second
+  process's argv to the first and exits it; the callback feeds the same `Launch` queue and emits
+  the same `OPEN_EVENT` as every other route in, so there is one path for "open this document"
+  rather than two that can drift. It also unminimises and focuses the window, because a handover
+  that loaded the document behind whatever the reader was looking at would read as nothing having
+  happened.
+
+  `open_check.py` now runs **five of six** phases on Windows, up from four. Proved by mutation:
+  disabling the plugin turns the phase red with *"nothing ever arrived"* while its control still
+  passes. The remaining skip is the cold double-click, which is not a gap --- Explorer hands the
+  path over in `argv`, already covered by the `argv` phase.
+
+- **Printing works on Windows**, which was the last user-facing capability the platform lacked
+  --- `present_job` returned `Err("printing is implemented on macOS only")`. `print_win.rs` reads
+  the job back with `Windows.Data.Pdf`, the operating system's own PDF stack and the direct
+  counterpart of the PDFKit readback on macOS: independent of the `lopdf` that wrote the job and
+  the PDFium that drew what the reader saw, so it can attest that the output is readable by
+  something else. It then rasterises each page onto a printer device context, because Windows has
+  no in-box PDF print API at any layer and every Windows PDF viewer does the same. `PrintDlgW`
+  runs the panel, on its own thread so the modal loop cannot freeze the window behind it.
+
+  Windows output is therefore **raster at 300 dpi** where macOS is vector. Pages are requested
+  from WinRT as BMP rather than the default PNG, which is what lets `StretchDIBits` take the
+  bytes directly and keeps an image decoder out of the tree entirely.
+
+  Adds the `windows` crate, and no crate to the dependency graph: it is already there
+  transitively through Tauri's WebView2 stack, and it is `MIT OR Apache-2.0`.
+
+- **`print-probe` drives the whole print path to a real spooler, without paper.** "Microsoft
+  Print to PDF" is a real driver, and naming an output file in `DOCINFOW.lpszOutput` stops it
+  raising a save dialog --- so everything except the panel runs unattended and the result is
+  re-read by the OS parser. 8/8 checks. It asserts **ink** rather than a page count, because a
+  wrong `BITMAPINFO`, a DC in the wrong mapping mode and a bad blit rectangle all produce the
+  right number of blank sheets; mutating the blit away leaves the page count green and only the
+  ink red. It also reads its own module table: 80 modules mapped, none named pdfium, with
+  `Windows.Data.Pdf.dll` named beside it as what *is* mapped --- printing parses in the app
+  process on both platforms, and what the boundary buys is that the parser doing it is not ours.
+
+  It found a defect in the code it was written to check, which is the point of writing it:
+  **every page was printed at half physical size.** A DIB rendered at 300 dpi was placed onto a
+  600 dpi printer DC unit-for-unit, and for a page small enough that the fit-scale never engages
+  there was nothing to correct it --- a wide even margin that looks deliberate. The probe's
+  original oracle, printed ink over sent ink with an order-of-magnitude band, read `0.49` and
+  passed; the same formula then failed at `0.01` on an A0 page purely because the paper is 16×
+  smaller in area. What holds for both is predicting where the ink should land, from the source
+  page's extent scaled by the page-to-sheet ratio: 1% error on the reference run, 48% against the
+  reverted bug.
+
+- **Large-format pages no longer allocate half a gigabyte per sheet.** `PRINT_DPI` was applied
+  relative to the *page*, so an A0 page rasterised to 9933x14043 --- 532 MB as BGRA --- for a
+  sheet that can show 9 MB of it, and `print-probe` on twelve A0 pages did not finish in two
+  minutes. Pages now render at the resolution that yields 300 dpi *after* the fit to paper. The
+  constant's own doc comment had done the arithmetic for A4, which is the page size that makes it
+  look reasonable.
+
+  What remains, measured and not a defect: one A0 page of 200,000 vector operations takes
+  **2m51s**, nearly all of it inside the OS rasteriser and largely independent of resolution. A
+  raster print path inherits that, and macOS avoids it entirely by handing vectors to
+  `NSPrintOperation`. Avoiding it here needs `IPrintDocumentPackageTarget`, which GDI cannot
+  express; not started.
+
+- **Three of `print.rs`'s four third-parser checks now run on Windows**, taking `cargo test
+  --lib print::` from 14 checks there to 18. They were `#[cfg(target_os = "macos")]` because
+  PDFKit used to be the only independent parser available, which said nothing about the property
+  under test --- so printing, the one subsystem whose output leaves the process, had no
+  independent readback check on Windows at all. Shown to buy real coverage rather than merely
+  existing: breaking `effective_rotation` turns both rotation checks red here, including
+  `rotated.pdf`'s which-pages-survived case. The fourth needs per-page text, which
+  `Windows.Data.Pdf` has none of, so it pins the page count and prints a `[SKIP]` naming the gap.
+
+- **The job object's own two limits are measured**, having been claimed by `win-sandbox-probe`'s
+  table since it was written and probed by nothing. Its three authority probes are all
+  integrity-level properties, so every rung reported on `lowil` and above while
+  `JOB_OBJECT_LIMIT_PROCESS_MEMORY` and `ActiveProcessLimit` went unexercised. With the
+  uncontained rung as the control: `bare` commits 1 GB and starts a second process; every rung
+  with a job is refused with `1455` (commit charge) and `1816` (process quota). Windows charges
+  *committed* memory, so a bomb is refused before a byte of it exists --- a step earlier than the
+  resident-memory polling macOS is limited to.
+
 - **A Windows worker renders, contained.** `Worker::spawn` builds one off macOS for the first
   time: created suspended, dropped to low integrity, assigned to its job object before it
   executes an instruction, then handed two pipes and the document and tile sections as
@@ -1037,6 +1133,50 @@ experience.
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **A harness phase could time out with no transcript at all, because render workers inherit the
+  app's stdout.** `open_check.py`'s handover phase captured the app through a `PIPE` and waited on
+  `communicate()`, which returns only at EOF --- and the workers are re-execs of the same binary
+  holding the same descriptor, so one outliving the app by a moment produced `run timed out` with
+  nothing printed before it. That reads as the app hanging on one phase while an adjacent phase
+  passes 7/7. It now redirects to a file and waits on the *process*, so there is no EOF to wait
+  for, and a timeout keeps whatever the run had already written.
+
+  Two smaller fixes fell out of it. `scripts/stray.py` clears leftover instances of the binary
+  under test before the first launch and prints a `[WARN]` naming the pids when it finds any: on
+  Windows a stray instance **silently absorbs** every later launch through the single-instance
+  plugin, so a run that needed clearing is a run whose earlier phases are suspect. And the
+  handover's scratch directory tolerates cleanup errors, because the inherited handle can still
+  hold the log file for a moment after every check has passed.
+
+- **`session_check.py` reported a wrong page instead of a wrong fixture.** Its target page is 7
+  and `Viewer.goToPage` clamps to the last page, so a document with fewer than eight pages gave
+  *"it opens on the remembered page: page 0, wanted 7"* --- stably, on a session restore that was
+  working perfectly (verified afterwards at 7/7 on twenty pages). There is a named check for the
+  precondition now. The first version of it read the count immediately after the viewer appeared
+  and reported "0 pages" for every document, because the status it comes from is published a frame
+  later; it waits for the value and keeps "never became known" distinct from "too short".
+
+- **The render deadline was not a deadline on Windows, and said it was.** `workers::kill_pid` ---
+  the only thing that bounds a request that never comes back --- was `#[cfg(not(unix))] fn
+  kill_pid(_pid: u32) {}`, and its own comment had named the trigger in advance: *"if a worker
+  ever starts on Windows this has to become `TerminateProcess`, or the deadline silently stops
+  being one."* Workers started there the day before.
+
+  It did not merely fail to enforce. `kill_overdue` counted the pid, set the killed flag, and
+  printed *"worker killed for exceeding its deadline"* --- so the caller got a deadline error, the
+  log recorded a kill, and the process went on holding a hung PDFium render forever: one leaked
+  worker per hung document, with a line in the log saying otherwise. The three tests covering the
+  mechanism were `#[cfg(unix)]` too, so the platform where the guard had stopped working was also
+  the platform where nothing tested it, and the suite was green.
+
+  Now `OpenProcess` + `TerminateProcess(sandbox_win::KILLED_EXIT)`, using a distinct exit code
+  because Windows has no signal number to carry "did not choose to exit". The three tests are
+  un-gated, with a `ping`-based sleeper --- Windows has no `sleep`, and `timeout.exe` exits
+  immediately under a redirected stdin, which would have made every assertion pass for the wrong
+  reason. Proved by mutation: restoring the no-op turns
+  `the_supervisor_kills_the_process_holding_an_overdue_call` red with `ExitStatus(0)` and takes
+  the suite from 0.06 s to 5.08 s, the sleeper's own lifetime.
 
 - **No tile was ever painted on Windows, and nothing reported an error.** `tiles.ts` fetched
   `tile://localhost/...`, which WebView2 cannot resolve --- it registers no custom URI schemes,

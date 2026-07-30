@@ -2,8 +2,30 @@
 
 Status: **Phase 0 closed; Phase 1 in progress.** The viewer runs --- sandboxed worker
 pool, virtual scroller, selection, find, outline, page strip, session restore and
-printing --- on macOS arm64. Windows has never been built. Editing, annotations, forms and
+printing --- on **macOS arm64 and Windows x64**. Editing, annotations, forms and
 redaction are not started.
+
+Windows reached capability parity on 2026-07-30, including a **distributable** (MSI and NSIS) and
+the document handover a second launch performs. Two differences remain and both are real rather
+than unfinished:
+
+- **Printing is raster there and vector on macOS.** Windows has no in-box PDF print API at any
+  layer, so pages are rasterised onto a printer DC. Text is therefore not selectable in a
+  print-to-PDF result, and an A0 page of 200,000 vector operations costs **2m51s** where macOS
+  hands the file to the print system and rasterises nothing.
+- **Every render constant is 1.5--1.8× slower**, measured, so a latency budget written from the
+  macOS figures is optimistic here by about a third. The architectural ratios that drove §4 hold
+  on both.
+
+What is genuinely missing is `worker-bench`'s seven POSIX modes, of which only `latency` measures
+anything nothing else covers. Two things are decisions rather than gaps: the installer ships all
+17 probe binaries (identical on macOS), and the cold-double-click harness phase has no Windows
+counterpart because Explorer hands the path over in `argv`, which another phase already covers.
+
+This paragraph replaced "Windows has never been built", which was two days stale and directly
+contradicted by `AGENTS.md`. Recorded rather than quietly overwritten, because it is the second
+time this repository's documents have disagreed with each other about Windows, and the failure
+mode is that whichever one a reader reaches first wins.
 
 This document records the design and the reasoning behind it, so that decisions can be
 revisited on their merits rather than re-argued from scratch. Sections written before a
@@ -2560,6 +2582,36 @@ leaves `/Pages /Count` at its pre-subset value: every `lopdf` check passes, and 
 manufactures to satisfy the count. Two correct sheets and three blank ones, invisible to the
 writer's own reader. That is now an `AGENTS.md` entry, and the three `a_third_parser_*` checks
 assert through PDFKit instead.
+
+##### The Windows half, and where the analogy stops
+
+Written 2026-07-30 in `src-tauri/src/print_win.rs`. The readback corresponds exactly:
+`Windows.Data.Pdf` is the operating system's own PDF stack --- what Explorer uses for thumbnails
+and what sits behind Edge's viewer --- so it is a third parser in the same sense PDFKit is, and
+`present_job` refuses to open a panel for a job it cannot read. Three of the four
+`a_third_parser_*` checks now run on both platforms as a result; the fourth needs per-page text,
+which this parser has none of, and skips out loud.
+
+**The printing itself has no analogue, and that is a property of Windows rather than a decision.**
+There is no in-box "print this PDF" API at any layer --- not Win32, not WinRT --- so pages are
+rasterised onto a printer device context, which is what SumatraPDF and every other Windows PDF
+viewer does. The consequences, both stated rather than left to be found: output is raster at
+300 dpi, so text is not selectable in a print-to-PDF result; and the DPI constant is not the
+printer's own `LOGPIXELSX`, because a 1200 dpi A0 sheet would be a 2 GB buffer and a job that
+fails on the allocation rather than printing badly.
+
+Two things this half has that the macOS half does not:
+
+- **It is verified to a real spooler.** `bin/print_probe.rs` opens a DC for "Microsoft Print to
+  PDF" directly and names an output file in `DOCINFOW.lpszOutput`, so the driver writes instead of
+  prompting --- everything except the panel runs unattended, and the result is re-read by the OS
+  parser. The two decisions above that "need paper" on macOS are still unverified as *choices*,
+  but the pipeline they sit in is no longer unexercised. It asserts ink per page and not a page
+  count, since a broken blit yields the right number of blank sheets.
+- **It distinguishes Cancel from failure.** `PrintDlgW` returns zero for both and
+  `CommDlgExtendedError` separates them, where `runOperation` answers one boolean for "printed"
+  and "cancelled" alike --- so macOS cannot report a print failure without also reporting a
+  Cancel as one, and deliberately reports neither.
 
 ##### Two defects the real corpora found, and a third the profile nearly hid
 

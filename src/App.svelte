@@ -548,6 +548,7 @@
         viewer: () => viewer,
         root: () => surface,
         path: () => openPathName,
+        pageCount: () => status?.pageCount ?? 0,
         sidebarShown: () => sidebarShown,
         toggleSidebar,
         flush: () => places.flush(),
