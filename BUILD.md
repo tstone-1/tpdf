@@ -316,10 +316,23 @@ peak, no `pdfium` among them, over 32--1324 samples.
 **One run of `vector-multi` failed before this and is worth reading rather than discarding.**
 `activating a thumbnail goes to its page` reported `from page 1 to 1, wanted 7`, and the three
 withdrawal checks beside it skipped --- which looks like two findings and is one, since nothing
-navigated, so no new thumbnail was ever requested to be in flight. It did not reproduce in two
-later runs, including one under deliberate concurrent CPU load, which is the explanation that
-was guessed first and tested second. The check now prints whether focus actually landed, so
-the next occurrence says which half failed; see the trap of that name.
+navigated, so no new thumbnail was ever requested to be in flight.
+
+It led to a real defect in two classes. The page strip and the outline tree both activated
+`focused` --- a **mirror** of the DOM's focus kept by a `focusin` listener --- rather than the
+row the key event reached, and a mirror that misses an update sends the reader to whatever it
+still names, which is page 1 because it starts at 0. `focusin` is not guaranteed: a document
+without system focus moves `activeElement` without delivering focus events. Both now take the
+row from `event.target` and keep the mirror only as the fallback for a key that arrived on the
+container. Each has a unit test that was shown to go red first, plus a control on the
+fallback; `sidebar.ts` had no unit tests before this.
+
+**The intermittent itself was never caught a second time** --- five further corpus runs,
+including a replay of the back-to-back loop it came from and one under deliberate concurrent
+CPU load, are all green --- so this is an identification by mechanism and symptom, not by
+re-observation. Contention was the first guess and was wrong when tested. The check now prints
+`activeElement`, whether the strip followed, and `document.hasFocus()`, so a recurrence
+settles it. See the trap *A mirror of the DOM's focus goes stale*.
 
 Rendering, scrolling, zoom, pinch, view rotation, text selection, search, the palette, the
 accessibility tree, the outline sidebar, thumbnails, inversion and the print command's

@@ -3816,35 +3816,47 @@ exactly like one that passes there**, because neither produces a failure. Four d
 Windows blockers had already been found wrong by over-reporting; this is the same error with
 the sign flipped --- two harnesses nobody had listed as blocked, one of which could not start.
 
-### A check that navigates from the strip's own focus cannot tell lost focus from lost navigation
+### A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 
 `activating a thumbnail goes to its page` failed once in three Windows runs of
-`vector-multi`, with `from page 1 to 1, wanted 7`, and passed on every other corpus and on
-the two later runs of that one.
+`vector-multi`, with `from page 1 to 1, wanted 7`. The check-side half is that the symptom
+is ambiguous: the strip activates its **own** idea of the focused row, so a `focus()` that
+did not take and an Enter that never reached the handler print character for character
+alike. The code-side half is the actual defect, and it was in two classes at once.
 
-The strip's Enter handler is `this.opts.onNavigate(this.focused)` --- its **own** focus, not
-the element the event reached. `focused` starts at 0 and is synced from the DOM only by a
-`focusin` listener. So a `focus()` that does not land leaves it at 0, Enter navigates to
-page 1, and the detail line is **character for character** what "Enter never reached the
-handler" would print. One symptom, two causes, and they want opposite fixes.
+Both `thumbnails.ts` and `sidebar.ts` kept a `focused` field --- a **mirror** of the DOM's
+focus, maintained by a `focusin` listener --- and activated *that* on Enter rather than the
+row the key event reached. A mirror is only as good as its updates, and `focusin` is not
+guaranteed: a document without system focus moves `activeElement` without delivering focus
+events at all. Whenever the mirror is stale the reader is sent to whatever it still names,
+and since it starts at 0 that is **page 1** --- which is exactly what the transcript said.
 
-Three explanations were ruled out before touching anything, and the third is the useful one:
+The fix is to stop consulting the mirror for activation. `event.target` is authoritative,
+because it *is* the focused element; the mirror survives only as the fallback for a key that
+arrived on the container rather than on a row.
 
-- The row cannot be detached: `mount` does `appendChild` *before* `rows.set`, so nothing in
-  the map is ever out of the document.
-- Nothing resets `focused` to 0 --- there are exactly three assignments and none of them can.
-- **Contention was tested rather than assumed, and the guess was wrong.** The failing run had
-  a mutation harness running beside it, which is an obvious explanation for a timing-sensitive
-  check; re-running `vector-multi` under deliberate concurrent load passed 70/39, identical to
-  the quiet run. Had that not been tried, "it was CPU load" would have been written down here
-  as the cause.
+**It was already half-known, which is the part worth stealing.** `sidebar.ts`'s `focusin`
+listener carries a comment saying that a roving tabindex which does not follow focus "aims
+every key at whichever row happened to be tracked", and it was added to fix exactly that for
+the arrow keys. Adding a synchroniser makes a mirror *usually* right, and usually-right is
+the version that passes review and then fails once a month. The arrows were fixed and Enter
+went on reading the mirror.
 
-The check now records whether `document.activeElement` is the row and prints it beside the
-failure. Proved by mutation, not by inspection: deleting the `focus()` call yields
-`from page 1 to 1, wanted 2, and focus never landed on the row (connected=true)` --- the same
-symptom with its cause named, and `connected=true` disposing of the detachment theory in the
-transcript itself rather than in someone's memory.
+Reproduced deterministically rather than waited for: dispatching Enter with a target that
+differs from the mirror is precisely the state a missed `focusin` leaves behind, and under
+the old code it activated page 0 while the key sat on page 3. Each class got that test plus
+a control asserting the fallback still works --- without the control, "use the event's row"
+is satisfied by a class that activates nothing. Both were shown to go red before the fix and
+green after; `sidebar.ts` had no unit tests at all before this.
 
-**The intermittent is not explained, and is recorded here as open.** It was seen once, on the
-first --- and therefore cold --- open of that fixture on this machine, and has not recurred in
-two later runs. What has changed is that the next occurrence will say which half failed.
+**What is not established is that this is what happened in that run.** It has not recurred:
+five further corpus runs, including a deliberate replay of the back-to-back loop the failure
+came from and one under concurrent CPU load, are all green. So the identification rests on a
+defect that produces exactly that symptom, not on catching it twice. Contention was the
+first guess and was wrong when tested, which is the reason this paragraph exists. The check
+now prints `activeElement`, whether the strip followed, and `document.hasFocus()`, so a
+recurrence will confirm or refute it instead of restarting the argument.
+
+Fixed in both classes in one change, deliberately. Two copies of one mistake drift, and the
+outline tree's version had never failed a check --- which is what a latent defect looks like
+right up until it is the one on the screen.

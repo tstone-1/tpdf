@@ -3055,14 +3055,25 @@ async function navigateFromStrip(
   // "from page 1 to 1" and reads as a broken navigation rather than as lost
   // focus. Recorded rather than asserted, because the two failures want
   // different fixes and the detail line is what says which one happened.
+  // Three observables, because "went nowhere" has three causes that print
+  // identically. `landed` is the DOM's own focus; `roved` is the strip's, since
+  // the roving tabindex is set by the same `focus(page)` the `focusin` listener
+  // calls, so it says whether that listener ever ran; `hasFocus` is there
+  // because a document without system focus is exactly where the two can
+  // disagree -- the element becomes `activeElement` and the focus event is not
+  // delivered.
   const landed = document.activeElement === element;
+  const roved = element.tabIndex === 0;
+  const framed = document.hasFocus();
   key(element, "Enter");
   await settle(() => viewer.position.page === target);
   check(
     name,
     viewer.position.page === target,
     `from page ${here + 1} to ${viewer.position.page + 1}, wanted ${target + 1}` +
-      (landed ? "" : `, and focus never landed on the row (connected=${element.isConnected})`),
+      (viewer.position.page === target
+        ? ""
+        : `, activeElement=${landed}, strip followed=${roved}, document focused=${framed}`),
   );
 }
 

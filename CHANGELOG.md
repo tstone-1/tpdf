@@ -1286,6 +1286,20 @@ experience.
 
 ### Fixed
 
+- **Enter on a page thumbnail or an outline row could go to the wrong place.** Both the strip
+  and the outline tree activated `focused` --- their own record of which row has focus, kept up
+  to date by a `focusin` listener --- rather than the row the key actually reached. That record
+  is a mirror, and `focusin` is not guaranteed to arrive: a document without system focus moves
+  `activeElement` without delivering any focus event. A stale mirror sends the reader to
+  whatever it still names, which is page 1, since it starts there. Both now read the row from
+  the event itself and keep the mirror only for a key that landed on the container rather than
+  on a row.
+
+  Found from a single `viewer_check.py` failure on `vector-multi` that has never recurred, so
+  it is an identification by mechanism rather than by catching it twice --- `docs/TRAPS.md` has
+  what that does and does not establish. Each class has a unit test that was shown to fail
+  first and a control on the fallback; `sidebar.ts` had no unit tests before this.
+
 - **A harness phase could time out with no transcript at all, because render workers inherit the
   app's stdout.** `open_check.py`'s handover phase captured the app through a `PIPE` and waited on
   `communicate()`, which returns only at EOF --- and the workers are re-execs of the same binary

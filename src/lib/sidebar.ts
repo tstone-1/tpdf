@@ -550,9 +550,19 @@ export class Sidebar {
         else return;
         break;
       case "Enter":
-      case " ":
-        if (this.focused) this.activate(this.focused);
+      case " ": {
+        // The row the key reached, for the reason the page strip records at the
+        // same point: `focused` is a mirror of the DOM's focus maintained by the
+        // `focusin` listener, and a document without system focus moves
+        // `activeElement` without delivering that event -- leaving the mirror
+        // naming a different row than the one the key actually landed on. The
+        // event's target is authoritative, because it *is* the focused element.
+        // The mirror stays as the fallback for a key that arrived on the tree
+        // rather than on a row.
+        const from = (event.target as HTMLElement | null)?.dataset?.id ?? this.focused;
+        if (from) this.activate(from);
         break;
+      }
       default:
         return;
     }
