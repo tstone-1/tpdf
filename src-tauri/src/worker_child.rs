@@ -299,7 +299,11 @@ fn handle(
             Ok(text) => Response::json(&text),
             Err(e) => Response::err(e),
         },
-        Request::Search { page, query } => match render::run_search(document, *page, query) {
+        Request::Search {
+            page,
+            query,
+            options,
+        } => match render::run_search(document, *page, query, *options) {
             Ok(matches) => Response::json(&matches),
             Err(e) => Response::err(e),
         },

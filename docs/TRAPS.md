@@ -3522,3 +3522,73 @@ Two ways to get it wrong while fixing it, both worse than the bug:
 Worth pairing with the entry about a control contaminated by the phase before it: both are
 cases where the *fixture* decides whether an assertion means what it says, and neither is
 visible until a corpus with the awkward shape runs.
+
+### A restored file with its original timestamp leaves the build serving the mutation
+
+**This repository had already paid for this once**, and the entry it wrote down named the
+wrong thing. *"Restoring a mutated file by moving a backup over it tests the mutated
+binary"* blames `mv`, and `mv` was never the mechanism --- the mechanism is that the
+restored file carries the backup's **older mtime**, which `cp -p`, `shutil.copy2`, `rsync
+-a` and `tar -x` all do just as faithfully. A new harness written months later, by someone
+who had read that entry and had written *"copied aside and copied back, never moved"* into
+its own comment as the lesson, reproduced the defect exactly.
+
+`scripts/mutate_rust.py` copied each target aside with `shutil.copy2`, mutated it, ran
+`cargo test`, and copied the backup back in a `finally`. `copy2` preserves mtime by design,
+so the restored file ended up *older* than the artifact cargo had just built from the
+mutated one. Cargo compares timestamps, found nothing newer than its output, and rebuilt
+nothing --- so every `cargo test` after the run, including the harness's own control on the
+next run, executed the **last mutation**. It surfaced as `a_page_with_no_text_reports_it`
+claiming a blank page had 7 characters, which is `"catalog".len()`: the query, from a
+mutation that had been reverted twenty minutes earlier.
+
+What makes it expensive is that every ordinary check agrees with the source. `git diff` is
+clean, the file reads correctly, and reading the function proves nothing. The tell is in
+cargo's own output --- `Finished in 0.14s` with no `Compiling` line, for a crate whose
+source has supposedly just changed.
+
+- **Restore by writing the bytes, not by copying the file**: `target.write_text(backup.read_text())`.
+  A write stamps the current time, which is what every build system is watching for. Keep the
+  backup as a real file so a harness that dies mid-run still leaves something to recover from.
+- **Within a run it does not bite**, which is why the first run's results were sound and the
+  second one's control was not: mutating uses `write_text`, so each mutation *is* newer than
+  the artifact. Only the restore is stale. A harness that ran one mutation and stopped would
+  look perfect and leave the tree poisoned.
+- The general form: **any tool that decides staleness by timestamp can be fooled by a restore
+  that preserves one** --- cargo, `make`, `tsc --incremental`, `ninja`. `rsync -a`,
+  `cp -p`, `tar -x` and `git checkout` of an unchanged blob all preserve or restore mtimes.
+- `mutate_frontend.py` has had the same `copy2` restore since it was written and has never
+  misbehaved, because vitest reads sources per run rather than consulting a timestamp. It was
+  safe by accident, not by design, and is fixed the same way --- a latent defect that only
+  the *build system* decides whether you notice.
+
+The lesson about the lesson, which is the reason this entry is worth its length: **name the
+mechanism in the title, not the operation that happened to expose it.** "Restore by move"
+reads as a rule about `mv`, so a harness using `copy2` looks compliant, and its author wrote
+a comment saying so. The rule that transfers is *"a restore must stamp a new mtime"*.
+
+### A label rendered only from real ids cannot be tested on a combination none of them uses
+
+`keys.ts` renders a shortcut's label from the modifiers its binding declares, which is the
+whole point of the module: a label cannot disagree with its handler because it is derived
+from it. It took `label(id: BoundCommand)` --- an id that exists --- and the modifier order
+inside was therefore only ever exercised by the combinations the binding table happens to
+contain.
+
+No binding held Shift *and* Option, so the order between those two was decided by a line of
+code no test could reach. It was wrong: the comment above it said "Control, Option, Shift,
+Command", which is the platform's order, and the code emitted Shift first. Nothing was red,
+nothing could be, and the comment sitting two lines above the contradiction is what makes
+this different from an ordinary untested branch --- the intent was written down and the code
+disagreed with it in the same commit.
+
+The fix is not a test for a fake command. It is **taking the data instead of the key to the
+data**: `render(binding: Binding)` accepts any combination, `label(id)` is one line calling
+it, and the ordering can be asserted for a chord no command uses. The mutation that swaps the
+two now goes red.
+
+Generalises to anything shaped "look it up, then compute": a formatter keyed by enum, a price
+rule keyed by SKU, a permission string keyed by role. **The lookup restricts the test suite to
+the inputs that happen to exist today**, and the combination nobody uses is exactly where a
+disagreement can sit undisturbed. Split the computation from the lookup and the coverage
+follows.

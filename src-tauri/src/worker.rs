@@ -236,7 +236,14 @@ pub enum Request {
     /// Extract one page's characters and their positions.
     Text { page: u32 },
     /// Find a query's occurrences on one page.
-    Search { page: u32, query: String },
+    Search {
+        page: u32,
+        query: String,
+        /// How to match. Defaulted so that a request written before the options
+        /// existed still parses as the unrestricted search it meant.
+        #[serde(default)]
+        options: crate::search::Options,
+    },
     /// Read the document's outline.
     Outline,
 }
@@ -2142,6 +2149,10 @@ mod tests {
             Request::Search {
                 page: 1,
                 query: "quartz".into(),
+                options: crate::search::Options {
+                    match_case: true,
+                    whole_word: true,
+                },
             },
             Request::Outline,
         ] {

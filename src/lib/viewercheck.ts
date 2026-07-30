@@ -787,6 +787,7 @@ async function searchChecks(
     skip("case is ignored", "page 1 has no extractable text");
     skip("a word that is not there is not found", "page 1 has no extractable text");
     skip("searches forward from the page being read", "page 1 has no extractable text");
+    skipSearchOptions("page 1 has no extractable text");
     skip("finds something from the end of the document", "page 1 has no extractable text");
     skip("counts more than the matches on one page", "page 1 has no extractable text");
     skip("Cmd-G moves to a match on another page", "page 1 has no extractable text");
@@ -866,8 +867,106 @@ async function searchChecks(
       `${viewer.searchElapsedMs.toFixed(0)} ms`,
   );
 
+  await searchOptionChecks(viewer, seen, needle, firstHit, doc.page_count);
   await searchesFromHere(root, viewer, seen, needle, doc.page_count);
   await stepToAnotherPage(root, viewer, seen, needle, doc.page_count);
+}
+
+/** The three checks {@link searchOptionChecks} records, for the skip path. */
+const SEARCH_OPTION_CHECKS = [
+  "matching case rejects the hit that ignoring it accepted",
+  "whole words rejects a hit inside a longer word",
+  "turning the options off finds the hit again",
+] as const;
+
+function skipSearchOptions(why: string): void {
+  for (const name of SEARCH_OPTION_CHECKS) skip(name, why);
+}
+
+/**
+ * That the two matching options reach the matcher and change what it accepts.
+ *
+ * Each is asserted against **one known occurrence** --- the first hit of the
+ * plain search, whose position and spelling are both already established ---
+ * rather than against a count. A count is the tempting assertion and it cannot
+ * fail honestly: whole-word narrows a search on most documents and widens it on
+ * none, so "fewer than before" passes for a fixture that simply has fewer of
+ * something, and it passes for an option that was dropped on the way to the
+ * worker whenever the document happens to agree.
+ *
+ * The waits are on `searching` **and** `scanned`, where the checks above wait on
+ * `scanned` alone. `Search.run` sets `running` synchronously before its first
+ * await, so a wait that includes it cannot be satisfied by the *previous* scan's
+ * finished state --- which is a race the `scanned`-only form has on entry. The
+ * `scanned` half is kept because it is what notices a missing generation guard,
+ * for the reason the negative control above spells out.
+ */
+async function searchOptionChecks(
+  viewer: Viewer,
+  seen: { status: ViewerStatus | null },
+  needle: string,
+  firstHit: { page: number; start: number } | undefined,
+  pageCount: number,
+): Promise<void> {
+  const done = (): boolean =>
+    !viewer.searching && (seen.status?.search.scanned ?? 0) >= pageCount;
+  const hitAtFirst = (): boolean =>
+    !!firstHit &&
+    viewer.searchMatches.some((m) => m.page === firstHit.page && m.start === firstHit.start);
+
+  if (!firstHit) {
+    skipSearchOptions("the plain search found nothing to reason about");
+    return;
+  }
+
+  const shouted = needle.toUpperCase();
+  if (shouted === needle) {
+    skip(
+      SEARCH_OPTION_CHECKS[0],
+      `"${needle}" is already upper case, so there is no spelling of it that ` +
+        "matching case would reject",
+    );
+  } else {
+    // `case is ignored` has just established that this exact query finds this
+    // exact occurrence. Turning the option on must stop it, because the text
+    // there is spelled the other way.
+    viewer.setSearchOptions({ matchCase: true, wholeWord: false });
+    viewer.search(shouted);
+    await settle(done);
+    check(
+      SEARCH_OPTION_CHECKS[0],
+      !hitAtFirst(),
+      `"${shouted}" with match-case -> ${viewer.searchMatches.length} matches, none at ` +
+        `${firstHit.page}:${firstHit.start} where "${needle}" is`,
+    );
+  }
+
+  // A proper prefix of the needle occurs at the needle's own position and is
+  // followed there by a letter, so it is never a whole word there. `pickNeedle`
+  // returns five letters or more, so the prefix is at least four.
+  const stem = needle.slice(0, -1);
+  viewer.setSearchOptions({ matchCase: false, wholeWord: true });
+  viewer.search(stem);
+  await settle(done);
+  check(
+    SEARCH_OPTION_CHECKS[1],
+    !hitAtFirst(),
+    `"${stem}" with whole-word -> ${viewer.searchMatches.length} matches, none at ` +
+      `${firstHit.page}:${firstHit.start} where it is followed by ` +
+      `"${needle.slice(-1)}"`,
+  );
+
+  // The control, and the one that says the two above rejected something rather
+  // than the search having stopped working. Same query, options off, hit back.
+  viewer.setSearchOptions({ matchCase: false, wholeWord: false });
+  viewer.search(stem);
+  await settle(done);
+  check(
+    SEARCH_OPTION_CHECKS[2],
+    hitAtFirst(),
+    `"${stem}" unrestricted -> ${viewer.searchMatches.length} matches, including ` +
+      `${firstHit.page}:${firstHit.start}`,
+  );
 }
 
 /**

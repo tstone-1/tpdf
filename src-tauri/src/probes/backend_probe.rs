@@ -371,13 +371,52 @@ pub fn main() {
     // Searched for something a text page has and a vector one does not, so the
     // count below is evidence rather than a matching pair of zeroes.
     let query = "e".to_string();
-    let worker_hits = wait(|reply| workers.search(worker_doc.id, page, query.clone(), reply));
-    let native_hits = wait(|reply| in_process.search(native_doc.id, page, query.clone(), reply));
+    let plain = tpdf_lib::search::Options::default();
+    let words = tpdf_lib::search::Options {
+        whole_word: true,
+        ..plain
+    };
+    let worker_hits =
+        wait(|reply| workers.search(worker_doc.id, page, query.clone(), plain, reply));
+    let native_hits =
+        wait(|reply| in_process.search(native_doc.id, page, query.clone(), plain, reply));
     report.check(
         "a search returns the same ranges on both",
         same_matches(&worker_hits, &native_hits),
         describe_matches(&native_hits),
     );
+
+    // The options travel down the same pipe as the query, and a worker that
+    // dropped them would answer the unrestricted search --- which is the plain
+    // result above, so the two checks together are what catches it. A count that
+    // did not move means the option had nothing to bite on here, and that is a
+    // skip rather than a pass: the check would agree with a worker ignoring it.
+    let worker_words =
+        wait(|reply| workers.search(worker_doc.id, page, query.clone(), words, reply));
+    let native_words =
+        wait(|reply| in_process.search(native_doc.id, page, query.clone(), words, reply));
+    let hit_count =
+        |result: &Result<PageMatches, String>| result.as_ref().ok().map(|m| m.matches.len());
+    if hit_count(&native_words) == hit_count(&native_hits) {
+        report.skip(
+            "a search option crosses the worker boundary",
+            format!(
+                "a whole-word search for {query:?} finds what an unrestricted one does on this \
+                 page ({}), so agreement would not show the option arriving",
+                describe_matches(&native_hits)
+            ),
+        );
+    } else {
+        report.check(
+            "a search option crosses the worker boundary",
+            same_matches(&worker_words, &native_words),
+            format!(
+                "whole-word: {}; unrestricted: {}",
+                describe_matches(&native_words),
+                describe_matches(&native_hits)
+            ),
+        );
+    }
 
     let worker_outline = wait(|reply| workers.outline(worker_doc.id, reply));
     let native_outline = wait(|reply| in_process.outline(native_doc.id, reply));

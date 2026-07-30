@@ -637,6 +637,27 @@ experience.
   of by a `reset()` call at each of those sites. Units are found from the character under the
   pointer rather than the caret beside it: the caret after a word's last glyph names the
   following space, and a word selection built on that selects the gap.
+- **Matching case and whole words, in find.** ⌥⌘C and ⌥⌘W, two toggles beside the find field,
+  or the palette. Both default to off, so a reader who never touches them gets the search that
+  was there before. A toggle rescans the current query rather than filtering what it found:
+  deciding whether a hit is a whole word needs the characters *next to* it, and having those
+  on the front end means shipping a 775-page document's text to answer a question about a
+  dozen hits.
+
+  Matching case turns off half the fold and nothing else --- whitespace still collapses and
+  soft hyphens still disappear, because neither is about case. Whole word is `\b` over the
+  folded sequence, so a soft hyphen does not break a word and a line break does. Its word
+  class is letters, digits and underscore and deliberately **not** combining marks, which the
+  front end's own word selection does count; the consequence is that a whole-word search for
+  `cafe` still matches a decomposed `café`, which is what the unrestricted search does anyway.
+
+  `scripts/mutate_rust.py` is new: the backend had no mutation harness, and `search.rs` is its
+  densest logic. 16 mutations, each caught by the test named for it. Writing it exposed two
+  defects elsewhere --- `keys.ts` rendered Shift before Option while its own comment said the
+  reverse, unreachable because no binding held both; and the new harness reproduced, through
+  `shutil.copy2`, the mtime-restore defect already recorded here as a `mv` problem. It was
+  never a `mv` problem, and cargo served the last mutation to every run afterwards.
+
 - **Go to page, and commands that take a value.** ⌥⌘G, or "Go to page…" in the palette, turns
   the palette's input into a value field with a placeholder, live validation and a preview of
   what Enter will do. A 775-page document previously had no way to reach page 400 at all:
