@@ -374,6 +374,14 @@ render. Four consequences, all load-bearing:
    cancellation has to work *inside* a render, which is what the `IFSDK_PAUSE` path is
    for.
 
+**All four now rest on two platforms, and the constants are worse on the second.** Re-measured
+on Windows 2026-07-30 against the same generated A0 fixture and the same PDFium pin: spatial
+culling is intact (a 256² tile is **3.8%** of a full render, against 4.3% here), and the floor
+is real but larger --- **~1.3 s** per render call, a full page **35.1 s at 1×** and **88.3 s at
+2×**. So the ratios that drove the architecture reproduce and the absolute numbers are 1.5--1.8×
+higher, which means any latency budget written against the figures above is optimistic on
+Windows by about a third. `BUILD.md` has the table and the cross-check.
+
 Peak RSS: 211 MB for one A0 page, 70 MB for the 775-page text document.
 
 ### Two-tier cache

@@ -167,7 +167,15 @@ about the pool.
 
 `pool-bench` and `prespawn-bench` act as their own worker on Windows now --- their `#[cfg(unix)]`
 gate on the re-exec dated from before `worker_child` compiled there, and left each binary unable
-to be the thing it measures. `worker-bench` and `tile-bench` still carry it.
+to be the thing it measures.
+
+**`tile-bench` was never blocked at all**, and this file said it was for two days: the list of
+four refusing binaries had it in, and running it showed no refusal --- only a hardcoded
+`vendor/pdfium/lib` and a `NaN` where a peak should be. Both fixed, so it now measures on Windows.
+That is the trap of the same name arriving in this file rather than in the code: a blocker list
+is written by reading, and reading over-reports. `worker-bench` is the one genuine refusal left,
+and its reason is real --- it carries its own POSIX worker implementation, fd passing and SBPL
+profiles included, and shares no mechanism with the Windows model.
 
 **Pre-spawning works on Windows too** (2026-07-30), so both platforms now start a worker before
 a file is chosen. The handover is the only part that differs and it had to: a macOS parent
@@ -340,6 +348,15 @@ cargo **feature**, not by the profile. Both are in `docs/TRAPS.md`.
 Every *measurement* in this file is macOS arm64 unless it says otherwise --- the pre-spawn
 figures above are the first Windows ones, and they are labelled. The two platforms differ enough
 on that measurement that carrying a macOS number over is a guess rather than an estimate.
+
+**And the render constants are now measured on both.** `tile-bench` runs on Windows since
+2026-07-30, and `docs/PLAN.md` §4's four architectural consequences reproduce there against the
+same generated A0 fixture: spatial culling intact (a 256² tile is 3.8% of a full render, against
+4.3% on macOS), a real per-render floor of **~1.3 s** against ~1 s, and a full page at **35.1 s /
+88.3 s** for 1× / 2× against 22.8 s / 48.4 s. The ratios that drove the architecture hold; every
+absolute number is **1.5--1.8× worse**, so a latency budget written against the macOS figures is
+optimistic here by about a third. `BUILD.md` has the table, the caveats and the independent
+cross-check that says the numbers are the document's rather than the harness's.
 
 ---
 

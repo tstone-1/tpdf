@@ -103,9 +103,45 @@ fn parse_args() -> Result<Args, String> {
 /// mistaken for a measurement. A zero here would read as "PDFium allocated
 /// nothing", which is both false and exactly the kind of plausible number that
 /// gets quoted.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn peak_rss_mb() -> f64 {
     f64::NAN
+}
+
+/// The high-water mark of this process's memory, in MB.
+///
+/// `PeakWorkingSetSize` is the closest Windows counterpart to `ru_maxrss` and it
+/// is not the same quantity: a working set is resident pages, so it is trimmed
+/// by memory pressure and can be lower than the peak *commit* the same run
+/// reached. It is the right one here anyway --- the question this bench asks is
+/// what a tile costs in resident memory, and both platforms answer it about
+/// pages actually held.
+///
+/// Bytes, unlike macOS's kilobytes-or-bytes ambiguity next door, and unlike the
+/// unix arm this needs no per-target scaling.
+///
+/// Keeps the `NaN` contract of the arm above on failure, for the same reason:
+/// a zero would read as "PDFium allocated nothing".
+#[cfg(windows)]
+fn peak_rss_mb() -> f64 {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    // SAFETY: a zeroed struct is the documented starting point and `cb` is its
+    // own size, as the API requires.
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    counters.cb = match u32::try_from(std::mem::size_of::<PROCESS_MEMORY_COUNTERS>()) {
+        Ok(size) => size,
+        Err(_) => return f64::NAN,
+    };
+    // SAFETY: a pseudo-handle to self, and the struct outlives the call.
+    let ok = unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &raw mut counters, counters.cb) };
+    if ok == 0 {
+        return f64::NAN;
+    }
+    counters.PeakWorkingSetSize as f64 / (1024.0 * 1024.0)
 }
 
 #[cfg(unix)]
@@ -650,6 +686,6 @@ fn pdfium_dir() -> PathBuf {
     }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium/lib"))
+        .map(|root| root.join("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR))
         .unwrap_or_else(|| PathBuf::from("."))
 }

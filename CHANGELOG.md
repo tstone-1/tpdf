@@ -131,11 +131,29 @@ experience.
   behaviour changed; it is replaced by one pinning `PRESPAWNS` against what `prespawn` actually
   does, proved able to fail by restoring the stale value.
 
-- **`pool-bench` and `prespawn-bench` can act as their own worker on Windows.** Both gated the
-  `--render-worker` re-exec on `#[cfg(unix)]`, left from before `worker_child` compiled there,
-  and both hardcoded `vendor/pdfium/lib` where the loadable DLL is in `bin/`. A binary that
-  re-execs itself as a worker and then refuses to be one is not degraded, it is unrunnable.
-  `worker-bench` and `tile-bench` still carry both.
+- **`pool-bench`, `prespawn-bench` and `tile-bench` run on Windows.** The first two gated the
+  `--render-worker` re-exec on `#[cfg(unix)]`, left from before `worker_child` compiled there; a
+  binary that re-execs itself as a worker and then refuses to be one is not degraded, it is
+  unrunnable. All three hardcoded `vendor/pdfium/lib`, which on Windows exists and holds the
+  import library, so the failure lands at `LoadLibraryExW`. `tile-bench` also gained a real
+  `peak_rss_mb` there (`GetProcessMemoryInfo`/`PeakWorkingSetSize`) in place of `NaN`, keeping
+  the `NaN`-on-failure contract.
+
+  **`tile-bench` had never refused anything** --- the documented list of four blocked binaries was
+  wrong about two of them, in the direction a list written by reading always errs. `worker-bench`
+  is the one real refusal, and its reason is accurate: its own POSIX worker, fd passing and SBPL
+  bisection, sharing no mechanism with the job-object model.
+
+- **The render constants are measured on Windows, and `docs/PLAN.md` §4 holds with worse numbers.**
+  Same generated A0 fixture, same PDFium pin. Spatial culling intact --- a 256² tile is **3.8%** of
+  a full render against 4.3% on macOS --- and the per-render floor is real but larger: **~1.3 s**
+  against ~1 s, with a full page at **35.1 s / 88.3 s** for 1x / 2x against 22.8 s / 48.4 s. The
+  ratios that drove the architecture reproduce; every absolute number is **1.5--1.8x worse**, so a
+  latency budget written against the macOS figures is optimistic here by about a third. Peak RSS
+  532 MB. Cross-checked against `backend-probe`'s independent 1536 ms 512² render of the same
+  document on the same machine before being believed. The cheap-page half is flat (0.6--0.9
+  ms/Mpixel, no floor), which confirms the asymmetry the plan bets on but is **not** a
+  cross-platform comparison --- macOS measured a fixture this machine has not generated.
 
   `worker_pids` matches a child on its **image name** there rather than on argv, because
   Toolhelp reports a parent pid and an image but no command line. Weaker, and sufficient for a
