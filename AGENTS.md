@@ -637,7 +637,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test for an atomic write must plant the intermediate it is meant to prove
 - A control can be contaminated by the phase that ran before it
 - A check that derives its inputs from the thing it is testing cannot fail
-- A check that navigates from the strip's own focus cannot tell lost focus from lost navigation
+- A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 - A page fitted to the element's own width is measured under the scrollbar
 - A synthetic heading that does not reach the second column tests nothing
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion

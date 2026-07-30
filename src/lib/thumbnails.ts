@@ -714,9 +714,20 @@ export class Thumbnails {
         this.move(this.opts.pageCount);
         break;
       case "Enter":
-      case " ":
-        this.opts.onNavigate(this.focused);
+      case " ": {
+        // The row the key actually reached, not the one this class believes has
+        // focus. `focused` is a mirror of the DOM's focus kept up to date by the
+        // `focusin` listener, and a mirror can be stale: a document without
+        // system focus moves `activeElement` without delivering the focus event,
+        // so the mirror still says page 0 while the key lands on another row --
+        // and activating page 0 is indistinguishable from Enter doing nothing.
+        // The event's own target is authoritative in every case, because that
+        // *is* the focused element; the mirror is only the fallback for a key
+        // that arrived on the list rather than on a row.
+        const from = (event.target as HTMLElement | null)?.dataset?.page;
+        this.opts.onNavigate(from === undefined ? this.focused : Number(from));
         break;
+      }
       default:
         return;
     }

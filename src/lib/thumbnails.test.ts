@@ -320,3 +320,72 @@ describe("Thumbnails lifetime", () => {
     pages.destroy();
   });
 });
+
+describe("Thumbnails keyboard activation", () => {
+  let dom: FakeDom;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => new Promise(() => {}));
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  /**
+   * A strip with rows actually built. The panel it makes for itself has no
+   * height under the fake DOM, and a strip that cannot measure its panel builds
+   * a single row -- so every row past the first has to be laid out on purpose.
+   */
+  function stripWithRows(navigated: number[]): Thumbnails {
+    const pages = new Thumbnails(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 40,
+      page: { width_pt: 600, height_pt: 800 },
+      tier1: { placeholderFor: () => null },
+      onNavigate: (page: number) => navigated.push(page),
+    });
+    const host = dom.root.children[dom.root.children.length - 1]!;
+    host.clientHeight = 700;
+    host.dispatch("scroll", {});
+    return pages;
+  }
+
+  it("activates the row the key reached, not the one it last tracked", () => {
+    const navigated: number[] = [];
+    const pages = stripWithRows(navigated);
+    const row = pages.elementFor(3) as unknown as (typeof dom.root | null);
+    expect(row).not.toBeNull();
+
+    // Focus reached the row without this class's `focusin` listener ever
+    // running. That is not a contrived state: a document without system focus
+    // moves `activeElement` and does not deliver the focus event, so the row
+    // this class believes is focused is still page 0 while the key event lands
+    // on page 3. Activating the tracked row sends the reader to page 1, which
+    // is what `viewer_check.py` caught once on `vector-multi` and what reads in
+    // a transcript as a navigation that did nothing.
+    const list = row!.parent!.parent!;
+    list.dispatch("keydown", { key: "Enter", target: row });
+
+    expect(navigated).toEqual([3]);
+    pages.destroy();
+  });
+
+  it("falls back to the tracked row when the key did not come from one", () => {
+    // The control on the assertion above: the fallback still has to work, or
+    // "use the event's row" would be satisfied by a class that never activates
+    // anything. A key on the list itself carries no page.
+    const navigated: number[] = [];
+    const pages = stripWithRows(navigated);
+    const list = (pages.elementFor(0) as unknown as typeof dom.root)!.parent!.parent!;
+    list.dispatch("keydown", { key: "Enter", target: list });
+
+    expect(navigated).toEqual([0]);
+    pages.destroy();
+  });
+});
