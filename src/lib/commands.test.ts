@@ -17,8 +17,19 @@
 import { describe, expect, it } from "vitest";
 import { CommandRegistry, fuzzyMatch, rank, type Command } from "./commands";
 
-/** A command that records whether it ran. */
-function command(id: string, title: string, extra: Partial<Command> = {}): Command {
+/**
+ * A command that records whether it ran.
+ *
+ * `extra` names the fields explicitly rather than `Partial<Command>`, which
+ * stopped type-checking when `Command` became a union: a partial of a union
+ * admits an object with neither `run` nor `argument`, which is the shape the
+ * union exists to forbid.
+ */
+function command(
+  id: string,
+  title: string,
+  extra: { keys?: string; enabled?: () => boolean; run?: () => void } = {},
+): Command {
   return { id, title, run: () => {}, ...extra };
 }
 
@@ -168,5 +179,94 @@ describe("CommandRegistry", () => {
     registry.register(...ids.map((id) => command(id, id.toUpperCase())));
     for (const id of ids) registry.run(id);
     expect(registry.recents()).toEqual(["g", "f", "e", "d", "c"]);
+  });
+});
+
+/** A command that takes a value, recording every value it was run with. */
+function pageCommand(ran: string[], pages = 10): Command {
+  return {
+    id: "nav.goToPage",
+    title: "Go to page…",
+    argument: {
+      placeholder: "Page number",
+      problem: (raw) => {
+        const trimmed = raw.trim();
+        if (trimmed === "") return `Page number, 1 to ${pages}`;
+        if (!/^[0-9]+$/.test(trimmed)) return `"${trimmed}" is not a page number`;
+        const page = Number(trimmed);
+        return page < 1 || page > pages ? `This document has ${pages} pages` : null;
+      },
+      preview: (raw) => `Go to page ${Number(raw.trim())} of ${pages}`,
+      run: (raw) => void ran.push(raw),
+    },
+  };
+}
+
+describe("commands that take an argument", () => {
+  it("runs with the value it was given", () => {
+    const ran: string[] = [];
+    const registry = new CommandRegistry();
+    registry.register(pageCommand(ran));
+    expect(registry.run("nav.goToPage", "7")).toBe(true);
+    expect(ran).toEqual(["7"]);
+  });
+
+  it("refuses to run without one", () => {
+    // The shape the union forbids at compile time, arriving at run time from a
+    // caller that has only an id --- a keybinding, a restored session.
+    const ran: string[] = [];
+    const registry = new CommandRegistry();
+    registry.register(pageCommand(ran));
+    expect(registry.run("nav.goToPage")).toBe(false);
+    expect(ran).toEqual([]);
+  });
+
+  it("refuses a value its own check rejects", () => {
+    // Checked in the registry rather than trusted to the palette. The palette
+    // will not offer a bad value; the caller that skips that check is the one
+    // written later.
+    const ran: string[] = [];
+    const registry = new CommandRegistry();
+    registry.register(pageCommand(ran, 10));
+    expect(registry.run("nav.goToPage", "11")).toBe(false);
+    expect(registry.run("nav.goToPage", "nine")).toBe(false);
+    expect(registry.run("nav.goToPage", "")).toBe(false);
+    expect(ran).toEqual([]);
+  });
+
+  it("refuses a value for a command that takes none", () => {
+    let ran = 0;
+    const registry = new CommandRegistry();
+    registry.register(command("view.zoomIn", "Zoom in", { run: () => void ran++ }));
+    expect(registry.run("view.zoomIn", "3")).toBe(false);
+    expect(ran).toBe(0);
+  });
+
+  it("does not record a refused command as recent", () => {
+    // Otherwise a shortcut pressed with no value would push the command to the
+    // top of the palette's list without ever having run.
+    const ran: string[] = [];
+    const registry = new CommandRegistry();
+    registry.register(pageCommand(ran));
+    registry.run("nav.goToPage");
+    expect(registry.recents()).toEqual([]);
+    registry.run("nav.goToPage", "3");
+    expect(registry.recents()).toEqual(["nav.goToPage"]);
+  });
+
+  it("finds a command by id", () => {
+    const registry = new CommandRegistry();
+    registry.register(command("a", "A"));
+    expect(registry.find("a")?.title).toBe("A");
+    expect(registry.find("b")).toBeUndefined();
+  });
+
+  it("explains an empty value rather than saying nothing", () => {
+    // The palette asks before anything is typed, so the empty case is the
+    // first thing a reader sees and has to read as instructions.
+    const spec = pageCommand([], 775).argument;
+    expect(spec?.problem("")).toBe("Page number, 1 to 775");
+    expect(spec?.problem("400")).toBeNull();
+    expect(spec?.preview("400")).toBe("Go to page 400 of 775");
   });
 });

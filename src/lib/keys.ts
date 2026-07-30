@@ -36,6 +36,18 @@ export interface Binding {
   /** Whether Shift is held. Absent means "must not be". */
   shift?: boolean;
   /**
+   * Whether Option/Alt is held. Absent means "must not be".
+   *
+   * Added for ⌥⌘G, which is what this platform's own viewer uses for "Go to
+   * page". Note {@link matches} previously did not look at `altKey` at all, so
+   * every binding here matched with Option held as well as without --- ⌥⌘F
+   * opened find, and ⌥⌘G ran find-next. That is the same both-directions bug
+   * the Shift check exists to prevent, and it had to be fixed before this
+   * binding could exist at all: ⌥⌘G would otherwise have been find-next too,
+   * and whichever branch came first would have won.
+   */
+  alt?: boolean;
+  /**
    * What the palette shows, when the modifiers do not say it.
    *
    * Only for bindings whose key is not its own name: `Escape` reads as `Esc`,
@@ -68,6 +80,7 @@ export const BINDINGS = {
   "nav.previousPage": { keys: ["p"] },
   "nav.firstPage": { keys: ["Home"] },
   "nav.lastPage": { keys: ["End"] },
+  "nav.goToPage": { keys: ["g", "G"], accel: true, alt: true },
   "edit.selectAll": { keys: ["a"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },
   "edit.clearSelection": { keys: ["Escape"], shown: "Esc" },
@@ -85,13 +98,14 @@ export type BoundCommand = keyof typeof BINDINGS;
  */
 export function label(id: BoundCommand): string {
   const binding: Binding = BINDINGS[id];
-  const modified = Boolean(binding.accel || binding.shift);
+  const modified = Boolean(binding.accel || binding.shift || binding.alt);
   const first = binding.keys[0] ?? "";
   // A letter in a chord is capitalised and a bare one is not, which is what
   // every menu on this platform does: ⌘O, but `n` for the unmodified key.
   const key =
     binding.shown ?? (modified && first.length === 1 ? first.toUpperCase() : first);
-  return `${binding.shift ? "⇧" : ""}${binding.accel ? "⌘" : ""}${key}`;
+  // macOS order: Control, Option, Shift, Command, then the key.
+  return `${binding.shift ? "⇧" : ""}${binding.alt ? "⌥" : ""}${binding.accel ? "⌘" : ""}${key}`;
 }
 
 /**
@@ -107,5 +121,6 @@ export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
   const accel = event.metaKey || event.ctrlKey;
   if (accel !== (binding.accel ?? false)) return false;
   if (event.shiftKey !== (binding.shift ?? false)) return false;
+  if (event.altKey !== (binding.alt ?? false)) return false;
   return binding.keys.includes(event.key);
 }

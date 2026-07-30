@@ -11,13 +11,14 @@ import { BINDINGS, label, matches, type BoundCommand } from "./keys";
  */
 function event(
   key: string,
-  { accel = false, ctrl = false, shift = false } = {},
+  { accel = false, ctrl = false, shift = false, alt = false } = {},
 ): KeyboardEvent {
   return {
     key,
     metaKey: accel,
     ctrlKey: ctrl,
     shiftKey: shift,
+    altKey: alt,
   } as KeyboardEvent;
 }
 
@@ -29,6 +30,8 @@ describe("label", () => {
     // Shift before Command, which is the platform's order.
     expect(label("find.previous")).toBe("⇧⌘G");
     expect(label("edit.clearSelection")).toBe("Esc");
+    // Option before Command, and the letter still capitalised by the chord.
+    expect(label("nav.goToPage")).toBe("⌥⌘G");
   });
 
   it("capitalises a letter only when it is part of a chord", () => {
@@ -56,7 +59,8 @@ describe("matches", () => {
       for (const key of binding.keys) {
         const accel = "accel" in binding ? binding.accel : false;
         const shift = "shift" in binding ? binding.shift : false;
-        expect(matches(id, event(key, { accel, shift })), `${id} / ${key}`).toBe(
+        const alt = "alt" in binding ? binding.alt : false;
+        expect(matches(id, event(key, { accel, shift, alt })), `${id} / ${key}`).toBe(
           true,
         );
       }
@@ -113,6 +117,17 @@ describe("matches", () => {
     expect(matches("find.previous", event("g", { accel: true }))).toBe(false);
   });
 
+  it("distinguishes a chord from the same chord with Option", () => {
+    // ⌘G is find-next and ⌥⌘G goes to a page. Until Option was added to the
+    // table `matches` never looked at `altKey` at all, so every binding here
+    // fired with Option held as well as without -- and ⌥⌘G would have been
+    // find-next, whichever arm of the handler was tested first.
+    expect(matches("find.next", event("g", { accel: true }))).toBe(true);
+    expect(matches("find.next", event("g", { accel: true, alt: true }))).toBe(false);
+    expect(matches("nav.goToPage", event("g", { accel: true, alt: true }))).toBe(true);
+    expect(matches("nav.goToPage", event("g", { accel: true }))).toBe(false);
+  });
+
   it("accepts either spelling of a key whose shifted form differs", () => {
     // `key` carries the shifted form and varies by layout: ⌘+ arrives as `+` on
     // one keyboard and `=` on another, and ⇧⌘I as `I` on a US layout and `i` on
@@ -139,8 +154,14 @@ describe("the binding table", () => {
       const binding = BINDINGS[id];
       const accel = "accel" in binding ? binding.accel : false;
       const shift = "shift" in binding ? binding.shift : false;
+      // Alt belongs in the chord for the same reason the other two do, and it
+      // was missing: ⌥⌘G and ⌘G hashed to one key, so this test failed the
+      // moment a binding used Option -- correctly, since without the modifier
+      // in the identity they really would be the same chord.
+      const alt = "alt" in binding ? binding.alt : false;
       for (const key of binding.keys) {
-        const chord = `${accel ? "accel+" : ""}${shift ? "shift+" : ""}${key}`;
+        const chord =
+          `${accel ? "accel+" : ""}${shift ? "shift+" : ""}${alt ? "alt+" : ""}${key}`;
         expect(seen.get(chord), `${chord} is both ${seen.get(chord)} and ${id}`)
           .toBeUndefined();
         seen.set(chord, id);

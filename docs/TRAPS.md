@@ -3494,3 +3494,31 @@ Two further things fell out of the same work, both about the check rather than t
   240 px ended on a boundary because from x=300 a drag that long runs off the end of the line,
   so the selection ends at its last character however far past it the pointer travels. A
   search that comes up empty is evidence about the search, not about the property.
+
+### The last page cannot reach the top of the viewport
+
+Found 2026-07-30 checking a typed page jump. The check asserted that after going to page *n*
+the viewer's `position.page` --- the page at the **top edge** --- is *n*. True on five corpora
+and false on `rotated-90`, which has four landscape pages: jumping to page 4 scrolls as far as
+the document goes and leaves page 3 still visible above it, so the viewer honestly reported
+page 3 for a jump that was entirely correct.
+
+The general form is not about PDFs. **A "scroll X to position P" operation is bounded by the
+content, and the last item can never reach the top of a viewport taller than what follows it.**
+Anything that asserts a scroll target by reading back a top-edge position has this, and it
+appears only on inputs short enough for the clamp to bite --- which is why five fixtures agreed
+and the sixth did not.
+
+Two ways to get it wrong while fixing it, both worse than the bug:
+
+- **Weakening the assertion everywhere.** "The position is *n*, or we are at maximum scroll"
+  passes on any corpus for a jump that simply scrolled to the end. The excuse has to be scoped
+  to the case that earns it: the target is the *final* page **and** the document is pinned at
+  maximum scroll. On every other input the strict equality still holds.
+- **Choosing a target that avoids it.** Picking page 2 instead makes the check pass and stops
+  it testing a jump anyone would make. The clamp is real behaviour; the check should state it,
+  not dodge it.
+
+Worth pairing with the entry about a control contaminated by the phase before it: both are
+cases where the *fixture* decides whether an assertion means what it says, and neither is
+visible until a corpus with the awkward shape runs.

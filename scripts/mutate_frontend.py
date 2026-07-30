@@ -178,6 +178,48 @@ MUTATIONS = [
         "weights distance across the lines, not along them",
     ),
     Mutation(
+        "argument: run a value-taking command with no value",
+        "src/lib/commands.ts",
+        "      if (argument === undefined) return false;",
+        "      if (argument === undefined) return true;",
+        "refuses to run without one",
+    ),
+    Mutation(
+        "argument: trust the caller's value instead of checking it",
+        "src/lib/commands.ts",
+        "      if (command.argument.problem(argument) !== null) return false;",
+        "",
+        "refuses a value its own check rejects",
+    ),
+    Mutation(
+        "argument: silently ignore a value a command cannot take",
+        "src/lib/commands.ts",
+        "      // takes none has misunderstood something, and silently dropping it hides\n      // that until someone wonders why the value had no effect.\n      return false;",
+        "      // takes none has misunderstood something, and silently dropping it hides\n      // that until someone wonders why the value had no effect.\n      argument = undefined;",
+        "refuses a value for a command that takes none",
+    ),
+    Mutation(
+        "argument: record a refused command as recent anyway",
+        "src/lib/commands.ts",
+        "      if (argument === undefined) return false;",
+        "      if (argument === undefined) {\n        this.recent.unshift(id);\n        return false;\n      }",
+        "does not record a refused command as recent",
+    ),
+    Mutation(
+        "keys: stop checking Option in both directions",
+        "src/lib/keys.ts",
+        "  if (event.altKey !== (binding.alt ?? false)) return false;",
+        "",
+        "distinguishes a chord from the same chord with Option",
+    ),
+    Mutation(
+        "keys: leave Option out of the rendered label",
+        "src/lib/keys.ts",
+        '${binding.alt ? "⌥" : ""}',
+        "",
+        "renders the modifiers the binding actually declares",
+    ),
+    Mutation(
         "nearest: count a character PDFium gave no box",
         "src/lib/text.ts",
         "    if (!isPlaced(quad)) continue;\n\n    const dx = Math.max(quad.left - x, 0, x - quad.right);",
@@ -193,7 +235,15 @@ SUMMARY = re.compile(r"^\s*Tests\s+(?:(\d+) failed)?.*?(\d+) passed", re.M)
 def run_tests() -> tuple[set[str], int | None, str]:
     """Runs the suite, returning the failed test names, the summary's count and the log."""
     done = subprocess.run(
-        ["npx", "vitest", "run", "src/lib/text.test.ts", "src/lib/clicks.test.ts"],
+        [
+            "npx",
+            "vitest",
+            "run",
+            "src/lib/text.test.ts",
+            "src/lib/clicks.test.ts",
+            "src/lib/commands.test.ts",
+            "src/lib/keys.test.ts",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
