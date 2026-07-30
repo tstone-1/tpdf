@@ -12,6 +12,7 @@
   import { Palette } from "./lib/palette";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Outline } from "./lib/outline";
+  import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import { clampPlace, loadSession, SessionWriter, type Session } from "./lib/session";
   import { runSessionCheckIfRequested } from "./lib/sessioncheck";
   import { runOpenCheckIfRequested } from "./lib/opencheck";
@@ -414,6 +415,43 @@
     });
   }
 
+  /**
+   * Registers one command per recently-read document.
+   *
+   * The list is `session.rs`'s, which is already most-recent-first, deduplicated
+   * by path and truncated --- so nothing here decides an order, and the ordering
+   * rule lives in exactly one place. Reaching the second entry has simply never
+   * been possible until now.
+   *
+   * Nothing checks that the files still exist. That would be one filesystem call
+   * per entry on a path a keystroke waits behind, to prevent an error message
+   * that `openPath` already produces correctly --- and a document on a volume
+   * that is not mounted right now is one a reader may well want offered.
+   */
+  function offerRecents(from: Session) {
+    const paths = from.places.slice(0, MAX_RECENTS).map((place) => place.path);
+    const labels = labelsFor(paths);
+    commands.replace(
+      RECENT_PREFIX,
+      paths.map((path, index) => ({
+        id: recentCommandId(index),
+        // Prefixed with the verb so the row reads as a command next to "Zoom
+        // in" rather than as a stray filename. Ranking is subsequence matching,
+        // so typing part of the name still finds it.
+        title: `Open ${labels[index] ?? path}`,
+        run: () => void openPath(path),
+      })),
+    );
+  }
+
+  /** Rebuilds the recent-document commands from disk, then re-ranks. */
+  async function refreshRecents() {
+    offerRecents(await loadSession());
+    // The palette may have been opened while this was in flight, or closed
+    // again, or moved into argument mode. `reload` is a no-op in the last two.
+    palette?.reload();
+  }
+
   function focusFind() {
     findField?.focus();
     findField?.select();
@@ -496,7 +534,14 @@
       // Toggling rather than reopening: Cmd-K on an open palette is a request
       // to get rid of it, not to clear the query someone is halfway through.
       if (palette?.isOpen) palette.close();
-      else palette?.open();
+      else {
+        palette?.open();
+        // Opened first and refreshed behind it. The list only changes when a
+        // document is opened, so it is almost always already right, and blocking
+        // a keystroke on a file read to cover the case where it is not would
+        // make every use of the palette pay for it.
+        void refreshRecents();
+      }
     } else if (matches("nav.goToPage", event) && title) {
       // Straight into the palette's argument mode. The shortcut and the palette
       // row reach the same code, which is the point of `askFor` -- a second way
@@ -601,6 +646,10 @@
       const handed = await invoke<string[]>("take_launch_paths");
 
       session = await loadSession();
+      // From the session already in hand, so opening the palette on the first
+      // keystroke costs nothing. Refreshed from disk after that -- see
+      // `refreshRecents`.
+      offerRecents(session);
       // Read before any document opens, so the first tiles of the first page are
       // requested in the polarity the reader left the application in.
       invertPages = session.invert_pages ?? false;
@@ -640,6 +689,11 @@
         sidebarShown: () => sidebarShown,
         toggleSidebar,
         flush: () => places.flush(),
+        recentCommands: () =>
+          commands
+            .all()
+            .filter((command) => command.id.startsWith(RECENT_PREFIX))
+            .map((command) => command.title),
       });
     })();
   });

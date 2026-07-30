@@ -1782,6 +1782,46 @@ rediscovering — a test that cannot distinguish its own silence from a pass.
 Not done: regular expressions, search within a selection, and matching across a page
 boundary.
 
+##### Recent documents in the palette --- 2026-07-30
+
+The list is not new and neither is the ordering: `session.rs` has kept every document that
+has been read, most recent first, deduplicated by path and truncated, since session restore
+needed it. **Reaching the second one has never been possible** --- a reader who wanted
+yesterday's *other* document went through the file dialog for a file the application already
+knew about. Nothing was built here except the way in.
+
+§8 decides the shape: every command is reachable in two keystrokes through the palette, so
+recent documents are **commands**, not a menu. They rank the same way and are found by typing
+part of a name.
+
+The registry became append-only-plus-one: `replace(prefix, commands)` swaps a whole group,
+because the ordering changes whenever a document is opened and re-registering without removing
+would leave yesterday's ordering beside today's. It also drops the replaced ids from the
+recently-run list --- inert today, since ranking looks an id up and finds nothing, and wrong
+the moment an id is reused for a different document, which is exactly what these ids do.
+
+The part with an answer that can be wrong is the **label**. A basename is what a reader
+recognises and is not unique: `report.pdf` in three client folders is the normal case, and
+three identical rows are worse than no list. A full path is unique and unreadable at a glance.
+So the basename is shown and **only the colliding labels** lengthen, one directory at a time,
+until they differ --- one awkward pair does not make every other row longer. Two labels that
+can never differ grow to the whole path and stop, which is what makes it terminate on any
+input.
+
+The list is refreshed from disk when the palette opens, behind the palette rather than in
+front of it: it only changes when a document is opened, so it is almost always already right,
+and blocking a keystroke on a file read to cover the case where it is not would make every
+use of the palette pay for it. Nothing checks that the files still exist --- one filesystem
+call per entry on a path a keystroke waits behind, to prevent an error `openPath` already
+produces correctly, and a document on an unmounted volume is one a reader may well want
+offered.
+
+13 unit tests over the labels and the group replacement, all proved by mutation. The one
+thing no unit test can reach is that the *chain* exists --- session file written by Rust,
+read back, turned into commands, registered --- so `session_check.py` asserts the restored
+document is the **first** recent command offered, with the empty-session phase as its
+control: no session, nothing offered.
+
 ##### The results sidebar --- 2026-07-30
 
 §8's third tab. Worth building rather than leaving the find bar's counter to stand for it,

@@ -224,6 +224,33 @@ export class CommandRegistry {
     this.commands.push(...commands);
   }
 
+  /**
+   * Swaps every command whose id starts with `prefix` for `commands`.
+   *
+   * The registry is otherwise append-only, which suits a command list that is
+   * decided at startup. Recent documents are not: the list changes whenever one
+   * is opened, and re-registering without removing would leave the palette
+   * offering yesterday's ordering alongside today's.
+   *
+   * By prefix rather than by a list of ids, because the *old* ids are exactly
+   * what a caller replacing a whole group does not have --- it knows what the
+   * group is now, not what it was.
+   */
+  replace(prefix: string, commands: Command[]): void {
+    for (let i = this.commands.length - 1; i >= 0; i--) {
+      if (this.commands[i]?.id.startsWith(prefix)) this.commands.splice(i, 1);
+    }
+    this.commands.push(...commands);
+    // A removed command's id can still be sitting in the recents, where it would
+    // rank a command that no longer exists --- harmless today, since `rank`
+    // looks the id up and finds nothing, and wrong the moment an id is reused
+    // for a different document, which is precisely what these ids do.
+    for (let i = this.recent.length - 1; i >= 0; i--) {
+      const id = this.recent[i];
+      if (id?.startsWith(prefix)) this.recent.splice(i, 1);
+    }
+  }
+
   /** Every registered command, enabled or not. */
   all(): readonly Command[] {
     return this.commands;
