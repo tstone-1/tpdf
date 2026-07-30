@@ -245,6 +245,69 @@ MUTATIONS = [
         "describes the plain search as neither option",
     ),
     Mutation(
+        "results: rebuild the whole list on every reply",
+        "src/lib/results.ts",
+        "    for (let i = this.built; i < matches.length && i < MAX_RESULT_ROWS; i++) {",
+        "    this.list.replaceChildren();\n    this.rows.length = 0;\n    for (let i = 0; i < matches.length && i < MAX_RESULT_ROWS; i++) {",
+        "appends only what has arrived since the last paint",
+    ),
+    Mutation(
+        "results: append to the old rows when the query changes",
+        "src/lib/results.ts",
+        "    if (matches !== this.shown) {",
+        "    if (false) {",
+        "rebuilds when the match list is replaced",
+    ),
+    Mutation(
+        "results: keep building rows past the cap",
+        "src/lib/results.ts",
+        "    this.built = Math.min(matches.length, MAX_RESULT_ROWS);",
+        "    this.built = matches.length;",
+        "stops building rows at the cap while the count stays exact",
+    ),
+    Mutation(
+        "results: leave the previous row highlighted",
+        "src/lib/results.ts",
+        "    this.paintRow(this.currentIndex, false);",
+        "",
+        "moves the highlight to the current match and off the previous one",
+    ),
+    Mutation(
+        "results: number rows from zero, as the code does rather than a reader",
+        "src/lib/results.ts",
+        "    page.textContent = String(match.page + 1);",
+        "    page.textContent = String(match.page);",
+        "numbers pages as a reader does, from one",
+    ),
+    Mutation(
+        "results: write the status line on every reply",
+        "src/lib/results.ts",
+        "    if (text === this.said) return;",
+        "",
+        "writes the status line only when it changes",
+    ),
+    Mutation(
+        "results: call an empty query and an empty result the same thing",
+        "src/lib/results.ts",
+        '  if (!query) return "Type in the find field to search.";',
+        "",
+        "tells an empty query apart from a search that has found nothing",
+    ),
+    Mutation(
+        "results: apply the row cap without saying so",
+        "src/lib/results.ts",
+        '    total > MAX_RESULT_ROWS ? `, showing the first ${MAX_RESULT_ROWS}` : "";',
+        '    "";',
+        "states the row cap rather than applying it silently",
+    ),
+    Mutation(
+        "results: do not say a scan is still running",
+        "src/lib/results.ts",
+        "  return running ? `${found}${capped}, still searching…` : `${found}${capped}`;",
+        "  return `${found}${capped}`;",
+        "says a scan is still running",
+    ),
+    Mutation(
         "cache: never evict, whatever the bound says",
         "src/lib/text.ts",
         "      if (this.chars <= TEXT_CACHE_CHARS || this.pages.size <= TEXT_CACHE_FLOOR) break;",
@@ -295,24 +358,27 @@ MUTATIONS = [
     ),
 ]
 
+#: Suites this harness runs. Named once: `run_tests` and the name check below
+#: must agree, or the second validates a list the first never runs.
+TEST_FILES = [
+    "src/lib/text.test.ts",
+    "src/lib/clicks.test.ts",
+    "src/lib/commands.test.ts",
+    "src/lib/keys.test.ts",
+    "src/lib/search.test.ts",
+    "src/lib/textcache.test.ts",
+    "src/lib/results.test.ts",
+]
+
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
+TEST_NAME = re.compile(r"^\s*[✓x×]\s+\S+\.test\.ts\s*>\s*(.*?)(?:\s+\d+ms)?$", re.M)
 SUMMARY = re.compile(r"^\s*Tests\s+(?:(\d+) failed)?.*?(\d+) passed", re.M)
 
 
 def run_tests() -> tuple[set[str], int | None, str]:
     """Runs the suite, returning the failed test names, the summary's count and the log."""
     done = subprocess.run(
-        [
-            "npx",
-            "vitest",
-            "run",
-            "src/lib/text.test.ts",
-            "src/lib/clicks.test.ts",
-            "src/lib/commands.test.ts",
-            "src/lib/keys.test.ts",
-            "src/lib/search.test.ts",
-            "src/lib/textcache.test.ts",
-        ],
+        ["npx", "vitest", "run", *TEST_FILES],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -326,6 +392,21 @@ def run_tests() -> tuple[set[str], int | None, str]:
     return names, counted, out
 
 
+def all_test_names() -> set[str]:
+    """Every test name the suite defines, from the verbose reporter."""
+    done = subprocess.run(
+        ["npx", "vitest", "run", "--reporter=verbose", *TEST_FILES],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    out = done.stdout + done.stderr
+    # `✓ src/lib/x.test.ts > describe > name 3ms` -- split on the marker and take
+    # the rest, never a fixed column.
+    return {m.strip() for m in TEST_NAME.findall(out) if m.strip()}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", action="store_true")
@@ -336,7 +417,7 @@ def main() -> int:
             print(f"{mutation.name}  ->  expects: {mutation.expect}")
         return 0
 
-    print(f"--- control: the suite must be green before anything is broken", flush=True)
+    print("--- control: the suite must be green before anything is broken", flush=True)
     names, counted, out = run_tests()
     if counted is None:
         print("[FAIL] the control run produced no summary line, so nothing below is readable")
@@ -346,6 +427,22 @@ def main() -> int:
         print(f"[FAIL] the control run is not green: {counted} failed, {sorted(names)}")
         return 1
     print("[OK]   control green", flush=True)
+
+    # Every `expect` must name a test this harness can actually run. One named a
+    # check that only `viewer_check.py` records, and the run reported SURVIVED --
+    # which reads as a gap in the suite rather than a mistake in the harness, and
+    # is the most misleading verdict a mutation pass can print. Derived from the
+    # control run's own list rather than from a hand-kept table.
+    known = all_test_names()
+    unknown = [m for m in MUTATIONS if not any(m.expect in name for name in known)]
+    if unknown:
+        for mutation in unknown:
+            print(
+                f"[FAIL] {mutation.name}: no test here is named {mutation.expect!r} -- "
+                "it cannot go red, so this mutation would report SURVIVED"
+            )
+        return 1
+    print(f"[OK]   every mutation names one of the {len(known)} tests", flush=True)
 
     problems = 0
     with tempfile.TemporaryDirectory(prefix="tpdf-mutate-") as scratch:

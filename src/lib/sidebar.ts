@@ -52,6 +52,7 @@ import {
   type Outline,
   type Row,
 } from "./outline";
+import { Results, type ResultsOptions } from "./results";
 import { Thumbnails, type ThumbnailOptions } from "./thumbnails";
 
 /** Indent per level, in CSS pixels. */
@@ -61,11 +62,13 @@ const INDENT = 14;
 const WIDTH = 260;
 
 /** Which panel is showing. */
-export type Tab = "outline" | "pages";
+export type Tab = "outline" | "pages" | "results";
 
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
   onNavigate: (page: number, top: number | null) => void;
+  /** What the results tab needs. */
+  results: ResultsOptions;
   /**
    * What the page strip needs, or absent for no strip at all.
    *
@@ -95,6 +98,7 @@ export class Sidebar {
   private readonly notice: HTMLElement;
   private readonly tree: HTMLElement;
   private readonly strip: Thumbnails | null = null;
+  private readonly hits: Results;
   private showing: Tab = "outline";
   private visibleNow = true;
 
@@ -172,6 +176,10 @@ export class Sidebar {
     this.host.appendChild(pagesPanel);
     if (opts.pages) this.strip = new Thumbnails(pagesPanel, opts.pages);
 
+    const resultsPanel = this.panel("results", "Results");
+    this.host.appendChild(resultsPanel);
+    this.hits = new Results(resultsPanel, opts.results);
+
     root.appendChild(this.host);
     this.selectTab("outline");
   }
@@ -232,12 +240,19 @@ export class Sidebar {
     return this.strip;
   }
 
+  /** The search-results panel. */
+  get results(): Results {
+    return this.hits;
+  }
+
   /**
-   * Shows one panel and hides the other.
+   * Shows one panel and hides the others.
    *
    * The strip is told, and that is not cosmetic: a hidden strip that carried on
    * rendering would spend the render thread on pictures nobody can see, in
-   * front of the tiles for the page they are actually reading.
+   * front of the tiles for the page they are actually reading. The results panel
+   * needs no such call --- it costs nothing to hold and nothing to update, since
+   * the work behind it is a scan that runs whether or not anybody is looking.
    */
   selectTab(tab: Tab): void {
     this.showing = tab;

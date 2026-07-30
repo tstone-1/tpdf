@@ -75,11 +75,69 @@ pub struct Options {
 /// A run of characters matching a query, as half-open character indices into
 /// the page's `codes` --- the same indices [`crate::text::PageText`] keys its
 /// boxes by, which is what makes a hit paintable without a lookup table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// It also carries the words around itself, for a results list. That is built
+/// here rather than by the caller because the page's characters are already in
+/// hand at this point and are dropped again the moment this returns: a frontend
+/// assembling its own snippets would have to re-fetch every page a hit is on,
+/// which on a 775-page document is the entire text of the document in order to
+/// show a dozen lines of it.
+///
+/// **Three strings rather than one and two offsets.** An offset into a snippet
+/// is a third index space --- alongside the page's code points and JavaScript's
+/// UTF-16 --- and this module exists because two of those already disagree in
+/// ways no test catches. Concatenating three strings cannot be got wrong.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Match {
     pub page: u32,
     pub start: u32,
     pub end: u32,
+    /// Text immediately before the hit, whitespace collapsed.
+    pub before: String,
+    /// The matched text itself, exactly as the page spells it.
+    pub hit: String,
+    /// Text immediately after the hit, whitespace collapsed.
+    pub after: String,
+}
+
+/// Characters of context taken on each side of a hit.
+///
+/// Two of these plus the hit is about a line of a results panel 260 px wide. The
+/// cost is real and worth stating: a query matching 5,712 times ships roughly
+/// 900 kB of snippets rather than 140 kB of bare ranges, arriving one page at a
+/// time as the scan walks.
+const CONTEXT_CHARS: usize = 40;
+
+/// The characters of `codes` in `range`, with runs of whitespace collapsed.
+///
+/// Collapsed because a snippet is for reading in a list one line high, and PDF
+/// text is full of line breaks that would otherwise arrive as blanks in the
+/// middle of it. The hit itself is **not** collapsed --- it is what the page
+/// says, and a results row that disagrees with the highlight it scrolls to is
+/// worse than an ugly one.
+fn slice_of(codes: &[u32], range: std::ops::Range<usize>) -> String {
+    let mut out = String::new();
+    for code in &codes[range] {
+        let Some(ch) = char::from_u32(*code) else {
+            continue;
+        };
+        if ch.is_whitespace() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// The exact characters of `range`, unaltered.
+fn exact_of(codes: &[u32], range: std::ops::Range<usize>) -> String {
+    codes[range]
+        .iter()
+        .filter_map(|c| char::from_u32(*c))
+        .collect()
 }
 
 /// What one page contributed to a search.
@@ -227,10 +285,18 @@ pub fn find_in(text: &PageText, page: u32, query: &str, options: Options) -> Vec
 
         // Back through the source map rather than by arithmetic: folding can
         // turn one character into two, and collapse several into one.
+        let start = hay.source[at] as usize;
+        let stop = hay.source[end - 1] as usize + 1;
         matches.push(Match {
             page,
-            start: hay.source[at],
-            end: hay.source[end - 1] + 1,
+            start: start as u32,
+            end: stop as u32,
+            before: slice_of(&text.codes, start.saturating_sub(CONTEXT_CHARS)..start),
+            hit: exact_of(&text.codes, start..stop),
+            after: slice_of(
+                &text.codes,
+                stop..(stop + CONTEXT_CHARS).min(text.codes.len()),
+            ),
         });
 
         // Non-overlapping, which is what a reader counting hits expects: `aa`
@@ -284,7 +350,11 @@ mod tests {
     }
 
     /// The characters a match covers, which is what a highlight would paint.
-    fn covered(source: &str, m: Match) -> String {
+    ///
+    /// Taken from the *page*, not from the match's own `hit` field: a snippet
+    /// the matcher wrote cannot say whether the indices it reported are right,
+    /// and the indices are what the highlight is drawn from.
+    fn covered(source: &str, m: &Match) -> String {
         source
             .chars()
             .skip(m.start as usize)
@@ -298,7 +368,7 @@ mod tests {
         let found = find_in(&page(text), 3, "raster", PLAIN);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].page, 3);
-        assert_eq!(covered(text, found[0]), "raster");
+        assert_eq!(covered(text, &found[0]), "raster");
     }
 
     #[test]
@@ -316,7 +386,7 @@ mod tests {
         let text = "raster\r\nappearance";
         let found = find_in(&page(text), 0, "raster appearance", PLAIN);
         assert_eq!(found.len(), 1);
-        assert_eq!(covered(text, found[0]), text);
+        assert_eq!(covered(text, &found[0]), text);
     }
 
     #[test]
@@ -332,7 +402,7 @@ mod tests {
         assert_eq!(found.len(), 1);
         // The hyphen is inside the match's span even though it matched nothing,
         // because a highlight that skipped it would be two rectangles.
-        assert_eq!(covered(text, found[0]), text);
+        assert_eq!(covered(text, &found[0]), text);
     }
 
     #[test]
@@ -422,7 +492,7 @@ mod tests {
         assert_eq!(found[0].start, 0);
         // The one before the full stop: punctuation is a boundary, a letter is
         // not. Without the option all four occurrences match.
-        assert_eq!(covered(text, found[1]), "cat");
+        assert_eq!(covered(text, &found[1]), "cat");
         assert_eq!(found[1].start, 24);
         assert_eq!(find_in(&page(text), 0, "cat", PLAIN).len(), 4);
     }
@@ -487,6 +557,70 @@ mod tests {
         );
         assert_eq!(find_in(&page(text), 0, "cat", CASED).len(), 1);
         assert_eq!(find_in(&page(text), 0, "cat", WORDS).len(), 2);
+    }
+
+    #[test]
+    fn a_hit_carries_the_words_on_either_side_of_it() {
+        let text = "the raster appearance of a page";
+        let found = find_in(&page(text), 0, "appearance", PLAIN);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].before, "the raster ");
+        assert_eq!(found[0].hit, "appearance");
+        assert_eq!(found[0].after, " of a page");
+        // The three concatenate to the page around the hit, which is the only
+        // property a caller can rely on -- it pastes them together and emboldens
+        // the middle.
+        let joined = format!("{}{}{}", found[0].before, found[0].hit, found[0].after);
+        assert_eq!(joined, text);
+    }
+
+    #[test]
+    fn context_stops_at_the_ends_of_the_page() {
+        // Both ends, because a saturating subtraction and a clamped addition are
+        // separate mistakes and either one alone panics on a real document.
+        let found = find_in(&page("cat"), 0, "cat", PLAIN);
+        assert_eq!(found[0].before, "");
+        assert_eq!(found[0].after, "");
+    }
+
+    #[test]
+    fn context_is_bounded_and_the_hit_is_not() {
+        let long = "z".repeat(500);
+        let text = format!("{long}catalog{long}");
+        let found = find_in(&page(&text), 0, "catalog", PLAIN);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].before.chars().count(), CONTEXT_CHARS);
+        assert_eq!(found[0].after.chars().count(), CONTEXT_CHARS);
+        // The hit is whatever matched, however long. A query is not the place to
+        // truncate: the row would show something the page does not say.
+        let whole = find_in(&page(&text), 0, &text, PLAIN);
+        assert_eq!(whole[0].hit.chars().count(), text.chars().count());
+    }
+
+    #[test]
+    fn context_collapses_line_breaks_but_the_hit_keeps_them() {
+        // A snippet is one line in a list, so the breaks around it become
+        // spaces. The hit itself is not touched, because the row has to agree
+        // with the highlight the reader lands on.
+        let text = "a\n\n\nraster\nappearance\n\nb";
+        let found = find_in(&page(text), 0, "raster appearance", PLAIN);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].before, "a ");
+        assert_eq!(found[0].hit, "raster\nappearance");
+        assert_eq!(found[0].after, " b");
+    }
+
+    #[test]
+    fn the_hit_is_the_page_text_and_not_the_query() {
+        // Case is folded for matching and must not be folded for display: a
+        // results row spelling a word differently from the page it points at is
+        // the row being wrong about the document.
+        let found = find_in(&page("Kerning"), 0, "KERNING", PLAIN);
+        assert_eq!(found[0].hit, "Kerning");
+        // And a soft hyphen inside the span survives into the hit, for the same
+        // reason the span covers it: there is one run of glyphs on the page.
+        let found = find_in(&page("ras\u{00ad}ter"), 0, "raster", PLAIN);
+        assert_eq!(found[0].hit, "ras\u{00ad}ter");
     }
 
     #[test]

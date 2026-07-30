@@ -1779,8 +1779,49 @@ rediscovering — a test that cannot distinguish its own silence from a pass.
   while the summary line in the same output said 28 of 29 passed. The two numbers disagreed
   and nothing was comparing them; they are compared now.
 
-Not done: regular expressions, a results sidebar, search within a selection, and matching
-across a page boundary.
+Not done: regular expressions, search within a selection, and matching across a page
+boundary.
+
+##### The results sidebar --- 2026-07-30
+
+§8's third tab. Worth building rather than leaving the find bar's counter to stand for it,
+for the same reason the palette exists: `12 of 5712` says how much there is and nothing
+about what is in it.
+
+**The snippets come from the backend**, and that is not an optimisation. A row shows the
+words around its hit; those words are on the page, and the frontend does not have the page
+--- `search.rs` extracts the text, matches against it, and drops it again. Building snippets
+here would mean re-fetching every page a hit is on, which on the 775-page corpus is the whole
+document's text in order to show a screenful of it. So a `Match` carries `before`, `hit` and
+`after`, built where the characters already are, and the cost is stated: a query matching
+5,712 times ships about 900 kB of snippets rather than 140 kB of bare ranges, one page at a
+time as the scan walks.
+
+**Three strings, not a string and two offsets.** An offset into a snippet would be a third
+index space beside the page's code points and JavaScript's UTF-16, and this module exists
+because two of those already disagree in ways no test catches. Concatenating three strings
+cannot be got wrong.
+
+**Rows are appended, not rebuilt.** The scan reports after every page, so a panel that
+rebuilt its list each time would rebuild it 775 times and only the last would be seen. The
+row cap is 2,000 and is *stated* in the panel; the match count stays exact, because a list
+that stopped at 2,000 without saying so is a document that appears to contain 2,000 hits.
+
+13 unit tests and 4 functional checks, taking `viewer_check.py` to 101 names. The split is
+the one `sidebar.ts` already implies: the state machine and the status line are unit-tested
+against the fake DOM, and what only a real webview can answer --- that a row *says* what the
+page says at the indices the match reported, and that pressing one moves the document ---
+is functional. The load-bearing check is the first of those, and it is the same shape as the
+search check beside it: a row is tied to specific content, re-extracted independently. A
+check that a row is non-empty passes for a row describing the wrong hit.
+
+**A mutation reported SURVIVED for a mistake in the harness**, which is the most misleading
+verdict a mutation pass can print: its `expect` named a functional check, and
+`mutate_frontend.py` runs vitest. Both harnesses now derive the list of test names --- from
+vitest's verbose reporter and from libtest's `--list` --- and refuse to run a mutation naming
+one that does not exist. Proved by pointing an `expect` at a name that is not there and
+watching it refuse, because a guard that has never fired looks exactly like one that keeps
+passing.
 
 ##### A bound on the text cache --- 2026-07-30
 

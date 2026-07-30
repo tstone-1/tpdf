@@ -28,11 +28,25 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-/** A hit, as half-open character indices into the page's own text. */
+/**
+ * A hit, as half-open character indices into the page's own text, plus the
+ * words around it.
+ *
+ * The snippet is three strings rather than a string and two offsets, because an
+ * offset into it would be a third index space beside the page's code points and
+ * JavaScript's UTF-16 --- see `src-tauri/src/search.rs`, which builds them where
+ * the page's characters already are. Concatenating them is the snippet.
+ */
 export interface Match {
   page: number;
   start: number;
   end: number;
+  /** Text immediately before the hit, whitespace collapsed. */
+  before: string;
+  /** The matched text, exactly as the page spells it. */
+  hit: string;
+  /** Text immediately after the hit, whitespace collapsed. */
+  after: string;
 }
 
 /**

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 151 entries
+The one thing this file does *not* carry in full is the trap list --- 152 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -505,7 +505,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 151 of them and the full text
+titles. Only the titles are here, because there are 152 of them and the full text
 was 93% of this file --- an instruction budget spent on the 147 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
@@ -651,6 +651,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A restored file with its original timestamp leaves the build serving the mutation
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
+- A mutation naming a test the harness cannot run reports SURVIVED
 - A harness that prints stderr only on failure hides what a passing run said
 - A mutation caught by an access violation produces no test results at all
 - A comment claimed an ordering mattered, and the mutation that should have hurt did not

@@ -637,6 +637,23 @@ experience.
   of by a `reset()` call at each of those sites. Units are found from the character under the
   pointer rather than the caret beside it: the caret after a word's last glyph names the
   following space, and a word selection built on that selects the gap.
+- **A search-results sidebar tab.** Every hit in the document, one row each: the page number
+  and the words around the match, with the match emboldened. Picking a row moves the document
+  to it. `12 of 5712` in the find bar says how much there is and nothing about what is in it.
+
+  The snippets come from the backend, and that is not an optimisation: the words around a hit
+  are on the *page*, and the frontend does not have the page --- Rust extracts the text,
+  matches, and drops it again. Building them here would mean re-fetching every page a hit is
+  on. A `Match` now carries `before`, `hit` and `after`, three strings rather than a string
+  and two offsets, because an offset into a snippet would be a third index space beside the
+  page's code points and JavaScript's UTF-16.
+
+  Rows are appended rather than rebuilt --- a 775-page scan reports 775 times --- and capped
+  at 2,000 with the cap *stated*, while the match count stays exact. Both mutation harnesses
+  now refuse a mutation whose expected test does not exist: one of these named a functional
+  check that vitest cannot run, and the pass reported SURVIVED, which reads as a gap in the
+  suite rather than a mistake in the harness.
+
 - **A bound on the front-end text cache.** Least-recently-used, 400,000 characters --- about
   16 MB --- with a floor of eight pages kept whatever they cost. It was unbounded, and search
   is what made that matter: a whole-document scan never touches it, but *stepping through* the

@@ -31,6 +31,16 @@ import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { CommandRegistry } from "./commands";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
+import { MAX_RESULT_ROWS } from "./results";
+
+/**
+ * Tabs the sidebar has: outline, pages, results.
+ *
+ * Spelled out here rather than read from the sidebar, which would make the check
+ * agree with whatever the sidebar happens to build. It went red on its own when
+ * the results tab landed, which is the check working.
+ */
+const SIDEBAR_TABS = 3;
 import { Sidebar } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor } from "./thumbnails";
@@ -294,6 +304,7 @@ async function run(path: string): Promise<void> {
   document.body.appendChild(panel);
   const sidebar = new Sidebar(panel, {
     onNavigate: (target, top) => viewer.goToDestination(target, top),
+    results: { onPick: (index) => viewer.showMatch(index) },
     pages: {
       doc: doc.id,
       pageCount: doc.page_count,
@@ -438,6 +449,7 @@ async function run(path: string): Promise<void> {
 
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
+  await resultsChecks(viewer, sidebar, doc, seen);
   await paletteChecks(viewer, doc.page_count);
   await accessibilityChecks(root, viewer, doc, seen);
   await outlineChecks(viewer, sidebar, doc);
@@ -870,6 +882,140 @@ async function searchChecks(
   await searchOptionChecks(viewer, seen, needle, firstHit, doc.page_count);
   await searchesFromHere(root, viewer, seen, needle, doc.page_count);
   await stepToAnotherPage(root, viewer, seen, needle, doc.page_count);
+}
+
+/** What {@link resultsChecks} records, for its own skip path. */
+const RESULTS_CHECKS = [
+  "the results tab lists a row per hit",
+  "a row shows the words around its hit, with the hit emboldened",
+  "picking a row moves the document to that hit",
+  "the results list is replaced when the query changes",
+] as const;
+
+/**
+ * The search-results sidebar tab, against a real DOM.
+ *
+ * The unit tests cover the state machine --- appending rather than rebuilding,
+ * the row cap, the status line --- against `testdom.ts`, which has no text
+ * layout and no real elements. What only a running webview can answer is whether
+ * a row actually *says* what the match found and whether pressing one moves the
+ * document, so those are here and nothing else is.
+ *
+ * The snippet check is the load-bearing one, and it is the same shape as the
+ * search check above it: a row is tied to *specific content* by comparing what
+ * it displays against the page's own text, re-extracted independently. A check
+ * that a row is non-empty passes for a row describing the wrong hit.
+ */
+async function resultsChecks(
+  viewer: Viewer,
+  sidebar: Sidebar,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const first = await invoke<{ codes: number[] }>("page_text", {
+    doc: doc.id,
+    page: 0,
+  }).catch(() => null);
+  const needle = first ? pickNeedle(first.codes) : null;
+  if (!needle) {
+    for (const name of RESULTS_CHECKS) skip(name, "page 1 has no extractable text");
+    return;
+  }
+
+  sidebar.selectTab("results");
+  const results = sidebar.results;
+  const feed = (): void =>
+    results.update(
+      viewer.searchMatches,
+      viewer.matchIndex,
+      seen.status?.search.query ?? "",
+      viewer.searching,
+    );
+
+  viewer.search(needle);
+  await settle(() => !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  feed();
+
+  const total = viewer.searchMatches.length;
+  check(
+    RESULTS_CHECKS[0],
+    results.rowCount === Math.min(total, MAX_RESULT_ROWS) && results.rowCount > 0,
+    `${results.rowCount} rows for ${total} matches --- "${results.status}"`,
+  );
+
+  const hit = viewer.searchMatches[0];
+  const page = hit
+    ? await invoke<{ codes: number[] }>("page_text", { doc: doc.id, page: hit.page }).catch(
+        () => null,
+      )
+    : null;
+  if (hit && page) {
+    // What the row displays, read back out of the DOM, against what the page
+    // says at the indices the match reported. Both halves matter: the bold run
+    // has to be the hit, and the row has to be about the right place.
+    const row = results.rowText(0);
+    const onPage = String.fromCodePoint(...page.codes.slice(hit.start, hit.end));
+    check(
+      RESULTS_CHECKS[1],
+      row.bold === onPage && row.page === String(hit.page + 1) && row.whole.includes(onPage),
+      `row 1 reads "${preview(row.whole)}" with "${row.bold}" bold on page ${row.page}; ` +
+        `the document has "${preview(onPage)}" at ${hit.page}:${hit.start}`,
+    );
+  } else {
+    skip(RESULTS_CHECKS[1], "nothing was found to compare against the page");
+  }
+
+  // A row other than the one the scan already jumped to, and on a different
+  // page, so the assertion is that the document *moved* rather than that it was
+  // already there. `viewer.search` auto-shows the first hit, so without the
+  // first condition this picks the row the viewer is on and asserts nothing.
+  const shown = viewer.matchIndex;
+  const shownPage = viewer.searchMatches[shown]?.page ?? -1;
+  const away = viewer.searchMatches.findIndex(
+    (m, i) => i !== shown && i < MAX_RESULT_ROWS && m.page !== shownPage,
+  );
+  if (away < 0) {
+    skip(
+      RESULTS_CHECKS[2],
+      `all ${total} hits are on page ${shownPage + 1}, which is the one already shown, ` +
+        "so a jump would not be observable",
+    );
+  } else {
+    const target = viewer.searchMatches[away];
+    const from = viewer.offset;
+    // Through the row's own listener rather than by calling `onPick`, so what is
+    // tested is the wiring a reader's finger goes through.
+    results
+      .rowAt(away)
+      ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    await settle(() => viewer.matchIndex === away && viewer.offset !== from);
+    // **Not** `position.page`, which is the page at the *top edge*: `goToMatch`
+    // deliberately leaves a third of a screen above the hit, so a match near the
+    // top of page 2 is shown with page 1 still at the top edge and the top-edge
+    // page never changes. It is also 0 on a rotated document. The scroll offset
+    // is the quantity that actually says the document moved.
+    check(
+      RESULTS_CHECKS[2],
+      viewer.matchIndex === away && viewer.offset !== from,
+      `row ${away + 1} is on page ${(target?.page ?? -1) + 1}; current match went ` +
+        `${shown} -> ${viewer.matchIndex}, offset ${from.toFixed(0)} -> ` +
+        `${viewer.offset.toFixed(0)}`,
+    );
+  }
+
+  const absent = `qxzj${needle}`;
+  viewer.search(absent);
+  await settle(() => !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  feed();
+  check(
+    RESULTS_CHECKS[3],
+    results.rowCount === 0,
+    `"${absent}" -> ${results.rowCount} rows, "${results.status}"`,
+  );
+
+  viewer.clearSearch();
+  feed();
+  sidebar.selectTab("outline");
 }
 
 /** The three checks {@link searchOptionChecks} records, for the skip path. */
@@ -1803,11 +1949,11 @@ async function thumbnailChecks(
   }
 
   const tabs = panelTabs();
+  const selected = tabs.filter((t) => t.getAttribute("aria-selected") === "true").length;
   check(
     "the sidebar has a tab for pages",
-    tabs.length === 2 && tabs.filter((t) => t.getAttribute("aria-selected") === "true").length === 1,
-    `${tabs.length} tabs (${tabs.map((t) => t.textContent).join(", ")}), ` +
-      `${tabs.filter((t) => t.getAttribute("aria-selected") === "true").length} selected`,
+    tabs.length === SIDEBAR_TABS && selected === 1,
+    `${tabs.length} tabs (${tabs.map((t) => t.textContent).join(", ")}), ${selected} selected`,
   );
 
   viewer.goToStart();
