@@ -3455,3 +3455,42 @@ Two details worth copying, both of which this repository has paid for elsewhere:
   eleven-failure transcript quietly returns. So its absence from the transcript is reported as a
   failure of the driver. Proved by mutation: renaming it turns a green run into
   `[FAIL] this script cannot find a check named ... it has been renamed in sessioncheck.ts`.
+
+### A harness that synthesises input must reset the input's own state machine
+
+Found 2026-07-30, adding double- and triple-click selection. Three functional checks failed
+on their first run, including the *control*, and nothing was wrong with the code under test.
+
+Double-click detection counts presses that land close together in time and place. The checks
+dispatched a single click, then a double-click, then a triple-click at the same point, back to
+back --- which is not three gestures, it is **six consecutive clicks at one point**, and the
+counter read them exactly as it should: one run, cycling 1,2,3,1,2,3. Every reading was off by
+however many presses the previous check had made. The control, a single click that must select
+nothing, reported seven characters selected, because the *drag* in the check before it had
+pressed at the same coordinates a few milliseconds earlier and this was that run's second
+click.
+
+The general shape, and it will recur for anything driven by synthesised events: **an input
+state machine spans the checks, and neither check mentions it.** A key-repeat counter, a
+gesture recogniser, a drag threshold, an IME composition, a chord being held --- each is state
+that survives a check boundary while looking like nothing at all, because the checks
+communicate through the DOM and this does not travel through the DOM.
+
+Reset it explicitly at the start of each gesture. Prefer breaking the run by *distance* over
+waiting out its timer: a sleep long enough to be safe is a sleep in every run, and one just
+short of the window is a flake that appears only on a loaded machine. Here one press a few
+pixels away, before each gesture, is deterministic and costs nothing.
+
+Two further things fell out of the same work, both about the check rather than the code:
+
+- **A fixed drag distance let a mutation survive.** The word-drag check asserted that a drag
+  begun with a double-click ends on a word boundary --- and it passed with the granular branch
+  mutated to `false`, because 240 px happens to land on a boundary in that fixture, so the
+  character drag and the word drag return the identical string. The repair is not a better
+  constant: the check now *searches* candidate distances for one whose character-granular end
+  falls inside a word, and skips with the reason if none does. A precondition that has to hold
+  for a check to discriminate must be established by the check, not inherited from a fixture.
+- **The first search found nothing, for a reason unrelated to words.** Every candidate near
+  240 px ended on a boundary because from x=300 a drag that long runs off the end of the line,
+  so the selection ends at its last character however far past it the pointer travels. A
+  search that comes up empty is evidence about the search, not about the property.
