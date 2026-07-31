@@ -833,6 +833,36 @@ worker's own stderr is inherited. Seeing that line repeatedly on one document me
 document is faulting PDFium on a page the reader keeps asking for, which is the one case a
 single retry cannot make cheap.
 
+### `ocr-probe`: does the recogniser work, and is the flip right
+
+macOS only --- it is the Vision binding it exercises. Nothing in it is wired into the viewer;
+OCR has interfaces and one engine, and no worker yet.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- \
+    testdata/text-base14.pdf --lib vendor/pdfium/lib
+```
+
+| fixture | result |
+|---|---|
+| `text-base14`, `text-cid`, `rotated` | 6/6 |
+| `outline-simple`, `form` | 5/5, 1 skipped |
+| `columns` | 2/2, 4 skipped --- two columns leave no vertically isolated span to use as a control |
+| `vector-heavy` | 1/1 against the *inverted* claim: the page has no text, so reading none is correct |
+
+**The check that earns its keep is the ordering one.** `normalised_to_points` has unit tests
+and they cannot catch the thing that matters, because they assert arithmetic against numbers
+the same file wrote --- Vision's `boundingBox` is normalized with the origin bottom-left, and
+whether the conversion understands that is a question about a black box. So the probe asserts
+content at a position: the word the *document* places highest must come back highest. Removing
+the flip reports `read gap -119 pt against 123 pt in the document` and takes both gate checks
+with it.
+
+Two limits worth knowing before reading a run. The control band is a strip of the page's own
+text rather than a drawn token, so a fixture whose lines are too close together produces no
+usable strip and the gate checks `[SKIP]` rather than failing --- `columns` is that case. And
+`[SKIP]` here means the harness could not construct the input, never that the gate passed.
+
 ### `latency-bench`: what one tile costs, decomposed
 
 The last thing `worker-bench` measured that nothing else did. It is a **spike, not a port**:

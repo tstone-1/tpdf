@@ -11,6 +11,8 @@
 pub mod invert;
 pub mod launch;
 pub mod ocr;
+#[cfg(target_os = "macos")]
+pub mod ocr_vision;
 pub mod outline;
 pub mod print;
 #[cfg(target_os = "macos")]

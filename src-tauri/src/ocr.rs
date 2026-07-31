@@ -330,11 +330,23 @@ impl Control {
         })
     }
 
-    /// Whether a rect lies within the control band.
+    /// Whether a rect belongs to the control band, by its centre.
+    ///
+    /// This was strict containment first, and `ocr-probe` failed on the real engine because
+    /// of it. Vision's reported box is not tight to the glyphs: handed a strip cropped to a
+    /// span's own rectangle, it read the text back and placed it **1.5 pt above the strip it
+    /// came from**, so `top >= band_top` was false and a control the engine had plainly read
+    /// counted as a survivor. The gate then refused a redaction that was fine.
+    ///
+    /// A centre test keeps the property that matters --- position, not string, decides what
+    /// the control is, so a token occurring elsewhere on the page cannot stand in for it ---
+    /// while tolerating an engine whose idea of a bounding box is looser than the pixels it
+    /// was given. Which every engine's is: they are detections, not measurements.
     fn contains(&self, rect: &[f32; 4]) -> bool {
         let [l, t, r, b] = *rect;
         let [bl, bt, br, bb] = self.band;
-        l >= bl && t >= bt && r <= br && b <= bb
+        let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
+        cx >= bl && cx <= br && cy >= bt && cy <= bb
     }
 }
 
@@ -648,6 +660,21 @@ mod tests {
         assert!(
             v.certifies(),
             "a working engine failed its own control: {v:?}"
+        );
+    }
+
+    #[test]
+    fn a_control_box_looser_than_the_band_still_counts() {
+        // The real failure `ocr-probe` hit. Vision, handed a strip cropped to a span's own
+        // rectangle, reported that span 1.5 pt *above* the strip -- so strict containment
+        // rejected a control the engine had obviously read, and the gate refused a clean
+        // redaction. An engine's box is a detection, not a measurement.
+        let c = control();
+        let spilling = item("K7QX2", [0.0, 98.5, 200.0, 121.5]);
+        let v = adjudicate(&engine(), &c, &Ok(vec![spilling]));
+        assert!(
+            v.certifies(),
+            "a control overlapping its band by all but a hair was not counted: {v:?}"
         );
     }
 

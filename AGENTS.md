@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 170 entries
+The one thing this file does *not* carry in full is the trap list --- 171 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -583,8 +583,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 170 of them and the full text
-was 93% of this file --- an instruction budget spent on the 169 traps that are not
+titles. Only the titles are here, because there are 171 of them and the full text
+was 93% of this file --- an instruction budget spent on the 170 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were **six** behind when this line was next corrected, on 2026-07-31, having been
 two behind when it was written --- which is how a count in prose fails, and why the
@@ -700,6 +700,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 ### Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration
 - A control that is easier than the check certifies nothing
+- An OCR engine's bounding box is a detection, not a measurement
 - A property that holds by construction cannot test the thing it resembles
 - A fixture the library itself wrote cannot tell a passthrough from a rewrite
 - An oracle more forgiving than the thing it stands in for cannot fail
