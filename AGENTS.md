@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 161 entries
+The one thing this file does *not* carry in full is the trap list --- 163 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -177,6 +177,12 @@ wrong. What actually stands behind macOS here is that the harnesses were re-run 
 `worker-probe` 12/12 on four, `viewer_check` 86 names across all six, `session_check` and
 `open_check` green. Worth stating because the original phrasing invites the next session to
 skip exactly that.
+
+Those two counts are **of their date and are no longer current** --- 168 tests and 86 names were
+what that run measured, and macOS reports **182 tests and 109 check names** as of 2026-07-31.
+They are left rather than overwritten because the paragraph is about what was verified when;
+the number to work from is the one in `BUILD.md`'s table, which is the single place these are
+written down.
 
 **Windows no longer fails open.** `Backend::default_here()` selects workers there, proved by
 the external module check above rather than by the absence of our own warning.
@@ -494,9 +500,17 @@ rather than warn --- a skipped notarization exits 0 and produces an app Gatekeep
 any machine that has never seen it.
 
 **Windows runs the viewer, and is contained.** On 2026-07-29 a Windows build opened documents
-and passed `viewer_check.py` on four corpora --- **86 check names** on each, the same invariant
-macOS holds to, with ran/skipped splits inside the ranges `BUILD.md` records; re-run on
+and passed `viewer_check.py` on four corpora --- **86 check names** on each, which was the
+invariant *then*, with ran/skipped splits inside the ranges `BUILD.md` records; re-run on
 2026-07-30 with pre-spawning live and still green.
+
+The invariant is **109 names** now, and both platforms hold to it: Windows measured 109 across
+six corpora on 2026-07-30, and macOS confirmed 109 on **all seven** on 2026-07-31 --- name sets
+diffed pairwise and byte-identical, with every ran/skipped split matching `BUILD.md`'s table
+exactly, from the fixed bundle. So the table needed no correction and the only stale numbers
+were the ones in this file. A count written into prose goes stale the next time a check is
+added, which is why the table is the one place it belongs; these two paragraphs are dated
+statements about dated runs.
 
 This paragraph said the opposite until 2026-07-30 --- "the platform is unsandboxed", "it fails
 open" --- which had been true and was fixed the day before by the commit that selects workers
@@ -736,6 +750,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A print DPI relative to the page is the wrong quantity, and A4 is the example that hides it
 - The OS's PDF rasteriser is not fast, and a raster print path inherits that
 - A directory under `src/bin/` becomes a phantom binary in the Windows installer
+- A trailing slash in a Tauri resource map is a rename on macOS, not a directory
+- An interpolated status label is two columns narrower when it passes
 - A green gate list can sit beside a distributable that cannot be built
 - A bundled app that finds its library in the dev tree proves nothing about the bundle
 - Moving a binary out of the installer moves it out of the gate that links it

@@ -1347,8 +1347,32 @@ experience.
   the extracted MSI with the dev library moved aside: **102/102 checks passed on the bundled
   library alone**, against a negative control with no PDFium reachable that fails and names the
   path it looked in. The lookup tries two bundled candidates, because Tauri's WiX template
-  ignores a resource map's target directory and puts the DLL beside the executable; the macOS
-  layout is unverified from a Mac, so neither is asserted.
+  ignores a resource map's target directory and puts the DLL beside the executable.
+
+- **The macOS half of that fix did not work, and the check found it** (2026-07-31, verified on
+  a Mac). `"...libpdfium.dylib": "pdfium/"` produced neither bundled layout: the macOS bundler
+  reads the value as a target *path* and renamed the dylib to the **file**
+  `Contents/Resources/pdfium`. Both candidates missed, and a bundle with the dev tree hidden
+  reported `0/1 checks passed` with three `could not load Pdfium` lines. `tauri.macos.conf.json`
+  now names the file (`"pdfium/libpdfium.dylib"`); with the dev library hidden the same bundle
+  reports **102/102 checks passed, 7 not applicable, 109 names**. `tauri.windows.conf.json` is
+  unchanged on purpose — WiX ignores the target either way, and that platform cannot be re-run
+  from a Mac.
+
+  Every cheap observation agreed with the working case: the build exits 0, the bundle is the
+  right size, `find` prints a path containing `pdfium`, and `viewer_check.py` from the repo
+  passes. What discriminates is `-type f` against `-type d`. See the trap of that name.
+
+- **`backend-probe` and `worker-probe` mis-aligned their own output on the rows that passed.**
+  Both built the verdict as `"[{}] {name} ..."` with `OK` or `FAIL` interpolated, and `[OK]` is
+  two characters shorter than `[FAIL]`/`[SKIP]` — so passing rows started two columns to the
+  left, in the terminal and in anything parsing them. `BUILD.md`'s documented `cut -c8-47`
+  recipe for extracting a check-name set then sliced those rows short, and diffing three
+  `backend-probe` corpora reported **"the name sets diverge"** for three runs whose sets were
+  identical. The count agreed throughout, which is what made it look like a real regression
+  rather than a broken read. Both labels are padded to seven now, matching every other harness,
+  so one recipe reads all of them; `prespawn-bench`'s summary line had the same shape and is
+  fixed with them. `BUILD.md` says the `8` is a property of the harness and how to check it.
 
 - **The Rust test gate printed a bare `error:` line while passing.** Two Windows checks spawn
   a worker whose child is the libtest harness, which has no `--render-worker` dispatch and
@@ -1359,6 +1383,17 @@ experience.
   for the length of the spawn and restores it on drop --- the console changes, the child does
   not, and no `cfg(test)` branch enters the code under test. The gate transcript now contains
   no `error:` line at all.
+
+  **The `#[cfg(unix)]` arm compiled and ran on macOS for the first time on 2026-07-31, and the
+  claim it was written on turns out to be false there.** The noise does not occur on macOS:
+  removing the `install()` call changed no output over 40 runs, while the same harness invoked
+  directly prints `error: Unrecognized option: 'render-worker'` and exits 101. Holding the
+  `PreWorker` for 400 ms before dropping it makes the line appear exactly once, which names the
+  mechanism — `prespawn` returns as soon as `fork`/`exec` is issued, the test drops the child
+  at once, and the kill lands while it is still in dyld, before libtest parses argv. Windows
+  creates the process suspended and resumes it, and loses that race. The guard is kept rather
+  than deleted, because the impossibility lives in another type's drop timing rather than in
+  this arm, and the doc comment now says so.
 
   Proved by removing the guard, which puts the line back. `docs/TRAPS.md` records why that
   mutation has to be run single-threaded: the window is process-wide, so with the module's

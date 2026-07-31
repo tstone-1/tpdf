@@ -93,8 +93,9 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example outline-probe
 # the OS process table must be replaced by one serving the same document. Run it
 # on vector-heavy as well as a text fixture -- it is the only corpus whose render
 # is slow enough for the withdrawal and drain checks to apply, and on every other
-# one they report [SKIP] with the reason. vector-heavy is the run to read: 41
-# check names, 1 skipped.
+# one they report [SKIP] with the reason. vector-heavy is the run to read: 42
+# check names, 2 skipped on macOS (measured 2026-07-31; this said 41/1 and
+# contradicted the "all 42 names" sentence below it -- the prose was right).
 cargo run --release --manifest-path src-tauri/Cargo.toml --example backend-probe -- \
     testdata/vector-heavy.pdf
 ```
@@ -1009,6 +1010,15 @@ characters wide and the padded name forty, so a fixed slice is exactly right:
 grep -E "^\[(OK|FAIL|SKIP)\]" run.log | cut -c8-47 | sort > names.txt
 ```
 
+**That `8` is a fact about this harness, not about the repository.** `backend-probe` and
+`worker-probe` built their label by interpolating `OK`/`FAIL` into `[{}]`, so their passing
+rows began at column 6 and their skipped rows at column 8 --- and the recipe above, applied
+there, sliced the `[OK]` rows two characters short and reported *"the name sets diverge"*
+across three corpora that were in fact identical. Both now pad the label to seven like
+everything else, so one recipe reads every harness; before copying it to a new one, check the
+widths (`grep -hoE "^\[[A-Z]+\] *" run.log | awk '{print length($0)}' | sort -u` must print a
+single value). See the trap of that name.
+
 Six of those, diffed pairwise, is the invariant in one command. It also reports the count,
 which must equal the number of unique lines --- two checks whose first forty characters
 coincide would otherwise merge silently.
@@ -1395,6 +1405,25 @@ starts at 0 and increments within the month.
 
    Move the *bundled* library aside as well, once, and confirm the run fails. A pass on its own
    cannot say which of the candidate paths resolved; the failure names it.
+
+   **Run on macOS 2026-07-31, and it failed --- the Windows fix did not carry over.** The
+   `.app` built cleanly and `find` reported the dylib present, which is exactly how this
+   stays hidden: `Contents/Resources/pdfium` existed, and it was a **file**, not a directory.
+   The bundler read `"../vendor/pdfium/lib/libpdfium.dylib": "pdfium/"` as a target *path* and
+   renamed the dylib to `pdfium`, so both bundled candidates missed and the app died on
+   `Contents/Resources/libpdfium.dylib` --- `0/1 checks passed`, three `could not load Pdfium`
+   lines naming the path. The trailing slash is not a directory marker on this bundler.
+
+   Fixed by naming the file in `tauri.macos.conf.json`
+   (`"../vendor/pdfium/lib/libpdfium.dylib": "pdfium/libpdfium.dylib"`), which lands it where
+   the second candidate already looked. `tauri.windows.conf.json` is deliberately **not**
+   changed: WiX ignores the target directory either way and the resource-root candidate
+   catches it there, and that platform cannot be re-verified from a Mac. After the fix, with
+   the dev library hidden: **102/102 checks passed, 7 not applicable, 109 names**.
+
+   The failing run before the fix is the negative control, and it is what makes the pass mean
+   anything --- the same `.app`, the same command, the only difference being where the library
+   sits. Keep both halves when repeating this.
 9. Commit as `Release vYY.M.MICRO: <summary>`.
 
 Verify the bump landed everywhere:

@@ -2604,12 +2604,32 @@ mod tests {
     /// whose `Command` asks for `Stdio::inherit()` for the same reason Windows
     /// shares its handle: a sandbox denial or a fatal signal has to be visible.
     ///
-    /// **Written on Windows and therefore not compiled, let alone run, here.**
-    /// It is included rather than left out because the noise it addresses is the
-    /// same noise on that platform and by the same route, and because a wrong
-    /// arm fails loudly on the next macOS run instead of quietly claiming a
-    /// clean console --- but it is a claim about macOS made from Windows until
-    /// someone runs it there.
+    /// Written on Windows and run on macOS for the first time on 2026-07-31.
+    /// It compiles and the arm is correct --- and the run settled the claim it was
+    /// written on, which was wrong. **The noise it addresses does not occur on
+    /// macOS**, so here this guard silences nothing.
+    ///
+    /// Measured rather than inferred, because "no output" is what a guard that
+    /// works and a guard that is never needed both look like. Removing the
+    /// `install()` call changed no output over 40 runs, while the same harness
+    /// invoked directly (`--render-worker --prespawn --lib .`) prints
+    /// `error: Unrecognized option: 'render-worker'` and exits 101 --- so the
+    /// child is capable of the complaint and does not make it. Holding the
+    /// `PreWorker` for 400 ms before dropping it makes the line appear exactly
+    /// once, which names the mechanism: `prespawn` returns as soon as
+    /// `fork`/`exec` is issued, the test drops the child immediately, and the
+    /// kill lands while the child is still in dyld --- before libtest parses
+    /// argv. Windows creates the process suspended and resumes it, and loses
+    /// that race.
+    ///
+    /// **Kept rather than deleted, and the distinction matters.** A guard no
+    /// mutation can break is usually one to remove, but the impossibility here
+    /// is not local to this arm --- it lives in `PreWorker`'s drop timing, in
+    /// another type. Deleting this would make a clean console depend silently on
+    /// how fast a kill lands, with nothing to fail when that changes; a test that
+    /// ever waits on a pre-spawned child would resurrect the noise. `AGENTS.md`
+    /// records that shape: when the impossibility lives elsewhere, keep the
+    /// guard and say where the guarantee actually comes from.
     #[cfg(unix)]
     struct QuietChildStderr {
         /// A duplicate of the real stderr, `dup2`'d back on the way out.
