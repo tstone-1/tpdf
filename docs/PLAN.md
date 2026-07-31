@@ -3024,7 +3024,50 @@ wrong in the other direction.
 document handed over, which is every page. `print::build` takes a range because printing
 selected thumbnails will need it, not because anything asks today.
 
-**Windows is not written**, and `present_job` says so with an error rather than doing nothing.
+**Windows was not written when this section was first published**, and `present_job` said so
+with an error rather than doing nothing. It landed on 2026-07-30 --- see *The Windows half, and
+where the analogy stops* above, which is the account to read. The sentence is corrected rather
+than deleted because it stood for a day directly contradicting its own section, and a reader
+who reached the end first would have concluded the platform could not print.
+
+#### The installers shipped no PDF engine — found and fixed 2026-07-31
+
+`tauri.conf.json` declared no `bundle.resources`, so nothing ever copied PDFium into a
+bundle. `pdfium_library_dir` has always had the fallback --- dev tree first, then the resource
+directory --- and the second branch pointed at a directory the bundler never created. So the
+Windows MSI and NSIS installers built on 2026-07-30, and every macOS bundle before them,
+produced an app that opens a window and cannot parse a document on any machine without this
+repository checked out at the same absolute path.
+
+Nothing caught it because **every check ran where the dev tree exists**. `viewer_check.py`
+against the bundle passes on this machine either way: the first candidate hits, and the second
+is never exercised. That is the "a test whose precondition is already satisfied never runs"
+shape, and the missing control is the cheap half --- hide the dev library, and the check has to
+fail.
+
+Fixed with `tauri.windows.conf.json` and `tauri.macos.conf.json`, which are the platform
+overlays Tauri merges over the base config, because the two archives disagree about where the
+loadable library lives (`bin/pdfium.dll` against `lib/libpdfium.dylib`) and that distinction
+already exists once as `PDFIUM_SUBDIR`.
+
+**The bundlers then disagreed about the resource map's target directory**, which is why the
+lookup now tries two bundled candidates rather than one. The map asks for `pdfium/`; extracting
+the MSI with `msiexec /a` put `pdfium.dll` directly beside `tpdf.exe`, and the generated
+`main.wxs` shows the component under `INSTALLDIR` with no intermediate `<Directory>`. macOS is
+expected to honour the target and is **unverified from a Mac**, so both are tried and neither
+is asserted.
+
+Proved by a control pair against the extracted MSI with the dev library moved aside:
+
+| | result |
+|---|---|
+| no PDFium reachable at all | `0/1` — *could not load Pdfium from …\tpdf\pdfium.dll* |
+| bundled PDFium only | **`102/102` checks passed, 7 not applicable** |
+
+The negative control is what makes the pass mean anything, and it earned its keep twice: the
+error message it printed is also the evidence that the flat candidate is the one resolving,
+and the first two attempts failed on a fixture that had never been generated on this machine
+rather than on anything about the bundle.
 
 #### The worker boundary — started 2026-07-28, parent half landed
 

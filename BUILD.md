@@ -1346,6 +1346,30 @@ starts at 0 and increments within the month.
    including a sandbox prober. That follows from declaring them `[[bin]]` in the bundled
    crate, is identical on macOS, and wants a separate workspace crate or `[[example]]`
    targets before a real release.
+
+   **Run the bundle check with the development library moved aside.** This is not optional
+   and it is not paranoia: until 2026-07-31 no bundle contained PDFium at all, and every
+   check passed anyway, because `pdfium_library_dir` tries the dev tree first and a check run
+   from the repo never reaches the bundled branch. A check on a distributable that can see the
+   development tree is a check on the development tree.
+
+   ```
+   # Windows. macOS is the same shape with lib/libpdfium.dylib and the .app.
+   msiexec /a <the msi> /qn TARGETDIR=<somewhere>
+   mv vendor/pdfium/bin/pdfium.dll vendor/pdfium/bin/pdfium.dll.hidden
+   python scripts/viewer_check.py <somewhere>/PFiles/tpdf/tpdf.exe <an absolute path>/testdata/outline-simple.pdf
+   mv vendor/pdfium/bin/pdfium.dll.hidden vendor/pdfium/bin/pdfium.dll
+   ```
+
+   Two things that cost a run each, both worth knowing before starting. Pass the PDF as an
+   **absolute** path --- the app resolves a relative one against its own working directory, and
+   the failure is a plain "could not find the file" that reads like a broken bundle. And make
+   sure the fixture has been **generated**: `testdata/*.pdf` is gitignored, an absent one
+   produces the same red, and the first two attempts here died on `text-heavy.pdf`, which this
+   machine had never built.
+
+   Move the *bundled* library aside as well, once, and confirm the run fails. A pass on its own
+   cannot say which of the candidate paths resolved; the failure names it.
 9. Commit as `Release vYY.M.MICRO: <summary>`.
 
 Verify the bump landed everywhere:

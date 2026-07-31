@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 159 entries
+The one thing this file does *not* carry in full is the trap list --- 160 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -514,8 +514,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 159 of them and the full text
-was 93% of this file --- an instruction budget spent on the 158 traps that are not
+titles. Only the titles are here, because there are 160 of them and the full text
+was 93% of this file --- an instruction budget spent on the 159 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -709,6 +709,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - The OS's PDF rasteriser is not fast, and a raster print path inherits that
 - A directory under `src/bin/` becomes a phantom binary in the Windows installer
 - A green gate list can sit beside a distributable that cannot be built
+- A bundled app that finds its library in the dev tree proves nothing about the bundle
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 
 ### Fixtures
