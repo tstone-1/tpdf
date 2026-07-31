@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "resources": {
-      "../vendor/pdfium/lib/libpdfium.dylib": "pdfium/"
+      "../vendor/pdfium/lib/libpdfium.dylib": "pdfium/libpdfium.dylib"
     }
   }
 }
