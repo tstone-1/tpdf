@@ -9,7 +9,7 @@
 //! version below produces byte-identical output at a cost indistinguishable from
 //! not collecting at all.
 //!
-//! It lived in `bin/sanitize_rewrite.rs` first, where the measurement was taken.
+//! It lived in `examples/sanitize_rewrite.rs` first, where the measurement was taken.
 //! It is here because printing a page range needs exactly the same sweep, and
 //! two copies of a graph walk is two things to keep in step.
 //!

@@ -493,13 +493,31 @@ cargo build --release --example backend-probe
 
 | fixture | passed | skipped | failed |
 |---|---|---|---|
-| `text-base14.pdf` | 37/41 | 4 | 0 |
-| `text-cid.pdf` | 37/41 | 4 | 0 |
-| `outline-hostile.pdf` | 38/41 | 3 | 0 |
-| `vector-heavy.pdf` | 40/41 | 1 | 0 |
+| `text-base14.pdf` | 38/42 | 4 | 0 |
+| `text-cid.pdf` | 38/42 | 4 | 0 |
+| `outline-hostile.pdf` | 39/42 | 3 | 0 |
+| `vector-heavy.pdf` | 40/42 | 2 | 0 |
 
-The skips are a slow enough render for the three withdrawal checks (only `vector-heavy` has one)
-and a second page to confuse a page number with. The boundary, the pixel comparisons, capacity,
+Re-measured 2026-07-31. **The earlier `41`s were not a missing check**, which is what they
+looked like: this table read `37/41 ... 40/41` against macOS's 42, and a handover went out
+asking which check was macOS-only and proposing that the flat "all 42 names appear" sentence
+above become a per-platform one. Nothing is macOS-only. The 41s were taken at `df1ca61`, and
+`9fb728f` --- the very next commit to touch this file --- added *"a search option crosses the
+worker boundary"*. Windows has had all 42 ever since; the name sets are byte-identical across
+all four corpora here, diffed rather than counted.
+
+Worth keeping as the shape of the error rather than only its answer: **a count taken at one
+commit and compared against a count taken at another is not a platform difference**, however
+neatly the two platforms line up on either side of it. The cheap discriminator is the one that
+settled it in a single command --- grep the *name* out of the source at each commit, rather than
+reasoning about which check a platform might lack. The plausible hypothesis on offer was the
+parent's memory poll, since `worker-probe` really does skip that one here; it was wrong, and it
+was wrong in the direction that would have put a false per-platform caveat into this file.
+
+That added check is also why `vector-heavy` moved from 1 skip to 2 while its passed count stayed
+at 40: it skips where the search option changes nothing, which is a corpus with no extractable
+text. The other skips are a slow enough render for the three withdrawal checks (only
+`vector-heavy` has one) and a second page to confuse a page number with. The boundary, the pixel comparisons, capacity,
 crash restart, replacement, retirement, close, descriptor return **and the spare's lifetime** all
 pass. Its Windows primitives are Toolhelp for the module list and the process table,
 `GetProcessHandleCount` for descriptors, and `TerminateProcess` for a hostile kill from outside
@@ -814,6 +832,89 @@ reader as nothing at all --- but it is never silent in the terminal: the parent 
 worker's own stderr is inherited. Seeing that line repeatedly on one document means the
 document is faulting PDFium on a page the reader keeps asking for, which is the one case a
 single retry cannot make cheap.
+
+### `latency-bench`: what one tile costs, decomposed
+
+The last thing `worker-bench` measured that nothing else did. It is a **spike, not a port**:
+`worker-bench` carries its own POSIX worker, `dup2` handover, socket pair and SBPL bisection and
+cannot run off unix, so this drives the **production** `Worker` instead --- which means it runs on
+both platforms --- **measured on Windows, never yet run on macOS**, where it is written to
+compile and expected to work rather than shown to. The point of it being portable is that macOS
+can then cross-check it against `worker-bench --mode latency`, an implementation it shares no
+worker code with; until that run happens the cross-check is a plan, not evidence.
+
+```
+cargo build --release --example latency-bench
+./src-tauri/target/release/examples/latency-bench.exe testdata/text-base14.pdf
+./src-tauri/target/release/examples/latency-bench.exe testdata/vector-heavy.pdf
+```
+
+Four variants, interleaved within each round, round 0 discarded as warm-up and printed anyway:
+`inproc` (no boundary), `raw` (`Tile { png: false }`), `png` (`Tile { png: true }`), and
+`control` (`Outline`, a round trip carrying no tile). Each row decomposes into render, encode,
+parent fold and transport; every pixel-bearing variant folds its whole payload in the parent so
+none can look cheap by never reading what it received. It ends with a `N/M checks passed`
+summary and exits non-zero on a failure, so a scripted run can see one; a `[WARN]` does not fail
+the run, because every warning here says a *derived* figure is untrustworthy rather than that the
+measurement broke.
+
+**There is no `pipe` row, and that is a finding.** `worker-bench` compares pixels down the pipe
+against pixels through shared memory. Production never does the first --- `Response` documents
+that payloads travel through the mapping and never inline --- so a pipe row would measure a route
+no tile takes. The same quantity is recovered by differencing `raw` against `png`, two paths that
+are both real.
+
+Measured 2026-07-31, Windows, 1024² tile at scale 1:
+
+| fixture | boundary cost | spread over rounds | round trip, no tile | per 100 KB moved |
+|---|---|---|---|---|
+| `text-base14.pdf` | 0.269 ms | 0.004 ms | 0.040 ms | 0.0055 ms |
+| `outline-simple.pdf` | 0.309 ms | 0.016 ms | 0.070 ms | 0.0069 ms |
+| `vector-heavy.pdf` | 0.294 ms | 0.150 ms | 0.052 ms | `[SKIP]` --- see below |
+
+**Read the invariance, not the numbers.** The boundary cost is a property of the boundary, so it
+should not depend on the document, and across three fixtures that differ by three orders of
+magnitude in render time it lands within 0.02 ms of itself. That agreement is the result; any one
+of those figures alone would be a single sample.
+
+Two things the A0 fixture forced, both of which the small ones hid, and both now traps:
+
+- **The boundary figure is differenced on the transport column, not on end-to-end.** The obvious
+  estimator subtracts two ~2.7 s numbers to recover a ~0.3 ms one and reports render noise: it
+  read **-265.822 ms** there. The run reports how far the same render varies between variants
+  beside the figure, which is the error that estimator would have carried --- on the A0 sheet a
+  factor of several hundred.
+- **Payload differencing is guarded by materiality, not by ordering.** A dense vector page barely
+  compresses --- png 4027 KB against raw 4096 --- so `raw > png` passes on a 68 KB gap and divides
+  noise by it. That fixture now reports `[SKIP]` naming both sizes.
+
+The `control` variant subtracts the outline walk the reply reports in `walk_ms`, rather than
+warning that the walk is inside the number. Whether that subtraction is sound is cross-checked
+two ways --- the entry count and the walk time must agree about whether any work happened --- and
+both disagreement branches were shown to fire under mutation. They exist because the first
+version trusted the count alone, misparsed an object as an array, and printed *"the document has
+no outline"* for `outline-simple.pdf`.
+
+**The boundary check is on reproducibility, not on sign, and the difference was forced by a
+mutation that survived.** The first version simply required the figure to be positive --- a
+boundary cannot be free --- and restoring the wall-based estimator on the A0 fixture *passed* it,
+because -265.822 ms had been one sample of a noisy quantity and the next run of the same broken
+arithmetic landed positive. A check that fires only when noise falls one way is decoration on
+every run where it does not. It now requires the figure to be positive **and** to repeat across
+rounds, which the two estimators differ in enormously: 0.004--0.150 ms of spread on the sound
+one, 48 ms on the broken one.
+
+That fix exposed a second defect worth more than the first. The check compared a spread against
+a figure that was computed by a *different route*, so the mutation moved the figure and left the
+spread sound, and the comparison passed on an estimator that had been broken on purpose. Both
+now come from one per-round vector. **Two derivations of one quantity have to be tied together
+or their agreement means nothing** --- which is the same lesson as the outline count above,
+arriving from the other direction.
+
+**Its checks are proved, not assumed.** Four mutations, four caught, each with the predicted
+verdict, restored by bytes and verified by digest: forcing the outline count to zero, forcing it
+non-zero, dropping the fold term from the transport formula, and estimating the boundary on
+end-to-end again.
 
 ### Printing on Windows, and how to check it without paper
 

@@ -62,7 +62,7 @@ use std::path::Path;
 ///
 /// The refusal for every other mode names the model that was actually built.
 /// It previously cited "restricted tokens" and "named section objects", both of
-/// which `bin/win_sandbox_probe.rs` measured *out* of the design, and a wrong
+/// which `examples/win_sandbox_probe.rs` measured *out* of the design, and a wrong
 /// reason on a refusal is worse than a vague one: it reads as a design
 /// instruction, and someone building the spike from it would have built the two
 /// rejected things.
@@ -96,11 +96,15 @@ fn main() {
             "counterpart. Only --mode engine runs here, and it does.
 ",
             "The Windows model is a low-integrity token inside a job object, with ",
-            "anonymous sections inherited by handle; see bin/win_sandbox_probe.rs for ",
+            "anonymous sections inherited by handle; see examples/win_sandbox_probe.rs for ",
             "why it is not a restricting SID.
 ",
-            "The rest needs its own spike, not a port. What a spike would measure that ",
-            "nothing else does is the per-tile overhead decomposition of latency mode. ",
+            "The rest needs its own spike, not a port, and as of 2026-07-31 it has one: ",
+            "latency-bench measures the per-tile overhead decomposition here, which was ",
+            "the one thing this refusal named as uncovered. It drives the production ",
+            "worker rather than a private one, so it builds on both platforms and this ",
+            "harness can be cross-checked against it on macOS -- a run that has not happened yet.
+",
             "Parallel scaling is pool-bench, the authority rungs are win-sandbox-probe, ",
             "crash and timeout are backend-probe, and limits and footprint are answered ",
             "by the job object capping commit in the kernel.",

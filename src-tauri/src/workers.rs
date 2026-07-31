@@ -51,7 +51,7 @@ use crate::worker::{Request, Response, Shm, WarmWorker, Worker, WorkerSender};
 /// How many workers one document may have, unless `TPDF_POOL` says otherwise.
 ///
 /// Six, because that is where the curve flattens on the workload a viewport
-/// actually issues. Measured through this service by `bin/pool_bench.rs`, six
+/// actually issues. Measured through this service by `examples/pool_bench.rs`, six
 /// 1024-square tiles of the A0 sheet, interleaved across rounds (4P+6E machine):
 ///
 /// | workers | 1 | 2 | 4 | 6 | 8 |
@@ -388,7 +388,7 @@ pub(crate) struct Workers {
     /// workers are grown under contention, when a render is already on screen and
     /// several milliseconds are not what anybody is waiting for.
     ///
-    /// `bin/prespawn_bench.rs` measures what it removes from an open: **7.9 ms**
+    /// `examples/prespawn_bench.rs` measures what it removes from an open: **7.9 ms**
     /// on a document that embeds its fonts and **15.3 ms** on one that does not,
     /// because a pre-spawned worker has already paid both the ~6.6 ms link-and-
     /// sandbox floor and the ~7.4 ms system-font walk. What it cannot remove is

@@ -44,7 +44,7 @@ fn main() {
 
 #[cfg(windows)]
 // Moved out of `src/bin/win_sandbox_probe/` --- see the note in
-// `bin/backend_probe.rs` and the trap it points at: a directory under `src/bin/`
+// `examples/backend_probe.rs` and the trap it points at: a directory under `src/bin/`
 // becomes a phantom binary in the Windows installer.
 #[path = "../src/probes/win_sandbox_probe.rs"]
 mod imp;
