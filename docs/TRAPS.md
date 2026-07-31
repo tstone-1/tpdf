@@ -3928,10 +3928,16 @@ Two cheap controls make it honest, and both are one `Move-Item` apart:
 **The bundlers disagree about a resource map's target directory, so one bundled candidate is
 not enough.** The map asks for `pdfium/`. Tauri's WiX template ignores it: `msiexec /a` puts
 `pdfium.dll` directly beside `tpdf.exe`, and the generated `main.wxs` shows the component under
-`INSTALLDIR` with no intermediate `<Directory>`. macOS is expected to honour it and has not been
-checked from a Mac. The lookup therefore tries `resources/pdfium` then `resources`, and applies
-this function's own older lesson --- look for the **file**, not the directory that should
-contain it --- which is what lets one lookup serve two layouts without either being asserted.
+`INSTALLDIR` with no intermediate `<Directory>`. The lookup therefore tries `resources/pdfium`
+then `resources`, and applies this function's own older lesson --- look for the **file**, not the
+directory that should contain it --- which is what lets one lookup serve two layouts without
+either being asserted.
+
+**"macOS is expected to honour it" stood here until it was checked, on 2026-07-31, and it was
+wrong** --- see the next entry. macOS honoured neither candidate: it renamed the dylib to
+`Resources/pdfium`. The prediction was reasonable, it was labelled as unverified, and it was
+still false, which is the argument for running the control rather than for writing a better
+guess.
 
 **The size of an installer is a real signal and is not evidence.** The NSIS setup was 5.59 MB
 while `pdfium.dll` alone is 7.21 MB, which settles it in that direction; the reverse does not
@@ -3977,3 +3983,96 @@ The two `#[path]` includes need re-pointing, and they fail loudly: `src/bin/back
 reached its body at `../probes/`, which from `examples/` means `src-tauri/probes/` rather than
 `src-tauri/src/probes/`. A wrong `#[path]` is a compile error, so this one cannot be shipped by
 accident --- unlike everything above it.
+
+### A trailing slash in a Tauri resource map is a rename on macOS, not a directory
+
+`tauri.macos.conf.json` asked for `"../vendor/pdfium/lib/libpdfium.dylib": "pdfium/"`, the same
+shape the Windows config uses, and the entry above predicted the macOS bundler would place the
+file in `Contents/Resources/pdfium/`. Measured on 2026-07-31, it does not. It reads the value as
+the target **path** and writes the dylib as a *file*:
+
+```
+Contents/Resources/pdfium   7732336 bytes   Mach-O 64-bit dynamically linked shared library arm64
+```
+
+So both bundled candidates missed --- `Resources/pdfium/libpdfium.dylib` and
+`Resources/libpdfium.dylib` are each absent --- and the app fell through to the resource-directory
+fallback and died with three `could not load Pdfium` lines, `0/1 checks passed`. The fix is to
+name the file: `"pdfium/libpdfium.dylib"`. After it, 102/102 with the dev library hidden.
+
+**The reason this is worth an entry rather than a config diff is how thoroughly it looks
+correct.** Every cheap observation agrees with the working case:
+
+- `npm run tauri build` exits 0 and reports the bundle.
+- `find tpdf.app -name '*pdfium*'` prints a path with `pdfium` in it, which is what someone
+  checking "did the library get bundled?" is looking for and what they will accept.
+- The bundle is the right size, because the file really is in it.
+- `viewer_check.py` passes --- from the repo, where the dev candidate hits first.
+
+What discriminates is `find -type f` versus `-type d`, or `file`, on that one path. A path
+existing is not the same fact as a path being the *kind of thing* that was asked for, and the
+trailing slash reads as a directory marker to a human and as nothing at all to this bundler.
+
+**The two platforms diverge here, and only one of them can be tested from a given machine.**
+Windows survives the same map because WiX ignores the target directory and the resource-root
+candidate catches it; macOS does not survive it because it honours the target and the target was
+under-specified. `tauri.windows.conf.json` was therefore deliberately left alone --- changing a
+config for a platform you cannot re-run is trading a measured pass for a predicted one, which is
+the mistake this entry exists to record in the first place.
+
+**It also breaks the next build in an existing tree, and the error names nothing useful.**
+`tauri-build` stages resources for ordinary `cargo` builds too, so `target/debug/pdfium`
+already existed as a *file* from the old config. The new map wants a directory at that path,
+and the build script fails with `File exists (os error 17)` under
+`error: failed to run custom build command` --- during **clippy**, which reads as a lint failure
+in the gate summary and mentions neither the resource nor the path. `rm target/debug/pdfium`
+is the whole fix, and a clean tree never sees it. Worth knowing because the config change and
+the failure look unrelated: one is a bundling concern, the other kills a gate that does not
+bundle anything.
+
+**One check was already strict enough to catch it, and would have --- at the worst moment.**
+`release.yml`'s notarization verification does
+`mapfile -t DYLIBS < <(find "$APP" -name 'libpdfium.dylib')` and refuses anything but exactly
+one. Against the broken layout that finds **0** and fails with *"expected exactly one
+libpdfium.dylib, found 0"*; against the fixed one it finds exactly the one, at
+`Contents/Resources/pdfium/libpdfium.dylib`. Both measured on 2026-07-31. So the macOS half of
+that workflow, none of which has ever run, contains at least one assertion now known to be
+correct and load-bearing --- and the bug would have surfaced on the first tagged release, after
+the version bump and the tag, rather than during a build anyone could repeat. That is the
+argument for the dev-library-hidden check being a *step* in `BUILD.md` rather than something CI
+eventually notices.
+
+### An interpolated status label is two columns narrower when it passes
+
+`backend-probe` and `worker-probe` printed their verdicts as `"[{}] {name:56} {}"` with `OK`
+or `FAIL` interpolated. `[OK]` is four characters and `[FAIL]`/`[SKIP]` six, so **the rows that
+pass start two columns to the left of the rows that do not** --- in the harness's own output, and
+in anything reading it.
+
+What that costs is not cosmetic. `BUILD.md`'s documented recipe for extracting a check-name set
+is a fixed slice, `cut -c8-47`, correct for `viewer_check.py` where every label is seven wide.
+Applied to `backend-probe` it takes the `[OK]` rows two characters short --- `e page asked for
+is one a wrong page num` where the `[SKIP]` row gives `the page asked for is one a wrong page
+n` --- so the same check appears under two different "names" depending on whether it passed.
+Diffing three corpora on 2026-07-31 therefore reported **the name sets diverge**, on three runs
+whose name sets were identical. That is the single conclusion this whole arrangement exists to
+make trustworthy, and the instrument produced the opposite of it.
+
+Three things worth carrying:
+
+- **The failure is silent and self-consistent.** Every corpus reports the same *count* (42), so
+  a check on totals passes; only the set diff moves, and it moves in the direction that looks
+  like a regression rather than like a broken parser. A count agreeing while a set disagrees is
+  the signature.
+- **Uniformity is the fix, not a cleverer parser.** Both now use `{label:7}` with the brackets
+  in the literal, matching every other harness here. `fdpass_probe.rs` had independently dodged
+  it by padding the *word* (`"OK  "`), which is why the inconsistency survived being read
+  several times --- two of four probes were right, in two different ways.
+- **Check the widths before reusing a slice recipe.**
+  `grep -hoE "^\[[A-Z]+\] *" run.log | awk '{print length($0)}' | sort -u` must print one value.
+  It is one line, and it is the difference between a recipe and a recipe that happens to work
+  on the harness it was written against.
+
+Same family as the padded-column trap already in this file, and the mirror of it: there the
+*name* overran its field, here the *label* underran it. Both end with a fixed offset reading
+the wrong bytes and nothing announcing that it did.
