@@ -48,7 +48,7 @@ non-zero on failure.
 ```
 # The FPDFPageObj_Destroy ownership segfault. Case `c` (leak) must pass; if case
 # `a` (destroy) ever stops crashing, the upstream bug is fixed.
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin remove-probe -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example remove-probe -- \
     testdata/text-truetype.pdf c
 
 # The V8 and XFA symbol scan. This mode reads the library rather than binding it,
@@ -57,35 +57,35 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin remove-probe -- \
 # macOS is the only platform where this can currently answer: the Windows DLL is
 # stripped of local symbols and the check correctly reports [NOT VERIFIED]. Run both;
 # the Windows one still reports the export surface, which stripping cannot hide.
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin worker-bench -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example worker-bench -- \
     testdata/text-heavy.pdf --mode engine --lib vendor/pdfium/lib   # macOS
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin worker-bench -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example worker-bench -- \
     --mode engine --lib vendor/pdfium/bin                           # Windows
 
 # Progressive rendering still agrees with the safe path, byte for byte. Slow:
 # roughly 20 s, because the point is the page that takes seconds to render.
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin progressive-probe -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example progressive-probe -- \
     testdata/vector-heavy.pdf --mode identity --slices 0
 
 # Form widgets take a second PDFium pass after the progressive render. The
 # fixture has a value and deliberately has no stored appearance stream, so
 # omitting FPDF_FFLDraw changes 4,587 bytes rather than passing by construction.
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin progressive-probe -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example progressive-probe -- \
     testdata/form.pdf --mode identity --slices 0
 
 # Character boxes still land on the ink they describe. Run it on a *small* text
 # fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
 # that page cannot discriminate and the probe fails rather than reporting a pass.
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin text-probe -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example text-probe -- \
     testdata/text-marked.pdf --mode align
 
 # The outline walk terminates, resolves and refuses. Run BOTH: the hostile
 # fixture proves the bounds fire, and the ordinary one proves they do not fire
 # when they should not, which is the half that catches a walk bounding
 # everything.
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example outline-probe -- \
     testdata/outline-simple.pdf --mode check
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example outline-probe -- \
     testdata/outline-hostile.pdf --mode check
 
 # The worker boundary is still transparent: the two backends must agree byte for
@@ -95,7 +95,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin outline-probe -- 
 # is slow enough for the withdrawal and drain checks to apply, and on every other
 # one they report [SKIP] with the reason. vector-heavy is the run to read: 41
 # check names, 1 skipped.
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin backend-probe -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example backend-probe -- \
     testdata/vector-heavy.pdf
 ```
 
@@ -124,7 +124,7 @@ number. It is not part of the bump checklist above --- run it when the pool, the
 count, or the tile path changes:
 
 ```
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin pool-bench -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example pool-bench -- \
     testdata/vector-heavy.pdf --rounds 4 --sizes 1,2,4,6,8
 ```
 
@@ -138,7 +138,7 @@ gives back --- is a second mode. Run it when the idle timeout, the reaper, or th
 workers kept changes:
 
 ```
-cargo run --release --manifest-path src-tauri/Cargo.toml --bin pool-bench -- \
+cargo run --release --manifest-path src-tauri/Cargo.toml --example pool-bench -- \
     testdata/vector-heavy.pdf --mode retire --rounds 4
 ```
 
@@ -149,11 +149,17 @@ retirement is **bounded and fails the run** if it does not happen --- without th
 second column would quietly be a warm screenful wearing a cold label, which is a number
 that looks entirely reasonable.
 
-Two notes on why these are written out in full. The binary names are **hyphenated**, and
-`--bin remove_probe` fails as "no such target", which reads like a missing binary rather
-than a wrong name. And `remove-probe` with no case argument defaults to case `a`, whose
-whole purpose is to segfault --- so the obvious invocation of the regression check crashes
-by design and looks like the bump broke something.
+Three notes on why these are written out in full. The target names are **hyphenated**, and
+`--example remove_probe` fails as "no such target", which reads like a missing harness
+rather than a wrong name. They are `--example`, not `--bin`, since 2026-07-31 --- as
+`[[bin]]` they were shipped inside the installer, all seventeen of them --- so an older
+command fails the same way, and the built artifacts moved from `target/release/` down into
+`target/release/examples/`. **Delete any probe executables still sitting in
+`target/release/`**: they are left over from before the split, nothing rebuilds them, and a
+path copied out of an older document silently runs a frozen binary. And `remove-probe` with
+no case argument defaults to case `a`, whose whole purpose is to segfault --- so the obvious
+invocation of the regression check crashes by design and looks like the bump broke
+something.
 
 The progressive checks are why the raw path restates `FPDF_ANNOT`,
 `FPDF_REVERSE_BYTE_ORDER` and `FPDFBitmap_BGRA` by value: `pdfium-render` does not
@@ -388,8 +394,8 @@ lockdown-token handover to get past.
 `worker-probe` is the standing proof:
 
 ```
-cargo build --release --bin worker-probe
-./src-tauri/target/release/worker-probe.exe testdata/text-base14.pdf
+cargo build --release --example worker-probe
+./src-tauri/target/release/examples/worker-probe.exe testdata/text-base14.pdf
 ```
 
 **11/11 checks, 1 not applicable**, on `text-base14`, `text-cid`, `vector-heavy` and `rotated`
@@ -438,7 +444,7 @@ and keeping it out of the request vocabulary makes a second one unsayable rather
 the child has to refuse.
 
 ```
-cargo run --release --bin prespawn-bench -- --rounds 6 \
+cargo run --release --example prespawn-bench -- --rounds 6 \
     text-base14.pdf text-truetype.pdf text-cid.pdf vector-heavy.pdf
 ```
 
@@ -463,9 +469,9 @@ has not generated, and it `[SKIP]`s with that reason rather than quietly not run
 ### `backend-probe` on Windows, and the defect it found in itself
 
 ```
-cargo build --release --bin backend-probe
-./src-tauri/target/release/backend-probe.exe testdata/text-base14.pdf
-./src-tauri/target/release/backend-probe.exe testdata/vector-heavy.pdf
+cargo build --release --example backend-probe
+./src-tauri/target/release/examples/backend-probe.exe testdata/text-base14.pdf
+./src-tauri/target/release/examples/backend-probe.exe testdata/vector-heavy.pdf
 ```
 
 | fixture | passed | skipped | failed |
@@ -545,7 +551,7 @@ direction a list written by reading always errs --- see the trap. What was actua
   **The eighth mode ran here for the first time, and it does not say what the threat model does.**
 
 ```
-./src-tauri/target/release/worker-bench.exe --mode engine --lib vendor/pdfium/bin
+./src-tauri/target/release/examples/worker-bench.exe --mode engine --lib vendor/pdfium/bin
 ```
 
   `--mode engine` spawns nothing --- it reads the library file --- and was unreachable off unix only
@@ -580,9 +586,9 @@ font walk against ~7.4 ms --- that carrying a figure over is a guess, not an est
 ### `tile-bench` on Windows, and what the render constants cost here
 
 ```
-cargo build --release --bin tile-bench
-./src-tauri/target/release/tile-bench.exe testdata/vector-heavy.pdf --mode single --rounds 4
-./src-tauri/target/release/tile-bench.exe testdata/text-base14.pdf  --mode single --rounds 4
+cargo build --release --example tile-bench
+./src-tauri/target/release/examples/tile-bench.exe testdata/vector-heavy.pdf --mode single --rounds 4
+./src-tauri/target/release/examples/tile-bench.exe testdata/text-base14.pdf  --mode single --rounds 4
 ```
 
 It needed two fixes and neither was a refusal: the hardcoded `vendor/pdfium/lib` (on Windows that
@@ -625,7 +631,7 @@ machine has not generated, so the two cheap-page numbers are different fixtures.
 ### `pool-bench` on Windows: what a pool buys a screenful
 
 ```
-cargo run --release --bin pool-bench -- testdata/vector-heavy.pdf --tiles 6 --rounds 4 --sizes 1,2,4,6,8
+cargo run --release --example pool-bench -- testdata/vector-heavy.pdf --tiles 6 --rounds 4 --sizes 1,2,4,6,8
 ```
 
 Six 1024² tiles of the A0 page, which is what one screenful is. Two runs, so the stable
@@ -805,9 +811,9 @@ real spooler**, and naming an output file in `DOCINFOW.lpszOutput` stops it rais
 dialog:
 
 ```
-cargo run --release --bin print-probe
-cargo run --release --bin print-probe -- testdata/rotated.pdf
-cargo run --release --bin print-probe -- testdata/vector-multi.pdf "Microsoft Print to PDF"
+cargo run --release --example print-probe
+cargo run --release --example print-probe -- testdata/rotated.pdf
+cargo run --release --example print-probe -- testdata/vector-multi.pdf "Microsoft Print to PDF"
 ```
 
 Eight checks, and three of them are the ones worth understanding:
@@ -1076,11 +1082,11 @@ is the probe, per rotation:
 ```
 for page in 0 1 2 3; do
     for view in 0 1 2 3; do
-        src-tauri/target/release/text-probe testdata/rotated.pdf \
+        src-tauri/target/release/examples/text-probe testdata/rotated.pdf \
             --page $page --mode align --view-turns $view
     done
 done
-src-tauri/target/release/outline-probe testdata/rotated-90.pdf --mode check \
+src-tauri/target/release/examples/outline-probe testdata/rotated-90.pdf --mode check \
     --manifest testdata/rotated-manifest.json
 ```
 
@@ -1090,7 +1096,7 @@ file. It prints them, which is the only way to see from outside the viewer that 
 order is not the page's:
 
 ```
-src-tauri/target/release/text-probe testdata/columns.pdf --page 1 --mode order
+src-tauri/target/release/examples/text-probe testdata/columns.pdf --page 1 --mode order
 ```
 
 On page 1 of that fixture it prints `alpha one beta one`, `alpha two beta two`, and so on ---
@@ -1342,10 +1348,13 @@ starts at 0 and increments within the month.
    `imp.rs`, became a phantom binary and failed WiX. Those bodies now live in `src/probes/`.
    See the trap of that name for the four theories that were wrong first.
 
-   The installer ships all **17 probe and benchmark executables**, about 35 MB of spikes
-   including a sandbox prober. That follows from declaring them `[[bin]]` in the bundled
-   crate, is identical on macOS, and wants a separate workspace crate or `[[example]]`
-   targets before a real release.
+   **It no longer ships the probes.** Until 2026-07-31 the installer carried all 17 spike
+   and benchmark executables, including a sandbox prober and a hostile-document harness,
+   because they were `[[bin]]` targets of the bundled crate. They are `[[example]]` targets
+   now: cargo still builds and links them, `scripts/gates.py`'s `bins` gate still covers
+   them via `--examples`, and the bundler does not see them. The MSI payload is three files
+   --- `tpdf.exe`, `tpdf_lib.dll`, `pdfium.dll` --- verified by extracting it, and the MSI went
+   16.7 -> 8.0 MB with the NSIS setup 8.8 -> 5.8 MB.
 
    **Run the bundle check with the development library moved aside.** This is not optional
    and it is not paranoia: until 2026-07-31 no bundle contained PDFium at all, and every

@@ -18,9 +18,11 @@ than unfinished:
   on both.
 
 What is genuinely missing is `worker-bench`'s seven POSIX modes, of which only `latency` measures
-anything nothing else covers. Two things are decisions rather than gaps: the installer ships all
-17 probe binaries (identical on macOS), and the cold-double-click harness phase has no Windows
-counterpart because Explorer hands the path over in `argv`, which another phase already covers.
+anything nothing else covers. The cold-double-click harness phase has no Windows counterpart, and
+that is a decision rather than a gap: Explorer hands the path over in `argv`, which another phase
+already covers. The installer shipping all 17 probe binaries *was* listed here as the second such
+decision, and it stopped being one on 2026-07-31 --- they are `[[example]]` targets now and the
+payload is three files.
 
 This paragraph replaced "Windows has never been built", which was two days stale and directly
 contradicted by `AGENTS.md`. Recorded rather than quietly overwritten, because it is the second

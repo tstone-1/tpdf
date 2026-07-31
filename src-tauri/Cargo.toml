@@ -137,70 +137,70 @@ windows = { version = "0.61", features = [
 ] }
 tauri-plugin-single-instance = "2.4.3"
 
-[[bin]]
+[[example]]
 name = "tile-bench"
-path = "src/bin/tile_bench.rs"
+path = "examples/tile_bench.rs"
 
-[[bin]]
+[[example]]
 name = "text-roundtrip"
-path = "src/bin/text_roundtrip.rs"
+path = "examples/text_roundtrip.rs"
 
-[[bin]]
+[[example]]
 name = "remove-probe"
-path = "src/bin/remove_probe.rs"
+path = "examples/remove_probe.rs"
 
-[[bin]]
+[[example]]
 name = "sanitize-rewrite"
-path = "src/bin/sanitize_rewrite.rs"
+path = "examples/sanitize_rewrite.rs"
 
-[[bin]]
+[[example]]
 name = "worker-bench"
-path = "src/bin/worker_bench.rs"
+path = "examples/worker_bench.rs"
 
-[[bin]]
+[[example]]
 name = "incremental-save"
-path = "src/bin/incremental_save.rs"
+path = "examples/incremental_save.rs"
 
-[[bin]]
+[[example]]
 name = "thread-probe"
-path = "src/bin/thread_probe.rs"
+path = "examples/thread_probe.rs"
 
-[[bin]]
+[[example]]
 name = "text-probe"
-path = "src/bin/text_probe.rs"
+path = "examples/text_probe.rs"
 
-[[bin]]
+[[example]]
 name = "progressive-probe"
-path = "src/bin/progressive_probe.rs"
+path = "examples/progressive_probe.rs"
 
-[[bin]]
+[[example]]
 name = "outline-probe"
-path = "src/bin/outline_probe.rs"
+path = "examples/outline_probe.rs"
 
-[[bin]]
+[[example]]
 name = "worker-probe"
-path = "src/bin/worker_probe.rs"
+path = "examples/worker_probe.rs"
 
-[[bin]]
+[[example]]
 name = "backend-probe"
-path = "src/bin/backend_probe.rs"
+path = "examples/backend_probe.rs"
 
-[[bin]]
+[[example]]
 name = "pool-bench"
-path = "src/bin/pool_bench.rs"
+path = "examples/pool_bench.rs"
 
-[[bin]]
+[[example]]
 name = "prespawn-bench"
-path = "src/bin/prespawn_bench.rs"
+path = "examples/prespawn_bench.rs"
 
-[[bin]]
+[[example]]
 name = "fdpass-probe"
-path = "src/bin/fdpass_probe.rs"
+path = "examples/fdpass_probe.rs"
 
-[[bin]]
+[[example]]
 name = "win-sandbox-probe"
-path = "src/bin/win_sandbox_probe.rs"
+path = "examples/win_sandbox_probe.rs"
 
-[[bin]]
+[[example]]
 name = "print-probe"
-path = "src/bin/print_probe.rs"
+path = "examples/print_probe.rs"

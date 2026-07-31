@@ -45,5 +45,5 @@ fn main() {
 // binary of its own. The MSI was then generated with a component pointing at a
 // `backend_probe.exe` that does not exist, and WiX refused the whole package.
 // See `docs/TRAPS.md`; `src/bin/` must contain only declared bin sources.
-#[path = "../probes/backend_probe.rs"]
+#[path = "../src/probes/backend_probe.rs"]
 mod imp;

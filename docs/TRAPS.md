@@ -3944,3 +3944,36 @@ A harness note that cost two runs: the first attempts failed with *could not ope
 "...text-heavy.pdf"* --- a fixture never generated on this machine, since `testdata/*.pdf` is
 gitignored. An absent fixture and a broken bundle produce the same red, and the message names
 the file, so read it before concluding anything about the thing under test.
+
+### Moving a binary out of the installer moves it out of the gate that links it
+
+The seventeen spike and benchmark harnesses were `[[bin]]` targets of the crate Tauri bundles,
+so the MSI and NSIS installers shipped every one of them --- a sandbox prober and a
+hostile-document harness included. They are `[[example]]` targets since 2026-07-31, which the
+bundler does not enumerate. The payload went from twenty executables to three (`tpdf.exe`,
+`tpdf_lib.dll`, `pdfium.dll`), the MSI 16.7 -> 8.0 MB and the NSIS setup 8.8 -> 5.8 MB.
+
+**The trap is what the move does to `scripts/gates.py`.** Its `bins` gate exists because
+nothing else in the list links a binary --- clippy stops at metadata, and `cargo test` links
+each target with `main` replaced by the harness's own, so a symbol reachable only from `main`
+is dropped as dead code. The file that motivated it was `backend_probe.rs`, and that file is
+now an **example**. `cargo build --bins` after the move therefore links exactly one target, the
+app, and reports success in under a second --- looking identical to the gate that used to cover
+seventeen. The gate is `--bins --examples` now.
+
+Proved rather than assumed, and it is worth doing because the pass is so fast it reads as a
+no-op: an undefined `extern "C"` called from one example's `main` turns the gate red with
+`LNK2019: unresolved external symbol ... referenced in function ..._12fdpass_probe4main`. That
+also settles the speed --- 0.6 s to catch it, so the quick green was incremental caching and not
+an empty gate.
+
+**Delete the old executables.** `target/release/backend-probe.exe` and its sixteen siblings
+survive the move; nothing rebuilds them, and every path in a document written before the split
+still resolves --- to a binary frozen on the day of the change. Fifty-three stale artifacts were
+removed here. Same shape as the stale `.pdb` recorded elsewhere in this file, arriving through a
+manifest edit rather than a failed build, and the reason `BUILD.md` now says to clear them.
+
+The two `#[path]` includes need re-pointing, and they fail loudly: `src/bin/backend_probe.rs`
+reached its body at `../probes/`, which from `examples/` means `src-tauri/probes/` rather than
+`src-tauri/src/probes/`. A wrong `#[path]` is a compile error, so this one cannot be shipped by
+accident --- unlike everything above it.
