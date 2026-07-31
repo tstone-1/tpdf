@@ -175,7 +175,7 @@ fn session_file(app: &tauri::AppHandle) -> PathBuf {
 /// binaries on two separate days (`worker-probe`, then `backend-probe`), which is
 /// once more than a fact should be rediscovered.
 ///
-/// Five spike binaries still hardcode `lib`. They have never been run on Windows;
+/// Four spike binaries still hardcode `lib`. They have never been run on Windows;
 /// the next one that is should take this instead of adding a third copy.
 pub const PDFIUM_SUBDIR: &str = if cfg!(windows) { "bin" } else { "lib" };
 

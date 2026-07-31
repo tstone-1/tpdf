@@ -315,11 +315,13 @@ macOS gets `lib/libpdfium.dylib`. Windows gets the runtime DLL at **`bin/pdfium.
 and `lib/` holds only the import library `pdfium.dll.lib`. Found 2026-07-27 by a
 cross-platform install test that was only meant to check a digest.
 
-`pdfium_library_dir()` in `src-tauri/src/lib.rs` joins `vendor/pdfium/lib` unconditionally,
-so on Windows it resolves to a directory containing nothing loadable. **This is an open
-defect**, not a fixed one --- it is recorded here rather than repaired because no Windows
-build has ever run, and a blind fix would be another untested claim. `scripts/fetch_pdfium.py`
-already knows both layouts.
+The first app path joined `vendor/pdfium/lib` unconditionally, so on Windows it resolved
+to a directory containing nothing loadable. That app path is fixed and the distinction
+lives once as `PDFIUM_SUBDIR` in `src-tauri/src/lib.rs`, shared by every binary as it is
+run on Windows. `progressive-probe` was the third copy found afterwards (2026-07-31):
+its documented command failed at `LoadLibraryExW` and told the reader to reinstall a
+perfectly valid PDFium. A platform path duplicated beside a shared constant is a latent
+copy of the original defect, even when the application itself is already correct.
 
 ### A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
 
@@ -1240,9 +1242,11 @@ uncancelled progressive render is **byte-identical** to `render_into_bitmap_with
 on every fixture tried, sliced or not --- which is also what asserts the flags, clear
 colour and placement, since `pdfium-render` re-exports the handle *types* out of its
 private `bindgen` module but not the `FPDF_ANNOT` / `FPDF_REVERSE_BYTE_ORDER` /
-`FPDFBitmap_BGRA` constants, so those had to be restated by value. One documented gap: the
-safe path also calls `FPDF_FFLDraw` to overlay interactive form-field appearances, and the
-progressive path does not.
+`FPDFBitmap_BGRA` constants, so those had to be restated by value. The former form-widget
+gap closed 2026-07-31: the raw document now owns PDFium's pinned form environment and the
+progressive path follows a completed render with `FPDF_FFLDraw`. The discriminating fixture
+has a value but no `/AP` appearance stream; deleting that pass makes 4,587 bytes differ,
+while an unused-form control stays byte-identical.
 
 ### PDFium decides how often it can be interrupted, and the slice does not change it
 
@@ -3860,3 +3864,41 @@ recurrence will confirm or refute it instead of restarting the argument.
 Fixed in both classes in one change, deliberately. Two copies of one mistake drift, and the
 outline tree's version had never failed a check --- which is what a latent defect looks like
 right up until it is the one on the screen.
+
+### An expected error line beside a passing suite makes a green run unreadable
+
+The Windows check `a_worker_whose_child_dies_says_so_rather_than_blocking` spawns a worker
+whose child, under `cargo test`, is the libtest harness --- which has no `--render-worker`
+dispatch and refuses. That refusal is the check's **control**: a child that dies at once is
+what exercises the pipe plumbing hardest, and a real worker answering would test less.
+
+A worker inherits its parent's stderr on purpose, on both platforms, so the refusal printed
+`error: Unrecognized option: 'render-worker'` into the gate transcript --- one bare `error:`
+line, immediately above the `ok` that followed it, in a run of 205 passing tests. Nothing was
+wrong and nothing could be told that from reading the output. A reader who trusts the line
+looks for a failure that does not exist; a reader who learns to ignore it has learned to
+ignore `error:` in a gate transcript, which is worse.
+
+The fix quiets the **console**, never the child: a `#[cfg(test)]` guard points the process's
+own stderr at the null device for the length of the spawn, restoring it on `Drop`. That is
+the input the production spawn path already reads --- `Stdio::with_inherited_stderr` on
+Windows, `Stdio::inherit()` on macOS --- so no `cfg(test)` branch appears in the code under
+test, which is the only reason the check is worth running at all. The child copies the
+handle at `CreateProcess`/`exec`, so the window need only cover the spawn; the spawn, the
+death and the epitaph are unchanged. Rust's own `eprintln!` and panic messages go through
+libtest's per-test capture and never through this handle, so nothing a failure would have
+said is lost.
+
+**Mutate a process-wide guard single-threaded, or the verdict is a lie.** Deleting the
+`install` call and running the module's nineteen checks in parallel printed nothing at all:
+the *other* test's guard was open at the time and quieted this spawn too. That reads exactly
+like a guard nothing depends on, and the obvious next move --- delete it as dead --- would
+have put the line straight back. Alone, the same deletion restores it immediately. This is
+"a control can be contaminated by the phase that ran before it" with the phases running
+*beside* each other instead of before, and concurrency makes it intermittent rather than
+reproducible.
+
+The POSIX arm was written on Windows and has never been compiled, let alone run. It is
+there because macOS prints the same line by the same route, and because a wrong arm fails
+loudly on the next macOS run rather than quietly claiming a clean console --- but until
+someone runs it there, it is a claim about macOS made from Windows.

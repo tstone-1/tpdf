@@ -51,6 +51,18 @@ experience.
 
 ### Added
 
+- **Interactive form-field values are drawn by the cancellable renderer.** The raw PDFium
+  path now retains a pinned form environment for the document, notifies it as cached pages
+  open and close, and overlays `FPDF_FFLDraw` only after a complete base render. A cancelled
+  tile remains an explicitly incomplete tile rather than receiving a complete widget over
+  partial page pixels.
+
+  A generated text widget with a value and no stored appearance stream makes the pass
+  observable: before the fix the safe and progressive paths differed in 4,587 bytes; after
+  it they are byte-identical both uninterrupted and through a forced pause/resume. The probe
+  that proves it also now finds PDFium through the shared platform path --- on Windows it had
+  still looked in macOS's `lib/` directory and told the reader to reinstall a valid DLL.
+
 - **Text comes off a multi-column page in the order it is read.** A PDF carries no reading
   order --- only glyphs at positions, in whatever sequence its producer emitted them --- so a
   two-column page whose producer wrote line by line across the gutter copied as `alpha one
@@ -1285,6 +1297,21 @@ experience.
   which behaved as predicted, including one predicted to survive.
 
 ### Fixed
+
+- **The Rust test gate printed a bare `error:` line while passing.** Two Windows checks spawn
+  a worker whose child is the libtest harness, which has no `--render-worker` dispatch and
+  says so on the stderr every worker inherits by design. That refusal is the checks' control,
+  but it landed on the gate transcript as `error: Unrecognized option: 'render-worker'` above
+  its own `ok` line, so a clean run of 205 tests was indistinguishable from one that failed
+  and reported it badly. A test-only guard now points the process's stderr at the null device
+  for the length of the spawn and restores it on drop --- the console changes, the child does
+  not, and no `cfg(test)` branch enters the code under test. The gate transcript now contains
+  no `error:` line at all.
+
+  Proved by removing the guard, which puts the line back. `docs/TRAPS.md` records why that
+  mutation has to be run single-threaded: the window is process-wide, so with the module's
+  other checks running beside it the deletion printed nothing and read as a guard nothing
+  needed.
 
 - **Enter on a page thumbnail or an outline row could go to the wrong place.** Both the strip
   and the outline tree activated `focused` --- their own record of which row has focus, kept up

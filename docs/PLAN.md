@@ -1414,14 +1414,30 @@ silently stopped working. It was caught by the probe's rule that a sliced render
 all still passed because a render that never pauses is byte-identical to one that never
 had to.
 
-Two things are known and not yet done:
+One thing is known and not yet done:
 
 - **A cancelled tile is a real partial composite**, not an untouched buffer, but whether it
   is worth showing is unmeasured: the A0 fixture saturates every similarity metric tried
   (see `AGENTS.md`). That needs a realistic drawing, not a stress fixture.
-- **Form-field appearances are not drawn.** The safe path follows its render with
-  `FPDF_FFLDraw`; the progressive path does not, so documents with interactive widgets will
-  differ until that pass exists.
+##### Form-field appearances --- done 2026-07-31
+
+The progressive path now owns the same form lifecycle as the safe wrapper: a pinned
+`FPDF_FORMFILLINFO` for the document lifetime, `FORM_OnAfterLoadPage` and
+`FORM_OnBeforeClosePage` around every cached page, then `FPDF_FFLDraw` after a completed
+base render. A cancelled tile gets no form overlay; production discards it, and drawing a
+complete widget over a partial page would make incomplete pixels look authoritative.
+
+`make_form_pdf.py` supplies the discriminating fixture: one text widget has a value and no
+`/AP` appearance stream, so only the form environment can make it visible. Before the fix,
+the safe and progressive paths differed in **4,587 of 4,194,304 bytes**; afterwards they
+are byte-identical without slicing and through a forced pause/resume. The existing
+`hostile-unused-form.pdf` is the opposite control --- an unused AcroForm still compares
+byte-identically, so initialising the environment does not alter an ordinary page.
+
+This work also found `progressive-probe` still hardcoding `vendor/pdfium/lib` after the app
+had centralised the Windows `bin/` distinction. Its documented command therefore failed
+before the first check and advised reinstalling a valid PDFium. It now uses
+`PDFIUM_SUBDIR`, the same platform fact as the app and the other Windows-run probes.
 
 #### Withdrawing a stale tile — done 2026-07-27, and it does not fix the A0 page
 

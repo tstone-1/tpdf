@@ -813,10 +813,13 @@ fn parse_args() -> Args {
     }
 }
 
-/// `vendor/pdfium/lib` at the repo root, matching the other spike binaries.
+/// Where PDFium lives, matching the app's own development layout.
+///
+/// Windows ships the loadable DLL in `bin/` and puts only its import library
+/// in `lib/`; use the shared distinction rather than repeating the macOS path.
 fn default_library_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root: &Path| root.join("vendor/pdfium/lib"))
-        .unwrap_or_else(|| PathBuf::from("vendor/pdfium/lib"))
+        .map(|root: &Path| root.join("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR))
+        .unwrap_or_else(|| PathBuf::from("."))
 }

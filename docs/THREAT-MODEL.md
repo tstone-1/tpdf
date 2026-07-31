@@ -207,6 +207,16 @@ PDFium build cannot.
 - Its `FPDF_FORMFILLINFO` sets `m_pJsPlatform` to null and every callback to `None`, so
   even a fired action has no platform to open a URL, launch a file, mail, upload, or
   download with.
+- **There is a second caller as of 2026-07-31, and it takes the same posture.**
+  `progressive.rs` builds its own environment, because the raw cancellable path has no
+  `pdfium-render` wrapper to inherit one from and interactive widget values are invisible
+  without it. Its `FPDF_FORMFILLINFO` is zeroed before `version` and `xfa_disabled` are
+  set, so `m_pJsPlatform` is null and every callback is `None` for the same reason rather
+  than by copying the same lines. It calls `FORM_OnAfterLoadPage`, `FORM_OnBeforeClosePage`
+  and `FPDF_FFLDraw`, and **no `FORM_Do*` function** — not `FORM_DoPageAAction` either,
+  which is the page-level counterpart the two document-level ones above do not cover.
+  Checked by grep over `src-tauri/src`, which is the whole of it: the string does not
+  appear.
 
 **JavaScript** cannot be tested behaviourally. A document whose script does nothing looks
 exactly like a document whose script was never run, so the absence of an effect is not
