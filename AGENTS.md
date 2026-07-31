@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 160 entries
+The one thing this file does *not* carry in full is the trap list --- 161 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -323,11 +323,20 @@ It had never been caught because Windows packaging had never been attempted --- 
 mentioned neither MSI nor WiX. The trap entry records the four theories that were wrong first,
 including an experiment whose control was placed where it could not fire.
 
-One thing that is *not* fixed and is a decision rather than an oversight: the installer ships all
-**17 probe and benchmark executables**, about 35 MB of development spikes including a sandbox
-prober and a hostile-document harness. That follows from declaring them `[[bin]]` in the bundled
-crate, it is identical on macOS, and the real fix is a separate workspace crate or `[[example]]`
-targets.
+**And it no longer ships the spikes.** Until 2026-07-31 the installer carried all 17 probe and
+benchmark executables --- a sandbox prober and a hostile-document harness among them --- because
+they were `[[bin]]` targets of the bundled crate. They are `[[example]]` targets now: cargo
+builds and links them exactly as before, the `bins` gate keeps covering them through
+`--examples`, and the bundler does not see them. Extracting the MSI shows a payload of three
+files (`tpdf.exe`, `tpdf_lib.dll`, `pdfium.dll`); the MSI went 16.7 -> 8.0 MB and the NSIS setup
+8.8 -> 5.8 MB. The invocations moved with them: `--example <name>`, and built artifacts now sit
+in `target/release/examples/`.
+
+**That gate flag is load-bearing, and was proved so rather than assumed.** Dropping
+`--examples` would narrow the `bins` gate back to the one thing it was added to catch ---
+`backend_probe.rs`'s dyld symbols, which is now an example --- leaving only the app under
+`--bins`. An undefined extern called from one example's `main` turns the gate red with
+`LNK2019`, which is the check that says the flag does something.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -514,8 +523,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 160 of them and the full text
-was 93% of this file --- an instruction budget spent on the 159 traps that are not
+titles. Only the titles are here, because there are 161 of them and the full text
+was 93% of this file --- an instruction budget spent on the 160 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they were already two behind when this one was written, which is how a count in prose
 fails. What the index has to preserve is knowing that a trap *exists*;
@@ -710,6 +719,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A directory under `src/bin/` becomes a phantom binary in the Windows installer
 - A green gate list can sit beside a distributable that cannot be built
 - A bundled app that finds its library in the dev tree proves nothing about the bundle
+- Moving a binary out of the installer moves it out of the gate that links it
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 
 ### Fixtures

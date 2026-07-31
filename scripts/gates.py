@@ -29,14 +29,21 @@ on a `Cargo.lock` that was not committed after a `cargo update`, and it compiles
 the test targets, which is where `--all-targets` clippy findings and broken
 test-only code show up.
 
-`cargo build --bins` is there because **neither of the two gates above links a
-binary**, and on 2026-07-29 this sweep reported 7/7 on Windows while
+`cargo build --bins --examples` is there because **neither of the two gates above
+links a binary**, and on 2026-07-29 this sweep reported 7/7 on Windows while
 `npm run tauri build` failed outright. clippy stops at metadata and never calls
-the linker at all; `cargo test` does link each `[[bin]]`, but with its `main`
+the linker at all; `cargo test` does link each binary target, but with its `main`
 replaced by the test harness's own, so anything reachable only from `main` is
 dead code the linker drops. `backend_probe.rs` referenced two dyld symbols that
 exist on no other platform, and both gates were blind to it for exactly that
 reason. A gate list that never links what it ships cannot see a link error.
+
+`--examples` is not decoration on that flag, it is where the sixteen spike
+harnesses went on 2026-07-31 when they stopped being `[[bin]]` so the installer
+would stop shipping them. `backend_probe.rs` --- the file that motivated this gate
+in the first place --- is one of them, so dropping `--examples` would silently
+narrow the gate back to the state it was added to fix, and the only target left
+under `--bins` is the app itself.
 
 `vitest` covers the front-end logic that has an answer which can be *wrong*
 rather than merely ugly -- currently command ranking. Behaviour that needs a
@@ -97,7 +104,15 @@ def gates() -> "list[tuple[str, list[str], str]]":
         ),
         (
             "bins",
-            ["cargo", "build", "--manifest-path", CARGO_MANIFEST, "--locked", "--bins"],
+            [
+                "cargo",
+                "build",
+                "--manifest-path",
+                CARGO_MANIFEST,
+                "--locked",
+                "--bins",
+                "--examples",
+            ],
             "a binary does not link (clippy and cargo test never link one)",
         ),
         (

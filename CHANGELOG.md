@@ -1296,6 +1296,24 @@ experience.
   checks, six of them controls --- and the checks themselves by eleven mutations, all of
   which behaved as predicted, including one predicted to survive.
 
+### Changed
+
+- **The installers no longer ship the development spikes.** All 17 probe and benchmark
+  harnesses were `[[bin]]` targets of the crate Tauri bundles, so every installer carried
+  them — a sandbox prober and a hostile-document harness included. They are `[[example]]`
+  targets now, which the bundler does not enumerate: the MSI payload is three files, and the
+  MSI went 16.7 → 8.0 MB with the NSIS setup 8.8 → 5.8 MB. On macOS this is also 17 fewer
+  binaries for the hardened runtime to sign and notarize.
+
+  Invocations move with them — `--example <name>` rather than `--bin`, and artifacts land in
+  `target/release/examples/`. Clear out any probe executables left in `target/release/`;
+  nothing rebuilds them and an older documented path still resolves to a frozen copy.
+
+  The `bins` gate takes `--examples` now, and that flag is not decoration: the file that
+  motivated the gate is one of the moved ones, so without it the gate would link only the app
+  and pass in under a second looking exactly as it did when it covered seventeen targets. An
+  undefined symbol called from an example's `main` turns it red with `LNK2019`.
+
 ### Fixed
 
 - **The installers shipped no PDF engine.** `tauri.conf.json` declared no `bundle.resources`,
