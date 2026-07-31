@@ -4359,3 +4359,46 @@ And the reason to probe at all rather than reason: the answer sounded obvious in
 beforehand. "Vision is a system framework, it will be fine under `allow default`" and "OCR is
 just pixels, of course it needs nothing" are both wrong, and a design was about to be written on
 whichever one got asserted first.
+
+### An OCR engine's bounding box is a detection, not a measurement
+
+Found 2026-07-31 the first time `ocr-probe` ran the real Vision binding rather than its unit
+tests. `Control::contains` was strict containment --- a recognised span counted as the control
+only if its whole rectangle lay inside the control band --- which is the obvious reading of
+"in the band" and passes every test written against synthetic input.
+
+The probe builds its control band by cropping a strip of the rendered page to one recognised
+span's own rectangle and stacking it under a blank strip. Vision then read that text back
+perfectly and reported it **1.5 pt above the strip it had been cropped from**. `top >= band_top`
+was false, the control counted as a survivor rather than as the control, and the gate returned
+`NotVerified` for a redaction that was fine.
+
+The fix is a centre-inside test, which keeps the property that matters --- position decides what
+the control is, so a token occurring elsewhere cannot stand in for it --- while tolerating an
+engine whose boxes are looser than the pixels it was handed. Every engine's are: they are
+detections fitted to what a model thinks it saw, not measurements of ink.
+
+Two more of the same family surfaced in the same hour, and both are about the *harness* rather
+than the gate:
+
+- **A strip cropped flush to a span's box clips its ascenders, and the engine misreads its own
+  text.** On `outline-simple` a line beginning "Donn" came back from the isolated strip as
+  `"L UNVG"`. Padding fixed it --- and a *fixed* pad then pulled a neighbouring line into the
+  band on `rotated` and cost that fixture its gate checks entirely, so the padding is now a
+  search for the largest pad that still isolates the span. A recogniser needs the whitespace
+  around a line nearly as much as the line.
+- **Matching a recognised span by substring finds the first occurrence, not the one measured.**
+  The ordering check that exists to catch a y-flip "passed" on `columns.pdf` by **1 pt on an
+  842 pt page**, because the two words it compared each occur more than once and it had found
+  unrelated instances of them. It now requires a word to occur exactly once in the document and
+  in exactly one recognised span, and asserts the read gap is at least half the document's ---
+  and on that fixture it now correctly reports `[SKIP]`. Passing by 1 pt out of 842 is what a
+  broken check looks like when the sign happens to come out right.
+
+The general point, and the reason this is worth an entry rather than a comment: **a unit test
+over synthetic geometry cannot tell you what a black box means by the numbers it returns.** The
+conversion in `normalised_to_points` had five tests, all green, all correct --- and every one of
+them asserted arithmetic against numbers the same file had written. What the engine's
+`boundingBox` *means* is only answerable by putting known content at a known place and reading
+it back, which is the same lesson `docs/TRAPS.md` already records for the selection code from
+the other end.

@@ -11,6 +11,32 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Phase 1 --- a first OCR engine behind those interfaces
+
+- **`src-tauri/src/ocr_vision.rs`**, macOS Vision implementing `Recogniser`. One crate added,
+  `objc2-vision`, `Zlib OR Apache-2.0 OR MIT`, read out of `cargo metadata` rather than
+  assumed from the rest of that family; it is the only new package in the tree, since
+  `objc2-core-graphics` and `objc2-core-foundation` were already there transitively.
+- **`ocr-probe`**, which runs the engine on real rendered pages rather than on synthetic
+  geometry. 6/6 on `text-base14`, `text-cid` and `rotated`; `outline-simple` and `form` 5/5;
+  `columns` 2/2 with the rest honestly skipped; `vector-heavy` 1/1 against the inverted
+  claim, since a page with no text is one where reading nothing is the correct answer and
+  reading something is the engine inventing it.
+- **The coordinate flip is now verified against the engine, not against arithmetic.** Vision
+  reports boxes normalized with the origin bottom-left; everything here is points, top-left,
+  y down. `normalised_to_points` had five green unit tests that could not have caught a
+  wrong assumption about what Vision *means*, so the probe asserts content-at-a-position:
+  the word the document places highest must come back highest. Removing the flip turns that
+  red with `read gap -119 pt against 123 pt in the document`, and takes both gate checks and
+  two unit tests with it.
+- **Three defects came out of running it, all in the checking rather than the gate**, and each
+  is now a trap: an engine's bounding box is looser than the pixels it was given, so strict
+  containment rejected a control the engine had plainly read; a strip cropped flush to a span
+  clips its ascenders and the engine misreads its own text; and matching a span by substring
+  found a different occurrence than the one measured, which let the y-flip check pass by 1 pt
+  on an 842 pt page. Index now 171.
+- 19 tests. The 8 mutations still catch 8, each tripping the predicted test.
+
 ### Phase 1 --- the OCR interfaces
 
 - **`src-tauri/src/ocr.rs`**, answering `docs/PLAN.md` §10 question 10 by defining the

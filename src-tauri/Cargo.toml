@@ -60,6 +60,9 @@ objc2-pdf-kit = { version = "0.3", features = [
     "PDFPage",
     "objc2-app-kit",
 ] }
+objc2-vision = { version = "0.3.2", default-features = false, features = ["VNRequest", "VNRecognizeTextRequest", "VNObservation", "VNRequestHandler", "VNTypes", "VNError", "std", "objc2-core-graphics", "objc2-core-foundation"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGImage", "CGDataProvider", "CGColorSpace", "std"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "std"] }
 
 # Windows containment, for `bin/win_sandbox_probe.rs`. macOS gets its boundary
 # from `sandbox_init`, which has no counterpart here: job objects, integrity
@@ -156,6 +159,10 @@ path = "examples/sanitize_rewrite.rs"
 [[example]]
 name = "worker-bench"
 path = "examples/worker_bench.rs"
+
+[[example]]
+name = "ocr-probe"
+path = "examples/ocr_probe.rs"
 
 [[example]]
 name = "latency-bench"
