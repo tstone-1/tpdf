@@ -198,14 +198,32 @@ pub const PDFIUM_LOADABLE: &str = if cfg!(windows) {
 /// tried, dev first, because `cargo tauri dev` runs from `src-tauri`.
 ///
 /// **Two bundled candidates, because the bundlers disagree about the target
-/// directory in a resource map.** The map asks for `pdfium/`, and Tauri's WiX
-/// template ignores it: measured 2026-07-31 by extracting the MSI with
-/// `msiexec /a`, which put `pdfium.dll` directly under `INSTALLDIR` beside
-/// `tpdf.exe`, and the generated `main.wxs` confirms it --- the component sits in
-/// `INSTALLDIR` with no intermediate `<Directory>`. The macOS bundler is
-/// expected to honour it and place the dylib in `Resources/pdfium/`, but that has
-/// **not been checked from a Mac**, so both are tried rather than one being
-/// asserted. Neither is a guess in the harmful direction: whichever layout a
+/// directory in a resource map.** Tauri's WiX template ignores a trailing-slash
+/// target: measured 2026-07-31 by extracting the MSI with `msiexec /a`, which put
+/// `pdfium.dll` directly under `INSTALLDIR` beside `tpdf.exe`, and the generated
+/// `main.wxs` confirms it --- the component sits in `INSTALLDIR` with no
+/// intermediate `<Directory>`. That is why the resource-directory root is tried.
+///
+/// **The macOS layout was checked from a Mac on 2026-07-31, and the expectation
+/// recorded here was wrong.** `"...libpdfium.dylib": "pdfium/"` did not produce a
+/// `pdfium/` directory: the bundler read the value as the target *path* and wrote
+/// the dylib as a **file** named `Contents/Resources/pdfium` --- 7,732,336 bytes,
+/// `Mach-O 64-bit dynamically linked shared library arm64`, the vendor copy
+/// renamed. So neither bundled candidate matched, and a bundle built from this
+/// repository could not parse a document at all once the dev tree was out of
+/// reach. `tauri.macos.conf.json` now names the file explicitly
+/// (`"pdfium/libpdfium.dylib"`), which lands it where the second candidate
+/// already looked.
+///
+/// Two things worth keeping from that. The trailing slash is **not** a directory
+/// marker on this bundler, so a map value that omits the filename is a rename and
+/// not a placement; and the failure was invisible for as long as it was, because
+/// the *dev* candidate is tried first and every check ran in a tree where it hits.
+/// Hiding `vendor/pdfium/lib/libpdfium.dylib` is what makes the bundled branch
+/// reachable, and it is the only reason this was found --- `BUILD.md`'s release
+/// section makes it a step rather than an idea.
+///
+/// Neither candidate is a guess in the harmful direction: whichever layout a
 /// platform produces, the file is found by looking for the *file*.
 ///
 /// **The archive is not laid out the same way on both platforms.** macOS ships
