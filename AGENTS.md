@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 167 entries
+The one thing this file does *not* carry in full is the trap list --- 168 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -531,6 +531,17 @@ through the production worker rather than a private POSIX one; see `docs/PLAN.md
 `BUILD.md`. `worker-bench` still refuses to run here, which is correct: a POSIX harness not
 running on Windows was never the gap, only the measurement it held exclusively.
 
+**The cross-check that portability was for has now run, and it paid.** `latency-bench`
+executed on macOS 2026-07-31 (3/3, 3/3, 3/4+1 skip, exit 0; four mutations re-proved 4/4;
+no sandbox font substitution) and was compared against `worker-bench --mode latency`, which
+shares no worker code with it. They disagreed by an order of magnitude on the same quantity,
+and the older harness was the wrong one: it baselines on a variant that never renders, so its
+residual --- 46.7 ms on `vector-heavy`, against a printed 46.6 ms --- stays in the answer.
+`worker-bench` now prints that residual and warns when it dominates, which is on every fixture
+measured. The production worker's per-tile cost is **0.071--0.103 ms** on macOS, ~10x the
+prototype's and still ~30x under the webview hand-off, so no conclusion moves. Two agreeing
+harnesses would have proved less than these two disagreeing did.
+
 The same sentence also claimed *"two `open_check.py`
 phases whose route does not exist here"*, and both halves were wrong by 2026-07-31 --- the count
 is **one**, and it is a decision rather than a gap, since Explorer hands the path over in `argv`
@@ -572,11 +583,13 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 161 of them and the full text
-was 93% of this file --- an instruction budget spent on the 160 traps that are not
+titles. Only the titles are here, because there are 168 of them and the full text
+was 93% of this file --- an instruction budget spent on the 167 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
-they were already two behind when this one was written, which is how a count in prose
-fails. What the index has to preserve is knowing that a trap *exists*;
+they were **six** behind when this line was next corrected, on 2026-07-31, having been
+two behind when it was written --- which is how a count in prose fails, and why the
+authority is `grep -c '^### ' docs/TRAPS.md` rather than this sentence.
+What the index has to preserve is knowing that a trap *exists*;
 the paragraphs matter once you are in that area.
 
 So: **before working in any area named below, read its entry.** A title is a claim, not
@@ -673,6 +686,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 ### Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
 - Two counts from two commits are not a platform difference
+- A baseline that skips the expensive step leaves its noise in the answer
 - A difference is only a measurement when the operands make it one
 - A check on the sign of a noisy quantity fires only when the noise falls one way
 - A mean cannot test a claim about a minimum

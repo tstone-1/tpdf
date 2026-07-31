@@ -1724,6 +1724,48 @@ mod imp {
             n / 1024
         );
 
+        // The control on the arithmetic, added 2026-07-31 after a macOS run read
+        // this mode's own output back against `latency-bench`.
+        //
+        // `transport` is a residual --- wall minus render, swizzle and fold --- so it
+        // absorbs every millisecond the other three columns fail to account for,
+        // render noise included. `inproc` crosses no boundary, so whatever lands in
+        // *its* transport column is pure subtraction error, and it is the floor
+        // under every other transport figure printed above.
+        //
+        // The two figures above subtract `ping`, which never renders at all, so that
+        // floor is left in the answer. On a light fixture the error is comparable to
+        // the quantity (0.014 ms against a reported 0.015 ms); on `vector-heavy` it
+        // is 46.7 ms against a reported 46.6 ms, i.e. the answer is entirely noise.
+        // Baselined against `inproc` instead, that same run yields **-0.087 ms** --- a
+        // boundary costing less than nothing, which is the tell.
+        //
+        // Nothing here fails the run: this mode reports rather than asserts, and the
+        // shape it exists to show (shared memory is ~30x cheaper than a pipe) is
+        // sound on every fixture. But a figure this cannot resolve must say so
+        // rather than print at three decimal places as if it could.
+        let residual = mean("inproc", Row::transport);
+        let shm_vs_inproc = mean("shm", Row::transport) - residual;
+        println!();
+        println!(
+            "  in-process residual (subtraction error) {:>7.3} ms",
+            residual
+        );
+        println!(
+            "  the same, baselined on inproc not ping  {:>7.3} ms",
+            shm_vs_inproc
+        );
+        if residual.abs() >= shm_vs_inproc.abs() {
+            println!();
+            println!(
+                "[WARN] the subtraction error ({residual:.3} ms) is at least as large as the \
+                 shared-memory cost derived from it ({shm_vs_inproc:.3} ms), so the two \
+                 transport figures above are not resolved by this run. Read them as an \
+                 upper bound. `latency-bench` measures the same quantity against the \
+                 production worker with a control on exactly this."
+            );
+        }
+
         let _ = worker.call(&Request::Ping);
         Ok(())
     }
