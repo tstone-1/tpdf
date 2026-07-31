@@ -2496,13 +2496,175 @@ mod tests {
         out
     }
 
+    /// The lock both arms of [`QuietChildStderr`] take.
+    ///
+    /// Process-wide state needs process-wide exclusion, and libtest runs these
+    /// in parallel threads: two overlapping guards would have the first restore
+    /// what the second installed, leaving the harness with no stderr at all for
+    /// the rest of the run.
+    fn quiet_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // A poisoned lock means an earlier test panicked inside the window. Its
+        // `Drop` ran on the way out, so the handle is already restored and the
+        // state this guards is sound --- refusing here would turn one failure
+        // into every later one.
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Sends a test child's stderr to the null device for the length of a spawn.
+    ///
+    /// The two checks below spawn a worker whose child is the libtest harness,
+    /// which has no `--render-worker` dispatch and says so. That refusal is
+    /// their *control* --- it is what makes the child die at once --- but a worker
+    /// inherits its parent's stderr by design, so it landed on the console as a
+    /// bare `error: Unrecognized option: 'render-worker'` line above the `ok`
+    /// that followed it. `AGENTS.md` records what that costs: a reader cannot
+    /// tell a green run carrying an expected control from a run that failed and
+    /// reported it badly, and the run that looks broken is the one that is fine.
+    ///
+    /// **It swaps the process's own stderr rather than adding a parameter to the
+    /// spawn**, because that handle *is* the input the spawn path reads
+    /// (`Stdio::with_inherited_stderr` on Windows, `Stdio::inherit()` on macOS).
+    /// Production keeps one path with no `cfg(test)` branch in it, which is the
+    /// whole reason these checks are worth running. The child copies the handle
+    /// at `CreateProcess`/`exec`, so the window only has to cover the spawn ---
+    /// a child quieted here stays quiet however long it lives afterwards.
+    ///
+    /// Two things it deliberately does not silence. Rust's own `eprintln!` and
+    /// panic messages go through libtest's per-test capture, never through this
+    /// handle, so a failure still says everything it said before. And nothing
+    /// survives a leak: `Drop` restores the real handle even when the test
+    /// panics inside the window.
+    ///
+    /// Only the two arms exist. A target that is neither fails to compile here,
+    /// which is the right direction --- the alternative is a no-op arm that
+    /// silently stops quieting on a platform nobody checked.
+    ///
+    /// **Mutate it with `--test-threads=1`, or the result is a lie.** The window
+    /// is process-wide, so a guard held by *one* test quiets every child any
+    /// other test spawns while it is open. Deleting the `install` below and
+    /// running the module's nineteen checks in parallel printed nothing at all
+    /// --- the other guard happened to cover this spawn --- and that reads exactly
+    /// like a guard nothing depends on. Alone, the same deletion puts the line
+    /// straight back. `AGENTS.md`: a control contaminated by the phase beside it.
+    #[cfg(windows)]
+    struct QuietChildStderr {
+        /// The handle this process had on the way in, restored on the way out.
+        previous: windows_sys::Win32::Foundation::HANDLE,
+        /// Held open for the window, and closed *after* `Drop` restores.
+        _null: std::fs::File,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    #[cfg(windows)]
+    impl QuietChildStderr {
+        fn install() -> Self {
+            use std::os::windows::io::AsRawHandle;
+
+            use windows_sys::Win32::System::Console::{
+                GetStdHandle, SetStdHandle, STD_ERROR_HANDLE,
+            };
+
+            let lock = quiet_lock();
+            let null = std::fs::OpenOptions::new()
+                .write(true)
+                .open("NUL")
+                .expect("NUL is always openable on Windows");
+            // SAFETY: a documented constant, and neither call takes a pointer.
+            // `null` is moved into the guard below, so the handle installed here
+            // stays live until `Drop` has put `previous` back.
+            let previous = unsafe {
+                let previous = GetStdHandle(STD_ERROR_HANDLE);
+                SetStdHandle(STD_ERROR_HANDLE, null.as_raw_handle().cast());
+                previous
+            };
+            Self {
+                previous,
+                _null: null,
+                _lock: lock,
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for QuietChildStderr {
+        fn drop(&mut self) {
+            use windows_sys::Win32::System::Console::{SetStdHandle, STD_ERROR_HANDLE};
+
+            // SAFETY: the handle this process was given on the way in. Fields
+            // drop after this body, so `_null` is still open as it is replaced.
+            unsafe { SetStdHandle(STD_ERROR_HANDLE, self.previous) };
+        }
+    }
+
+    /// As the Windows arm above, over descriptor 2 instead of a std handle.
+    ///
+    /// Only `the_prespawn_constant_matches_what_prespawn_does` reaches this, and
+    /// only where `prespawn` really starts a child --- which today is macOS,
+    /// whose `Command` asks for `Stdio::inherit()` for the same reason Windows
+    /// shares its handle: a sandbox denial or a fatal signal has to be visible.
+    ///
+    /// **Written on Windows and therefore not compiled, let alone run, here.**
+    /// It is included rather than left out because the noise it addresses is the
+    /// same noise on that platform and by the same route, and because a wrong
+    /// arm fails loudly on the next macOS run instead of quietly claiming a
+    /// clean console --- but it is a claim about macOS made from Windows until
+    /// someone runs it there.
+    #[cfg(unix)]
+    struct QuietChildStderr {
+        /// A duplicate of the real stderr, `dup2`'d back on the way out.
+        previous: std::os::fd::OwnedFd,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    #[cfg(unix)]
+    impl QuietChildStderr {
+        fn install() -> Self {
+            use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+            let lock = quiet_lock();
+            // SAFETY: a duplicate of a descriptor this process owns. It is
+            // handed to `OwnedFd` immediately, so nothing else can close it and
+            // it is closed exactly once, after `Drop` has restored it.
+            let previous = unsafe {
+                let saved = libc::dup(libc::STDERR_FILENO);
+                assert!(saved >= 0, "stderr could not be duplicated");
+                OwnedFd::from_raw_fd(saved)
+            };
+            let null = std::fs::OpenOptions::new()
+                .write(true)
+                .open("/dev/null")
+                .expect("/dev/null is always openable");
+            // SAFETY: both descriptors are live here; `dup2` closes descriptor 2,
+            // whose only other reference is the duplicate saved above.
+            unsafe { libc::dup2(null.as_raw_fd(), libc::STDERR_FILENO) };
+            Self {
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for QuietChildStderr {
+        fn drop(&mut self) {
+            use std::os::fd::AsRawFd;
+
+            // SAFETY: the saved duplicate is still owned by this guard and is
+            // closed only after this body returns.
+            unsafe { libc::dup2(self.previous.as_raw_fd(), libc::STDERR_FILENO) };
+        }
+    }
+
     /// A worker whose child dies is *reported* dead, not waited on forever.
     ///
     /// Under `cargo test` this is a real spawn with a fake worker: `current_exe`
     /// is the test harness, which has no `--render-worker` dispatch, so the child
     /// exits immediately. That is the point --- what is under test here is the
     /// plumbing, not the protocol, and a child that dies at once exercises it
-    /// harder than one that answers.
+    /// harder than one that answers. Its complaint about the flag is quieted by
+    /// [`QuietChildStderr`], which is about the console and not about the child:
+    /// the spawn, the death and the epitaph are all exactly what they were.
     ///
     /// The specific defect it pins is the parent keeping its copy of the reply
     /// pipe's *write* end. That pipe then never reaches end of file, so a dead
@@ -2520,7 +2682,10 @@ mod tests {
     fn a_worker_whose_child_dies_says_so_rather_than_blocking() {
         let path = std::env::temp_dir().join(format!("tpdf-plumbing-{}", std::process::id()));
         std::fs::write(&path, b"%PDF-1.7 not really").expect("write fixture");
-        let spawned = super::Worker::spawn(&path, std::path::Path::new("."));
+        let spawned = {
+            let _quiet = QuietChildStderr::install();
+            super::Worker::spawn(&path, std::path::Path::new("."))
+        };
         let _ = std::fs::remove_file(&path);
         // `map_err` first: a live child is not something to format into a panic.
         let mut worker = match spawned {
@@ -2571,7 +2736,12 @@ mod tests {
     /// it promises here. The child is killed by `PreWorker`'s drop.
     #[test]
     fn the_prespawn_constant_matches_what_prespawn_does() {
-        let started = super::Worker::prespawn(std::path::Path::new(".")).is_ok();
+        // The guard covers the child's whole life, not only the spawn: `is_ok`
+        // drops the `PreWorker` inside the block, so the kill happens here too.
+        let started = {
+            let _quiet = QuietChildStderr::install();
+            super::Worker::prespawn(std::path::Path::new(".")).is_ok()
+        };
         assert_eq!(
             started,
             super::PRESPAWNS,

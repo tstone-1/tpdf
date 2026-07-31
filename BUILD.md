@@ -67,6 +67,12 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --bin worker-bench -- \
 cargo run --release --manifest-path src-tauri/Cargo.toml --bin progressive-probe -- \
     testdata/vector-heavy.pdf --mode identity --slices 0
 
+# Form widgets take a second PDFium pass after the progressive render. The
+# fixture has a value and deliberately has no stored appearance stream, so
+# omitting FPDF_FFLDraw changes 4,587 bytes rather than passing by construction.
+cargo run --release --manifest-path src-tauri/Cargo.toml --bin progressive-probe -- \
+    testdata/form.pdf --mode identity --slices 0
+
 # Character boxes still land on the ink they describe. Run it on a *small* text
 # fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
 # that page cannot discriminate and the probe fails rather than reporting a pass.
@@ -149,7 +155,7 @@ than a wrong name. And `remove-probe` with no case argument defaults to case `a`
 whole purpose is to segfault --- so the obvious invocation of the regression check crashes
 by design and looks like the bump broke something.
 
-The third check is why the progressive path restates `FPDF_ANNOT`,
+The progressive checks are why the raw path restates `FPDF_ANNOT`,
 `FPDF_REVERSE_BYTE_ORDER` and `FPDFBitmap_BGRA` by value: `pdfium-render` does not
 re-export them, and a bump that changed any of them would silently alter every tile. The
 run compares progressive output byte-for-byte against the safe path, so it fails if one
@@ -169,6 +175,7 @@ uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testd
 python3 testdata/make_outline_pdf.py testdata
 python3 testdata/make_rotated_pdf.py testdata
 python3 testdata/make_columns_pdf.py testdata
+python3 testdata/make_form_pdf.py
 ```
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a

@@ -34,6 +34,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::os::raw::{c_int, c_void};
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -141,8 +142,67 @@ const PAGE_CACHE: usize = 4;
 pub struct RawDocument {
     bindings: Bindings,
     handle: FPDF_DOCUMENT,
+    form: Option<RawForm>,
     /// Loaded page handles, and the order they were loaded in for eviction.
     pages: RefCell<(HashMap<u32, FPDF_PAGE>, VecDeque<u32>)>,
+}
+
+/// PDFium's form-fill environment, retained for exactly the document lifetime.
+///
+/// Even a read-only viewer needs this: PDFium does not load or draw interactive
+/// widget values until the environment exists. The callback table is pinned
+/// because PDFium retains its address until `FPDFDOC_ExitFormFillEnvironment`;
+/// moving it before then makes the final call dereference stale memory.
+struct RawForm {
+    bindings: Bindings,
+    handle: FPDF_FORMHANDLE,
+    _info: Pin<Box<FPDF_FORMFILLINFO>>,
+}
+
+impl RawForm {
+    /// Creates the inert, no-JavaScript form environment used for rendering.
+    fn open(bindings: Bindings, document: FPDF_DOCUMENT) -> Option<Self> {
+        // SAFETY: every field in FPDF_FORMFILLINFO is an integer, raw pointer,
+        // or Option<extern fn>; all-zero is therefore its documented inert
+        // configuration. Version 2 matches pdfium-render and keeps XFA disabled
+        // explicitly even though the pinned PDFium build contains no XFA.
+        let mut info: Pin<Box<FPDF_FORMFILLINFO>> = Box::pin(unsafe { std::mem::zeroed() });
+        info.as_mut().get_mut().version = 2;
+        info.as_mut().get_mut().xfa_disabled = 1;
+
+        // SAFETY: `info` is pinned and remains owned by the returned RawForm.
+        let handle =
+            unsafe { bindings.FPDFDOC_InitFormFillEnvironment(document, info.as_mut().get_mut()) };
+        if handle.is_null() {
+            return None;
+        }
+
+        let form = Self {
+            bindings,
+            handle,
+            _info: info,
+        };
+
+        // Match pdfium-render: an empty environment is closed immediately and
+        // not carried on every page. FPDF_GetFormType returns FORMTYPE_NONE (0)
+        // when there is no AcroForm or XFA form to draw. Returning drops the
+        // owner, so this path cannot leak the environment.
+        let form_type = unsafe { bindings.FPDF_GetFormType(document) };
+        if form_type == 0 {
+            return None;
+        }
+
+        Some(form)
+    }
+}
+
+impl Drop for RawForm {
+    fn drop(&mut self) {
+        // SAFETY: this owner was created by InitFormFillEnvironment; its pinned
+        // callback table is still a live field and the document closes pages
+        // before dropping the form.
+        unsafe { self.bindings.FPDFDOC_ExitFormFillEnvironment(self.handle) };
+    }
 }
 
 impl RawDocument {
@@ -162,9 +222,11 @@ impl RawDocument {
             return Err(format!("could not open {}", path.display()));
         }
 
+        let form = RawForm::open(bindings, handle);
         Ok(Self {
             bindings,
             handle,
+            form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
         })
     }
@@ -189,9 +251,11 @@ impl RawDocument {
             return Err(format!("could not parse {} bytes as a PDF", bytes.len()));
         }
 
+        let form = RawForm::open(bindings, handle);
         Ok(Self {
             bindings,
             handle,
+            form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
         })
     }
@@ -231,6 +295,10 @@ impl RawDocument {
         if handle.is_null() {
             return Err(format!("no such page: {index}"));
         }
+        if let Some(form) = &self.form {
+            // SAFETY: both handles are live and owned by this document.
+            unsafe { self.bindings.FORM_OnAfterLoadPage(handle, form.handle) };
+        }
 
         let evicted = {
             let mut pages = self.pages.borrow_mut();
@@ -249,7 +317,7 @@ impl RawDocument {
             // SAFETY: loaded by this function, cached since, and now unreachable
             // -- every `RawPage` handed out borrows `self`, so none can be live
             // across a call that mutates the cache.
-            unsafe { self.bindings.FPDF_ClosePage(old) };
+            self.close_page(old);
         }
 
         Ok(self.borrow_page(handle))
@@ -269,14 +337,27 @@ impl RawDocument {
         };
         if let Some(handle) = handle {
             // SAFETY: as in `page`.
-            unsafe { self.bindings.FPDF_ClosePage(handle) };
+            self.close_page(handle);
         }
+    }
+
+    /// Notifies the form environment before closing one loaded page.
+    fn close_page(&self, handle: FPDF_PAGE) {
+        if let Some(form) = &self.form {
+            // SAFETY: this page received the matching OnAfterLoadPage call and
+            // both handles are still live.
+            unsafe { self.bindings.FORM_OnBeforeClosePage(handle, form.handle) };
+        }
+        // SAFETY: loaded by `page`, removed from the cache before this call,
+        // and closed exactly once.
+        unsafe { self.bindings.FPDF_ClosePage(handle) };
     }
 
     fn borrow_page(&self, handle: FPDF_PAGE) -> RawPage<'_> {
         RawPage {
             bindings: self.bindings,
             handle,
+            form: self.form.as_ref().map(|form| form.handle),
             _document: std::marker::PhantomData,
         }
     }
@@ -284,10 +365,13 @@ impl RawDocument {
 
 impl Drop for RawDocument {
     fn drop(&mut self) {
-        for handle in self.pages.borrow().0.values() {
-            // SAFETY: each was loaded by `page` and closed exactly once here.
-            unsafe { self.bindings.FPDF_ClosePage(*handle) };
+        let pages: Vec<FPDF_PAGE> = self.pages.borrow().0.values().copied().collect();
+        for handle in pages {
+            self.close_page(handle);
         }
+        // Explicitly before CloseDocument. `RawForm::drop` exits the form
+        // environment while its pinned callback table is still alive.
+        drop(self.form.take());
         // SAFETY: closed exactly once, after every page it owns, and every
         // `RawPage` borrows `self` so none can outlive this.
         unsafe { self.bindings.FPDF_CloseDocument(self.handle) };
@@ -303,6 +387,7 @@ impl Drop for RawDocument {
 pub struct RawPage<'doc> {
     bindings: Bindings,
     handle: FPDF_PAGE,
+    form: Option<FPDF_FORMHANDLE>,
     _document: std::marker::PhantomData<&'doc RawDocument>,
 }
 
@@ -659,10 +744,8 @@ pub struct Progress {
 /// poll interval rather than one slice.
 ///
 /// The flags, clear colour and cleared rect match `PdfRenderConfig::default()`
-/// exactly, so an uncancelled render here is byte-identical to the safe path ---
-/// with one documented exception: the safe path also calls `FPDF_FFLDraw` to
-/// overlay interactive form-field appearances, and this does not. Documents with
-/// form widgets will differ until that pass exists.
+/// exactly, including the form-widget overlay, so an uncancelled render here is
+/// byte-identical to the safe path.
 pub fn render(
     bitmap: &mut RawBitmap<'_>,
     page: &RawPage<'_>,
@@ -738,6 +821,30 @@ pub fn render(
         raw::FPDF_RENDER_TOBECONTINUED => Outcome::Cancelled,
         other => Outcome::Failed(other),
     };
+
+    if outcome.is_done() {
+        if let Some(form) = page.form {
+            // The form pass is deliberately after a complete base render, as in
+            // pdfium-render. A cancelled tile is discarded by every production
+            // caller; painting a complete widget over a partial page would make
+            // that incomplete buffer look more authoritative than it is.
+            // SAFETY: the form, bitmap and page belong to this live document;
+            // placement and flags are the same ones used for the base render.
+            unsafe {
+                bindings.FPDF_FFLDraw(
+                    form,
+                    bitmap.handle,
+                    page.handle,
+                    placement.start_x,
+                    placement.start_y,
+                    placement.size_x,
+                    placement.size_y,
+                    placement.turns as c_int,
+                    RENDER_FLAGS,
+                )
+            };
+        }
+    }
 
     Progress {
         outcome,
