@@ -4284,3 +4284,78 @@ the boundary is cheap. `latency-bench`, with a control on precisely this and an 
 residual of 0.001 ms, puts the production worker's per-tile cost at **0.071--0.103 ms** on macOS.
 That is ~10x the prototype's, and still ~30x below the 3.0 ms it costs to hand the same tile to
 the webview. Nothing architectural moves; only the digits do.
+
+### A control that is easier than the check certifies nothing
+
+Designing the OCR verification gate, 2026-07-31. `docs/PLAN.md` §6 step 4 renders the redacted
+regions and OCRs them "confirming no legible text survives", and it is the *only* check that can
+say anything about an image carrier --- step 3's byte scan cannot see into a `/DCTDecode` stream,
+and refusing every such stream would refuse every scanned page in existence.
+
+So the whole guarantee rests on an empty OCR result. And an empty OCR result is also what a
+missing language pack, a crashed engine, a wrong page, a blank region and a downscaled image all
+produce. That much is the familiar shape --- `AGENTS.md` already carries *"an empty filter is not
+a pass"* and *"a check whose failure mode is a wait cannot fail"*. The fix is equally familiar:
+prove the engine can read *something* in this image before believing it read nothing.
+
+The part that is not obvious is that **the control has to be at least as hard as the thing being
+checked for**, and it is very easy to build one that is not. Composite a token into the probe
+image, get it back, and the check feels earned. But if the token is drawn at 48 pt and the text
+that was redacted was a 6 pt footnote, what has been proved is that the engine reads 48 pt. It
+says nothing about 6 pt, and the page is then certified with its small print intact.
+
+So `Control::no_easier_than` takes the boxes the redaction covered and sizes the token from the
+**smallest** of them, and refuses to build a control at all when no box has a usable height ---
+because with nothing to size against there is no honest control, and no control means no
+certification. `fold(f32::INFINITY, f32::min)` mutated to `NEG_INFINITY, max` is a one-token
+change that turns the gate into decoration, and there is a test that goes red for it.
+
+Three details that each cost something:
+
+- **Put the control in a band appended to the image, not drawn over the region.** Drawn over, it
+  can obscure exactly the survivor it was meant to make findable.
+- **Match the control by position, not by string.** If the token counts wherever it appears, an
+  engine that returns one box for the whole image satisfies its own control --- and so does a
+  document that happens to contain the token.
+- **Turn language correction off.** A corrector turns marks it cannot read into plausible words,
+  which is the wrong bias when the question is whether anything is readable; it will also
+  "repair" a high-entropy control token and fail the check for the wrong reason.
+
+Generalises past OCR to any gate whose pass condition is an absence: a virus scan that finds
+nothing, a linter with no findings, a diff with no output, a log with no errors. Ask what the
+detector would have to see to speak, then make sure it saw something.
+
+### macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
+
+Measured 2026-07-31 on macOS 26.5.2 with `scripts/vision_sandbox_probe.swift`, which applies a
+profile to itself *post-launch* exactly as `worker_child.rs` does. Running it under
+`sandbox-exec` instead would apply the profile before `exec` and the process would die in dyld
+--- a different failure that reads as "Vision cannot be sandboxed" when it only means the loader
+was denied its own reads. Same shape as the Windows restricting-SID rung already in this file.
+
+| profile | result |
+|---|---|
+| `SANDBOX_PROFILE`, i.e. font directories only | **killed, SIGTRAP** |
+| `+ file-read-data` on all of `/System/Library` | ran, then failed with `nilError` |
+| `+ file-read` allowed entirely | read the control string back |
+
+Two things follow.
+
+**Vision needs general read authority**, which is the single most valuable thing that profile
+withholds: a worker parsing a hostile document must not be able to read the user's files. So OCR
+cannot be another `Request` on the parser worker, and the tempting one-line relaxation would
+quietly trade away the containment the worker exists for. It does not need to share that
+boundary --- an engine consumes a fixed-size RGBA buffer *we* rendered, with no format to parse,
+no lengths to trust and no recursion --- so `ocr.rs` defines a separate `OCR_SANDBOX_PROFILE`
+keeping the two properties that still apply, no network and no writes.
+
+**The failure mode is a crash, not an error.** That is worth more than the licence question it
+settles: a subsystem that aborts its host cannot live in the app process either, whatever its
+authority. It is also a warning about how this would have presented if it had been discovered in
+production rather than in a probe --- a worker dying at a fixed point, restarted by the pool, dying
+again.
+
+And the reason to probe at all rather than reason: the answer sounded obvious in both directions
+beforehand. "Vision is a system framework, it will be fine under `allow default`" and "OCR is
+just pixels, of course it needs nothing" are both wrong, and a design was about to be written on
+whichever one got asserted first.

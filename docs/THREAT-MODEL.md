@@ -550,6 +550,49 @@ Two rules attach to changing it. Verify by pixels, never by a return code. And r
 a base-14 fixture specifically — an embedded-font document is pixel-identical under a
 profile that is badly wrong.
 
+### 5.1 A second boundary, for OCR
+
+Defined 2026-07-31 in `src-tauri/src/ocr.rs`; no engine is implemented yet, so nothing below
+is running in production. It is recorded here because the *shape* is a trust-boundary
+decision and it was measured rather than assumed.
+
+OCR cannot run under the profile above. Measured with `scripts/vision_sandbox_probe.swift`,
+which applies a profile to itself post-launch exactly as `worker_child.rs` does — running it
+under `sandbox-exec` instead applies the profile before `exec`, and the process then dies in
+dyld, which reads as "Vision cannot be sandboxed" when it only means the loader was denied:
+
+| profile | macOS Vision |
+|---|---|
+| the profile above | **killed, SIGTRAP** |
+| `+ file-read-data` on all of `/System/Library` | ran, then failed with `nilError` |
+| `+ file-read` allowed entirely | read the control string back |
+
+General `file-read` is exactly what §4's T4 exists to deny a worker, so relaxing this profile
+to fit an engine into the parser worker would trade away the containment that worker is for.
+
+It does not need that boundary. The parser is contained because it consumes **attacker-authored
+structure**; a recogniser consumes a fixed-size RGBA buffer *we* rendered — no format to parse,
+no lengths to trust, no recursion. So a second worker with its own profile keeps the two
+authorities that still matter:
+
+```
+(version 1)
+(allow default)
+(deny network*)
+(deny file-write*)
+```
+
+It stays a separate **process** for a reason unrelated to authority: the first rung above is an
+engine aborting its host. Anything that can do that must not share a process with unsaved
+annotations, whatever it is allowed to read.
+
+**This narrows T5's claim rather than widening it.** OCR is the only check that can speak about
+an image carrier, since a byte scan cannot see into a `/DCTDecode` stream. `ocr.rs` therefore
+makes "clean" unreachable except through a positive control the engine had to read back from
+the same probe image, sized from the smallest box the redaction covered — a control drawn larger
+than the redacted text proves only that the engine reads larger text. Every engine failure, and
+a missing control, produce `NotVerified`, never `Illegible`.
+
 ## 6. Windows — a gap, not a policy
 
 Untested, and it shares no mechanism with any of the above.
@@ -689,6 +732,12 @@ worker-bench <file.pdf> --mode crash      --lib vendor/pdfium/lib
 worker-bench <file.pdf> --mode limits     --lib vendor/pdfium/lib
 worker-probe  <file.pdf>                  # the boundary itself
 backend-probe <file.pdf>                  # that the viewer's own path goes through it
+
+# §5.1, macOS only. Bare first: the control must read its own string back, or the
+# sandboxed runs below are unreadable rather than informative.
+swiftc -O -o /tmp/vision_probe scripts/vision_sandbox_probe.swift
+/tmp/vision_probe
+/tmp/vision_probe /tmp/prod.sb            # the profile extracted from worker.rs
 ```
 
 `--mode engine` and `--mode authority` are the two that must be re-run after every PDFium
