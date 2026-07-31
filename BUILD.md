@@ -838,10 +838,10 @@ single retry cannot make cheap.
 The last thing `worker-bench` measured that nothing else did. It is a **spike, not a port**:
 `worker-bench` carries its own POSIX worker, `dup2` handover, socket pair and SBPL bisection and
 cannot run off unix, so this drives the **production** `Worker` instead --- which means it runs on
-both platforms --- **measured on Windows, never yet run on macOS**, where it is written to
-compile and expected to work rather than shown to. The point of it being portable is that macOS
-can then cross-check it against `worker-bench --mode latency`, an implementation it shares no
-worker code with; until that run happens the cross-check is a plan, not evidence.
+both platforms. **Measured on Windows 2026-07-30 and on macOS 2026-07-31**, and the point of it
+being portable is that macOS can cross-check it against `worker-bench --mode latency`, an
+implementation it shares no worker code with. That cross-check has now run, and it is the most
+useful thing this harness has produced --- see below.
 
 ```
 cargo build --release --example latency-bench
@@ -872,10 +872,78 @@ Measured 2026-07-31, Windows, 1024² tile at scale 1:
 | `outline-simple.pdf` | 0.309 ms | 0.016 ms | 0.070 ms | 0.0069 ms |
 | `vector-heavy.pdf` | 0.294 ms | 0.150 ms | 0.052 ms | `[SKIP]` --- see below |
 
+And on macOS, 2026-07-31, same tile and scale, three interleaved passes per fixture rather than
+one (the fixtures were run round-robin, not in blocks, because wall clock on these Macs drifts
+several percent over minutes):
+
+| fixture | boundary cost, 3 passes | within-run spread | round trip, no tile | inproc residual |
+|---|---|---|---|---|
+| `text-base14.pdf` | 0.103 / 0.079 / 0.071 ms | 0.048 / 0.024 / 0.002 ms | 0.012 ms | 0.001 ms |
+| `outline-simple.pdf` | 0.100 / 0.085 / 0.079 ms | 0.003 / 0.007 / 0.010 ms | 0.022 ms | 0.001 ms |
+| `vector-heavy.pdf` | 0.150 / 0.200 / 0.194 ms | 0.125 / 0.145 / 0.142 ms | 0.019 ms | 0.002 ms |
+
+Expected shape reproduced exactly: 3/3, 3/3, and 3/4 with 1 skipped on `vector-heavy`, exit 0
+throughout, and its `[SKIP]` for payload differencing appears for the documented reason --- png
+4027 KB against raw's 4096 KB, so the two variants move nearly the same bytes. That is a property
+of the document and it held on both platforms.
+
 **Read the invariance, not the numbers.** The boundary cost is a property of the boundary, so it
 should not depend on the document, and across three fixtures that differ by three orders of
 magnitude in render time it lands within 0.02 ms of itself. That agreement is the result; any one
 of those figures alone would be a single sample.
+
+**The invariance is looser on macOS, and the looseness is confined to one fixture.** The two
+light fixtures agree tightly across six runs --- 0.071 to 0.103 ms, overlapping completely --- while
+`vector-heavy` sits clear of both at 0.150 to 0.200 ms. Absolute spread across fixtures is
+0.137 ms here against 0.040 ms on Windows. Before reading that as a defect, note that
+`vector-heavy`'s *own* within-run spread is 0.125--0.145 ms, i.e. as large as its offset from the
+others: it is the one fixture where the estimator is near the edge of what it can resolve, which
+is exactly what the spread column exists to say. The check is `spread < boundary`, and there it
+passes at 0.73--0.83 of its limit against Windows' 0.51 --- so a macOS run of `vector-heavy` is
+the plausible place for this to go red first. Three passes did not. Worth knowing rather than
+worth acting on.
+
+The absolutes are **~3.5x lower than Windows**, not the 1.5--1.8x the other render constants
+differ by. A latency budget written from the Windows figures is conservative on a Mac by more
+than the usual factor.
+
+**The cross-check against `worker-bench --mode latency`.** Both harnesses were run on this
+machine in one session, and both figures below use the *same* estimator --- the tile variant's
+transport column minus `inproc`'s, `inproc` being the variant that renders but crosses nothing:
+
+| | `worker-bench` (private POSIX worker) | `latency-bench` (production `Worker`) |
+|---|---|---|
+| `text-base14` | 0.006, 0.008 ms | 0.071--0.103 ms |
+| `outline-simple` | 0.008 ms | 0.079--0.100 ms |
+| `vector-heavy` | **-0.087 ms** | 0.150--0.200 ms |
+| in-process residual | 0.013--0.037 ms, and **46.7 ms** on `vector-heavy` | 0.001--0.002 ms |
+
+Two conclusions, and the second is why the cross-check was worth doing:
+
+- **The production worker's per-tile boundary cost is roughly 10x the prototype's** --- ~0.08 ms
+  against ~0.007 ms, non-overlapping across nine runs. Both are far below anything that matters
+  (the same tile costs 3.0 ms to hand to the webview), so nothing architectural moves, but the
+  production protocol is not free the way the spike suggested.
+- **`worker-bench`'s latency mode cannot resolve its own answer**, and now says so. Its
+  `transport` is a residual and it baselines on `ping`, which never renders, so the render-noise
+  floor stays in the figure; on `vector-heavy` the residual is 46.7 ms against a printed 46.6 ms
+  and the `inproc`-baselined value goes *negative*. It now prints the residual and the
+  `inproc`-baselined figure beside the two `ping`-baselined ones and warns when the error is as
+  large as the answer --- which is on **every fixture measured so far**. Read its two headline
+  transport figures as upper bounds. Trap: *"A baseline that skips the expensive step leaves its
+  noise in the answer"*.
+
+**No sandbox font substitution on macOS.** The handover flagged this as the second reason a Mac
+run was worth more than a re-run, since a sandboxed PDFium has previously substituted fonts
+silently while still returning `ok`. It did not happen: `inproc` and the worker agree on render
+time to within 0.25% on all three fixtures (0.130 vs 0.133 ms, 0.523 vs 0.507 ms, 1670.5 vs
+1666.3 ms).
+
+Its four mutations were re-proved here rather than taken on trust --- **4/4 caught**, control
+green on all three fixtures first, file restored by bytes and verified by digest against `HEAD`.
+Two are caught as `[WARN]` rather than `[FAIL]`, which is by design and worth knowing before
+writing a harness around it: a parser that treats `passed = total - skipped` as the failure count
+reports those two as broken runs. `passed = checks - failures - skipped - warnings`.
 
 Two things the A0 fixture forced, both of which the small ones hid, and both now traps:
 

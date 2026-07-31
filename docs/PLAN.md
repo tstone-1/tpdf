@@ -1296,7 +1296,7 @@ that includes deliberately hostile files:
 | Spike | Proves |
 |-------|--------|
 | ~~**Render pipeline**~~ | **Passed 2026-07-26** (§3, §4). Raw pixels over the custom scheme, 1024²–2048² tiles, ~1 s fixed cost per render call on a dense CAD page, 211 MB peak. Sustained scroll holds 60 fps at 100% and 400% on both corpora with 0.1–0.6 ms of main thread per frame — but the webview presents at 59 Hz on a 120 Hz panel, and on the CAD page it holds that 60 fps over a blank screen |
-| ~~**Process architecture**~~ | **Passed 2026-07-26** (§3), on macOS only. The boundary costs 6 µs of control latency and 0.11 ms to move a 4 MB tile through shared memory; four workers give 3.9× throughput; a crash is noticed in under a millisecond and recovered in ~10 ms; the worker renders correctly with files and network denied. Two gaps recorded rather than closed: macOS has no memory rlimit, and Windows is untested |
+| ~~**Process architecture**~~ | **Passed 2026-07-26** (§3), on macOS only. The boundary costs 6 µs of control latency and 0.11 ms to move a 4 MB tile through shared memory (an upper bound from the prototype worker, whose estimator leaves its own subtraction error in the figure; the production worker is 0.071--0.103 ms on macOS, `latency-bench`, 2026-07-31); four workers give 3.9× throughput; a crash is noticed in under a millisecond and recovered in ~10 ms; the worker renders correctly with files and network denied. Two gaps recorded rather than closed: macOS has no memory rlimit, and Windows is untested |
 | ~~**Startup**~~ | **Passed 2026-07-26** (§4). Warm, cold and first-launch-after-build are three separate regimes, and the last two are the OS. The shell floor is ~250 ms before any application code runs and is not reducible by anything tpdf controls; the two avoidable items — our page-geometry walk and Tauri's default menu — are worth 92 ms together and take it to 276 ms warm |
 | ~~**Text-object round trip**~~ | **Passed 2026-07-26** (§6). Both routes reproduce the page with zero collateral pixels; only the surgical route preserves marked content, and only it detects an out-of-subset character instead of silently drawing `.notdef` |
 | ~~**Sanitized full rewrite**~~ | **Passed 2026-07-26** (§6). A collected `lopdf` rewrite matches QPDF on every fixture, so QPDF is not required — but `lopdf`'s own collection is quadratic and the sweep has to be ours, and "every stream must decode" would refuse most scanned documents |
@@ -3768,7 +3768,9 @@ that it presented several genuinely unresolved questions as settled architecture
    latency target, given the boundary crossing it adds?~~ **Answered 2026-07-26** (§3). The
    boundary crossing is not a cost worth reasoning about: 6 µs for a control round trip and
    0.11 ms to move a 4 MB tile, against 3.0 ms to hand the same tile to the webview. One
-   worker matches the in-process baseline exactly. **Process count should default to the
+   worker matches the in-process baseline exactly. (Both tile figures are upper bounds from
+   the prototype worker; `latency-bench` measured the **production** one at 0.071--0.103 ms
+   on macOS, 2026-07-31, which only strengthens the answer.) **Process count should default to the
    performance-core count** — speedup is near-linear to 4 on a 4P+6E machine (3.89×) and
    then buys ~0.4× per further worker, so the efficiency cores belong to background work
    rather than to latency-critical tiles. What remains open is not the cost but the

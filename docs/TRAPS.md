@@ -4227,3 +4227,60 @@ directions: **two derivations of one quantity have to be tied together, or their
 means nothing.** An outline count read one way and a walk time read another. A parsed detail and
 a printed total. A figure and its own spread. In each case the agreement was doing no work,
 because nothing forced the two to move together.
+
+### A baseline that skips the expensive step leaves its noise in the answer
+
+Found on macOS 2026-07-31, running `latency-bench` for the first time and cross-checking it
+against `worker-bench --mode latency` as the handover asked. The two harnesses share no worker
+code, which is what makes the comparison worth anything --- and they disagreed by an order of
+magnitude on the same nominal quantity, the cost of moving one 4 MB tile out of a worker.
+
+`worker-bench` has four variants: `ping` (a round trip carrying nothing, no render at all),
+`inproc` (renders in-process, crosses no boundary), `pipe` and `shm`. Its `transport` column is
+a **residual** --- `wall - render - swizzle - fold` --- so it absorbs every microsecond the other
+three columns fail to account for. And its derived figures subtract `ping`:
+
+```rust
+mean("shm", Row::transport) - mean("ping", |r| r.wall)
+```
+
+`ping` never renders, so the render-noise floor that the residual is full of is never
+subtracted out. The right baseline is `inproc`, which does everything the measured variant does
+**except the one thing being measured**.
+
+The size of the mistake is not academic. On `text-base14` the in-process residual is 0.014 ms
+against a reported shared-memory cost of 0.015 ms --- the answer is its own error. On
+`vector-heavy`, where the render is ~830 ms and varies by ~12 ms between rounds, the residual is
+**46.7 ms** and the reported figure **46.6 ms**: entirely noise, printed to three decimal places.
+Baselined on `inproc` instead, that run yields **-0.087 ms**, a boundary costing less than
+nothing, which is the tell that was invisible while `ping` was the baseline.
+
+Three things worth taking from it:
+
+- **A baseline is not "the cheapest thing you can measure".** It is the thing that differs from
+  the measurement in exactly one respect. `ping` differs in two --- it neither renders nor
+  crosses --- so the difference cannot isolate either.
+- **A residual column is a debt, not a measurement.** It reports whatever the accounting missed,
+  and it is the only column that grows when an unrelated cost gets noisier. Every harness
+  printing one owes the reader the in-process value beside it, because that is the floor under
+  all the others.
+- **The number was already correctly hedged, and the hedge did not travel.** The trap *"A worker
+  process is nearly free; the webview boundary is not"* says the shared-memory figure "is
+  indistinguishable from the in-process residual" --- which is exactly this, written down on
+  2026-07-26 by whoever measured it. But the **0.11 ms** it hedges is quoted flat in
+  `docs/PLAN.md` §3 and its Phase 0 verdict table, in `docs/THREAT-MODEL.md`, and in
+  `CHANGELOG.md`. A qualification that lives only next to the first statement of a number does
+  not survive the number being cited; put it in the harness's own output, where it cannot be
+  left behind.
+
+`worker-bench` now prints the in-process residual and the `inproc`-baselined figure beside the
+two `ping`-baselined ones, and warns when the error is as large as the answer. It warns on every
+fixture measured so far, which is the finding rather than a flaw in the warning --- and it was
+proved to be able to stay silent (scale the residual down 100x and it does), because a warning
+that cannot not-fire is a constant.
+
+The conclusion drawn from the original number survives all of this and is worth saying plainly:
+the boundary is cheap. `latency-bench`, with a control on precisely this and an in-process
+residual of 0.001 ms, puts the production worker's per-tile cost at **0.071--0.103 ms** on macOS.
+That is ~10x the prototype's, and still ~30x below the 3.0 ms it costs to hand the same tile to
+the webview. Nothing architectural moves; only the digits do.

@@ -11,6 +11,37 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Measurement --- the macOS half of the boundary cost, and a cross-check that disagreed
+
+- **`latency-bench` runs on macOS**, closing the "compiles but has never executed there"
+  qualifier it shipped with. Expected shape reproduced exactly on all three fixtures --- 3/3,
+  3/3, and 3/4 with the documented `[SKIP]` on `vector-heavy` --- exit 0 throughout, and its
+  four mutations re-proved here rather than taken on trust (4/4 caught, control green first,
+  file restored by bytes and verified by digest against `HEAD`). The production worker's
+  per-tile boundary cost is **0.071--0.103 ms** on macOS against 0.269--0.309 ms on Windows,
+  ~3.5x rather than the 1.5--1.8x the other render constants differ by.
+- **No sandbox font substitution.** The Mac run existed partly to check this, since a
+  sandboxed PDFium has previously substituted fonts silently while still returning `ok`.
+  In-process and worker renders agree to within 0.25% on all three fixtures.
+- **The cross-check against `worker-bench --mode latency` disagreed by an order of
+  magnitude, and the older harness was wrong.** Its `transport` is a residual and it
+  baselines on `ping`, a variant that never renders, so the render-noise floor is left in
+  the answer. On `text-base14` the subtraction error is 0.014 ms against a reported 0.015 ms;
+  on `vector-heavy` it is 46.7 ms against a reported 46.6 ms, and the correctly baselined
+  figure goes **negative**. `worker-bench` now prints its in-process residual and the
+  `inproc`-baselined figure beside the two `ping`-baselined ones, and warns when the error is
+  as large as the answer --- which is every fixture measured so far. Proved able to stay
+  silent, because a warning that cannot not-fire is a constant.
+- **The affected number was already hedged where it was written, and the hedge had not
+  travelled.** `docs/PLAN.md` §3 says the shared-memory figure "is indistinguishable from the
+  in-process residual"; the same 0.11 ms is quoted flat in the Phase 0 verdict table, in
+  question 10's answer, and in `docs/THREAT-MODEL.md`. All three now carry it. No conclusion
+  moves --- the boundary is cheap on every version of the number, and the production figure is
+  still ~30x under the 3.0 ms webview hand-off.
+- New trap, index now 168: *"A baseline that skips the expensive step leaves its noise in
+  the answer"*. `AGENTS.md`'s own count of its own index was six behind; the sentence now
+  names `grep -c '^### ' docs/TRAPS.md` as the authority instead of asserting a number.
+
 ### Phase 0 --- feasibility spikes
 
 All seven spikes have documented verdicts and the exit criterion is met. The evidence is

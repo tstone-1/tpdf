@@ -155,6 +155,16 @@ case. The boundary itself is not a reason to hesitate: a control round trip is *
 and moving a 4 MB tile through shared memory is **0.11 ms**, against **3.0 ms** to hand
 the same tile to the webview. Isolation costs about 1/27th of the UI.
 
+Two qualifications on that 0.11 ms, added 2026-07-31 without changing the conclusion. It is
+an **upper bound**: it comes from `worker-bench --mode latency`, whose estimator leaves its
+own subtraction error in the answer, and that error is as large as the figure (trap: *"A
+baseline that skips the expensive step leaves its noise in the answer"*). And it is the
+*prototype* worker, not the shipped one --- `latency-bench` puts the **production** `Worker`
+at **0.071--0.103 ms** per tile on macOS and 0.269--0.309 ms on Windows, measured against a
+control that holds its residual to 0.001 ms. Every one of those is still one to two orders
+of magnitude under the webview hand-off, so "isolation costs a small fraction of the UI"
+stands on the better numbers as well as the original ones.
+
 **Residual.** A worker compromise can still lie about what it rendered or extracted. Any
 security-relevant answer — above all a redaction verification — must therefore not be
 taken on a worker's word alone; see T5.
