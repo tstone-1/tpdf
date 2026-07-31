@@ -58,7 +58,12 @@ fn main() {
         if !ok {
             failures += 1;
         }
-        println!("[{}] {name:52} {detail}", if ok { "OK" } else { "FAIL" });
+        // Padded to a fixed seven, not interpolated: `[OK]` is two characters
+        // shorter than `[FAIL]`, so interpolating the word shifts the detail
+        // column on exactly the rows that pass, and a fixed-offset `cut` reading
+        // the name set slices those rows short. See the trap.
+        let label = if ok { "[OK]" } else { "[FAIL]" };
+        println!("{label:7}{name:52} {detail}");
     };
 
     // ---------------------------------------------------------------- worker
