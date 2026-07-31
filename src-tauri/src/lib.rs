@@ -194,8 +194,19 @@ pub const PDFIUM_LOADABLE: &str = if cfg!(windows) {
 /// Locates the Pdfium dynamic library.
 ///
 /// In development it sits under `vendor/pdfium/` at the repo root. In a bundled
-/// app it will sit alongside the executable. Both are tried, dev first, because
-/// `cargo tauri dev` runs from `src-tauri`.
+/// app it comes from `tauri.<platform>.conf.json`'s `bundle.resources`. Both are
+/// tried, dev first, because `cargo tauri dev` runs from `src-tauri`.
+///
+/// **Two bundled candidates, because the bundlers disagree about the target
+/// directory in a resource map.** The map asks for `pdfium/`, and Tauri's WiX
+/// template ignores it: measured 2026-07-31 by extracting the MSI with
+/// `msiexec /a`, which put `pdfium.dll` directly under `INSTALLDIR` beside
+/// `tpdf.exe`, and the generated `main.wxs` confirms it --- the component sits in
+/// `INSTALLDIR` with no intermediate `<Directory>`. The macOS bundler is
+/// expected to honour it and place the dylib in `Resources/pdfium/`, but that has
+/// **not been checked from a Mac**, so both are tried rather than one being
+/// asserted. Neither is a guess in the harmful direction: whichever layout a
+/// platform produces, the file is found by looking for the *file*.
 ///
 /// **The archive is not laid out the same way on both platforms.** macOS ships
 /// the loadable `lib/libpdfium.dylib`; Windows ships the runtime DLL in `bin/`
@@ -211,20 +222,26 @@ fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|root| root.join("vendor/pdfium").join(subdir));
+    let resources = app.path().resource_dir().ok();
 
     // The *library*, not the directory that should contain it. Those are the
     // same question everywhere except the one platform this got wrong, which is
-    // precisely why the weaker check survived so long.
-    if let Some(dev) = dev {
-        if dev.join(loadable).exists() {
-            return dev;
+    // precisely why the weaker check survived so long -- and it is now also what
+    // lets one lookup serve two bundle layouts.
+    let candidates = [
+        dev,
+        resources.as_ref().map(|d| d.join("pdfium")),
+        resources.clone(),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.join(loadable).exists() {
+            return candidate;
         }
     }
 
-    app.path()
-        .resource_dir()
-        .map(|d| d.join("pdfium"))
-        .unwrap_or_else(|_| PathBuf::from("."))
+    // Nothing found. Answer with the resource directory rather than `.`, so the
+    // bind error names where a bundled app was actually looking.
+    resources.unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Opens a document and returns its page geometry.

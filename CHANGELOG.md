@@ -1298,6 +1298,22 @@ experience.
 
 ### Fixed
 
+- **The installers shipped no PDF engine.** `tauri.conf.json` declared no `bundle.resources`,
+  so nothing ever copied PDFium into a bundle, and the resource-directory fallback in
+  `pdfium_library_dir` pointed at a directory the bundler never created. Every installer built
+  before this produced an app that opens a window and cannot parse a document on any machine
+  without this repository checked out at the same absolute path. `tauri.windows.conf.json` and
+  `tauri.macos.conf.json` now carry the library, because the two archives disagree about where
+  the loadable one lives.
+
+  It survived because every check ran where the dev tree exists, so the bundled branch was
+  never exercised — `viewer_check.py` against the bundle passed either way. Now proved against
+  the extracted MSI with the dev library moved aside: **102/102 checks passed on the bundled
+  library alone**, against a negative control with no PDFium reachable that fails and names the
+  path it looked in. The lookup tries two bundled candidates, because Tauri's WiX template
+  ignores a resource map's target directory and puts the DLL beside the executable; the macOS
+  layout is unverified from a Mac, so neither is asserted.
+
 - **The Rust test gate printed a bare `error:` line while passing.** Two Windows checks spawn
   a worker whose child is the libtest harness, which has no `--render-worker` dispatch and
   says so on the stderr every worker inherits by design. That refusal is the checks' control,

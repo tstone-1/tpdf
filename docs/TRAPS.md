@@ -3902,3 +3902,45 @@ The POSIX arm was written on Windows and has never been compiled, let alone run.
 there because macOS prints the same line by the same route, and because a wrong arm fails
 loudly on the next macOS run rather than quietly claiming a clean console --- but until
 someone runs it there, it is a claim about macOS made from Windows.
+
+### A bundled app that finds its library in the dev tree proves nothing about the bundle
+
+tpdf's `tauri.conf.json` declared no `bundle.resources` until 2026-07-31, so no bundle ever
+contained PDFium. `pdfium_library_dir` tries the dev tree first and the resource directory
+second; the second branch pointed at a directory nothing created. Every Windows installer
+built before that date, and every macOS bundle, shipped an app that opens a window and cannot
+parse a document anywhere this repository is not checked out at the same absolute path.
+
+**`viewer_check.py` against the bundle passed the whole time, and could not have failed.** It
+runs from the repo, where the first candidate hits, so the bundled branch was never once
+exercised. Same family as "a test whose precondition is already satisfied never runs", with
+the precondition being an entire directory nobody thought of as an input. The rule that falls
+out is worth applying past this case: **a check on a distributable has to run somewhere the
+development tree cannot be reached**, or it is a check on the development tree.
+
+Two cheap controls make it honest, and both are one `Move-Item` apart:
+
+- Hide the dev library and re-run. That is the whole test.
+- Hide the *bundled* one too, and confirm the run fails. Without it, a pass could still be a
+  third path nobody enumerated --- and here that negative control also printed the resolved
+  path, which is what identified which candidate was doing the work.
+
+**The bundlers disagree about a resource map's target directory, so one bundled candidate is
+not enough.** The map asks for `pdfium/`. Tauri's WiX template ignores it: `msiexec /a` puts
+`pdfium.dll` directly beside `tpdf.exe`, and the generated `main.wxs` shows the component under
+`INSTALLDIR` with no intermediate `<Directory>`. macOS is expected to honour it and has not been
+checked from a Mac. The lookup therefore tries `resources/pdfium` then `resources`, and applies
+this function's own older lesson --- look for the **file**, not the directory that should
+contain it --- which is what lets one lookup serve two layouts without either being asserted.
+
+**The size of an installer is a real signal and is not evidence.** The NSIS setup was 5.59 MB
+while `pdfium.dll` alone is 7.21 MB, which settles it in that direction; the reverse does not
+follow, and after the fix the MSI grew 13.0 -> 16.7 MB, which is consistent with a compressed
+copy and equally consistent with several other things. `msiexec /a` extracts the file list
+without installing, and an extractor that did not build the package is the reader whose opinion
+counts.
+
+A harness note that cost two runs: the first attempts failed with *could not open
+"...text-heavy.pdf"* --- a fixture never generated on this machine, since `testdata/*.pdf` is
+gitignored. An absent fixture and a broken bundle produce the same red, and the message names
+the file, so read it before concluding anything about the thing under test.
