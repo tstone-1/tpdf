@@ -468,11 +468,30 @@ scaffolding, and the rule was that they land when there is something for them to
 front-end logic with an answer that can be wrong rather than merely ugly. `npm run lint`
 still does not exist, for the same reason as before.
 
-**There is no remote CI, deliberately** --- pre-release, one machine, and a workflow would
-add a second place for the gate list to live while catching nothing `scripts/gates.py`
-does not catch first. When it is added (the natural trigger is the repo going public, or a
-second contributor) the workflow should *invoke* `scripts/gates.py` rather than re-list the
-commands in YAML.
+**There is no CI for ordinary commits, and there is a release workflow as of 2026-07-31.**
+The reasoning for the first half is unchanged: one machine, and a workflow that ran on every
+push would add a second place for the gate list to live while catching nothing
+`scripts/gates.py` does not catch locally first.
+
+`.github/workflows/release.yml` fires only on a CalVer tag, and it exists because **the
+predicted trigger was the wrong one**. This file expected CI to arrive with the repo going
+public or a second contributor; what actually forced it is that notarization needs a Mac,
+an Apple Developer ID and API credentials, and cutting a signed macOS release by hand from
+whichever machine happens to be free is precisely the step that should not depend on who is
+sitting where. Worth recording because the prediction was confident and specific.
+
+It **invokes `scripts/gates.py`** rather than re-listing commands in YAML, which was the
+one instruction this file did get right --- a hand-copied command quietly loses a `--locked`
+and then gates something weaker than the real gate.
+
+**Nothing in its macOS half has ever run.** It is ported from `screenpick`'s working
+workflow, and the one part with no precedent anywhere in the portfolio is signing the
+bundled `libpdfium.dylib`: neither sibling ships a native library, and notarization requires
+every Mach-O in the bundle to carry a Developer ID signature and the hardened runtime. The
+dylib is therefore signed in `vendor/` *before* the bundler copies it, which is correct
+whether or not Tauri re-signs nested resources. Its verification step is written to fail
+rather than warn --- a skipped notarization exits 0 and produces an app Gatekeeper rejects on
+any machine that has never seen it.
 
 **Windows runs the viewer, and is contained.** On 2026-07-29 a Windows build opened documents
 and passed `viewer_check.py` on four corpora --- **86 check names** on each, the same invariant
