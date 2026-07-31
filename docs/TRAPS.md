@@ -47,7 +47,7 @@ is a bad vtable dereference, i.e. the handle is already dead.
 memory is reclaimed when the document closes. Removal is redaction's primitive, so this is
 not an edge case --- it is on the main path.
 
-`src-tauri/src/bin/remove_probe.rs` is the minimal repro, kept as a standing regression:
+`src-tauri/examples/remove_probe.rs` is the minimal repro, kept as a standing regression:
 case `c` (leak) must pass, and if case `a` (destroy) ever starts passing, the upstream bug
 is fixed and the `forget` can go. Re-run it after any `pdfium-render` or PDFium bump.
 
@@ -125,7 +125,7 @@ parallel *processing*, not multi-threading. That much has always been right here
 mechanism this file gave for it was not.
 
 **`pdfium-render`'s `thread_safe` feature does not lock anything.** Measured on 0.9.3,
-2026-07-27, by `src/bin/thread_probe.rs`. What the feature actually does is store the
+2026-07-27, by `examples/thread_probe.rs`. What the feature actually does is store the
 bindings in a global `OnceCell` that is *awaited* rather than unwrapped, plus
 `unsafe impl Send for Pdfium` and `unsafe impl Sync for Pdfium`. The only `Mutex` in the
 crate guards a page-index cache; the only `RwLock` is in the WASM bindings. A native call
@@ -1059,7 +1059,7 @@ environment, which `open -a` does not.
 
 ### PDFium pays a large fixed cost *per render call*, not per page open
 
-Measured 2026-07-26 (`src-tauri/src/bin/tile_bench.rs --mode single`). On a complex page
+Measured 2026-07-26 (`src-tauri/examples/tile_bench.rs --mode single`). On a complex page
 --- an A0 sheet with ~200k path segments --- every render call pays roughly **1 second**
 before any area-proportional work, and this is charged per *call* even when the same
 `PdfPage` object is held across all of them. Rendering that page to a 150 px-wide
@@ -1237,7 +1237,7 @@ on anything the safe API produced.** Cancellable rendering therefore means ownin
 bindings trait. The safe wrapper is all-or-nothing: use it and you cannot cancel. This
 points the same way as the worker design, whose processes want raw handles regardless.
 
-`src/progressive.rs` is that ownership, and `bin/progressive_probe.rs` measured it. An
+`src/progressive.rs` is that ownership, and `examples/progressive_probe.rs` measured it. An
 uncancelled progressive render is **byte-identical** to `render_into_bitmap_with_config`
 on every fixture tried, sliced or not --- which is also what asserts the flags, clear
 colour and placement, since `pdfium-render` re-exports the handle *types* out of its
@@ -3186,7 +3186,7 @@ which is usually the family of bug being made.
 
 ### A print check that counts pages cannot see a blank page
 
-`bin/print_probe.rs` drives the whole Windows print path to a real spooler --- "Microsoft Print
+`examples/print_probe.rs` drives the whole Windows print path to a real spooler --- "Microsoft Print
 to PDF", with `DOCINFOW.lpszOutput` naming a file so the driver writes instead of raising a save
 dialog --- which makes everything except the panel itself verifiable without paper.
 
@@ -4076,3 +4076,154 @@ Three things worth carrying:
 Same family as the padded-column trap already in this file, and the mirror of it: there the
 *name* overran its field, here the *label* underran it. Both end with a fixed offset reading
 the wrong bytes and nothing announcing that it did.
+
+### Two counts from two commits are not a platform difference
+
+`backend-probe` reported **42** check names on macOS and **41** on Windows. Both numbers were
+honest, both were recorded in the files that are supposed to be believed, and the conclusion
+drawn from the pair --- *one check is macOS-only, find out which* --- went out as the headline
+item of a handover, together with a plausible candidate: the parent's memory poll, which macOS
+uses as a substitute for an rlimit and which `worker-probe` genuinely does report as not
+applicable on Windows.
+
+There is no macOS-only check. The 41 was measured at `df1ca61`; `9fb728f`, the next commit to
+touch the file, added *"a search option crosses the worker boundary"*. The two counts were taken
+one commit apart and compared as though the only variable between them were the operating
+system.
+
+What makes this worth an entry rather than an erratum is that **every property that usually
+exposes a bad comparison was present and pointed the wrong way.** The two numbers were adjacent,
+so the difference looked like exactly one check rather than like drift. A specific,
+mechanism-level explanation was available and fit the evidence. And the platform that reported
+fewer is the platform that really does lack the thing the explanation named --- so confirming
+the hypothesis on `worker-probe` would have *strengthened* a conclusion about a different
+harness. A wrong answer that survives its own corroboration is the expensive kind.
+
+Two habits:
+
+- **A count is a measurement of a commit, not of a machine.** Before reading a cross-platform
+  difference out of two numbers, check they came from the same tree. Same rule the repository
+  already applies to debug-versus-release timings, in the axis nobody labels.
+- **Grep for the name, not for a reason.** One command settles it ---
+  `git show <commit>:<path> | grep -cF '<check name>'` across the candidate commits --- and it
+  is available *before* any theory about which platform lacks what. The theory is the expensive
+  route and it is the one that feels like progress.
+
+The near-miss: the proposed repair was to soften `BUILD.md`'s flat *"all 42 names appear"* into
+a per-platform statement. That sentence was correct. Weakening a true invariant to accommodate a
+mismeasurement is the documentation form of chasing a number back to a documented value, which
+this file already records from the code side.
+
+### A reply parsed as the wrong shape reads as absence, and absence is the reassuring branch
+
+`latency-bench` uses an `Outline` round trip as its no-tile control, and the outline walk is
+inside that measurement --- so how much work the walk did decides whether the number is a
+measurement or a bound. The harness read the entry count out of the reply with
+`json.as_array().map(Vec::len).unwrap_or(0)`.
+
+`Outline` is an **object** --- `{items, total, limits, walk_ms}` --- not an array. `as_array()`
+returned `None`, `unwrap_or(0)` turned that into zero, and zero means *"the document has no
+outline"*, which is the branch that prints `[OK] ... the bound above is tight`. It printed
+exactly that for `outline-simple.pdf`: the one fixture in the corpus whose entire reason to
+exist is having an ordinary outline.
+
+Nothing failed. There was no error, no missing field diagnostic, no `[WARN]`. A parse that
+could not find what it was looking for produced the most reassuring sentence the harness can
+emit, on the input designed to make it say the opposite.
+
+**Its own output contradicted it four lines up.** The control read 0.460 ms on that document
+against 0.041 ms on one with genuinely no outline --- an order of magnitude, sitting in the
+table directly above a claim that no outline work happened. Two derivations of the same fact
+were both printed and neither was compared against the other.
+
+Three things, and the second is the general one:
+
+- **Never default a parse whose zero value is the quiet answer.** `unwrap_or(0)` is a
+  reasonable habit exactly where zero is unremarkable; here zero *is* the verdict. It refuses
+  now, naming the shape it got, because a count this harness cannot read is not a count of
+  zero. Same family as the padded-column parser already in this file: the failure is silent
+  and lands on the side that looks like good news.
+- **When a run derives the same fact two ways, make it compare them.** The check is now a
+  match on `(entries > 0, walk_ms > threshold)` with both disagreeing combinations printing
+  `[WARN]`, and both were shown to fire under mutation before being trusted. This file already
+  says to write that cross-check *before* the first run rather than after the first surprise;
+  this is the third time it has been learned by not doing so.
+- **The fix was better than the check.** `walk_ms` is in the reply, so the walk is now
+  *subtracted* rather than warned about, which turns the round trip from a bound that is tight
+  on some fixtures into a measurement on all of them. Evidence it is right rather than merely
+  different: across three fixtures with 0, 0 and 10 outline entries it reads 0.039--0.068 ms,
+  where the un-subtracted figures spanned an order of magnitude.
+
+### A difference is only a measurement when the operands make it one
+
+Two defects in one benchmark, found by the same run, and they are the same mistake pointing in
+opposite directions. Both survived the small fixtures and both were exposed the first time
+`latency-bench` was pointed at the A0 sheet.
+
+**Too far apart.** The cost of crossing the worker boundary was `raw end-to-end` minus `inproc
+end-to-end`. On a text fixture that is 3.0 ms minus 2.5 ms and looks fine. On a dense vector
+page it is 2674.7 ms minus 2940.5 ms, because rendering dominates and rendering *varies* ---
+the same tile measured 2669, 3095 and 3050 ms in-process across three rounds. The run reported
+the boundary cost as **-265.822 ms**. A negative one, on a run whose transport columns were a
+perfectly sensible 0.152 against 0.445 ms. Recovering a 0.3 ms quantity by subtracting two
+2.7-second ones asks for four digits of cancellation from a number that is not repeatable to
+two. The estimator is now a difference of the two *transport* columns, which are small and
+exclude the render.
+
+**Too close together.** The payload-differencing figure was guarded by `raw_bytes >
+png_bytes`, which is an ordering test where materiality was wanted. A dense vector page barely
+compresses: PNG came back at 4027 KB against raw's 4096, the guard passed on a 68 KB gap out
+of 4 MB, and sub-millisecond noise was divided by it to print a **negative cost per 100 KB**.
+The condition is now a ratio, and a document that fails it gets a `[SKIP]` naming both sizes
+and why.
+
+The evidence the first fix is a fix, and it is the part worth copying: the boundary cost is a
+property of the *boundary*, so it should not depend on the document. Before, three fixtures
+gave -265.822, 0.357 and 0.242 ms. After, the same three give **0.279, 0.263 and 0.283 ms**.
+A quantity that ought to be invariant becoming invariant is a stronger result than any single
+number, and it costs nothing but running the harness on a corpus instead of on a favourite.
+
+So, before differencing: **ask what fraction of each operand the answer is.** If it is a
+rounding error on either side, the difference is measuring the noise in the larger one; if the
+operands are nearly equal, it is measuring the noise in both. Neither condition is visible in
+the output --- both produce a plausible small number, and the only reason these two were caught
+is that the noise happened to be large enough to push them negative.
+
+### A check on the sign of a noisy quantity fires only when the noise falls one way
+
+`latency-bench` estimated the cost of crossing the worker boundary by subtracting two
+end-to-end figures, which on the A0 fixture meant subtracting two ~2.7 s numbers to recover a
+~0.3 ms one. It printed **-265.822 ms**. The estimator was replaced, and a check was added to
+stop the old one coming back: the boundary must be *positive*, since a process boundary cannot
+cost less than nothing.
+
+That check looked airtight. A mutation restoring the wall-based estimator, on the same fixture
+that had produced the negative number, **survived**.
+
+Nothing was wrong with the mutation. -265.822 ms was one sample of a quantity whose noise is
+hundreds of times its own magnitude, and on the next run the same broken arithmetic landed
+positive. The check was not testing the estimator; it was testing which way the noise fell.
+
+**The property that discriminates is reproducibility, not sign.** That is where the two
+estimators genuinely differ: a difference of two transport columns lands within 0.004--0.150 ms
+of itself across rounds, and a difference of two end-to-end figures swings by 48 ms. Requiring
+the figure to repeat catches the broken estimator on every run rather than on the lucky ones.
+
+Worth pausing on how ordinary the mistake looks. "A boundary cannot be free" is a true statement
+about the system, it is exactly the kind of invariant this file keeps recommending, and it is
+still a bad check --- because the *failure* it is meant to catch does not reliably produce the
+symptom it tests for. Before writing a check, ask not only "is this property true?" but **"does
+the defect I fear always break it?"**
+
+**And the fix contained a worse bug than the thing it fixed.** The reproducibility check
+compared a spread against a headline figure that was computed by a *separate* expression, so a
+mutation of the estimator moved the figure while the spread went on being derived the sound way.
+The comparison then passed on an estimator broken on purpose --- the check and the thing it
+checked had come apart, silently, and the only reason it was noticed is that the mutation was
+re-run rather than assumed to work. Both now come from one per-round vector.
+
+So, the general form, which this file has now met three times in one session from three
+directions: **two derivations of one quantity have to be tied together, or their agreement
+means nothing.** An outline count read one way and a walk time read another. A parsed detail and
+a printed total. A figure and its own spread. In each case the agreement was doing no work,
+because nothing forced the two to move together.

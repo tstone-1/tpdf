@@ -158,6 +158,10 @@ name = "worker-bench"
 path = "examples/worker_bench.rs"
 
 [[example]]
+name = "latency-bench"
+path = "examples/latency_bench.rs"
+
+[[example]]
 name = "incremental-save"
 path = "examples/incremental_save.rs"
 

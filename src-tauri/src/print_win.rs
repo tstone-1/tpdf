@@ -33,7 +33,7 @@
 //! covered by tests below and by the four checks in `print.rs` that now run on both
 //! platforms. `present` opening a real panel and a real printer consuming the
 //! result is not covered by anything automatic --- the same honest gap
-//! `print_macos.rs` records --- though `bin/print_probe.rs` drives everything up to
+//! `print_macos.rs` records --- though `examples/print_probe.rs` drives everything up to
 //! and including the spooler by opening a printer DC directly.
 
 use windows::core::{Interface, HSTRING, PCWSTR};
@@ -204,7 +204,7 @@ fn to_stream(bytes: &[u8]) -> Option<InMemoryRandomAccessStream> {
 /// `StretchDIBits`. Asking for PNG would mean pulling in a decoder to undo an
 /// encode that never needed to happen.
 ///
-/// Public because `bin/print_probe.rs` and the tests below both need to look at a
+/// Public because `examples/print_probe.rs` and the tests below both need to look at a
 /// rendered page without a printer involved.
 ///
 /// # Errors
@@ -530,7 +530,7 @@ fn paper_dpi(page: &PdfPage, sheet: (i32, i32), dc_dpi: (i32, i32), device_dpi: 
 ///
 /// Split out from [`present`] so that the whole pipeline --- parse, rasterise,
 /// spool --- can be exercised against a printer DC opened directly, with no dialog
-/// and no user. That is what `bin/print_probe.rs` does, and it is the only way any
+/// and no user. That is what `examples/print_probe.rs` does, and it is the only way any
 /// of this is verifiable without paper.
 ///
 /// # Errors

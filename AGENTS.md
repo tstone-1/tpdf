@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 163 entries
+The one thing this file does *not* carry in full is the trap list --- 167 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -78,7 +78,7 @@ PDFium is native C++ parsing attacker-controlled files, and PDF is a format with
 JavaScript, launch actions, embedded executables, recursive object graphs and
 decompression bombs in it. Chrome sandboxes PDFium in a separate process for exactly this
 reason, and so must tpdf. **In place for the viewer's own render path since 2026-07-28** —
-`RenderService` defaults to worker processes on macOS, and `bin/backend_probe.rs` proves the
+`RenderService` defaults to worker processes on macOS, and `examples/backend_probe.rs` proves the
 app process never maps libpdfium by reading the dynamic linker's image table.
 
 **On both platforms since 2026-07-29.** macOS gets its boundary from `sandbox_init` SBPL,
@@ -103,7 +103,7 @@ with the same ran/skipped splits as before (81/5, 81/5, 75/11, 52/34), the `[WAR
 the corpus that most wants a boundary.
 
 **What Windows containment can actually be is now measured, not guessed** (2026-07-29,
-`bin/win_sandbox_probe.rs`). Six rungs, each rendering the same tile from the same document
+`examples/win_sandbox_probe.rs`). Six rungs, each rendering the same tile from the same document
 in a re-exec'd child and compared **pixel for pixel** against an in-process render, with an
 uncontained child as the control over the harness itself:
 
@@ -187,9 +187,13 @@ written down.
 **Windows no longer fails open.** `Backend::default_here()` selects workers there, proved by
 the external module check above rather than by the absence of our own warning.
 
-**`backend-probe` runs on Windows too, and passes** (2026-07-30): **37/41** on `text-base14` and
-`text-cid`, **38/41** on `outline-hostile`, **40/41** on `vector-heavy`, which is where a render
-is slow enough for the withdrawal checks to run rather than skip. No failures on any. The
+**`backend-probe` runs on Windows too, and passes** (re-measured 2026-07-31): **38/42** on
+`text-base14` and `text-cid`, **39/42** on `outline-hostile`, **40/42** on `vector-heavy`, which
+is where a render is slow enough for the withdrawal checks to run rather than skip. Name sets
+byte-identical across all four, diffed rather than counted. This paragraph read `37/41 ... 40/41`
+until then, which is the same count one commit earlier and **not** a platform difference --- see
+`BUILD.md`, which carries the table and why the "one check is macOS-only" reading was wrong.
+No failures on any. The
 boundary, the pixel comparisons, capacity, crash restart, replacement, retirement, close,
 descriptor return **and the spare's lifetime** all pass. Its Windows primitives are Toolhelp for
 the module list and the process table, `GetProcessHandleCount` for descriptors, and
@@ -293,7 +297,7 @@ fine.
 
 Three things came free with it, and the third is the one worth noticing:
 
-- **`bin/print_probe.rs` verifies the whole path without paper.** "Microsoft Print to PDF" is a
+- **`examples/print_probe.rs` verifies the whole path without paper.** "Microsoft Print to PDF" is a
   real driver and a real spooler, and naming an output file in `DOCINFOW.lpszOutput` stops it
   raising a save dialog --- so everything except the panel is driven end to end and the result is
   re-read by the OS parser. 8/8, including **ink per page** rather than a page count, because a
@@ -520,8 +524,20 @@ who happened to start here would have concluded that hostile input is parsed in 
 process. **A document with two accounts of the same fact is worse than one with none**, and
 the failure mode is that whichever section a reader reaches first wins.
 
-What is actually missing is smaller and is listed under the harnesses below: `worker-bench`'s
-seven POSIX modes, and two `open_check.py` phases whose route does not exist here.
+**Nothing measurable is missing here as of 2026-07-31.** This sentence named `worker-bench`'s
+seven POSIX modes, and only one of them --- `latency`'s per-tile overhead decomposition ---
+measured anything no other harness covers. `latency-bench` covers it now, on both platforms,
+through the production worker rather than a private POSIX one; see `docs/PLAN.md` §0 and
+`BUILD.md`. `worker-bench` still refuses to run here, which is correct: a POSIX harness not
+running on Windows was never the gap, only the measurement it held exclusively.
+
+The same sentence also claimed *"two `open_check.py`
+phases whose route does not exist here"*, and both halves were wrong by 2026-07-31 --- the count
+is **one**, and it is a decision rather than a gap, since Explorer hands the path over in `argv`
+and the `argv` phase already covers it. The paragraph 290 lines above says exactly that (*"runs
+five of six"*, *"the one phase that stays macOS-only"*), and `docs/PLAN.md` §0 agrees with it ---
+so this was the same document contradicting itself that the paragraph immediately above warns
+about, three paragraphs later, on a different fact.
 
 Two things a green sweep still does not say, both learned the same day. `scripts/gates.py`
 reported 7/7 while `npm run tauri build` failed, because nothing in the list linked a
@@ -656,6 +672,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 
 ### Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
+- Two counts from two commits are not a platform difference
+- A difference is only a measurement when the operands make it one
+- A check on the sign of a noisy quantity fires only when the noise falls one way
 - A mean cannot test a claim about a minimum
 - A frame-rate pass means nothing without a coverage number beside it
 - Interleaving controls for drift, not for what the last variant left behind
@@ -669,6 +688,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A fixture the library itself wrote cannot tell a passthrough from a rewrite
 - An oracle more forgiving than the thing it stands in for cannot fail
 - A writer and its own reader agree about a document that is wrong
+- A reply parsed as the wrong shape reads as absence, and absence is the reassuring branch
 - A canvas round trip cannot read back what a renderer produced
 - A dependency that refuses your test input makes your own guard look redundant
 - A defect that switches off a check's precondition is not caught by that check

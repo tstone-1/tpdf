@@ -94,7 +94,7 @@ pub fn main(args: &[String]) -> ! {
 /// generated: every other PDF in this repository is a gitignored fixture, and
 /// this one has to be inside the shipped binary.
 ///
-/// It exists because of what `bin/prespawn_bench.rs` measured. A worker's fixed
+/// It exists because of what `examples/prespawn_bench.rs` measured. A worker's fixed
 /// startup is ~6.6 ms, but a document that does *not* embed its fonts pays a
 /// further ~7.4 ms while PDFium goes looking for a system face --- which reads
 /// like a per-document cost and is not one. It is the machine's font list, so
@@ -513,7 +513,7 @@ fn wait_for_document() -> Result<Shm, String> {
 /// Deliberately ignores every failure. This is an optimisation: a worker that
 /// could not warm itself is still a correct worker, and a hard failure here would
 /// turn a missed 7 ms into a document that does not open. What it must not do is
-/// *look* like it worked --- `bin/prespawn_bench.rs --mode warm` measures the
+/// *look* like it worked --- `examples/prespawn_bench.rs --mode warm` measures the
 /// effect, so a warm that silently stopped working shows up as the saving
 /// disappearing rather than as nothing at all.
 fn warm_fonts(bindings: progressive::Bindings) {
@@ -623,7 +623,7 @@ mod tests {
     /// is worse than no check.
     ///
     /// So this covers exactly the platform whose guard is new. macOS's is the
-    /// pre-existing one, exercised end to end by `bin/fdpass_probe.rs` in a child
+    /// pre-existing one, exercised end to end by `examples/fdpass_probe.rs` in a child
     /// process, which is where a call with this blast radius belongs.
     #[cfg(not(target_os = "macos"))]
     #[test]

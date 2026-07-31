@@ -1,7 +1,7 @@
 //! Proves that moving every document behind a process boundary changed nothing
 //! the reader can see --- and that it really moved.
 //!
-//! `bin/worker_probe.rs` compares a worker against an in-process render at the
+//! `examples/worker_probe.rs` compares a worker against an in-process render at the
 //! *protocol* level. This compares the two at the level callers actually use:
 //! one [`RenderService`] per backend, driven through the same public methods the
 //! viewer calls, on the same document. The comparison has to be on **pixels**,

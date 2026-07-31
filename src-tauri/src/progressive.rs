@@ -25,7 +25,7 @@
 //! ## Threading
 //!
 //! Nothing here makes PDFium thread-safe. Concurrent PDFium calls are undefined
-//! behaviour and crash (see `bin/thread_probe.rs`); these handles must be used
+//! behaviour and crash (see `examples/thread_probe.rs`); these handles must be used
 //! from one thread at a time. The only thing that legitimately crosses a thread
 //! boundary is the [`CancelToken`], which is an `AtomicBool` and touches no
 //! PDFium state.

@@ -17,8 +17,20 @@ than unfinished:
   macOS figures is optimistic here by about a third. The architectural ratios that drove §4 hold
   on both.
 
-What is genuinely missing is `worker-bench`'s seven POSIX modes, of which only `latency` measures
-anything nothing else covers. The cold-double-click harness phase has no Windows counterpart, and
+**Nothing measurable is missing on Windows as of 2026-07-31.** What stood here was
+`worker-bench`'s seven POSIX modes --- and the sentence already contained its own answer: *only
+`latency` measures anything nothing else covers*. That one is now covered by `latency-bench`,
+which is a spike rather than a port, drives the **production** worker instead of `worker-bench`'s
+private POSIX one, and therefore builds on both --- though it has so far only been *run* on
+Windows. The other six were already answered
+elsewhere and are listed in `worker-bench`'s own refusal: `pool-bench` for parallel scaling,
+`win-sandbox-probe` for the authority rungs, `backend-probe` for crash and timeout, and the job
+object for limits and footprint, which it bounds in the kernel rather than by polling.
+
+`worker-bench` itself still refuses on Windows and should. It is not a gap that a POSIX harness
+does not run on Windows; it was only ever a gap that something it measured went unmeasured.
+
+The cold-double-click harness phase has no Windows counterpart, and
 that is a decision rather than a gap: Explorer hands the path over in `argv`, which another phase
 already covers. The installer shipping all 17 probe binaries *was* listed here as the second such
 decision, and it stopped being one on 2026-07-31 --- they are `[[example]]` targets now and the
@@ -351,7 +363,7 @@ Pages render in tiles at the current zoom; only visible tiles plus one screen of
 are rendered.
 
 **Tile size: measured, 2026-07-26. 512² was the wrong guess — use 1024² or larger.**
-Spike 0.1 (`src-tauri/src/bin/tile_bench.rs`, `--mode single`) rendered one centred tile
+Spike 0.1 (`src-tauri/examples/tile_bench.rs`, `--mode single`) rendered one centred tile
 at each size plus the whole page, interleaved across rounds. Ratios were stable to within
 1% across rounds on both corpora, so these differences are real, not clock drift.
 
@@ -839,7 +851,7 @@ trusted, and a certification signature may forbid the edit outright.
 
 ### Incremental save — measured 2026-07-26
 
-Spike 0.6 (`src-tauri/src/bin/incremental_save.rs`) writes an update section with `lopdf`
+Spike 0.6 (`src-tauri/examples/incremental_save.rs`) writes an update section with `lopdf`
 and puts it to four independent parsers — PDFium, QPDF 12.3, poppler, and CoreGraphics,
 i.e. what Preview and Quick Look use. Each is asked for something falsifiable rather than
 for acceptance: QPDF for a structural check, poppler for the text of the edited page,
@@ -988,7 +1000,7 @@ Until a hostile corpus proves round-trip fidelity for A, B is the shipped behavi
 
 ### Text-object round trip — measured 2026-07-26
 
-Spike 0.3, the gating one. Harness `src-tauri/src/bin/text_roundtrip.rs`, corpus
+Spike 0.3, the gating one. Harness `src-tauri/examples/text_roundtrip.rs`, corpus
 `testdata/make_text_pdf.py`: four single-page A4 fixtures, each with four text lines and
 four unrelated non-text objects, differing only in how the text is encoded —
 
@@ -1120,7 +1132,7 @@ API reports it gone — this pass is not belt-and-braces, it is load-bearing.
 
 ### Sanitized full rewrite — measured 2026-07-26
 
-Spike 0.4. Harness `src-tauri/src/bin/sanitize_rewrite.rs`, corpus
+Spike 0.4. Harness `src-tauri/examples/sanitize_rewrite.rs`, corpus
 `testdata/make_hostile_pdf.py`: eleven fixtures, each hiding a distinct needle in a
 different carrier, with `hostile-manifest.json` recording for each one whether a
 reachability sweep is *expected* to clear it. Six routes, from a byte copy (the control)
@@ -1385,7 +1397,7 @@ uninterruptible, and so the renderer stays busy on a tile the viewport left long
 accessor `pub(crate)` and the progressive functions take raw handles — so the safe wrapper
 cannot reach them at all.
 
-`bin/progressive_probe.rs` measured it on the A0 sheet, one 1024² tile at 1x:
+`examples/progressive_probe.rs` measured it on the A0 sheet, one 1024² tile at 1x:
 
 | question | answer |
 |---|---|
@@ -2892,7 +2904,7 @@ rotation composes onto each page's *effective* `/Rotate`, resolved up the `/Pare
 because the literal one is absent on exactly the documents that inherit it. The outline is
 dropped whenever pages are, since its destinations name pages the file no longer has.
 
-The mark-and-sweep moved out of `bin/sanitize_rewrite.rs` into `src/sweep.rs`, since printing a
+The mark-and-sweep moved out of `examples/sanitize_rewrite.rs` into `src/sweep.rs`, since printing a
 range needs the same walk. That refactor was verified rather than assumed: the spike's eleven
 rewritten fixtures are **byte-identical before and after the move**, checked by running the
 pre-move code as a control. (One of them, `hostile-stale`, differs from lopdf's own collector
@@ -2966,7 +2978,7 @@ fails on the allocation rather than printing badly.
 
 Two things this half has that the macOS half does not:
 
-- **It is verified to a real spooler.** `bin/print_probe.rs` opens a DC for "Microsoft Print to
+- **It is verified to a real spooler.** `examples/print_probe.rs` opens a DC for "Microsoft Print to
   PDF" directly and names an output file in `DOCINFOW.lpszOutput`, so the driver writes instead of
   prompting --- everything except the panel runs unattended, and the result is re-read by the OS
   parser. The two decisions above that "need paper" on macOS are still unverified as *choices*,
@@ -3111,7 +3123,7 @@ the document, which is what makes that sound — `RawDocument` is not `Send`, an
 PDFium is undefined behaviour whatever the handles are. The queue's claim/withdraw state
 machine is reused verbatim from `queue.rs` rather than rewritten.
 
-`bin/worker_probe.rs` is the evidence, and the load-bearing check compares **pixels** against
+`examples/worker_probe.rs` is the evidence, and the load-bearing check compares **pixels** against
 an in-process render of the same tile — because a sandbox that renders the wrong typeface
 returns `ok` and this file already records that happening. 12/12 on `text-heavy`,
 `vector-heavy` and `rotated-90`:
@@ -3165,7 +3177,7 @@ reply can now fail because the worker died, and a withdrawal grew a second half.
 else — the callback shape, the FIFO ordering, the queue's semantics — is what it was, which
 is what the interface was shaped for in Phase 0.
 
-`bin/backend_probe.rs` is the comparison, at the level callers use rather than at the
+`examples/backend_probe.rs` is the comparison, at the level callers use rather than at the
 protocol: one service per backend, driven through the same public methods the viewer calls.
 Sixteen checks, of which the pixel comparison is the one that matters — a sandboxed PDFium
 that renders the wrong typeface returns `ok`, and this project has recorded that happening.
@@ -3376,7 +3388,7 @@ page render at once. The in-process backend is deliberately **not** pooled: conc
 in one process is undefined behaviour whatever the handles are, which is the reason security
 and performance wanted the same architecture in the first place.
 
-`bin/pool_bench.rs` measures it through `RenderService` rather than the raw protocol, six
+`examples/pool_bench.rs` measures it through `RenderService` rather than the raw protocol, six
 1024-square tiles of the A0 sheet, interleaved across rounds and compared pairwise within a
 round. Two runs:
 
@@ -3589,7 +3601,7 @@ stderr-on-failure convention suppresses.
 
 #### Spike 0.7 — what Windows containment can be (2026-07-29)
 
-`bin/win_sandbox_probe.rs`, in the shape spike 0.5 established: re-exec this binary as a
+`examples/win_sandbox_probe.rs`, in the shape spike 0.5 established: re-exec this binary as a
 contained child, render one tile, compare **pixels** against an in-process render. Pixels
 rather than exit codes, because the macOS work already recorded a sandboxed PDFium returning
 `ok` while silently substituting a typeface, and the Windows font path has no reason to be
@@ -3780,3 +3792,14 @@ that it presented several genuinely unresolved questions as settled architecture
    so the rule has to distinguish a carrier we cannot decode from a carrier that is an image
    and belongs to a different check. What remains open is where that line sits on a real
    corpus, and it needs one — the fixtures only prove the failure mode exists.
+10. **Which phase actually defines the OCR interfaces?** §9's cross-cutting note says Phase 1
+   defines them "even though implementation lands later", and the source has **zero** mentions
+   of OCR. That is not merely unbuilt --- it contradicts this plan's own account of Phase 1,
+   whose remaining items are enumerated in §8 and do not include it, one of them described as
+   "the last". So either the note is stale and OCR belongs to a later phase, or a Phase 1 item
+   went unlisted. OCR is load-bearing for more than search: §6 depends on it twice, to stop a
+   pre-redaction image reinstating a secret as invisible text and as the render-and-OCR check
+   that replaces the byte scan on filters we cannot decode. Carried here from a Windows
+   handover of 2026-07-31, which reached the same reading and proposed correcting the plan;
+   correcting it is a decision about scope rather than a documentation fix, so it is filed as
+   a question rather than made silently.

@@ -804,7 +804,7 @@ fn route_a_remove(
     // caller and `FPDFPageObj_Destroy()` frees it, and pdfium-render's `Drop`
     // does exactly that -- and it segfaults, for text and path objects alike,
     // whether the destroy happens immediately or after regeneration and save.
-    // See src/bin/remove_probe.rs and AGENTS.md. Leaking the handle is the only
+    // See examples/remove_probe.rs and AGENTS.md. Leaking the handle is the only
     // safe option through this binding; the memory is reclaimed when the
     // document closes.
     std::mem::forget(removed);

@@ -7,7 +7,7 @@
 //! at `CreateProcess` time and is in force from the first instruction, so there
 //! is no "before" in which to load a library --- which is exactly why a
 //! restricting SID cannot be used here without Chromium's two-token handover
-//! (`bin/win_sandbox_probe.rs` measures the failure: `STATUS_DLL_NOT_FOUND`,
+//! (`examples/win_sandbox_probe.rs` measures the failure: `STATUS_DLL_NOT_FOUND`,
 //! before `main`).
 //!
 //! What this module provides is the rung that *was* measured to work: a **job

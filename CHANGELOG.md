@@ -1332,6 +1332,63 @@ experience.
   and pass in under a second looking exactly as it did when it covered seventeen targets. An
   undefined symbol called from an example's `main` turns it red with `LNK2019`.
 
+- **`backend-probe`'s Windows figures were a commit behind, and read as a missing check.**
+  `BUILD.md` and `AGENTS.md` recorded `37/41 ... 40/41` there against 42 on macOS, and the
+  gap was carried as an open question --- which check is macOS-only? --- with the parent's
+  memory poll as the candidate, since `worker-probe` really does skip that one on Windows.
+  None is. The 41s were taken at `df1ca61` and `9fb728f` added a check immediately after, so
+  the two counts differed by a commit rather than by a platform. Re-measured on Windows:
+  **38/42, 38/42, 39/42, 40/42** across `text-base14`, `text-cid`, `outline-hostile` and
+  `vector-heavy`, no failures, and the name sets byte-identical across all four when diffed
+  rather than counted. `BUILD.md`'s flat *"all 42 names appear"* was right as written and
+  stays flat; the proposal to weaken it into a per-platform statement is what the
+  mismeasurement would have cost. New trap: *Two counts from two commits are not a platform
+  difference*.
+
+- **`latency-bench`, closing the last measurable Windows gap.** `worker-bench --mode latency`
+  decomposes what one tile costs --- render, encode, the parent reading it, and everything left
+  over --- and cannot run off unix: it carries its own worker, `dup2` handover, socket pair and
+  SBPL bisection. Its own refusal named that decomposition as the single thing a Windows spike
+  would measure that nothing else does. This is that spike, and deliberately not a port: it
+  drives the **production** worker, so it is portable by construction and macOS can cross-check
+  it against an implementation sharing no worker code with it. **Every figure below is Windows,
+  and it has never been run on macOS** --- that it compiles there is a claim about a compiler,
+  not a result.
+
+  There is no `pipe` variant, which is a finding rather than an omission --- production sends
+  every tile payload through the shared mapping and never inline, so a pipe row would measure a
+  route no tile takes. Differencing `raw` against `png` recovers the same quantity from two
+  paths that are real.
+
+  Windows, 1024² tile: crossing the boundary costs **0.263--0.283 ms**, a round trip carrying no
+  tile **0.039--0.068 ms**, and moving bytes through the mapping **0.0051--0.0058 ms per 100 KB**.
+  The boundary cost is a property of the boundary, so the number to read is that it varies by
+  0.02 ms across fixtures whose render times differ by three orders of magnitude.
+
+  Its own defects were found by running it rather than by reading it, and each is now a trap. It
+  misparsed the outline reply as an array, so a defaulted zero printed *"the document has no
+  outline"* for `outline-simple.pdf` while its own control timing four lines above said
+  otherwise. It estimated the boundary cost by subtracting two ~2.7 s end-to-end figures, which
+  on the A0 sheet reported **-265.822 ms**. It guarded payload differencing on ordering rather
+  than materiality, so a page that barely compresses divided noise by a 68 KB gap. And the check
+  added to stop the bad estimator returning was itself too weak twice over: requiring only that
+  the figure be positive caught the defect just on the runs where the noise happened to fall
+  that way, and the replacement compared a spread against a figure derived separately, so a
+  mutation moved one and left the other sound. Both now come from one per-round vector.
+
+  Verdicts go through a recorder that pads every label to seven at column 1 --- an indented
+  `[SKIP]` had been invisible to the repository's own width recipe, which then passed by never
+  examining it --- and the tag vocabulary is back to the four every other harness emits, a
+  `[NOTE]` invented here having been dropped silently by anything grepping the set. The run ends
+  with `N/M checks passed` and exits non-zero on a failure. 4/4 mutations caught, restored by
+  bytes and verified by digest.
+
+- **Every reference to a spike's path now resolves.** The 2026-07-31 move of 17 harnesses from
+  `[[bin]]` to `[[example]]` left 34 `bin/<name>.rs` references across docs and doc comments
+  naming a path that no longer exists. Repointed with each target verified to exist; the dated
+  entries in this file and the trap describing the move itself keep their original paths, because
+  a historical record naming a historical path is correct.
+
 ### Fixed
 
 - **The installers shipped no PDF engine.** `tauri.conf.json` declared no `bundle.resources`,

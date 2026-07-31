@@ -332,7 +332,7 @@ async fn close_document(service: tauri::State<'_, RenderService>, doc: u32) -> R
 /// the same one deliberately --- three extractions would disagree in ways no
 /// test catches, each being self-consistent. Cached on the frontend rather than
 /// here: what a page's text costs to *re-request* is an IPC round trip, and what
-/// it costs to re-extract is measured in `bin/text_probe.rs`.
+/// it costs to re-extract is measured in `examples/text_probe.rs`.
 #[tauri::command]
 async fn page_text(
     service: tauri::State<'_, RenderService>,

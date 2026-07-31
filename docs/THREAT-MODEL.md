@@ -108,7 +108,7 @@ Three things bound how much that is worth:
   `Cargo.lock`. It is the same trade as PDFKit and it is the reason a third parser is used at
   all: `lopdf` wrote the job and PDFium drew what the reader saw, so neither can attest that
   the output is readable by anything else.
-- **PDFium is not there, and that is measured rather than argued.** `bin/print_probe.rs` reads
+- **PDFium is not there, and that is measured rather than argued.** `examples/print_probe.rs` reads
   its own module table after parsing, rendering and printing a document, and reports 80 modules
   with none named pdfium — with the count printed, so a failed enumeration cannot read as an
   absence. A PDFium bug reachable from a crafted document is therefore not reachable through
@@ -514,7 +514,7 @@ scaffold default. This is Phase 1 work and is a gap, not a mitigation.
 
 macOS, applied in the worker after the mappings are in place and PDFium is bound, and
 irrevocable thereafter. The authoritative copy is `PROFILE_WORKER` in
-`src-tauri/src/bin/worker_bench.rs`; it is reproduced here because a threat model that
+`src-tauri/examples/worker_bench.rs`; it is reproduced here because a threat model that
 describes a policy without showing it cannot be checked.
 
 ```
@@ -560,7 +560,7 @@ selects `Backend::InProcess`, which spawns a render thread and binds PDFium dire
 Windows user opening a PDF does not get an error; they get a working viewer with no
 containment at all. Nothing in this section is wired; the refusal guards a path nobody takes.
 
-**The Windows column below is no longer intent.** As of 2026-07-29 `bin/win_sandbox_probe.rs`
+**The Windows column below is no longer intent.** As of 2026-07-29 `examples/win_sandbox_probe.rs`
 has measured it: a **job object plus a low integrity level** renders pixel-identically to an
 uncontained render while denying writes to the user profile and `OpenProcess` on the parent.
 A **restricting SID** — the stronger rung, and the one that would deny reads too — kills the
@@ -617,7 +617,7 @@ before the architecture can be called cross-platform.
    fails open, though no longer silently: the uncontained default records
    `render::UNSANDBOXED_MARK` and prints a `[WARN]`. Since 2026-07-29 the *remedy* is measured
    rather than assumed — a job object plus low integrity renders pixel-identically and denies
-   writes (`bin/win_sandbox_probe.rs`) — but nothing uses it, so the risk is undiminished. Its
+   writes (`examples/win_sandbox_probe.rs`) — but nothing uses it, so the risk is undiminished. Its
    ceiling is now known too: low integrity does not deny reads, so even the wired version
    would leave a contained worker able to read any file the user can.
 5. **A hostile document can enumerate paths** under the sandbox profile.

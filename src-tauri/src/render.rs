@@ -16,7 +16,7 @@
 //! concurrent renders from two threads segfault on a complex page while merely
 //! appearing to work on a simple one. So that backend is one thread whatever
 //! pool size it is handed, and the only route to parallel rendering is the
-//! process boundary. Measured by `bin/thread_probe.rs`; see AGENTS.md.
+//! process boundary. Measured by `examples/thread_probe.rs`; see AGENTS.md.
 //!
 //! ## Abandoning work
 //!
@@ -42,7 +42,7 @@
 //! sandboxed child process, because `docs/THREAT-MODEL.md` requires it and
 //! `AGENTS.md` records why it cannot be a later hardening pass. The in-process
 //! path is kept, and not out of sentiment --- it is the control the worker is
-//! compared against, and `bin/backend_probe.rs` is that comparison.
+//! compared against, and `examples/backend_probe.rs` is that comparison.
 //!
 //! Almost nothing above this module changes with the switch. What does:
 //!
@@ -87,7 +87,7 @@ use crate::workers::{
 
 /// The pool's knobs, re-exported on the path they have always had.
 ///
-/// `bin/pool_bench.rs` and `bin/backend_probe.rs` both call
+/// `examples/pool_bench.rs` and `examples/backend_probe.rs` both call
 /// `tpdf_lib::render::pool_size()`, and moving the pool into its own module is a
 /// tidying of *this* file rather than a change to what a benchmark is allowed to
 /// ask for. `AGENTS.md` records that a spike entry point still reachable from a
@@ -492,7 +492,7 @@ impl RenderService {
 
     /// The process id of the warmed spare, if one is waiting.
     ///
-    /// Exposed for `bin/backend_probe.rs`, and it earns its place twice. A spare
+    /// Exposed for `examples/backend_probe.rs`, and it earns its place twice. A spare
     /// is a child process like any other, so anything counting this process's
     /// children counts it too --- which is how the pool-capacity check first went
     /// red, at `7 workers, capacity 6`, correctly. Excluding it needs its

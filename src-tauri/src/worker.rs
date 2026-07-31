@@ -76,7 +76,7 @@ pub const TILE_FD: i32 = 4;
 ///
 /// A worker started before any file is chosen cannot be given one at `exec`, so
 /// it gets a socket instead and receives the mapping as `SCM_RIGHTS` ancillary
-/// data once there is something to open. `bin/fdpass_probe.rs` is the standing
+/// data once there is something to open. `examples/fdpass_probe.rs` is the standing
 /// proof that this crosses a sandboxed boundary --- with the control that the
 /// child cannot read `/etc/hosts` at the time, since the transfer works equally
 /// well on a process that never sandboxed itself.
@@ -87,7 +87,7 @@ pub const SOCK_FD: i32 = 5;
 /// Windows has no counterpart to [`DOC_FD`]: handles are inherited by *value*,
 /// not by number, so there is nothing for the two sides to agree on in advance
 /// and the value has to be told to the child. argv is where every Win32 sandbox
-/// does this, and `bin/win_sandbox_probe.rs` measured it working under the
+/// does this, and `examples/win_sandbox_probe.rs` measured it working under the
 /// containment the worker uses.
 ///
 /// A handle in argv is not authority anyone else can use: the value means nothing
@@ -637,7 +637,7 @@ impl Shm {
     ///
     /// The Windows counterpart of [`Shm::from_fd`]. It takes a `usize` because a
     /// handle arrives through argv as a number, exactly as in
-    /// `bin/win_sandbox_probe.rs`.
+    /// `examples/win_sandbox_probe.rs`.
     ///
     /// # Errors
     ///
@@ -1172,7 +1172,7 @@ impl WorkerSender {
 
 /// A worker that is running, sandboxed and warmed, and has no document yet.
 ///
-/// This is the whole point of pre-spawning. `bin/prespawn_bench.rs` measures what
+/// This is the whole point of pre-spawning. `examples/prespawn_bench.rs` measures what
 /// a worker costs before it can answer anything: a **~6.6 ms floor** --- fork,
 /// exec, dyld, mapping libpdfium, `sandbox_init` --- plus **~7.4 ms of system-font
 /// enumeration** on any document that does not embed its fonts, plus the page
