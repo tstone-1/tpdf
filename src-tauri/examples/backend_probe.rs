@@ -39,11 +39,16 @@ fn main() {
 }
 
 #[cfg(any(target_os = "macos", windows))]
-// `../probes/`, not `backend_probe/`, and the location is load-bearing rather
-// than tidy: a **directory** under `src/bin/` has no `[[bin]]` path claiming it,
-// and `tauri build` scans that directory and registers the first such entry as a
-// binary of its own. The MSI was then generated with a component pointing at a
-// `backend_probe.exe` that does not exist, and WiX refused the whole package.
-// See `docs/TRAPS.md`; `src/bin/` must contain only declared bin sources.
+// `../src/probes/`, not a `backend_probe/` directory beside this file, and the
+// location is load-bearing rather than tidy: a **directory** next to a target
+// source has no manifest entry claiming it, and `tauri build` scanned `src/bin/`
+// and registered the first such entry as a binary of its own. The MSI was then
+// generated with a component pointing at a `backend_probe.exe` that does not
+// exist, and WiX refused the whole package. See `docs/TRAPS.md`.
+//
+// `src/bin/` is gone since 2026-07-31 --- these are `[[example]]` targets now, so
+// the installer stopped shipping them --- which removes that exact mechanism but
+// not the reason: cargo auto-discovers `examples/<name>/main.rs`, so a
+// subdirectory here is still a target waiting to be misread.
 #[path = "../src/probes/backend_probe.rs"]
 mod imp;
