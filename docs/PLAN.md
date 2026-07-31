@@ -3794,14 +3794,39 @@ that it presented several genuinely unresolved questions as settled architecture
    so the rule has to distinguish a carrier we cannot decode from a carrier that is an image
    and belongs to a different check. What remains open is where that line sits on a real
    corpus, and it needs one — the fixtures only prove the failure mode exists.
-10. **Which phase actually defines the OCR interfaces?** §9's cross-cutting note says Phase 1
-   defines them "even though implementation lands later", and the source has **zero** mentions
-   of OCR. That is not merely unbuilt --- it contradicts this plan's own account of Phase 1,
-   whose remaining items are enumerated in §8 and do not include it, one of them described as
-   "the last". So either the note is stale and OCR belongs to a later phase, or a Phase 1 item
-   went unlisted. OCR is load-bearing for more than search: §6 depends on it twice, to stop a
-   pre-redaction image reinstating a secret as invisible text and as the render-and-OCR check
-   that replaces the byte scan on filters we cannot decode. Carried here from a Windows
-   handover of 2026-07-31, which reached the same reading and proposed correcting the plan;
-   correcting it is a decision about scope rather than a documentation fix, so it is filed as
-   a question rather than made silently.
+10. ~~**Which phase actually defines the OCR interfaces?**~~ **Answered 2026-07-31 by defining
+   them.** §9's cross-cutting note was right and §8's enumeration was incomplete: a Phase 1
+   item had gone unlisted. `src-tauri/src/ocr.rs` is that item --- the interfaces, with no
+   engine, which is what "defines them even though implementation lands later" asks for.
+
+   Three decisions are recorded there rather than here, because they are properties of the
+   type signatures and belong next to them. In short:
+
+   - **The verdict is three-valued.** Search and redaction verification want opposite things
+     from an empty result: for search it is a poor answer, for §6 step 4 it *is* the claim.
+     `Legibility` is `Illegible` / `Legible` / `NotVerified`, and every engine failure lands
+     in the third. A two-valued verdict has to report failure as one of its two, and it is
+     always the clean one, because a failure produces no findings.
+   - **`Illegible` is reachable only through a positive control** the engine had to read back
+     from the same probe image, sized from the *smallest* box the redaction covered. A control
+     easier than the check certifies nothing; see the trap of that name.
+   - **OCR does not run in the parser worker**, which was measured rather than argued. Vision
+     under `SANDBOX_PROFILE` is **killed by SIGTRAP**; with all of `/System/Library` readable
+     it fails with `nilError`; it needs general `file-read`, which is the one authority that
+     profile most needs to withhold from a process parsing a hostile document. It does not
+     need to share it: an engine consumes a fixed-size RGBA buffer we rendered, not
+     attacker-authored structure. `OCR_SANDBOX_PROFILE` keeps the two properties that still
+     apply --- no network, no writes --- and it stays a separate process because the first rung
+     showed the engine can abort its host. Reproduce with `scripts/vision_sandbox_probe.swift`.
+
+   §6's first dependency is enforced by a type: `RedactedPixels` can only be constructed from
+   an `Illegible` verdict, so "OCR the pre-redaction image and reinstate the secret as an
+   invisible text layer" does not compile rather than being forbidden in a comment.
+
+   What is **not** answered, and is the next decision: which engines. `Windows.Media.Ocr`
+   needs only a feature on the already-declared `windows` crate; macOS Vision needs
+   `objc2-vision`, whose licence must be checked with `cargo metadata` before it is added,
+   not assumed from the rest of the `objc2` family. Tesseract is Apache-2.0 and therefore
+   permitted, but it would add roughly 30 MB of language data to an 8.0 MB installer and a
+   second C++ image parser, so the in-box engines are the candidates unless a language they
+   lack forces it.

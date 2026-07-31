@@ -11,6 +11,40 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Phase 1 --- the OCR interfaces
+
+- **`src-tauri/src/ocr.rs`**, answering `docs/PLAN.md` §10 question 10 by defining the
+  interfaces rather than by deciding which phase owns them. §9 was right and §8's
+  enumeration of Phase 1 had a gap. No engine is implemented: which engine runs is a
+  platform question, and the part that has to be correct is above it.
+- **The verdict is three-valued.** Search and redaction verification want opposite things
+  from an empty OCR result --- for search a poor answer, for §6 step 4 the entire claim, and
+  §6 step 4 is the only check that can speak about an image carrier at all. `Legibility` is
+  `Illegible` / `Legible` / `NotVerified`; every engine failure lands in the third. A
+  two-valued verdict must report failure as one of its two, and it is always the clean one,
+  because a failure produces no findings.
+- **`Illegible` is reachable only through a positive control** the engine had to read back
+  from the same probe image, in a band appended to it, matched by position rather than by
+  string, and **sized from the smallest box the redaction covered**. A control drawn at 48 pt
+  proves an engine reads 48 pt and says nothing about the 6 pt footnote that was redacted.
+- **`RedactedPixels` can only be constructed from an `Illegible` verdict**, so §6's rule that
+  OCR runs only on already-redacted pixels is carried by the type rather than by a comment ---
+  the same move `worker.rs` makes with `PreWorker`/`WarmWorker`.
+- **OCR does not run in the parser worker, measured rather than argued.** Vision under
+  `SANDBOX_PROFILE` is killed by SIGTRAP; with all of `/System/Library` readable it fails with
+  `nilError`; it needs general `file-read`, which is what the profile most needs to withhold
+  from a process parsing a hostile document. It does not need that boundary --- a recogniser
+  consumes a fixed-size RGBA buffer we rendered, not attacker-authored structure --- so
+  `OCR_SANDBOX_PROFILE` keeps no-network and no-writes, in a separate process because the
+  first rung is an engine aborting its host. `scripts/vision_sandbox_probe.swift` reproduces
+  the ladder; it applies the profile post-launch, because `sandbox-exec` would apply it before
+  `exec` and die in the loader instead.
+- 13 tests, all shown to fail: 8 mutations, 8 caught, and each tripped the test predicted for
+  it before the run.
+- Two new traps, index now 170: *"A control that is easier than the check certifies nothing"*
+  and *"macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than
+  refusing"*.
+
 ### Measurement --- the macOS half of the boundary cost, and a cross-check that disagreed
 
 - **`latency-bench` runs on macOS**, closing the "compiles but has never executed there"
