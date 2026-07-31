@@ -2178,11 +2178,17 @@ impl Report {
         if !ok {
             self.failures += 1;
         }
-        println!(
-            "[{}] {name:56} {}",
-            if ok { "OK" } else { "FAIL" },
-            detail.as_ref()
-        );
+        // The label is padded to a fixed width, not merely bracketed. `[OK]` is
+        // four characters and `[FAIL]`/`[SKIP]` six, so interpolating the word
+        // put the detail column two to the left on exactly the rows that pass ---
+        // and every documented `cut -c8-47` recipe for reading a name set then
+        // sliced those rows two characters off, which reads as a *different
+        // name* rather than as a misalignment. That produced a false "the name
+        // sets diverge" here on 2026-07-31, which is the one conclusion this
+        // whole arrangement exists to make trustworthy. Seven matches every
+        // other harness in the repository.
+        let label = if ok { "[OK]" } else { "[FAIL]" };
+        println!("{label:7}{name:56} {}", detail.as_ref());
     }
 
     /// Records a check that could not apply, with the reason.
@@ -2192,7 +2198,7 @@ impl Report {
     fn skip(&mut self, name: &str, why: impl AsRef<str>) {
         self.checks += 1;
         self.skipped += 1;
-        println!("[SKIP] {name:56} {}", why.as_ref());
+        println!("{:7}{name:56} {}", "[SKIP]", why.as_ref());
     }
 
     fn finish(&self) -> ! {

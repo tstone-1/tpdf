@@ -237,11 +237,11 @@ fn warming_holds(present: &[PathBuf], warm: &[Vec<f64>]) -> bool {
 
     let gap = base14 - embedded;
     let ok = gap < HALF_A_FONT_WALK_MS;
+    let label = if ok { "[OK]" } else { "[FAIL]" };
     println!(
-        "\n[{}] a warmed worker does not pay the font walk    \
+        "\n{label:7}a warmed worker does not pay the font walk    \
          base-14 {base14:.2} ms against embedded {embedded:.2} ms, \
-         a gap of {gap:+.2} ms against a {HALF_A_FONT_WALK_MS} ms bound",
-        if ok { "OK" } else { "FAIL" }
+         a gap of {gap:+.2} ms against a {HALF_A_FONT_WALK_MS} ms bound"
     );
     ok
 }
