@@ -1,0 +1,275 @@
+name: Release
+
+# Builds installers and publishes them to a GitHub Release.
+#
+# macOS is signed with a Developer ID identity and notarized by Apple, so it
+# opens without a Gatekeeper bypass. Windows has no Authenticode certificate and
+# is unsigned; SmartScreen warns on first launch.
+#
+# Signing is conditional on the Apple secrets being present, so a checkout
+# without them still builds -- ad-hoc signed and unnotarized.
+#
+# Trigger by pushing a CalVer tag:
+#   git tag v26.8.0 && git push origin v26.8.0
+#
+# ---------------------------------------------------------------------------
+# NOTHING BELOW THE WINDOWS LEG HAS EVER RUN.
+#
+# This was written on Windows, from `screenpick`'s working release workflow.
+# Everything about the Apple half -- the conditional export, the dylib signing,
+# the DMG notarization, the verification -- is a claim until a tag is pushed.
+# The verification step at the end is written to FAIL rather than warn, because
+# a skipped notarization exits 0 and produces an app Gatekeeper rejects on any
+# machine that has never seen it, which is the "looks green" shape this
+# repository spends most of its documentation on.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    tags:
+      - "v[0-9][0-9].[0-9]*.[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  # A tag on a broken commit must not produce artifacts. This runs
+  # `scripts/gates.py` rather than restating its commands in YAML: that script
+  # *is* the gate list, and AGENTS.md records that a hand-copied command quietly
+  # loses a `--locked` or an `--all-targets` and then tests something weaker
+  # than the real gate. Ask the script, never a second copy.
+  gates:
+    name: Gates (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-2025]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS deps
+        run: npm ci
+
+      # `vendor/pdfium/` is gitignored -- the engine is fetched by digest, not
+      # committed. The first gate is `fetch_pdfium.py --check`, which fails on a
+      # missing or mismatched install, so this step is a prerequisite rather
+      # than a convenience.
+      - name: Install the pinned PDFium
+        run: python scripts/fetch_pdfium.py
+
+      - name: Quality gates
+        run: python -u scripts/gates.py
+
+  release:
+    name: ${{ matrix.label }}
+    needs: gates
+    strategy:
+      fail-fast: false
+      # SERIAL. Both legs create or update the same GitHub Release through
+      # tauri-action, and two jobs racing on that is a general hazard, not a
+      # theoretical one -- screenpick hit the updater-manifest variant of it,
+      # where the second upload silently dropped the first platform's entry and
+      # nothing failed to say so. tpdf ships no updater today, so that exact
+      # failure cannot occur here; the release-creation race still can.
+      #
+      # If an updater is ever added, this is not optional any more.
+      max-parallel: 1
+      matrix:
+        include:
+          # Apple Silicon only, deliberately. `fetch_pdfium.py` installs one
+          # architecture, so a universal build would need `mac-arm64` and
+          # `mac-x64` fetched separately and `lipo`'d into a fat dylib -- and an
+          # x86_64 slice of the app carrying an arm64-only PDFium would fail at
+          # bind time on an Intel Mac, which nothing available here can test.
+          # Both target machines are Apple Silicon.
+          - platform: macos-latest
+            label: macOS (Apple Silicon)
+            bundle-dir: src-tauri/target/release/bundle
+          - platform: windows-2025
+            label: Windows (x64)
+            bundle-dir: src-tauri/target/release/bundle
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Install the pinned PDFium
+        run: python scripts/fetch_pdfium.py
+
+      # The vars go through $GITHUB_ENV rather than the build step's `env:`
+      # block, and that is load-bearing rather than stylistic. With `env:`, a
+      # checkout without the secrets hands the Tauri CLI an EMPTY
+      # APPLE_SIGNING_IDENTITY, which it reads as "sign with this identity" and
+      # fails on. Exporting conditionally leaves them genuinely unset, so the
+      # CLI falls back to ad-hoc signing and the build still completes.
+      #
+      # The CLI imports the certificate itself from APPLE_CERTIFICATE and
+      # APPLE_CERTIFICATE_PASSWORD and sets the key partition list, so codesign
+      # never blocks on an interactive prompt. No manual keychain step.
+      - name: Prepare Apple signing and notarization
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_API_KEY_P8" ]; then
+            echo "::warning::Apple signing secrets absent - building ad-hoc signed and UNNOTARIZED."
+            exit 0
+          fi
+
+          # notarytool wants the key as a file. RUNNER_TEMP goes with the
+          # runner, so it does not outlive the job.
+          KEYS="$RUNNER_TEMP/private_keys"
+          mkdir -p "$KEYS"
+          KEYFILE="$KEYS/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$KEYFILE"
+          chmod 600 "$KEYFILE"
+
+          # Heredoc for the certificate: base64 may arrive wrapped, and a
+          # multi-line value breaks the plain KEY=VALUE form.
+          {
+            echo "APPLE_CERTIFICATE<<__TAURI_EOF__"
+            printf '%s\n' "$APPLE_CERTIFICATE"
+            echo "__TAURI_EOF__"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            echo "APPLE_API_KEY=$APPLE_API_KEY"
+            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+            echo "APPLE_API_KEY_PATH=$KEYFILE"
+          } >> "$GITHUB_ENV"
+          echo "Apple signing enabled for this build."
+
+      # tpdf bundles a native library and neither screenpick nor dblitz does, so
+      # this step has no precedent to copy and is the one genuinely new part of
+      # the Apple half.
+      #
+      # Notarization requires EVERY Mach-O in the bundle to carry a Developer ID
+      # signature and the hardened runtime, `libpdfium.dylib` included. Whether
+      # Tauri's bundler signs nested resources is not something this repository
+      # has established. So the dylib is signed HERE, in `vendor/`, before the
+      # bundler copies it -- which is correct either way: if the bundler re-signs
+      # with `--deep` it overwrites this with the same identity, and if it does
+      # not, the copy that lands in the app is already signed.
+      - name: Sign the vendored PDFium
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        run: |
+          set -euo pipefail
+          DYLIB=vendor/pdfium/lib/libpdfium.dylib
+          codesign --force --timestamp --options runtime \
+            --sign "$APPLE_SIGNING_IDENTITY" "$DYLIB"
+          codesign -dv --verbose=4 "$DYLIB" 2>&1 | grep -q "Authority=Developer ID Application" \
+            || { echo "::error::vendored PDFium is not Developer ID signed"; exit 1; }
+          codesign -dv --verbose=4 "$DYLIB" 2>&1 | grep -q "flags=.*runtime" \
+            || { echo "::error::vendored PDFium lacks the hardened runtime"; exit 1; }
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "tpdf ${{ github.ref_name }}"
+          releaseBody: |
+            **macOS** — signed with a Developer ID identity and notarized by
+            Apple. Open it normally; no Gatekeeper bypass needed.
+
+            **Windows** — unsigned. SmartScreen warns on first launch: choose
+            *More info* → *Run anyway*.
+          releaseDraft: true
+          prerelease: false
+
+      # Tauri notarizes and staples the .app, then builds the DMG and only
+      # SIGNS it. The DMG is left unnotarized and `spctl -a -t open` rejects it
+      # as "Unnotarized Developer ID" -- and the DMG is what people download, so
+      # opening it still produces "Apple cannot check it for malicious
+      # software". Notarize and staple it too, then replace the asset
+      # tauri-action already uploaded. The app inside is unaffected: it is
+      # already stapled.
+      - name: Notarize and staple the macOS DMG
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          DMG=$(ls ${{ matrix.bundle-dir }}/dmg/*.dmg)
+          echo "Notarizing $DMG"
+          xcrun notarytool submit "$DMG" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG"
+          spctl -a -vvv -t open --context context:primary-signature "$DMG" 2>&1 \
+            | grep -q "source=Notarized Developer ID" \
+            || { echo "::error::DMG is still not notarized after stapling"; exit 1; }
+          gh release upload "${{ github.ref_name }}" "$DMG" --clobber \
+            --repo "$GITHUB_REPOSITORY"
+
+      # A skipped notarization does NOT fail the build: with credentials missing
+      # or malformed the bundler logs "skipping app notarization" and exits 0.
+      # Gate on the artifact so that cannot ship quietly.
+      #
+      # The dylib half also answers a question the code cannot: `PDFIUM_SUBDIR`'s
+      # doc comment records that the macOS bundle layout for a resource map is
+      # UNVERIFIED from a Mac. `find` locates it and prints the path, so the
+      # first real run settles where macOS actually puts it.
+      - name: Verify the macOS build is signed, notarized and stapled
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        run: |
+          set -euo pipefail
+          APP=$(ls -d ${{ matrix.bundle-dir }}/macos/*.app)
+          echo "app: $APP"
+
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+            || { echo "::error::not signed with a Developer ID identity"; exit 1; }
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -q "flags=.*runtime" \
+            || { echo "::error::hardened runtime missing - notarization cannot succeed"; exit 1; }
+          xcrun stapler validate "$APP"
+          spctl -a -vvv -t exec "$APP" 2>&1 | grep -q "source=Notarized Developer ID" \
+            || { echo "::error::Gatekeeper does not see this as notarized"; exit 1; }
+
+          # The engine must be present, and be present exactly once. Zero means
+          # the resource map did not survive into the bundle, which is the
+          # defect fixed on 2026-07-31 and would ship an app that cannot open a
+          # document at all.
+          mapfile -t DYLIBS < <(find "$APP" -name 'libpdfium.dylib')
+          echo "PDFium in the bundle at: ${DYLIBS[*]:-<none>}"
+          [ "${#DYLIBS[@]}" -eq 1 ] \
+            || { echo "::error::expected exactly one libpdfium.dylib, found ${#DYLIBS[@]}"; exit 1; }
+          codesign -dv --verbose=4 "${DYLIBS[0]}" 2>&1 | grep -q "Authority=Developer ID Application" \
+            || { echo "::error::bundled PDFium is not Developer ID signed"; exit 1; }
+          codesign -dv --verbose=4 "${DYLIBS[0]}" 2>&1 | grep -q "flags=.*runtime" \
+            || { echo "::error::bundled PDFium lacks the hardened runtime"; exit 1; }
+
+          echo "Verified: Developer ID signed, hardened, notarized, stapled, engine present."

@@ -1296,6 +1296,24 @@ experience.
   checks, six of them controls --- and the checks themselves by eleven mutations, all of
   which behaved as predicted, including one predicted to survive.
 
+### Added
+
+- **A release workflow, firing on a CalVer tag and on nothing else.**
+  `.github/workflows/release.yml` gates both platforms by invoking `scripts/gates.py` — not
+  by re-listing its commands — then builds, signs, notarizes and publishes a draft release.
+  macOS is Apple Silicon only: `fetch_pdfium.py` installs one architecture, and an x86_64
+  slice carrying an arm64 engine would fail at bind time on a machine nothing here can test.
+
+  The part with no precedent in the portfolio is signing the bundled `libpdfium.dylib` —
+  neither `screenpick` nor `dblitz` ships a native library, and notarization requires every
+  Mach-O in the bundle to be Developer ID signed with the hardened runtime. It is signed in
+  `vendor/` before the bundler copies it, which holds whether or not Tauri re-signs nested
+  resources.
+
+  **Nothing in the macOS half has run yet.** Its verification step fails rather than warns,
+  because a skipped notarization exits 0 and yields an app Gatekeeper rejects on any machine
+  that has never seen it.
+
 ### Changed
 
 - **The installers no longer ship the development spikes.** All 17 probe and benchmark

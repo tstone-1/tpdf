@@ -247,16 +247,32 @@ Two of them are worth understanding rather than just running:
   missing or is not the pinned build --- which is the difference between a benchmark that
   means something and one that does not.
 
-### There is no remote CI, deliberately
+### CI runs on a tag, and on nothing else
 
-The project is pre-release and developed on one machine. A GitHub Actions workflow would
-add macOS-runner minutes and a second place for the gate list to live, in exchange for
-catching nothing that `scripts/gates.py` does not catch locally first.
+There is still no per-push CI, for the reason there never was: one machine, and a workflow
+running on every commit would add macOS-runner minutes and a second place for the gate list
+to live, in exchange for catching nothing `scripts/gates.py` does not catch locally first.
 
-When CI is added --- the natural trigger is the repo going public, or a second contributor
---- **the workflow should invoke `scripts/gates.py`**, not re-list the commands in YAML. That
-keeps the checklist and the gate the same object rather than two things that happen to
-agree today.
+`.github/workflows/release.yml` fires on a CalVer tag. It **invokes `scripts/gates.py`** on
+both platforms rather than re-listing commands in YAML, so the checklist and the gate stay
+one object instead of two that happen to agree today. Then it builds, signs, notarizes and
+publishes a draft release.
+
+It arrived for a reason this document did not predict --- it expected the trigger to be the
+repo going public or a second contributor. What actually forced it is notarization: it needs
+a Mac, a Developer ID and Apple API credentials, and a signed macOS release should not
+depend on which machine is free.
+
+**Its macOS half has never run.** Ported from `screenpick`, whose version is proven; the
+part with no precedent is signing the bundled `libpdfium.dylib`, since neither sibling ships
+a native library. Notarization requires every Mach-O in the bundle to be Developer ID signed
+with the hardened runtime, so the dylib is signed in `vendor/` before the bundler copies it
+--- correct whether or not Tauri re-signs nested resources. The verification step fails
+rather than warns, because a skipped notarization exits 0.
+
+The first successful run also settles something the code cannot: `pdfium_library_dir`
+records the macOS bundle layout for a resource map as unverified, and the verification step
+prints where `libpdfium.dylib` actually landed.
 
 ### Windows runs the viewer, and how it came to be contained
 
