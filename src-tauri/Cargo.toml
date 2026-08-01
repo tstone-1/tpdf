@@ -190,6 +190,10 @@ name = "outline-probe"
 path = "examples/outline_probe.rs"
 
 [[example]]
+name = "search-probe"
+path = "examples/search_probe.rs"
+
+[[example]]
 name = "structure-probe"
 path = "examples/structure_probe.rs"
 

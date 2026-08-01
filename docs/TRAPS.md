@@ -4801,3 +4801,254 @@ table can be enumerated in a test where a fixture has to contain each case physi
 viewer check and a unit test cover the same rule, the unit test is the one that can be
 exhaustive and the viewer check is the one that proves the rule is wired --- so a viewer check
 surviving a mutation its unit test catches means the *fixture* is thin, not the suite.
+
+### `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
+
+`text.rs` opens by explaining why `PageText` carries codes rather than a string: three
+features reading three different extractions would disagree in ways no test catches. Its own
+docs go further and name the documents where a re-encoding goes wrong --- *"CJK, symbol fonts,
+anything astral"*. And then the code did exactly that, through a different call.
+
+`FPDFText_GetUnicode` returns a UTF-16 **code unit**. A code point above the BMP therefore
+arrives as two characters: measured on `testdata/multilingual.pdf`, U+20000 came back as
+U+D840 and U+DC00, each with the same box. So `codes` was documented as "one Unicode scalar per
+character index" and was not, and every consumer that turns a code into a `char` gets `None`
+for both halves --- `char::from_u32` refuses a surrogate. The fold in `search.rs` dropped them,
+which means a **CJK Extension B ideograph was unfindable while being plainly visible on the
+page**, and `PageMatches::chars` reported 30 for a page with 27 characters.
+
+The part that let it live is the direction the two consumers fail in. Rust drops the halves;
+**JavaScript reassembles them by accident**, because `String.fromCodePoint(0xD840)` is a legal
+lone surrogate and concatenating two of them produces the right character. So the frontend read
+the broken array correctly and the backend did not, and no check written on either side alone
+could see it. The one that found it compares a *hit's own text* against the code points its
+indices address --- which is a Rust-side assertion by necessity, and is the reason
+`examples/search_probe.rs` exists rather than a frontend check.
+
+The fix is one place: `extract` joins the pair into one entry and unions the boxes, so the field
+means what it says. An **unpaired** surrogate --- a broken `/ToUnicode` CMap rather than an astral
+character --- becomes U+FFFD, because dropping it would silently shorten the page and shift every
+box after it, and keeping it raw leaves a number no consumer can decode.
+
+The general shape: **an FFI call's element type is part of its contract, and a name like
+`GetUnicode` does not tell you which encoding.** Ask what one call returns for one character
+outside the BMP before assuming the array is scalars.
+
+### A content stream has no bidi, so logical order draws right-to-left text backwards
+
+Writing the Arabic page of `multilingual.pdf`, the obvious thing is to put the logical string
+into a `Tj`. `Tj` advances left to right in the order the glyphs are given, so the first
+character read lands leftmost and the line is drawn reversed. A real producer emits **visual**
+order --- for one unbroken run, the logical order reversed --- and shapes at layout time.
+
+What makes this worth an entry is not the mistake, it is how it presents. PDFium recognises a
+right-to-left run and reverses it to recover logical order, so the page laid out logically
+extracted *exactly reversed*, and the fixture's own expectations then looked like an extraction
+defect in tpdf. Two hours were one wrong turn away: the first reading was "our extraction
+reverses Arabic", which is a plausible and serious-sounding claim about the code. The check that
+settled it was one line --- comparing the extracted characters against `reversed(written)` ---
+and it should be the first thing tried whenever an ordering comes back inverted, because a
+*systematic* reversal is nearly always a convention mismatch rather than a bug.
+
+A second trap sits inside the first. Reversing the **whole line** is wrong once it contains a
+Latin word: `PDF` becomes `FDP`. Direction is per-run, and a neutral (a space) between two runs
+of *different* direction has to be resolved to the paragraph direction, not attached to whichever
+run precedes it. Getting that wrong put two spaces in one place and none in the other, and what
+surfaced was a space **missing** from the extracted text --- which reads as a extraction defect
+too.
+
+Worth knowing for the viewer side: reading order survives this. A fragment's ranges follow index
+order rather than x order, so a right-to-left line comes back logical even though the code sorts
+band members left to right. That is luck rather than design, and it is now measured.
+
+### PDFium maps Arabic presentation forms to base letters, which was assumed to be false
+
+A producer that shapes at layout time writes Arabic in the presentation-forms blocks (U+FB50 to
+U+FEFF): U+FEDF is a lam, and it is not U+0644. The obvious consequence is that a reader typing
+base letters cannot find shaped text, and `multilingual.pdf` was built with the two spellings on
+two lines to demonstrate it. The manifest said so, in a field explaining why the count was 1.
+
+It is 2. **PDFium normalises presentation forms to their base letters when it extracts**, so both
+lines come back character for character identical and a base-letter query finds both. The
+corollary is the one that would have been guessed wrong in the other direction too: a query
+written *in* presentation forms finds **nothing**, including the line that was written in them.
+
+Two things follow, and the second is the reusable one.
+
+The narrow one: do not add compatibility folding to `search.rs` for Arabic. The layer below
+already did it, and folding again would only widen what a highlight covers.
+
+The general one: **a fixture's expectations come in three kinds and conflating them is how a
+measurement comes to look like a specification.** `multilingual-manifest.json` now marks each
+query `why` (stated from what the generator wrote --- it inserted the substring, so nothing about
+the code can change the count), `measured` (a property of PDFium this corpus established), or
+`decided` (a product decision, so changing it has to be argued for). The count that was wrong
+here was written as a `why` --- as a fact about the file --- when it was a claim about a
+dependency nobody had asked.
+
+### `ß` does not lowercase to `ss`, and the doc comment saying so stood for days
+
+`search.rs` documented its fold with an example: *"Because folding can change a character's
+length --- `ß` lowercases to `ss` ---"*. It does not. `ß` **uppercases** to `SS` and lowercases to
+itself, because it is already lowercase. So `strasse` finds `STRASSE` and not `Straße`, which is
+a gap a German reader meets on their first search.
+
+Nothing was wrong with the code; the example was. It survived because both halves of the
+sentence around it are true --- the fold *can* change a character's length, and it *does* carry a
+source index per folded character for that reason --- so the paragraph reads as coherent and only
+the instance is false. The mechanism was real and had a different cause: `İ` (U+0130) lowercases
+to `i` followed by U+0307, which is the length change that actually happens here.
+
+Three consequences, all one cause, and all now stated as `decided` counts in
+`multilingual-manifest.json` so that changing any of them is a decision:
+
+- `strasse` does not find `Straße`.
+- `istanbul` does not find `İstanbul` --- the fold leaves the combining dot between the `i` and
+  the `s`.
+- Greek `οδος` (final sigma, which is what a reader types) finds neither `ΟΔΟΣ` nor `οδός`,
+  because `Σ` lowercases to `σ` and never to `ς`.
+
+**Lowercasing is not case folding.** Case folding fixes all three in one move and Rust's standard
+library does not offer it, so it means a dependency --- and it also folds `ﬁ` to `fi`, which the
+same module says outright it does not do. That makes it a decision about what a highlight may
+cover, not a bug fix, which is why the limitation is recorded rather than quietly patched.
+
+The habit: **a factual claim inside an otherwise-correct paragraph is the hardest kind to
+notice.** The thing that caught it was a fixture line asserting a count, not a reader.
+
+### A combining mark does not touch its own line, and a word with an ascender hides it
+
+An acute accent sits above the x-height. Measured on `multilingual.pdf`: U+0301 at 718.64--721.30
+against an `e` at 707.80--717.68 --- a 0.96 pt gap, and **no overlap at all**. `sameBand` requires
+overlap before it considers anything, and is right to: its short-mark clause exists for a comma
+that *dips into* the line, and loosening it to bridge a gap would start joining a mark to the line
+above in tightly leaded text.
+
+So `resumé` written decomposed came back as three lines --- `resume`, the accent alone, then the
+rest --- and the accessibility tree announced them that way.
+
+`café` does **not** show it. The `f` reaches to 721.30 and drags the accumulated band up into
+contact with the accent, so a word with an ascender passes. That is the discriminating property,
+and it took a second fixture line to find: the first decomposed line in the corpus had an `f` in
+it and was green.
+
+The fix is not geometric. **Unicode already answers the question the geometry cannot, and it
+answers it about the character rather than about where the producer drew it**: `\p{Mn}` and
+`\p{Me}` have no advance width and belong to the grapheme before them, so a mark is attached to
+the preceding character the same way a box-less character already was, and its box is folded into
+its base's.
+
+Two things the fix needed that the first attempt did not have. A mark with **nothing before it**
+has no base, and keeps its own band --- inventing an attachment to the character *after* it would
+be wrong in the one direction that reorders text. And the control against over-reach cannot be an
+*order* assertion: within one fragment the order is index order, so a raised digit beside its
+neighbours reads identically whether it is treated as a character or as a mark, and two
+arrangements were tried before that was clear. What discriminates is the **line count** --- a digit
+widened into the mark class swallows the line below it.
+
+### A harness that cannot read a script skips, and blames the fixture
+
+`viewer_check.py` picks a word out of page 1 and searches for it. The picker was
+`/[A-Za-z]{5,}/`, which finds nothing on a page of Japanese --- so it returned null and
+**seventeen** search checks skipped, every one of them printing *"page 1 has no extractable
+text"* about a page with forty-nine characters on it.
+
+Two failures, and the second is worse than the first. The checks did not run, which a count of
+`[OK]` lines would show. But the **reason printed was false**, and a skip is read as *"this
+fixture cannot exercise this"* rather than *"this harness cannot read this input"* --- the first
+is a property of the corpus and needs no action, the second is a hole in the harness. Nine of
+those skip sites shared one hardcoded string, so the lie was a copy-paste rather than a
+misjudgement.
+
+Both halves are worth fixing separately: the picker now falls back to `[\p{L}\p{N}]{2,}` and
+takes a slice from the middle of the longest run --- two characters is a word in Japanese, and a
+needle that *is* the whole run makes the whole-word check vacuous --- and the reason now
+distinguishes "the page has no text" from "no word could be read out of the page's N characters".
+Twelve of the seventeen then ran, on the same binary, with no other change.
+
+The general rule: **a skip's reason is an assertion and can be wrong.** It is not commentary. Any
+branch that produces a skip has to name the condition it actually tested, and a reason shared by
+several sites is where that stops being true first.
+
+### A check with no precondition reports a sparse fixture as a defect
+
+`multilingual.pdf`'s pages carry three to six lines spread down an A4 sheet. The drag check drags
+horizontally at `y=140` and again at `y=620` and asserts the higher one comes from earlier in the
+text --- and `y=620` fell in a gap between two lines, so it selected nothing and the check
+reported *"selected 20 and 0 characters"* on a viewer that was working perfectly.
+
+The check already had two carefully written preconditions, for a rotated page and for a
+side-by-side layout, both with the reason printed. It had none for the simplest thing: **that
+there is text where it dragged.** With nothing selected at one of the two heights there is no
+ordering to compare and any verdict is invented, so the answer is a precondition rather than a
+widened assertion --- the assertion is the valuable part.
+
+Two habits from it. A fixture whose pages are **mostly blank** silently narrows any check that
+reads a position, which is why the corpus spreads its lines down the page rather than stacking
+them at a fixed leading in the top fifth; that alone moved the failure but did not remove it,
+because no even spread of three lines can guarantee one at 68% of the page. And a check that
+reads a hardcoded coordinate should say so in its skip, because the next fixture will have its
+text somewhere else again.
+
+### A check name that is a prefix of another cannot be aimed at
+
+`scripts/mutate_viewer.py` matches a mutation's expectation as a **substring** of the check names
+and refuses an expectation that names more than one --- a good rule, and the entry
+*"a mutation naming a test the harness cannot run reports SURVIVED"* is why it exists.
+
+`search_probe.rs` named its three checks per query `query astral-alone`, `query astral-alone:
+indices address the hit` and `query astral-alone: hit is paintable`. The first is a prefix of the
+other two, so no mutation could be aimed at it: the harness correctly refused, saying the
+expectation matched three checks.
+
+The fix is one word --- the count check is `query astral-alone: hit count` --- and the rule is
+worth stating because it constrains naming rather than code: **in any family of check names
+matched by substring, no name may be a prefix of another.** Adding a suffix to the general one is
+the cheap fix; renaming the specific ones is not, because their names are the useful part.
+
+Related to the padded-column entry, and the same family: a parser that works on the names you
+have now, and stops working when one grows.
+
+### A mutation aimed at code no fixture reaches survives, and the fix is not a new corpus
+
+`extract` translates the tagged runs from PDFium's character indices into ours, which only
+matters on a page that is **both** tagged and carrying a character above the BMP. `tagged.pdf`
+has no astral character and `multilingual.pdf` has no tags, so a mutation that switched the whole
+translation off passed `search-probe` and `structure-probe` alike. It is not defence against
+something impossible --- a tagged Japanese document with an Extension B ideograph in a name is
+ordinary --- so the surviving mutation was a real gap.
+
+Three options, and the ranking is the point. A **new corpus** that is tagged and astral is the
+thorough answer and the expensive one: a structure tree in a second generator, expectations for
+it, and a ninth fixture whose purpose overlaps two existing ones. **Deleting the translation** is
+what the "unreachable guard" entry would suggest and is wrong here, because the code is reachable
+by input rather than unreachable by construction. What was done instead: the arithmetic was split
+into a function of its own and given **five unit tests**, one per case including a run that ends
+between the halves of a pair, and the mutation was moved to the Rust harness where a unit test
+can judge it.
+
+The general rule: **when no fixture reaches a branch, ask whether the branch is arithmetic before
+building a fixture.** Arithmetic can be tested directly and exhaustively; only behaviour needs a
+document. Two of the five cases here --- an end index inside a pair, an index past the end --- are
+ones no realistic fixture would have contained anyway.
+
+### A stand-in glyph with a degenerate box measures the wrong rule
+
+The astral page of `multilingual.pdf` draws a stand-in glyph, because no font on either platform
+has a CJK Extension B ideograph, and re-labels its CID in the `/ToUnicode` CMap. The first choice
+was U+2F00 KANGXI RADICAL ONE, on the reasoning that a rare character cannot disturb another
+line.
+
+U+2F00 is a single horizontal stroke. PDFium reported it **1.6 pt tall inside an 18 pt line**, so
+it tripped the short-mark clause in the line grouper and the page split into three lines --- which
+is a finding about the *banding* rule, on a page built to test *surrogate pairs*. The check that
+failed named neither.
+
+Swapping it for U+3007 IDEOGRAPHIC NUMBER ZERO, which has a box of ordinary proportions, made the
+page measure what it is for.
+
+The habit: **a stand-in has to be typical in every dimension the harness reads, not only in the
+one it was chosen for.** It was chosen for being unused and it was also, invisibly, chosen for
+being the thinnest glyph in the font. Same family as the fixture entries above --- a property with
+one value present cannot be distinguished --- arriving through a substitution rather than through
+a missing case.

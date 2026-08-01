@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 187 entries
+The one thing this file does *not* carry in full is the trap list --- 197 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -588,8 +588,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 187 of them and the full text
-was 93% of this file --- an instruction budget spent on the 186 traps that are not
+titles. Only the titles are here, because there are 197 of them and the full text
+was 93% of this file --- an instruction budget spent on the 196 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -637,6 +637,13 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
 - An outline can be infinite, and PDFium says so in its own documentation
 - PDFium cannot create digital signatures
+
+### Text matching, and scripts that are not English
+- `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
+- A content stream has no bidi, so logical order draws right-to-left text backwards
+- PDFium maps Arabic presentation forms to base letters, which was assumed to be false
+- `ß` does not lowercase to `ss`, and the doc comment saying so stood for days
+- A combining mark does not touch its own line, and a word with an ascender hides it
 
 ### The worker boundary, the sandbox and the pool
 - macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
@@ -747,6 +754,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test cannot see the direction of an attachment it puts in index order
 - A guard for "more than one page" is not a guard for "a page that can be reached"
 - A wrap is correct when there is nothing ahead, so the check cannot fire
+- A check with no precondition reports a sparse fixture as a defect
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -775,6 +783,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A harness that synthesises input must reset the input's own state machine
 - The last page cannot reach the top of the viewport
 - An expected error line beside a passing suite makes a green run unreadable
+- A harness that cannot read a script skips, and blames the fixture
+- A check name that is a prefix of another cannot be aimed at
+- A mutation aimed at code no fixture reaches survives, and the fix is not a new corpus
 
 ### Windows and portability
 - A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
@@ -817,6 +828,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 
 ### Fixtures
 - The test fixtures are generated, not committed
+- A stand-in glyph with a degenerate box measures the wrong rule
 
 ## Repository facts
 

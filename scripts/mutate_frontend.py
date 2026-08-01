@@ -66,6 +66,47 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # `resumé` decomposed came back as three lines --- `resume`, the accent
+        # alone, then the rest --- because an acute sits above the x-height and its
+        # box does not touch a word with no ascender. `café` hides it: the `f`
+        # reaches up far enough to drag the band into contact.
+        "mark: let a combining mark open a band of its own",
+        "src/lib/reading.ts",
+        "    const mark = last >= 0 && combining(text.codes[index] ?? 0);",
+        "    const mark = false;",
+        "does not open a line of its own",
+    ),
+    Mutation(
+        # The other direction: attach the mark to the character *after* it. The
+        # line count is then right and the text reads `resum` `é` the wrong way
+        # round, which a check on the number of lines cannot see.
+        "mark: attach a combining mark to the character after it",
+        "src/lib/reading.ts",
+        "      const at = trailing.get(last) ?? [];\n      at.push(index);\n      trailing.set(last, at);\n      if (mark && placed(box)) {",
+        "      const at = trailing.get(mark ? index : last) ?? [];\n      at.push(index);\n      trailing.set(mark ? index : last, at);\n      if (mark && placed(box)) {",
+        "stays with the character it decorates",
+    ),
+    Mutation(
+        # Key on the geometry rather than on the character: a small box high up.
+        # It catches the accent and also catches a superscript, which is a
+        # character in its own right with its own advance width.
+        "mark: treat anything small and raised as a combining mark",
+        "src/lib/reading.ts",
+        "const COMBINING = /^[\\p{Mn}\\p{Me}]$/u;",
+        "const COMBINING = /^[\\p{Mn}\\p{Me}0-9]$/u;",
+        "keys on the character rather than on the box",
+    ),
+    Mutation(
+        # Leave the mark out of the base's box. The line then reads correctly and
+        # cannot be hit-tested at the top of the accent, which is the half a text
+        # comparison is blind to.
+        "mark: leave a combining mark out of its line's box",
+        "src/lib/reading.ts",
+        "          absorb(base.box, box);\n          base.extents = extentsOf(base.box, axes);",
+        "",
+        "is covered by its line's box",
+    ),
+    Mutation(
         "word: do not walk left from the clicked character",
         "src/lib/text.ts",
         "  while (from > 0 && classOf(codes[from - 1] ?? 0) === kind) from--;",
@@ -581,13 +622,11 @@ MUTATIONS = [
     Mutation(
         "reading: drop the characters PDFium placed nowhere",
         "src/lib/reading.ts",
-        """    if (!placed(box)) {
-      const at = trailing.get(last) ?? [];
-      at.push(index);
-      trailing.set(last, at);
-      continue;
-    }""",
-        "    if (!placed(box)) continue;",
+        """    if (!placed(box) || mark) {
+      const at = trailing.get(last) ?? [];""",
+        """    if (!placed(box) || mark) {
+      if (!placed(box)) continue;
+      const at = trailing.get(last) ?? [];""",
         "returns every character exactly once",
     ),
     Mutation(

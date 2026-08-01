@@ -11,6 +11,50 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Phase 1 --- search on text that is not English
+
+- **`testdata/make_multilingual_pdf.py`**, the corpus `docs/PLAN.md` Phase 1 names as one of two
+  items not to be estimated as viewer polish. Four pages, one property each: Japanese with no word
+  separators and a Latin token inside the run, Arabic in base letters *and* in presentation forms,
+  a folding page (NFC against NFD, a Turkish dotted capital, Greek final sigma, `ß`), and a code
+  point above the BMP. Identity-H over a subsetted CIDFontType2 throughout, per-page font selection
+  with a hard error naming the missing character, and a self-check that refuses to write a fixture
+  that has stopped discriminating.
+- **`codes` is now what it always claimed to be: one Unicode scalar per index.**
+  `FPDFText_GetUnicode` is a UTF-16 API, so PDFium reported U+20000 as two lone surrogates with one
+  box each --- `char::from_u32` refuses both, the fold dropped them, and a CJK Extension B ideograph
+  was **unfindable while plainly visible on the page**. `extract` joins the pair and unions the
+  boxes; an unpaired surrogate becomes U+FFFD rather than being dropped, which would shorten the
+  page and shift every box after it. JavaScript had been reassembling the halves by accident, so
+  only a Rust-side assertion could see it.
+- **A combining mark no longer opens a line of its own.** An acute sits above the x-height and its
+  box does not touch a word with no ascender --- measured, a 0.96 pt gap --- so `resumé` written
+  decomposed read as three lines and the accessibility tree announced them that way. `café` hides
+  it, because the `f` drags the band up into contact. Keyed on `\p{Mn}`/`\p{Me}` rather than on
+  geometry, which answers the question about the character instead of about where it was drawn.
+- **`examples/search-probe`**, 60/60 with 9 not applicable: per-page text against the manifest,
+  per-query hit **counts**, and per-hit assertions that the indices address the text the match
+  claims and that every hit is paintable. Nineteen queries, each labelled *stated*, *measured* or
+  *decided* so that a product decision cannot be mistaken for a measurement.
+- **What the corpus established about PDFium**, both the opposite of what was assumed: it maps
+  Arabic **presentation forms to base letters** on extraction, so a base-letter query finds shaped
+  text and a presentation-form query finds nothing; and it recovers **logical order** from a
+  right-to-left run, so a query in reading order matches.
+- **What it established about our fold**, all one cause and all now recorded as decisions:
+  `strasse` does not find `Straße`, `istanbul` does not find `İstanbul`, and Greek `οδος` finds
+  neither spelling. `search.rs` had documented *"`ß` lowercases to `ss`"*, which is false --- `ß`
+  uppercases to `SS`. Lowercasing is not case folding; taking case folding means a dependency and
+  also means folding `ﬁ` to `fi`, which the same module says it does not do.
+- **Two harness defects the corpus exposed.** `viewer_check.py`'s word picker was `/[A-Za-z]{5,}/`,
+  so **seventeen** search checks skipped on a Japanese page while printing *"page 1 has no
+  extractable text"* about forty-nine characters --- unexercised checks *and* a false reason. Twelve
+  run now. And the drag check had no precondition for "there is text where I dragged", so a page
+  with lines spread down an A4 sheet read as a defect.
+- 10 new unit tests (surrogate pairing, and the index translation no fixture reaches), 5 new
+  front-end tests, and 9 new mutations --- 3 Rust, 4 front-end, 2 through the new `search` runner of
+  `scripts/mutate_viewer.py` --- all caught. All **nine** corpora report the same 157 check names,
+  sets diffed pairwise.
+
 ### Phase 1 --- a document's own reading order, read and proved
 
 - **`src-tauri/src/structure.rs`** reads a page's `/StructTree`: the runs in the order the

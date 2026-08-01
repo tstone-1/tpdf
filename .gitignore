@@ -38,4 +38,5 @@ testdata/outline-manifest.json
 testdata/rotated-manifest.json
 testdata/columns-manifest.json
 testdata/tagged-manifest.json
+testdata/multilingual-manifest.json
 __pycache__/

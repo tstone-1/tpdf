@@ -69,8 +69,10 @@ class Mutation:
     after: str
     expect: str
     #: Which harness runs it. "viewer" is `viewer_check.py` against a bundle,
-    #: "viewer-tagged" the same against the tagged corpus, and "structure" is
-    #: `structure-probe`, which needs no webview at all. All three print
+    #: "viewer-tagged" the same against the tagged corpus, and "structure" and
+    #: "search" are `structure-probe` and `search-probe`, which need no webview at
+    #: all --- so neither waits for a bundle nor requires an unlocked screen. All
+    #: of them print
     #: the same `[FAIL] name` lines and the same summary, so everything below ---
     #: the cross-check, the byte restore, the name validation --- is shared.
     runner: str = "viewer"
@@ -241,6 +243,31 @@ MUTATIONS = [
         "a pattern that does not compile says so instead of finding nothing",
     ),
     Mutation(
+        # The defect the corpus was built to look for, seen from the far end: the
+        # unit tests in `text.rs` cover the pairing rule, and this covers what a
+        # reader actually experiences --- a query for an Extension B ideograph
+        # finding nothing on a page that plainly shows one.
+        "an astral code point is two characters",
+        "src-tauri/src/text.rs",
+        "    match next {\n        Some(low) if (0xDC00..0xE000).contains(&low) => {",
+        "    match None::<u32> {\n        Some(low) if (0xDC00..0xE000).contains(&low) => {",
+        "query astral-alone: hit count",
+        "search",
+    ),
+    Mutation(
+        # A mutation only a non-Latin corpus can catch, which is the point of
+        # having one: with `is_word` restricted to ASCII, Kanji stop being word
+        # characters, so the whole-word search that correctly finds nothing inside
+        # a Japanese run starts finding something. Every Latin fixture agrees with
+        # both spellings of the rule.
+        "only ASCII letters are word characters",
+        "src-tauri/src/search.rs",
+        "    ch.is_alphanumeric() || ch == '_'",
+        "    ch.is_ascii_alphanumeric() || ch == '_'",
+        "query cjk-substring-whole-word: hit count",
+        "search",
+    ),
+    Mutation(
         "a paragraph's generated gaps are not bridged",
         "src-tauri/src/structure.rs",
         "            Some(last) if bridgeable(last.1 as usize, span.0 as usize) => last.1 = span.1,",
@@ -295,6 +322,24 @@ RUNNERS = {
     "viewer-tagged": {
         "build": ["npm", "run", "tauri", "build", "--", "--bundles", "app"],
         "run": None,
+    },
+    "search": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "search-probe",
+        ],
+        "run": [
+            "src-tauri/target/release/examples/search-probe",
+            "--lib",
+            "vendor/pdfium/lib",
+            "--file",
+            "testdata/multilingual.pdf",
+        ],
     },
     "structure": {
         "build": [

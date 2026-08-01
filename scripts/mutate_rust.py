@@ -47,7 +47,7 @@ CRATE = ROOT / "src-tauri"
 #: read as a mutation being caught. libtest takes several filters and ORs them,
 #: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
 #: which is worth knowing because it looks like the feature being unsupported.
-FILTERS = ["search::", "structure::"]
+FILTERS = ["search::", "structure::", "text::"]
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,59 @@ class Mutation:
 
 
 MUTATIONS = [
+    Mutation(
+        # No corpus reaches this: it fires only on a page that is both tagged and
+        # carries a character above the BMP, and neither fixture is both. A
+        # mutation switching the whole translation off passed `search-probe` and
+        # `structure-probe` alike, which is why the arithmetic was split out and is
+        # judged here instead.
+        "text: leave the tagged runs in PDFium's index space",
+        "src/text.rs",
+        "    if ours.len() == len + 1 {\n        // No pair anywhere, so the two spaces are the same one.\n        return;\n    }",
+        "    return;\n    #[allow(unreachable_code)]",
+        "a_run_after_a_pair_moves_back_by_the_units_it_saved",
+    ),
+    Mutation(
+        # The opposite: translate even when there is nothing to translate. It is
+        # the identity, so only a fixture with no pair can tell.
+        "text: round a run's end outwards to include a half-covered pair",
+        "src/text.rs",
+        "    let at = |index: u32| ours.get(index as usize).copied().unwrap_or(len as u32);",
+        "    let at = |index: u32| ours.get(index as usize + 1).copied().unwrap_or(len as u32);",
+        "a_run_ending_inside_a_pair_comes_back_empty",
+    ),
+    Mutation(
+        # The defect the multilingual corpus was built to look for, and it was
+        # there: `FPDFText_GetUnicode` is a UTF-16 API, so an astral code point
+        # arrives as two lone surrogates. `char::from_u32` refuses both, the fold
+        # drops them, and a CJK Extension B ideograph is unfindable while being
+        # perfectly visible on the page.
+        "text: report a surrogate pair as two characters",
+        "src/text.rs",
+        "    match next {\n        Some(low) if (0xDC00..0xE000).contains(&low) => {\n            (0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00), 2)\n        }\n        _ => (REPLACEMENT, 1),\n    }",
+        "    let _ = next;\n    (REPLACEMENT, 1)",
+        "a_surrogate_pair_becomes_one_scalar_over_two_units",
+    ),
+    Mutation(
+        # The other direction: pair anything that follows a high surrogate. This
+        # consumes a real character, so the page comes back one short and every
+        # box after it shifts.
+        "text: pair a high surrogate with whatever follows it",
+        "src/text.rs",
+        "        Some(low) if (0xDC00..0xE000).contains(&low) => {",
+        "        Some(low) => {",
+        "a_high_surrogate_followed_by_anything_else_is_replaced",
+    ),
+    Mutation(
+        # A lone surrogate dropped rather than replaced. It looks tidier and it
+        # shortens the page silently, which is the one thing an index space may
+        # not do.
+        "text: treat a lone low surrogate as two units wide",
+        "src/text.rs",
+        "    if !(0xD800..0xDC00).contains(&code) {\n        return (REPLACEMENT, 1);\n    }",
+        "    if !(0xD800..0xDC00).contains(&code) {\n        return (REPLACEMENT, 2);\n    }",
+        "a_lone_low_surrogate_is_replaced_and_never_paired_backwards",
+    ),
     Mutation(
         "fold: keep every whitespace character instead of collapsing runs",
         "src/search.rs",

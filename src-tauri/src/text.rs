@@ -145,6 +145,12 @@ impl Drop for RawTextPage<'_> {
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PageText {
     /// One Unicode scalar per character index. See the module docs.
+    ///
+    /// **Scalar, not UTF-16 code unit**, and that distinction is paid for rather
+    /// than free: `FPDFText_GetUnicode` is a UTF-16 API, so PDFium reports a code
+    /// point above the BMP as *two* characters --- a high surrogate and a low one,
+    /// each with the same box. [`extract`] joins them back into one entry, which
+    /// is what makes this field mean what the line above says it does.
     pub codes: Vec<u32>,
     /// Four values per character --- `left, top, right, bottom` --- with y
     /// increasing downwards and the origin at the page's top-left corner, in
@@ -253,6 +259,76 @@ pub fn turn_device(turns: u8, width: f32, height: f32, quad: [f32; 4]) -> [f32; 
     }
 }
 
+/// What PDFium reports at `index`, as a scalar, and how many indices it used.
+///
+/// `FPDFText_GetUnicode` is a UTF-16 API. A code point above the BMP therefore
+/// arrives as two characters, and everything downstream treats a character index
+/// as a code point: `char::from_u32` of a lone surrogate is `None`, so the fold
+/// in `search.rs` drops both halves and an Extension B ideograph is unfindable.
+/// Measured on `testdata/multilingual.pdf`, where U+20000 came back as U+D840
+/// and U+DC00 with one box each --- and JavaScript reassembled them by accident,
+/// because two adjacent lone surrogates concatenate into the right character
+/// there. Two consumers of one array disagreeing about how many characters it
+/// holds is the failure `text.rs` opens by saying this module exists to prevent.
+///
+/// An **unpaired** surrogate is a broken `/ToUnicode` CMap rather than an astral
+/// character, and becomes U+FFFD: it is what every other decoder does, it keeps
+/// one index per character, and it is visible. Dropping it would silently shorten
+/// the page and shift every box after it.
+/// Split from [`scalar_at`] so it can be tested without a document: the pairing
+/// rule is arithmetic over two numbers, and a test that has to open a PDF to
+/// reach it would be testing PDFium.
+fn scalar_of(code: u32, next: Option<u32>) -> (u32, u32) {
+    const REPLACEMENT: u32 = 0xFFFD;
+    if !(0xD800..=0xDFFF).contains(&code) {
+        return (code, 1);
+    }
+    if !(0xD800..0xDC00).contains(&code) {
+        return (REPLACEMENT, 1);
+    }
+    match next {
+        Some(low) if (0xDC00..0xE000).contains(&low) => {
+            (0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00), 2)
+        }
+        _ => (REPLACEMENT, 1),
+    }
+}
+
+fn scalar_at(text: &RawTextPage<'_>, index: u32, count: u32) -> (u32, u32) {
+    let next = (index + 1 < count).then(|| text.code(index + 1));
+    scalar_of(text.code(index), next)
+}
+
+/// Moves tagged runs from PDFium's character indices into ours.
+///
+/// `structure.rs` speaks to PDFium, so its ranges count a surrogate pair twice.
+/// Translating them here keeps that module free of the distinction --- it indexes
+/// what PDFium indexes --- and makes this the single place the two spaces meet.
+///
+/// **No fixture reaches this**, and that is why it is a function of its own rather
+/// than four lines inside [`extract`]. It fires only on a page that is both tagged
+/// *and* carries a character above the BMP: `tagged.pdf` has no astral character
+/// and `multilingual.pdf` has no tags, so a mutation that switched the whole
+/// translation off passed both probes. A tagged Japanese document with an
+/// Extension B ideograph in a name is not exotic, so the answer is a unit test on
+/// arithmetic rather than either a new corpus or a guard nothing watches.
+///
+/// `ours` is one longer than PDFium's character count, so an exclusive end index
+/// has somewhere to land. An `end` that falls *between* the halves of a pair maps
+/// to the pair's own index and the run comes back empty --- which is the honest
+/// answer for a mark that claims half a character.
+fn retarget(runs: &mut [crate::structure::TaggedRun], ours: &[u32], len: usize) {
+    if ours.len() == len + 1 {
+        // No pair anywhere, so the two spaces are the same one.
+        return;
+    }
+    let at = |index: u32| ours.get(index as usize).copied().unwrap_or(len as u32);
+    for run in runs.iter_mut() {
+        run.start = at(run.start);
+        run.end = at(run.end);
+    }
+}
+
 /// Extracts a page's text and character geometry.
 pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     let started = std::time::Instant::now();
@@ -265,16 +341,52 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
 
     let mut codes = Vec::with_capacity(count as usize);
     let mut boxes = Vec::with_capacity(count as usize * 4);
+    // PDFium's character index to ours. One entry longer than the character
+    // count, so an exclusive end index has somewhere to land.
+    let mut ours = Vec::with_capacity(count as usize + 1);
 
-    for index in 0..count {
-        codes.push(text.code(index));
-        match text.char_box(index) {
+    let mut index = 0;
+    while index < count {
+        ours.push(codes.len() as u32);
+        let (scalar, units) = scalar_at(&text, index, count);
+        if units == 2 {
+            // Both halves map to the one entry they became, so a range that
+            // starts or ends between them still lands on the whole character.
+            ours.push(codes.len() as u32);
+        }
+        codes.push(scalar);
+
+        let mut quad = text.char_box(index);
+        if units == 2 {
+            // The two halves carry identical boxes in every case measured, and a
+            // union is still the right answer: one character occupies one area,
+            // and taking only the first half's box would be trusting that they
+            // agree.
+            //
+            // Which does mean **no fixture can distinguish the two**: a mutation
+            // that drops the union passes `search-probe`, because the operands are
+            // equal. Recorded rather than dressed up as tested --- it is one line
+            // of defence against a PDFium that reports the halves differently, and
+            // if that ever happens the box is right instead of arbitrary.
+            quad = match (quad, text.char_box(index + 1)) {
+                (Some(first), Some(second)) => Some([
+                    first[0].min(second[0]),
+                    first[1].min(second[1]),
+                    first[2].max(second[2]),
+                    first[3].max(second[3]),
+                ]),
+                (only, None) | (None, only) => only,
+            };
+        }
+        match quad {
             Some(page_box) => {
                 boxes.extend_from_slice(&to_device(turns, width_pt, height_pt, page_box));
             }
             None => boxes.extend_from_slice(&[0.0; 4]),
         }
+        index += units;
     }
+    ours.push(codes.len() as u32);
 
     // The tags, using the text page already loaded. An untagged document ---
     // which is most of them --- pays one FFI call for this, because
@@ -282,7 +394,8 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     // has no tree at all. A tagged one pays two calls per character, which is
     // what relating a mark to a character index costs and is why it is not done
     // on a page nobody asked about.
-    let runs = structure::read_using(page, &text)?.complete_runs();
+    let mut runs = structure::read_using(page, &text)?.complete_runs();
+    retarget(&mut runs, &ours, codes.len());
 
     Ok(PageText {
         codes,
@@ -297,7 +410,122 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{to_device, turn_device};
+    use super::{retarget, scalar_of, to_device, turn_device};
+    use crate::structure::TaggedRun;
+
+    /// A run over PDFium's indices, which is what `structure.rs` returns.
+    fn run(start: u32, end: u32) -> TaggedRun {
+        TaggedRun {
+            tag: "P".to_string(),
+            path: vec!["P".to_string()],
+            start,
+            end,
+        }
+    }
+
+    /// `ours` for `a` `b` <pair> `c`: four characters over five code units.
+    ///
+    /// Both halves of the pair map to entry 2, and the trailing entry is the
+    /// exclusive end of the whole page.
+    const PAIRED: [u32; 6] = [0, 1, 2, 2, 3, 4];
+
+    #[test]
+    fn a_page_with_no_pair_leaves_its_runs_alone() {
+        // The control, and the common case: `ours` is the identity, so the
+        // translation must be a no-op rather than an off-by-one.
+        let identity: Vec<u32> = (0..=4).collect();
+        let mut runs = vec![run(0, 2), run(2, 4)];
+        retarget(&mut runs, &identity, 4);
+        assert_eq!(
+            runs.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(),
+            vec![(0, 2), (2, 4)]
+        );
+    }
+
+    #[test]
+    fn a_run_after_a_pair_moves_back_by_the_units_it_saved() {
+        // PDFium indices 3..5 are the low half and the `c`; ours are 2..4.
+        let mut runs = vec![run(3, 5)];
+        retarget(&mut runs, &PAIRED, 4);
+        assert_eq!((runs[0].start, runs[0].end), (2, 4));
+    }
+
+    #[test]
+    fn a_run_spanning_a_pair_still_covers_the_whole_character() {
+        // 0..4 in PDFium's space is `a`, `b` and both halves; ours is 0..3.
+        let mut runs = vec![run(0, 4)];
+        retarget(&mut runs, &PAIRED, 4);
+        assert_eq!((runs[0].start, runs[0].end), (0, 3));
+    }
+
+    #[test]
+    fn a_run_ending_inside_a_pair_comes_back_empty() {
+        // An end index on the low half claims half a character, which no producer
+        // means. Empty is the honest answer; silently rounding it outwards would
+        // hand a screen reader a character the tag did not cover.
+        let mut runs = vec![run(2, 3)];
+        retarget(&mut runs, &PAIRED, 4);
+        assert_eq!((runs[0].start, runs[0].end), (2, 2));
+    }
+
+    #[test]
+    fn an_index_past_the_end_lands_on_the_end() {
+        // `structure.rs` closes an unterminated mark at the character count, so an
+        // end equal to it is ordinary rather than a bug --- and anything beyond it
+        // must still produce a range that can be sliced.
+        let mut runs = vec![run(4, 99)];
+        retarget(&mut runs, &PAIRED, 4);
+        assert_eq!((runs[0].start, runs[0].end), (3, 4));
+    }
+
+    /// U+20000, as PDFium reports it: two UTF-16 code units.
+    const HIGH: u32 = 0xD840;
+    const LOW: u32 = 0xDC00;
+    const ASTRAL: u32 = 0x20000;
+    const REPLACEMENT: u32 = 0xFFFD;
+
+    #[test]
+    fn an_ordinary_code_point_is_itself_and_one_unit_wide() {
+        assert_eq!(scalar_of(0x41, None), (0x41, 1));
+        // A CJK ideograph inside the BMP: two *bytes* in the content stream and
+        // one code unit here, which is the case that already worked and the
+        // control for the ones below.
+        assert_eq!(scalar_of(0x6587, Some(0x20)), (0x6587, 1));
+    }
+
+    #[test]
+    fn a_surrogate_pair_becomes_one_scalar_over_two_units() {
+        assert_eq!(scalar_of(HIGH, Some(LOW)), (ASTRAL, 2));
+        // The top of the plane, so a mistake in the shift shows up as a wildly
+        // wrong number rather than an off-by-one.
+        assert_eq!(scalar_of(0xDBFF, Some(0xDFFF)), (0x10FFFF, 2));
+    }
+
+    #[test]
+    fn a_high_surrogate_with_nothing_after_it_is_replaced() {
+        // The last character on a page. Dropping it would shorten the page and
+        // shift every box after it; keeping the raw surrogate would leave a
+        // number `char::from_u32` refuses.
+        assert_eq!(scalar_of(HIGH, None), (REPLACEMENT, 1));
+    }
+
+    #[test]
+    fn a_high_surrogate_followed_by_anything_else_is_replaced() {
+        assert_eq!(scalar_of(HIGH, Some(0x41)), (REPLACEMENT, 1));
+        // Two highs in a row: the second is not a low, so the first cannot pair
+        // with it. Consuming two units here would swallow a real character.
+        assert_eq!(scalar_of(HIGH, Some(HIGH)), (REPLACEMENT, 1));
+    }
+
+    #[test]
+    fn a_lone_low_surrogate_is_replaced_and_never_paired_backwards() {
+        // A low surrogate first is not the second half of anything --- the pair is
+        // consumed by the high that precedes it, so reaching one here means the
+        // document is broken. It must still be one unit wide, or the character
+        // after it disappears.
+        assert_eq!(scalar_of(LOW, Some(0x41)), (REPLACEMENT, 1));
+        assert_eq!(scalar_of(LOW, Some(LOW)), (REPLACEMENT, 1));
+    }
 
     /// An unrotated page, portrait.
     const W0: f32 = 600.0;

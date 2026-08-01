@@ -867,12 +867,29 @@ async function selectionChecks(
   const low = viewer.selectedText;
   const lowAt = whole.indexOf(low);
 
-  const located = high.length > 0 && low.length > 0 && highAt >= 0 && lowAt >= 0;
+  // A drag that selected nothing is a fact about where this page's text *is*,
+  // not about the ordering being wrong, and reporting it as a failure blames the
+  // code for the fixture. `multilingual.pdf` is where that showed up: four pages
+  // of three to six lines spread down an A4 sheet, and y=620 falls in a gap
+  // between two of them --- so the check reported "selected 20 and 0 characters"
+  // on a viewer that was working perfectly.
+  //
+  // A precondition rather than a widened assertion, because the assertion is the
+  // valuable part: with nothing selected at one of the two heights there is no
+  // ordering to compare, and any verdict would be invented.
+  if (high.length === 0 || low.length === 0) {
+    skip(
+      "a drag selects text from where it was dragged",
+      `this page has no text at y=${high.length === 0 ? HIGH_Y : LOW_Y}, so there is nothing to order`,
+    );
+    return;
+  }
+  const located = highAt >= 0 && lowAt >= 0;
   check(
     "a drag selects text from where it was dragged",
     located && highAt < lowAt,
     !located
-      ? `selected ${high.length} and ${low.length} characters, not both located`
+      ? `selected ${high.length} and ${low.length} characters, not both located in the page's text`
       : `y=${HIGH_Y} gave "${preview(high)}" at ${highAt}; ` +
         `y=${LOW_Y} gave "${preview(low)}" at ${lowAt}` +
         (highAt < lowAt ? "" : " -- the page reads bottom to top, which it does not"),
@@ -1104,35 +1121,42 @@ async function searchChecks(
   );
 
   if (!needle) {
-    skip(
-      "finds a word taken from the document",
-      "page 1 has no extractable text",
-    );
+    // The reason has to distinguish the two ways this happens, because they call
+    // for opposite responses. An empty page is a fixture that cannot exercise
+    // search; a page full of text that `pickNeedle` could not read a word out of
+    // is a **harness** that cannot exercise search, and printing the first when
+    // the second is true is how seventeen checks stayed silently unexercised on a
+    // Japanese document while claiming the page had no text.
+    const why =
+      (first?.codes.length ?? 0) === 0
+        ? "page 1 has no extractable text"
+        : `no word could be read out of page 1's ${first?.codes.length} characters`;
+    skip("finds a word taken from the document", why);
     skip(
       "a match covers the characters searched for",
-      "page 1 has no extractable text",
+      why,
     );
-    skip("case is ignored", "page 1 has no extractable text");
+    skip("case is ignored", why);
     skip(
       "a word that is not there is not found",
-      "page 1 has no extractable text",
+      why,
     );
     skip(
       "searches forward from the page being read",
-      "page 1 has no extractable text",
+      why,
     );
-    skipSearchOptions("page 1 has no extractable text");
+    skipSearchOptions(why);
     skip(
       "finds something from the end of the document",
-      "page 1 has no extractable text",
+      why,
     );
     skip(
       "counts more than the matches on one page",
-      "page 1 has no extractable text",
+      why,
     );
     skip(
       "Cmd-G moves to a match on another page",
-      "page 1 has no extractable text",
+      why,
     );
     return;
   }
@@ -1252,7 +1276,14 @@ async function resultsChecks(
   }).catch(() => null);
   const needle = first ? pickNeedle(first.codes) : null;
   if (!needle) {
-    for (const name of RESULTS_CHECKS) skip(name, "page 1 has no extractable text");
+    // Same distinction as in `searchesFromHere`: "no text" and "no word this
+    // harness could read" are different facts and only one of them is about the
+    // fixture.
+    const why =
+      (first?.codes.length ?? 0) === 0
+        ? "page 1 has no extractable text"
+        : `no word could be read out of page 1's ${first?.codes.length} characters`;
+    for (const name of RESULTS_CHECKS) skip(name, why);
     return;
   }
 
@@ -4424,12 +4455,29 @@ async function yieldChecks(
  * would be most likely to return anyway.
  */
 function pickNeedle(codes: number[]): string | null {
-  const words = String.fromCodePoint(...codes.slice(0, 4096)).match(
-    /[A-Za-z]{5,}/g,
-  );
-  if (!words?.length) return null;
-  const lead = words[0]?.toLowerCase();
-  return words.find((word) => word.toLowerCase() !== lead) ?? words[0] ?? null;
+  const text = String.fromCodePoint(...codes.slice(0, 4096));
+  // Latin words first, five characters or more, which is what this looked for
+  // exclusively until 2026-08-01. On `multilingual.pdf` it found none --- Kanji are
+  // not `[A-Za-z]` --- so `pickNeedle` returned null and **seventeen** search
+  // checks skipped, every one of them saying "the page has no extractable text"
+  // about a page with forty-nine characters on it. The checks did not run and the
+  // reason printed was false, which is the worse half: a skip is read as "this
+  // fixture cannot exercise it" rather than "the harness cannot read this script".
+  const latin = text.match(/[A-Za-z]{5,}/g);
+  if (latin?.length) {
+    const lead = latin[0]?.toLowerCase();
+    return latin.find((word) => word.toLowerCase() !== lead) ?? latin[0] ?? null;
+  }
+  // Any script's letters, and **two** of them is a word in Chinese or Japanese.
+  // Five would be a sentence, and the run this picks has to be short enough that
+  // the whole-word and in-selection checks have something longer around it.
+  const letters = text.match(/[\p{L}\p{N}]{2,}/gu);
+  if (!letters?.length) return null;
+  const longest = [...letters].sort((a, b) => b.length - a.length)[0] ?? "";
+  // A slice from the middle rather than the whole run: a needle that *is* the run
+  // makes "whole words rejects a hit inside a longer word" vacuous, and on a
+  // script with no spaces the run is the whole line.
+  return longest.length >= 4 ? longest.slice(1, 3) : longest;
 }
 
 /** A short, single-line form of a string, for a detail column. */

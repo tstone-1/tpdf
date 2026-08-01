@@ -24,22 +24,53 @@
 //! same as an equal sequence of code points:
 //!
 //! - **Case is ignored.** `char::to_lowercase` rather than `to_ascii_lowercase`,
-//!   so `STRASSE` matches `strasse` and `Ä` matches `ä`.
+//!   so `Ä` matches `ä` and `ΔΕΛΤΑ` matches `δελτα`. Lowercasing, note, and not
+//!   case folding --- see below for the three things that costs.
 //! - **Runs of whitespace collapse to one space.** A phrase that spans a line
 //!   break is one phrase; PDFium reports the break as its own character, and a
 //!   reader who types `raster appearance` does not know there is a newline in it.
 //! - **Soft hyphens disappear.** They are a hint about where a word *may* break,
 //!   not a character in the word.
 //!
-//! Because folding can change a character's length --- `ß` lowercases to `ss` ---
-//! the folded sequence carries the source index each of its characters came from,
-//! and a match is translated back through that rather than by arithmetic.
+//! Because folding can change a character's length, the folded sequence carries
+//! the source index each of its characters came from, and a match is translated
+//! back through that rather than by arithmetic. The case that does it is a
+//! **Turkish dotted capital**: `İ` lowercases to `i` followed by U+0307, so a hit
+//! on `stanbul` inside `İstanbul` starts one source character further along than
+//! its folded position says.
 //!
-//! What it deliberately does not do, so that a search result can be trusted to be
-//! the text on the page: it does not normalise ligatures (`ﬁ` is not `fi`), does
-//! not strip accents, and does not rejoin a word that a hyphen broke across two
-//! lines. Each of those is a real feature; each also makes the highlight cover
-//! characters the query did not contain, and none is guessed at here.
+//! This said `ß` lowercases to `ss` until 2026-08-01, and that is simply false ---
+//! `ß` *upper*cases to `SS` and lowercases to itself, because it is already
+//! lowercase. Nothing was wrong with the code; the example was, and it stood for
+//! days because both halves of the sentence beside it are true. What it cost is
+//! recorded below.
+//!
+//! ## What it deliberately does not do
+//!
+//! So that a search result can be trusted to be the text on the page: it does not
+//! normalise ligatures (`ﬁ` is not `fi`), does not strip accents, and does not
+//! rejoin a word that a hyphen broke across two lines. Each of those is a real
+//! feature; each also makes the highlight cover characters the query did not
+//! contain, and none is guessed at here.
+//!
+//! It also does not **case-fold**, which is a different operation from lowercasing
+//! and is the one a search arguably wants. Measured on
+//! `testdata/multilingual.pdf`, three consequences a reader would notice, all with
+//! the same cause:
+//!
+//! - `strasse` finds `STRASSE` and **not** `Straße`.
+//! - `odos` in Greek: `ΟΔΟΣ` lowercases to `οδοσ` with a medial sigma, so it is
+//!   not found by the final-sigma spelling `οδος` a reader would type.
+//! - `istanbul` does not find `İstanbul`, because the fold leaves the combining
+//!   dot U+0307 between the `i` and the `s`.
+//!
+//! Case folding fixes all three in one move --- `ß` folds to `ss`, `ς` and `σ` fold
+//! together --- and Rust's standard library does not offer it, so it means a
+//! dependency. It is not taken here silently, because the same operation also
+//! folds `ﬁ` to `fi`, which the paragraph above says outright that this does not
+//! do. Changing that is a decision about what a highlight is allowed to cover,
+//! not a bug fix, and `examples/search_probe.rs` states each of the three counts
+//! above as a *decision* so that changing one has to be argued for.
 //!
 //! ## The two options
 //!
