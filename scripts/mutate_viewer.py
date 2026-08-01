@@ -255,6 +255,30 @@ MUTATIONS = [
         "search",
     ),
     Mutation(
+        # `encodings.pdf` is the only fixture that reaches the replacement path at
+        # all: it needs a `/ToUnicode` mapping a CID to a lone surrogate, which no
+        # correct document contains. Until it existed this was covered by unit tests
+        # alone, and this mutation is what says the end-to-end path agrees with them.
+        "a lone surrogate is dropped rather than replaced",
+        "src-tauri/src/text.rs",
+        "    if !(0xD800..0xDC00).contains(&code) {\n        return (REPLACEMENT, 1);\n    }",
+        "    if !(0xD800..0xDC00).contains(&code) {\n        return (0x3F, 1);\n    }",
+        "query a-lone-surrogate-becomes-a-replacement: hit count",
+        "encodings",
+    ),
+    Mutation(
+        # The other half, on the corpus where two broken entries pair. Aimed here as
+        # well as at `multilingual.pdf` on purpose: there the pair comes from a
+        # correct CMap, and here from two unrelated characters whose broken mappings
+        # happen to form one --- the same code, reached two ways.
+        "a broken pair is not joined",
+        "src-tauri/src/text.rs",
+        "        Some(low) if (0xDC00..0xE000).contains(&low) => {",
+        "        Some(low) if false && (0xDC00..0xE000).contains(&low) => {",
+        "query two-broken-entries-can-pair: hit count",
+        "encodings",
+    ),
+    Mutation(
         # A mutation only a non-Latin corpus can catch, which is the point of
         # having one: with `is_word` restricted to ASCII, Kanji stop being word
         # characters, so the whole-word search that correctly finds nothing inside
@@ -339,6 +363,24 @@ RUNNERS = {
             "vendor/pdfium/lib",
             "--file",
             "testdata/multilingual.pdf",
+        ],
+    },
+    "encodings": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "search-probe",
+        ],
+        "run": [
+            "src-tauri/target/release/examples/search-probe",
+            "--lib",
+            "vendor/pdfium/lib",
+            "--file",
+            "testdata/encodings.pdf",
         ],
     },
     "structure": {

@@ -389,12 +389,30 @@ const PATTERN_SIZE_LIMIT: usize = 1 << 20;
 
 /// Compiles a reader's pattern against the folded haystack's conventions.
 ///
-/// Case is handled by the fold rather than by the `i` flag, so that a pattern
-/// and a literal query mean the same thing by `match_case` --- with the fold
-/// already lowercasing both sides, asking the engine to ignore case as well
-/// would be doing it twice and would diverge the moment one of them changed.
-fn compile(pattern: &str) -> Result<regex::Regex, String> {
+/// This said case was handled by the fold rather than by the `i` flag, *"with the
+/// fold already lowercasing both sides"* --- and both sides is exactly what it does
+/// not do. [`Folded::of_query`] folds a **literal** query; a pattern is handed here
+/// raw, because a regex source is not text and cannot be lowercased safely: doing
+/// so would turn `\S` into `\s`, `\D` into `\d`, `\B` into `\b` and `[A-Z]` into
+/// `[a-z]`, each silently meaning the opposite of what was typed.
+///
+/// So with `match_case` off the haystack was lowercase and the pattern was not, and
+/// **any uppercase letter in a pattern matched nothing at all**. A reader with the
+/// regex option on and match-case off, typing `Encoding`, got no results on a page
+/// that plainly contains it.
+///
+/// It survived because the comment above asserted the invariant it was breaking,
+/// and because every corpus until `encodings.pdf` had lowercase text in it ---
+/// `viewer_check.py` builds its pattern out of a word taken from the page, so the
+/// pattern was lowercase too and the two agreed by accident. The corpus that found
+/// it did so because its garbage text happens to be uppercase.
+///
+/// The `i` flag is the fix rather than folding the pattern: it composes with a
+/// haystack that is already lowercase, it leaves every class and escape alone, and
+/// it is what a reader means by "ignore case" on a pattern.
+fn compile(pattern: &str, match_case: bool) -> Result<regex::Regex, String> {
     regex::RegexBuilder::new(pattern)
+        .case_insensitive(!match_case)
         .size_limit(PATTERN_SIZE_LIMIT)
         .dfa_size_limit(PATTERN_SIZE_LIMIT)
         .build()
@@ -487,7 +505,7 @@ pub fn find_in(
     let mut spans: Vec<(usize, usize)> = Vec::new();
 
     if options.regex {
-        let pattern = compile(query)?;
+        let pattern = compile(query, options.match_case)?;
         let (haystack, at_byte) = hay.as_str();
         for found in pattern.find_iter(&haystack) {
             if found.range().is_empty() {
@@ -1313,6 +1331,44 @@ mod tests {
             ..CASED
         };
         assert_eq!(find_in(&page(text), 0, "raster", cased).len(), 1);
+    }
+
+    #[test]
+    fn an_upper_case_pattern_matches_lower_case_text() {
+        // The direction the test above cannot reach. It uses a *lowercase* pattern
+        // against mixed-case text, which agrees with a lowercased haystack whether
+        // or not the pattern is compiled case-insensitively --- so an uppercase
+        // pattern matching nothing at all went unnoticed until a corpus turned up
+        // whose text was uppercase.
+        let text = "raster appearance";
+        assert_eq!(find_in(&page(text), 0, "RASTER", PATTERN).len(), 1);
+        assert_eq!(find_in(&page(text), 0, "R.STER", PATTERN).len(), 1);
+        // And a class, which is why the pattern is not simply lowercased before
+        // compiling: `[A-Z]` lowercased is `[a-z]`, and `\S` becomes `\s`.
+        assert_eq!(find_in(&page(text), 0, "[A-Z]aster", PATTERN).len(), 1);
+    }
+
+    #[test]
+    fn an_upper_case_pattern_still_distinguishes_case_when_asked() {
+        // The other half of the switch: with `match_case` on, neither side is
+        // lowercased and an uppercase pattern must mean uppercase again.
+        let cased = Options {
+            regex: true,
+            ..CASED
+        };
+        assert_eq!(find_in(&page("Raster raster"), 0, "R.ster", cased).len(), 1);
+        assert_eq!(find_in(&page("raster"), 0, "R.ster", cased).len(), 0);
+    }
+
+    #[test]
+    fn a_class_that_negates_is_not_inverted_by_ignoring_case() {
+        // `\S` must still mean "not whitespace" with the `i` flag on. A fold that
+        // lowercased the pattern source would have turned it into `\s` and matched
+        // the space instead of the letters, which is the opposite of what was typed
+        // and would look like a match rather than an error.
+        let hits = find_in(&page("ab cd"), 0, r"\S\S", PATTERN);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(covered("ab cd", &hits[0]), "ab");
     }
 
     #[test]

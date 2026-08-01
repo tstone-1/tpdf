@@ -5052,3 +5052,166 @@ one it was chosen for.** It was chosen for being unused and it was also, invisib
 being the thinnest glyph in the font. Same family as the fixture entries above --- a property with
 one value present cannot be distinguished --- arriving through a substitution rather than through
 a missing case.
+
+### With no `/ToUnicode`, PDFium returns plausible garbage rather than nothing
+
+A CID font with no `/ToUnicode` CMap is ordinary in the wild --- some LaTeX setups and some
+scanner output emit it --- and the reasonable expectation is that its text is unextractable.
+It is not. PDFium falls back to reading the glyph ids as character codes, so
+`testdata/encodings.pdf` page 0 draws `Encoding probe ABC` and extracts
+`(QFRGLQJ\x03SUREH\x03$%&`: **eighteen characters for eighteen drawn**, in the right shape,
+with the right word lengths and the right spacing. This subset's glyph ids happen to sit
+0x1D below ASCII, which is why it looks like text rather than like noise.
+
+Everything downstream then behaves impeccably and is wrong. The page is **not textless**, so
+`PageMatches::textless` is false and the find bar's one honest signal --- *"this document has
+no extractable text"*, which exists precisely so that "no matches" is never a lie of omission
+--- does not fire. A reader searching for a word they can see gets *no matches*. Copy yields
+nonsense. The accessibility tree reads the nonsense out.
+
+So there is a **third state** between "text" and "no text", and nothing in tpdf currently
+represents it: text that is present, positioned correctly, and means nothing. Worth stating
+what a detector would look like, because it does not need a heuristic on the characters: the
+font dictionary either declares a `/ToUnicode` or it does not, and a `/CIDSystemInfo` ordering
+of `Identity` with no CMap is PDFium guessing by construction. That is a `lopdf` question with
+a yes-or-no answer, not a guess about whether text looks like language.
+
+Not built here. Surfacing it is a product decision --- what a reader is told, and where --- and
+the corpus exists so that the decision can be made against a measurement instead of a
+suspicion. `docs/PLAN.md` Phase 1 records it.
+
+### A pattern was compiled case-sensitively against a haystack the fold had lowercased
+
+`search.rs` folds the page --- lowercasing it when `match_case` is off --- and matches against
+the folded sequence. A **literal** query is folded the same way by `Folded::of_query`. A
+**pattern** is not: a regex source is not text and cannot be lowercased safely, since `\S`
+would become `\s`, `\D` become `\d`, `\B` become `\b` and `[A-Z]` become `[a-z]`, each
+silently meaning the opposite of what was typed. So it was handed to the engine raw.
+
+The consequence is total rather than partial: with the option off, **any uppercase letter in
+a pattern matched nothing at all.** A reader with regex on and match-case off, typing
+`Encoding`, got no results on a page that plainly contains it.
+
+Two things kept it alive for as long as the feature has existed, and both are worth copying
+down.
+
+The first is that `compile`'s doc comment asserted the invariant it was breaking: *"Case is
+handled by the fold rather than by the `i` flag ... with the fold already lowercasing both
+sides."* Both sides is exactly what it does not do. **A comment that states an invariant is a
+claim, and it is the one place nobody re-derives** --- the next reader takes it as given, which
+is what it is for.
+
+The second is that the harness could not produce an uppercase pattern. `viewer_check.py`
+builds its pattern out of a word taken from the page under test, so on every corpus with
+ordinary prose the pattern was lowercase and the two sides agreed *by accident*. The corpus
+that found it did so because its text is garbage that happens to be uppercase --- which is
+luck, and the reason to keep the fixture rather than to be pleased with the process.
+
+The unit test beside it could not fail either: it used a lowercase pattern against mixed-case
+text, which agrees whether or not the pattern is case-insensitive. **Both directions of a
+switch need a test, and for case that means an uppercase query as well as a lowercase one.**
+
+The fix is the `i` flag, not folding the pattern: it composes with a haystack that is already
+lowercase, leaves every class and escape alone, and is what a reader means by "ignore case" on
+a pattern.
+
+### A harness sliced a code-point index with `String.prototype.slice`
+
+The cross-page phrase check resolves each half of a hit against a fresh extraction of the page
+it claims to be on, and the comment above it says so: *"Re-extracted, so the two index spaces
+are checked against the pages rather than against the reply that reported them."*
+
+It did it by building a JavaScript string from the page's codes and slicing it with the match's
+`start` and `end` --- which are **code point** indices, while `slice` counts **UTF-16 code
+units**. On a page holding a character above the BMP the two differ by one per such character,
+so the right-hand half came back one letter short: `Encoding�probe𠀀�` where
+`...�C` was wanted.
+
+The comment is the whole entry. It names the exact hazard, in a check written to guard against
+it, in the two lines that fall to it. Nothing about the code was careless; the mistake is that
+`String.fromCodePoint(...codes)` produces a string whose indices are no longer the indices you
+started with, and that conversion reads as lossless because the *characters* are all there.
+
+**Slice the codes, not the string.** A helper that takes two code point indices and returns
+`String.fromCodePoint(...codes.slice(from, to))` cannot be got wrong, and it is the same shape
+as the fix in `text.rs` for the same underlying fact.
+
+### A fixture's self-check forbade its own finding
+
+`make_encodings_pdf.py` asserts its own properties before writing, which is the discipline this
+repository applies to every generator: a fixture that has stopped discriminating should fail
+loudly rather than pass quietly.
+
+The assertion was *"every page must extract as something other than what it was written as"*,
+which is true of the two pages with absent and broken character maps and is the entire subject
+of the corpus. It is exactly backwards for the third page, where a **predefined CMap over a
+non-embedded font extracting correctly is the finding** --- the fact being established is that
+PDFium's bundled Adobe-Japan1 tables are in the vendored build.
+
+So the check refused to write the fixture on the strength of its own result, and the failure
+line read like a defect in the generator.
+
+The rule: **a blanket invariant over a set of deliberately different cases is usually wrong for
+one of them**, and the one it is wrong for is the control. Assert per page, by name. It costs
+three lines and it makes the exception visible in the source rather than discovered when the
+check fires.
+
+### A measured string transcribed off a terminal loses what the terminal does not draw
+
+The expected extraction for the unmapped page was written by reading `text-probe --mode order`
+output and copying the string: `(QFRGLQJSUREH$%&`. Sixteen characters. The real answer is
+eighteen --- the two spaces map to glyph id 3, so the fallback yields **U+0003**, which a
+terminal prints as nothing at all.
+
+The probe said so. Its own first line reads `18 characters`, two lines above the string that
+was copied, and the count was read past on the way to the interesting part.
+
+Two habits, and the second is the cheap one:
+
+- **Never transcribe a measured value from rendered output.** Print it as escapes, or read it
+  from a file, or write the expectation as a program that computes it. Control characters,
+  zero-width joiners, bidi marks and combining marks are all invisible or misleading in a
+  terminal, and every one of them is exactly the sort of thing an encoding fixture contains.
+- **When a harness prints a count beside a value, compare them.** The disagreement was
+  available at zero cost and in the same buffer --- the same shape as the padded-column entry,
+  and the same fix: make the check do the arithmetic rather than the reader.
+
+### A mutation aimed at one branch when the fixture only reaches the other
+
+`scalar_of` replaces a lone surrogate with U+FFFD along two paths: a **high** surrogate whose
+follower is not a low one, and a **low** surrogate reached with nothing in front of it. The
+mutation written to prove the replacement was covered end to end changed the second, and
+SURVIVED.
+
+Correctly. The fixture mapped a space to a high surrogate and `A` to a low one, and in
+`Encoding probe ABC` every `A` is preceded by a space --- so **every low surrogate in the corpus
+paired**, and the branch the mutation broke was never taken. The check that was supposed to
+notice was passing for a reason unrelated to the mutation.
+
+Two readings of a survivor, and telling them apart is the work: *the test is weak* or *the
+input never reaches the code*. Here it was the second, and the fix was one more entry in the
+CMap --- mapping `B` to a low surrogate as well, so that by the time it is reached the pair
+before it has been consumed and it is genuinely alone.
+
+Generalises past surrogates: **a function with two paths to the same result needs an input for
+each**, and a fixture built to exercise "the replacement path" naturally produces only whichever
+one the author had in mind. Enumerate the `return`s, not the outcomes.
+
+### Two broken `/ToUnicode` entries can decode to one valid astral character
+
+The broken-map page maps a space to a lone high surrogate and `A` to a lone low one. In
+`Encoding probe ABC` the first space is followed by `p` and becomes U+FFFD, and the second is
+followed by the `A` --- so **two unrelated characters, at different positions on the page,
+decode to one astral character** with a box spanning both, and the page comes back seventeen
+characters long for eighteen drawn.
+
+Nothing is wrong. That is what decoding a UTF-16 stream means, the document is broken, and no
+interpretation of it is more correct than another. It is written down because the *length* is
+the sort of number that looks like an off-by-one later, and because the pairing rule joining
+two characters the producer never meant to join reads as over-reach until the alternative is
+stated: refusing to pair across a "suspicious" boundary would need a rule about which
+boundaries are suspicious, and there is none.
+
+Worth having as a fixture for a second reason. It is the only input in the corpus that reaches
+the pairing code from *broken* data rather than from a correct CMap --- same function, two
+provenances --- and a mutation aimed at each catches the same defect from both sides.

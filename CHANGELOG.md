@@ -11,6 +11,40 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Phase 1 --- encodings that are absent, broken or predefined
+
+- **`testdata/make_encodings_pdf.py`**, the other half of the Phase 1 sentence about *"malformed
+  encodings and custom CMaps"*. Three pages: a CID font with **no `/ToUnicode` at all**, one whose
+  `/ToUnicode` maps CIDs to lone surrogates, and `/UniJIS-UCS2-H` over a **non-embedded**
+  KozMinPro. A separate corpus from `multilingual.pdf` because the subject differs --- those pages
+  are correct documents in other scripts, these are documents whose statement of what their bytes
+  mean is missing or wrong. `examples/search-probe` reads both unchanged: 23/23 with 7 not
+  applicable.
+- **A defect in the regex path, and a total one.** A pattern was compiled case-sensitively against
+  a haystack the fold had already lowercased, so with match-case off **any uppercase letter in a
+  pattern matched nothing**. `compile` now sets the `i` flag --- folding the pattern source is not
+  an option, since it would turn `\S` into `\s` and `[A-Z]` into `[a-z]`. It survived because
+  `compile`'s own doc comment asserted the invariant it was breaking, and because the harness
+  builds its pattern from a word on the page, so every corpus with ordinary prose agreed by
+  accident.
+- **A code-point index sliced with `String.prototype.slice`** in the cross-page phrase check ---
+  in the two lines directly under a comment about checking the index spaces. Sliced by code point
+  now.
+- **What the corpus established about PDFium.** With no `/ToUnicode` it does not fail: it returns
+  eighteen characters of plausible garbage for eighteen drawn, and the page is **not textless**,
+  so the one honest signal the find bar has does not fire and a reader searching for a word they
+  can see gets *no matches*. There is a third state between "text" and "no text" that nothing
+  represents; a detector needs no heuristic (the font either declares a `/ToUnicode` or it does
+  not) and surfacing it is a product decision, recorded in `docs/PLAN.md` rather than built.
+  Separately, the vendored build **does** carry the predefined Adobe-Japan1 CMaps.
+- **The replacement-character path is now reached by a fixture**, where it had been covered by
+  unit tests alone --- and the same page pairs two unrelated broken entries into one astral
+  character, which is what decoding UTF-16 means and is pinned so the length is not read as a
+  defect later.
+- 3 new unit tests on the regex switch, 2 new mutations for it, and a new `encodings` runner with
+  2 more --- all caught. All **ten** corpora report the same 157 check names, sets diffed pairwise.
+  Seven new traps, 204 in the index.
+
 ### Phase 1 --- search on text that is not English
 
 - **`testdata/make_multilingual_pdf.py`**, the corpus `docs/PLAN.md` Phase 1 names as one of two

@@ -2144,11 +2144,28 @@ async function crossPageChecks(
     skipBoth("a break needs two pages");
     return;
   }
-  const textOf = async (page: number): Promise<string | null> => {
+  // The **codes**, not a string, and that distinction is the whole reason this
+  // helper does not return one. A match's `start` and `end` are code point indices,
+  // and `String.prototype.slice` counts UTF-16 code units --- so on a page holding a
+  // character above the BMP the two spaces differ by one per such character, and a
+  // slice comes back one short. `encodings.pdf` is where it showed: two broken
+  // `/ToUnicode` entries decode to one astral character, and the right-hand half of
+  // the phrase lost its last letter while the comment below claimed to be checking
+  // the index spaces against the pages.
+  const codesOf = async (page: number): Promise<number[] | null> => {
     const got = await invoke<{ codes: number[] }>("page_text", { doc: doc.id, page }).catch(
       () => null,
     );
-    return got ? String.fromCodePoint(...got.codes) : null;
+    return got ? got.codes : null;
+  };
+  const textOf = async (page: number): Promise<string | null> => {
+    const codes = await codesOf(page);
+    return codes ? String.fromCodePoint(...codes) : null;
+  };
+  /** A page's text between two **code point** indices. */
+  const sliceOf = async (page: number, from: number, to?: number): Promise<string> => {
+    const codes = await codesOf(page);
+    return codes ? String.fromCodePoint(...codes.slice(from, to)) : "";
   };
   const first = await textOf(0);
   const second = await textOf(1);
@@ -2185,9 +2202,10 @@ async function crossPageChecks(
     return;
   }
   // Re-extracted, so the two index spaces are checked against the pages rather
-  // than against the reply that reported them.
-  const left = (await textOf(across.page))?.slice(across.start) ?? "";
-  const right = (await textOf(across.endPage ?? -1))?.slice(0, across.end) ?? "";
+  // than against the reply that reported them --- and sliced by code point, which
+  // is the space the indices are in. See `sliceOf`.
+  const left = await sliceOf(across.page, across.start);
+  const right = await sliceOf(across.endPage ?? -1, 0, across.end);
   check(
     NAMES[1],
     across.page === 0 &&
