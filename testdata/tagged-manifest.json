@@ -1,0 +1,52 @@
+{
+  "pages": [
+    {
+      "tagged": [
+        "heading",
+        "body-one",
+        "body-two",
+        "margin-note"
+      ],
+      "geometric": [
+        "heading",
+        "body-one",
+        "margin-note",
+        "body-two"
+      ],
+      "types": {
+        "heading": "H1",
+        "body-one": "P",
+        "body-two": "P",
+        "margin-note": "Note"
+      },
+      "text": {
+        "heading": "Quarterly review",
+        "body-one": "The first body paragraph runs down the main column and is the first thing the document means to be read after the heading.",
+        "body-two": "The second body paragraph follows it, still in the main column, and closes the section.",
+        "margin-note": "Marginal aside kept out of the main flow."
+      }
+    },
+    {
+      "tagged": [
+        "control-heading",
+        "control-one",
+        "control-two"
+      ],
+      "geometric": [
+        "control-heading",
+        "control-one",
+        "control-two"
+      ],
+      "types": {
+        "control-heading": "H1",
+        "control-one": "P",
+        "control-two": "P"
+      },
+      "text": {
+        "control-heading": "Appendix",
+        "control-one": "This page is tagged in the order it is laid out, top to bottom.",
+        "control-two": "So a reader that believes the tags and one that believes the geometry agree here."
+      }
+    }
+  ]
+}

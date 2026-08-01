@@ -11,6 +11,39 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Phase 1 --- a document's own reading order, read and proved
+
+- **`src-tauri/src/structure.rs`** reads a page's `/StructTree`: the runs in the order the
+  document says they should be read, each with the element's type as the document spells it
+  (`H1`, `P`, `Note`, `TD`) and the path it sits at. Answers the half of `docs/PLAN.md`'s
+  accessibility note that called geometric reading order *"a real limitation rather than a
+  missing nicety"*.
+- **No second extraction.** `FPDFText_GetTextObject` gives the page object a character was
+  drawn by and `FPDFPageObj_GetMarkedContentID` gives that object's mark, so a character index
+  resolves to a marked-content id directly and a run lands in **the same character indices**
+  selection, search and the accessibility tree already use. Parsing the content stream and
+  correlating it with the extractor would have been the third independent extraction here,
+  which is the failure `text.rs` opens by warning about.
+- **`testdata/make_tagged_pdf.py`**, and the discrimination is the point: page 1's margin note
+  reads third by geometry and last by the tags, page 2 is a control tagged in the order geometry
+  would infer anyway, and the generator refuses to write a fixture that has lost the difference.
+  Poppler's `pdftotext` reads page 1 geometrically, which is external evidence that the fixture
+  is not merely self-consistent. `qpdf --check` accepts the file.
+- **`examples/structure-probe`**, 10/10 on the tagged fixture with the untagged control. It
+  asserts the order matches the tags **and** does not match the geometry, and resolves every run
+  through a fresh extraction of the page rather than trusting the run's own report.
+- **The bound and the honest invariant.** The tree is hostile input like the outline, so the walk
+  is bounded in depth and elements and the truncation is reported. "Every character is claimed"
+  is *not* the invariant --- PDFium's generated separator between two text objects belongs to
+  neither element --- so what is asserted is that nothing **visible** is left out.
+- 7 unit tests on the span logic, and 4 mutations against the probe, all caught.
+  `scripts/mutate_viewer.py` now drives two harnesses, selected with `--runner`; the structure
+  one needs no webview and runs in 15 s a mutation.
+- **Not yet wired to anything.** `reading.ts` and the accessibility tree still use geometry, and
+  a page with no tree deliberately reports no runs so a caller can tell "fall back" from "the
+  document says nothing". The consumer is the next commit.
+- One new trap, index now 177.
+
 ### Phase 1 --- the command list, moved somewhere a check can reach it
 
 - **`src/lib/appcommands.ts`**: the twenty-nine commands and the window-key routing move out

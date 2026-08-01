@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 176 entries
+The one thing this file does *not* carry in full is the trap list --- 177 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -588,8 +588,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 176 of them and the full text
-was 93% of this file --- an instruction budget spent on the 175 traps that are not
+titles. Only the titles are here, because there are 177 of them and the full text
+was 93% of this file --- an instruction budget spent on the 176 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -632,6 +632,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Two rotation tables, disagreeing at every turn but zero
 - PDFium's character order is not the page's line order
 - A dense page of uniform lines cannot detect a y-flip
+- A paragraph is one mark and several text objects, and the gap between them belongs to neither
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
 - An outline can be infinite, and PDFium says so in its own documentation
 - PDFium cannot create digital signatures

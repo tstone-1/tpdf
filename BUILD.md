@@ -79,6 +79,16 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example progressive-p
 cargo run --release --manifest-path src-tauri/Cargo.toml --example text-probe -- \
     testdata/text-marked.pdf --mode align
 
+# Reading order taken from a document's own tags rather than from geometry. The
+# assertion that carries the weight is not that an order came back but that it is
+# the *tagged* one: page 1's margin note reads third by geometry and last by the
+# tags, and the manifest states both. Page 2 is the control, tagged in the order
+# geometry would infer anyway, and text-base14 is the other control -- an untagged
+# page must report no runs rather than an order it inferred.
+cargo run --release --example structure-probe -- \
+    --library ../vendor/pdfium/lib --file ../testdata/tagged.pdf \
+    --untagged ../testdata/text-base14.pdf
+
 # The outline walk terminates, resolves and refuses. Run BOTH: the hostile
 # fixture proves the bounds fire, and the ordinary one proves they do not fire
 # when they should not, which is the half that catches a walk bounding
@@ -182,11 +192,24 @@ uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testd
 python3 testdata/make_outline_pdf.py testdata
 python3 testdata/make_rotated_pdf.py testdata
 python3 testdata/make_columns_pdf.py testdata
+python3 testdata/make_tagged_pdf.py testdata
 python3 testdata/make_form_pdf.py
 ```
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
 300 MB file is near-instant" can be tested at 300 MB.
+
+`make_tagged_pdf.py` is the other side of that coin: the only fixture that carries a
+`/StructTreeRoot`, so it says what its own reading order is. Page 1 puts a margin note beside
+the first paragraph --- geometry reads it third, the tags read it last --- and page 2 is the
+control, tagged in the order geometry would have inferred anyway. A tagged fixture whose tag
+order matches geometry tests nothing, so the generator **asserts the discrimination itself**
+and refuses to write a fixture that has lost it. Its manifest states both orders, which is what
+lets a check say "the tagged answer was used" rather than "an answer was produced".
+
+Worth knowing as external evidence that the fixture is not merely self-consistent: poppler's
+`pdftotext` reads page 1 in **geometric** order --- heading, margin note, body --- which is the
+wrong answer the tags exist to correct.
 
 `make_columns_pdf.py` is the only fixture whose *content-stream order* is the point. Its
 three pages are two columns emitted column by column, the same two columns emitted line by
@@ -1551,9 +1574,16 @@ starts at 0 and increments within the month.
    scripts/mutate_rust.py          # search.rs, 22 mutations, `cargo test --lib search::`
    scripts/mutate_frontend.py      # text/clicks/commands/keys/search/results.ts, 42 mutations
    scripts/mutate_viewer.py        # appcommands/search/viewercheck, 15 mutations, viewer_check.py
+   scripts/mutate_viewer.py --runner structure   # structure.rs, 4 mutations, structure-probe
    ```
 
-   The third one is different in kind and slower for it: it rebuilds the bundle and runs
+   `mutate_viewer.py` drives two harnesses, chosen per mutation and filterable with
+   `--runner`. The `structure` one needs no webview and no bundle, so it neither waits for one
+   nor requires an unlocked screen; it rebuilds one example and runs it, at about 15 s a
+   mutation. Both print the same `[FAIL] <name>` lines and the same summary, so the
+   cross-check, the byte restore and the name validation are shared rather than copied.
+
+   The viewer runner is different in kind and slower for it: it rebuilds the bundle and runs
    `viewer_check.py` per mutation (~20 s each), because what it covers --- the application's
    own command list, the window shortcuts, and the search behaviour that only shows up
    against a real document --- is reachable from neither `cargo test` nor `vitest`. It needs

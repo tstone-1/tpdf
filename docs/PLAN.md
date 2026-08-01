@@ -2335,13 +2335,64 @@ text comparison cannot see a property that is not about text:
   reading correct. There is now a check that the container is 1×1 but neither hidden that
   way — visually gone, still in the tree.
 
-Not done, and the first of these is a real limitation rather than a missing nicety:
-**reading order is derived from geometry, not from the document's own tagged structure.**
-A tagged PDF carries a `/StructTree` that says what is a heading, a table cell, an
-alternative text, and in what order it should be read; we infer lines from character boxes,
-which is what an untagged document forces and is strictly worse for one that is tagged.
+~~Not done, and the first of these is a real limitation rather than a missing nicety:
+**reading order is derived from geometry, not from the document's own tagged structure.**~~
+**Read and proved 2026-08-01 --- see below --- and not yet wired to this layer.**
 Also absent: headings and table semantics, a document language attribute, visible keyboard
 navigation between pages, and any high-contrast handling.
+
+#### The document's own reading order, read and proved --- 2026-08-01
+
+A tagged PDF carries a `/StructTree` that says what is a heading, what is a table cell, and in
+what order it should be read. `reading.ts` infers all of that from character boxes, which is
+what an untagged document forces and is strictly worse for one that has bothered to say ---
+which is what the paragraph above recorded as a real limitation.
+
+`src-tauri/src/structure.rs` reads it. The part that made this tractable rather than expensive
+is the route: `FPDFText_GetTextObject` gives the page object a character was drawn by and
+`FPDFPageObj_GetMarkedContentID` gives that object's mark, so **a character index resolves to a
+marked-content id directly**. The obvious alternative --- parse the content stream, find the
+marked-content operators, correlate what they contain with what the extractor returned --- would
+have been the third independent extraction in this codebase, each self-consistent and
+disagreeing with the others in ways no test catches. `text.rs` opens by warning about exactly
+that, and this avoids it entirely: a run lands in the same character indices the selection, the
+search and the accessibility tree already use.
+
+**The fixture is the half that decides whether any of this is testable.** A tagged page whose
+tag order happens to match what geometry would infer tests nothing at all: both implementations
+agree and the check passes whether or not the tags were read. `testdata/make_tagged_pdf.py`
+therefore puts a margin note beside the first paragraph --- geometry reads it third, the tags
+read it last --- and it **asserts the discrimination itself**, refusing to write a fixture that
+has lost it. Page 2 is the control, tagged in the order geometry would have inferred anyway,
+which a tagged reader must leave alone; without it, "the tags are read" and "the tags are read
+and everything is scrambled" look identical. `text-base14.pdf` is the third control: an untagged
+page must report **no** runs rather than an order it inferred, because that emptiness is how a
+caller tells "fall back to geometry" from "the document says its order is this".
+
+Two independent parsers accept the file, and one of them is evidence rather than validation:
+poppler's `pdftotext` reads page 1 in **geometric** order --- heading, margin note, body ---
+which is the wrong answer the tags exist to correct.
+
+`examples/structure-probe` is 10/10, and it resolves every run through a fresh extraction of the
+page rather than trusting the run's own report. Its first run reported **ten runs for four
+blocks**, and the reason is a trap of its own: a paragraph is one marked-content id and one text
+object *per line*, and the separator PDFium generates between two text objects belongs to no
+page object, so it carries no mark. Bridging those gaps needs both halves of a condition ---
+unmarked *and* whitespace --- because bridging on unmarked alone would let a run silently swallow
+visible text the producer failed to tag. It also means "every character is claimed" is not the
+invariant and would fail on a correct implementation; what is asserted is that nothing
+**visible** is left out.
+
+The tree is hostile input like the outline, so the walk is bounded in depth and in elements and
+the truncation is reported --- a partial reading order shown as a complete one is worse here than
+for an outline, because the missing part is text on the page.
+
+**Not wired to anything yet, deliberately.** `reading.ts` and the accessibility tree still use
+geometry. What remains is the plumbing and the policy: a request across the worker boundary, a
+consumer that prefers the tagged order where there is one and falls back where there is not, and
+the decision about what to do with a page whose tree covers only part of its text --- which is
+why `untagged_chars` is reported rather than assumed to be zero. Same shape as the OCR
+interfaces landing before an engine did.
 
 #### The outline, and a sidebar to put it in — 2026-07-27
 

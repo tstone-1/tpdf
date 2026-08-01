@@ -79,6 +79,15 @@ impl<'page> RawTextPage<'page> {
         })
     }
 
+    /// The raw handle, for the few callers that need a binding this does not wrap.
+    ///
+    /// `structure.rs` is the one: `FPDFText_GetTextObject` is what relates a
+    /// character to the marked content it was drawn inside, and wrapping it here
+    /// would mean this module owning a page-object type it has no other use for.
+    pub(crate) fn handle(&self) -> FPDF_TEXTPAGE {
+        self.handle
+    }
+
     /// Characters on the page, including ones that draw nothing.
     pub fn count(&self) -> u32 {
         // SAFETY: `self.handle` is non-null for the lifetime of `self`.
