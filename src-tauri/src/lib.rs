@@ -31,6 +31,7 @@ pub mod sandbox_win;
 pub mod search;
 pub mod session;
 pub mod startup;
+pub mod structure;
 pub mod sweep;
 pub mod text;
 pub mod worker;

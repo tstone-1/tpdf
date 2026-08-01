@@ -63,6 +63,11 @@ class Mutation:
     before: str
     after: str
     expect: str
+    #: Which harness runs it. "viewer" is `viewer_check.py` against a bundle;
+    #: "structure" is `structure-probe` against the tagged fixture. Both print
+    #: the same `[FAIL] name` lines and the same summary, so everything below ---
+    #: the cross-check, the byte restore, the name validation --- is shared.
+    runner: str = "viewer"
 
 
 MUTATIONS = [
@@ -181,6 +186,38 @@ MUTATIONS = [
         "a pattern that does not compile says so instead of finding nothing",
     ),
     Mutation(
+        "a paragraph's generated gaps are not bridged",
+        "src-tauri/src/structure.rs",
+        "            Some(last) if bridgeable(last.1 as usize, span.0 as usize) => last.1 = span.1,",
+        "            Some(_) if false => {}",
+        "page 1: every run's characters are a block's text",
+        "structure",
+    ),
+    Mutation(
+        "the tree's roots are walked backwards",
+        "src-tauri/src/structure.rs",
+        "    for index in 0..roots.max(0) {",
+        "    for index in (0..roots.max(0)).rev() {",
+        "page 1: the order is the one the tags give",
+        "structure",
+    ),
+    Mutation(
+        "every element reports no type",
+        "src-tauri/src/structure.rs",
+        "        let tag = self.type_of(element);",
+        "        let tag = String::new();",
+        "page 1: each run carries its element's type",
+        "structure",
+    ),
+    Mutation(
+        "every character is asked about the first text object",
+        "src-tauri/src/structure.rs",
+        "unsafe { bindings.FPDFText_GetTextObject(text.handle(), index as i32) }",
+        "unsafe { bindings.FPDFText_GetTextObject(text.handle(), 0) }",
+        "page 1: every run's characters are a block's text",
+        "structure",
+    ),
+    Mutation(
         "the phase does not put the rotation back",
         "src/lib/viewercheck.ts",
         "  viewer.rotateBy(entry.rotation - viewer.rotation);",
@@ -193,16 +230,59 @@ MARKER = re.compile(r"^\[(OK|FAIL|SKIP)\]\s")
 SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed")
 
 
-def build() -> tuple[bool, str]:
-    """Rebuilds the bundle. A mutation that will not compile is a broken run."""
+#: How each runner is built and invoked. The structure probe needs no webview
+#: and no bundle, so it neither waits for one nor requires an unlocked screen.
+RUNNERS = {
+    "viewer": {
+        "build": ["npm", "run", "tauri", "build", "--", "--bundles", "app"],
+        "run": None,  # built in `run_check`, which needs the app path
+    },
+    "structure": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "structure-probe",
+        ],
+        "run": [
+            "src-tauri/target/release/examples/structure-probe",
+            "--library",
+            "vendor/pdfium/lib",
+            "--file",
+            "testdata/tagged.pdf",
+            "--untagged",
+            "testdata/text-base14.pdf",
+        ],
+    },
+}
+
+
+def build(runner: str = "viewer") -> tuple[bool, str]:
+    """Rebuilds what the runner needs. A mutation that will not compile is broken."""
     done = subprocess.run(
-        ["npm", "run", "tauri", "build", "--", "--bundles", "app"],
+        RUNNERS[runner]["build"],
         cwd=ROOT,
         capture_output=True,
         text=True,
         errors="replace",
     )
     return done.returncode == 0, done.stderr[-2000:]
+
+
+def run_probe(runner: str) -> tuple[list[str], str, str]:
+    """Runs a probe that needs no webview, in the same shape as `run_check`."""
+    done = subprocess.run(
+        RUNNERS[runner]["run"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    lines = [line for line in done.stdout.splitlines() if MARKER.match(line)]
+    return lines, done.stdout, done.stderr
 
 
 def run_check() -> tuple[list[str], str, str]:
@@ -231,6 +311,11 @@ def run_check() -> tuple[list[str], str, str]:
     )
     lines = [line for line in done.stdout.splitlines() if MARKER.match(line)]
     return lines, done.stdout, done.stderr
+
+
+def execute(runner: str) -> tuple[list[str], str, str]:
+    """Runs one harness, whichever it is."""
+    return run_check() if runner == "viewer" else run_probe(runner)
 
 
 def verdict(lines: list[str], text: str, stderr: str) -> tuple[set[str], str | None]:
@@ -263,12 +348,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print the pairs and stop")
     parser.add_argument("--only", default="", help="run mutations whose name contains this")
+    parser.add_argument(
+        "--runner",
+        default="",
+        choices=["", *RUNNERS],
+        help="run only the mutations judged by this harness",
+    )
     args = parser.parse_args()
 
-    chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
+    chosen = [
+        m
+        for m in MUTATIONS
+        if args.only.lower() in m.name.lower() and (not args.runner or m.runner == args.runner)
+    ]
     if args.list:
         for m in chosen:
-            print(f"{m.name}\n    {m.path}\n    expects: {m.expect}")
+            print(f"{m.name}\n    {m.path} [{m.runner}]\n    expects: {m.expect}")
         return 0
     if not chosen:
         print(f"[FAIL] no mutation matches {args.only!r}")
@@ -278,31 +373,42 @@ def main() -> int:
         print(f"[FAIL] {FIXTURE} is missing --- testdata is generated, not committed")
         return 1
 
-    print(f"Baseline: building and running {FIXTURE.name}")
-    ok, err = build()
-    if not ok:
-        print(f"[FAIL] the unmutated tree does not build\n{err}")
-        return 1
-    lines, out, err = run_check()
-    failures, broken = verdict(lines, out, err)
-    if broken:
-        print(f"[FAIL] baseline unreadable: {broken}")
-        return 1
-    if failures:
-        print(f"[FAIL] baseline is not green: {sorted(failures)[:3]}")
-        return 1
+    # One baseline per runner in play, since each has its own check names and a
+    # mutation's expectation is validated against the runner that will judge it.
+    wanted = sorted({m.runner for m in chosen})
+    baseline: dict[str, list[str]] = {}
+    for runner in wanted:
+        print(f"Baseline: building and running the {runner} harness")
+        ok, err = build(runner)
+        if not ok:
+            print(f"[FAIL] the unmutated tree does not build for {runner}\n{err}")
+            return 1
+        lines, out, err = execute(runner)
+        failures, broken = verdict(lines, out, err)
+        if broken:
+            print(f"[FAIL] {runner} baseline unreadable: {broken}")
+            return 1
+        if failures:
+            print(f"[FAIL] {runner} baseline is not green: {sorted(failures)[:3]}")
+            return 1
+        baseline[runner] = lines
+    lines = baseline[wanted[0]]
 
     # Refuse to start on a name that cannot go red, and on one that is ambiguous.
     # A prefix matching two checks would report the wrong one as the catcher.
     problems = []
     for m in chosen:
-        hits = [line for line in lines if line[7:].startswith(m.expect)]
+        hits = [line for line in baseline[m.runner] if line[7:].startswith(m.expect)]
         if len(hits) != 1:
             problems.append(f"{m.name!r} expects {m.expect!r}, which matches {len(hits)} checks")
     if problems:
         print("[FAIL] " + "\n[FAIL] ".join(problems))
         return 1
-    print(f"Baseline green: {len(lines)} check names, every expectation names exactly one\n")
+    print(
+        "Baseline green: "
+        + ", ".join(f"{len(baseline[r])} {r} check names" for r in wanted)
+        + ", every expectation names exactly one\n"
+    )
 
     survived, unreadable = [], []
     for index, m in enumerate(chosen, 1):
@@ -318,14 +424,14 @@ def main() -> int:
         started = time.monotonic()
         path.write_bytes(source.replace(m.before, m.after).encode("utf-8"))
         try:
-            built, err = build()
+            built, err = build(m.runner)
             if not built:
                 # A mutation that will not compile is not a caught mutation: the
                 # checks never ran, so they said nothing about it either way.
                 print(f"[BROKEN] {m.name}: does not build\n{err[-400:]}")
                 unreadable.append(m.name)
                 continue
-            lines, out, err = run_check()
+            lines, out, err = execute(m.runner)
             failures, broken = verdict(lines, out, err)
         finally:
             path.write_bytes(original)
@@ -349,7 +455,8 @@ def main() -> int:
     # a stale binary is the other way a later run reports a defect that is not
     # there.
     print("\nRebuilding the clean tree")
-    build()
+    for runner in wanted:
+        build(runner)
     print(
         f"\n{len(chosen) - len(survived) - len(unreadable)}/{len(chosen)} caught, "
         f"{len(survived)} survived, {len(unreadable)} unreadable"

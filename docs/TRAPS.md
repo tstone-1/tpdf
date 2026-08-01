@@ -4537,3 +4537,33 @@ Two things follow:
   search path --- that no test could have found, because no test can reach it while the guard
   stands. The harness's insistence on positive evidence that a run happened is what surfaced
   it; a harness that read "no failures" as "caught" would have reported a clean pass.
+
+### A paragraph is one mark and several text objects, and the gap between them belongs to neither
+
+`structure.rs` maps a tagged element's marked-content ids to character ranges, and the mapping
+route is worth knowing before reaching for the obvious one: `FPDFText_GetTextObject` gives the
+page object a character was drawn by and `FPDFPageObj_GetMarkedContentID` gives that object's
+mark, so a character index resolves to an MCID **directly**. Parsing the content stream and
+correlating it with the extractor's output --- the obvious route --- would have been the third
+independent extraction in this codebase, which is the failure `text.rs` opens by warning about.
+
+The trap is what the literal mapping then reports. A paragraph is *one* marked-content id and,
+in the content stream, *one text object per line*. PDFium inserts a **generated** character
+between two text objects so the extracted text reads as prose, and that character belongs to no
+page object, so it carries no mark at all. Taken at face value a four-line paragraph is
+therefore four runs with three unclaimed characters between them: the first run of
+`structure_probe` reported **ten runs for four blocks**, and every run's text was a single line.
+
+Bridging the gaps is right, and both halves of the condition are load-bearing:
+
+- **Unmarked**, so a run cannot absorb another element's characters.
+- **Whitespace**, so a run cannot absorb *visible* text the producer failed to tag. That is the
+  one thing a reading order must never do quietly --- the word would appear in the wrong place
+  and nothing would say so. Bridging on "unmarked" alone looks equivalent and is not.
+
+Two consequences for anything built on this. **"Every character is claimed" is not the
+invariant** and asserting it fails on a correct implementation: a separator falling *between*
+two elements belongs to neither, and the honest assertion is that nothing **visible** is
+unclaimed. And a page with no structure tree must report **no runs at all** rather than an order
+it inferred, because that emptiness is how a caller tells "fall back to geometry" from "the
+document says its reading order is this".
