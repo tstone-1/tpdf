@@ -79,6 +79,10 @@ export const BINDINGS = {
   // list is for.
   "find.matchCase": { keys: ["c", "ç"], accel: true, alt: true },
   "find.wholeWord": { keys: ["w", "∑"], accel: true, alt: true },
+  // ⌥⌘R rather than ⌘R, which is the rotate chord, and beside the other two
+  // find toggles on the same modifier.
+  "find.regex": { keys: ["r", "®"], accel: true, alt: true },
+  "find.inSelection": { keys: ["s", "ß"], accel: true, alt: true },
   "view.zoomIn": { keys: ["+", "="], accel: true, shown: "+" },
   "view.zoomOut": { keys: ["-"], accel: true, shown: "−" },
   // ⌘0 for fit-width was here first and stays, which is why the other two are

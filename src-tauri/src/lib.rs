@@ -358,6 +358,10 @@ async fn page_text(
 /// One page per call, because the render thread is FIFO and a whole-document
 /// scan would sit in front of every tile --- see `RenderService::search`. The
 /// caller walks the document and stops when it wants to cancel.
+///
+/// `carry` is the previous page's tail, handed back by the previous call. It is
+/// how a phrase that runs over a page break is found without either side
+/// holding two pages at once --- see `search::Carry`.
 #[tauri::command]
 async fn search_page(
     service: tauri::State<'_, RenderService>,
@@ -365,6 +369,7 @@ async fn search_page(
     page: u32,
     query: String,
     options: search::Options,
+    carry: Option<search::Carry>,
 ) -> Result<search::PageMatches, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     service.search(
@@ -372,6 +377,7 @@ async fn search_page(
         page,
         query,
         options,
+        carry,
         Box::new(move |result| {
             let _ = tx.send(result);
         }),

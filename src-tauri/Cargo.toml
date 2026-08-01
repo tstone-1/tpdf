@@ -33,6 +33,7 @@ serde_json = "1"
 pdfium-render = "0.9"
 
 # Low-level PDF object graph and content-stream operators.
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode"] }
 lopdf = "0.44"
 
 parking_lot = "0.12"

@@ -377,9 +377,9 @@ pub fn main() {
         ..plain
     };
     let worker_hits =
-        wait(|reply| workers.search(worker_doc.id, page, query.clone(), plain, reply));
+        wait(|reply| workers.search(worker_doc.id, page, query.clone(), plain, None, reply));
     let native_hits =
-        wait(|reply| in_process.search(native_doc.id, page, query.clone(), plain, reply));
+        wait(|reply| in_process.search(native_doc.id, page, query.clone(), plain, None, reply));
     report.check(
         "a search returns the same ranges on both",
         same_matches(&worker_hits, &native_hits),
@@ -392,9 +392,9 @@ pub fn main() {
     // did not move means the option had nothing to bite on here, and that is a
     // skip rather than a pass: the check would agree with a worker ignoring it.
     let worker_words =
-        wait(|reply| workers.search(worker_doc.id, page, query.clone(), words, reply));
+        wait(|reply| workers.search(worker_doc.id, page, query.clone(), words, None, reply));
     let native_words =
-        wait(|reply| in_process.search(native_doc.id, page, query.clone(), words, reply));
+        wait(|reply| in_process.search(native_doc.id, page, query.clone(), words, None, reply));
     let hit_count =
         |result: &Result<PageMatches, String>| result.as_ref().ok().map(|m| m.matches.len());
     if hit_count(&native_words) == hit_count(&native_hits) {

@@ -70,6 +70,13 @@ pub struct Options {
     pub match_case: bool,
     /// Require a word boundary at both ends of a hit.
     pub whole_word: bool,
+    /// Read the query as a regular expression rather than as literal text.
+    ///
+    /// See [`find_in`] for what the pattern is matched *against*, which is the
+    /// part that is easy to get wrong: the folded sequence, not the page's raw
+    /// characters. A pattern that does not compile is reported rather than
+    /// quietly matching nothing --- see [`PageMatches::problem`].
+    pub regex: bool,
 }
 
 /// A run of characters matching a query, as half-open character indices into
@@ -88,10 +95,25 @@ pub struct Options {
 /// UTF-16 --- and this module exists because two of those already disagree in
 /// ways no test catches. Concatenating three strings cannot be got wrong.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Match {
     pub page: u32,
     pub start: u32,
+    /// Exclusive end, on [`Self::end_page`] when there is one and on
+    /// [`Self::page`] otherwise.
     pub end: u32,
+    /// The page the hit *finishes* on, when that is not the one it starts on.
+    ///
+    /// A phrase can run over a page break --- "the raster" at the foot of one
+    /// page and "appearance" at the head of the next --- and a reader who types
+    /// it does not know there is a break in it. Such a hit is anchored on the
+    /// page it starts on, because that is where the search should take them,
+    /// and carries the second half here.
+    ///
+    /// `None` for every hit inside one page, which is nearly all of them, and
+    /// the field is omitted from the wire in that case.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub end_page: Option<u32>,
     /// Text immediately before the hit, whitespace collapsed.
     pub before: String,
     /// The matched text itself, exactly as the page spells it.
@@ -107,6 +129,45 @@ pub struct Match {
 /// 900 kB of snippets rather than 140 kB of bare ranges, arriving one page at a
 /// time as the scan walks.
 const CONTEXT_CHARS: usize = 40;
+
+/// Characters carried off the end of a page so a phrase can span the break.
+///
+/// The bound is on *source* characters, and it is generous relative to what it
+/// has to hold because the fold shrinks: a page ending in fifty spaces
+/// contributes one folded character, so a carry sized to the query in source
+/// characters could arrive with nothing of the query in it.
+const CARRY_CHARS: usize = 256;
+
+/// The longest query a page break is looked across for, in folded characters.
+///
+/// Half the carry, so the characters *before* a straddling hit are always
+/// present too --- which is what the whole-word test on the left-hand end reads.
+/// A query longer than this is matched within each page, as it was before.
+const CARRY_LONGEST_QUERY: usize = CARRY_CHARS / 2;
+
+/// Source index standing for the page break itself, which belongs to no page.
+///
+/// A folded character carrying this came from the boundary rather than from
+/// either side of it, so a hit that begins or ends on it is not a hit that
+/// straddles: it lies wholly in one page, and that page's own reply reports it.
+const BREAK: u32 = u32::MAX;
+
+/// The tail of a page, for the request that asks about the next one.
+///
+/// Handed back to the caller and handed straight to the following
+/// [`search_page`], which is what makes a cross-page hit findable without the
+/// backend holding two pages at once or extracting either of them twice. The
+/// walk is sequential anyway --- see `search.ts` --- so the caller has it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Carry {
+    /// The page these characters came from.
+    pub page: u32,
+    /// Index in that page of the first of them.
+    pub from: u32,
+    /// The characters, in order.
+    pub codes: Vec<u32>,
+}
 
 /// The characters of `codes` in `range`, with runs of whitespace collapsed.
 ///
@@ -153,6 +214,23 @@ pub struct PageMatches {
     /// docs/PLAN.md section 9 measured the A0 sheet at zero characters, which is
     /// the correct answer for it and the case this field exists for.
     pub chars: u32,
+    /// Why the query could not be run at all, if it could not.
+    ///
+    /// Only a regular expression can fail to be a query. The distinction is the
+    /// same one `chars` exists for and matters more here, because a reader
+    /// typing a pattern is *expecting* to get it wrong: `foo(` finds nothing,
+    /// and "no matches" for it is a lie of omission that reads as a working
+    /// search over a document that does not contain `foo(`. There is no third
+    /// state to invent --- a page with a problem reports no matches and the
+    /// reason, and the find bar shows the reason instead of the counter.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub problem: Option<String>,
+    /// This page's last characters, for the request about the next one.
+    ///
+    /// Absent when the query cannot span a break anyway --- see
+    /// [`carry_for`] --- so the common single-word search ships nothing extra.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tail: Option<Carry>,
 }
 
 /// Characters left after folding, and where each came from.
@@ -243,46 +321,186 @@ impl Folded {
         // Source indices are meaningless for a query and are never read.
         Self::build(query.chars().map(|ch| (0, ch)), match_case)
     }
+
+    /// The folded characters as a string, with a byte offset to char index map.
+    ///
+    /// Only the regex path needs this. `regex` reports byte offsets into a
+    /// `&str` and everything else here counts characters, so without the map a
+    /// pattern that matched after any non-ASCII character on the page would
+    /// resolve to the wrong source index --- silently, and only on the documents
+    /// that most need searching.
+    ///
+    /// The map has one entry per byte plus one, and a byte in the middle of a
+    /// character carries the same index as the byte that started it. A match
+    /// boundary can only fall on a character boundary, so the interior entries
+    /// are never read; they are there so the lookup needs no branch.
+    fn as_str(&self) -> (String, Vec<u32>) {
+        let mut text = String::with_capacity(self.chars.len());
+        let mut at_byte: Vec<u32> = Vec::new();
+        for (index, ch) in self.chars.iter().enumerate() {
+            text.push(*ch);
+            at_byte.resize(text.len(), index as u32);
+        }
+        at_byte.resize(text.len() + 1, self.chars.len() as u32);
+        (text, at_byte)
+    }
+}
+
+/// How large a compiled pattern may get, in bytes.
+///
+/// The `regex` crate matches in time linear in the input, so there is no
+/// catastrophic backtracking to defend against and this is not that guard. It
+/// bounds *space*: a pattern like `a{1000}{1000}` is small to type and large to
+/// compile, and a reader who types one should get a refusal rather than a
+/// window that stops responding. The default is 10 MB; a search box does not
+/// need it.
+const PATTERN_SIZE_LIMIT: usize = 1 << 20;
+
+/// Compiles a reader's pattern against the folded haystack's conventions.
+///
+/// Case is handled by the fold rather than by the `i` flag, so that a pattern
+/// and a literal query mean the same thing by `match_case` --- with the fold
+/// already lowercasing both sides, asking the engine to ignore case as well
+/// would be doing it twice and would diverge the moment one of them changed.
+fn compile(pattern: &str) -> Result<regex::Regex, String> {
+    regex::RegexBuilder::new(pattern)
+        .size_limit(PATTERN_SIZE_LIMIT)
+        .dfa_size_limit(PATTERN_SIZE_LIMIT)
+        .build()
+        .map_err(|e| {
+            // The crate's own message is several lines with a caret diagram in
+            // it, which is right for a terminal and wrong for a one-line find
+            // bar. The first line is the sentence a reader needs.
+            e.to_string()
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("not a valid pattern")
+                .trim()
+                .to_string()
+        })
 }
 
 /// Finds every non-overlapping occurrence of `query` in a page's characters.
 ///
 /// An empty query matches nothing rather than matching everywhere, and so does
 /// a query of only whitespace --- see the comment on that guard.
-pub fn find_in(text: &PageText, page: u32, query: &str, options: Options) -> Vec<Match> {
+///
+/// Fails only when [`Options::regex`] is set and the pattern does not compile.
+///
+/// ## What a pattern is matched against
+///
+/// The **folded** sequence, which is the same haystack a literal query gets and
+/// is worth stating because it is not what a reader might assume:
+///
+/// - Runs of whitespace are already one space, so `\n` never occurs and a
+///   pattern written with one matches nothing. `^` and `$` anchor to the page,
+///   not to a printed line --- there are no lines left by then. That is the same
+///   bargain the literal path makes, and the reason a phrase matches across a
+///   line break at all.
+/// - Soft hyphens are already gone, so `ras\u{00ad}ter` is `raster` to a pattern
+///   as well as to a literal.
+/// - Case is folded by [`Options::match_case`] rather than by the `i` flag, so
+///   the two query kinds mean the same thing by the same switch.
+///
+/// **A zero-length match is not a match.** `a*` matches the empty string at
+/// every position; reporting those would fill the results list with hits that
+/// highlight nothing and give the reader a count of the page's characters. They
+/// are skipped, and the scan still advances, which is also what stops the walk
+/// looping forever on one.
+pub fn find_in(
+    text: &PageText,
+    page: u32,
+    query: &str,
+    options: Options,
+) -> Result<Vec<Match>, String> {
     let needle = Folded::of_query(query, options.match_case);
     // A query of only whitespace is refused rather than run. The fold collapses
     // runs, so two spaces and one space are the same query here, and the only
     // distinction such a query could be trying to draw is exactly the one that
     // has just been destroyed --- answering it with every gap in the document
     // would be confidently wrong rather than merely useless.
-    if needle.chars.iter().all(|ch| *ch == ' ') {
-        return Vec::new();
+    //
+    // A *pattern* of only whitespace is a different thing --- `\s+` is spaces to
+    // look at and not spaces to match --- so the guard reads the query as typed
+    // in that case, which for a pattern is only empty when it is empty.
+    // An empty needle first, and on its own, because the literal walk below
+    // advances by the needle's length and would therefore **never terminate** on
+    // one. The whitespace guard beneath happens to cover that today --- `all` is
+    // true of an empty sequence --- and a termination argument that leans on
+    // another guard's implementation is one edit away from a hang. It was:
+    // deleting the whitespace guard as a mutation turned a readable red into a
+    // run with no result at all.
+    if needle.chars.is_empty() {
+        return Ok(Vec::new());
+    }
+    if options.regex {
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+    } else if needle.chars.iter().all(|ch| *ch == ' ') {
+        return Ok(Vec::new());
     }
 
     let hay = Folded::of_page(text, options.match_case);
-    let mut matches = Vec::new();
-    let mut at = 0usize;
 
-    while at + needle.chars.len() <= hay.chars.len() {
-        let end = at + needle.chars.len();
-        if hay.chars[at..end] != needle.chars[..] {
-            at += 1;
-            continue;
-        }
-
-        if options.whole_word
-            && !(boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))
+    // Whether a hit has a word boundary at both ends. A closure rather than a
+    // filter over the collected spans, because *where* the test happens is
+    // load-bearing on the literal path and only there --- see the walk below.
+    let whole = |at: usize, end: usize| -> bool {
+        !options.whole_word
+            || (boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))
                 && boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied()))
-        {
-            // One character, not the needle's length. A rejected candidate is
-            // not a match, and the next one may start inside it: `ab-a` occurs
-            // twice in `ab-ab-a`, overlapping, and only the second is a whole
-            // word. Skipping the span would walk past it.
-            at += 1;
-            continue;
-        }
+    };
 
+    // Accepted hits, as half-open indices into the folded sequence.
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+
+    if options.regex {
+        let pattern = compile(query)?;
+        let (haystack, at_byte) = hay.as_str();
+        for found in pattern.find_iter(&haystack) {
+            if found.range().is_empty() {
+                continue;
+            }
+            let at = at_byte[found.start()] as usize;
+            let end = at_byte[found.end()] as usize;
+            // Rejected outright rather than retried one character along, which
+            // is the opposite of the literal path below and is right here:
+            // `find_iter` has already chosen where the hits are, and a reader
+            // who wants a boundary inside a pattern can write `\b`.
+            if whole(at, end) {
+                spans.push((at, end));
+            }
+        }
+    } else {
+        let mut at = 0usize;
+        while at + needle.chars.len() <= hay.chars.len() {
+            let end = at + needle.chars.len();
+            if hay.chars[at..end] != needle.chars[..] {
+                at += 1;
+                continue;
+            }
+            if !whole(at, end) {
+                // One character, not the needle's length. A rejected candidate
+                // is not a match, and the next one may start inside it: `ab-a`
+                // occurs twice in `ab-ab-a`, overlapping, and only the second is
+                // a whole word. Skipping the span would walk past it.
+                //
+                // Collecting the spans first and filtering them afterwards
+                // loses exactly this, and did: the test named for it is what
+                // caught the restructure that introduced the regex path.
+                at += 1;
+                continue;
+            }
+            spans.push((at, end));
+            // Non-overlapping, which is what a reader counting hits expects:
+            // `aa` occurs once in `aaa`, not twice.
+            at += needle.chars.len();
+        }
+    }
+
+    let mut matches = Vec::new();
+    for (at, end) in spans {
         // Back through the source map rather than by arithmetic: folding can
         // turn one character into two, and collapse several into one.
         let start = hay.source[at] as usize;
@@ -291,6 +509,7 @@ pub fn find_in(text: &PageText, page: u32, query: &str, options: Options) -> Vec
             page,
             start: start as u32,
             end: stop as u32,
+            end_page: None,
             before: slice_of(&text.codes, start.saturating_sub(CONTEXT_CHARS)..start),
             hit: exact_of(&text.codes, start..stop),
             after: slice_of(
@@ -298,21 +517,187 @@ pub fn find_in(text: &PageText, page: u32, query: &str, options: Options) -> Vec
                 stop..(stop + CONTEXT_CHARS).min(text.codes.len()),
             ),
         });
-
-        // Non-overlapping, which is what a reader counting hits expects: `aa`
-        // occurs once in `aaa`, not twice.
-        at += needle.chars.len();
     }
 
+    Ok(matches)
+}
+
+/// Whether a page break is worth looking across for this query, and how much of
+/// the previous page it would take.
+///
+/// `None` for the cases where a carry would be dead weight or wrong:
+///
+/// - a **pattern**, because `^` and `$` already mean the page and stitching two
+///   pages into one haystack would quietly make them mean something else;
+/// - a query of one folded character, which cannot straddle anything;
+/// - a query longer than [`CARRY_LONGEST_QUERY`], where the carry could not
+///   hold both the hit's left half and the character before it.
+fn carry_len(query: &str, options: Options) -> Option<usize> {
+    if options.regex {
+        return None;
+    }
+    let folded = Folded::of_query(query, options.match_case).chars.len();
+    if !(2..=CARRY_LONGEST_QUERY).contains(&folded) {
+        return None;
+    }
+    Some(CARRY_CHARS)
+}
+
+/// The tail this page should hand to the request about the next one.
+fn carry_for(text: &PageText, page: u32, query: &str, options: Options) -> Option<Carry> {
+    let want = carry_len(query, options)?;
+    let from = text.codes.len().saturating_sub(want);
+    Some(Carry {
+        page,
+        from: from as u32,
+        codes: text.codes[from..].to_vec(),
+    })
+}
+
+/// Finds hits that begin on the carried page and finish on this one.
+///
+/// Only those. Everything inside this page is [`find_in`]'s job and reporting it
+/// twice would double every count in the document.
+fn find_across(
+    text: &PageText,
+    page: u32,
+    carry: &Carry,
+    query: &str,
+    options: Options,
+) -> Vec<Match> {
+    let Some(_) = carry_len(query, options) else {
+        return Vec::new();
+    };
+    let needle = Folded::of_query(query, options.match_case);
+    if needle.chars.is_empty() {
+        return Vec::new();
+    }
+
+    // One haystack, indexed continuously --- with a space in the middle that no
+    // page contains.
+    //
+    // That space is the whole difference between this working and not. A page's
+    // extracted characters do not end with whitespace: "raster" is the last
+    // thing on one page and "appearance" the first on the next, so a plain
+    // concatenation reads `rasterappearance` and the phrase a reader typed
+    // matches nothing. The break *is* whitespace --- it is a line break with a
+    // sheet of paper in it --- and the fold then collapses it against any
+    // whitespace either side of it, exactly as it does a line break inside a
+    // page. This cost two tests to find and is the reason they exist.
+    let joined: Vec<u32> = carry
+        .codes
+        .iter()
+        .chain(text.codes.iter())
+        .copied()
+        .collect();
+    let split = carry.codes.len();
+    let mut items: Vec<(u32, char)> = Vec::with_capacity(joined.len() + 1);
+    for (index, code) in joined.iter().enumerate() {
+        if index == split {
+            items.push((BREAK, '\n'));
+        }
+        if let Some(ch) = char::from_u32(*code) {
+            items.push((index as u32, ch));
+        }
+    }
+    let hay = Folded::build(items.into_iter(), options.match_case);
+
+    let mut matches = Vec::new();
+    let mut at = 0usize;
+    while at + needle.chars.len() <= hay.chars.len() {
+        let end = at + needle.chars.len();
+        if hay.chars[at..end] != needle.chars[..] {
+            at += 1;
+            continue;
+        }
+        let (first, last) = (hay.source[at], hay.source[end - 1]);
+        // Straddling, and nothing else. A hit wholly in the carry belongs to the
+        // previous page's own reply, and one wholly in this page to this reply's.
+        // An end on the break itself is the first of those and a start on it the
+        // second, which is why both are dropped here rather than resolved.
+        if first == BREAK || last == BREAK {
+            at += 1;
+            continue;
+        }
+        let (first, last) = (first as usize, last as usize);
+        if !(first < split && last >= split) {
+            at += 1;
+            continue;
+        }
+        if options.whole_word
+            && !(boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))
+                && boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied()))
+        {
+            at += 1;
+            continue;
+        }
+
+        let stop = last + 1;
+        matches.push(Match {
+            page: carry.page,
+            start: carry.from + first as u32,
+            end: (stop - split) as u32,
+            end_page: Some(page),
+            // Context from the joined text on the left and from this page on the
+            // right, which is what a reader sees either side of the break.
+            before: slice_of(&joined, first.saturating_sub(CONTEXT_CHARS)..first),
+            // A space where the break is, because that is what the fold matched
+            // against and what the reader sees --- the two pages' characters
+            // concatenated would read `rasterappearance`, which is a snippet of
+            // a word that occurs nowhere.
+            hit: format!(
+                "{} {}",
+                exact_of(&joined, first..split),
+                exact_of(&joined, split..stop)
+            ),
+            after: slice_of(
+                &text.codes,
+                (stop - split)..(stop - split + CONTEXT_CHARS).min(text.codes.len()),
+            ),
+        });
+        at += needle.chars.len();
+    }
     matches
 }
 
-/// Searches one page.
-pub fn search_page(text: &PageText, page: u32, query: &str, options: Options) -> PageMatches {
-    PageMatches {
-        page,
-        matches: find_in(text, page, query, options),
-        chars: text.len() as u32,
+/// Searches one page, and the break before it when there is a carry.
+///
+/// A pattern that does not compile is reported on every page rather than once,
+/// because there is no "once" here: the walk asks page by page and each reply
+/// stands alone. The frontend shows the first one it gets and stops the scan.
+pub fn search_page(
+    text: &PageText,
+    page: u32,
+    query: &str,
+    options: Options,
+    carry: Option<&Carry>,
+) -> PageMatches {
+    let tail = carry_for(text, page, query, options);
+    match find_in(text, page, query, options) {
+        Ok(mut matches) => {
+            if let Some(carry) = carry {
+                // Ahead of this page's own hits, because the walk keeps matches
+                // in the order they are found and a hit that begins on the
+                // previous page comes first in reading order.
+                let mut across = find_across(text, page, carry, query, options);
+                across.append(&mut matches);
+                matches = across;
+            }
+            PageMatches {
+                page,
+                matches,
+                chars: text.len() as u32,
+                problem: None,
+                tail,
+            }
+        }
+        Err(problem) => PageMatches {
+            page,
+            matches: Vec::new(),
+            chars: text.len() as u32,
+            problem: Some(problem),
+            tail: None,
+        },
     }
 }
 
@@ -324,17 +709,35 @@ mod tests {
     const PLAIN: Options = Options {
         match_case: false,
         whole_word: false,
+        regex: false,
     };
     /// Case distinguished, everything else as `PLAIN`.
     const CASED: Options = Options {
         match_case: true,
         whole_word: false,
+        regex: false,
     };
     /// A boundary required at both ends, everything else as `PLAIN`.
     const WORDS: Options = Options {
         match_case: false,
         whole_word: true,
+        regex: false,
     };
+    /// The query is a pattern, everything else as `PLAIN`.
+    const PATTERN: Options = Options {
+        match_case: false,
+        whole_word: false,
+        regex: true,
+    };
+
+    /// Finds, and asserts the query was runnable at all.
+    ///
+    /// Every test but the ones about a bad pattern goes through this, so a
+    /// pattern that stopped compiling could not be mistaken for one that stopped
+    /// matching --- which is the whole reason the error is not swallowed.
+    fn find_in(text: &PageText, page: u32, query: &str, options: Options) -> Vec<Match> {
+        super::find_in(text, page, query, options).expect("the query compiles")
+    }
 
     /// A page whose characters are `text`, with no geometry.
     ///
@@ -355,6 +758,11 @@ mod tests {
     /// the matcher wrote cannot say whether the indices it reported are right,
     /// and the indices are what the highlight is drawn from.
     fn covered(source: &str, m: &Match) -> String {
+        assert!(
+            m.end_page.is_none(),
+            "a hit that ends on another page needs `covered_across`; \
+             this one would subtract two pages' indices from each other"
+        );
         source
             .chars()
             .skip(m.start as usize)
@@ -549,7 +957,8 @@ mod tests {
                 "cat",
                 Options {
                     match_case: true,
-                    whole_word: true
+                    whole_word: true,
+                    regex: false
                 }
             )
             .len(),
@@ -625,7 +1034,7 @@ mod tests {
 
     #[test]
     fn a_page_with_no_text_reports_it_rather_than_no_matches() {
-        let result = search_page(&PageText::default(), 7, "catalog", PLAIN);
+        let result = search_page(&PageText::default(), 7, "catalog", PLAIN, None);
         assert!(result.matches.is_empty());
         assert_eq!(result.chars, 0);
         assert_eq!(result.page, 7);
@@ -633,8 +1042,293 @@ mod tests {
 
     #[test]
     fn a_page_with_text_and_no_hit_is_not_a_page_with_no_text() {
-        let result = search_page(&page("journal"), 0, "catalog", PLAIN);
+        let result = search_page(&page("journal"), 0, "catalog", PLAIN, None);
         assert!(result.matches.is_empty());
         assert_eq!(result.chars, 7);
+    }
+
+    /// The two halves a cross-page hit covers, as each page would paint it.
+    fn covered_across(first: &str, second: &str, m: &Match) -> (String, String) {
+        (
+            first.chars().skip(m.start as usize).collect(),
+            second.chars().take(m.end as usize).collect(),
+        )
+    }
+
+    /// Searches `second` with `first`'s tail carried into it, as the walk does.
+    ///
+    /// Goes through `search_page` both times rather than calling `find_across`,
+    /// so what is exercised is the handover the frontend actually performs ---
+    /// the tail one reply produces is the carry the next request consumes, and
+    /// a test that built the carry itself could not catch the two disagreeing.
+    fn across(first: &str, second: &str, query: &str, options: Options) -> Vec<Match> {
+        let tail = search_page(&page(first), 0, query, options, None).tail;
+        search_page(&page(second), 1, query, options, tail.as_ref()).matches
+    }
+
+    #[test]
+    fn a_phrase_matches_across_a_page_break() {
+        let found = across(
+            "at the foot: raster",
+            "appearance, at the head",
+            "raster appearance",
+            PLAIN,
+        );
+        assert_eq!(found.len(), 1);
+        let hit = &found[0];
+        // Anchored where it starts, which is where the reader has to be taken.
+        assert_eq!(hit.page, 0);
+        assert_eq!(hit.end_page, Some(1));
+        // Each half lands on the characters its own page would highlight, which
+        // is what the two index spaces have to mean.
+        let (left, right) = covered_across("at the foot: raster", "appearance, at the head", hit);
+        assert_eq!(left, "raster");
+        assert_eq!(right, "appearance");
+        assert_eq!(hit.hit, "raster appearance");
+    }
+
+    #[test]
+    fn a_break_collapses_like_any_other_line_break() {
+        // The join is folded with everything else, so trailing and leading
+        // whitespace at the break is one space --- the same bargain that makes a
+        // phrase match across a line break inside a page.
+        let found = across("raster  \n", "\n  appearance", "raster appearance", PLAIN);
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn a_hit_inside_one_page_is_not_reported_twice() {
+        // Both pages contain the phrase outright. Each reply must report its
+        // own and neither must report the other's, or every count in a document
+        // that repeats a phrase is doubled.
+        let found = across(
+            "raster appearance",
+            "raster appearance",
+            "raster appearance",
+            PLAIN,
+        );
+        assert_eq!(found.len(), 1, "the second page's own hit, once: {found:?}");
+        assert_eq!(found[0].page, 1);
+        assert_eq!(found[0].end_page, None);
+    }
+
+    #[test]
+    fn a_break_is_only_looked_across_when_the_pages_are_adjacent() {
+        // The carry names the page it came from, and the walk is what decides
+        // whether to pass it. What this pins is the other half: given no carry,
+        // nothing straddles.
+        let found = search_page(&page("appearance"), 1, "raster appearance", PLAIN, None);
+        assert!(found.matches.is_empty());
+    }
+
+    #[test]
+    fn whole_word_reads_the_characters_either_side_of_the_break() {
+        // The left-hand boundary is on the *previous* page, which is the whole
+        // reason the carry is longer than the query: without those characters
+        // the test would see the start of the carry and call it a boundary.
+        let joined = across("a graster", "appearance b", "raster appearance", WORDS);
+        assert!(
+            joined.is_empty(),
+            "`graster appearance` is not a whole word: {joined:?}"
+        );
+        let clean = across("a raster", "appearance b", "raster appearance", WORDS);
+        assert_eq!(clean.len(), 1);
+    }
+
+    #[test]
+    fn a_pattern_is_not_matched_across_a_break() {
+        // Deliberate, not missing: `^` and `$` mean the page, and a haystack
+        // stitched from two pages would quietly make them mean something else.
+        let found = across("raster", " appearance", "raster.appearance", PATTERN);
+        assert!(found.is_empty());
+        // The tail is not even produced for a pattern, so nothing is shipped
+        // for a feature that is switched off.
+        assert!(search_page(&page("raster"), 0, "r.ster", PATTERN, None)
+            .tail
+            .is_none());
+    }
+
+    #[test]
+    fn a_query_that_cannot_straddle_ships_no_tail() {
+        // One character cannot start on one page and finish on the next, and a
+        // single-word search is the common case: it must not pay 256 characters
+        // a page for a feature it cannot use.
+        assert!(search_page(&page("raster"), 0, "r", PLAIN, None)
+            .tail
+            .is_none());
+        assert!(search_page(&page("raster"), 0, "ra", PLAIN, None)
+            .tail
+            .is_some());
+        let long = "x".repeat(CARRY_LONGEST_QUERY + 1);
+        assert!(search_page(&page("raster"), 0, &long, PLAIN, None)
+            .tail
+            .is_none());
+    }
+
+    #[test]
+    fn the_tail_is_the_end_of_the_page_and_says_where_it_started() {
+        let text = "abcdefghij";
+        let tail = search_page(&page(text), 4, "ij", PLAIN, None)
+            .tail
+            .expect("a two-character query carries a tail");
+        assert_eq!(tail.page, 4);
+        // Shorter than the bound, so it is the whole page and starts at zero.
+        assert_eq!(tail.from, 0);
+        assert_eq!(tail.codes.len(), text.chars().count());
+    }
+
+    #[test]
+    fn a_long_page_carries_only_its_end() {
+        let text = "z".repeat(CARRY_CHARS * 2);
+        let tail = search_page(&page(&text), 0, "z z", PLAIN, None)
+            .tail
+            .expect("a tail");
+        assert_eq!(tail.codes.len(), CARRY_CHARS);
+        assert_eq!(tail.from, (CARRY_CHARS * 2 - CARRY_CHARS) as u32);
+        // And an index built from it points at the right character. `from` is
+        // what makes that work: an offset into the carry is not an offset into
+        // the page, and reporting the first would put every hit on a long page
+        // 256 characters early.
+        let found = across(&text, "zz", "z z", PLAIN);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].start, (CARRY_CHARS * 2 - 1) as u32);
+        assert_eq!(found[0].end, 1);
+    }
+
+    #[test]
+    fn a_word_the_break_splits_is_not_rejoined() {
+        // The break reads as whitespace, so `appear` at the foot of one page and
+        // `ance` at the head of the next is two words, not one. That is the same
+        // answer the module already gives for a word a *line* break splits ---
+        // "it does not rejoin a word that a hyphen broke across two lines" ---
+        // and the alternative would make a hit out of two unrelated words
+        // whenever a page happens to end mid-syllable.
+        assert!(across("to appear", "ance of it", "appearance", PLAIN).is_empty());
+        // The control: the same two pages find the phrase that really is there.
+        assert_eq!(
+            across("to appear", "ance of it", "appear ance", PLAIN).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_pattern_matches_what_a_literal_cannot() {
+        let text = "raster ruster roster";
+        assert_eq!(find_in(&page(text), 0, "r[au]ster", PATTERN).len(), 2);
+        // The control: as a literal it is the text `r[au]ster`, which is not on
+        // the page. Without this the test passes for a matcher that quietly
+        // treats every query as a pattern.
+        assert_eq!(find_in(&page(text), 0, "r[au]ster", PLAIN).len(), 0);
+    }
+
+    #[test]
+    fn a_pattern_reads_the_folded_text_and_not_the_page() {
+        // Three properties of the fold at once, each of which a pattern would
+        // see differently if it ran against the raw characters: the line break
+        // is one space, the soft hyphen is gone, and `.` therefore matches
+        // across both.
+        let found = find_in(
+            &page("ras\u{00ad}ter\r\nappearance"),
+            0,
+            "raster.appear",
+            PATTERN,
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].start, 0);
+    }
+
+    #[test]
+    fn an_anchor_is_the_page_and_not_a_printed_line() {
+        // Worth pinning rather than leaving to be discovered: after the fold
+        // there are no newlines left, so `^` cannot mean what it means in a
+        // text editor. A reader who assumes otherwise gets no matches, and the
+        // module docs say so.
+        let text = "alpha\nbeta";
+        assert_eq!(find_in(&page(text), 0, "^alpha", PATTERN).len(), 1);
+        assert_eq!(find_in(&page(text), 0, "^beta", PATTERN).len(), 0);
+        assert_eq!(find_in(&page(text), 0, "beta$", PATTERN).len(), 1);
+    }
+
+    #[test]
+    fn a_zero_length_match_is_not_a_match() {
+        // `x*` matches the empty string at every position, which would report a
+        // hit per character, each highlighting nothing.
+        assert_eq!(find_in(&page("abc"), 0, "x*", PATTERN).len(), 0);
+        // And a pattern that can match empty still finds what it really matches.
+        assert_eq!(find_in(&page("abc"), 0, "b*", PATTERN).len(), 1);
+    }
+
+    #[test]
+    fn a_hit_after_a_wide_character_lands_on_the_right_character() {
+        // The one test that can only pass if the byte-offset map is right.
+        // `regex` reports byte offsets and everything else here counts
+        // characters: `äöü ` is four characters and seven bytes, so a matcher
+        // that used the byte offset as an index would report the hit three
+        // characters late --- past the end of `raster`, still inside the page,
+        // and with a plausible-looking highlight three letters to the right.
+        let text = "äöü raster";
+        let found = find_in(&page(text), 0, "raster", PATTERN);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].start, 4);
+        assert_eq!(covered(text, &found[0]), "raster");
+    }
+
+    #[test]
+    fn a_pattern_folds_case_with_the_same_switch_a_literal_does() {
+        let text = "Raster raster";
+        assert_eq!(find_in(&page(text), 0, "raster", PATTERN).len(), 2);
+        let cased = Options {
+            regex: true,
+            ..CASED
+        };
+        assert_eq!(find_in(&page(text), 0, "raster", cased).len(), 1);
+    }
+
+    #[test]
+    fn whole_word_still_applies_to_a_pattern() {
+        let text = "cat cathode";
+        let words = Options {
+            regex: true,
+            ..WORDS
+        };
+        assert_eq!(find_in(&page(text), 0, "c.t", words).len(), 1);
+        assert_eq!(find_in(&page(text), 0, "c.t", PATTERN).len(), 2);
+    }
+
+    #[test]
+    fn a_pattern_that_does_not_compile_is_reported_and_not_answered() {
+        // The distinction the whole `problem` field exists for: a reader typing
+        // a pattern expects to get it wrong, and "no matches" for `foo(` reads
+        // as a working search over a document that does not contain it.
+        let broken = super::find_in(&page("foo(bar"), 0, "foo(", PATTERN);
+        assert!(broken.is_err(), "expected a refusal, got {broken:?}");
+        let reported = search_page(&page("foo(bar"), 2, "foo(", PATTERN, None);
+        assert!(reported.matches.is_empty());
+        assert!(reported.problem.is_some());
+        // One line, not the crate's multi-line caret diagram, because the find
+        // bar has one line to show it in.
+        let problem = reported.problem.unwrap_or_default();
+        assert!(!problem.contains('\n'), "not one line: {problem:?}");
+        // And the same text as a literal is a perfectly good query, which is
+        // what says the refusal is about the pattern and not about the page.
+        assert_eq!(find_in(&page("foo(bar"), 0, "foo(", PLAIN).len(), 1);
+    }
+
+    #[test]
+    fn a_pattern_too_large_to_compile_is_refused_rather_than_built() {
+        // Small to type, large to compile. The engine is linear-time, so this
+        // is a bound on space rather than on backtracking.
+        let huge = "a{1000}{1000}{1000}";
+        assert!(super::find_in(&page("aaa"), 0, huge, PATTERN).is_err());
+    }
+
+    #[test]
+    fn an_empty_pattern_matches_nothing() {
+        assert_eq!(find_in(&page("abc"), 0, "", PATTERN).len(), 0);
+        // A pattern *of* whitespace is a real query, unlike a literal one: the
+        // literal guard exists because the fold has already destroyed the only
+        // distinction two spaces could be drawing, and `\s+` is not that.
+        assert_eq!(find_in(&page("a b"), 0, "\\s+", PATTERN).len(), 1);
+        assert_eq!(find_in(&page("a b"), 0, " ", PLAIN).len(), 0);
     }
 }

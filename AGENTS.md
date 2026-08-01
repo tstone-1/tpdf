@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 171 entries
+The one thing this file does *not* carry in full is the trap list --- 176 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -390,6 +390,11 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
+Three crates carry the search: `regex` (MIT OR Apache-2.0) reads a reader's pattern, and it
+was already in the tree transitively through the toolchain, so declaring it added no package
+--- checked with `cargo metadata` over the whole tree rather than from its README, which is
+the standing rule for anything the licensing constraint above touches.
+
 Two plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open dialog,
 which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT); and, on Windows only,
 `tauri-plugin-single-instance` (Apache-2.0 OR MIT), which is what gives that platform the
@@ -583,12 +588,12 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 171 of them and the full text
-was 93% of this file --- an instruction budget spent on the 170 traps that are not
+titles. Only the titles are here, because there are 176 of them and the full text
+was 93% of this file --- an instruction budget spent on the 175 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
-they were **six** behind when this line was next corrected, on 2026-07-31, having been
-two behind when it was written --- which is how a count in prose fails, and why the
-authority is `grep -c '^### ' docs/TRAPS.md` rather than this sentence.
+they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
+which is how a count in prose fails, and why the authority is
+`grep -c '^### ' docs/TRAPS.md` rather than this sentence.
 What the index has to preserve is knowing that a trap *exists*;
 the paragraphs matter once you are in that area.
 
@@ -619,6 +624,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 
 ### PDFium: text, coordinates and outlines
 - A byte scan cannot verify a document with a Type0 font
+- The page break is whitespace, and concatenating two pages loses it
+- A pattern over folded text has no lines, so `^` means the page
 - `FPDFText_GetText` drops characters, so it cannot be indexed alongside boxes
 - A page carries `/Rotate`, and PDFium answers in two coordinate systems at once
 - A line-grouping rule assumes an axis, and the axis is not always vertical
@@ -716,6 +723,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test for an atomic write must plant the intermediate it is meant to prove
 - A control can be contaminated by the phase that ran before it
 - A check that derives its inputs from the thing it is testing cannot fail
+- A closure and a direct read of the same variable disagreed, and it is unexplained
 - A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 - A page fitted to the element's own width is measured under the scrollbar
 - A synthetic heading that does not reach the second column tests nothing
@@ -746,7 +754,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mutation naming a test the harness cannot run reports SURVIVED
 - A mutation that survives may be a variant, not a gap --- check before strengthening
 - A harness that prints stderr only on failure hides what a passing run said
+- A wrapper's own verdicts are on the other stream, in the same shape as a check's
 - A mutation caught by an access violation produces no test results at all
+- A guard that also guarantees termination fails as a hang, not as a red test
 - A comment claimed an ordering mattered, and the mutation that should have hurt did not
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 - Repeating a race inside one process re-runs the first round, not the race

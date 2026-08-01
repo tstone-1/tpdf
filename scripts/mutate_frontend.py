@@ -249,15 +249,15 @@ MUTATIONS = [
     Mutation(
         "search: compare only the first of the two options",
         "src/lib/search.ts",
-        "  return a.matchCase === b.matchCase && a.wholeWord === b.wholeWord;",
-        "  return a.matchCase === b.matchCase;",
+        "    a.matchCase === b.matchCase &&\n    a.wholeWord === b.wholeWord &&\n    a.regex === b.regex",
+        "    a.matchCase === b.matchCase",
         "is true only when both options agree",
     ),
     Mutation(
         "search: let the plain search match case",
         "src/lib/search.ts",
-        "export const PLAIN_SEARCH: SearchOptions = { matchCase: false, wholeWord: false };",
-        "export const PLAIN_SEARCH: SearchOptions = { matchCase: true, wholeWord: false };",
+        "export const PLAIN_SEARCH: SearchOptions = {\n  matchCase: false,",
+        "export const PLAIN_SEARCH: SearchOptions = {\n  matchCase: true,",
         "describes the plain search as neither option",
     ),
     Mutation(

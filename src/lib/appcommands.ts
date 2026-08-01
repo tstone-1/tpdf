@@ -1,0 +1,509 @@
+/**
+ * The command list the application actually has, and the window shortcuts.
+ *
+ * This was inside `App.svelte`, and `docs/PLAN.md` recorded the consequence as a
+ * gap: *"Cmd-K itself and the command list `App.svelte` registers are covered by
+ * nothing."* The palette check built its own four-command registry, so what it
+ * proved was that the palette works --- not that any command a reader can type
+ * is wired to anything. The same sentence `palette.ts` opens with says why: a
+ * component that only exists inside `App.svelte` is a component the check cannot
+ * reach, because `viewercheck.ts` runs *instead of* the shell booting.
+ *
+ * So the list moved out to where the check can reach it. Nothing about it
+ * changed on the way --- the commands, their titles, their `enabled` guards and
+ * their argument validators are the ones that were there, and `App.svelte` calls
+ * {@link registerAppCommands} where it used to call `register` itself.
+ *
+ * ## What the seam is, and what it costs
+ *
+ * A command's `run` reaches one of two places. Most reach the {@link Viewer},
+ * which the check owns a real one of, so those are end-to-end: type "fit width",
+ * press Enter, and the viewer the reader would be looking at changes. The rest
+ * reach the shell --- a file dialog, a print panel, a Svelte `$state` flag for
+ * the sidebar --- and there is no shell in the check. Those arrive through
+ * {@link AppActions}, which the check implements with recorders.
+ *
+ * Be precise about what that buys. For a shell action the check asserts the
+ * *wiring* --- that this command, found by the name a reader types, reaches that
+ * action exactly once --- and says nothing about what the action then does.
+ * `toggleInvert` writing the preference to the session is not covered here and
+ * is not claimed to be. The wiring is the half that was covered by nothing.
+ */
+
+import type { CommandRegistry } from "./commands";
+import { label, matches } from "./keys";
+import type { Tab } from "./sidebar";
+import type { Viewer } from "./viewer";
+import { MAX_ZOOM, MIN_ZOOM, parseZoomPercent, percentOf } from "./zoom";
+
+/**
+ * Everything a command needs that is not the viewer.
+ *
+ * Deliberately not "the app": each member is one verb, so a check can record
+ * which of them a command reached. A single `app` object with the whole
+ * component behind it would make the seam untestable again.
+ */
+export interface AppActions {
+  /**
+   * The open document's surface, or null.
+   *
+   * A function rather than a value because the registry outlives any document:
+   * it is read at call time, so closing and opening one does not need the
+   * commands rebuilt.
+   */
+  viewer(): Viewer | null;
+  /** How many pages the open document has, for the "Go to page" validator. */
+  pageCount(): number;
+  /** Ask for a file and open it. */
+  openDocument(): void;
+  /**
+   * Whether an open is already in flight.
+   *
+   * Only the keyboard route consults it, which is how it was before this moved:
+   * the Open *button* carries the same guard as `disabled`, and the palette row
+   * carries none. Preserved rather than unified --- making the palette guard too
+   * would be a behaviour change nobody asked for while moving code.
+   */
+  busyOpening(): boolean;
+  /** Hand the document to the platform print panel. */
+  printDocument(): void;
+  /** Put the caret in the find field. */
+  focusFind(): void;
+  /** Flip one matching option and rescan. */
+  toggleSearchOption(which: "matchCase" | "wholeWord" | "regex"): void;
+  /** Confine the search to the selection, or let it see the document again. */
+  toggleSearchScope(): void;
+  /** Show or hide the sidebar. */
+  toggleSidebar(): void;
+  /** Show one of the sidebar's tabs. */
+  showTab(tab: Tab): void;
+  /** Invert the page colours, and remember it. */
+  toggleInvert(): void;
+}
+
+/**
+ * Registers every command the application has.
+ *
+ * Appends to whatever the registry already holds, so the recent-document group
+ * that `recents.ts` maintains is unaffected by the order these are added in.
+ */
+export function registerAppCommands(
+  registry: CommandRegistry,
+  actions: AppActions,
+): void {
+  /**
+   * Every command the application has, in one place.
+   *
+   * Built once and outliving any document, so the palette works before a file
+   * is open --- "Open document" is the command someone reaches for first. The
+   * rest guard on `viewer`, which is read at call time rather than captured, so
+   * closing and opening a document does not need the registry rebuilt.
+   *
+   * The `keys` strings are labels the palette displays, and they are **derived**
+   * from the same table `viewer.ts`'s key handler and {@link handleWindowKey} match
+   * against --- see `keys.ts`. They were hand-written beside those handlers with
+   * nothing checking the two agreed, and the gap was not hypothetical: ⌘O was
+   * advertised and reached no handler at all, and ⌘P turned the page as well as
+   * printing, because the viewer's `p` arm tested the key without the modifier.
+   */
+  const withDocument = () => actions.viewer() !== null;
+
+  registry.register(
+    {
+      id: "file.open",
+      title: "Open document",
+      keys: label("file.open"),
+      run: () => actions.openDocument(),
+    },
+    {
+      // No page-range field of our own, deliberately: the system panel has one,
+      // and its numbers refer to the document we hand over --- which is every
+      // page, so they mean what the reader thinks they mean. `print::build`
+      // takes a range because thumbnail-selection printing will need it, not
+      // because anything asks for one today.
+      id: "file.print",
+      title: "Print",
+      keys: label("file.print"),
+      enabled: withDocument,
+      run: () => actions.printDocument(),
+    },
+    {
+      id: "find.open",
+      title: "Find in document",
+      keys: label("find.open"),
+      enabled: withDocument,
+      run: () => actions.focusFind(),
+    },
+    {
+      id: "find.next",
+      title: "Find next",
+      keys: label("find.next"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.nextMatch(),
+    },
+    {
+      id: "find.previous",
+      title: "Find previous",
+      keys: label("find.previous"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.prevMatch(),
+    },
+    {
+      // Titled by what pressing it does, not by what the setting is called: a
+      // palette lists verbs, and "Match case" beside a checkbox that is already
+      // on reads as a description of the state rather than as a command.
+      id: "find.matchCase",
+      title: "Find: match case on or off",
+      keys: label("find.matchCase"),
+      enabled: withDocument,
+      run: () => actions.toggleSearchOption("matchCase"),
+    },
+    {
+      id: "find.wholeWord",
+      title: "Find: whole words on or off",
+      keys: label("find.wholeWord"),
+      enabled: withDocument,
+      run: () => actions.toggleSearchOption("wholeWord"),
+    },
+    {
+      // Enabled on having something to scope *to*, which is what makes a
+      // silently-does-nothing command unnecessary: a reader with no selection
+      // sees it greyed, with the reason being that nothing is selected. It
+      // stays enabled while scoped so there is a way back out.
+      id: "find.inSelection",
+      title: "Find: in selection on or off",
+      keys: label("find.inSelection"),
+      enabled: () => {
+        const viewer = actions.viewer();
+        return (
+          viewer !== null && (viewer.searchScoped || viewer.selectedText !== "")
+        );
+      },
+      run: () => actions.toggleSearchScope(),
+    },
+    {
+      // Titled by what it turns on rather than by the word "regex", which is
+      // what a reader who wants it would type and not what a reader who does
+      // not would understand. Both spellings are in the title so the palette
+      // finds it either way.
+      id: "find.regex",
+      title: "Find: regular expression on or off",
+      keys: label("find.regex"),
+      enabled: withDocument,
+      run: () => actions.toggleSearchOption("regex"),
+    },
+    {
+      id: "view.zoomIn",
+      title: "Zoom in",
+      keys: label("view.zoomIn"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.zoomStep(1),
+    },
+    {
+      id: "view.zoomOut",
+      title: "Zoom out",
+      keys: label("view.zoomOut"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.zoomStep(-1),
+    },
+    {
+      id: "view.fitWidth",
+      title: "Fit width",
+      keys: label("view.fitWidth"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.setFit("width"),
+    },
+    {
+      id: "view.fitPage",
+      title: "Fit page",
+      keys: label("view.fitPage"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.setFit("page"),
+    },
+    {
+      // 100% means one CSS pixel per PDF point, which is not the same as one
+      // inch on the desk --- that would need the display's physical size, which
+      // no browser reports honestly. Every other reader calls this number
+      // "actual size" and means the same thing by it.
+      id: "view.actualSize",
+      title: "Actual size",
+      keys: label("view.actualSize"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.setZoomFixed(1),
+    },
+    {
+      // The second command that takes a value. The zoom ladder is deliberately
+      // coarse --- each stop throws away every tile --- so a reader who wants
+      // 175% cannot step to it, and before this there was nothing to type it
+      // into either.
+      id: "view.zoomTo",
+      title: "Zoom to…",
+      keys: label("view.zoomTo"),
+      enabled: withDocument,
+      argument: {
+        placeholder: "Zoom, in percent",
+        problem: (raw: string) => {
+          if (raw.trim() === "")
+            return `Zoom, ${percentOf(MIN_ZOOM)} to ${percentOf(MAX_ZOOM)}%`;
+          if (parseZoomPercent(raw) === null) {
+            return `"${raw.trim()}" is not a zoom between ${percentOf(MIN_ZOOM)}% and ${percentOf(MAX_ZOOM)}%`;
+          }
+          return null;
+        },
+        preview: (raw: string) =>
+          `Zoom to ${percentOf(parseZoomPercent(raw) ?? 1)}%`,
+        run: (raw: string) => {
+          const zoom = parseZoomPercent(raw);
+          if (zoom !== null) actions.viewer()?.setZoomFixed(zoom);
+        },
+      },
+    },
+    {
+      // Preview's bindings, not Acrobat's: Acrobat rotates on Shift-Cmd-+ and
+      // Shift-Cmd-−, and on this keyboard those produce the same `key` as the
+      // zoom shortcuts they would then collide with.
+      //
+      // Rotating the *view* only. The file is untouched; rotating pages in the
+      // document is a page operation and belongs with the ones that write.
+      id: "view.rotateClockwise",
+      title: "Rotate view clockwise",
+      keys: label("view.rotateClockwise"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.rotateBy(1),
+    },
+    {
+      id: "view.rotateCounterClockwise",
+      title: "Rotate view anticlockwise",
+      keys: label("view.rotateCounterClockwise"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.rotateBy(-1),
+    },
+    {
+      id: "nav.nextPage",
+      title: "Next page",
+      keys: label("nav.nextPage"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.nextPage(),
+    },
+    {
+      id: "nav.previousPage",
+      title: "Previous page",
+      keys: label("nav.previousPage"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.previousPage(),
+    },
+    {
+      id: "nav.firstPage",
+      title: "Go to start",
+      keys: label("nav.firstPage"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.goToStart(),
+    },
+    {
+      id: "nav.lastPage",
+      title: "Go to end",
+      keys: label("nav.lastPage"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.goToEnd(),
+    },
+    {
+      // The first command that takes a value. On a 775-page document there was
+      // no way to reach page 400 at all: Home, End and one page at a time.
+      //
+      // Numbers here are the ones printed on the page --- one-based --- and
+      // `goToPage` is zero-based, so the conversion happens once, here, next to
+      // the text that says "of {pageCount}". `problem` refuses out of range
+      // rather than clamping: a reader who types 900 in a 775-page document has
+      // made a mistake, and silently going to the last page hides it.
+      id: "nav.goToPage",
+      title: "Go to page…",
+      keys: label("nav.goToPage"),
+      enabled: withDocument,
+      argument: {
+        placeholder: "Page number",
+        problem: (raw: string) => {
+          const pages = actions.pageCount();
+          const trimmed = raw.trim();
+          if (trimmed === "") return `Page number, 1 to ${pages}`;
+          if (!/^[0-9]+$/.test(trimmed))
+            return `"${trimmed}" is not a page number`;
+          const page = Number(trimmed);
+          if (page < 1 || page > pages) {
+            return `This document has ${pages} page${pages === 1 ? "" : "s"}`;
+          }
+          return null;
+        },
+        preview: (raw: string) =>
+          `Go to page ${Number(raw.trim())} of ${actions.pageCount()}`,
+        run: (raw: string) =>
+          actions.viewer()?.goToPage(Number(raw.trim()) - 1),
+      },
+    },
+    {
+      id: "edit.selectAll",
+      title: "Select all on page",
+      keys: label("edit.selectAll"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.selectPage(),
+    },
+    {
+      id: "edit.copy",
+      title: "Copy selection",
+      keys: label("edit.copy"),
+      enabled: withDocument,
+      run: () => void actions.viewer()?.copySelection(),
+    },
+    {
+      id: "edit.clearSelection",
+      title: "Clear selection",
+      keys: label("edit.clearSelection"),
+      enabled: withDocument,
+      run: () => actions.viewer()?.clearSelection(),
+    },
+    {
+      // Named for both things a reader might type. One command with one
+      // binding rather than two commands sharing one, which would show the
+      // same shortcut twice in the palette and teach that it does two things.
+      id: "view.toggleSidebar",
+      title: "Toggle sidebar",
+      keys: label("view.toggleSidebar"),
+      enabled: withDocument,
+      run: () => actions.toggleSidebar(),
+    },
+    {
+      // Two commands rather than one "switch tab", because the palette is how a
+      // command is *found*: someone looking for thumbnails types "thumb", and a
+      // command called "Switch sidebar tab" is not what they would type.
+      id: "view.showOutline",
+      title: "Show outline",
+      enabled: withDocument,
+      run: () => actions.showTab("outline"),
+    },
+    {
+      id: "view.showThumbnails",
+      title: "Show page thumbnails",
+      enabled: withDocument,
+      run: () => actions.showTab("pages"),
+    },
+    {
+      // "Invert page colours", not "Dark mode". The chrome is already dark when
+      // the desktop is, so a command called dark mode would appear to do nothing
+      // for the reader who most expects it to --- and what this actually does is
+      // change how the document looks, which is worth saying out loud.
+      id: "view.invertPages",
+      title: "Invert page colours",
+      keys: label("view.invertPages"),
+      enabled: withDocument,
+      run: () => actions.toggleInvert(),
+    },
+  );
+}
+
+/** The part of the palette the window shortcuts drive. */
+export interface PaletteLike {
+  readonly isOpen: boolean;
+  open(): void;
+  close(): void;
+  askFor(id: string): void;
+}
+
+/** What {@link handleWindowKey} reaches for. */
+export interface WindowKeyDeps {
+  actions: AppActions;
+  /** The palette, or null before the shell has built one. */
+  palette(): PaletteLike | null;
+  /**
+   * Whether a document is open.
+   *
+   * `App.svelte` answered this with the window title, and every binding but two
+   * is gated on it. Kept distinct from `actions.viewer() !== null`, which is
+   * what a command's `enabled` asks: they agree in practice and they are not the
+   * same question, and collapsing them here would be a change disguised as a
+   * move.
+   */
+  hasDocument(): boolean;
+  /** Re-read the recent-document list behind an opening palette. */
+  refreshRecents(): void;
+}
+
+/**
+ * The shortcuts that belong to the window rather than to the surface.
+ *
+ * Matched through `keys.ts`, which is where the palette's labels come from
+ * too --- see the note there. ⌘K is the one chord not in that table: it opens
+ * the palette rather than being listed in it, so there is no label for it to
+ * disagree with.
+ */
+export function handleWindowKey(
+  event: KeyboardEvent,
+  deps: WindowKeyDeps,
+): void {
+  const palette = deps.palette();
+  const { actions } = deps;
+  const title = deps.hasDocument();
+
+  if ((event.metaKey || event.ctrlKey) && event.key === "k") {
+    event.preventDefault();
+    // Toggling rather than reopening: Cmd-K on an open palette is a request
+    // to get rid of it, not to clear the query someone is halfway through.
+    if (palette?.isOpen) palette.close();
+    else {
+      palette?.open();
+      // Opened first and refreshed behind it. The list only changes when a
+      // document is opened, so it is almost always already right, and blocking
+      // a keystroke on a file read to cover the case where it is not would
+      // make every use of the palette pay for it.
+      deps.refreshRecents();
+    }
+  } else if (matches("nav.goToPage", event) && title) {
+    // Straight into the palette's argument mode. The shortcut and the palette
+    // row reach the same code, which is the point of `askFor` -- a second way
+    // to ask for a page number is a second thing to keep right.
+    event.preventDefault();
+    palette?.askFor("nav.goToPage");
+  } else if (matches("view.zoomTo", event) && title) {
+    event.preventDefault();
+    palette?.askFor("view.zoomTo");
+  } else if (matches("file.open", event)) {
+    // ⌘O was advertised in the palette and reached nothing at all: the label
+    // was written by hand and no handler was ever added for it, which is the
+    // exact disagreement the shared table exists to make impossible.
+    //
+    // Prevented whether or not an open is already running, but only issued
+    // when one is not --- the same guard the Open button carries as
+    // `disabled`. Without it the keyboard is the one path that can stack file
+    // dialogs, and the second chooser's document then waits behind the first
+    // in `opens` for no reason anyone asked for.
+    event.preventDefault();
+    if (!actions.busyOpening()) actions.openDocument();
+  } else if (matches("find.open", event) && title) {
+    event.preventDefault();
+    actions.focusFind();
+  } else if (matches("file.print", event)) {
+    // Prevented whether or not a document is open --- note the missing
+    // `&& title` that every other binding here has. WKWebView's own Cmd-P
+    // prints the *page*: the chrome, the toolbar, and a scaled-down
+    // screenshot of whatever tiles happen to be painted. On the empty state
+    // that is a picture of the words "Open a PDF, or drop one here."
+    event.preventDefault();
+    actions.printDocument();
+  } else if (matches("view.toggleSidebar", event) && title) {
+    event.preventDefault();
+    actions.toggleSidebar();
+  } else if (matches("view.invertPages", event) && title) {
+    event.preventDefault();
+    actions.toggleInvert();
+  } else if (matches("find.matchCase", event) && title) {
+    event.preventDefault();
+    actions.toggleSearchOption("matchCase");
+  } else if (matches("find.wholeWord", event) && title) {
+    event.preventDefault();
+    actions.toggleSearchOption("wholeWord");
+  } else if (matches("find.regex", event) && title) {
+    event.preventDefault();
+    actions.toggleSearchOption("regex");
+  } else if (matches("find.inSelection", event) && title) {
+    event.preventDefault();
+    actions.toggleSearchScope();
+  }
+}

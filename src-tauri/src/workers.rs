@@ -1271,6 +1271,7 @@ impl Engine for Workers {
         page: u32,
         query: &str,
         options: crate::search::Options,
+        carry: Option<&crate::search::Carry>,
     ) -> Result<PageMatches, String> {
         self.ask(
             doc,
@@ -1278,6 +1279,7 @@ impl Engine for Workers {
                 page,
                 query: query.to_string(),
                 options,
+                carry: carry.cloned(),
             },
         )
     }

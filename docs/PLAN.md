@@ -1809,8 +1809,8 @@ rediscovering — a test that cannot distinguish its own silence from a pass.
   while the summary line in the same output said 28 of 29 passed. The two numbers disagreed
   and nothing was comparing them; they are compared now.
 
-Not done: regular expressions, search within a selection, and matching across a page
-boundary.
+~~Not done: regular expressions, search within a selection, and matching across a page
+boundary.~~ **All three done 2026-08-01 --- see below.**
 
 ##### Recent documents in the palette --- 2026-07-30
 
@@ -2016,10 +2016,9 @@ expected victim written down first. All fourteen were caught. Two results worth 
   ordering test that recency must not beat a better match, which fails without it, and that
   is recorded next to the line so the next reader does not "fix" it.
 
-Not done, and unchecked rather than merely unfinished: **Cmd-K itself and the command list
-`App.svelte` registers are covered by nothing.** The check builds its own registry, so what
-it proves is that the palette works, not that the application's commands are wired to it.
-Also absent: user-rebindable keys and persisted recents.
+~~Not done, and unchecked rather than merely unfinished: **Cmd-K itself and the command
+list `App.svelte` registers are covered by nothing.**~~ **Closed 2026-08-01 --- see below.**
+Still absent: user-rebindable keys and persisted recents.
 
 Two items listed here are now done and are recorded where they were closed rather than
 struck out: a command's displayed keybinding cannot disagree with its handler, because
@@ -2172,6 +2171,120 @@ Three things this turned up that were not the feature:
   the checks above instead.
 - **A precondition guarding the first of those was wrong twice before it was right**, and
   survived only because it printed what it measured. See the traps.
+
+#### The command list, moved somewhere a check can reach it --- done 2026-08-01
+
+The gap struck out above was real and it was structural, not an oversight: `viewercheck.ts`
+runs *instead of* `App.svelte` booting --- it is the first thing the setup effect tries, and
+it exits the process when it is done --- so anything defined inside that component is
+unreachable by it. The palette check therefore built its own four-command registry, and said
+so. What it proved was that the palette works. Whether a command a reader can actually type
+reached anything was covered by nothing at all, and the file recorded that as a known gap for
+five days.
+
+`src/lib/appcommands.ts` is the fix, and it is the same move `viewer.ts` and `palette.ts`
+already made: the twenty-nine commands and the window-key routing move out of the component
+into a module, parameterised by an `AppActions` interface. `App.svelte` keeps the half that is
+genuinely the shell --- the file dialog, the print panel, the Svelte state --- and implements
+that interface with it.
+
+**The move was verified mechanically rather than by eye**, because a restructure that silently
+drops a command is worse than the gap it closed: the ids and titles are identical and in the
+same order, every comment line survives, and `App.svelte` outside the two moved blocks is
+byte-identical to `HEAD` apart from three import lines.
+
+Thirty-six checks came with it, and two of them are the ones worth having:
+
+- **A coverage audit.** Every registered command is classified in a table --- driven against
+  the viewer, driven against a recorded action, or not driven with the reason --- and the check
+  asserts the table and the registry are the same *set*. A command added tomorrow turns it red
+  until somebody decides how it is covered, and a renamed one turns it red from the other side.
+  `AGENTS.md` says to diff the names rather than compare totals; this is that, for commands.
+- **Each command run the way a reader runs it**: open the palette, type the command's title,
+  press Enter --- with the assertion that the title ranked *first* before Enter, since pressing
+  it on whatever happened to be highlighted would run some other command and then assert against
+  it. The ones that reach the viewer are asserted against a real viewer moving, each with a
+  control establishing it was not already where the command would take it.
+
+⌘K goes through the real routing with a real `KeyboardEvent`, and carries the control this file
+keeps needing: the palette is asserted **closed** first, and a bare `k` is asserted not to open
+it, so "the modifier is tested" is a separate claim from "the arm exists".
+
+Two defects in the new checks came out of running them, both of a kind already in
+`docs/TRAPS.md`. The phase left the viewer rotated three quarter-turns and turned **eight**
+later assertions red across three phases, which is the contamination trap; it now restores what
+it found and says so in a check of its own. And the guard on `enabled` was written by taking
+the document away from the shared actions object --- a reading this file cannot explain, which
+is its own entry, and which is why the check now builds a second registry whose viewer is null
+by construction.
+
+Ten mutations, ten caught, each tripping the check predicted for it before the run.
+`scripts/mutate_viewer.py` is the third mutation harness and exists because the first two drive
+`cargo test` and `vitest`, and none of this is reachable from either. Its own cross-check
+earned its place on the first run: it read `viewer_check.py`'s stderr as well as its stdout and
+counted the wrapper's `[FAIL] exit 1` as a check, so all ten mutations came back off by exactly
+one and were reported as **broken runs** rather than as caught or survived. That is the
+cross-check working.
+
+#### Three things search could not do --- done 2026-08-01
+
+The find bar had a literal query, two toggles and a whole-document walk. The three gaps struck
+out above are closed, and each cost something worth recording.
+
+**Regular expressions.** `regex` is a third option, matched against the **folded** sequence a
+literal query gets --- one space for a run of whitespace, no soft hyphens, case decided by the
+same match-case switch rather than by an inline flag. One haystack, so a pattern and a literal
+mean the same thing by the same options and a hit stays expressible in the character indices
+the highlight already uses. The cost is stated rather than discovered: `\n` never occurs and
+`^` anchors to the page rather than to a printed line, both pinned by tests. The `regex` crate
+was already in the tree transitively and is `MIT OR Apache-2.0`, read out of `cargo metadata`
+rather than assumed, so declaring it adds no package.
+
+A pattern that does not compile is **reported**, not answered: `PageMatches` carries a
+`problem`, the walk stops on the first one, and the find bar shows the reason where the counter
+goes. "No matches" for `foo(` is a statement about the document, and a reader typing a pattern
+expects to get it wrong.
+
+**Search within a selection.** A scope is a snapshot of the selection, taken when the reader
+scopes the search and held until they release it --- not a live reading, because clicking on
+the page is how a selection is dismissed and a live scope would silently widen to the whole
+document while the label still said otherwise. It is applied in the frontend, and that is a
+decision rather than laziness: the whole-word boundary is decided by the characters either side
+of a hit *on the page*, so a selection cutting through a word must not make that half a whole
+word, and a snippet's context is the page's text around the hit whether or not those words were
+selected. Both are right by default when the scope filters results and wrong by default when it
+narrows the haystack. The pages outside the scope are simply never asked about, which is the
+part that would have cost anything.
+
+**Matching across a page boundary.** The walk is sequential, so the tail of each page is handed
+to the request about the next one and the join is matched there. A hit that straddles is
+anchored on the page it *starts* on --- that is where the search should take the reader --- and
+carries `endPage`, and the highlight paints one half on each page because two pages share no
+coordinate space.
+
+The part that cost two tests to find is that **the break is whitespace**: a page's text does not
+end with any, so a plain concatenation reads `rasterappearance` and the phrase matches nothing.
+A separator belonging to no page is inserted before folding, which also makes a hit that starts
+or ends *on* the break belong to one page's own reply rather than being reported twice. One
+consequence follows and is deliberate: a word the break splits is not rejoined, exactly as a
+word a line break splits is not.
+
+The wrapped walk left one join unexamined --- starting at page 400 means 399 is scanned last, so
+the break between them has no request after it --- and one extra request closes it, taking only
+the cross-page hits from the reply.
+
+Five checks in the running app, three of them tying a position to specific content: the
+cross-page query is built from the document itself (the last word of page 1 and the first of
+page 2, which by construction occur in that order with only the break between them) and each
+half is resolved against a fresh extraction of the page it claims to be on.
+
+The scoped check took three attempts to become able to fail, and the two failures are both
+already-known traps arriving in new clothes. First it compared the scoped count against the
+*document* total, which the page list alone explains --- an outcome two mechanisms can produce.
+Then it computed "there is something outside the range to drop" from the matches it got back,
+so a mutation that stopped clipping widened the numbers the precondition was measured against
+and turned the check into a `[SKIP]` --- a defect switching off the check that would have caught
+it. It now measures both ends against the **scope**, which nothing under test can move.
 
 #### The accessibility tree — 2026-07-27
 

@@ -252,6 +252,7 @@ fn main() {
         page: 0,
         query: "the".into(),
         options: Default::default(),
+        carry: None,
     });
     check(
         "a search crosses the boundary",

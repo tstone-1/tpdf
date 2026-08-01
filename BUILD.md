@@ -1185,19 +1185,30 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all seven corpora. Every run reports the same **109 check names**; what differs is how
+Run all seven corpora. Every run reports the same **153 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch. The splits below were all measured on 2026-07-30:
+bug this arrangement exists to catch. The splits below were measured on 2026-08-01, when 44
+checks landed for the command list and the three things search could not do:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 96 | 13 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 102 | 7 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 102 | 7 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 62 | 47 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 70 | 39 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 95 | 14 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 93 | 16 | the only one whose content-stream order is not its reading order |
+| `text-heavy.pdf` | 141 | 12 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 146 | 7 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 146 | 7 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 89 | 64 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 102 | 51 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 137 | 16 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 135 | 18 | the only one whose content-stream order is not its reading order |
+
+**Compare the name *sets*, not the counts, and slice the name by column.** Every label is
+exactly six characters --- `[OK]  `, `[FAIL]`, `[SKIP]` --- so the name begins at column 7
+whatever the outcome, and consuming the label with a regex `\s` eats one space for `[OK]`
+and none for `[SKIP]`. An ad-hoc comparison written that way reported five corpora
+disagreeing when the only difference was which checks had skipped. The name column is padded
+to 40 and a longer name is followed by a single space, so there is no reliable split at all:
+key on the first 41 characters after the label, which are byte-identical for the same check
+on any document. Two corpora legitimately differ in the *order* they record two checks;
+compare sets.
 
 **Diff the names mechanically, and not with a naive split.** `record` pads each name to 40
 characters and then prints the detail, so a name *longer* than that is followed by a single
@@ -1539,7 +1550,17 @@ starts at 0 and increments within the month.
    ```
    scripts/mutate_rust.py          # search.rs, 22 mutations, `cargo test --lib search::`
    scripts/mutate_frontend.py      # text/clicks/commands/keys/search/results.ts, 42 mutations
+   scripts/mutate_viewer.py        # appcommands/search/viewercheck, 15 mutations, viewer_check.py
    ```
+
+   The third one is different in kind and slower for it: it rebuilds the bundle and runs
+   `viewer_check.py` per mutation (~20 s each), because what it covers --- the application's
+   own command list, the window shortcuts, and the search behaviour that only shows up
+   against a real document --- is reachable from neither `cargo test` nor `vitest`. It needs
+   an unlocked, unoccluded screen for the same reason `viewer_check.py` does. It reads check
+   results from **stdout only**: `viewer_check.py` writes its own verdict on the run to
+   stderr in the same `[FAIL] ` shape, and counting those as checks is what made its first
+   run report all ten mutations as broken.
 
    Each mutation names the test expected to notice, and a mutation nothing caught is
    reported as a defect in the **suite**. Three properties keep that verdict honest: both

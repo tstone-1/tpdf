@@ -341,6 +341,9 @@ pub(crate) enum Job {
         page: u32,
         query: String,
         options: search::Options,
+        /// The previous page's tail, when the walk had one --- see
+        /// `search::Carry`.
+        carry: Option<search::Carry>,
         reply: Reply<PageMatches>,
     },
     Outline {
@@ -613,6 +616,7 @@ impl RenderService {
         page: u32,
         query: String,
         options: search::Options,
+        carry: Option<search::Carry>,
         reply: Reply<PageMatches>,
     ) {
         if self
@@ -622,6 +626,7 @@ impl RenderService {
                 page,
                 query,
                 options,
+                carry,
                 reply,
             })
             .is_err()
@@ -719,6 +724,7 @@ pub(crate) trait Engine {
         page: u32,
         query: &str,
         options: search::Options,
+        carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
@@ -739,8 +745,9 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             page,
             query,
             options,
+            carry,
             reply,
-        } => reply(engine.search(doc, page, &query, options)),
+        } => reply(engine.search(doc, page, &query, options, carry.as_ref())),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
     }
@@ -880,8 +887,15 @@ impl Engine for InProcess {
         page: u32,
         query: &str,
         options: search::Options,
+        carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String> {
-        run_search(open_slot(&self.docs.borrow(), doc)?, page, query, options)
+        run_search(
+            open_slot(&self.docs.borrow(), doc)?,
+            page,
+            query,
+            options,
+            carry,
+        )
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
@@ -1027,12 +1041,14 @@ pub(crate) fn run_search(
     page: u32,
     query: &str,
     options: search::Options,
+    carry: Option<&search::Carry>,
 ) -> Result<PageMatches, String> {
     Ok(search::search_page(
         &run_text(document, page)?,
         page,
         query,
         options,
+        carry,
     ))
 }
 
