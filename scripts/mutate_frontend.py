@@ -611,6 +611,87 @@ MUTATIONS = [
         "  for (const range of [...ranges].sort((a, b) => a.from - b.from)) {",
         "concatenates the ranges in the order it is given them",
     ),
+    Mutation(
+        "structure: ignore the document's own reading order",
+        "src/lib/reading.ts",
+        "  const tagged = usableRuns(text);",
+        "  const tagged = null;",
+        "reads the page in the order the tags give",
+    ),
+    Mutation(
+        "structure: use the runs even when they leave visible text unclaimed",
+        "src/lib/reading.ts",
+        "    if (isVisible(code) && placed(charQuad(text, index))) return null;",
+        "",
+        "is null for a page whose runs leave a visible character unclaimed",
+    ),
+    Mutation(
+        # Written first against an *unplaced* space, and it survived: that case
+        # is refused by the other half of the condition, so the whitespace half
+        # was covered by nothing. The fixture now uses a space with a box.
+        "structure: reject a page over an untagged space",
+        "src/lib/reading.ts",
+        "    if (isVisible(code) && placed(charQuad(text, index))) return null;",
+        "    if (placed(charQuad(text, index))) return null;",
+        "ignores an unclaimed character that is only whitespace",
+    ),
+    Mutation(
+        "structure: reject a page over a character PDFium placed nowhere",
+        "src/lib/reading.ts",
+        "    if (isVisible(code) && placed(charQuad(text, index))) return null;",
+        "    if (isVisible(code)) return null;",
+        "ignores an unclaimed character PDFium placed nowhere",
+    ),
+    Mutation(
+        # The clipping, rather than the bucketing. A fragment that straddles two
+        # elements is the case a reading order gets wrong quietly: the words end
+        # up in one block, in the wrong order, and every count still agrees.
+        "structure: put a straddling fragment in whichever run it starts in",
+        "src/lib/reading.ts",
+        "      for (let index = range.from; index < range.to; index++) {\n        if (!mine.has(index)) continue;",
+        "      if (!mine.has(range.from)) continue;\n      for (let index = range.from; index < range.to; index++) {",
+        "clips a fragment that straddles two runs",
+    ),
+    Mutation(
+        # Order the tagged blocks by position instead of by the tags, which is
+        # the mutation the margin-note fixture alone cannot catch: geometry and
+        # tags agree about *which* block comes first there for two of three.
+        "structure: order the tagged blocks geometrically after all",
+        "src/lib/reading.ts",
+        "    ? ownership(text, tagged).map((owned) => within(text, fragments, owned))",
+        "    ? ownership(text, [...tagged].sort((a, b) => a.start - b.start)).map((owned) =>\n        within(text, fragments, owned),\n      )",
+        "follows the tags even where they disagree with the geometry entirely",
+    ),
+    Mutation(
+        "structure: emit only the characters a run claims",
+        "src/lib/reading.ts",
+        "  let last = -1;\n  for (let index = 0; index < owner.length; index++) {\n    if (owner[index] === -1) owner[index] = last;\n    else last = owner[index] as number;\n  }\n  // Backwards for anything before the first claimed character, which the forward\n  // pass could only leave at -1.\n  let next = runs.length > 0 ? 0 : -1;\n  for (let index = owner.length - 1; index >= 0; index--) {\n    if (owner[index] === -1) owner[index] = next;\n    else next = owner[index] as number;\n  }",
+        "",
+        "are still in the reading order",
+    ),
+    Mutation(
+        "structure: give an unclaimed character to the run after it, not before",
+        "src/lib/reading.ts",
+        "  let last = -1;\n  for (let index = 0; index < owner.length; index++) {\n    if (owner[index] === -1) owner[index] = last;\n    else last = owner[index] as number;\n  }",
+        "",
+        "stay with the text they follow",
+    ),
+    Mutation(
+        # Found by the tagged fixture and present long before it: the geometric
+        # path produced the same broken line.
+        "reading: let a comma open a line of its own",
+        "src/lib/reading.ts",
+        "  if (shorter < Math.max(...heights) * SHORT_MARK) return true;",
+        "",
+        "is one line, not a line of letters and a line of marks",
+    ),
+    Mutation(
+        "reading: let any box that touches a line join it",
+        "src/lib/reading.ts",
+        "  if (shorter < Math.max(...heights) * SHORT_MARK) return true;",
+        "  return true;",
+        "does not make two real lines into one",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below

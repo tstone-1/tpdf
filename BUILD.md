@@ -207,6 +207,11 @@ order matches geometry tests nothing, so the generator **asserts the discriminat
 and refuses to write a fixture that has lost it. Its manifest states both orders, which is what
 lets a check say "the tagged answer was used" rather than "an answer was produced".
 
+Its manifest also carries the three fields `viewer_check.py`'s reading-order check reads
+(`page`, `name`, `lines`), so this is an ordinary corpus for that harness rather than one it has
+to know about --- and what that check then asserts is the **lines**, in tagged order, against a
+file a different program wrote.
+
 Worth knowing as external evidence that the fixture is not merely self-consistent: poppler's
 `pdftotext` reads page 1 in **geometric** order --- heading, margin note, body --- which is the
 wrong answer the tags exist to correct.
@@ -1208,20 +1213,28 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all seven corpora. Every run reports the same **153 check names**; what differs is how
+Run all eight corpora. Every run reports the same **155 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch. The splits below were measured on 2026-08-01, when 44
-checks landed for the command list and the three things search could not do:
+bug this arrangement exists to catch. The splits below were measured on 2026-08-01, when the
+tagged corpus and its two checks landed:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 141 | 12 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 146 | 7 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 146 | 7 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 89 | 64 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 102 | 51 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 137 | 16 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 135 | 18 | the only one whose content-stream order is not its reading order |
+| `text-heavy.pdf` | 140 | 15 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 146 | 9 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 146 | 9 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 89 | 66 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 102 | 53 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 137 | 18 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 135 | 20 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 128 | 27 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+
+**The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
+checks red that had been green on every corpus for a week --- two nav probes guarded on "more
+than one page" where the guard has to be "a page that can be reached", and a search check that
+cannot tell "the scan restarted" from "there was nothing ahead to find". None was a defect in
+the subject; all three were preconditions written as assertions, and the smallest multi-page
+fixture until then had three pages. See the traps.
 
 **Compare the name *sets*, not the counts, and slice the name by column.** Every label is
 exactly six characters --- `[OK]  `, `[FAIL]`, `[SKIP]` --- so the name begins at column 7
@@ -1571,17 +1584,29 @@ starts at 0 and increments within the month.
    says the tests can fail:
 
    ```
-   scripts/mutate_rust.py          # search.rs, 22 mutations, `cargo test --lib search::`
-   scripts/mutate_frontend.py      # text/clicks/commands/keys/search/results.ts, 42 mutations
+   scripts/mutate_rust.py          # search.rs + structure.rs, 23 mutations, `cargo test --lib`
+   scripts/mutate_frontend.py      # text/clicks/commands/keys/search/results/reading.ts, 85
    scripts/mutate_viewer.py        # appcommands/search/viewercheck, 15 mutations, viewer_check.py
-   scripts/mutate_viewer.py --runner structure   # structure.rs, 4 mutations, structure-probe
+   scripts/mutate_viewer.py --runner structure       # structure.rs, 4, structure-probe
+   scripts/mutate_viewer.py --runner viewer-tagged   # reading.ts, 2, viewer_check on tagged.pdf
    ```
 
-   `mutate_viewer.py` drives two harnesses, chosen per mutation and filterable with
+   `mutate_rust.py` filters on **two** module prefixes, and libtest takes several and ORs them
+   --- but only after `--`. `cargo test --lib a:: b::` is cargo's own argument error, which
+   reads like the feature being unsupported.
+
+   `mutate_viewer.py` drives three harnesses, chosen per mutation and filterable with
    `--runner`. The `structure` one needs no webview and no bundle, so it neither waits for one
    nor requires an unlocked screen; it rebuilds one example and runs it, at about 15 s a
-   mutation. Both print the same `[FAIL] <name>` lines and the same summary, so the
+   mutation. All three print the same `[FAIL] <name>` lines and the same summary, so the
    cross-check, the byte restore and the name validation are shared rather than copied.
+
+   `viewer-tagged` is the viewer harness against `tagged.pdf`, and it exists because the two
+   tagged-reading-order checks `[SKIP]` on every other corpus. A skipped check is in the name
+   set and cannot go red, so a mutation aimed at one reported **SURVIVED** --- the most
+   misleading verdict this harness produces, since it reads as a gap in the checks rather than
+   a fixture that does not exercise them. The baseline validation now refuses that case
+   explicitly, alongside the zero-match and ambiguous-prefix ones.
 
    The viewer runner is different in kind and slower for it: it rebuilds the bundle and runs
    `viewer_check.py` per mutation (~20 s each), because what it covers --- the application's

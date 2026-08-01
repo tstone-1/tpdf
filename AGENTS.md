@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 177 entries
+The one thing this file does *not* carry in full is the trap list --- 184 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -588,8 +588,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 177 of them and the full text
-was 93% of this file --- an instruction budget spent on the 176 traps that are not
+titles. Only the titles are here, because there are 184 of them and the full text
+was 93% of this file --- an instruction budget spent on the 183 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -632,6 +632,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Two rotation tables, disagreeing at every turn but zero
 - PDFium's character order is not the page's line order
 - A dense page of uniform lines cannot detect a y-flip
+- A comma opens a line of its own, and every space on the line joins it
 - A paragraph is one mark and several text objects, and the gap between them belongs to neither
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
 - An outline can be infinite, and PDFium says so in its own documentation
@@ -740,6 +741,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A print check that counts pages cannot see a blank page
 - A page count read too early is 0, and 0 is not a count
 - A DIB pixel is not a device unit, and every page printed at half size while a check passed
+- A tolerated gap in the input becomes a hole in the output
+- A test cannot see the direction of an attachment it puts in index order
+- A guard for "more than one page" is not a guard for "a page that can be reached"
+- A wrap is correct when there is nothing ahead, so the check cannot fire
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -754,8 +759,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A verdict that reads a timeout as "no result" throws away the finding
 - A mutation naming a test the harness cannot run reports SURVIVED
 - A mutation that survives may be a variant, not a gap --- check before strengthening
+- A leaner data structure turned a wrong edit into a no-op
 - A harness that prints stderr only on failure hides what a passing run said
 - A wrapper's own verdicts are on the other stream, in the same shape as a check's
+- A mutation aimed at a check that skips reports SURVIVED
 - A mutation caught by an access violation produces no test results at all
 - A guard that also guarantees termination fails as a hang, not as a red test
 - A comment claimed an ordering mattered, and the mutation that should have hurt did not

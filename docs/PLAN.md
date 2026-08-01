@@ -2337,7 +2337,8 @@ text comparison cannot see a property that is not about text:
 
 ~~Not done, and the first of these is a real limitation rather than a missing nicety:
 **reading order is derived from geometry, not from the document's own tagged structure.**~~
-**Read and proved 2026-08-01 --- see below --- and not yet wired to this layer.**
+**Read, proved and wired 2026-08-01 --- see below. A tagged page is now read in the order its
+tags give, and an untagged one falls back to the geometry as before.**
 Also absent: headings and table semantics, a document language attribute, visible keyboard
 navigation between pages, and any high-contrast handling.
 
@@ -2387,9 +2388,9 @@ The tree is hostile input like the outline, so the walk is bounded in depth and 
 the truncation is reported --- a partial reading order shown as a complete one is worse here than
 for an outline, because the missing part is text on the page.
 
-**Not wired to anything yet, deliberately**, in the shape the OCR interfaces landed in before
-an engine did. `reading.ts` and the accessibility tree still use geometry. The design for the
-consumer is settled, though, and is written down here so it is not re-derived:
+~~**Not wired to anything yet, deliberately**, in the shape the OCR interfaces landed in before
+an engine did.~~ **Wired on 2026-08-01 --- see below.** The design was recorded here first and
+was followed as written, so it is left in place rather than deleted:
 
 - **No new request.** `PageText` already crosses the worker boundary and reaches the frontend,
   and `readingLines(text)` is the single funnel every consumer goes through --- `a11y.ts`
@@ -2406,12 +2407,59 @@ consumer is settled, though, and is written down here so it is not re-derived:
   three of four paragraphs must not have the fourth silently disappear from what a screen reader
   reads.
 
-The one genuinely open question is **granularity**, and it is a product decision rather than a
+The one genuinely open question was **granularity**, and it is a product decision rather than a
 mechanical one. A tagged run is a *paragraph*; `readingLines` returns lines, and `a11y.ts` emits
 one element per line. Handing a screen reader a paragraph per element is arguably better than a
 line per element --- it is what the document says --- but it changes what that layer emits, and
-the accessibility and selection checks are written against lines. That is the work, not the
-reading of the tree.
+the accessibility and selection checks are written against lines.
+
+**Settled the conservative way, and it is a real answer rather than a deferral: the tags decide
+the order of the blocks, and the geometry still decides the lines inside one.** A tagged run is
+a paragraph and a screen reader is handed lines, so the two answer different questions and both
+are needed --- `readingLines` uses the runs where the geometry used its own blocks, and splits
+each one into lines exactly as before. Nothing downstream changed shape, so the accessibility
+and selection checks kept their meaning instead of being rewritten alongside the thing they
+check. Emitting a paragraph per element remains open and is now a change to `a11y.ts` alone.
+
+#### Wiring it, and the two defects the fixture found --- 2026-08-01
+
+Both consumers reach it through `readingLines`, which is the single funnel, so `a11y.ts` and
+`selection.ts` needed no call-site change at all --- the design above holds. `usableRuns` is the
+whole of the decision and is exported so a check can assert *which route ran*, rather than
+inferring it from an order the two routes might agree on anyway.
+
+Two defects, and the more interesting one was not mine:
+
+- **The tagged path dropped every character no run claimed.** Tolerating an unclaimed whitespace
+  character in the *decision* to trust the tags says nothing about what to *emit*, and emitting
+  only the claimed characters lost the six `\r\n` separators between paragraphs: a page came
+  back six characters shorter than the page. Every character now gets an owner --- its own run,
+  or the run of the nearest character before it --- so the tagged order is a permutation of the
+  page, exactly as the geometric one is. The invariant is one line to assert and was not being
+  asserted.
+
+- **A comma opened a line of its own, and every space on the line joined it.** Pre-existing, in
+  the *geometric* path, and it produced `inthemaincolumnandclosesthesection` beside a second
+  "line" holding a comma, a full stop and six spaces --- read aloud and copied exactly like that.
+  PDFium reports a comma as a box that drops below the baseline, overlapping the line by 46% of
+  itself, which is under the banding threshold; the spaces are 0.01 pt tall and then match the
+  comma's new band by 100% of themselves. The rule now is that a box too short to be a line of
+  text joins the line it touches. It survived a week because every other generated corpus is
+  built from words with no punctuation in them.
+
+**The untagged early-out costs nothing measurable**, which is the claim the design rested on
+and is now a number rather than an argument: `text-probe --mode extract` on `text-heavy` reports
+**1.436 ms** cached against the **1.42 ms** recorded in the table above, i.e. unchanged within
+noise. That is the null result it should be --- three of the four corpora carry no
+`/StructTreeRoot` at all, so extraction pays one `FPDF_StructTree_GetForPage` and returns. It is
+stated as "no measurable change" rather than as a win: a single pair across sessions cannot
+support a stronger claim, and none is needed.
+
+`tagged.pdf` is the eighth corpus for `viewer_check.py` and its manifest gained the three fields
+that harness already reads, so the reading-order check asserts its **lines**, in tagged order,
+against a file a different program wrote. Adding it also exposed three checks whose preconditions
+were written as assertions and had never met a two-page document --- see the traps; all three now
+skip with the reason printed rather than failing.
 
 #### The outline, and a sidebar to put it in — 2026-07-27
 

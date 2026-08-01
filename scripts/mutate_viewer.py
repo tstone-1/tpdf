@@ -52,6 +52,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf"
 FIXTURE = ROOT / "testdata/outline-simple.pdf"
+#: The corpus the tagged-reading-order checks need. On every other fixture they
+#: `[SKIP]`, correctly and uselessly for a mutation: a check that skips cannot go
+#: red, so a mutation aimed at one would report SURVIVED against a harness that
+#: never ran it.
+TAGGED_FIXTURE = ROOT / "testdata/tagged.pdf"
 
 
 @dataclass(frozen=True)
@@ -63,14 +68,34 @@ class Mutation:
     before: str
     after: str
     expect: str
-    #: Which harness runs it. "viewer" is `viewer_check.py` against a bundle;
-    #: "structure" is `structure-probe` against the tagged fixture. Both print
+    #: Which harness runs it. "viewer" is `viewer_check.py` against a bundle,
+    #: "viewer-tagged" the same against the tagged corpus, and "structure" is
+    #: `structure-probe`, which needs no webview at all. All three print
     #: the same `[FAIL] name` lines and the same summary, so everything below ---
     #: the cross-check, the byte restore, the name validation --- is shared.
     runner: str = "viewer"
 
 
 MUTATIONS = [
+    Mutation(
+        "structure: show the geometry's order to a screen reader",
+        "src/lib/reading.ts",
+        "  const tagged = usableRuns(text);",
+        "  const tagged = null;",
+        "the accessibility tree is built in the order the tags give",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # The control on the fixture rather than on the code: if the two orders
+        # ever stopped differing, the check above would pass without a tag being
+        # read. Mutating the *geometric* side proves the comparison is live.
+        "structure: compare the tagged order against itself",
+        "src/lib/viewercheck.ts",
+        "  const geometric = lines({ ...text, runs: [] });",
+        "  const geometric = lines(text);",
+        "a tagged page's reading order is not the one its geometry gives",
+        runner="viewer-tagged",
+    ),
     Mutation(
         "Cmd-K reaches no arm at all",
         "src/lib/appcommands.ts",
@@ -237,6 +262,10 @@ RUNNERS = {
         "build": ["npm", "run", "tauri", "build", "--", "--bundles", "app"],
         "run": None,  # built in `run_check`, which needs the app path
     },
+    "viewer-tagged": {
+        "build": ["npm", "run", "tauri", "build", "--", "--bundles", "app"],
+        "run": None,
+    },
     "structure": {
         "build": [
             "cargo",
@@ -285,7 +314,7 @@ def run_probe(runner: str) -> tuple[list[str], str, str]:
     return lines, done.stdout, done.stderr
 
 
-def run_check() -> tuple[list[str], str, str]:
+def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     """Runs the viewer check. Returns its result lines, its stdout, and its stderr.
 
     Only **stdout** carries check results. `viewer_check.py` writes its own
@@ -302,7 +331,7 @@ def run_check() -> tuple[list[str], str, str]:
             sys.executable,
             str(ROOT / "scripts/viewer_check.py"),
             str(APP),
-            str(FIXTURE),
+            str(fixture),
         ],
         cwd=ROOT,
         capture_output=True,
@@ -315,7 +344,11 @@ def run_check() -> tuple[list[str], str, str]:
 
 def execute(runner: str) -> tuple[list[str], str, str]:
     """Runs one harness, whichever it is."""
-    return run_check() if runner == "viewer" else run_probe(runner)
+    if runner == "viewer":
+        return run_check()
+    if runner == "viewer-tagged":
+        return run_check(TAGGED_FIXTURE)
+    return run_probe(runner)
 
 
 def verdict(lines: list[str], text: str, stderr: str) -> tuple[set[str], str | None]:
@@ -369,9 +402,10 @@ def main() -> int:
         print(f"[FAIL] no mutation matches {args.only!r}")
         return 1
 
-    if not FIXTURE.exists():
-        print(f"[FAIL] {FIXTURE} is missing --- testdata is generated, not committed")
-        return 1
+    for needed in {FIXTURE, TAGGED_FIXTURE}:
+        if not needed.exists():
+            print(f"[FAIL] {needed} is missing --- testdata is generated, not committed")
+            return 1
 
     # One baseline per runner in play, since each has its own check names and a
     # mutation's expectation is validated against the runner that will judge it.
@@ -401,6 +435,15 @@ def main() -> int:
         hits = [line for line in baseline[m.runner] if line[7:].startswith(m.expect)]
         if len(hits) != 1:
             problems.append(f"{m.name!r} expects {m.expect!r}, which matches {len(hits)} checks")
+        # A check that *skipped* in the baseline is present in the name set and
+        # cannot go red, so a mutation aimed at it reports SURVIVED --- the most
+        # misleading verdict this harness can print, because it reads as a gap in
+        # the checks rather than a fixture that does not exercise them.
+        elif hits[0].startswith("[SKIP]"):
+            problems.append(
+                f"{m.name!r} expects {m.expect!r}, which SKIPS on the {m.runner} "
+                "fixture and therefore cannot go red"
+            )
     if problems:
         print("[FAIL] " + "\n[FAIL] ".join(problems))
         return 1

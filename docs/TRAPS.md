@@ -4567,3 +4567,167 @@ two elements belongs to neither, and the honest assertion is that nothing **visi
 unclaimed. And a page with no structure tree must report **no runs at all** rather than an order
 it inferred, because that emptiness is how a caller tells "fall back to geometry" from "the
 document says its reading order is this".
+
+### A tolerated gap in the input becomes a hole in the output
+
+The entry above ends on the right rule --- an unclaimed *whitespace* character is not a hole in
+a tagged reading order, so a page carrying some must still be usable. That is a statement about
+the **decision** to trust the tags. It says nothing about what to *emit*, and the obvious
+reading of it is wrong in a way that no test written for the decision can see.
+
+The first consumer built the page from the runs: for each run, the characters in its range, in
+the order the tags give. Every one of those characters is on the page and in the right place.
+What is not there is the six characters no run claimed --- one `\r\n` per paragraph boundary ---
+so the page came back **six characters shorter than the page**, and both halves of the check
+that noticed were about counting rather than about order: select-all reported 272 code points
+against an extraction of 278, and the accessibility text compared as a multiset and was short by
+five after whitespace folding.
+
+The rule that fixes it is the one `fragmentsOf` already used for a character PDFium placed
+nowhere: **every character gets an owner** --- its own run where it has one, the run of the
+nearest character before it otherwise, and the first run that follows for anything before the
+first claimed character. The output is then a permutation of every index, exactly as the
+geometric order is.
+
+Worth stating as an invariant rather than a fix, because it is the thing to assert: a reading
+order is a **permutation of the page**, and one that quietly holds less than the page is worse
+than one that holds all of it in a poorer order. `readingOrder(text).length === codes.length` is
+the whole test and it is one line.
+
+The generalisation past tags: wherever a validation step *tolerates* something the emitter does
+not *handle*, the tolerance is a silent deletion. Two different questions --- "may I use this
+input?" and "what do I do with every part of it?" --- and answering the first does not answer
+the second.
+
+### A comma opens a line of its own, and every space on the line joins it
+
+Found by the tagged fixture, present in the geometric path since long before it, and it survived
+because every other generated corpus is built from words with no punctuation in them.
+
+Lines are recovered by banding character boxes: two boxes share a line when they overlap by more
+than half of the shorter one's extent. That is right for two boxes of comparable height and
+wrong for a **comma**, which PDFium reports as a box starting inside the line and dropping below
+the baseline --- about a third of the line's height, overlapping it by 46% of *itself*. Measured
+on `testdata/tagged.pdf`: letters banded at 227.41--236.13, the comma at 234.80--237.69.
+
+Below the threshold, so the comma opened a band of its own. The characters are scanned in order
+of their top edge, so what came next were the **spaces**, which PDFium reports 0.01 pt tall
+sitting on the baseline --- and a space overlaps anything it touches by 100% of itself, so every
+one of them matched the comma's new band rather than the letters'. One line of text came back as
+two:
+
+```
+in the main column, and closes the section.
+->  "inthemaincolumnandclosesthesection"  and  ", .      "
+```
+
+Read aloud, copied, and searched exactly like that.
+
+The fix is a statement about type rather than a tuned constant: **a box too short to be a line of
+text joins the line it touches.** A mark a third the height of the letters beside it is a mark on
+their line, and nothing set in the same type is half the height of the line above it.
+
+Two things worth carrying. The failure is invisible in every aggregate --- the characters are all
+present, in one order or another, so a multiset comparison passes and only an assertion about
+*lines* can see it. And the control for the new rule has to use lines that **overlap**: written
+first with 12 pt boxes 16 pt apart, it could not fail, because boxes that do not touch are
+refused by the guard above the rule whatever the rule says. Real text lines overlap by their
+ascenders and descenders, which is the case that had to be held.
+
+### A test cannot see the direction of an attachment it puts in index order
+
+The check for "an unclaimed character stays with the text it follows" was written over two
+tagged blocks in index order, with the separator between them. Attaching it to the block before
+gives `body\n` + `note`; attaching it to the block after gives `body` + `\nnote`. The same
+string. The test passed, and it passed identically with the rule reversed.
+
+Tagging the **second** block first is what makes the placement observable: `note` + `body\n`
+against `\nnote` + `body`. One character moved across a boundary is invisible whenever the two
+sides are adjacent in the output, so a check on where something is attached needs the sides
+*separated* --- which on this subject is the same fixture property that makes the tags worth
+reading at all.
+
+### A guard for "more than one page" is not a guard for "a page that can be reached"
+
+`nav.goToPage` already carried the right guard --- `page_count > 2`, because the last page cannot
+reach the top of the viewport --- and `nav.nextPage` and `nav.previousPage` beside it carried
+`page_count > 1`. Both had been green on every corpus for a week, because the smallest
+multi-page fixture in the corpus had three pages.
+
+A two-page fixture arrived and both failed, `0 -> 0`, which reads as a broken command. Nothing
+was broken: stepping forward from page 1 targets page 2, page 2 is the last page, and on a
+window taller than one page it can never become the page being read.
+
+The lesson is not about page counts. **A guard is a claim about what the fixture can exercise,
+and it goes stale silently when the corpus grows in the direction it did not anticipate** --- a
+guard that is too weak produces a red check that looks like a defect in the subject. When one
+check's guard is strengthened, look for its siblings: these three were written together, one was
+fixed once, and the fix was not carried across.
+
+### A wrap is correct when there is nothing ahead, so the check cannot fire
+
+"The scan starts at the page being read, not at page 1" is asserted by pressing End, searching,
+and requiring the first hit to be at or after the page reached. On a document where the needle
+appears only *before* that page, wrapping to the start is the correct behaviour and the check
+reports it as `the scan restarted at the beginning`.
+
+The needle is picked from page 1 and no corpus repeated it on a later page until a two-page
+fixture arrived. So the check could not distinguish its **subject** --- where the scan starts ---
+from its **precondition** --- that there is anything ahead to find.
+
+The fix is to establish the precondition from the result and skip with it printed: *"no match at
+or after page 2, so wrapping to the start is correct"*. Its sibling in the same file had the
+same shape from the other side: a wait for "matches on two pages" that spends its whole bound
+and then fails on a document whose needle is on one page, when what it has established is that
+this fixture cannot exercise the check below it. Wait for the *search* to finish, then decide
+between a check and a skip. Both are the same mistake --- **a precondition written as an
+assertion** --- and both only appear when a corpus arrives that cannot satisfy it.
+
+### A mutation aimed at a check that skips reports SURVIVED
+
+`mutate_viewer.py` refuses to start on an expectation matching zero or two check names, which
+catches a renamed check and an ambiguous prefix. It did not catch the third case: a name that is
+present in the baseline and is `[SKIP]`.
+
+A skipped check is in the name set --- deliberately, since a name that vanishes is the bug that
+arrangement exists to catch --- so the validation passed, the mutation ran, nothing went red, and
+the harness printed **SURVIVED**. That is the most misleading verdict it can produce: it reads
+as a gap in the checks rather than as a fixture that does not exercise them.
+
+Two lines fix it, and the reason to write them rather than remember is that the two new checks
+skip on six of the seven corpora, so the natural fixture is the one that cannot judge them.
+`mutate_viewer.py` grew a per-mutation runner for this: same harness, different corpus, and the
+baseline validation now refuses a mutation whose expected check skipped.
+
+### A leaner data structure turned a wrong edit into a no-op
+
+The tagged reading order gives every character an owner, and there are two shapes for that: a
+list of indices per run, or one owner per character with the run named by its **position** in the
+run list. The second is leaner --- an `Int32Array` and an array read instead of a `Set` per run
+--- so it was written that way second, as a simplification.
+
+It was reverted by a mutation. "Order the tagged blocks geometrically after all" is one of the
+mutations the suite exists to catch, and against the leaner shape it read:
+
+```ts
+[...tagged].sort((a, b) => a.start - b.start).map((_, at) => within(text, fragments, owner, at))
+```
+
+which changes **nothing**. The callback uses the positional index, never the run, so sorting the
+list it maps over cannot affect the result --- and the owner array was built from the unsorted
+list anyway. The harness reported SURVIVED, which reads as a missing test.
+
+Two things worth carrying, and the second is the general one:
+
+- **A shape that couples two values by index has an invariant nothing enforces.** Here it was
+  "the owner array's numbers are positions in *this* run list", and the natural wrong edit
+  violates it silently rather than failing. The list-per-run shape carries the coupling in the
+  value: there is no order to keep in step, so the edit is not expressible.
+- This repository already records the better version of the same lesson from the other end ---
+  *"an unreachable guard is worth keeping if the type can carry it instead"*. **Move the
+  impossibility into the value or the type**, and pay a `Set` per run for it. A page has a few
+  thousand characters; the allocation is not the thing that matters.
+
+And the reason it was caught at all is that the mutation had to be **re-anchored** after the
+refactor. A mutation harness re-run after a shape change is not bookkeeping: it is the only
+thing that reads the new shape adversarially.

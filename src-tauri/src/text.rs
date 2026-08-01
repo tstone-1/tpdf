@@ -50,6 +50,7 @@ use std::os::raw::{c_double, c_int};
 use pdfium_render::prelude::*;
 
 use crate::progressive::{Bindings, RawPage};
+use crate::structure;
 
 /// A loaded `FPDF_TEXTPAGE`, closed on drop.
 ///
@@ -164,6 +165,22 @@ pub struct PageText {
     pub quarter_turns: u8,
     /// Time spent inside PDFium extracting this, in milliseconds.
     pub extract_ms: f64,
+    /// What the document's own tags say the reading order is, where it has them.
+    ///
+    /// Half-open ranges over `codes`, in the order the document means them to be
+    /// read --- which is not ascending: a margin note drawn beside the first
+    /// paragraph and tagged after the last one is exactly the case tagging exists
+    /// for. Empty for an untagged page, and empty for a page whose walk was
+    /// truncated, so **present means complete** (see
+    /// [`crate::structure::PageStructure::complete_runs`]).
+    ///
+    /// Carried here rather than fetched by a request of its own because
+    /// `PageText` already crosses the worker boundary and reaches every consumer,
+    /// and because `reading.ts` needs the characters and the runs *together* to
+    /// decide whether the tags cover the page. A second command would have put
+    /// that decision at two call sites and left one of them to be forgotten.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<crate::structure::TaggedRun>,
 }
 
 impl PageText {
@@ -259,6 +276,14 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
         }
     }
 
+    // The tags, using the text page already loaded. An untagged document ---
+    // which is most of them --- pays one FFI call for this, because
+    // `structure::read_using` returns before anything per-character when the page
+    // has no tree at all. A tagged one pays two calls per character, which is
+    // what relating a mark to a character index costs and is why it is not done
+    // on a page nobody asked about.
+    let runs = structure::read_using(page, &text)?.complete_runs();
+
     Ok(PageText {
         codes,
         boxes,
@@ -266,6 +291,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
         width_pt,
         quarter_turns: turns,
         extract_ms: started.elapsed().as_secs_f64() * 1000.0,
+        runs,
     })
 }
 
