@@ -2387,12 +2387,31 @@ The tree is hostile input like the outline, so the walk is bounded in depth and 
 the truncation is reported --- a partial reading order shown as a complete one is worse here than
 for an outline, because the missing part is text on the page.
 
-**Not wired to anything yet, deliberately.** `reading.ts` and the accessibility tree still use
-geometry. What remains is the plumbing and the policy: a request across the worker boundary, a
-consumer that prefers the tagged order where there is one and falls back where there is not, and
-the decision about what to do with a page whose tree covers only part of its text --- which is
-why `untagged_chars` is reported rather than assumed to be zero. Same shape as the OCR
-interfaces landing before an engine did.
+**Not wired to anything yet, deliberately**, in the shape the OCR interfaces landed in before
+an engine did. `reading.ts` and the accessibility tree still use geometry. The design for the
+consumer is settled, though, and is written down here so it is not re-derived:
+
+- **No new request.** `PageText` already crosses the worker boundary and reaches the frontend,
+  and `readingLines(text)` is the single funnel every consumer goes through --- `a11y.ts`
+  directly, `selection.ts` via `readingTextOf`. So the runs belong *on* `PageText`, and both
+  consumers then get the tagged order with no call-site change at all. A separate
+  `page_structure` command would need plumbing through five files and leave two callers to
+  remember to use it.
+- **Runs are omitted when the walk was truncated**, so the invariant on the wire is "runs
+  present means runs complete". A partial reading order is not a reading order, and the fallback
+  for one is the same as the fallback for no tags.
+- **The fallback decision is `reading.ts`'s**, made on the characters it already has: use the
+  tagged order when the runs claim every *visible* character, and geometry otherwise. That is
+  why `untagged_chars` is reported rather than assumed to be zero --- a producer that tagged
+  three of four paragraphs must not have the fourth silently disappear from what a screen reader
+  reads.
+
+The one genuinely open question is **granularity**, and it is a product decision rather than a
+mechanical one. A tagged run is a *paragraph*; `readingLines` returns lines, and `a11y.ts` emits
+one element per line. Handing a screen reader a paragraph per element is arguably better than a
+line per element --- it is what the document says --- but it changes what that layer emits, and
+the accessibility and selection checks are written against lines. That is the work, not the
+reading of the tree.
 
 #### The outline, and a sidebar to put it in — 2026-07-27
 

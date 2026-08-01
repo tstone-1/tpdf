@@ -122,24 +122,14 @@ pub struct PageStructure {
 pub fn read(page: &RawPage<'_>) -> Result<PageStructure, String> {
     let text = RawTextPage::load(page)?;
     let chars = text.count();
-    let codes: Vec<u32> = (0..chars).map(|index| text.code(index)).collect();
-
-    // Character -> marked-content id, taken from the text objects themselves.
-    // Built before the tree is walked because a page with no tree needs it for
-    // nothing, and a page with one needs all of it.
     let bindings = page.bindings();
-    let mut of_char: Vec<i32> = Vec::with_capacity(chars as usize);
-    for index in 0..chars {
-        // SAFETY: the text page outlives this loop and `index` is in range.
-        let object = unsafe { bindings.FPDFText_GetTextObject(text.handle(), index as i32) };
-        of_char.push(if object.is_null() {
-            -1
-        } else {
-            // SAFETY: `object` is a valid page object owned by the page.
-            unsafe { bindings.FPDFPageObj_GetMarkedContentID(object) }
-        });
-    }
 
+    // The tree first, and the early return before anything per-character. An
+    // untagged document is the common case and the mapping below is two FFI
+    // calls *per character* --- thousands on a dense page --- so paying for it
+    // before knowing whether there is a tree to relate it to would put that cost
+    // on every page of every document that has no tags at all.
+    //
     // SAFETY: the page handle is valid for the borrow.
     let tree = unsafe { bindings.FPDF_StructTree_GetForPage(page.handle()) };
     if tree.is_null() {
@@ -154,6 +144,20 @@ pub fn read(page: &RawPage<'_>) -> Result<PageStructure, String> {
         bindings,
         handle: tree,
     };
+
+    // Character -> marked-content id, taken from the text objects themselves.
+    let codes: Vec<u32> = (0..chars).map(|index| text.code(index)).collect();
+    let mut of_char: Vec<i32> = Vec::with_capacity(chars as usize);
+    for index in 0..chars {
+        // SAFETY: the text page outlives this loop and `index` is in range.
+        let object = unsafe { bindings.FPDFText_GetTextObject(text.handle(), index as i32) };
+        of_char.push(if object.is_null() {
+            -1
+        } else {
+            // SAFETY: `object` is a valid page object owned by the page.
+            unsafe { bindings.FPDFPageObj_GetMarkedContentID(object) }
+        });
+    }
 
     let mut walk = Walk {
         bindings: tree.bindings,
