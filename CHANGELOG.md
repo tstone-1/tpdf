@@ -11,6 +11,32 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Phase 1 --- case folding in search
+
+- **The fold case-folds rather than lowercasing.** `char::to_lowercase` is the operation for
+  *displaying* text and leaves `ß` alone, since it is already lowercase; `default_case_fold` is
+  the one Unicode defines for caseless *matching*, which is what a find bar does. Taken as a
+  decision, not a fix: the same operation folds `ﬁ` to `fi`, which `search.rs` had refused.
+- **It fixed two of the three consequences, not three** --- the prediction was wrong and the
+  difference matters. `strasse` now finds `Straße` and `οδος` now finds `ΟΔΟΣ`. `istanbul` still
+  does not find `İstanbul`, because that difference is a **combining mark** rather than a case:
+  `İ` folds to `i` + U+0307 exactly as it lowercased. Removing the dot is accent stripping, a
+  separate decision; Unicode's Turkic mapping would do it and also folds `I` to `ı`, which is
+  right only for Turkish and nothing here knows a document's language.
+- **And the ligature cost is near-theoretical.** U+FB01 is in the same Alphabetic Presentation
+  Forms block as the Arabic this corpus had already shown PDFium normalising, so a page typeset
+  `ﬁnal` arrives as five plain letters and the fold's ligature rule is never reached from the page
+  side. It is reached from the *query* side: a reader who pastes a ligature into the find bar used
+  to get nothing and now gets the word. The trade turned out one-sided.
+- `caseless` (MIT), whose only new transitive is `unicode-normalization` (MIT OR Apache-2.0) ---
+  checked with `cargo metadata` over all 531 packages rather than read off a README.
+- One asymmetry that cannot be removed: a **pattern** is not folded, because a regex source is
+  not text. It gets the engine's `i` flag, so the length-changing folds do not apply on the
+  pattern side.
+- A `ﬁnal ﬂour` line on the folding page, 5 new unit tests including one pinning what folding
+  does **not** fix, and 2 new mutations; the redundant second one was removed after running it
+  showed the first already catches both halves. 2 new traps, 206 in the index.
+
 ### Phase 1 --- encodings that are absent, broken or predefined
 
 - **`testdata/make_encodings_pdf.py`**, the other half of the Phase 1 sentence about *"malformed

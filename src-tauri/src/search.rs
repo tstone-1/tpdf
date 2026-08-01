@@ -23,9 +23,10 @@
 //! A query matches text a reader would say is the same text, which is not the
 //! same as an equal sequence of code points:
 //!
-//! - **Case is ignored.** `char::to_lowercase` rather than `to_ascii_lowercase`,
-//!   so `Ä` matches `ä` and `ΔΕΛΤΑ` matches `δελτα`. Lowercasing, note, and not
-//!   case folding --- see below for the three things that costs.
+//! - **Case is folded**, using Unicode's `default_case_fold` --- the operation
+//!   defined for caseless *matching*, as distinct from `to_lowercase`, which is
+//!   defined for displaying text. So `Ä` matches `ä`, `ΔΕΛΤΑ` matches `δελτα`,
+//!   `Straße` matches `strasse`, and Greek's two sigmas match each other.
 //! - **Runs of whitespace collapse to one space.** A phrase that spans a line
 //!   break is one phrase; PDFium reports the break as its own character, and a
 //!   reader who types `raster appearance` does not know there is a newline in it.
@@ -34,43 +35,62 @@
 //!
 //! Because folding can change a character's length, the folded sequence carries
 //! the source index each of its characters came from, and a match is translated
-//! back through that rather than by arithmetic. The case that does it is a
-//! **Turkish dotted capital**: `İ` lowercases to `i` followed by U+0307, so a hit
-//! on `stanbul` inside `İstanbul` starts one source character further along than
-//! its folded position says.
+//! back through that rather than by arithmetic. Two characters here do it: `ß`
+//! folds to `ss`, and a **Turkish dotted capital** `İ` folds to `i` followed by
+//! U+0307 --- so a hit on `stanbul` inside `İstanbul` starts one source character
+//! further along than its folded position says.
 //!
-//! This said `ß` lowercases to `ss` until 2026-08-01, and that is simply false ---
-//! `ß` *upper*cases to `SS` and lowercases to itself, because it is already
-//! lowercase. Nothing was wrong with the code; the example was, and it stood for
-//! days because both halves of the sentence beside it are true. What it cost is
-//! recorded below.
+//! ## Folding replaced lowercasing on 2026-08-01, and what it did and did not fix
+//!
+//! It was `char::to_lowercase` until then, with a doc comment claiming `ß`
+//! lowercases to `ss`. That is false --- `ß` *upper*cases to `SS` and lowercases to
+//! itself, being already lowercase --- and the false example stood for days because
+//! both halves of the sentence beside it were true.
+//!
+//! Three reader-visible consequences were measured on `testdata/multilingual.pdf`
+//! and the change was made deliberately, as a decision about what a highlight may
+//! cover. **It fixed two of the three, not three.** The prediction that it fixed
+//! all of them was wrong, and the difference matters because the third is not a
+//! case problem at all:
+//!
+//! | before | after | why |
+//! |---|---|---|
+//! | `strasse` missed `Straße` | **found** | `ß` folds to `ss`; lowercasing left it alone |
+//! | `οδος` missed `ΟΔΟΣ` | **found** | `Σ` and `ς` both fold to `σ`; lowercasing maps `Σ` to `σ` and leaves `ς` alone |
+//! | `istanbul` missed `İstanbul` | **still missed** | folding gives `i` + U+0307, exactly as lowercasing did |
+//!
+//! The Turkish case is a **combining mark**, not a case difference: `İ` decomposes
+//! to an `i` and a dot however it is cased, so the folded page reads `i`, U+0307,
+//! `stanbul` and the query does not. Reaching it needs the dot *removed*, which is
+//! accent stripping --- a separate decision, and one that would make a highlight
+//! cover characters the query did not contain. Unicode's Turkic mapping (`T` in
+//! `CaseFolding.txt`) does fold `İ` to a bare `i`, and is not used: it also folds
+//! `I` to `ı`, which is right for Turkish text and wrong for everything else, and
+//! nothing here knows a document's language.
+//!
+//! Greek is half fixed rather than fixed, for the same reason: `ΟΔΟΣ` is found and
+//! the accented lowercase spelling `οδός` is not, because the query a reader types
+//! has no accent on it.
 //!
 //! ## What it deliberately does not do
 //!
 //! So that a search result can be trusted to be the text on the page: it does not
-//! normalise ligatures (`ﬁ` is not `fi`), does not strip accents, and does not
-//! rejoin a word that a hyphen broke across two lines. Each of those is a real
-//! feature; each also makes the highlight cover characters the query did not
-//! contain, and none is guessed at here.
+//! strip accents, and does not rejoin a word that a hyphen broke across two lines.
+//! Both are real features; both also make the highlight cover characters the query
+//! did not contain, and neither is guessed at here.
 //!
-//! It also does not **case-fold**, which is a different operation from lowercasing
-//! and is the one a search arguably wants. Measured on
-//! `testdata/multilingual.pdf`, three consequences a reader would notice, all with
-//! the same cause:
+//! **Ligatures are no longer on that list.** `ﬁ` folds to `fi`, so a query for
+//! `final` finds a word typeset with the ligature --- which is what a reader wants
+//! and is the price of case folding, since it is one operation and not a menu. The
+//! highlight then covers one code point for a two-character query, which is the
+//! thing the old refusal was protecting; it is the correct answer, because that one
+//! code point *is* those two letters.
 //!
-//! - `strasse` finds `STRASSE` and **not** `Straße`.
-//! - `odos` in Greek: `ΟΔΟΣ` lowercases to `οδοσ` with a medial sigma, so it is
-//!   not found by the final-sigma spelling `οδος` a reader would type.
-//! - `istanbul` does not find `İstanbul`, because the fold leaves the combining
-//!   dot U+0307 between the `i` and the `s`.
-//!
-//! Case folding fixes all three in one move --- `ß` folds to `ss`, `ς` and `σ` fold
-//! together --- and Rust's standard library does not offer it, so it means a
-//! dependency. It is not taken here silently, because the same operation also
-//! folds `ﬁ` to `fi`, which the paragraph above says outright that this does not
-//! do. Changing that is a decision about what a highlight is allowed to cover,
-//! not a bug fix, and `examples/search_probe.rs` states each of the three counts
-//! above as a *decision* so that changing one has to be argued for.
+//! One asymmetry to know about, and it cannot be removed: a **pattern** is not
+//! folded, because a regex source is not text (see [`compile`]). It gets the engine's
+//! `i` flag, which is simple case-insensitivity, so the length-changing folds do
+//! not apply on the pattern side --- a pattern containing `ß` will not match a page
+//! whose `ß` has folded to `ss`. A literal query has no such gap.
 //!
 //! ## The two options
 //!
@@ -88,6 +108,8 @@
 //! them is a word character and the other is not. It is applied to the *folded*
 //! sequence, which is what makes a soft hyphen not break a word --- it is gone
 //! by then --- and what makes a line break count as a boundary.
+
+use caseless::Caseless;
 
 use crate::text::PageText;
 
@@ -329,8 +351,17 @@ impl Folded {
                 source.push(index);
                 continue;
             }
-            for lower in ch.to_lowercase() {
-                chars.push(lower);
+            // Case **folding**, not lowercasing. `ch.to_lowercase()` stood here
+            // until 2026-08-01 and left `ß` alone --- it is already lowercase ---
+            // so `strasse` could not find `Straße`. Folding is the operation
+            // Unicode defines for caseless *matching*, which is what a find bar
+            // does, and lowercasing is the operation for displaying text.
+            //
+            // Every folded character carries the source index of the one it came
+            // from, which is what makes a hit translate back to the page: `ß`
+            // folds to two characters and both point at the one the reader sees.
+            for folded in std::iter::once(ch).default_case_fold() {
+                chars.push(folded);
                 source.push(index);
             }
         }
@@ -1331,6 +1362,75 @@ mod tests {
             ..CASED
         };
         assert_eq!(find_in(&page(text), 0, "raster", cased).len(), 1);
+    }
+
+    #[test]
+    fn a_sharp_s_folds_to_two_letters() {
+        // The case the old doc comment claimed and the old code did not do. `ß` is
+        // already lowercase, so lowercasing left it alone and `strasse` found only
+        // the shouted spelling.
+        let text = "Straße STRASSE strasse";
+        assert_eq!(
+            find_in(&page(text), 0, "strasse", Options::default()).len(),
+            3
+        );
+        // And the highlight covers the characters the page spells it with, which is
+        // six for the first hit and seven for the others.
+        let hits = find_in(&page(text), 0, "strasse", Options::default());
+        assert_eq!(covered(text, &hits[0]), "Straße");
+        assert_eq!(covered(text, &hits[1]), "STRASSE");
+    }
+
+    #[test]
+    fn both_greek_sigmas_fold_together() {
+        // `Σ` lowercases to `σ` and `ς` lowercases to itself, so lowercasing put
+        // the two spellings of one word in different buckets. Folding maps both to
+        // `σ`.
+        let text = "ΟΔΟΣ οδος";
+        assert_eq!(find_in(&page(text), 0, "οδος", Options::default()).len(), 2);
+        assert_eq!(find_in(&page(text), 0, "οδοσ", Options::default()).len(), 2);
+    }
+
+    #[test]
+    fn a_ligature_folds_to_its_letters() {
+        // The price of case folding, taken deliberately: `ﬁ` folds to `fi`, so a
+        // query for `final` finds a word typeset with the ligature. The highlight
+        // covers one code point for a two-character query, which is correct --- that
+        // code point is those two letters.
+        let text = "ﬁnal final";
+        let hits = find_in(&page(text), 0, "final", Options::default());
+        assert_eq!(hits.len(), 2);
+        assert_eq!(covered(text, &hits[0]), "ﬁnal");
+    }
+
+    #[test]
+    fn a_turkish_dotted_capital_is_not_fixed_by_folding() {
+        // The one of the three that folding does **not** fix, pinned so the claim
+        // that it did cannot come back. `İ` folds to `i` + U+0307 exactly as it
+        // lowercased, because the difference is a combining mark and not a case:
+        // removing the dot is accent stripping, which is a separate decision.
+        let text = "İstanbul istanbul";
+        assert_eq!(
+            find_in(&page(text), 0, "istanbul", Options::default()).len(),
+            1
+        );
+        // What *does* find both is a query starting after the dot, which is also the
+        // case that exercises the source-index map across a length-changing fold.
+        assert_eq!(
+            find_in(&page(text), 0, "stanbul", Options::default()).len(),
+            2
+        );
+    }
+
+    #[test]
+    fn folding_is_off_when_case_is_being_matched() {
+        // The switch still switches. With `match_case` on, neither side is folded,
+        // so `ß` is a `ß` again and `strasse` finds only itself.
+        assert_eq!(
+            find_in(&page("Straße strasse"), 0, "strasse", CASED).len(),
+            1
+        );
+        assert_eq!(find_in(&page("ﬁnal final"), 0, "final", CASED).len(), 1);
     }
 
     #[test]

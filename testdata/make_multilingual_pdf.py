@@ -397,6 +397,27 @@ def folding_page() -> Page:
             # The case the module docs use as their example, kept so the fixture
             # covers the length-changing fold that is already known to work.
             Line("sharp-s", "Stra\u00dfe STRASSE", "sharp s folds to two"),
+            # A typographic ligature, here because a *decision* was reversed on
+            # 2026-08-01: the fold used to refuse to normalise these, and case
+            # folding does it as part of the same operation, so `final` now finds a
+            # word typeset with the ligature. A fixture line rather than a sentence
+            # in a doc comment for exactly that reason --- a reversed decision that
+            # nothing exercises is one that can drift back.
+            Line(
+                "ligature",
+                "\ufb01nal \ufb02our",
+                "ligatures fold to their letters",
+                # Measured, and it makes the decision cheaper than it looked:
+                # **PDFium decomposes these before we ever see them.** U+FB01 is in
+                # the Alphabetic Presentation Forms block, the same range as the
+                # Arabic on page 1, and PDFium normalises the whole range on
+                # extraction --- so this line comes back as two plain letters and the
+                # fold's ligature rule is never reached from the *page* side. It is
+                # reached from the *query* side, which is a reader who pastes a
+                # ligature into the find bar, and that is the half this page can
+                # still prove.
+                extracts_as="final flour",
+            ),
         ],
     )
 
@@ -689,10 +710,13 @@ def queries(all_pages: "list[Page]") -> "list[dict]":
             "page": index["folding"],
             "hits": 1,
             "decided": (
-                "1, not 2. `İ` lowercases to `i` followed by U+0307, so the folded "
-                "page reads `i` + combining dot + `stanbul` and the query does not "
-                "match it. Case *folding* would; lowercasing does not, and the "
-                "difference is the subject of `search.rs`'s module docs."
+                "1, and **still** 1 after case folding replaced lowercasing --- which was "
+                "predicted to fix it and did not. The dotted capital folds to `i` plus a "
+                "combining dot exactly as it lowercased, because the difference is a mark "
+                "and not a case. Removing the dot is accent stripping, a separate decision; "
+                "Unicode's Turkic mapping does fold it away and also folds `I` to a dotless "
+                "one, which is right only for Turkish, and nothing here knows a document's "
+                "language."
             ),
         },
         {
@@ -720,24 +744,53 @@ def queries(all_pages: "list[Page]") -> "list[dict]":
             "query": "οδος",
             "options": {},
             "page": index["folding"],
-            "hits": 0,
+            "hits": 1,
             "decided": (
-                "0. The spelling a reader of Greek would type, with a final sigma. "
-                "`Σ` lowercases to `σ` and never to `ς`, so neither word on the "
-                "page matches it --- the uppercase one folds to a medial sigma and "
-                "the lowercase one carries an accent as well."
+                "1 since 2026-08-01, and 0 before it. The spelling a reader of Greek would "
+                "type, with a final sigma: case folding maps both sigmas to the medial one, "
+                "so the uppercase word is found. The accented lowercase spelling is still "
+                "not, because the query carries no accent --- half fixed, and the other half "
+                "is accent stripping, which is a separate decision."
             ),
         },
         {
-            "name": "sharp-s-is-not-case-folded",
+            "name": "sharp-s-is-case-folded",
             "query": "strasse",
+            "options": {},
+            "page": index["folding"],
+            "hits": 2,
+            "decided": (
+                "2 since 2026-08-01, and 1 before it: the fold case-folds rather than "
+                "lowercasing, so the sharp s becomes `ss` and both spellings are found. It "
+                "was 1 because the sharp s is already lowercase --- and `search.rs` claimed "
+                "the opposite in its own module docs until this query was written."
+            ),
+        },
+        {
+            "name": "a-ligature-is-found-by-its-letters",
+            "query": "final",
+            "options": {},
+            "page": index["folding"],
+            "hits": 1,
+            "measured": (
+                "1, and **not** because of the fold. PDFium decomposes U+FB01 on extraction, "
+                "so this page holds the two plain letters and the query matches them "
+                "directly. Worth stating because it was expected to be the fold's doing: the "
+                "ligature cost of case folding is therefore near-theoretical for page text, "
+                "and real only for a query."
+            ),
+        },
+        {
+            "name": "a-ligature-is-found-by-itself",
+            "query": "\ufb01nal",
             "options": {},
             "page": index["folding"],
             "hits": 1,
             "decided": (
-                "1, not 2. It finds `STRASSE` and not `Straße`: `ß` is already "
-                "lowercase, so lowercasing leaves it alone. `search.rs` claimed "
-                "the opposite in its own module docs until this query was written."
+                "1, and this one *is* the fold: the query carries the ligature, the page "
+                "carries two letters, and only case folding bridges them. Before 2026-08-01 "
+                "the fold refused to normalise ligatures and a reader who pasted one into the "
+                "find bar got nothing. This is the half of the trade that has an effect."
             ),
         },
         {
@@ -745,11 +798,14 @@ def queries(all_pages: "list[Page]") -> "list[dict]":
             "query": "straße",
             "options": {},
             "page": index["folding"],
-            "hits": 1,
-            "why": (
-                "the control for the query above: the German spelling is on the "
-                "page and is found, so the gap is in folding rather than in "
-                "extraction"
+            "hits": 2,
+            "decided": (
+                "2, and it was 1 until case folding landed --- which is the property "
+                "worth asserting rather than the count. Folding is **symmetric**: "
+                "the German spelling and the shouted one fold to the same eight "
+                "characters, so typing either finds both. It was written as a "
+                "control for `sharp-s-is-case-folded` and is now the same fact "
+                "approached from the other side."
             ),
         },
         # --- a surrogate pair through every index space -----------------------
