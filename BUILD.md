@@ -1234,7 +1234,7 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all nine corpora. Every run reports the same **157 check names**; what differs is how
+Run all ten corpora. Every run reports the same **157 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch. The splits below were measured on 2026-08-01, with the
 tagged and multilingual corpora both in:
@@ -1250,6 +1250,7 @@ tagged and multilingual corpora both in:
 | `columns.pdf` | 135 | 22 | the only one whose content-stream order is not its reading order |
 | `tagged.pdf` | 130 | 27 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
 | `multilingual.pdf` | 127 | 30 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 128 | 29 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
 
 **The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
 checks red that had been green on every corpus for a week --- two nav probes guarded on "more
@@ -1281,6 +1282,32 @@ Nineteen queries, and the manifest labels each count as **stated** (from what th
 back as base letters) or **decided** (a product decision, such as `strasse` not finding `Straße`).
 Conflating the three is how a measurement comes to read as a specification, so a change to a
 `decided` count has to be argued for rather than absorbed.
+
+**`encodings.pdf` is the other half of the multilingual work**, and a separate corpus because
+the subject is different: those pages are correct documents in other scripts, and these are
+documents whose own statement of what their bytes mean is missing or wrong. Three pages, and
+it found a product defect on the first run.
+
+| page | what it is | what it established |
+|---|---|---|
+| `no-mapping` | Identity-H, **no `/ToUnicode`** | PDFium does not fail --- it returns eighteen characters of plausible garbage for eighteen drawn. The page is *not* textless, so nothing tells a reader that a search of it means nothing |
+| `broken-map` | a `/ToUnicode` with lone surrogates | the only fixture reaching `text.rs`'s replacement path. Two of its broken entries also **pair into one astral character**, which nobody predicted |
+| `predefined` | `/UniJIS-UCS2-H`, **non-embedded** KozMinPro | extracts correctly, so the `chromium/7881` build has the bundled Adobe-Japan1 CMaps. A fact about the pin, to re-establish if it moves |
+
+```sh
+cargo run --release --example search-probe -- --file ../testdata/encodings.pdf
+```
+
+23/23 with 7 not applicable. Six of its seven queries are `measured` rather than `stated`: what
+a broken document extracts as is a property of PDFium, and writing it as a fact about the file
+is how a measurement comes to read as a specification.
+
+**The defect it found is in the regex path.** A pattern was compiled case-sensitively against a
+haystack the fold had already lowercased, so with match-case off **any uppercase letter in a
+pattern matched nothing at all**. It survived because `compile`'s own doc comment asserted the
+invariant it was breaking, and because `viewer_check.py` builds its pattern from a word taken
+from the page --- so on every corpus with ordinary prose the pattern was lowercase and the two
+sides agreed by accident. This corpus's garbage happens to be uppercase.
 
 **Compare the name *sets*, not the counts, and slice the name by column.** Every label is
 exactly six characters --- `[OK]  `, `[FAIL]`, `[SKIP]` --- so the name begins at column 7
@@ -1367,7 +1394,9 @@ Absolute counts are deliberately not quoted in this paragraph: they move wheneve
 added, and a stale number here would send someone looking for a regression that is a
 changelog entry. The table above is the one place they are written down.
 
-**So the ran/skipped columns are not the invariant** --- the **109 names** are. A count chased
+**So the ran/skipped columns are not the invariant** --- the **names** are, and how many there
+are of them is in the table above rather than in this sentence, which said `109` for two days
+after the number stopped being right. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that

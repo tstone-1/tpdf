@@ -1423,9 +1423,45 @@ a `decided` count. Case folding fixes all three and needs a dependency, and it a
 `fi`, which `search.rs` says outright it does not do. That is a decision about what a highlight
 may cover.
 
-**What the corpus does not cover**: malformed encodings, and predefined CMaps such as
-`UniJIS-UCS2-H`. Every page here carries a correct `/ToUnicode`, which is the well-behaved case;
-a producer that emits a broken one is the other half of the Phase 1 sentence above.
+**What this corpus does not cover** is `encodings.pdf`'s subject, below: every page here carries
+a correct `/ToUnicode`, which is the well-behaved case.
+
+#### Malformed and predefined encodings — corpus done 2026-08-01
+
+`testdata/encodings.pdf`, three pages, read by the same `examples/search-probe` (23/23, 7 not
+applicable). A CID font with no `/ToUnicode` at all, one whose `/ToUnicode` maps CIDs to lone
+surrogates, and a predefined `/UniJIS-UCS2-H` over a non-embedded font.
+
+**It found a total defect in the regex path**: a pattern was compiled case-sensitively against a
+haystack the fold had already lowercased, so with match-case off any uppercase letter in a
+pattern matched nothing at all. Fixed with the `i` flag. It also found a code-point index sliced
+as UTF-16 in the cross-page check.
+
+**And it established that the vendored build carries the predefined Adobe-Japan1 CMaps**, which
+is a fact about the `chromium/7881` pin to re-establish if the pin moves.
+
+##### Open: a page whose text is present, positioned and meaningless
+
+The finding that needs a decision rather than a fix. A CID font with **no `/ToUnicode`** is
+ordinary in the wild, and PDFium does not fail on it — it reads the glyph ids as character codes
+and returns text of the right length, in the right places, with the right word lengths. On the
+fixture, `Encoding probe ABC` extracts as `(QFRGLQJ\x03SUREH\x03$%&`.
+
+Everything downstream then behaves correctly and is wrong. The page is **not** textless, so
+`PageMatches::textless` — which exists so that "no matches" is never a lie of omission — does not
+fire. A reader searching for a word they can see is told there are no matches. Copy yields
+nonsense; the accessibility tree reads the nonsense out.
+
+So there is a **third state** between "has text" and "has no text", and nothing represents it.
+The detector needs no heuristic on the characters: the font dictionary either declares a
+`/ToUnicode` or it does not, and `Identity` ordering with no CMap is PDFium guessing by
+construction — a `lopdf` question with a yes-or-no answer.
+
+What is undecided is the **product** half: whether a reader is told, where, and in what words. A
+banner is intrusive on a document someone only wants to look at; a line in the find bar is
+invisible until they search, which is arguably exactly when it matters; a badge in the sidebar is
+neither. Not built, because guessing at that is how a viewer acquires a nag. The corpus exists so
+the decision is made against a measurement.
 
 #### Cancellable rendering — done 2026-07-27
 

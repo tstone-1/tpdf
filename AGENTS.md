@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 197 entries
+The one thing this file does *not* carry in full is the trap list --- 204 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -588,8 +588,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 197 of them and the full text
-was 93% of this file --- an instruction budget spent on the 196 traps that are not
+titles. Only the titles are here, because there are 204 of them and the full text
+was 93% of this file --- an instruction budget spent on the 203 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -644,6 +644,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - PDFium maps Arabic presentation forms to base letters, which was assumed to be false
 - `ß` does not lowercase to `ss`, and the doc comment saying so stood for days
 - A combining mark does not touch its own line, and a word with an ascender hides it
+- With no `/ToUnicode`, PDFium returns plausible garbage rather than nothing
+- A pattern was compiled case-sensitively against a haystack the fold had lowercased
+- Two broken `/ToUnicode` entries can decode to one valid astral character
 
 ### The worker boundary, the sandbox and the pool
 - macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
@@ -786,6 +789,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A harness that cannot read a script skips, and blames the fixture
 - A check name that is a prefix of another cannot be aimed at
 - A mutation aimed at code no fixture reaches survives, and the fix is not a new corpus
+- A harness sliced a code-point index with `String.prototype.slice`
+- A measured string transcribed off a terminal loses what the terminal does not draw
+- A mutation aimed at one branch when the fixture only reaches the other
 
 ### Windows and portability
 - A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
@@ -829,6 +835,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 ### Fixtures
 - The test fixtures are generated, not committed
 - A stand-in glyph with a degenerate box measures the wrong rule
+- A fixture's self-check forbade its own finding
 
 ## Repository facts
 

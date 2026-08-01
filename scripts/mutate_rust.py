@@ -63,6 +63,26 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        # A pattern compiled case-sensitively against a haystack the fold has
+        # already lowercased: any uppercase letter in a pattern then matches
+        # nothing. It shipped that way, and the doc comment above `compile`
+        # asserted the invariant it was breaking.
+        "regex: compile a pattern case-sensitively whatever the option says",
+        "src/search.rs",
+        "        .case_insensitive(!match_case)",
+        "        .case_insensitive(false)",
+        "an_upper_case_pattern_matches_lower_case_text",
+    ),
+    Mutation(
+        # The other direction: ignore case even when asked not to. Only a test
+        # that turns the option *on* can see it.
+        "regex: always ignore case, whatever the option says",
+        "src/search.rs",
+        "        .case_insensitive(!match_case)",
+        "        .case_insensitive(true)",
+        "an_upper_case_pattern_still_distinguishes_case_when_asked",
+    ),
+    Mutation(
         # No corpus reaches this: it fires only on a page that is both tagged and
         # carries a character above the BMP, and neither fixture is both. A
         # mutation switching the whole translation off passed `search-probe` and
