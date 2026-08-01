@@ -303,7 +303,8 @@ fn handle(
             page,
             query,
             options,
-        } => match render::run_search(document, *page, query, *options) {
+            carry,
+        } => match render::run_search(document, *page, query, *options, carry.as_ref()) {
             Ok(matches) => Response::json(&matches),
             Err(e) => Response::err(e),
         },

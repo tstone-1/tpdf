@@ -34,7 +34,15 @@ import { matches } from "./keys";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
-import { PLAIN_SEARCH, Search, sameOptions, type Match, type SearchOptions } from "./search";
+import {
+  PLAIN_SEARCH,
+  Search,
+  sameOptions,
+  type Match,
+  type SearchOptions,
+  type SearchScope,
+  type ScopeRange,
+} from "./search";
 import { Selection } from "./selection";
 import {
   caretAt,
@@ -75,8 +83,15 @@ export interface SearchStatus {
   total: number;
   /** One-based position of the current match, or 0 when there is none. */
   index: number;
-  /** Pages scanned so far, out of the document's page count. */
+  /** Pages scanned so far, out of {@link toScan}. */
   scanned: number;
+  /**
+   * Pages this scan will look at: the document, or the selection it is scoped
+   * to. What "finished" is measured against.
+   */
+  toScan: number;
+  /** Whether the scan is confined to a selection the reader made. */
+  scoped: boolean;
   /** Whether a scan is still running. */
   running: boolean;
   /**
@@ -86,6 +101,14 @@ export interface SearchStatus {
    * reported as different: a scan of a scanned document never tested the query.
    */
   textless: boolean;
+  /**
+   * Why the query could not be run at all, or "".
+   *
+   * Only a pattern can fail to be a query. Distinct from `total === 0` because
+   * they are different statements: one says the document does not contain the
+   * query, the other says the query was never asked.
+   */
+  problem: string;
 }
 
 /** What the surface is currently showing, for a status line to render. */
@@ -242,6 +265,8 @@ export class Viewer {
   private currentMatch = -1;
 
   private selection: Selection | null = null;
+  /** Where the search may look, or null for the whole document. */
+  private searchScope: SearchScope | null = null;
   /** Whether a pointer is currently extending the selection. */
   private selecting = false;
   /** Counts clicks, so a double- and triple-click can be told apart. */
@@ -364,7 +389,9 @@ export class Viewer {
 
     this.text = new TextCache(opts.doc);
     this.a11y = new AccessibleText(root, opts.pageCount);
-    this.searcher = new Search(opts.doc, opts.pageCount, () => this.onSearchProgress());
+    this.searcher = new Search(opts.doc, opts.pageCount, () =>
+      this.onSearchProgress(),
+    );
 
     this.surfaceHost = document.createElement("div");
     this.surfaceHost.style.cssText = "position:absolute;left:0;top:0;";
@@ -569,7 +596,9 @@ export class Viewer {
    * page's last line scrolls out.
    */
   private currentPage(): number {
-    return this.scroller.pageAt(this.scrollTop + this.viewportSize().height / 2);
+    return this.scroller.pageAt(
+      this.scrollTop + this.viewportSize().height / 2,
+    );
   }
 
   /** Emits a status only when something a reader could notice has changed. */
@@ -761,7 +790,7 @@ export class Viewer {
    * a page operation, and belongs with the ones that write.
    */
   rotateBy(delta: number): void {
-    const next = ((this.turns + delta) % 4 + 4) % 4;
+    const next = (((this.turns + delta) % 4) + 4) % 4;
     if (next === this.turns) return;
 
     const page = this.currentPage();
@@ -1104,7 +1133,9 @@ export class Viewer {
    * the caret after a word's last glyph names the space that follows, so a word
    * selection built on one selects the gap. See `nearestChar`.
    */
-  private unitFrom(event: PointerEvent): { page: number; from: number; to: number } | null {
+  private unitFrom(
+    event: PointerEvent,
+  ): { page: number; from: number; to: number } | null {
     const point = this.pointFrom(event);
     if (!point) return null;
     const index = nearestChar(point.text, point.x, point.y);
@@ -1170,9 +1201,16 @@ export class Viewer {
       // drag started in half-selected --- from its start to the pointer, rather
       // than from its end back to where the pointer now is.
       const before =
-        unit.page < anchor.page || (unit.page === anchor.page && unit.to <= anchor.from);
-      this.selection.anchor = { page: anchor.page, index: before ? anchor.to : anchor.from };
-      this.selection.focus = { page: unit.page, index: before ? unit.from : unit.to };
+        unit.page < anchor.page ||
+        (unit.page === anchor.page && unit.to <= anchor.from);
+      this.selection.anchor = {
+        page: anchor.page,
+        index: before ? anchor.to : anchor.from,
+      };
+      this.selection.focus = {
+        page: unit.page,
+        index: before ? unit.from : unit.to,
+      };
       this.requestText(unit.page);
       this.wake();
       return;
@@ -1348,8 +1386,11 @@ export class Viewer {
       total: this.searcher.matches.length,
       index: this.currentMatch < 0 ? 0 : this.currentMatch + 1,
       scanned: this.searcher.scanned,
+      toScan: this.searcher.toScan,
+      scoped: this.searcher.scope !== null,
       running: this.searcher.running,
       textless: this.searcher.textless,
+      problem: this.searcher.problem,
     };
   }
 
@@ -1363,8 +1404,65 @@ export class Viewer {
    */
   search(query: string): void {
     this.currentMatch = -1;
-    void this.searcher.run(query, this.currentPage(), this.searchOptions);
+    void this.searcher.run(
+      query,
+      this.currentPage(),
+      this.searchOptions,
+      this.searchScope,
+    );
     this.wake();
+  }
+
+  /**
+   * Confines the search to what is selected, and rescans.
+   *
+   * Returns whether there was a selection to confine it to. The scope is a
+   * **snapshot** taken here, not a live reading --- see `SearchScope`, which has
+   * why: clicking on the page clears the selection, so a live scope would
+   * quietly become the whole document while the find bar still said otherwise.
+   *
+   * The selection itself is left alone. A reader who scoped a search is looking
+   * at the range they drew, and clearing it would take away the only thing on
+   * screen saying what the search is confined to.
+   */
+  scopeSearchToSelection(): boolean {
+    const selection = this.selection;
+    if (!selection) return false;
+    const scope: SearchScope = [];
+    for (const page of selection.pages()) {
+      const range = selection.rangeOn(page);
+      if (range) scope.push({ page, from: range.from, to: range.to });
+    }
+    if (scope.length === 0) return false;
+    this.searchScope = scope;
+    if (this.searcher.query) this.search(this.searcher.query);
+    else this.wake();
+    return true;
+  }
+
+  /** Lets the search see the whole document again, and rescans. */
+  clearSearchScope(): void {
+    if (!this.searchScope) return;
+    this.searchScope = null;
+    if (this.searcher.query) this.search(this.searcher.query);
+    else this.wake();
+  }
+
+  /** Whether the search is confined to a selection. */
+  get searchScoped(): boolean {
+    return this.searchScope !== null;
+  }
+
+  /**
+   * The ranges the search is confined to, or null.
+   *
+   * For `viewercheck.ts`, and it earns the accessor: a check that derives the
+   * scope's bounds from the matches it got back cannot fail, because a filter
+   * that stopped clipping widens the bounds it is measured against in the same
+   * step. Two mutations survived exactly that way.
+   */
+  get searchScopeRanges(): readonly ScopeRange[] | null {
+    return this.searchScope;
   }
 
   /**
@@ -1390,6 +1488,10 @@ export class Viewer {
   /** Drops the query and its results. */
   clearSearch(): void {
     this.currentMatch = -1;
+    // The scope goes with the query. It was drawn to narrow *this* search, and
+    // leaving it behind would silently narrow the next one --- with the find
+    // bar empty, there would be nothing on screen saying so.
+    this.searchScope = null;
     this.searcher.clear();
     this.wake();
   }
@@ -1498,23 +1600,40 @@ export class Viewer {
     const visible = new Set(this.scroller.visiblePages());
     for (let index = 0; index < matches.length; index++) {
       const match = matches[index];
-      if (!match || !visible.has(match.page)) continue;
-      // Not requested if missing: `prefetchText` already asks for every visible
-      // page, and asking again from the paint path would queue an extraction
-      // per frame for a page whose reply has not landed yet.
-      const text = this.text.peek(match.page);
-      if (!text) continue;
-
+      if (!match) continue;
       ctx.fillStyle =
         index === this.currentMatch ? CURRENT_MATCH_FILL : MATCH_FILL;
-      const origin = this.scroller.pageOrigin(match.page);
-      for (const quad of runsFor(text, match.start, match.end)) {
-        ctx.fillRect(
-          (origin.left + quad.left * this.zoom) * dpr,
-          (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,
-          (quad.right - quad.left) * this.zoom * dpr,
-          (quad.bottom - quad.top) * this.zoom * dpr,
-        );
+
+      // Two halves when the hit runs over a page break, and each is painted by
+      // the page it belongs to --- there is no shared coordinate space between
+      // two pages, so one rectangle cannot span them. `Infinity` is the first
+      // half's end because it runs to wherever that page's text stops, which
+      // this does not have to know and `runsFor` clamps.
+      const halves: { page: number; from: number; to: number }[] =
+        match.endPage === undefined
+          ? [{ page: match.page, from: match.start, to: match.end }]
+          : [
+              { page: match.page, from: match.start, to: Infinity },
+              { page: match.endPage, from: 0, to: match.end },
+            ];
+
+      for (const half of halves) {
+        if (!visible.has(half.page)) continue;
+        // Not requested if missing: `prefetchText` already asks for every
+        // visible page, and asking again from the paint path would queue an
+        // extraction per frame for a page whose reply has not landed yet.
+        const text = this.text.peek(half.page);
+        if (!text) continue;
+
+        const origin = this.scroller.pageOrigin(half.page);
+        for (const quad of runsFor(text, half.from, half.to)) {
+          ctx.fillRect(
+            (origin.left + quad.left * this.zoom) * dpr,
+            (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,
+            (quad.right - quad.left) * this.zoom * dpr,
+            (quad.bottom - quad.top) * this.zoom * dpr,
+          );
+        }
       }
     }
   }
@@ -1527,7 +1646,9 @@ export class Viewer {
    * alive across a scroll. See `a11y.ts`.
    */
   private syncAccessibleText(): void {
-    this.a11y.sync(this.scroller.visiblePages(), (page) => this.text.peek(page));
+    this.a11y.sync(this.scroller.visiblePages(), (page) =>
+      this.text.peek(page),
+    );
     this.a11y.announce(this.currentPage());
   }
 

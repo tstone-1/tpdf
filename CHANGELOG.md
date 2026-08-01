@@ -11,6 +11,67 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Phase 1 --- the command list, moved somewhere a check can reach it
+
+- **`src/lib/appcommands.ts`**: the twenty-nine commands and the window-key routing move out
+  of `App.svelte`, which is where `docs/PLAN.md` recorded them as *"covered by nothing"* ---
+  structurally, since `viewercheck.ts` runs instead of that component ever booting. The move
+  was verified mechanically: ids and titles identical and in order, every comment preserved,
+  and `App.svelte` outside the two moved blocks byte-identical to `HEAD` bar three imports.
+- **36 new checks in `viewercheck.ts`**, 153 names on every one of the seven corpora and the
+  name sets diffed pairwise rather than counted. Every command is driven the way a reader
+  drives it --- open the palette, type the title, press Enter --- with the title asserted to
+  rank first beforehand, and the ones reaching the viewer asserted against a real viewer
+  moving. ⌘K goes through the real routing, asserted closed first and with a bare `k` asserted
+  not to open it.
+- **A coverage audit that cannot be reopened silently.** Every command is classified as driven
+  against the viewer, driven against a recorded action, or not driven *with the reason*; the
+  check asserts the table and the registry are the same set, so a command added tomorrow turns
+  it red until somebody decides how it is covered.
+- **`scripts/mutate_viewer.py`**, the third mutation harness --- the other two drive `cargo
+  test` and `vitest`, and none of this is reachable from either. 15 mutations, 15 caught. Its
+  own cross-check fired on the first run: it read `viewer_check.py`'s stderr as well as its
+  stdout and counted the wrapper's `[FAIL] exit 1` as a check, so every mutation came back off
+  by exactly one and was reported as a **broken run** rather than as caught or survived.
+- Two defects in the new checks, both already-named traps: the phase left the viewer rotated
+  and turned eight later assertions red across three phases, and the `enabled` guard was
+  written around a shared mutable binding whose behaviour this repository cannot account for
+  (see the trap of that name --- the check now builds a second registry instead).
+
+### Phase 1 --- the three things search could not do
+
+- **Regular expressions.** A third option, matched against the same *folded* sequence a literal
+  gets, so a pattern and a literal mean the same thing by the same switches and a hit stays in
+  the character indices the highlight already uses. Two consequences pinned by tests and stated
+  in the module docs: `\n` never occurs, and `^` anchors to the page rather than to a printed
+  line. `regex` was already in the tree transitively, `MIT OR Apache-2.0` read out of `cargo
+  metadata`, so declaring it adds no package.
+- **A pattern that does not compile is reported, not answered.** `PageMatches` carries a
+  `problem`, the walk stops on the first, and the find bar shows the reason where the counter
+  goes --- "no matches" for `foo(` is a statement about the document.
+- **Search within a selection.** The scope is a snapshot taken when the reader scopes the
+  search, not a live reading: clicking on the page dismisses a selection, and a live scope
+  would widen to the whole document while the label still said otherwise. Applied to the
+  results rather than to the haystack, so the whole-word boundary still reads the characters
+  either side of a hit on the page and a snippet still shows the page's own context.
+- **Matching across a page boundary.** The tail of each page is handed to the request about the
+  next one; a straddling hit is anchored where it starts, carries `endPage`, and is highlighted
+  on both pages. The break is **whitespace** --- a page's text does not end with any, so a plain
+  concatenation reads `rasterappearance` and matches nothing --- and a word the break splits is
+  not rejoined, exactly as a word a line break splits is not. The wrapped walk's one unexamined
+  join is closed by a single extra request.
+- 10 new Rust tests (46 in `search::`, 221 in the library), 5 new checks in the running app.
+  The scoped check took three attempts to become able to fail: first it compared against the
+  document total, which the page list alone explains; then it computed its own precondition
+  from the results, so a mutation that stopped clipping turned it into a `[SKIP]` instead of
+  turning it red.
+- **A mutation found a latent hang.** Deleting the whitespace-only guard produced a run with
+  no result rather than a red test: `all` is true of an empty sequence, so that guard was also
+  what stopped an empty needle advancing the literal walk by zero forever. The empty needle is
+  refused first and on its own now, and deleting the whitespace guard turns a test red the way
+  a mutation should.
+- Five new traps, index now 176.
+
 ### Phase 1 --- a first OCR engine behind those interfaces
 
 - **`src-tauri/src/ocr_vision.rs`**, macOS Vision implementing `Recogniser`. One crate added,

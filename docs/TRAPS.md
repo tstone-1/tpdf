@@ -4402,3 +4402,138 @@ them asserted arithmetic against numbers the same file had written. What the eng
 `boundingBox` *means* is only answerable by putting known content at a known place and reading
 it back, which is the same lesson `docs/TRAPS.md` already records for the selection code from
 the other end.
+
+### A wrapper's own verdicts are on the other stream, in the same shape as a check's
+
+`scripts/mutate_viewer.py`'s first run reported all ten mutations as **broken runs**, each off
+by exactly one: "summary says 2 failed, 3 `[FAIL]` lines". Nothing was wrong with the
+mutations. `viewer_check.py` prints the webview's results on **stdout** and its own verdict on
+the run --- `[FAIL] exit 1`, a timeout, the loaded-module audit --- on **stderr**, in the same
+`[FAIL] ` shape. The harness read both streams and counted the wrapper's line as an eleventh
+failing check.
+
+Two things worth taking from it, and the second is the reason this is an entry rather than a
+one-line fix:
+
+- **Split the streams, do not filter by content.** A pattern excluding "exit 1" would break the
+  day the wrapper learns a new message, and it would break silently and in the direction that
+  reads as good news.
+- **The cross-check is what made this a five-minute problem.** Both counts come from the same
+  buffer and answer the same question through different code, and their disagreement was
+  reported as *unreadable* rather than resolved in either direction. Without it the run would
+  have reported ten mutations caught --- which is what it would also report if the checks were
+  perfect, and the two are indistinguishable from the outside. `AGENTS.md` says to write the
+  cross-check before the first run rather than after the first surprise; this is what that buys.
+
+Related, and found the same day in an ad-hoc analysis script rather than in a committed one:
+**every outcome label is exactly six characters** --- `[OK]  `, `[FAIL]`, `[SKIP]` --- and the
+name starts at column 7 whatever the outcome. Consuming the label with a regex `\s` eats one
+space for `[OK]` and none for `[SKIP]`, so the *same* check reads as two different names
+depending on whether it ran or skipped --- and a comparison of check names across documents
+then reports differences that are entirely the parser's. Slice by column; do not tokenise.
+
+### The page break is whitespace, and concatenating two pages loses it
+
+Cross-page search joins the tail of one page to the head of the next and matches over the
+join. The obvious implementation concatenates the two pages' characters, and it finds nothing:
+a page's extracted text does not end with whitespace, so "raster" at the foot of one page and
+"appearance" at the head of the next read as `rasterappearance`, and the phrase a reader typed
+matches nothing at all.
+
+The break **is** whitespace --- it is a line break with a sheet of paper in it --- so a
+separator has to be inserted before folding, and then the existing fold collapses it against
+any whitespace either side exactly as it does a line break inside a page. Two tests were
+written before the code and both went red on the first run, which is the only reason this took
+minutes.
+
+The separator needs a source index that belongs to no page (`u32::MAX` here), and the reason is
+not tidiness: a hit that *starts* or *ends* on the separator lies wholly inside one page, so it
+is that page's own reply to report, and emitting it from the join as well would double every
+count in a document that repeats a phrase across a break.
+
+One consequence follows and is worth stating rather than discovering: **a word the break splits
+is not rejoined.** `appear` / `ance` across a break is two words, because the break is
+whitespace. That is the same answer the module already gives for a word a *line* break splits,
+and the alternative would manufacture a hit out of two unrelated words whenever a page happens
+to end mid-syllable.
+
+### A pattern over folded text has no lines, so `^` means the page
+
+Regular-expression search matches against the same **folded** sequence a literal query gets ---
+runs of whitespace already collapsed to one space, soft hyphens already gone, case already
+decided by the match-case option rather than by an inline `i` flag. Keeping one haystack is
+what makes a pattern and a literal mean the same thing by the same switches, and what keeps a
+hit expressible in the character indices the selection and the highlight already use.
+
+The cost is two things a reader would assume and which are false:
+
+- **`\n` never occurs**, so a pattern written with one matches nothing.
+- **`^` and `$` anchor to the page**, not to a printed line. There are no lines left by the
+  time the pattern runs.
+
+Both are the same bargain that makes a phrase match across a line break at all, so neither is
+fixable without giving that up. They are pinned by tests and stated in the module docs; the
+trap is assuming the pattern sees what the page looks like.
+
+Two smaller ones from the same work. **A zero-length match is not a match** --- `a*` matches the
+empty string at every position, which would report a hit per character, each highlighting
+nothing. And **a pattern that does not compile must be reported, not answered**: a reader typing
+one *expects* to get it wrong, and "no matches" for `foo(` is a statement about the document
+rather than about the query. That is why `PageMatches` carries a `problem` and the find bar
+shows it in place of the counter.
+
+### A closure and a direct read of the same variable disagreed, and it is unexplained
+
+Recorded because it cost an hour and because the next person to write this check will reach for
+the same shape. It is **not** a resolved trap; what follows is what was ruled out.
+
+The palette's "only Open document is offered with no document" check originally held the viewer
+in a `let` that the actions object closed over, set it to `null` for the duration, and put it
+back. On `vector-heavy` it failed, and the diagnostic read:
+
+    direct=null through=[object Object]
+
+--- inside one template literal, in one synchronous expression: `attached === null` was true
+while `actions.viewer() === null` was false, where `actions.viewer` is `() => attached` and
+prints as exactly that. Which way round the two disagreed **changed between runs of the same
+binary**, and `outline-simple` was correct throughout.
+
+Ruled out, each by reading rather than by assumption: one declaration of the variable, one
+closure over it, one call site of the enclosing function, no reassignment of the actions object,
+and the *compiled* bundle reading correctly (`let ... r=e ...; const a={viewer:()=>r,...}` and
+later `r=null;const Fn=\`direct=${r===null} through=${a.viewer()===null}\``). Nothing static
+accounts for it. What remains is a JavaScriptCore artifact in a very large async function with
+many closures and awaits --- run-to-run variation with the same binary is the shape of a
+tier-dependent miscompile --- and that is a suspicion, not a finding.
+
+The response was not to explain it but to remove the need for it: the check now builds a
+**second registry** whose viewer is null *by construction*, so there is no shared mutable
+binding for anything to observe at the wrong moment. Both readings have been stable since.
+
+**The rule to carry forward is the one that applies whether or not the cause is what it looks
+like: do not ship a check whose own mechanism you cannot account for.** A check that fails for
+a reason nobody understands is worth less than no check, because the next failure will be read
+as the same mystery.
+
+### A guard that also guarantees termination fails as a hang, not as a red test
+
+`find_in` refused a query of only whitespace, and that guard quietly did a second job: `all`
+is true of an empty sequence, so an empty query returned early too --- which mattered, because
+the literal walk advances by the needle's length and an empty needle advances it by **zero**.
+
+Deleting the guard as a mutation therefore did not produce a failing test. It produced a run
+with no result at all: the harness reported *"no summary line --- the run did not finish"*,
+which is its verdict for a crash, a timeout and a build error alike. The mutation was
+unreadable rather than caught or survived, and an unreadable mutation says nothing about the
+tests either way.
+
+Two things follow:
+
+- **Do not let a termination argument lean on another guard's implementation.** The empty
+  needle is now refused first and on its own, with the reason next to it. The whitespace guard
+  still refuses whitespace, and deleting *it* now turns the test red the way a mutation should.
+- **A mutation that hangs is a finding about the code, not noise from the harness.** It located
+  a real latent hazard --- one edit to an unrelated guard away from an infinite loop in the
+  search path --- that no test could have found, because no test can reach it while the guard
+  stands. The harness's insistence on positive evidence that a run happened is what surfaced
+  it; a harness that read "no failures" as "caught" would have reported a clean pass.

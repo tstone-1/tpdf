@@ -27,11 +27,18 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import {
+  handleWindowKey,
+  registerAppCommands,
+  type AppActions,
+  type WindowKeyDeps,
+} from "./appcommands";
 import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { CommandRegistry } from "./commands";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { MAX_RESULT_ROWS } from "./results";
+import { PLAIN_SEARCH } from "./search";
 import { hasSideBySideLines, readingLines } from "./reading";
 import { TextCache } from "./text";
 
@@ -187,11 +194,20 @@ function pointer(
 }
 
 /** Drags from one point to another, in a few steps as a real drag would. */
-function drag(root: HTMLElement, from: [number, number], to: [number, number]): void {
+function drag(
+  root: HTMLElement,
+  from: [number, number],
+  to: [number, number],
+): void {
   pointer(root, "pointerdown", from[0], from[1]);
   for (let step = 1; step <= 4; step++) {
     const t = step / 4;
-    pointer(root, "pointermove", from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t);
+    pointer(
+      root,
+      "pointermove",
+      from[0] + (to[0] - from[0]) * t,
+      from[1] + (to[1] - from[1]) * t,
+    );
   }
   pointer(root, "pointerup", to[0], to[1]);
 }
@@ -356,7 +372,11 @@ async function run(path: string): Promise<void> {
   check("runs a frame loop while working", !viewer.idle, `idle=${viewer.idle}`);
 
   await eventually("covers the first screen", covered, pct);
-  await eventually("stops the frame loop when settled", () => viewer.idle, () => "loop stopped");
+  await eventually(
+    "stops the frame loop when settled",
+    () => viewer.idle,
+    () => "loop stopped",
+  );
 
   const before = viewer.offset;
   wheel(root, 400);
@@ -402,7 +422,11 @@ async function run(path: string): Promise<void> {
   );
 
   key(root, "Home");
-  check("Home returns to the top", viewer.offset === 0, `offset=${viewer.offset}`);
+  check(
+    "Home returns to the top",
+    viewer.offset === 0,
+    `offset=${viewer.offset}`,
+  );
 
   // Zoom, with its own control: recovering coverage proves nothing unless the
   // zoom threw the tiles away first.
@@ -415,7 +439,11 @@ async function run(path: string): Promise<void> {
     viewer.currentZoom > fitZoom,
     `${fitZoom.toFixed(3)} -> ${viewer.currentZoom.toFixed(3)}`,
   );
-  check("a zoom step discards what it invalidates", !covered(), `${pct()} one frame later`);
+  check(
+    "a zoom step discards what it invalidates",
+    !covered(),
+    `${pct()} one frame later`,
+  );
   await eventually("recovers coverage after a zoom", covered, pct);
 
   // A pinch is a wheel event carrying ctrlKey, and is the only zoom path not on
@@ -454,7 +482,10 @@ async function run(path: string): Promise<void> {
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
   await resultsChecks(viewer, sidebar, doc, seen);
+  await crossPageChecks(viewer, doc, seen);
+  await scopedSearchChecks(root, viewer, seen);
   await paletteChecks(viewer, doc.page_count);
+  await appCommandChecks(viewer, doc);
   await accessibilityChecks(root, viewer, doc, seen);
   await outlineChecks(viewer, sidebar, doc);
   await thumbnailChecks(root, viewer, sidebar, doc, page);
@@ -508,8 +539,14 @@ interface ReadingManifest {
 async function readingChecks(doc: DocumentInfo): Promise<void> {
   const raw = await invoke<string | null>("reading_manifest");
   if (!raw) {
-    skip("a page reads in the order its generator laid it out", "no manifest for this fixture");
-    skip("two pages laid out alike read alike, whatever their order in the file", "no manifest");
+    skip(
+      "a page reads in the order its generator laid it out",
+      "no manifest for this fixture",
+    );
+    skip(
+      "two pages laid out alike read alike, whatever their order in the file",
+      "no manifest",
+    );
     return;
   }
 
@@ -517,7 +554,11 @@ async function readingChecks(doc: DocumentInfo): Promise<void> {
   try {
     manifest = JSON.parse(raw) as ReadingManifest;
   } catch (e) {
-    check("a page reads in the order its generator laid it out", false, `unreadable manifest: ${e}`);
+    check(
+      "a page reads in the order its generator laid it out",
+      false,
+      `unreadable manifest: ${e}`,
+    );
     return;
   }
 
@@ -714,8 +755,14 @@ async function selectionChecks(
     // two runs and getting 43 and 41.
     skip("Cmd-A selects the page's text", "the page has no extractable text");
     skip("Escape clears the selection", "there is no text to select and clear");
-    skip("dragging nowhere selects nothing", "there is no text a drag could select");
-    skip("a drag selects text from where it was dragged", "the page has no extractable text");
+    skip(
+      "dragging nowhere selects nothing",
+      "there is no text a drag could select",
+    );
+    skip(
+      "a drag selects text from where it was dragged",
+      "the page has no extractable text",
+    );
     skipGranularity("the page has no extractable text");
     return;
   }
@@ -732,7 +779,11 @@ async function selectionChecks(
   const whole = viewer.selectedText;
 
   key(root, "Escape");
-  check("Escape clears the selection", viewer.selectedText === "", "nothing selected");
+  check(
+    "Escape clears the selection",
+    viewer.selectedText === "",
+    "nothing selected",
+  );
 
   // A degenerate drag, as the control: press and release without moving. If
   // this selected something, every assertion below would pass on a selection
@@ -747,7 +798,10 @@ async function selectionChecks(
   granularityChecks(root, viewer, whole);
 
   if (!ok || !whole) {
-    skip("a drag selects text from where it was dragged", "the page has no extractable text");
+    skip(
+      "a drag selects text from where it was dragged",
+      "the page has no extractable text",
+    );
     return;
   }
 
@@ -849,7 +903,11 @@ function skipGranularity(why: string): void {
  * on a `/Rotate 90` page selects the line that runs down the screen --- there
  * is nothing here that assumes lines advance downwards.
  */
-function granularityChecks(root: HTMLElement, viewer: Viewer, whole: string): void {
+function granularityChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  whole: string,
+): void {
   const at: [number, number] = [MID_X, HIGH_Y];
 
   // The control, and it has to come first: if a single click already selected
@@ -876,7 +934,10 @@ function granularityChecks(root: HTMLElement, viewer: Viewer, whole: string): vo
   if (word && line === word) {
     // Honest rather than green: on a line holding a single word the two
     // selections are legitimately identical and the check cannot discriminate.
-    skip(GRANULARITY_CHECKS[1], "the line under the pointer holds a single word");
+    skip(
+      GRANULARITY_CHECKS[1],
+      "the line under the pointer holds a single word",
+    );
   } else {
     check(
       GRANULARITY_CHECKS[1],
@@ -914,7 +975,9 @@ function granularityChecks(root: HTMLElement, viewer: Viewer, whole: string): vo
   // at its last character however far past it the pointer goes.
   let midWordAt = 0;
   let charDrag = "";
-  for (const candidate of [40, 48, 56, 64, 72, 80, 88, 96, 120, 160, 200, 240]) {
+  for (const candidate of [
+    40, 48, 56, 64, 72, 80, 88, 96, 120, 160, 200, 240,
+  ]) {
     dragAfterClicks(root, at, candidate, 1);
     const text = viewer.selectedText;
     const edges = edgesOf(text);
@@ -928,7 +991,10 @@ function granularityChecks(root: HTMLElement, viewer: Viewer, whole: string): vo
   if (!midWordAt) {
     // Honest rather than green: with no distance that ends inside a word, the
     // two mechanisms agree and the check would be asserting nothing.
-    skip(GRANULARITY_CHECKS[2], "no drag distance tried ends inside a word on this page");
+    skip(
+      GRANULARITY_CHECKS[2],
+      "no drag distance tried ends inside a word on this page",
+    );
     return;
   }
 
@@ -1038,15 +1104,36 @@ async function searchChecks(
   );
 
   if (!needle) {
-    skip("finds a word taken from the document", "page 1 has no extractable text");
-    skip("a match covers the characters searched for", "page 1 has no extractable text");
+    skip(
+      "finds a word taken from the document",
+      "page 1 has no extractable text",
+    );
+    skip(
+      "a match covers the characters searched for",
+      "page 1 has no extractable text",
+    );
     skip("case is ignored", "page 1 has no extractable text");
-    skip("a word that is not there is not found", "page 1 has no extractable text");
-    skip("searches forward from the page being read", "page 1 has no extractable text");
+    skip(
+      "a word that is not there is not found",
+      "page 1 has no extractable text",
+    );
+    skip(
+      "searches forward from the page being read",
+      "page 1 has no extractable text",
+    );
     skipSearchOptions("page 1 has no extractable text");
-    skip("finds something from the end of the document", "page 1 has no extractable text");
-    skip("counts more than the matches on one page", "page 1 has no extractable text");
-    skip("Cmd-G moves to a match on another page", "page 1 has no extractable text");
+    skip(
+      "finds something from the end of the document",
+      "page 1 has no extractable text",
+    );
+    skip(
+      "counts more than the matches on one page",
+      "page 1 has no extractable text",
+    );
+    skip(
+      "Cmd-G moves to a match on another page",
+      "page 1 has no extractable text",
+    );
     return;
   }
 
@@ -1076,7 +1163,10 @@ async function searchChecks(
         `searched for "${needle}"`,
     );
   } else {
-    skip("a match covers the characters searched for", "nothing was found to check");
+    skip(
+      "a match covers the characters searched for",
+      "nothing was found to check",
+    );
   }
 
   // Same first match, not merely some match: both scans start from the same
@@ -1177,7 +1267,10 @@ async function resultsChecks(
     );
 
   viewer.search(needle);
-  await settle(() => !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  await settle(
+    () =>
+      !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count,
+  );
   feed();
 
   const total = viewer.searchMatches.length;
@@ -1189,16 +1282,19 @@ async function resultsChecks(
 
   const hit = viewer.searchMatches[0];
   const page = hit
-    ? await invoke<{ codes: number[] }>("page_text", { doc: doc.id, page: hit.page }).catch(
-        () => null,
-      )
+    ? await invoke<{ codes: number[] }>("page_text", {
+        doc: doc.id,
+        page: hit.page,
+      }).catch(() => null)
     : null;
   if (hit && page) {
     // What the row displays, read back out of the DOM, against what the page
     // says at the indices the match reported. Both halves matter: the bold run
     // has to be the hit, and the row has to be about the right place.
     const row = results.rowText(0);
-    const onPage = String.fromCodePoint(...page.codes.slice(hit.start, hit.end));
+    const onPage = String.fromCodePoint(
+      ...page.codes.slice(hit.start, hit.end),
+    );
     check(
       RESULTS_CHECKS[1],
       row.bold === onPage && row.page === String(hit.page + 1) && row.whole.includes(onPage),
@@ -1249,7 +1345,10 @@ async function resultsChecks(
 
   const absent = `qxzj${needle}`;
   viewer.search(absent);
-  await settle(() => !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  await settle(
+    () =>
+      !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count,
+  );
   feed();
   check(
     RESULTS_CHECKS[3],
@@ -1267,6 +1366,8 @@ const SEARCH_OPTION_CHECKS = [
   "matching case rejects the hit that ignoring it accepted",
   "whole words rejects a hit inside a longer word",
   "turning the options off finds the hit again",
+  "a pattern finds what the same text as a literal does not",
+  "a pattern that does not compile says so instead of finding nothing",
 ] as const;
 
 function skipSearchOptions(why: string): void {
@@ -1302,7 +1403,9 @@ async function searchOptionChecks(
     !viewer.searching && (seen.status?.search.scanned ?? 0) >= pageCount;
   const hitAtFirst = (): boolean =>
     !!firstHit &&
-    viewer.searchMatches.some((m) => m.page === firstHit.page && m.start === firstHit.start);
+    viewer.searchMatches.some(
+      (m) => m.page === firstHit.page && m.start === firstHit.start,
+    );
 
   if (!firstHit) {
     skipSearchOptions("the plain search found nothing to reason about");
@@ -1320,7 +1423,7 @@ async function searchOptionChecks(
     // `case is ignored` has just established that this exact query finds this
     // exact occurrence. Turning the option on must stop it, because the text
     // there is spelled the other way.
-    viewer.setSearchOptions({ matchCase: true, wholeWord: false });
+    viewer.setSearchOptions({ ...PLAIN_SEARCH, matchCase: true });
     viewer.search(shouted);
     await settle(done);
     check(
@@ -1335,7 +1438,7 @@ async function searchOptionChecks(
   // followed there by a letter, so it is never a whole word there. `pickNeedle`
   // returns five letters or more, so the prefix is at least four.
   const stem = needle.slice(0, -1);
-  viewer.setSearchOptions({ matchCase: false, wholeWord: true });
+  viewer.setSearchOptions({ ...PLAIN_SEARCH, wholeWord: true });
   viewer.search(stem);
   await settle(done);
   check(
@@ -1348,7 +1451,7 @@ async function searchOptionChecks(
 
   // The control, and the one that says the two above rejected something rather
   // than the search having stopped working. Same query, options off, hit back.
-  viewer.setSearchOptions({ matchCase: false, wholeWord: false });
+  viewer.setSearchOptions({ ...PLAIN_SEARCH });
   viewer.search(stem);
   await settle(done);
   check(
@@ -1357,6 +1460,51 @@ async function searchOptionChecks(
     `"${stem}" unrestricted -> ${viewer.searchMatches.length} matches, including ` +
       `${firstHit.page}:${firstHit.start}`,
   );
+
+  // A pattern built from the needle by replacing its second character with a
+  // dot. As a pattern it must find the needle where the needle is; as a literal
+  // the same string contains a dot the page does not have there, so it finds
+  // nothing --- which is the control that says the option is what did it rather
+  // than the query happening to match twice.
+  const pattern = `${needle[0] ?? ""}.${needle.slice(2)}`;
+  viewer.setSearchOptions({ ...PLAIN_SEARCH, regex: true });
+  viewer.search(pattern);
+  await settle(done);
+  const asPattern = viewer.searchMatches.length;
+  const foundHere = hitAtFirst();
+  viewer.setSearchOptions({ ...PLAIN_SEARCH });
+  viewer.search(pattern);
+  await settle(done);
+  check(
+    SEARCH_OPTION_CHECKS[3],
+    foundHere && asPattern > 0 && viewer.searchMatches.length === 0,
+    `"${pattern}" as a pattern -> ${asPattern} matches including ` +
+      `${firstHit.page}:${firstHit.start}; as a literal -> ` +
+      `${viewer.searchMatches.length}`,
+  );
+
+  // An unclosed group. The reader has to be told the pattern is broken, because
+  // "no matches" for it is a statement about the document instead.
+  const broken = `${needle}(`;
+  viewer.setSearchOptions({ ...PLAIN_SEARCH, regex: true });
+  viewer.search(broken);
+  await settle(() => !viewer.searching);
+  const problem = seen.status?.search.problem ?? "";
+  // The control: the same characters as a literal are a perfectly ordinary
+  // query, so a `problem` there would mean the reporting is about the text
+  // rather than about the pattern.
+  viewer.setSearchOptions({ ...PLAIN_SEARCH });
+  viewer.search(broken);
+  await settle(done);
+  check(
+    SEARCH_OPTION_CHECKS[4],
+    problem !== "" && (seen.status?.search.problem ?? "") === "",
+    `"${broken}" as a pattern -> "${preview(problem)}"; as a literal -> ` +
+      `"${preview(seen.status?.search.problem ?? "")}", ` +
+      `${viewer.searchMatches.length} matches`,
+  );
+  viewer.setSearchOptions({ ...PLAIN_SEARCH });
+  viewer.clearSearch();
 }
 
 /**
@@ -1442,7 +1590,10 @@ async function stepToAnotherPage(
   viewer.search(needle);
   await eventually(
     spread,
-    () => viewer.searchMatches.some((m) => m.page !== viewer.searchMatches[0]?.page),
+    () =>
+      viewer.searchMatches.some(
+        (m) => m.page !== viewer.searchMatches[0]?.page,
+      ),
     () =>
       `${viewer.searchMatches.length} matches across ` +
       `${new Set(viewer.searchMatches.map((m) => m.page)).size} pages`,
@@ -1524,9 +1675,15 @@ async function accessibilityChecks(
       spoken.includes("no extractable text"),
       `reads "${preview(spoken)}"`,
     );
-    skip("the text read out is the page's own text", "the page has no extractable text");
+    skip(
+      "the text read out is the page's own text",
+      "the page has no extractable text",
+    );
   } else {
-    skip("a page with no text says so rather than falling silent", "this page has text");
+    skip(
+      "a page with no text says so rather than falling silent",
+      "this page has text",
+    );
     // Compared against an independent extraction, not against the viewer's
     // cache, so the layer cannot be confirmed by agreeing with itself.
     const expected = flatten(String.fromCodePoint(...extracted.codes));
@@ -1541,7 +1698,9 @@ async function accessibilityChecks(
     // against the fixture's own manifest and by `reading.test.ts`.
     const sorted = (text: string): string => [...text].sort().join("");
     const same = sorted(spoken) === sorted(expected);
-    const moved = [...spoken].filter((char, at) => char !== expected[at]).length;
+    const moved = [...spoken].filter(
+      (char, at) => char !== expected[at],
+    ).length;
     check(
       "the text read out is the page's own text",
       same,
@@ -1594,7 +1753,10 @@ async function accessibilityChecks(
   if (!focused) {
     skip("focus in the text survives a scroll", "the element never took focus");
   } else if (!stillVisible) {
-    skip("focus in the text survives a scroll", "the scroll left the page entirely");
+    skip(
+      "focus in the text survives a scroll",
+      "the scroll left the page entirely",
+    );
   } else {
     check(
       "focus in the text survives a scroll",
@@ -1612,7 +1774,10 @@ async function accessibilityChecks(
   await settle(() => viewer.idle);
   const last = (seen.status?.page ?? 1) - 1;
   if (!before || doc.page_count < 2) {
-    skip("a page that leaves the screen leaves the tree", "the document has one screen");
+    skip(
+      "a page that leaves the screen leaves the tree",
+      "the document has one screen",
+    );
   } else {
     await eventually(
       "a page that leaves the screen leaves the tree",
@@ -1646,13 +1811,235 @@ function flatten(text: string): string {
 }
 
 /**
+ * A search confined to what the reader selected.
+ *
+ * The discriminating part is not that a scoped search finds fewer things --- a
+ * search that found nothing would do that too. It is that the *same* query,
+ * unscoped, finds strictly more, and that everything the scoped one found lies
+ * inside the range that was drawn. Both directions, because a scope that
+ * excluded everything and a scope that excluded nothing are the two ways this
+ * can be wrong and each looks fine from the other side.
+ */
+async function scopedSearchChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const NAMES = [
+    "a scoped search looks only inside the selection",
+    "and the same query unscoped finds more",
+  ] as const;
+  const skipBoth = (why: string): void => {
+    for (const name of NAMES) skip(name, why);
+  };
+
+  viewer.goToStart();
+  viewer.clearSelection();
+  await settle(() => viewer.idle);
+
+  const done = (): boolean =>
+    !viewer.searching && (seen.status?.search.scanned ?? 0) >= (seen.status?.search.toScan ?? 1);
+
+  // A drag that starts part-way along a line and ends part-way down the page,
+  // so the scope is a *range within* a page. Dragging the whole page would
+  // leave both of the range's ends untested: a mutation relaxing the start
+  // bound survived exactly that, because the selection began at character 0 and
+  // "at or after 0" is true of everything.
+  drag(root, [WIDTH / 2, HEIGHT / 5], [WIDTH - 120, HEIGHT * 0.55]);
+  await settle(() => viewer.idle);
+  const selected = viewer.selectedText;
+  if (selected === "") {
+    skipBoth("dragging over the page selected nothing");
+    return;
+  }
+
+  // The query comes out of the selection, so it is certain to be inside the
+  // scope. Taken from the page instead it might not be, and a scoped search
+  // that finds nothing satisfies "fewer than before" perfectly.
+  const needle = pickNeedle([...selected].map((ch) => ch.codePointAt(0) ?? 0));
+  if (!needle) {
+    skipBoth(`the ${selected.length} selected characters yielded no word to search for`);
+    return;
+  }
+
+  viewer.search(needle);
+  await settle(done);
+  const whole = viewer.searchMatches.length;
+  // Hits on the selection's own page, which is the number that makes this a
+  // check on the *range*. A scoped scan only asks about the pages in the scope,
+  // so comparing against the whole document proves the page list and says
+  // nothing about the two ends of it --- and two mutations relaxing exactly
+  // those ends survived while this compared against `whole`.
+  const onFirstPage = viewer.searchMatches.filter((m) => m.page === 0);
+  if (whole < 2) {
+    skipBoth(`"${needle}" occurs ${whole} time(s) in the document, so a narrower search proves nothing`);
+    viewer.clearSearch();
+    viewer.clearSelection();
+    return;
+  }
+
+  if (!viewer.scopeSearchToSelection()) {
+    skipBoth("the selection could not be scoped to");
+    return;
+  }
+  if (onFirstPage.length < 2) {
+    skipBoth(
+      `"${needle}" occurs ${onFirstPage.length} time(s) on page 1, so clipping the range proves nothing`,
+    );
+    viewer.clearSearch();
+    viewer.clearSelection();
+    return;
+  }
+  await settle(done);
+  const scoped = viewer.searchMatches.slice();
+  const outside = scoped.filter((m) => m.page !== 0 || m.endPage !== undefined);
+
+  // Both ends of the range, and both measured against the **scope** rather than
+  // against the matches that came back. Two mutations relaxing one bound each
+  // survived a version that used the results: widening a bound widens the
+  // numbers the precondition is computed from too, so the check turned itself
+  // into a `[SKIP]` instead of going red --- a defect that switches off the
+  // check that would have caught it.
+  const range = viewer.searchScopeRanges?.[0];
+  const droppedBefore = range ? onFirstPage.filter((m) => m.start < range.from).length : 0;
+  const droppedAfter = range ? onFirstPage.filter((m) => m.end > range.to).length : 0;
+  if (!range || droppedBefore === 0 || droppedAfter === 0) {
+    skipBoth(
+      `"${needle}": the scope is ${range ? `[${range.from}, ${range.to})` : "absent"}, with ` +
+        `${droppedBefore} of page 1's hits before it and ${droppedAfter} after it --- ` +
+        `both ends need something to drop`,
+    );
+    viewer.clearSearchScope();
+    viewer.clearSearch();
+    viewer.clearSelection();
+    return;
+  }
+  check(
+    NAMES[0],
+    viewer.searchScoped &&
+      outside.length === 0 &&
+      scoped.length > 0 &&
+      scoped.length === onFirstPage.length - droppedBefore - droppedAfter,
+    `"${needle}": ${scoped.length} matches in [${range.from}, ${range.to}), and page 1 has ` +
+      `${onFirstPage.length} with ${droppedBefore} before that range and ${droppedAfter} ` +
+      `after it (${whole} in the document); ${outside.length} outside the scope`,
+  );
+
+  viewer.clearSearchScope();
+  await settle(done);
+  check(
+    NAMES[1],
+    !viewer.searchScoped && viewer.searchMatches.length === whole && whole > scoped.length,
+    `unscoped -> ${viewer.searchMatches.length}, was ${whole} before scoping and ` +
+      `${scoped.length} while scoped`,
+  );
+
+  viewer.clearSearch();
+  viewer.clearSelection();
+  await settle(() => viewer.idle);
+}
+
+/**
+ * A phrase that runs over a page break.
+ *
+ * The query is built from the document rather than written here: the last word
+ * on page 1 and the first word on page 2, which by construction occur in that
+ * order with nothing but the break between them. A matcher that looks at one
+ * page at a time cannot find it, which is what makes the check discriminating
+ * without needing a fixture built for it.
+ *
+ * Two things are asserted, and the second is the one that matters. That
+ * *something* was found is weak --- a hit anywhere would satisfy it. So each
+ * half is resolved against the page it claims to be on, through a fresh
+ * extraction rather than through the matcher's own snippet, and has to be the
+ * word that page really ends or begins with.
+ */
+async function crossPageChecks(
+  viewer: Viewer,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const NAMES = [
+    "a phrase is found across a page break",
+    "each half of it lands on the page it names",
+  ] as const;
+  const skipBoth = (why: string): void => {
+    for (const name of NAMES) skip(name, why);
+  };
+
+  if (doc.page_count < 2) {
+    skipBoth("a break needs two pages");
+    return;
+  }
+  const textOf = async (page: number): Promise<string | null> => {
+    const got = await invoke<{ codes: number[] }>("page_text", { doc: doc.id, page }).catch(
+      () => null,
+    );
+    return got ? String.fromCodePoint(...got.codes) : null;
+  };
+  const first = await textOf(0);
+  const second = await textOf(1);
+  const last = /(\S+)\s*$/.exec(first ?? "")?.[1];
+  const head = /^\s*(\S+)/.exec(second ?? "")?.[1];
+  if (!last || !head) {
+    skipBoth("page 1 or page 2 has no extractable text");
+    return;
+  }
+  const query = `${last} ${head}`;
+  if (query.length > 128) {
+    skipBoth(`"${preview(query)}" is longer than a break is looked across`);
+    return;
+  }
+
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  viewer.search(query);
+  await settle(
+    () => !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count,
+  );
+
+  const across = viewer.searchMatches.find((m) => m.endPage !== undefined);
+  check(
+    NAMES[0],
+    across !== undefined,
+    `"${preview(query)}" -> ${viewer.searchMatches.length} matches, ` +
+      `${viewer.searchMatches.filter((m) => m.endPage !== undefined).length} of them across a break`,
+  );
+
+  if (!across) {
+    skip(NAMES[1], "nothing was found to resolve");
+    viewer.clearSearch();
+    return;
+  }
+  // Re-extracted, so the two index spaces are checked against the pages rather
+  // than against the reply that reported them.
+  const left = (await textOf(across.page))?.slice(across.start) ?? "";
+  const right = (await textOf(across.endPage ?? -1))?.slice(0, across.end) ?? "";
+  check(
+    NAMES[1],
+    across.page === 0 &&
+      across.endPage === 1 &&
+      left.trim() === last &&
+      right.trim() === head,
+    `page ${across.page} from ${across.start} is "${preview(left)}" (wanted "${preview(last)}"), ` +
+      `page ${across.endPage} to ${across.end} is "${preview(right)}" (wanted "${preview(head)}")`,
+  );
+  viewer.clearSearch();
+}
+
+/**
  * The command palette, driven through its own DOM.
  *
- * The registry is built here rather than reusing `App.svelte`'s, because the
- * shell is not mounted --- so what this covers is the palette and the registry,
- * and **not** the command list the application actually registers or the Cmd-K
- * that opens it. Both are wiring in `App.svelte`, and both are unchecked; the
- * ranking underneath is covered by `commands.test.ts`.
+ * The registry is four commands built here, not the application's, so what this
+ * covers is the palette *mechanism* --- filtering, highlighting, Escape, running
+ * the selected row --- against a list small enough to state the expected result
+ * of every keystroke. The ranking underneath is `commands.test.ts`.
+ *
+ * The application's real command list and the ⌘K that opens it were covered by
+ * nothing at all, which `docs/PLAN.md` recorded as a gap; they are
+ * `appCommandChecks` below now. Kept separate rather than merged: a mechanism
+ * check wants a list it controls, and a wiring check wants the list a reader
+ * actually gets.
  *
  * The load-bearing assertion is that Enter *ran* something: a palette that
  * filters beautifully and does nothing passes every other check here. It carries
@@ -1662,10 +2049,30 @@ function flatten(text: string): string {
 async function paletteChecks(viewer: Viewer, pageCount: number): Promise<void> {
   const registry = new CommandRegistry();
   registry.register(
-    { id: "view.fitWidth", title: "Fit width", keys: "⌘0", run: () => viewer.setFit("width") },
-    { id: "nav.lastPage", title: "Go to end", keys: "End", run: () => viewer.goToEnd() },
-    { id: "nav.firstPage", title: "Go to start", keys: "Home", run: () => viewer.goToStart() },
-    { id: "edit.copy", title: "Copy selection", enabled: () => false, run: () => {} },
+    {
+      id: "view.fitWidth",
+      title: "Fit width",
+      keys: "⌘0",
+      run: () => viewer.setFit("width"),
+    },
+    {
+      id: "nav.lastPage",
+      title: "Go to end",
+      keys: "End",
+      run: () => viewer.goToEnd(),
+    },
+    {
+      id: "nav.firstPage",
+      title: "Go to start",
+      keys: "Home",
+      run: () => viewer.goToStart(),
+    },
+    {
+      id: "edit.copy",
+      title: "Copy selection",
+      enabled: () => false,
+      run: () => {},
+    },
   );
   const palette = new Palette(registry);
 
@@ -1744,7 +2151,10 @@ async function paletteChecks(viewer: Viewer, pageCount: number): Promise<void> {
   if (viewer.maxOffset <= 1) {
     skip("Enter runs the highlighted command", "the document does not scroll");
   } else if (start >= viewer.maxOffset - 1) {
-    skip("Enter runs the highlighted command", "already at the end before running it");
+    skip(
+      "Enter runs the highlighted command",
+      "already at the end before running it",
+    );
   } else {
     press("Enter");
     check(
@@ -1887,6 +2297,603 @@ async function argumentChecks(
 }
 
 /**
+ * The command list the application really has, driven the way a reader drives
+ * it, and the ⌘K that opens it.
+ *
+ * `paletteChecks` above builds a four-command registry of its own, and said so:
+ * what it proves is that the palette works, **not** that any command a reader
+ * can type reaches anything. `docs/PLAN.md` recorded that as a gap and it was
+ * one --- the list `App.svelte` registered was covered by nothing, and neither
+ * was ⌘K. Both now come from `appcommands.ts`, so this can import the real ones.
+ *
+ * ## Every command is driven, or says why not
+ *
+ * The audit below is the part worth keeping. A table classifies every id, the
+ * check asserts the table and the registry are the *same set*, and it prints the
+ * population it found --- so a command added tomorrow turns this red until
+ * somebody decides how it is covered, and a command renamed turns it red from
+ * the other side. A tally would not do that: this file has already been caught
+ * counting checks that had stopped existing, and `AGENTS.md` says to diff the
+ * names rather than compare the totals.
+ *
+ * ## Two kinds of coverage, and the difference is stated
+ *
+ * A command reaching the {@link Viewer} is asserted against a real viewer: the
+ * zoom, the page, the rotation or the selection has to move, and each has a
+ * control establishing it was not already where the command would take it. A
+ * command reaching the shell --- a file dialog, a print panel, a Svelte flag ---
+ * is asserted to reach *that action, once*, and nothing is claimed about what
+ * the action then does. There is no shell here to do it in.
+ */
+async function appCommandChecks(
+  viewer: Viewer,
+  doc: DocumentInfo,
+): Promise<void> {
+  /** Shell actions that fired, in order, since the last clearing. */
+  let fired: string[] = [];
+  let busy = false;
+  let recents = 0;
+  let hasDocument = true;
+
+  const actions: AppActions = {
+    viewer: () => viewer,
+    pageCount: () => doc.page_count,
+    openDocument: () => fired.push("openDocument"),
+    busyOpening: () => busy,
+    printDocument: () => fired.push("printDocument"),
+    focusFind: () => fired.push("focusFind"),
+    toggleSearchOption: (which) => fired.push(`toggleSearchOption:${which}`),
+    toggleSearchScope: () => fired.push("toggleSearchScope"),
+    toggleSidebar: () => fired.push("toggleSidebar"),
+    showTab: (tab) => fired.push(`showTab:${tab}`),
+    toggleInvert: () => fired.push("toggleInvert"),
+  };
+
+  // Where the viewer was on arrival, so it can be put back. Every phase after
+  // this one inherits whatever state it is left in, and the first run of these
+  // checks turned eight later assertions red across three phases --- the last
+  // probe rotates, and outlines, thumbnails and the rotation checks themselves
+  // all read a viewer that was three quarter-turns from where they expected it.
+  // `AGENTS.md` has this as "a control can be contaminated by the phase that ran
+  // before it"; the restoration is asserted below rather than assumed.
+  const entry = {
+    rotation: viewer.rotation,
+    fit: viewer.fitMode,
+    zoom: viewer.currentZoom,
+  };
+
+  const registry = new CommandRegistry();
+  registerAppCommands(registry, actions);
+  const palette = new Palette(registry);
+  const deps: WindowKeyDeps = {
+    actions,
+    palette: () => palette,
+    hasDocument: () => hasDocument,
+    refreshRecents: () => {
+      recents += 1;
+    },
+  };
+
+  const field = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>(".tpdf-palette input");
+  const type = (text: string): void => {
+    const input = field();
+    if (!input) return;
+    input.value = text;
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  };
+  const press = (k: string): void => {
+    field()?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+    );
+  };
+  /** A window chord, through the real routing rather than through a call. */
+  const chord = (
+    key: string,
+    mods: { accel?: boolean; shift?: boolean; alt?: boolean } = {},
+  ): boolean => {
+    const event = new KeyboardEvent("keydown", {
+      key,
+      metaKey: mods.accel ?? false,
+      shiftKey: mods.shift ?? false,
+      altKey: mods.alt ?? false,
+      bubbles: true,
+      cancelable: true,
+    });
+    handleWindowKey(event, deps);
+    return event.defaultPrevented;
+  };
+
+  // ⌘K, which is the one chord that is not a command and so had nothing
+  // advertising it to disagree with. Asserted closed first: "the palette is
+  // open" is true of a palette that was already open, which is the shape of
+  // pass this file keeps having to guard against.
+  check(
+    "the palette is closed before Cmd-K",
+    !palette.isOpen,
+    `open=${palette.isOpen}`,
+  );
+  const bareK = chord("k");
+  check(
+    "a bare k does not open the palette",
+    !palette.isOpen && !bareK,
+    `open=${palette.isOpen}, prevented=${bareK}`,
+  );
+  const opened = chord("k", { accel: true });
+  check(
+    "Cmd-K opens the palette",
+    palette.isOpen && opened && recents === 1,
+    `open=${palette.isOpen}, prevented=${opened}, recents refreshed ${recents}x`,
+  );
+  chord("k", { accel: true });
+  check(
+    "Cmd-K again closes it, and does not re-read the recents",
+    !palette.isOpen && recents === 1,
+    `open=${palette.isOpen}, recents refreshed ${recents}x`,
+  );
+
+  // ⌘P has no `&& title` guard, deliberately, because WKWebView's own ⌘P would
+  // otherwise print a screenshot of the chrome. ⌘F has one. Driving both with
+  // no document is what tells those two arms apart.
+  hasDocument = false;
+  fired = [];
+  chord("p", { accel: true });
+  const printedEmpty = fired.slice();
+  chord("f", { accel: true });
+  const findEmpty = fired.slice();
+  hasDocument = true;
+  check(
+    "Cmd-P prints with no document open, and Cmd-F does not reach find",
+    printedEmpty.join() === "printDocument" &&
+      findEmpty.join() === "printDocument",
+    `after Cmd-P: [${printedEmpty.join(", ")}], after Cmd-F: [${findEmpty.join(", ")}]`,
+  );
+
+  // The guard the Open button carries as `disabled`, which the keyboard route
+  // shares and the palette row deliberately does not.
+  busy = true;
+  fired = [];
+  chord("o", { accel: true });
+  const whileBusy = fired.slice();
+  busy = false;
+  chord("o", { accel: true });
+  check(
+    "Cmd-O opens one dialog at a time",
+    whileBusy.length === 0 && fired.join() === "openDocument",
+    `busy: [${whileBusy.join(", ")}], idle: [${fired.join(", ")}]`,
+  );
+
+  /**
+   * Runs a command the way a reader does: open, type its title, Enter.
+   *
+   * Returns why it could not, or "". The title has to rank *first* --- pressing
+   * Enter on whatever happened to be highlighted would run some other command
+   * and assert against it, which is the failure mode a harness cannot see.
+   */
+  const runByTitle = (title: string, argument?: string): string => {
+    palette.open();
+    type(title);
+    if (palette.highlighted !== title) {
+      const top = palette.highlighted;
+      palette.close();
+      return `"${title}" highlighted "${top}" of ${palette.visible.length}`;
+    }
+    press("Enter");
+    if (argument !== undefined) {
+      if (!palette.isAsking) {
+        palette.close();
+        return `"${title}" did not ask for a value`;
+      }
+      type(argument);
+      press("Enter");
+    }
+    if (palette.isOpen) palette.close();
+    return "";
+  };
+
+  const titleOf = (id: string): string => registry.find(id)?.title ?? "";
+
+  /** One command, and what has to be different afterwards. */
+  interface Probe {
+    id: string;
+    /** Typed into the argument prompt, for the two commands that ask. */
+    argument?: string;
+    /** Puts the viewer somewhere the command can be seen to move it from. */
+    from?: () => void;
+    /** Reads what the command is supposed to change. */
+    read: () => string;
+    /** Whether the reading moved as the command promises. */
+    moved: (before: string, after: string) => boolean;
+    /** Why this document cannot exercise it, or null. */
+    unless?: () => string | null;
+  }
+
+  // Half the corpus is one page, and two of it have no extractable text. A
+  // probe that cannot move on such a document must say so: "next page" on a
+  // one-page document is a check whose before and after agree whatever the
+  // command does, which is decoration, and "select all" would simply go red for
+  // a reason that is not a defect.
+  const firstPage = await invoke<{ codes: number[] }>("page_text", {
+    doc: doc.id,
+    page: 0,
+  }).catch(() => null);
+  const hasText = (firstPage?.codes.length ?? 0) > 0;
+  const manyPages = () =>
+    doc.page_count > 1 ? null : "this document has one page";
+  const withText = () => (hasText ? null : "page 1 has no extractable text");
+
+  const zoom = () => viewer.currentZoom.toFixed(3);
+  const page = () => String(viewer.position.page);
+  const turn = () => String(viewer.rotation);
+  const fit = () => viewer.fitMode;
+  const selection = () => String(viewer.selectedText.length);
+  const shell = (expected: string) => ({
+    read: () => fired.join(","),
+    moved: (_before: string, after: string) => after === expected,
+  });
+
+  const last = doc.page_count - 1;
+  const probes: Probe[] = [
+    { id: "file.open", ...shell("openDocument"), read: () => fired.join(",") },
+    {
+      id: "file.print",
+      ...shell("printDocument"),
+      read: () => fired.join(","),
+    },
+    { id: "find.open", ...shell("focusFind"), read: () => fired.join(",") },
+    {
+      id: "find.matchCase",
+      ...shell("toggleSearchOption:matchCase"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "find.wholeWord",
+      ...shell("toggleSearchOption:wholeWord"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "find.regex",
+      ...shell("toggleSearchOption:regex"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "find.inSelection",
+      ...shell("toggleSearchScope"),
+      read: () => fired.join(","),
+      // Only offered when there is something to scope to, so the probe has to
+      // make one --- and on a page with no text there is nothing to select.
+      from: () => viewer.selectPage(),
+      unless: withText,
+    },
+    {
+      id: "view.toggleSidebar",
+      ...shell("toggleSidebar"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "view.showOutline",
+      ...shell("showTab:outline"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "view.showThumbnails",
+      ...shell("showTab:pages"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "view.invertPages",
+      ...shell("toggleInvert"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "view.zoomIn",
+      from: () => viewer.setZoomFixed(1),
+      read: zoom,
+      moved: (b, a) => Number(a) > Number(b),
+    },
+    {
+      id: "view.zoomOut",
+      from: () => viewer.setZoomFixed(1),
+      read: zoom,
+      moved: (b, a) => Number(a) < Number(b),
+    },
+    {
+      id: "view.actualSize",
+      from: () => viewer.setZoomFixed(2),
+      read: zoom,
+      moved: (b, a) => b !== "1.000" && a === "1.000",
+    },
+    {
+      id: "view.zoomTo",
+      argument: "175",
+      from: () => viewer.setZoomFixed(1),
+      read: zoom,
+      moved: (b, a) => b !== "1.750" && a === "1.750",
+    },
+    {
+      id: "view.fitWidth",
+      from: () => viewer.setFit("page"),
+      read: fit,
+      moved: (b, a) => b !== "width" && a === "width",
+    },
+    {
+      id: "view.fitPage",
+      from: () => viewer.setFit("width"),
+      read: fit,
+      moved: (b, a) => b !== "page" && a === "page",
+    },
+    {
+      id: "view.rotateClockwise",
+      from: () => viewer.rotateBy(-viewer.rotation),
+      read: turn,
+      moved: (b, a) => b === "0" && a === "1",
+    },
+    {
+      id: "view.rotateCounterClockwise",
+      from: () => viewer.rotateBy(-viewer.rotation),
+      read: turn,
+      moved: (b, a) => b === "0" && a === "3",
+    },
+    {
+      id: "nav.nextPage",
+      from: () => viewer.goToStart(),
+      read: page,
+      moved: (b, a) => b === "0" && Number(a) > 0,
+      unless: manyPages,
+    },
+    {
+      id: "nav.previousPage",
+      from: () => viewer.goToPage(Math.min(1, last)),
+      read: page,
+      moved: (b, a) => Number(a) < Number(b),
+      unless: manyPages,
+    },
+    {
+      id: "nav.lastPage",
+      from: () => viewer.goToStart(),
+      read: () => `${viewer.offset.toFixed(0)}/${viewer.maxOffset.toFixed(0)}`,
+      moved: (b, a) => b.startsWith("0/") && !a.startsWith("0/"),
+      unless: () =>
+        viewer.maxOffset > 0 ? null : "the whole document fits on screen",
+    },
+    {
+      id: "nav.firstPage",
+      from: () => viewer.goToEnd(),
+      read: () => viewer.offset.toFixed(0),
+      moved: (b, a) => b !== "0" && a === "0",
+      unless: () =>
+        viewer.maxOffset > 0 ? null : "the whole document fits on screen",
+    },
+    {
+      // Page 2, and only when it is not the last one. `AGENTS.md` has "the
+      // last page cannot reach the top of the viewport": asking a three-page
+      // document for its third page scrolls as far as it can and reports the
+      // page above it, which reads as the command missing by one.
+      id: "nav.goToPage",
+      argument: "2",
+      from: () => viewer.goToStart(),
+      read: page,
+      moved: (b, a) => b === "0" && a === "1",
+      unless: () =>
+        doc.page_count > 2
+          ? null
+          : `page 2 is the last of ${doc.page_count} and cannot reach the top`,
+    },
+    {
+      id: "edit.selectAll",
+      from: () => viewer.clearSelection(),
+      read: selection,
+      moved: (b, a) => b === "0" && Number(a) > 0,
+      unless: withText,
+    },
+    {
+      id: "edit.clearSelection",
+      from: () => viewer.selectPage(),
+      read: selection,
+      moved: (b, a) => Number(b) > 0 && a === "0",
+      unless: withText,
+    },
+  ];
+
+  // The two the list above cannot drive, each with the reason it cannot, so
+  // that "not covered" is a decision in the table rather than an absence.
+  const undriven: Record<string, string> = {
+    "find.next": "needs a live search with more than one match",
+    "find.previous": "needs a live search with more than one match",
+    "edit.copy": "its outcome is the system clipboard",
+  };
+
+  const registered = registry.all().map((command) => command.id);
+  const classified = new Set([
+    ...probes.map((p) => p.id),
+    ...Object.keys(undriven),
+  ]);
+  const unclassified = registered.filter((id) => !classified.has(id));
+  const stale = [...classified].filter((id) => !registered.includes(id));
+  check(
+    "every registered command is classified, and every classification is registered",
+    registered.length > 0 && unclassified.length === 0 && stale.length === 0,
+    `${registered.length} registered, ${probes.length} driven, ` +
+      `${Object.keys(undriven).length} not driven; ` +
+      `unclassified [${unclassified.join(", ")}], stale [${stale.join(", ")}]`,
+  );
+
+  for (const probe of probes) {
+    const title = titleOf(probe.id);
+    if (!title) {
+      check(`${probe.id} runs from the palette`, false, "not registered");
+      continue;
+    }
+    const cannot = probe.unless?.();
+    if (cannot) {
+      skip(`${probe.id} runs from the palette`, cannot);
+      continue;
+    }
+    probe.from?.();
+    await settle(() => viewer.idle);
+    fired = [];
+    const before = probe.read();
+    const why = runByTitle(title, probe.argument);
+    await settle(() => viewer.idle);
+    const after = probe.read();
+    check(
+      `${probe.id} runs from the palette`,
+      why === "" && probe.moved(before, after),
+      why === "" ? `"${title}": ${before} -> ${after}` : why,
+    );
+  }
+
+  // Find-next and find-previous, once there is something to step through. The
+  // needle comes from the document rather than from here, and the two are
+  // skipped together with the reason when it does not yield two matches.
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  const needle = firstPage ? pickNeedle(firstPage.codes) : null;
+  if (needle) {
+    viewer.search(needle);
+    // Guarded, because the predicate cannot hold on a document with no text and
+    // an unguarded wait would then spend the full 30 s timeout doing nothing ---
+    // the trap `AGENTS.md` records as a wait for a condition that cannot hold.
+    await settle(() => !viewer.searching && viewer.searchMatches.length > 1);
+  }
+  if (!needle || viewer.searchMatches.length < 2) {
+    const why = `${undriven["find.next"]} ("${needle ?? "no needle"}" found ${viewer.searchMatches.length})`;
+    skip("find.next runs from the palette", why);
+    skip("find.previous runs from the palette", why);
+  } else {
+    viewer.showMatch(0);
+    await settle(() => viewer.idle);
+    const atZero = viewer.matchIndex;
+    const nextWhy = runByTitle(titleOf("find.next"));
+    await settle(() => viewer.idle);
+    const afterNext = viewer.matchIndex;
+    check(
+      "find.next runs from the palette",
+      nextWhy === "" && atZero === 0 && afterNext === 1,
+      nextWhy === ""
+        ? `match ${atZero} -> ${afterNext} of ${viewer.searchMatches.length}`
+        : nextWhy,
+    );
+    const prevWhy = runByTitle(titleOf("find.previous"));
+    await settle(() => viewer.idle);
+    check(
+      "find.previous runs from the palette",
+      prevWhy === "" && viewer.matchIndex === 0,
+      prevWhy === "" ? `match ${afterNext} -> ${viewer.matchIndex}` : prevWhy,
+    );
+    viewer.clearSearch();
+  }
+
+  // Copy. The OS clipboard cannot be read back here, so what is asserted is
+  // that the command reaches the copy path carrying the selection --- the write
+  // itself is intercepted, and this says nothing about the system clipboard.
+  const clipboard: { writeText?: (text: string) => Promise<void> } =
+    navigator.clipboard ?? {};
+  const realWrite = clipboard.writeText?.bind(navigator.clipboard);
+  let written: string | null = null;
+  let installed = false;
+  try {
+    clipboard.writeText = (text: string) => {
+      written = text;
+      return Promise.resolve();
+    };
+    installed = clipboard.writeText !== realWrite;
+  } catch {
+    installed = false;
+  }
+  if (!installed || !hasText) {
+    skip(
+      "edit.copy runs from the palette",
+      installed
+        ? "page 1 has no extractable text"
+        : "the clipboard write could not be intercepted",
+    );
+  } else {
+    viewer.goToStart();
+    viewer.selectPage();
+    await settle(() => viewer.idle);
+    const selected = viewer.selectedText;
+    const copyWhy = runByTitle(titleOf("edit.copy"));
+    await settle(() => written !== null);
+    check(
+      "edit.copy runs from the palette",
+      copyWhy === "" && selected.length > 0 && written === selected,
+      copyWhy === ""
+        ? `selected ${selected.length} characters, copied ${written === null ? "nothing" : String(written).length}`
+        : copyWhy,
+    );
+    viewer.clearSelection();
+    if (realWrite) clipboard.writeText = realWrite;
+  }
+
+  // The guard every command but "Open document" carries: without a document,
+  // only "Open document" may be offered, and with one, everything that needs
+  // nothing further must come back. The second half is the control --- a
+  // palette that listed nothing at all would satisfy the first.
+  //
+  // A **second registry** rather than taking the document away from this one.
+  // The obvious version holds the viewer in a `let` the actions close over and
+  // sets it to null for the duration, and that version produced a reading this
+  // file could not explain: `attached === null` and `actions.viewer() === null`
+  // disagreed inside one expression, and which way round they disagreed changed
+  // between runs of the same binary. Nothing static accounts for it --- one
+  // declaration, one closure, one call site, and the compiled bundle reads
+  // correctly --- so rather than ship a check whose own mechanism is not
+  // understood, the mechanism is gone: a registry built with a viewer that is
+  // null *by construction* has nothing to observe at the wrong moment. See
+  // `docs/TRAPS.md`.
+  //
+  // Commands that a document alone does not enable are declared rather than
+  // subtracted, so the next one of them turns this red instead of being
+  // absorbed by a count.
+  const NEEDS_MORE_THAN_A_DOCUMENT = ["find.inSelection"];
+
+  viewer.clearSelection();
+  await settle(() => viewer.idle);
+
+  const detached = new CommandRegistry();
+  registerAppCommands(detached, { ...actions, viewer: () => null });
+  const withoutDocument = detached.search("").map((ranked) => ranked.command.title);
+
+  palette.open();
+  const withDocument = palette.visible.slice();
+  palette.close();
+  const missing = registered.filter((id) => !withDocument.includes(titleOf(id)));
+  check(
+    "with no document only Open document is offered",
+    withoutDocument.length === 1 &&
+      withoutDocument[0] === titleOf("file.open") &&
+      missing.join() === NEEDS_MORE_THAN_A_DOCUMENT.join(),
+    `no document: [${withoutDocument.join(", ")}]; with one and nothing selected: ` +
+      `${withDocument.length} of ${registered.length}, withheld [${missing.join(", ")}]`,
+  );
+
+  palette.destroy();
+
+  // Put it back, and say so. Restoring silently would be enough to stop the
+  // contamination and would not stop the *next* probe from reintroducing it: a
+  // phase that hands on a viewer it did not leave as it found it is worth one
+  // line of output.
+  viewer.clearSearch();
+  viewer.clearSelection();
+  viewer.rotateBy(entry.rotation - viewer.rotation);
+  if (entry.fit === "none") viewer.setZoomFixed(entry.zoom);
+  else viewer.setFit(entry.fit);
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  check(
+    "leaves the viewer as the phase before it did",
+    viewer.rotation === entry.rotation &&
+      viewer.fitMode === entry.fit &&
+      viewer.selectedText === "" &&
+      viewer.searchMatches.length === 0,
+    `turns ${entry.rotation}, fit ${entry.fit}, ` +
+      `${viewer.selectedText.length} characters selected, ` +
+      `${viewer.searchMatches.length} matches held`,
+  );
+}
+
+/**
  * The outline, and the sidebar showing it.
  *
  * Most of the corpus has no outline at all, so nearly everything here is
@@ -1954,7 +2961,9 @@ async function outlineChecks(
     `${shown} rows drawn of ${rows.length} entries`,
   );
 
-  const treeitems = document.querySelectorAll('.tpdf-sidebar [role="treeitem"]');
+  const treeitems = document.querySelectorAll(
+    '.tpdf-sidebar [role="treeitem"]',
+  );
   check(
     "the rows are a tree, not a list",
     treeitems.length === shown &&
@@ -2013,7 +3022,11 @@ async function outlineChecks(
     sidebar.reveal(elsewhere.id);
     const element = sidebar.elementFor(elsewhere.id);
     if (!element) {
-      check("activating a row goes to its page", false, `no row for ${elsewhere.id}`);
+      check(
+        "activating a row goes to its page",
+        false,
+        `no row for ${elsewhere.id}`,
+      );
     } else {
       element.focus();
       key(element, "Enter");
@@ -2205,7 +3218,9 @@ async function thumbnailChecks(
   }
 
   const tabs = panelTabs();
-  const selected = tabs.filter((t) => t.getAttribute("aria-selected") === "true").length;
+  const selected = tabs.filter(
+    (t) => t.getAttribute("aria-selected") === "true",
+  ).length;
   check(
     "the sidebar has a tab for pages",
     tabs.length === SIDEBAR_TABS && selected === 1,
@@ -2522,13 +3537,19 @@ async function rotatedDragCheck(
   if (before.early === before.late) {
     // A one-line page, or a drag that clamped to the same line twice. Either
     // way the comparison could not tell a rotation from a mirror.
-    skip(name, "both samples came from the same line, which cannot distinguish a turn");
+    skip(
+      name,
+      "both samples came from the same line, which cannot distinguish a turn",
+    );
     return;
   }
 
   const after = await sampleLines(root, viewer);
   if (!after || after.page !== before.page) {
-    skip(name, `the rotation left page ${(after?.page ?? -1) + 1}, not ${before.page + 1}`);
+    skip(
+      name,
+      `the rotation left page ${(after?.page ?? -1) + 1}, not ${before.page + 1}`,
+    );
     return;
   }
 
@@ -2556,7 +3577,10 @@ async function rotatedDragCheck(
  * This asserts the wiring rather than the geometry: what the page reports as its
  * own rotation, and its dimensions, must have moved.
  */
-async function rotatedTextLayerCheck(viewer: Viewer, doc: DocumentInfo): Promise<void> {
+async function rotatedTextLayerCheck(
+  viewer: Viewer,
+  doc: DocumentInfo,
+): Promise<void> {
   const name = "the text layer turns with the view";
   const at = viewer.position.page;
   const shown = viewer.textOn(at);
@@ -2567,10 +3591,13 @@ async function rotatedTextLayerCheck(viewer: Viewer, doc: DocumentInfo): Promise
 
   // From the backend, so the comparison is against the document rather than
   // against the same cache being checked.
-  const raw = await invoke<{ quarter_turns: number; width_pt: number }>("page_text", {
-    doc: doc.id,
-    page: at,
-  }).catch(() => null);
+  const raw = await invoke<{ quarter_turns: number; width_pt: number }>(
+    "page_text",
+    {
+      doc: doc.id,
+      page: at,
+    },
+  ).catch(() => null);
   if (!raw) {
     skip(name, "the page's text could not be fetched a second time");
     return;
@@ -2631,7 +3658,9 @@ async function invertChecks(
  * right place to read it. It also removes the decode from a comparison that was
  * never about the decode.
  */
-async function tileBytes(req: Parameters<typeof tileUrl>[0]): Promise<Uint8ClampedArray | null> {
+async function tileBytes(
+  req: Parameters<typeof tileUrl>[0],
+): Promise<Uint8ClampedArray | null> {
   const response = await fetch(tileUrl(req));
   if (!response.ok || response.status === 204) return null;
   return new Uint8ClampedArray(await response.arrayBuffer());
@@ -2691,9 +3720,10 @@ async function rendererInvertCheck(
       format: "raw",
     });
 
-  const [plainPixels, darkPixels] = await Promise.all([request(false), request(true)]).catch(
-    () => [null, null],
-  );
+  const [plainPixels, darkPixels] = await Promise.all([
+    request(false),
+    request(true),
+  ]).catch(() => [null, null]);
   if (!plainPixels || !darkPixels || plainPixels.length !== darkPixels.length) {
     skip(exact, "the tile requests did not complete");
     skip(moved, "the tile requests did not complete");
@@ -2716,7 +3746,10 @@ async function rendererInvertCheck(
       : "the inverted tile is byte-identical, so the exact check below proves nothing",
   );
   if (differences === 0) {
-    skip(exact, "the two tiles are identical, so there is nothing to compare against");
+    skip(
+      exact,
+      "the two tiles are identical, so there is nothing to compare against",
+    );
     return;
   }
 
@@ -2753,7 +3786,10 @@ async function screenInvertCheck(
   const surface = viewer.compositedSurface;
   if (!surface) {
     for (const name of [darker, back, dropped, reported]) {
-      skip(name, "this layout composites per tile, so there is no single surface");
+      skip(
+        name,
+        "this layout composites per tile, so there is no single surface",
+      );
     }
     return;
   }
@@ -2787,7 +3823,10 @@ async function screenInvertCheck(
   // measuring nothing. `vector-heavy` is dense linework and lands here.
   if (before < 0.6) {
     for (const name of [darker, back, dropped]) {
-      skip(name, `the page is already dark at ${(before * 100).toFixed(0)}% lightness`);
+      skip(
+        name,
+        `the page is already dark at ${(before * 100).toFixed(0)}% lightness`,
+      );
     }
     await invertReportedCheck(viewer, seen, reported);
     return;
@@ -2932,7 +3971,9 @@ async function identical(a: ImageBitmap, b: ImageBitmap): Promise<boolean> {
  * line: a one-line error returns a different line number entirely.
  */
 function sameLine(a: string, b: string): boolean {
-  return core(a).length >= CORE_CHARS && (b.includes(core(a)) || a.includes(core(b)));
+  return (
+    core(a).length >= CORE_CHARS && (b.includes(core(a)) || a.includes(core(b)))
+  );
 }
 
 /** The comparable middle of a sample, with an edge character trimmed each end. */
@@ -2953,9 +3994,9 @@ function core(text: string): string {
 const CORE_CHARS = 8;
 
 /** The box enclosing every character that has one, in the view's own space. */
-function inkBounds(
-  text: { boxes: number[] },
-): { left: number; top: number; right: number; bottom: number } | null {
+function inkBounds(text: {
+  boxes: number[];
+}): { left: number; top: number; right: number; bottom: number } | null {
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
@@ -3005,7 +4046,9 @@ function rotatedStripCheck(
 
 /** Every tab button in the sidebar, in order. */
 function panelTabs(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('.tpdf-sidebar [role="tab"]')];
+  return [
+    ...document.querySelectorAll<HTMLElement>('.tpdf-sidebar [role="tab"]'),
+  ];
 }
 
 /** Whether a panel is displayed. */
@@ -3228,7 +4271,9 @@ async function yieldChecks(
  * would be most likely to return anyway.
  */
 function pickNeedle(codes: number[]): string | null {
-  const words = String.fromCodePoint(...codes.slice(0, 4096)).match(/[A-Za-z]{5,}/g);
+  const words = String.fromCodePoint(...codes.slice(0, 4096)).match(
+    /[A-Za-z]{5,}/g,
+  );
   if (!words?.length) return null;
   const lead = words[0]?.toLowerCase();
   return words.find((word) => word.toLowerCase() !== lead) ?? words[0] ?? null;
@@ -3298,7 +4343,10 @@ async function releaseChecks(path: string): Promise<void> {
 }
 
 async function printChecks(path: string, doc: DocumentInfo): Promise<void> {
-  const print = async (pages: number[] | null, turns: number): Promise<string> => {
+  const print = async (
+    pages: number[] | null,
+    turns: number,
+  ): Promise<string> => {
     try {
       await invoke("print_document", { path, pages, turns });
       return "";

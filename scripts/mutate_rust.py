@@ -114,29 +114,29 @@ MUTATIONS = [
     Mutation(
         "match: let occurrences overlap",
         "src/search.rs",
-        "        at += needle.chars.len();",
-        "        at += 1;",
+        "            // `aa` occurs once in `aaa`, not twice.\n            at += needle.chars.len();",
+        "            // `aa` occurs once in `aaa`, not twice.\n            at += 1;",
         "matches_do_not_overlap",
     ),
     Mutation(
         "match: run a query of only whitespace",
         "src/search.rs",
-        "    if needle.chars.iter().all(|ch| *ch == ' ') {\n        return Vec::new();\n    }",
-        "",
+        "    } else if needle.chars.iter().all(|ch| *ch == ' ') {\n        return Ok(Vec::new());\n    }",
+        "    }",
         "an_empty_query_matches_nothing",
     ),
     Mutation(
         "whole word: check the left boundary only",
         "src/search.rs",
-        "            && !(boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))\n                && boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied()))",
-        "            && !boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))",
+        "            || (boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))\n                && boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied()))",
+        "            || boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))",
         "a_whole_word_search_bounds_both_ends_independently",
     ),
     Mutation(
         "whole word: check the right boundary only",
         "src/search.rs",
-        "            && !(boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))\n                && boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied()))",
-        "            && !boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied())",
+        "            || (boundary(at.checked_sub(1).map(|i| hay.chars[i]), Some(hay.chars[at]))\n                && boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied()))",
+        "            || boundary(Some(hay.chars[end - 1]), hay.chars.get(end).copied())",
         "a_whole_word_search_bounds_both_ends_independently",
     ),
     Mutation(
@@ -163,8 +163,8 @@ MUTATIONS = [
     Mutation(
         "whole word: skip the whole span after rejecting a candidate",
         "src/search.rs",
-        "            // word. Skipping the span would walk past it.\n            at += 1;",
-        "            // word. Skipping the span would walk past it.\n            at += needle.chars.len();",
+        "                // caught the restructure that introduced the regex path.\n                at += 1;",
+        "                // caught the restructure that introduced the regex path.\n                at += needle.chars.len();",
         "a_rejected_candidate_does_not_hide_the_one_overlapping_it",
     ),
     Mutation(
@@ -177,8 +177,8 @@ MUTATIONS = [
         # finds anything at all.
         "whole word: apply the boundary test whether or not it was asked for",
         "src/search.rs",
-        "        if options.whole_word",
-        "        if true",
+        "        !options.whole_word",
+        "        false",
         "a_whole_word_search_skips_the_word_it_is_part_of",
     ),
     Mutation(
@@ -226,8 +226,8 @@ MUTATIONS = [
     Mutation(
         "page: report the query's length rather than the page's",
         "src/search.rs",
-        "        chars: text.len() as u32,",
-        "        chars: query.chars().count() as u32,",
+        "                chars: text.len() as u32,\n                problem: None,",
+        "                chars: query.chars().count() as u32,\n                problem: None,",
         "a_page_with_no_text_reports_it_rather_than_no_matches",
     ),
 ]

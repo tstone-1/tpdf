@@ -243,6 +243,10 @@ pub enum Request {
         /// existed still parses as the unrestricted search it meant.
         #[serde(default)]
         options: crate::search::Options,
+        /// The previous page's last characters, so a phrase that runs over the
+        /// break is found. Defaulted for the same reason `options` is.
+        #[serde(default)]
+        carry: Option<crate::search::Carry>,
     },
     /// Read the document's outline.
     Outline,
@@ -2152,7 +2156,9 @@ mod tests {
                 options: crate::search::Options {
                     match_case: true,
                     whole_word: true,
+                    regex: false,
                 },
+                carry: None,
             },
             Request::Outline,
         ] {
