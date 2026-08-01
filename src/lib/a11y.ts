@@ -49,8 +49,44 @@
  * claim is made about it.
  */
 
-import { readingLines, textOfRanges } from "./reading";
+import { readingBlocks, textOfRanges, type ReadingBlock } from "./reading";
 import { type PageText } from "./text";
+
+/**
+ * The DOM element a tagged block is announced as.
+ *
+ * Headings are the whole of the win here, and they are not cosmetic: "jump to
+ * the next heading" and "list the headings" are how a screen-reader user skims a
+ * document, and neither works on a page of paragraphs however correctly ordered.
+ * A PDF states its levels, so they are used rather than guessed --- `H1` through
+ * `H6` map across, and a bare `H` becomes `h2`, since the document has said
+ * "heading" and not which level.
+ *
+ * Everything else becomes a paragraph, and two cases are deliberately *not*
+ * given their obvious element:
+ *
+ * - **Table cells.** `TD` outside a `<table>` is not a table cell, it is an
+ *   element screen readers ignore or mis-announce, so emitting one would be worse
+ *   than a paragraph. Building a real table needs to know which cells share a
+ *   row, and {@link TaggedRun.path} carries element *types* --- two different
+ *   `/TR`s have the identical path --- so the information is not there yet. It
+ *   needs element identity from `structure.rs`, which is a backend change, and
+ *   pretending otherwise would produce a table with one row per cell.
+ * - **Figures.** The useful thing about a `/Figure` is its `/Alt` text, which is
+ *   not read yet. A `<figure>` with the figure's own characters in it says
+ *   nothing a paragraph does not.
+ *
+ * Exported for its tests. There is no DOM in the unit-test environment, so this
+ * is the part of the layer a test can reach at all --- the elements themselves are
+ * asserted by `viewercheck.ts` against a real webview, which is the stronger
+ * evidence of the two and cannot cover a mapping table exhaustively.
+ */
+export function elementFor(tag: string | null): string {
+  if (tag === null) return "p";
+  const heading = /^H([1-6])$/.exec(tag);
+  if (heading) return `h${heading[1]}`;
+  return tag === "H" ? "h2" : "p";
+}
 
 /**
  * Hidden visually, present in the accessibility tree.
@@ -161,16 +197,14 @@ export class AccessibleText {
     article.tabIndex = -1;
     article.dataset.page = String(page);
 
-    // `readingLines` rather than `linesOf`: a screen reader is handed the page
+    // `readingBlocks` rather than `linesOf`: a screen reader is handed the page
     // in the order it is read, which on a two-column page is not the order the
     // producer emitted it in. `linesOf` groups by index adjacency, so on such a
     // page it reads one line from each column in turn --- which is what it did.
-    for (const line of readingLines(content)) {
-      const text = textOfRanges(content, line.ranges).trim();
-      if (!text) continue;
-      const paragraph = document.createElement("p");
-      paragraph.textContent = text;
-      article.appendChild(paragraph);
+    for (const block of readingBlocks(content)) {
+      for (const element of this.elementsFor(content, block)) {
+        article.appendChild(element);
+      }
     }
 
     if (article.childElementCount === 0) {
@@ -183,5 +217,48 @@ export class AccessibleText {
     }
 
     return article;
+  }
+
+  /**
+   * One block as elements: one element if the document said so, else one a line.
+   *
+   * The granularity question, answered by who drew the boundary. A **tagged**
+   * block is a paragraph the producer declared, so it is handed over whole and a
+   * screen reader moves through its lines itself --- which it does better than
+   * this can, since it re-wraps to the user's settings. An **inferred** block
+   * came out of the XY-cut, whose boundaries are a guess, so its lines are kept
+   * separate: an over-eager cut then costs a reader nothing, where merging on one
+   * would silently join two columns into a paragraph.
+   *
+   * That is also why the line split existed in the first place --- one
+   * 2,700-character blob per page is unusable --- and the reason it can be
+   * dropped for a tagged block is that the block is a paragraph rather than a
+   * page.
+   */
+  private elementsFor(content: PageText, block: ReadingBlock): HTMLElement[] {
+    const texts = block.lines.map((line) => textOfRanges(content, line.ranges).trim());
+    if (block.tag === null) {
+      return texts
+        .filter((text) => text.length > 0)
+        .map((text) => {
+          const paragraph = document.createElement("p");
+          paragraph.textContent = text;
+          return paragraph;
+        });
+    }
+    // Joined with a space rather than a newline: these are the lines of one
+    // paragraph, and a line break inside a paragraph is a rendering decision the
+    // producer made about the page, not part of what it says.
+    const joined = texts.filter((text) => text.length > 0).join(" ");
+    if (!joined) return [];
+    const element = document.createElement(elementFor(block.tag));
+    element.textContent = joined;
+    // The document's own word for it, on every block including the ones that
+    // become a paragraph. It is not announced --- it is here so that a
+    // `/Figure`, a `/TD` or a type nobody has seen before is *visible* to a check
+    // and to anyone reading the DOM, rather than being flattened into "p" with
+    // nothing recording that something was thrown away.
+    element.dataset.tag = block.tag;
+    return [element];
   }
 }

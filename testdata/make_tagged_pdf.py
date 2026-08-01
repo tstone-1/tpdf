@@ -27,10 +27,16 @@ tagged in the order geometry would have inferred anyway. A tagged reader must
 leave it alone. Without that page, "the tags are being read" and "the tags are
 being read *and* scrambling everything" look identical.
 
-Element types are carried too --- `/H1` for the heading, `/P` for the body,
-`/Note` for the margin note --- because reading order is not the only thing a
-structure tree answers, and a consumer that flattens every element to "text" has
-thrown away the half that makes a heading announce as a heading.
+Element types are carried too --- `/H1` for the heading, `/H2` for a subheading,
+`/P` for the body, `/Note` for the margin note --- because reading order is not the
+only thing a structure tree answers, and a consumer that flattens every element to
+"text" has thrown away the half that makes a heading announce as a heading.
+
+**Two heading levels, deliberately.** A page with one heading cannot distinguish a
+consumer that uses the document's level from one that announces every heading as
+`h1`; the mutation that does exactly that survived against the first version of
+this fixture, and the check passed --- correctly, and uselessly. Whatever a fixture
+is meant to discriminate, it needs at least two of.
 
 `tagged-manifest.json` states the expected reading order and the expected type
 per block, so a probe reads a file this script wrote rather than carrying a copy
@@ -110,6 +116,12 @@ def page_one() -> "list[Block]":
                 "means to be read after the heading.",
             ],
         ),
+        # A *second* heading, at a different level, and it is not decoration: a
+        # page with one heading cannot tell "the level the document stated" from
+        # "every heading is an h1". The mutation that flattens every level to h1
+        # survived against a fixture whose only heading was `H1` --- the check
+        # passed, correctly and uselessly.
+        Block("H2", "subheading", BODY_X, HEIGHT - 192, ["Second half"]),
         Block(
             "P",
             "body-two",

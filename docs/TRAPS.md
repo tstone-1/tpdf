@@ -4731,3 +4731,73 @@ Two things worth carrying, and the second is the general one:
 And the reason it was caught at all is that the mutation had to be **re-anchored** after the
 refactor. A mutation harness re-run after a shape change is not bookkeeping: it is the only
 thing that reads the new shape adversarially.
+
+### A selector naming one element stops reading the page when the layer gains another
+
+`spokenText` in `viewercheck.ts` gathered a page's text with
+`article.querySelectorAll("p")`, which was exactly right for a layer that emitted one `<p>` per
+line, and became wrong the moment a heading became an `<h1>`.
+
+What makes it worth an entry is **where the failure would have surfaced**. The check that uses
+it is *"the text read out is the page's own text"*, compared against an independent extraction.
+A page whose heading was no longer selected reads as the accessibility layer having **lost the
+heading** --- a defect in extraction, or in the tree, or in the reading order. Nothing points at
+the selector, which is in a helper thirty lines away and has been right for a week.
+
+Two habits, and the second generalises past selectors:
+
+- **Gather by structure, not by tag name.** `[...article.children]` says "every block this layer
+  emitted" and stays true whatever the layer emits. A tag list is a copy of the layer's
+  vocabulary that has to be updated in step with it, and nothing enforces the step.
+- **When a layer's output vocabulary grows, grep for everything that names the old one.** The
+  change that adds `<h1>` is the change that has to widen the selector; a later session sees
+  only a check failing about text.
+
+### A `null` that means "inferred" is not a `null` that means "unknown"
+
+`ReadingBlock.tag` is the element type a block came from, and it is `null` when the block came
+out of the geometry rather than out of the document's tags. The temptation --- and the first
+draft --- is to fill that in with `"P"`, since an inferred block is, after all, a paragraph.
+
+It is not the same claim. A tagged boundary is the producer's **statement**; an inferred one is
+this file's **guess** from where the whitespace fell. `a11y.ts` uses exactly that difference:
+a tagged block is handed to a screen reader as one element, because its boundaries are real, and
+an inferred one is handed over line by line, because merging on a wrong guess joins two columns
+into a paragraph while an over-eager split costs a reader nothing.
+
+Write `"P"` there and the distinction is gone, silently, and every consumer downstream is now
+asserting something nobody claimed. The mutation that does it is one word and it is caught by one
+test, which is the cheap version of this entry.
+
+The general shape: **an optional field's absent case often carries information, and filling it
+in with a plausible default destroys the information rather than the absence.** Ask what the
+absence *means* before defaulting it --- "not stated" and "stated to be the ordinary thing" are
+different, and only one of them can be acted on.
+
+### Whatever a fixture is meant to discriminate, it needs two of
+
+The tagged fixture was built to discriminate a reading order --- a margin note that geometry
+reads third and the tags read last --- and it does that well. It carried **one** heading, an
+`/H1`, and the check written against it says *"a heading is announced as a heading, at the
+document's own level"*.
+
+That check passed. It could not fail: the mutation that maps every heading level to `h1`
+produces `h1` for the only heading on the page, so the tree and the tags agree and the run is
+green. The claim in the name --- *at the document's own level* --- was untested, on a fixture
+built specifically for testing claims.
+
+The general rule, and it applies to a fixture rather than to a test: **a property with N values
+needs at least two of them present, and one value is the same as none.** The list is longer than
+it looks once stated that way --- one heading level, one page, one rotation, one font, one
+language, one column, one revision. This repository already has entries for the two-page case
+(three checks whose guards had never met one) and for the rotation case (a dense page of uniform
+lines cannot detect a y-flip); this is the same failure arriving through an element type.
+
+The fix was one line of fixture --- an `/H2` subheading --- and it turned the mutation red
+immediately. Cheaper than the check it made honest, which is the usual ratio here.
+
+Corollary worth keeping: the *unit* test caught this mutation the whole time, because a mapping
+table can be enumerated in a test where a fixture has to contain each case physically. When a
+viewer check and a unit test cover the same rule, the unit test is the one that can be
+exhaustive and the viewer check is the one that proves the rule is wired --- so a viewer check
+surviving a mutation its unit test catches means the *fixture* is thin, not the suite.

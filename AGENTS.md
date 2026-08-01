@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 184 entries
+The one thing this file does *not* carry in full is the trap list --- 187 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -588,8 +588,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 184 of them and the full text
-was 93% of this file --- an instruction budget spent on the 183 traps that are not
+titles. Only the titles are here, because there are 187 of them and the full text
+was 93% of this file --- an instruction budget spent on the 186 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -720,6 +720,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A defect that switches off a check's precondition is not caught by that check
 - An "already have it" cache needs an in-flight set, not just the cache
 - A text comparison cannot see a property that is not about text
+- A selector naming one element stops reading the page when the layer gains another
 - A test whose precondition is already satisfied never runs
 - A crash test that compiles away proves containment of a crash that never happened
 - A test for an atomic write must plant the intermediate it is meant to prove
@@ -729,6 +730,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 - A page fitted to the element's own width is measured under the scrollbar
 - A synthetic heading that does not reach the second column tests nothing
+- Whatever a fixture is meant to discriminate, it needs two of
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion
 - An outcome two mechanisms can produce cannot test either one
 - A length bound cannot be tested by the verdict it produces
@@ -777,6 +779,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 ### Windows and portability
 - A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
 - An uninhabited type carries its impossibility into every caller
+- A `null` that means "inferred" is not a `null` that means "unknown"
 - A directory that exists is not the library you need
 - A list of documented blockers can be wrong in the direction that looks thorough
 - A gate list that never links a binary cannot see a link error

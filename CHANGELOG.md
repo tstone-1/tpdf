@@ -41,6 +41,43 @@ single "initial release" line.
   one needs no webview and runs in 15 s a mutation.
 - One new trap, index now 177.
 
+### Phase 1 --- headings announced as headings, and a harness that names its silence
+
+- **`H1`--`H6` reach the accessibility tree as `h1`--`h6`**, and a bare `/H` as `h2`. This is
+  the reason to read element types at all: "jump to the next heading" and "list the headings"
+  are how a screen-reader user skims, and neither works on a page of paragraphs however well
+  ordered. Closes the first half of what `docs/PLAN.md` listed as *"absent: headings and table
+  semantics"*.
+- **Granularity follows who drew the boundary.** A tagged block is handed over as one element,
+  because the producer declared it; an inferred block is handed over line by line, because the
+  XY-cut's boundaries are a guess and merging on a wrong one joins two columns into a
+  paragraph. `ReadingBlock.tag` is `null` for the inferred case, and that `null` means
+  *inferred*, not *unknown* --- filling it with `"P"` destroys the distinction the split exists
+  for. `readingLines` is now written in terms of `readingBlocks`, so the two cannot disagree
+  about the order.
+- **Table cells and figures deliberately keep `<p>`.** A `TD` outside a `<table>` is not a
+  cell, and building a real table needs to know which cells share a **row** --- `TaggedRun.path`
+  carries element *types*, so two different `/TR`s are indistinguishable. That needs element
+  identity from `structure.rs`; faking it produces a table with one row per cell. A `/Figure`
+  needs its `/Alt` text, which is not read yet. Every block carries `data-tag` so a type nobody
+  handled is visible rather than silently flattened.
+- **`spokenText` selected `p`** and would have read a tagged page short by its headings ---
+  surfacing as the page's *text* being wrong rather than the selector being narrow. Widened to
+  every child. Four new checks, 157 names on all eight corpora.
+- **`viewer_check.py` now says which silence a timeout was.** A suspended page and a page stuck
+  in a loop both present as no output and a live process, and they want opposite responses.
+  `diagnose_silence` samples CPU **time** twice before the kill --- a delta, because a single
+  `ps -o %cpu` is a lifetime average on macOS and a page that worked and then got suspended
+  reads as busy. Three bands: suspended, alive and waiting, alive and spinning. All three proved
+  against real processes. `mutate_viewer.py` inherits it; `session_check.py` and `open_check.py`
+  do not, and `BUILD.md` says so.
+- **The fixture gained a second heading level**, because it had to: with one `/H1` on the page,
+  the mutation that announces every heading as `h1` produced the right answer and the check
+  passed. A property with one value present is the same as none. `structure-probe` is 10/10 on
+  the five-block page.
+- 11 new frontend tests, 91 frontend mutations and 5 tagged-viewer mutations, all caught. Three
+  new traps, index now 187.
+
 ### Phase 1 --- a tagged page is read in the order the document says
 
 - **`reading.ts` believes the tags where it has them.** `usableRuns` is the whole decision ---

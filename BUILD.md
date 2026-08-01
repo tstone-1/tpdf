@@ -216,6 +216,13 @@ Worth knowing as external evidence that the fixture is not merely self-consisten
 `pdftotext` reads page 1 in **geometric** order --- heading, margin note, body --- which is the
 wrong answer the tags exist to correct.
 
+**It carries two heading levels, and that is not decoration.** A page with one heading cannot
+tell a consumer that uses the document's level from one that announces every heading as `h1`:
+the mutation doing exactly that survived against the first version, and the check passed. A
+property with one value present is the same as none --- see the trap, whose list of the usual
+suspects (one page, one rotation, one font, one column) is worth reading before building any
+fixture.
+
 `make_columns_pdf.py` is the only fixture whose *content-stream order* is the point. Its
 three pages are two columns emitted column by column, the same two columns emitted line by
 line across the gutter, and a heading spanning both over the second of those. The first two
@@ -1175,6 +1182,20 @@ It also requires an unlocked screen, for the reason `scroll_bench.py` does: WebK
 a page whose window is not visible, so behind a lock screen the check does not fail, it
 stops. Both scripts share that guard (`scripts/webview_guard.py`).
 
+**On a timeout it says which silence it hit**, which it could not until 2026-08-01. A page
+WebKit has suspended and a page stuck in a loop both present as no output and a live process,
+and they want opposite responses --- one is an occluded window or a screen that locked
+*mid-run*, the other a defect in whatever was last changed. `webview_guard.diagnose_silence`
+samples the app's CPU **time** twice, two seconds apart, before the kill: suspended uses none,
+waiting uses a little, spinning uses a core. The delta is load-bearing --- a single
+`ps -o %cpu` is a lifetime average on macOS, so a page that worked hard and then got suspended
+reads as busy. `mutate_viewer.py` gets the line for free, since it already forwards
+`[FAIL]` stderr lines into its own broken-run verdict.
+
+`session_check.py` and `open_check.py` do **not** have it: they use `subprocess.run`, so the
+process is already dead when the timeout is raised, and giving them the diagnosis means
+converting four call sites to `Popen`. Worth knowing rather than assuming it is everywhere.
+
 **It does not take focus.** The window appears and has to stay visible, but it will not raise
 itself over what you are doing, so the run can sit in the background while you work.
 `scroll_bench.py` is the exception and calls `set_focus()` on purpose --- an unfocused window
@@ -1213,21 +1234,21 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all eight corpora. Every run reports the same **155 check names**; what differs is how
+Run all eight corpora. Every run reports the same **157 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch. The splits below were measured on 2026-08-01, when the
 tagged corpus and its two checks landed:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 140 | 15 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 146 | 9 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 146 | 9 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 89 | 66 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 102 | 53 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 137 | 18 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 135 | 20 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 128 | 27 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `text-heavy.pdf` | 140 | 17 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 146 | 11 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 146 | 11 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 89 | 68 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 102 | 55 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 137 | 20 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 135 | 22 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 130 | 27 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
 
 **The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
 checks red that had been green on every corpus for a week --- two nav probes guarded on "more
