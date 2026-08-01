@@ -658,8 +658,8 @@ MUTATIONS = [
         # tags agree about *which* block comes first there for two of three.
         "structure: order the tagged blocks geometrically after all",
         "src/lib/reading.ts",
-        "    ? ownership(text, tagged).map((owned) => within(text, fragments, owned))",
-        "    ? ownership(text, [...tagged].sort((a, b) => a.start - b.start)).map((owned) =>\n        within(text, fragments, owned),\n      )",
+        "  if (tagged) {\n    return ownership(text, tagged).map((owned, at) => ({",
+        "  if (tagged) {\n    tagged = [...tagged].sort((a, b) => a.start - b.start);\n    return ownership(text, tagged).map((owned, at) => ({",
         "follows the tags even where they disagree with the geometry entirely",
     ),
     Mutation(
@@ -692,6 +692,54 @@ MUTATIONS = [
         "  return true;",
         "does not make two real lines into one",
     ),
+    Mutation(
+        "a11y: flatten every heading to one level",
+        "src/lib/a11y.ts",
+        "  if (heading) return `h${heading[1]}`;",
+        '  if (heading) return "h1";',
+        "gives a heading the level the document stated",
+    ),
+    Mutation(
+        # Written first as a dropped `$`, and it survived: neither `H7` nor
+        # `Hyperlink` matches `^H([1-6])` either way, so the anchor was not what
+        # those cases test. The `$` is covered by `H1Alt`; the character class is
+        # covered by `H7`, and HTML has no `h7`.
+        "a11y: accept a heading level HTML does not have",
+        "src/lib/a11y.ts",
+        "  const heading = /^H([1-6])$/.exec(tag);",
+        "  const heading = /^H([0-9])$/.exec(tag);",
+        "does not read a level out of a type that merely starts with H",
+    ),
+    Mutation(
+        "a11y: read a level off the front of a longer type",
+        "src/lib/a11y.ts",
+        "  const heading = /^H([1-6])$/.exec(tag);",
+        "  const heading = /^H([1-6])/.exec(tag);",
+        "does not read a level out of a type that merely starts with H",
+    ),
+    Mutation(
+        "a11y: leave an unlevelled heading as a paragraph",
+        "src/lib/a11y.ts",
+        '  return tag === "H" ? "h2" : "p";',
+        '  return "p";',
+        "gives a bare H a level, since the document did not",
+    ),
+    Mutation(
+        # The distinction the whole block/line split exists for: an inferred
+        # boundary is not a stated one.
+        "a11y: treat an inferred block as a stated paragraph",
+        "src/lib/reading.ts",
+        "  return blocksOf(fragments, axes, gap).map((block) => ({\n    tag: null,",
+        '  return blocksOf(fragments, axes, gap).map((block) => ({\n    tag: "P",',
+        "reports an inferred block as having no type",
+    ),
+    Mutation(
+        "a11y: lose the run's type on the way to the consumer",
+        "src/lib/reading.ts",
+        "      tag: tagged[at]?.tag ?? null,",
+        "      tag: null,",
+        "carries each tagged run's type",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -707,6 +755,7 @@ TEST_FILES = [
     "src/lib/recents.test.ts",
     "src/lib/zoom.test.ts",
     "src/lib/reading.test.ts",
+    "src/lib/a11y.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

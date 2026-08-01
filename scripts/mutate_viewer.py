@@ -78,6 +78,36 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        "a11y: announce every heading at one level",
+        "src/lib/a11y.ts",
+        "  if (heading) return `h${heading[1]}`;",
+        '  if (heading) return "h1";',
+        "a heading is announced as a heading, at the document's own level",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # The other direction, and the one the first check cannot see: it asks
+        # only that the headings the tags wanted are present.
+        "a11y: announce every block as a heading",
+        "src/lib/a11y.ts",
+        "  return tag === \"H\" ? \"h2\" : \"p\";",
+        '  return "h1";',
+        "nothing the document did not call a heading becomes one",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # The check that reads the tree's text has to see every element, not the
+        # ones it was written before. A selector naming `p` reads a tagged page
+        # short by its headings --- and presents that as the page's text being
+        # wrong rather than the selector.
+        "a11y: hand a paragraph's lines over as separate paragraphs",
+        "src/lib/a11y.ts",
+        "    const joined = texts.filter((text) => text.length > 0).join(\" \");",
+        '    const joined = texts.filter((text) => text.length > 0).join("");',
+        "the accessibility tree is built in the order the tags give",
+        runner="viewer-tagged",
+    ),
+    Mutation(
         "structure: show the geometry's order to a screen reader",
         "src/lib/reading.ts",
         "  const tagged = usableRuns(text);",

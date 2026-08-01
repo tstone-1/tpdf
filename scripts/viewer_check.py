@@ -27,7 +27,7 @@ import threading
 import time
 
 from live_output import stream_results
-from webview_guard import require_visible_session
+from webview_guard import diagnose_silence, require_visible_session
 
 
 def main() -> int:
@@ -76,6 +76,12 @@ def main() -> int:
             [args.binary], process.returncode, stdout, stderr
         )
     except subprocess.TimeoutExpired as expired:
+        # Diagnosed *before* the kill, because the observable is the live
+        # process's CPU time and there is none to sample afterwards. Two seconds
+        # on a run that has already failed, in exchange for the difference between
+        # "an occluded window" and "a defect in what you just changed" --- which
+        # this printed identically until now.
+        silence = diagnose_silence(process.pid)
         process.kill()
         process.communicate()
         # The partial transcript, not just the verdict. `viewercheck.ts` prints
@@ -89,6 +95,7 @@ def main() -> int:
         print(partial, end="")
         done = partial.count("[OK]") + partial.count("[FAIL]") + partial.count("[SKIP]")
         print(f"[FAIL] run timed out after {args.timeout:.0f}s, {done} checks in", file=sys.stderr)
+        print(f"[FAIL] {silence}", file=sys.stderr)
         return 1
 
     print(completed.stdout, end="")

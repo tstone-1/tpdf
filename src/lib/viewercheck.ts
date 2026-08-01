@@ -1821,9 +1821,12 @@ async function accessibilityChecks(
  */
 function spokenText(article: HTMLElement | null): string {
   if (!article) return "";
-  return flatten(
-    [...article.querySelectorAll("p")].map((p) => p.textContent ?? "").join(" "),
-  );
+  // Every child, not `querySelectorAll("p")`. A tagged page announces its
+  // headings as `h1`--`h6`, and a selector naming one element silently stops
+  // reading the page the day the layer gains another --- which would have shown
+  // up here as the *page's text* being short by a heading, i.e. as a defect in
+  // extraction rather than in this line.
+  return flatten([...article.children].map((child) => child.textContent ?? "").join(" "));
 }
 
 /**
@@ -1853,6 +1856,8 @@ async function structureChecks(
   const names = [
     "a tagged page's reading order is not the one its geometry gives",
     "the accessibility tree is built in the order the tags give",
+    "a heading is announced as a heading, at the document's own level",
+    "nothing the document did not call a heading becomes one",
   ] as const;
   const text = await new TextCache(doc.id).load(0);
   const runs = text ? usableRuns(text) : null;
@@ -1889,6 +1894,56 @@ async function structureChecks(
     names[1],
     spoken === flatten(tagged.join(" ")) && spoken !== flatten(geometric.join(" ")),
     `tree reads "${preview(spoken)}"`,
+  );
+
+  // Headings, which are the reason to read the types at all: "jump to the next
+  // heading" is how a screen-reader user skims, and it works on `h1`--`h6` and on
+  // nothing else. Asserted against the *document's* types rather than a count, so
+  // a page with no heading skips instead of passing vacuously.
+  const wanted = runs.filter((run) => /^H[1-6]?$/.test(run.tag));
+  const headings = [...(article?.children ?? [])].filter((child) =>
+    /^H[1-6]$/.test(child.tagName),
+  );
+  const levels = headings.map((child) => child.tagName.toLowerCase()).join(", ");
+  if (wanted.length === 0) {
+    skip(names[2], "this page's tags contain no heading");
+  } else {
+    check(
+      names[2],
+      headings.length === wanted.length &&
+        wanted.every(
+          (run, at) =>
+            headings[at]?.tagName.toLowerCase() ===
+            (run.tag === "H" ? "h2" : run.tag.toLowerCase()),
+        ),
+      `tags say [${wanted.map((r) => r.tag).join(", ")}], tree has [${levels}]`,
+    );
+  }
+
+  // And the other half, over *every* block rather than the headings: a layer that
+  // emitted `h1` for everything would pass the check above, which only asks that
+  // the headings it wanted are present. Each block carries the document's own word
+  // for it in `data-tag`, so the whole mapping is checkable in one pass, and
+  // `data-tag` exists for exactly this --- a type flattened to `p` with nothing
+  // recording it cannot be told from a type nobody handled.
+  const expected = (tag: string | null): string => {
+    if (tag === null) return "p";
+    const level = /^H([1-6])$/.exec(tag);
+    if (level) return `h${level[1]}`;
+    return tag === "H" ? "h2" : "p";
+  };
+  const wrong = [...(article?.children ?? [])]
+    .map((child) => ({
+      tag: child.getAttribute("data-tag"),
+      is: child.tagName.toLowerCase(),
+    }))
+    .filter((block) => block.is !== expected(block.tag));
+  check(
+    names[3],
+    wrong.length === 0,
+    wrong.length === 0
+      ? `${article?.children.length ?? 0} blocks, each the element its type asks for`
+      : wrong.map((b) => `${b.tag} became <${b.is}>`).join(", "),
   );
 }
 

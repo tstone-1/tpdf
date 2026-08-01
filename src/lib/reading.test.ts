@@ -23,6 +23,7 @@ import {
   axesFor,
   cutWidth,
   hasSideBySideLines,
+  readingBlocks,
   readingLines,
   readingOrder,
   readingTextOf,
@@ -545,5 +546,32 @@ describe("characters no tagged run claims", () => {
     // to the block before it, which is the rule `fragmentsOf` already uses for a
     // character PDFium placed nowhere.
     expect(readingTextOf(withSeparator(), 0, 9)).toBe("notebody\n");
+  });
+});
+
+describe("readingBlocks", () => {
+  it("carries each tagged run's type", () => {
+    // What `a11y.ts` needs and `readingLines` cannot say: a line does not know
+    // whether it is part of a heading.
+    const text = marginNote([
+      { tag: "H1", path: ["H1"], start: 0, end: 4 },
+      { tag: "P", path: ["P"], start: 4, end: 8 },
+      { tag: "Note", path: ["Note"], start: 8, end: 12 },
+    ]);
+    expect(readingBlocks(text).map((b) => b.tag)).toEqual(["H1", "P", "Note"]);
+  });
+
+  it("reports an inferred block as having no type", () => {
+    // Not `"P"`. The geometry drew this boundary, and a consumer that treated it
+    // as the producer's statement would announce a guessed paragraph break as a
+    // real one --- which is why `a11y.ts` reads these line by line instead.
+    expect(readingBlocks(marginNote()).every((b) => b.tag === null)).toBe(true);
+  });
+
+  it("flattens to exactly what readingLines gives", () => {
+    // The two must not be able to disagree about the order, which is the whole
+    // reason `readingLines` is written in terms of this rather than beside it.
+    const text = marginNote(NOTE_LAST);
+    expect(readingBlocks(text).flatMap((b) => b.lines)).toEqual(readingLines(text));
   });
 });

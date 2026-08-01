@@ -96,6 +96,29 @@ export interface ReadingLine {
 }
 
 /**
+ * A group of lines meant to be read together, and what the document calls it.
+ *
+ * The unit the *tags* work in --- a paragraph, a heading, a table cell --- where
+ * {@link ReadingLine} is the unit a reader moves through. Both are needed and
+ * they are different questions, which is why this exists rather than a `tag` on
+ * the line: a consumer that wants "the heading" wants one element, and a consumer
+ * that wants "the next line" wants ten.
+ */
+export interface ReadingBlock {
+  /**
+   * The element's type as the document spells it, or `null` where there is none.
+   *
+   * `null` is not "unknown", it is **"inferred"**: the block came out of the
+   * geometry, so its boundaries are this file's guess rather than the producer's
+   * statement. A consumer that treats an inferred boundary as a real one is
+   * asserting something nobody claimed --- which is why `a11y.ts` reads a tagged
+   * block as one element and an inferred one line by line.
+   */
+  tag: string | null;
+  lines: ReadingLine[];
+}
+
+/**
  * Which screen axis is along a line and which is across, and which way each runs.
  *
  * Derived from `to_device` in `src-tauri/src/text.rs`, which maps a character
@@ -466,14 +489,32 @@ function splitOnce(spans: Span[], of: (s: Span) => [number, number]): Span[][] {
  * lines are.
  */
 export function readingLines(text: PageText): ReadingLine[] {
+  return readingBlocks(text).flatMap((block) => block.lines);
+}
+
+/**
+ * The page's blocks, in reading order, each carrying its lines.
+ *
+ * Where {@link readingLines} flattens. The two share every line of logic, so
+ * there is no second ordering to drift --- and the split is what lets one
+ * consumer take the page as a sequence of lines and another as a sequence of
+ * paragraphs without either of them re-deriving the order.
+ */
+export function readingBlocks(text: PageText): ReadingBlock[] {
   const axes = axesFor(text.quarter_turns);
   const gap = cutWidth(text, axes);
   const fragments = fragmentsOf(text, axes, gap);
   const tagged = usableRuns(text);
-  const blocks = tagged
-    ? ownership(text, tagged).map((owned) => within(text, fragments, owned))
-    : blocksOf(fragments, axes, gap);
-  return blocks.flatMap((block) => linesOf(block, axes));
+  if (tagged) {
+    return ownership(text, tagged).map((owned, at) => ({
+      tag: tagged[at]?.tag ?? null,
+      lines: linesOf(within(text, fragments, owned), axes),
+    }));
+  }
+  return blocksOf(fragments, axes, gap).map((block) => ({
+    tag: null,
+    lines: linesOf(block, axes),
+  }));
 }
 
 /**

@@ -2339,8 +2339,10 @@ text comparison cannot see a property that is not about text:
 **reading order is derived from geometry, not from the document's own tagged structure.**~~
 **Read, proved and wired 2026-08-01 --- see below. A tagged page is now read in the order its
 tags give, and an untagged one falls back to the geometry as before.**
-Also absent: headings and table semantics, a document language attribute, visible keyboard
-navigation between pages, and any high-contrast handling.
+~~Also absent: headings and table semantics,~~ **headings done 2026-08-01, see below;**
+table semantics still absent and now blocked on a named thing rather than unstarted. Also
+absent: a document language attribute, visible keyboard navigation between pages, and any
+high-contrast handling.
 
 #### The document's own reading order, read and proved --- 2026-08-01
 
@@ -2460,6 +2462,61 @@ that harness already reads, so the reading-order check asserts its **lines**, in
 against a file a different program wrote. Adding it also exposed three checks whose preconditions
 were written as assertions and had never met a two-page document --- see the traps; all three now
 skip with the reason printed rather than failing.
+
+#### Headings announced as headings --- 2026-08-01
+
+The reason to read element *types* at all, rather than only the order. "Jump to the next
+heading" and "list the headings" are how a screen-reader user skims a document, and neither
+works on a page of paragraphs however correctly ordered. A PDF states its levels, so `H1`
+through `H6` map across and a bare `/H` becomes `h2` --- the document has said "heading"
+without saying which, and competing with the page's own `H1` would put two titles in the
+outline.
+
+**Granularity follows who drew the boundary**, which turned out to be the answer to the
+question left open above rather than a separate decision. A **tagged** block is a paragraph
+the producer declared, so it is handed over whole and the screen reader moves through its
+lines itself --- better than we can, since it re-wraps to the user's own settings. An
+**inferred** block came out of the XY-cut, whose boundaries are a guess, so its lines stay
+separate: an over-eager cut then costs a reader nothing, where merging on one would silently
+join two columns into a paragraph. `ReadingBlock.tag` is `null` for the inferred case, and
+that `null` means *"inferred"* rather than *"unknown"* --- the distinction the whole split
+exists to carry.
+
+`readingBlocks` is the new funnel and `readingLines` is written in terms of it, so the two
+cannot disagree about the order; a test asserts exactly that.
+
+**Two things are deliberately not given their obvious element**, and the first is the useful
+finding:
+
+- **Table cells.** `TD` outside a `<table>` is not a table cell --- it is an element screen
+  readers ignore or mis-announce --- so emitting one would be worse than a paragraph.
+  Building a real table needs to know which cells share a **row**, and `TaggedRun.path`
+  carries element *types*: two different `/TR`s have the identical path, so the information
+  is not there. It needs element **identity** from `structure.rs` (a child-index path, or a
+  per-element id), which is a backend change. Pretending otherwise produces a table with one
+  row per cell, which is worse than no table.
+- **Figures.** The useful thing about a `/Figure` is its `/Alt` text, which is not read yet.
+  A `<figure>` holding the figure's own characters says nothing a paragraph does not.
+
+Every block carries the document's own word for it in `data-tag`, including the ones that
+become a paragraph. It is not announced --- it is there so a type nobody handled is *visible*
+to a check and to anyone reading the DOM, rather than flattened into `p` with nothing
+recording that something was dropped. Two of the four new checks use it, and the second is
+the one that matters: a layer emitting `h1` for everything passes "the headings the tags
+wanted are present", so the whole mapping is asserted over every block rather than over the
+headings.
+
+**The fixture needed a second heading level to make any of this checkable.** With one `/H1` on
+the page, the mutation that announces every heading as `h1` produces the right answer, so the
+check named *"at the document's own level"* passed without the level being read. One line of
+fixture --- an `/H2` subheading, which also gives page 1 a five-block reading order --- turned it
+red. A property with one value present is the same as none, and the unit test on the mapping
+table had been catching that mutation the whole time: when a viewer check survives a mutation its
+unit test catches, the fixture is thin rather than the suite.
+
+`spokenText` in `viewercheck.ts` had to be widened in the same change: it selected `p`, and a
+tagged page's headings would have been missing from what it read --- surfacing as *the page's
+text* being short rather than as the selector being narrow.
 
 #### The outline, and a sidebar to put it in — 2026-07-27
 
