@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 204 entries
+The one thing this file does *not* carry in full is the trap list --- 206 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -588,8 +588,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 204 of them and the full text
-was 93% of this file --- an instruction budget spent on the 203 traps that are not
+titles. Only the titles are here, because there are 206 of them and the full text
+was 93% of this file --- an instruction budget spent on the 205 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -647,6 +647,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - With no `/ToUnicode`, PDFium returns plausible garbage rather than nothing
 - A pattern was compiled case-sensitively against a haystack the fold had lowercased
 - Two broken `/ToUnicode` entries can decode to one valid astral character
+- A change predicted to fix three things fixed two, and the third was never the same problem
+- PDFium normalises ligatures too, so the cost of case folding was smaller than stated
 
 ### The worker boundary, the sandbox and the pool
 - macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing

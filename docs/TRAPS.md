@@ -5215,3 +5215,71 @@ boundaries are suspicious, and there is none.
 Worth having as a fixture for a second reason. It is the only input in the corpus that reaches
 the pairing code from *broken* data rather than from a correct CMap --- same function, two
 provenances --- and a mutation aimed at each catches the same defect from both sides.
+
+### A change predicted to fix three things fixed two, and the third was never the same problem
+
+Lowercasing was replaced with Unicode case folding on 2026-08-01, on the strength of a claim
+made in three documents and a doc comment: that it fixed all three of the reader-visible
+consequences the multilingual corpus had measured. It fixed two.
+
+| | before | after |
+|---|---|---|
+| `strasse` finding `Straße` | missed | **found** --- `ß` folds to `ss` |
+| `οδος` finding `ΟΔΟΣ` | missed | **found** --- `Σ` and `ς` both fold to `σ` |
+| `istanbul` finding `İstanbul` | missed | **still missed** |
+
+The third was never a case problem. `İ` folds to `i` followed by U+0307 --- *exactly* what
+lowercasing gave --- because the difference between it and a plain `i` is a **combining mark**,
+and no case operation removes a mark. Reaching it needs the dot stripped, which is accent
+stripping: a different decision, and one the module refuses for a stated reason.
+
+The three were grouped because they shared a *symptom* --- "a reader types the obvious spelling
+and finds nothing" --- and the grouping was then read as sharing a *cause*. It is an easy slip
+to make in a list, and the list was written here, in `search.rs`, in `docs/PLAN.md` and in
+`BUILD.md` before anything was measured.
+
+What caught it was checking before writing code: one throwaway test printing
+`default_case_fold` and `to_lowercase` side by side for six characters, which took a minute and
+showed the two agreeing exactly on U+0130. Had it been written after the change instead, the
+fixture would have been adjusted to match the new behaviour and the wrong claim would have
+survived as documentation.
+
+**A remedy that addresses N symptoms is a claim about N causes.** Before committing to one, put
+the inputs through it and print the outputs --- not the outcomes you expect, the outputs. Where a
+prediction turns out wrong, say which one and why it was a different kind of problem, because
+"fixed two of three" with no explanation reads as an incomplete job rather than as a
+misclassification.
+
+Unicode has a Turkic mapping (`T` in `CaseFolding.txt`) that *does* fold `İ` to a bare `i`, and
+it is deliberately not used: it also folds `I` to `ı`, which is right for Turkish and wrong for
+every other language, and nothing here knows a document's language.
+
+### PDFium normalises ligatures too, so the cost of case folding was smaller than stated
+
+Case folding was taken as a trade: it fixes `ß` and Greek sigma, and it also folds `ﬁ` to `fi`,
+which `search.rs` had explicitly refused to do because the resulting highlight covers one code
+point for a two-letter query. That refusal was the reason the change needed a decision rather
+than being applied as a bug fix.
+
+Measured after the change: **a ligature never arrives as one.** U+FB01 sits in the Alphabetic
+Presentation Forms block, the same range as the Arabic forms this corpus had already shown
+PDFium normalising --- and PDFium normalises the whole range on extraction. A page typeset
+`ﬁnal` comes back as `f`, `i`, `n`, `a`, `l`, and the fold's ligature rule is never reached from
+the page side at all.
+
+So the cost is near-theoretical for page text and real for exactly one case: a reader who
+**pastes** a ligature into the find bar. Before the change that reader got nothing; now they get
+the word. The trade turned out to be one-sided.
+
+Two things worth carrying:
+
+- **The existing measurement generalised further than the entry that recorded it.** That
+  presentation forms come back as base letters was written up as an Arabic fact; it is a fact
+  about a *range*, and ligatures, Roman numerals and the width-variant forms are all in
+  neighbouring blocks. When a normalisation is discovered, ask what else it covers before
+  reasoning about anything in the same neighbourhood.
+- **A fixture line for the ligature was still worth adding**, and its expectation had to be
+  relabelled from `decided` to `measured` once this was known: it passes because PDFium
+  normalised the page, not because of anything in `search.rs`. A check that passes for a
+  different reason than its name gives is the failure mode the three-way labelling exists to
+  prevent, and it caught itself here.

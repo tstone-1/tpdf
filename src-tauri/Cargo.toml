@@ -47,6 +47,19 @@ png = "0.17"
 libc = "0.2"
 tauri-plugin-dialog = "2.7.2"
 
+# Unicode case folding, for search. `char::to_lowercase` is the operation for
+# *displaying* text and leaves `ß` alone --- it is already lowercase --- so
+# `strasse` could not find `Straße`; folding is the operation Unicode defines for
+# caseless *matching*, which is what a find bar does. Taken on 2026-08-01 as a
+# decision rather than a fix, because the same operation folds `ﬁ` to `fi` and
+# `search.rs` had refused to normalise ligatures.
+#
+# MIT, and its only new transitive is `unicode-normalization` (MIT OR Apache-2.0)
+# with `tinyvec`/`tinyvec_macros` beside it --- checked with `cargo metadata` over
+# the whole tree rather than read off a README, because one copyleft crate anywhere
+# removes the option of making this repository public (AGENTS.md).
+caseless = "0.2.2"
+
 # The macOS print dialog. PDFKit paginates the document and builds the
 # NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,
 # `objc2-foundation` and `objc2-app-kit` are already in the tree transitively via

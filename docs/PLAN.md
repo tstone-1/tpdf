@@ -1416,12 +1416,15 @@ forms come back as base letters, so a base-letter query finds shaped Arabic and 
 presentation-form query finds nothing; and logical order is recovered from a right-to-left run,
 so a reader's query in reading order matches.
 
-**What is still open is a decision, not a gap.** The fold lowercases and does not case-fold, so
-`strasse` does not find `Straße`, `istanbul` does not find `İstanbul`, and Greek `οδος` finds
-neither spelling — one cause, three reader-visible consequences, each recorded in the manifest as
-a `decided` count. Case folding fixes all three and needs a dependency, and it also folds `ﬁ` to
-`fi`, which `search.rs` says outright it does not do. That is a decision about what a highlight
-may cover.
+**The fold case-folds since 2026-08-01**, which was the open decision here and was taken. It
+fixed **two** of the three consequences, not three: `strasse` finds `Straße` and `οδος` finds
+`ΟΔΟΣ`, and `istanbul` still does not find `İstanbul` — that difference is a combining mark
+rather than a case, so no case operation reaches it and removing the dot is accent stripping,
+which remains refused. The predicted third fix was a misclassification, recorded in the traps.
+
+The ligature cost the decision was weighed against turned out near-theoretical: PDFium normalises
+the Alphabetic Presentation Forms block on extraction, so a page typeset `ﬁnal` never arrives as
+a ligature. What the fold's ligature rule buys is a reader who *pastes* one into the find bar.
 
 **What this corpus does not cover** is `encodings.pdf`'s subject, below: every page here carries
 a correct `/ToUnicode`, which is the well-behaved case.

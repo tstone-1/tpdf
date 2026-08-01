@@ -63,6 +63,22 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        # Back to lowercasing, which is what stood here until 2026-08-01 and is the
+        # whole subject of the change: `ß` is already lowercase, so it survives the
+        # fold and `strasse` cannot find `Straße`.
+        "fold: lowercase instead of case-folding",
+        "src/search.rs",
+        "            for folded in std::iter::once(ch).default_case_fold() {",
+        "            for folded in ch.to_lowercase() {",
+        "a_sharp_s_folds_to_two_letters",
+    ),
+    # There is deliberately no second mutation for the Greek half. Written and run:
+    # the one above already turns `both_greek_sigmas_fold_together` red, because
+    # lowercasing gets Greek wrong in its own way --- it maps `Σ` to `σ` and leaves
+    # `ς` alone, so one word's two spellings land in different buckets. A second
+    # mutation that pre-lowercased the input before the loop broke six *other* tests
+    # and not that one, because it also defeated `match_case`.
+    Mutation(
         # A pattern compiled case-sensitively against a haystack the fold has
         # already lowercased: any uppercase letter in a pattern then matches
         # nothing. It shipped that way, and the doc comment above `compile`
@@ -157,10 +173,10 @@ MUTATIONS = [
         # mutation that changes nothing looks precisely like a test that cannot
         # fail, and the entry of that name in docs/TRAPS.md is about the minute
         # spent strengthening a test that was already fine.
-        "fold: lower-case ASCII only, dropping the Unicode mapping",
+        "fold: fold ASCII only, dropping the Unicode mapping",
         "src/search.rs",
-        "            for lower in ch.to_lowercase() {",
-        "            for lower in [ch.to_ascii_lowercase()] {",
+        "            for folded in std::iter::once(ch).default_case_fold() {",
+        "            for folded in [ch.to_ascii_lowercase()] {",
         "a_multi_character_lowercase_still_maps_back",
     ),
     Mutation(

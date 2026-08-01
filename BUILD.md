@@ -1277,11 +1277,13 @@ webview:
 cargo run --release --example search-probe -- --file ../testdata/multilingual.pdf
 ```
 
-Nineteen queries, and the manifest labels each count as **stated** (from what the generator wrote),
-**measured** (a property of PDFium this corpus established --- that Arabic presentation forms come
-back as base letters) or **decided** (a product decision, such as `strasse` not finding `Straße`).
-Conflating the three is how a measurement comes to read as a specification, so a change to a
-`decided` count has to be argued for rather than absorbed.
+Twenty-one queries, and the manifest labels each count as **stated** (from what the generator
+wrote), **measured** (a property of PDFium this corpus established --- that the Alphabetic and
+Arabic Presentation Forms come back normalised) or **decided** (a product decision). Conflating
+the three is how a measurement comes to read as a specification, so a change to a `decided` count
+has to be argued for rather than absorbed --- and one of them has since been argued for and
+changed: the fold case-folds rather than lowercasing since 2026-08-01, so `strasse` finds `Straße`
+and its count went from 1 to 2. The `decided` prose records both the old answer and the new one.
 
 **`encodings.pdf` is the other half of the multilingual work**, and a separate corpus because
 the subject is different: those pages are correct documents in other scripts, and these are
