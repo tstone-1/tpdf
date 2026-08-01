@@ -390,10 +390,22 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
-Three crates carry the search: `regex` (MIT OR Apache-2.0) reads a reader's pattern, and it
-was already in the tree transitively through the toolchain, so declaring it added no package
---- checked with `cargo metadata` over the whole tree rather than from its README, which is
-the standing rule for anything the licensing constraint above touches.
+Two crates carry the search, and this sentence said **three** while naming one until
+2026-08-01 --- which is the counting-in-prose failure this file records elsewhere about the trap
+list, arriving in the section where a missing dependency matters most.
+
+`regex` (MIT OR Apache-2.0) reads a reader's pattern, and it was already in the tree
+transitively through the toolchain, so declaring it added no package. `caseless` (MIT) does
+Unicode case folding, which is what makes `strasse` find `Straße`: `char::to_lowercase` is
+defined for *displaying* text and leaves a sharp s alone, and folding is the operation defined
+for caseless *matching*. It brings `unicode-normalization` (MIT OR Apache-2.0) with
+`tinyvec`/`tinyvec_macros` (permissive) --- the only genuinely new packages either of them adds.
+
+Both checked with `cargo metadata` over the whole tree rather than from a README, which is the
+standing rule for anything the licensing constraint above touches. The sweep covers all 531
+packages and looks for the copyleft families by name; the only hits are MPL-2.0 (file-level, in
+Servo's CSS crates via Tauri) and a triple-licensed `r-efi` whose `MIT OR Apache-2.0` arm
+applies, so the option of making this repository public is intact.
 
 Two plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open dialog,
 which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT); and, on Windows only,
