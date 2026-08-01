@@ -114,6 +114,27 @@ pub struct PageStructure {
     pub truncated: bool,
 }
 
+impl PageStructure {
+    /// The runs, but only if the walk finished.
+    ///
+    /// The invariant a consumer gets to rely on: **runs present means runs
+    /// complete.** A partial reading order is not a reading order, and the
+    /// fallback for one is the same as the fallback for no tags at all --- so
+    /// truncation is collapsed into emptiness *here*, once, rather than at each
+    /// call site where forgetting it produces a document that reads correctly
+    /// for a while and then stops.
+    ///
+    /// Separate from [`read`] and taking no PDFium handle so it can be tested
+    /// without one; the condition it encodes is the whole of what a caller has
+    /// to get right.
+    pub fn complete_runs(self) -> Vec<TaggedRun> {
+        if self.truncated {
+            return Vec::new();
+        }
+        self.runs
+    }
+}
+
 /// Reads a page's structure, or reports that it has none.
 ///
 /// Never fails on a document that merely lacks tags: that is an empty
@@ -121,6 +142,17 @@ pub struct PageStructure {
 /// read at all, which is a different thing and is the caller's to report.
 pub fn read(page: &RawPage<'_>) -> Result<PageStructure, String> {
     let text = RawTextPage::load(page)?;
+    read_using(page, &text)
+}
+
+/// [`read`], for a caller that has already loaded the page's text.
+///
+/// `text::extract` has one, and loading a second would mean PDFium building a
+/// second character index for the same page --- work proportional to the text on
+/// it, on every page of every document, to obtain something already in hand.
+/// Splitting it here rather than making [`read`] take one keeps the probe and the
+/// tests calling a function with a single argument.
+pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageStructure, String> {
     let chars = text.count();
     let bindings = page.bindings();
 
@@ -440,5 +472,37 @@ mod tests {
         // it is *marked*, so it belongs to element 3 and bridging over it would
         // move another element's characters into this one's run.
         assert_eq!(walk_with_gaps(&[7, 3, 7], "a b"), vec![(0, 1), (2, 3)]);
+    }
+
+    /// A structure with `count` runs, truncated or not.
+    fn structure(count: usize, truncated: bool) -> PageStructure {
+        PageStructure {
+            runs: (0..count)
+                .map(|at| TaggedRun {
+                    tag: "P".to_string(),
+                    path: vec!["P".to_string()],
+                    start: at as u32,
+                    end: at as u32 + 1,
+                })
+                .collect(),
+            chars: count as u32,
+            untagged_chars: 0,
+            truncated,
+        }
+    }
+
+    #[test]
+    fn a_finished_walks_runs_are_offered() {
+        assert_eq!(structure(3, false).complete_runs().len(), 3);
+    }
+
+    #[test]
+    fn a_truncated_walk_offers_nothing() {
+        // Not "offers what it managed", which is the tempting reading and is
+        // wrong: those runs are a reading order with an unknown amount of the
+        // page missing from it, and a consumer cannot tell which part. Falling
+        // back to geometry gives an order over *all* the text, which is worse in
+        // the places the tags disagree and complete everywhere.
+        assert!(structure(3, true).complete_runs().is_empty());
     }
 }

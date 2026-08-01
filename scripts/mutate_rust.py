@@ -43,9 +43,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "src-tauri"
 
-#: Only these tests are run, so an unrelated failure elsewhere cannot be read as
-#: a mutation being caught.
-FILTER = "search::"
+#: Only these modules' tests are run, so an unrelated failure elsewhere cannot be
+#: read as a mutation being caught. libtest takes several filters and ORs them,
+#: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
+#: which is worth knowing because it looks like the feature being unsupported.
+FILTERS = ["search::", "structure::"]
 
 
 @dataclass(frozen=True)
@@ -230,6 +232,16 @@ MUTATIONS = [
         "                chars: query.chars().count() as u32,\n                problem: None,",
         "a_page_with_no_text_reports_it_rather_than_no_matches",
     ),
+    Mutation(
+        # The invariant the wire carries: runs present means runs complete. A
+        # truncated walk is a reading order missing an unknown part of the page,
+        # and a consumer cannot tell which part.
+        "structure: offer a truncated walk's runs anyway",
+        "src/structure.rs",
+        "        if self.truncated {\n            return Vec::new();\n        }",
+        "",
+        "a_truncated_walk_offers_nothing",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.
@@ -242,7 +254,7 @@ LISTED_TEST = re.compile(r"^(\S+): test$", re.M)
 def run_tests() -> tuple[set[str], int | None, str]:
     """Runs the filtered suite, returning failed names, the summary count and the log."""
     done = subprocess.run(
-        ["cargo", "test", "--lib", FILTER],
+        ["cargo", "test", "--lib", "--", *FILTERS],
         cwd=CRATE,
         capture_output=True,
         text=True,
@@ -259,7 +271,7 @@ def run_tests() -> tuple[set[str], int | None, str]:
 def all_test_names() -> set[str]:
     """Every test the filter selects, from libtest's own listing."""
     done = subprocess.run(
-        ["cargo", "test", "--lib", FILTER, "--", "--list"],
+        ["cargo", "test", "--lib", "--", *FILTERS, "--list"],
         cwd=CRATE,
         capture_output=True,
         text=True,

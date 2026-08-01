@@ -39,10 +39,39 @@ single "initial release" line.
 - 7 unit tests on the span logic, and 4 mutations against the probe, all caught.
   `scripts/mutate_viewer.py` now drives two harnesses, selected with `--runner`; the structure
   one needs no webview and runs in 15 s a mutation.
-- **Not yet wired to anything.** `reading.ts` and the accessibility tree still use geometry, and
-  a page with no tree deliberately reports no runs so a caller can tell "fall back" from "the
-  document says nothing". The consumer is the next commit.
 - One new trap, index now 177.
+
+### Phase 1 --- a tagged page is read in the order the document says
+
+- **`reading.ts` believes the tags where it has them.** `usableRuns` is the whole decision ---
+  the runs are used when they claim every *visible* character, and the geometry otherwise ---
+  and it is the only place either route is chosen, so the accessibility tree and the copy path
+  cannot disagree about which one ran. Both consumers go through `readingLines`, so neither
+  needed a call-site change; the runs travel on `PageText`, which already crosses the worker
+  boundary.
+- **The tags decide the order of the blocks; the geometry still decides the lines inside one.**
+  A tagged run is a paragraph and a screen reader is handed lines. Emitting a paragraph per
+  element is a separate question and is now a change to `a11y.ts` alone.
+- **Every character keeps its place.** Runs do not claim PDFium's generated separators, and
+  emitting only the claimed characters lost six of them --- the page came back six characters
+  shorter than the page. Each character now has an owner, so the tagged order is a permutation
+  of the page, which is the invariant worth asserting and was not being asserted.
+- **A comma no longer opens a line of its own.** Pre-existing in the *geometric* path and found
+  by the new fixture: a comma drops below the baseline and overlaps its line by 46% of itself,
+  under the banding threshold, and the 0.01 pt-tall spaces then matched the comma's new band. One
+  line came back as `inthemaincolumnandclosesthesection` and a second holding `, .` and six
+  spaces --- read aloud and copied exactly like that. A box too short to be a line of text now
+  joins the line it touches.
+- **`tagged.pdf` is the eighth corpus** for `viewer_check.py`, and its manifest gained the three
+  fields that harness already reads, so the reading-order check asserts its lines in tagged order
+  against a file a different program wrote. Two new checks, 155 names on every corpus, sets
+  diffed pairwise.
+- Adding it exposed **three checks whose preconditions were written as assertions** and had never
+  met a two-page document; all three now skip with the reason printed. `mutate_viewer.py` grew a
+  `viewer-tagged` runner and now refuses a mutation whose expected check skipped in the baseline
+  --- which would have reported SURVIVED.
+- 11 new frontend tests and 1 Rust test; 85 frontend mutations, 23 Rust, 17 viewer, all caught.
+  Seven new traps, index now 184.
 
 ### Phase 1 --- the command list, moved somewhere a check can reach it
 

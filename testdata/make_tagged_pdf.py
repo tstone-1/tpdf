@@ -210,6 +210,19 @@ def build(path: str) -> None:
                 "geometric": geometric_order(blocks),
                 "types": {b.name: b.tag for b in blocks},
                 "text": {b.name: b.text() for b in blocks},
+                # The three fields `viewer_check.py`'s reading-order check reads,
+                # in the shape `make_columns_pdf.py` established. Emitted here so
+                # this file is an ordinary corpus for that harness rather than one
+                # it has to know about: the check then asserts the *lines*, in
+                # tagged order, against expectations this program wrote --- which
+                # is the same external-oracle mechanism, applied to tags.
+                #
+                # Lines rather than blocks, because that is what a reader is
+                # handed: a tagged run is a paragraph and it comes back as its
+                # lines, ordered by the geometry inside the run.
+                "page": index,
+                "name": "tagged" if index == 0 else "control",
+                "lines": [line for block in blocks for line in block.lines],
             }
         )
 

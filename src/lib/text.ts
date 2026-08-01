@@ -19,6 +19,21 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+/**
+ * One run of text the document's own tags claim, as half-open character indices.
+ *
+ * Mirrors `structure::TaggedRun`. See `src-tauri/src/structure.rs` for why a
+ * character index is the right currency here rather than a second index space.
+ */
+export interface TaggedRun {
+  /** The element's type as the document spells it: `P`, `H1`, `Note`, `TD`. */
+  tag: string;
+  /** The element's ancestry, deepest last: `["Document", "Sect", "P"]`. */
+  path: string[];
+  start: number;
+  end: number;
+}
+
 /** A page's characters and where they sit, in PDF points from the top-left. */
 export interface PageText {
   /** One Unicode scalar per character index. */
@@ -39,6 +54,16 @@ export interface PageText {
    */
   quarter_turns: number;
   extract_ms: number;
+  /**
+   * The document's own reading order, where it says one.
+   *
+   * Absent or empty on an untagged page, and absent when the structure walk was
+   * bounded --- so a non-empty value is a *complete* claim about the page, which
+   * is what lets `reading.ts` decide between it and the geometry on one
+   * condition. Optional because the backend omits the field when it is empty,
+   * which is most pages.
+   */
+  runs?: TaggedRun[];
 }
 
 /** Whether lines on this page are separated horizontally rather than vertically. */

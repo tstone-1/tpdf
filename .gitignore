@@ -37,4 +37,5 @@ testdata/incr-manifest.json
 testdata/outline-manifest.json
 testdata/rotated-manifest.json
 testdata/columns-manifest.json
+testdata/tagged-manifest.json
 __pycache__/

@@ -13,6 +13,20 @@
  * So the order has to be recovered from the geometry, which is the only thing
  * that describes the page rather than its producer.
  *
+ * ## Unless the document says, in which case believe it
+ *
+ * A tagged PDF carries its reading order explicitly, and `structure.rs` reads it
+ * into runs of the same character indices used here. Where those runs cover the
+ * page, they are the order and everything below is skipped --- inferring an order
+ * from boxes when the producer has stated one is guessing at an answer that is
+ * written down. {@link usableRuns} is the whole of that decision, and
+ * {@link readingLines} is the only place either route is chosen, so the
+ * accessibility tree and the copy path cannot disagree about which one ran.
+ *
+ * The tags decide the *order of the blocks* and the geometry still decides where
+ * the lines inside one fall. A tagged run is a paragraph, and a screen reader is
+ * handed lines, so the two answer different questions and both are needed.
+ *
  * ## Recursive XY-cut, over fragments rather than characters
  *
  * The page is split at the widest band of whitespace that crosses it, and each
@@ -50,6 +64,7 @@ import {
   type IndexRange,
   type PageText,
   type Quad,
+  type TaggedRun,
 } from "./text";
 
 /**
@@ -139,11 +154,51 @@ function extentsOf(box: Quad, axes: Axes): Extents {
   };
 }
 
-/** Whether two boxes share most of their extent across the lines. */
+/**
+ * How short a box has to be, against the one it touches, to be a mark on it.
+ *
+ * Half. A comma is about a third of a line's height and a space PDFium reports
+ * as a hundredth; a line of text is never half the height of the line beside it,
+ * because it is set in the same type.
+ */
+const SHORT_MARK = 0.5;
+
+/**
+ * Whether two boxes share a line.
+ *
+ * Mostly "they overlap by more than half the shorter one's extent", which is the
+ * right test for two boxes of comparable height --- and it is wrong in one
+ * direction that matters: a **comma**. PDFium reports `,` as a box that starts
+ * inside the line and drops below its baseline, roughly a third of the line's
+ * height, so it overlaps by well under half of *itself*. Measured on
+ * `testdata/tagged.pdf`: letters banded at 227.41--236.13 and the comma at
+ * 234.80--237.69, an overlap of 46%.
+ *
+ * The consequence was not a slightly wrong box. The comma opened a band of its
+ * own, and every space on the line --- which PDFium reports 0.01 pt tall, sitting
+ * on the baseline --- then matched *that* band rather than the letters', because
+ * a space overlaps anything it touches by 100% of itself. So one line came back
+ * as two: `inthemaincolumnandclosesthesection`, and a second "line" holding a
+ * comma, a full stop and six spaces. Read aloud, and copied, exactly like that.
+ *
+ * So a box too short to be a line of text joins the line it touches. That is a
+ * statement about type rather than a tuned constant: a mark a third the height of
+ * the letters beside it is a mark on their line, and nothing set in the same type
+ * is half the height of the line above it.
+ *
+ * Found by the tagged fixture and **not caused by the tags** --- the geometric
+ * path produced the same two lines, on a fixture that has existed for one day.
+ * The corpus that was going to catch this was always going to be a new one:
+ * every other one is generated from words with no punctuation in them.
+ */
 function sameBand(a: Extents, b: Extents): boolean {
   const overlap = Math.min(a.crossEnd, b.crossEnd) - Math.max(a.crossStart, b.crossStart);
-  const shorter = Math.min(a.crossEnd - a.crossStart, b.crossEnd - b.crossStart);
-  return shorter > 0 && overlap / shorter > 0.5;
+  if (overlap <= 0) return false;
+  const heights = [a.crossEnd - a.crossStart, b.crossEnd - b.crossStart];
+  const shorter = Math.min(...heights);
+  if (shorter <= 0) return false;
+  if (shorter < Math.max(...heights) * SHORT_MARK) return true;
+  return overlap / shorter > 0.5;
 }
 
 /** Grows `into` to contain `add`. */
@@ -413,25 +468,186 @@ function splitOnce(spans: Span[], of: (s: Span) => [number, number]): Span[][] {
 export function readingLines(text: PageText): ReadingLine[] {
   const axes = axesFor(text.quarter_turns);
   const gap = cutWidth(text, axes);
-  const lines: ReadingLine[] = [];
+  const fragments = fragmentsOf(text, axes, gap);
+  const tagged = usableRuns(text);
+  const blocks = tagged
+    ? ownership(text, tagged).map((owned) => within(text, fragments, owned))
+    : blocksOf(fragments, axes, gap);
+  return blocks.flatMap((block) => linesOf(block, axes));
+}
 
-  for (const block of blocksOf(fragmentsOf(text, axes, gap), axes, gap)) {
-    const ordered = [...block].sort((a, b) => {
-      const [ea, eb] = [extentsOf(a.box, axes), extentsOf(b.box, axes)];
-      return ea.crossStart - eb.crossStart || ea.alongStart - eb.alongStart;
-    });
-    let current: ReadingLine | null = null;
-    for (const fragment of ordered) {
-      if (current && sameBand(extentsOf(current.box, axes), extentsOf(fragment.box, axes))) {
-        current.ranges.push(...fragment.ranges);
-        absorb(current.box, fragment.box);
-        continue;
-      }
-      current = { ranges: [...fragment.ranges], box: { ...fragment.box } };
-      lines.push(current);
+/**
+ * One block's fragments as lines, in the order they are read.
+ *
+ * Shared by both routes, which is the point: a block from the geometry and a
+ * block from the tags are the same thing --- a set of fragments meant to be read
+ * together --- so the *ordering within* one is decided in one place. Fragments in
+ * the same band are one line, because a line broken by a wide word space is not
+ * two lines.
+ */
+function linesOf(block: readonly Fragment[], axes: Axes): ReadingLine[] {
+  const ordered = [...block].sort((a, b) => {
+    const [ea, eb] = [extentsOf(a.box, axes), extentsOf(b.box, axes)];
+    return ea.crossStart - eb.crossStart || ea.alongStart - eb.alongStart;
+  });
+  const lines: ReadingLine[] = [];
+  let current: ReadingLine | null = null;
+  for (const fragment of ordered) {
+    if (current && sameBand(extentsOf(current.box, axes), extentsOf(fragment.box, axes))) {
+      current.ranges.push(...fragment.ranges);
+      absorb(current.box, fragment.box);
+      continue;
     }
+    current = { ranges: [...fragment.ranges], box: { ...fragment.box } };
+    lines.push(current);
   }
   return lines;
+}
+
+/**
+ * The document's own reading order, if it covers the page well enough to use.
+ *
+ * The whole of the decision between the tags and the geometry, in one place and
+ * exported so a check can assert *which route ran* rather than infer it from an
+ * order that both routes might agree on.
+ *
+ * The condition is that every **visible** character is claimed by some run.
+ * Not every character: PDFium synthesises a separator between two text objects
+ * and one falling between two elements belongs to neither, so requiring all of
+ * them would reject every real tagged document. And not "most": a producer that
+ * tagged three paragraphs of four would otherwise have the fourth silently
+ * disappear from what a screen reader reads, which is worse than ignoring its
+ * tags altogether --- the geometry at least orders *all* the text, and is only
+ * wrong where the tags disagree with it.
+ *
+ * Returns `null` rather than an empty array for "use the geometry", so that a
+ * caller cannot accidentally treat the untagged case as a page with no text.
+ */
+export function usableRuns(text: PageText): TaggedRun[] | null {
+  const runs = text.runs;
+  if (!runs || runs.length === 0) return null;
+
+  const claimed = new Uint8Array(text.codes.length);
+  for (const run of runs) {
+    const to = Math.min(run.end, text.codes.length);
+    for (let index = Math.max(0, run.start); index < to; index++) claimed[index] = 1;
+  }
+  for (let index = 0; index < text.codes.length; index++) {
+    if (claimed[index]) continue;
+    const code = text.codes[index] ?? 0;
+    // A character with no box is one PDFium placed nowhere, which is invisible
+    // whatever its code says.
+    if (isVisible(code) && placed(charQuad(text, index))) return null;
+  }
+  return runs;
+}
+
+/** Whether a code is something a reader would see, rather than space. */
+function isVisible(code: number): boolean {
+  const char = String.fromCodePoint(code);
+  return char.trim().length > 0;
+}
+
+/**
+ * Which run every character belongs to, as one entry per run.
+ *
+ * The runs claim ranges of characters and they do not claim all of them: PDFium
+ * synthesises a separator between two text objects, and one falling *between*
+ * two elements belongs to neither. {@link usableRuns} tolerates that, correctly
+ * --- an unclaimed space is not a hole in the reading order --- but a consumer
+ * that then emitted only the claimed characters would **drop** those separators,
+ * and dropping the one between two paragraphs is how a page comes back six
+ * characters shorter than the page.
+ *
+ * So every character is given an owner: its own run where it has one, and
+ * otherwise the run of the nearest character before it, which is the same rule
+ * `fragmentsOf` uses to re-attach a character PDFium placed nowhere. A leading
+ * unclaimed character has nothing before it and takes the first owner that
+ * follows.
+ *
+ * The result is a partition, and that is the invariant worth stating: the tagged
+ * order is a **permutation of every character index**, exactly as the geometric
+ * one is. A reading order that quietly holds less than the page is worse than one
+ * that puts the page in a poorer order.
+ *
+ * Returned as **one list of indices per run**, not as one owner per character
+ * with the run named by position. The leaner shape was written and reverted: it
+ * couples the owner array to the run list by index, and a mutation that sorted
+ * the runs before mapping over them then changed *nothing at all*, because the
+ * callback used the positional index and never the run. A wrong edit that
+ * compiles to a no-op is indistinguishable from a test that cannot fail --- so
+ * the coupling is carried in the value instead, where there is no order to keep
+ * in step, and the `Set` per run is the price.
+ */
+function ownership(text: PageText, runs: readonly TaggedRun[]): number[][] {
+  const owner = new Int32Array(text.codes.length).fill(-1);
+  runs.forEach((run, at) => {
+    const to = Math.min(run.end, owner.length);
+    for (let index = Math.max(0, run.start); index < to; index++) owner[index] = at;
+  });
+  let last = -1;
+  for (let index = 0; index < owner.length; index++) {
+    if (owner[index] === -1) owner[index] = last;
+    else last = owner[index] as number;
+  }
+  // Backwards for anything before the first claimed character, which the forward
+  // pass could only leave at -1.
+  let next = runs.length > 0 ? 0 : -1;
+  for (let index = owner.length - 1; index >= 0; index--) {
+    if (owner[index] === -1) owner[index] = next;
+    else next = owner[index] as number;
+  }
+  const owned: number[][] = runs.map(() => []);
+  for (let index = 0; index < owner.length; index++) {
+    const at = owner[index] as number;
+    if (at >= 0) owned[at]?.push(index);
+  }
+  return owned;
+}
+
+/**
+ * The fragments of one run, clipped to the characters {@link ownership} gave it.
+ *
+ * A fragment is a geometric run of characters and a run is a set of indices, and
+ * nothing makes them nest: a fragment can straddle a boundary between two
+ * elements --- two tagged words side by side on one line are one fragment --- so
+ * it is clipped rather than assigned to whichever element its first character
+ * falls in. The box is rebuilt from the characters that survive, because the
+ * original covers text that is now in a different block and a line's band would
+ * be measured from it.
+ */
+function within(
+  text: PageText,
+  fragments: readonly Fragment[],
+  owned: readonly number[],
+): Fragment[] {
+  const mine = new Set(owned);
+  const out: Fragment[] = [];
+  for (const fragment of fragments) {
+    const indices: number[] = [];
+    let box: Quad | null = null;
+    for (const range of fragment.ranges) {
+      for (let index = range.from; index < range.to; index++) {
+        if (!mine.has(index)) continue;
+        indices.push(index);
+        const at = charQuad(text, index);
+        if (!placed(at)) continue;
+        if (box) absorb(box, at);
+        else box = { ...at };
+      }
+    }
+    if (indices.length === 0) continue;
+    // Every character of this piece unplaced: it carries text and no geometry,
+    // so it keeps its place in the run and takes a degenerate box, exactly as
+    // `fragmentsOf` does for the same case.
+    out.push({ ranges: rangesOf(indices), box: box ?? emptyBox() });
+  }
+  // Ordered along the run's own index range, so that a block whose fragments
+  // came out of the page-wide banding in a different order reads in the order
+  // its characters were written. `linesOf` re-orders by position within the
+  // block, which is what decides its lines; this only makes that input stable.
+  out.sort((a, b) => (a.ranges[0]?.from ?? 0) - (b.ranges[0]?.from ?? 0));
+  return out;
 }
 
 /**

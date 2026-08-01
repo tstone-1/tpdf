@@ -31,6 +31,18 @@
  * is already covered and paid for; adding a second, positioned copy of the text
  * would give the browser two selectable representations of one page.
  *
+ * ## Whose order it is read in
+ *
+ * `readingLines` answers that, and since 2026-08-01 it prefers the document's own
+ * tags over the geometry where a page carries them --- so a margin note tagged
+ * after the body is read after the body, however far up the page it sits. Nothing
+ * here changed for it: the order arrives through the same call, which is why the
+ * runs were put on `PageText` rather than fetched separately.
+ *
+ * Lines remain the granularity. A tagged run is a *paragraph*, and handing a
+ * screen reader one element per paragraph is arguably closer to what the document
+ * says --- it is an open question, and it is a change to this file alone.
+ *
  * And it is **not verified against a screen reader**. What the check asserts is
  * that the text is present, correct, in reading order, and stable across
  * scrolling. Whether VoiceOver announces it *well* is not measured here, and no

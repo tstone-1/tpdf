@@ -39,8 +39,8 @@ import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { MAX_RESULT_ROWS } from "./results";
 import { PLAIN_SEARCH } from "./search";
-import { hasSideBySideLines, readingLines } from "./reading";
-import { TextCache } from "./text";
+import { hasSideBySideLines, readingLines, textOfRanges, usableRuns } from "./reading";
+import { TextCache, type PageText } from "./text";
 
 /**
  * Tabs the sidebar has: outline, pages, results.
@@ -1551,6 +1551,19 @@ async function searchesFromHere(
     () => `${viewer.searchMatches.length} matches so far`,
   );
   const first = viewer.searchMatches[0];
+  // A needle with nothing at or after the page being read cannot distinguish the
+  // two answers: the scan is *supposed* to wrap when there is nothing ahead, so
+  // a first hit before `from` is correct there and a defect anywhere else. The
+  // check reported that as a failure on the first two-page fixture it met ---
+  // the needle comes from page 1 and this document does not repeat it --- which
+  // is a check that cannot tell its own subject from its precondition.
+  if (found && !viewer.searchMatches.some((m) => m.page >= from)) {
+    skip(
+      name,
+      `no match at or after page ${from + 1}, so wrapping to the start is correct`,
+    );
+    return;
+  }
   check(
     name,
     found && !!first && first.page >= from,
@@ -1588,16 +1601,22 @@ async function stepToAnotherPage(
   key(root, "Home");
   await settle(() => viewer.idle);
   viewer.search(needle);
-  await eventually(
-    spread,
-    () =>
-      viewer.searchMatches.some(
-        (m) => m.page !== viewer.searchMatches[0]?.page,
-      ),
-    () =>
-      `${viewer.searchMatches.length} matches across ` +
-      `${new Set(viewer.searchMatches.map((m) => m.page)).size} pages`,
-  );
+  // Waited out to the *end of the search*, not until matches appear on two
+  // pages. Written the second way first, and it is a wait for a condition that
+  // may never hold: on a document whose needle sits on one page it spent its
+  // whole bound and then reported a failure, when what it had established is
+  // that this fixture cannot exercise the check below. That is a precondition
+  // rather than a claim about searching, so it says so.
+  await settle(() => !viewer.searching);
+  const pages = new Set(viewer.searchMatches.map((m) => m.page));
+  const detail =
+    `${viewer.searchMatches.length} matches across ${pages.size} pages`;
+  if (pages.size < 2) {
+    skip(spread, detail);
+    skip(name, detail);
+    return;
+  }
+  check(spread, true, detail);
 
   const start = viewer.searchMatches[0]?.page ?? 0;
   const target = viewer.searchMatches.findIndex((m) => m.page !== start);
@@ -1711,6 +1730,8 @@ async function accessibilityChecks(
     );
   }
 
+  await structureChecks(doc, viewer.accessibleText.elementFor(0));
+
   // Hidden visually, present in the tree. `display:none` and
   // `visibility:hidden` both remove an element from the accessibility tree, so
   // either would make the whole layer do nothing while every other check here
@@ -1802,6 +1823,72 @@ function spokenText(article: HTMLElement | null): string {
   if (!article) return "";
   return flatten(
     [...article.querySelectorAll("p")].map((p) => p.textContent ?? "").join(" "),
+  );
+}
+
+/**
+ * The document's own reading order, where it reaches the tree.
+ *
+ * `structure_probe` already asserts that the tags are read correctly, against a
+ * fixture a different program wrote. What it cannot say is that anything
+ * *consumes* them: the runs travel on `PageText` and the decision to use them is
+ * `usableRuns`, and a wiring mistake anywhere along that path leaves a viewer
+ * that reads the tree perfectly and shows the geometry's answer.
+ *
+ * So the assertion is differential and it is made twice. The same page is laid
+ * out through `readingLines` with the runs and with them stripped, which is the
+ * geometric answer by construction --- and the first check is that those two
+ * *differ*, because on a fixture where they agree the second one is vacuous and
+ * would pass whether or not a single tag was read. The second is that the
+ * paragraphs actually in the accessibility tree are the tagged answer.
+ *
+ * Reading the DOM rather than calling `readingLines` again is the point of the
+ * second one: it is the only thing here that can see the tree being built from
+ * something else.
+ */
+async function structureChecks(
+  doc: DocumentInfo,
+  article: HTMLElement | null,
+): Promise<void> {
+  const names = [
+    "a tagged page's reading order is not the one its geometry gives",
+    "the accessibility tree is built in the order the tags give",
+  ] as const;
+  const text = await new TextCache(doc.id).load(0);
+  const runs = text ? usableRuns(text) : null;
+  if (!text || !runs) {
+    const why = !text
+      ? "the page's text did not arrive"
+      : text.runs && text.runs.length > 0
+        ? "this page's tags do not cover all of its visible text"
+        : "this document carries no structure tree";
+    for (const name of names) skip(name, why);
+    return;
+  }
+
+  /** A page's non-empty lines, in whatever order the text it is given implies. */
+  const lines = (of: PageText): string[] =>
+    readingLines(of)
+      .map((line) => flatten(textOfRanges(of, line.ranges)))
+      .filter((line) => line.length > 0);
+
+  const tagged = lines(text);
+  // Stripped rather than a separate code path: the geometric answer is exactly
+  // what this file's own layer produces for a document with no tags, so there is
+  // no second implementation here to be wrong in its own way.
+  const geometric = lines({ ...text, runs: [] });
+  check(
+    names[0],
+    tagged.length > 0 && tagged.join("\n") !== geometric.join("\n"),
+    `${runs.length} runs, ${tagged.length} lines; tags start "${preview(tagged[0] ?? "")}", ` +
+      `geometry starts "${preview(geometric[0] ?? "")}"`,
+  );
+
+  const spoken = spokenText(article);
+  check(
+    names[1],
+    spoken === flatten(tagged.join(" ")) && spoken !== flatten(geometric.join(" ")),
+    `tree reads "${preview(spoken)}"`,
   );
 }
 
@@ -2518,8 +2605,19 @@ async function appCommandChecks(
     page: 0,
   }).catch(() => null);
   const hasText = (firstPage?.codes.length ?? 0) > 0;
-  const manyPages = () =>
-    doc.page_count > 1 ? null : "this document has one page";
+  /**
+   * Whether a page *after* the first can become the page being read.
+   *
+   * Stronger than "more than one page", and it has to be: the last page cannot
+   * reach the top of the viewport, so on a two-page document stepping forward
+   * lands nowhere and the position stays 0. `nav.goToPage` already carried this
+   * guard; `nav.nextPage` and `nav.previousPage` carried `manyPages` and had
+   * never met a two-page fixture.
+   */
+  const reachablePage = () =>
+    doc.page_count > 2
+      ? null
+      : `page 2 is the last of ${doc.page_count} and cannot reach the top`;
   const withText = () => (hasText ? null : "page 1 has no extractable text");
 
   const zoom = () => viewer.currentZoom.toFixed(3);
@@ -2639,14 +2737,14 @@ async function appCommandChecks(
       from: () => viewer.goToStart(),
       read: page,
       moved: (b, a) => b === "0" && Number(a) > 0,
-      unless: manyPages,
+      unless: reachablePage,
     },
     {
       id: "nav.previousPage",
       from: () => viewer.goToPage(Math.min(1, last)),
       read: page,
       moved: (b, a) => Number(a) < Number(b),
-      unless: manyPages,
+      unless: reachablePage,
     },
     {
       id: "nav.lastPage",
