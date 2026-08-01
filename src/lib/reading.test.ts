@@ -575,3 +575,82 @@ describe("readingBlocks", () => {
     expect(readingBlocks(text).flatMap((b) => b.lines)).toEqual(readingLines(text));
   });
 });
+
+describe("a combining mark", () => {
+  /**
+   * A decomposed word whose letters have **no ascender**, with a second word
+   * after it so a broken line has somewhere wrong to go.
+   *
+   * The geometry is the measured one from `testdata/multilingual.pdf`: the acute
+   * sits above the x-height and its box does not touch the letters' band. Boxes
+   * here are device-space --- y downwards --- so the mark's top is the *smaller*
+   * number, and it therefore sorts ahead of every letter on the line.
+   */
+  function decomposed(): PageText {
+    const letters = (text: string, x: number): [string, [number, number, number, number]][] =>
+      [...text].map((char, at) => {
+        const left = x + at * 10;
+        return [char, [left, 124, left + 10, 134]] as [
+          string,
+          [number, number, number, number],
+        ];
+      });
+    return page([
+      ...letters("resume", 60),
+      // Above the x-height, 0.96pt clear of it: 120.7 to 123.36 against 124 to
+      // 134. No overlap at all, in either direction.
+      ["́", [110, 120.7, 113, 123.36]],
+      [" ", null],
+      // One character-width along, not a column away: at 200 the gap reads as a
+      // gutter and `fragmentsOf` splits the line for that reason instead, which
+      // is a different rule passing a test aimed at this one.
+      ...letters("souvenu", 130),
+      ["́", [190, 120.7, 193, 123.36]],
+    ]);
+  }
+
+  it("does not open a line of its own", () => {
+    // The defect this rule exists for. Before it, this page read as three lines
+    // --- `resume`, the accent alone, and `souvenu` --- and the accessibility tree
+    // announced them that way.
+    expect(linesAs(decomposed())).toEqual(["resumé souvenú"]);
+  });
+
+  it("stays with the character it decorates", () => {
+    // Present *and* in the right place. Attaching it to the following character
+    // would read `resum` `é` the wrong way round, and a check on the line count
+    // alone cannot see that.
+    expect(readsAs(decomposed())).toBe("resumé souvenú");
+  });
+
+  it("is covered by its line's box", () => {
+    // The accent is folded into its base's box rather than merely tolerated, so
+    // hit-testing the line still reaches the top of the accent. 120.7 is above
+    // the letters' own 124.
+    const [line] = readingLines(decomposed());
+    expect(line?.box.top).toBeCloseTo(120.7, 2);
+  });
+
+  it("with no character before it keeps its own band", () => {
+    // A page that opens with a mark has no base for it. Nothing sensible can be
+    // done, and inventing an attachment to the character *after* it would be
+    // wrong in the one direction that reorders text.
+    const text = page([["́", [110, 120.7, 113, 123.36]], ...word("after", 60, 124)]);
+    expect(readsAs(text)).toBe("́after");
+  });
+
+  it("keys on the character rather than on the box", () => {
+    // The control, and it took three attempts to make it able to fail. A rule
+    // keyed on geometry --- a small box, raised --- would catch a superscript,
+    // which is a character in its own right with its own advance width.
+    //
+    // What it cannot be is an *order* assertion. Within one fragment the order is
+    // index order, so a raised digit beside its neighbours reads the same whether
+    // it is a character or a mark, and two arrangements were tried before that
+    // was clear. What does differ is how many lines there are: a digit widened
+    // into the mark class attaches to the character before it, and the line below
+    // disappears into the line above.
+    const text = page([...word("ab", 60, 100), ...word("12", 60, 140)]);
+    expect(linesAs(text)).toEqual(["ab", "12"]);
+  });
+});

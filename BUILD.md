@@ -1234,10 +1234,10 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all eight corpora. Every run reports the same **157 check names**; what differs is how
+Run all nine corpora. Every run reports the same **157 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch. The splits below were measured on 2026-08-01, when the
-tagged corpus and its two checks landed:
+bug this arrangement exists to catch. The splits below were measured on 2026-08-01, with the
+tagged and multilingual corpora both in:
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
@@ -1249,6 +1249,7 @@ tagged corpus and its two checks landed:
 | `rotated-90.pdf` | 137 | 20 | every page at `/Rotate 90`, which nothing else in the corpus has |
 | `columns.pdf` | 135 | 22 | the only one whose content-stream order is not its reading order |
 | `tagged.pdf` | 130 | 27 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 127 | 30 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
 
 **The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
 checks red that had been green on every corpus for a week --- two nav probes guarded on "more
@@ -1256,6 +1257,30 @@ than one page" where the guard has to be "a page that can be reached", and a sea
 cannot tell "the scan restarted" from "there was nothing ahead to find". None was a defect in
 the subject; all three were preconditions written as assertions, and the smallest multi-page
 fixture until then had three pages. See the traps.
+
+**The multilingual corpus paid for itself before it was green.** It found four things, and only
+the first is in the viewer: a search picker written as `/[A-Za-z]{5,}/` matched nothing on a
+Japanese page, so **seventeen** search checks skipped while printing *"page 1 has no extractable
+text"* about a page with forty-nine characters on it --- the checks did not run and the reason
+printed was false. Twelve of them run now, on the same binary. The drag check had no precondition
+for *"there is text where I dragged"* and reported a sparse page as a defect. In the backend,
+`FPDFText_GetUnicode` turned out to be a UTF-16 API, so a code point above the BMP arrived as two
+lone surrogates and was unfindable; and a combining accent on a word with no ascender opened a
+line of its own. See the traps for each.
+
+Its own harness is **`examples/search-probe`**, which is where the search claims live: 60/60 with
+9 not applicable, against a manifest a different program wrote. Run it directly, since it needs no
+webview:
+
+```sh
+cargo run --release --example search-probe -- --file ../testdata/multilingual.pdf
+```
+
+Nineteen queries, and the manifest labels each count as **stated** (from what the generator wrote),
+**measured** (a property of PDFium this corpus established --- that Arabic presentation forms come
+back as base letters) or **decided** (a product decision, such as `strasse` not finding `Straße`).
+Conflating the three is how a measurement comes to read as a specification, so a change to a
+`decided` count has to be argued for rather than absorbed.
 
 **Compare the name *sets*, not the counts, and slice the name by column.** Every label is
 exactly six characters --- `[OK]  `, `[FAIL]`, `[SKIP]` --- so the name begins at column 7

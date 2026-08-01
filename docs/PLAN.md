@@ -1385,8 +1385,47 @@ Two items here are quietly large and should not be estimated as viewer polish: *
 across a large multilingual document** with malformed encodings and custom CMaps, and
 **cross-platform printing**.
 
+The first has now had its corpus — see *Multilingual search* below — and the second is done
+on both platforms.
+
 **Exit criterion:** tpdf is the daily default for reading. If it is not, it is not
 finished.
+
+#### Multilingual search — corpus done 2026-08-01
+
+`testdata/multilingual.pdf`, four pages with one property each, and `examples/search-probe`
+as its harness (60/60, 9 not applicable). It is the ninth viewer corpus and the only one whose
+text is not Latin.
+
+**It found two defects in the product and two in the harness**, which is the whole argument for
+building it: every fixture the search code had seen until now was English, written by us, in one
+script.
+
+- `FPDFText_GetUnicode` is a UTF-16 API, so a code point above the BMP arrived as two lone
+  surrogates. `char::from_u32` refuses both, the fold dropped them, and a CJK Extension B
+  ideograph was **unfindable while plainly visible on the page**. `codes` is documented as one
+  scalar per index and now is one.
+- A combining accent sits above the x-height, so on a word with no ascender its box does not
+  touch the line it belongs to. `resumé` written decomposed read as three lines.
+- `viewer_check.py`'s word picker was `/[A-Za-z]{5,}/`, so seventeen search checks skipped on a
+  Japanese page while claiming the page had no extractable text.
+- The drag check had no precondition for "there is text where I dragged".
+
+**Two things it established about PDFium, both the opposite of the assumption**: presentation
+forms come back as base letters, so a base-letter query finds shaped Arabic and a
+presentation-form query finds nothing; and logical order is recovered from a right-to-left run,
+so a reader's query in reading order matches.
+
+**What is still open is a decision, not a gap.** The fold lowercases and does not case-fold, so
+`strasse` does not find `Straße`, `istanbul` does not find `İstanbul`, and Greek `οδος` finds
+neither spelling — one cause, three reader-visible consequences, each recorded in the manifest as
+a `decided` count. Case folding fixes all three and needs a dependency, and it also folds `ﬁ` to
+`fi`, which `search.rs` says outright it does not do. That is a decision about what a highlight
+may cover.
+
+**What the corpus does not cover**: malformed encodings, and predefined CMaps such as
+`UniJIS-UCS2-H`. Every page here carries a correct `/ToUnicode`, which is the well-behaved case;
+a producer that emits a broken one is the other half of the Phase 1 sentence above.
 
 #### Cancellable rendering — done 2026-07-27
 

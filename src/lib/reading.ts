@@ -245,6 +245,40 @@ interface Placed {
 }
 
 /**
+ * A nonspacing or enclosing combining mark: `\p{Mn}` or `\p{Me}`.
+ *
+ * Not a character in its own right. It has no advance width, it is drawn over
+ * the character before it, and the two are one grapheme --- so the reader who
+ * typed `resumé` typed one thing, however many code points the producer stored.
+ */
+const COMBINING = /^[\p{Mn}\p{Me}]$/u;
+
+/**
+ * Whether a code is a mark that belongs to the character before it.
+ *
+ * The alternative was a geometric rule, and it cannot work. An acute accent sits
+ * **above the x-height**, so on a word with no ascender its box does not touch
+ * the band it belongs to at all: measured on `testdata/multilingual.pdf`, U+0301
+ * at 718.64--721.30 against an `e` at 707.80--717.68, which is a 0.96 pt gap and
+ * no overlap. {@link sameBand} requires overlap before it will consider anything,
+ * and it is right to --- the short-mark clause exists for a comma that *dips into*
+ * the line, and loosening it to bridge a gap would start joining a mark to the
+ * line above it in tightly leaded text.
+ *
+ * So `resumé` decomposed came back as three lines: `resume`, the accent alone,
+ * and the rest. Read aloud, and copied, exactly like that. `café` did **not**,
+ * which is why this needed a second fixture line: the `f` reaches up to 721.30
+ * and drags the band into contact with the accent, so a word with an ascender
+ * hides the defect completely.
+ *
+ * Unicode already answers the question the geometry cannot, and it answers it
+ * about the *character* rather than about where the producer drew it.
+ */
+function combining(code: number): boolean {
+  return COMBINING.test(String.fromCodePoint(code));
+}
+
+/**
  * The page's characters as fragments: runs that sit together on one line.
  *
  * Built by position rather than by index, which is the whole difference from
@@ -265,10 +299,23 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
   let last = -1;
   for (let index = 0; index < text.codes.length; index++) {
     const box = charQuad(text, index);
-    if (!placed(box)) {
+    // A mark is attached the same way an unplaced character is --- it stays in
+    // the ranges, so nothing is dropped --- and its box is folded into the
+    // character it decorates, so the line's box still covers the accent. A mark
+    // with nothing before it has no base to join and keeps its own band, which
+    // is the honest answer for a document that starts a page with one.
+    const mark = last >= 0 && combining(text.codes[index] ?? 0);
+    if (!placed(box) || mark) {
       const at = trailing.get(last) ?? [];
       at.push(index);
       trailing.set(last, at);
+      if (mark && placed(box)) {
+        const base = items[items.length - 1];
+        if (base) {
+          absorb(base.box, box);
+          base.extents = extentsOf(base.box, axes);
+        }
+      }
       continue;
     }
     items.push({ index, box, extents: extentsOf(box, axes) });
