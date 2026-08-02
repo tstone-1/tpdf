@@ -45,6 +45,16 @@ in the first place --- is one of them, so dropping `--examples` would silently
 narrow the gate back to the state it was added to fix, and the only target left
 under `--bins` is the app itself.
 
+`notices` runs **last, and must**: it reads `dist/assets/*.js.map` to find which npm
+packages the bundler actually put in the shipped output, so it needs the `build`
+gate above it to have run. It is two checks in one command -- that
+`THIRD-PARTY-NOTICES.md` still matches what the dependency tree would generate,
+which is the binary-distribution obligation, and that no GPL, LGPL or AGPL
+licence has appeared anywhere. The second half covers a population `cargo
+metadata` structurally cannot see: the fourteen C++ libraries compiled into
+libpdfium, enumerated from `vendor/pdfium/licenses/`. All three of its failure
+modes were proved by mutation before it was trusted.
+
 `vitest` covers the front-end logic that has an answer which can be *wrong*
 rather than merely ugly -- currently command ranking. Behaviour that needs a
 document and a window is asserted by `scripts/viewer_check.py` instead, which is
@@ -129,6 +139,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "build",
             [npm(), "run", "build"],
             "the frontend does not build",
+        ),
+        (
+            "notices",
+            [sys.executable, str(REPO / "scripts" / "third_party_notices.py"), "--check"],
+            "THIRD-PARTY-NOTICES.md is stale, or a forbidden licence appeared",
         ),
     ]
 

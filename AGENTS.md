@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 206 entries
+The one thing this file does *not* carry in full is the trap list --- 208 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -63,17 +63,31 @@ merely close a door, it would contradict the licence already granted to everyone
 cloned this. Do not introduce one. If a copyleft library ever looks necessary, raise it as
 a decision rather than adding it.
 
-Two obligations follow from shipping binaries rather than only source. PDFium is
-BSD-3-Clause and the crate tree is MIT / Apache-2.0, and **both require their notices to be
-reproduced in binary distributions**. That notice file **does not exist yet** and is a
-blocker on the first release, not on the repository being public --- nothing is distributed
-as a binary today. It should be generated from `cargo metadata` plus the registry's licence
-texts rather than hand-maintained, because a hand-written one is wrong the first time a
-dependency changes and nothing says so.
+Two obligations follow from shipping binaries rather than only source, and both are now
+executable rather than written down. `THIRD-PARTY-NOTICES.md` reproduces the notices a
+binary distribution requires, `scripts/third_party_notices.py` generates it, it ships inside
+both installers, and the `notices` gate fails on a stale file or a forbidden licence. Do not
+edit it by hand; a hand-maintained notices file is wrong the first time a dependency changes
+and nothing says so.
 
-And a new dependency's licence is checked with `cargo metadata` over the whole tree, never
-read off the crate's README; the sweep looks for the copyleft families by name across all
-531 packages.
+**The `cargo metadata` sweep this file has recommended since the beginning is real and
+structurally incomplete, and the gap is the whole product.** It sees 531 cargo packages. It
+is blind to the **fourteen C++ libraries compiled into libpdfium** --- FreeType, ICU,
+libjpeg-turbo, libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float,
+simdutf, llvm-libc --- because no cargo command can see inside a prebuilt blob, and that
+blob is the thing that actually parses PDFs. A sweep complete over cargo and silent about
+everything else passes exactly like one that covered everything, which is the
+consistency-versus-completeness trap arriving in the licensing constraint that the entire
+project rests on. The gate now enumerates `vendor/pdfium/licenses/` as a third population,
+so a new file appearing there is a finding.
+
+Two GPL strings live in there and both are benign; they are allowlisted **by file and by
+mechanism** in the script, never inferred, and an entry naming a file that has gone produces
+a warning rather than silently excusing nothing. `icu.txt` covers ICU4C's autotools scripts
+under the Autoconf exception, which are build-time files of a library we consume prebuilt;
+`llvm-libc.txt` is Apache-2.0 WITH LLVM-exception, whose GPLv2 clause *waives* Apache terms
+rather than imposing GPL ones. All three of the gate's failure modes were proved by mutation
+before it was trusted.
 
 ### Redaction must be genuine
 
@@ -629,7 +643,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 206 of them and the full text
+titles. Only the titles are here, because there are 208 of them and the full text
 was 93% of this file --- an instruction budget spent on the 205 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -801,6 +815,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A guard for "more than one page" is not a guard for "a page that can be reached"
 - A wrap is correct when there is nothing ahead, so the check cannot fire
 - A check with no precondition reports a sparse fixture as a defect
+- A test that refuses an empty fixture set is what makes CI's absence visible
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -837,6 +852,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mutation aimed at one branch when the fixture only reaches the other
 
 ### Windows and portability
+- The gates had never run on the platform where they fail
 - A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
 - An uninhabited type carries its impossibility into every caller
 - A `null` that means "inferred" is not a `null` that means "unknown"

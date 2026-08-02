@@ -61,6 +61,47 @@ single "initial release" line.
   blocks the first release rather than the repository being public. `BUILD.md` step 6
   exists for this exact failure and it still took writing the sentence twice to catch it.
 
+### Third-party notices, and what CI found on its first run
+
+- **`THIRD-PARTY-NOTICES.md`** and `scripts/third_party_notices.py` that generates it ---
+  325 crates, 4 npm packages and 16 PDFium components --- shipped inside both installers as
+  a bundle resource. This is the binary-distribution obligation that a root `LICENSE`
+  satisfies nothing of, and it is now the ninth gate rather than a step someone remembers.
+- **The licensing sweep this project rests on was structurally incomplete, and the gap was
+  the part that parses PDFs.** `cargo metadata` sees 531 packages and cannot see inside a
+  prebuilt blob, so the **fourteen C++ libraries compiled into libpdfium** --- FreeType,
+  ICU, libjpeg-turbo, libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float,
+  simdutf, llvm-libc --- had never been checked against "no AGPL or GPL, ever". They are now,
+  from `vendor/pdfium/licenses/`. Two GPL strings are in there and both are benign:
+  `icu.txt` covers ICU4C's autotools scripts under the Autoconf exception, and
+  `llvm-libc.txt` is Apache-2.0 WITH LLVM-exception, whose GPLv2 clause *waives* Apache
+  terms rather than imposing GPL ones. Allowlisted by file and by mechanism, with a warning
+  if an entry names a file that has gone.
+- **The npm half was a guess and is now a measurement.** The first draft named the shipping
+  packages by hand and was wrong in both directions --- `tslib` is not emitted at all, and
+  `esm-env` is, as a Svelte transitive marked `"dev": true`. It produced the right *count*,
+  four, which is the part worth keeping: a total that matches is not evidence that the set
+  matches. It now reads `dist/assets/*.js.map`, the bundler's own account of what it emitted.
+- All three of the gate's failure modes were proved by mutation before it was trusted, and
+  the script was restored by byte digest afterwards rather than by eye.
+
+- **`.github/workflows/ci.yml` ran for the first time and failed on both platforms, for two
+  unrelated and both correct reasons.**
+- **Windows had been broken for two days.** `examples/ocr_probe.rs` imported
+  `tpdf_lib::ocr_vision` unconditionally, and that module is `#[cfg(target_os = "macos")]`
+  --- so clippy, `cargo test` and `cargo build --examples` all failed there while the same
+  commit showed 9/9 on a Mac. Gates run where you are standing, and a green sweep is a
+  statement about one machine that reads exactly like a statement about the product. Fixed
+  with the repository's established shape: a refusing `main`, a dispatching `main`, and the
+  body in `src/probes/ocr_probe.rs` reached by `#[path]`. `ocr-probe` still passes 6/6 on
+  macOS after the move.
+- **macOS failed because a test did its job.** `print.rs`'s third-parser check asserts
+  `examined > 0` so that six `[SKIP]` lines cannot pass as six successes, and CI generated
+  no fixtures. `ci.yml` now generates the two dependency-free ones and **states in the
+  workflow which it deliberately does not** --- the fonttools ones embed a per-runner system
+  font, and `make_incremental_pdf.py` writes ~550 MB on purpose.
+- 2 new traps, 208 in the index.
+
 ### Phase 1 --- case folding in search
 
 - **The fold case-folds rather than lowercasing.** `char::to_lowercase` is the operation for
