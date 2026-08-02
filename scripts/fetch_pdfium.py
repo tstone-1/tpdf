@@ -29,11 +29,31 @@ Usage:
     scripts/fetch_pdfium.py --force         # reinstall even if correct
     scripts/fetch_pdfium.py --platform win-x64 --dest vendor/pdfium-win
 
-Installing writes `VERSION.txt` (the upstream tag) and `SHA256.txt` (the digest
-and asset name) beside the extracted tree, so an install can be checked later
-without the network. Note the archive itself carries neither -- it ships a
-`VERSION` file of MAJOR/MINOR/BUILD/PATCH lines -- which is why the two are
-written here.
+Installing writes `VERSION.txt` (the upstream tag) and `SHA256.txt` beside the
+extracted tree, so an install can be checked later without the network. Note the
+archive itself carries neither -- it ships a `VERSION` file of
+MAJOR/MINOR/BUILD/PATCH lines -- which is why the two are written here.
+
+`SHA256.txt` has **two** lines, and the second is what makes `--check` a
+statement about the library rather than about the stamp:
+
+    <sha256>  pdfium-win-x64.tgz      the archive, compared against PINS
+    <sha256>  bin/pdfium.dll          the extracted library, re-hashed on check
+
+Only the first existed until 2026-08-02, and the only other fact `--check` had
+about the tree was that *something* matching `*pdfium*` sat in `lib/` or `bin/`.
+On Windows `lib/pdfium.dll.lib` is an import library and satisfies that glob on
+its own, so deleting or replacing `bin/pdfium.dll` -- the C++ blob that parses
+every hostile document -- left the gate green. This file's own docstring already
+promised otherwise; the promise is now kept rather than reworded. It is the trap
+*"A directory that exists is not the library you need"* arriving inside the
+script whose docstring names that very function as the one getting it wrong.
+
+What the second line can and cannot say, stated so nobody reads more into it:
+the library digest is not pinned in `PINS` -- only the archive is -- so it
+catches a library that **changed after install**, which is deletion, corruption
+or a swap, and it inherits its provenance from the archive check that admitted
+those bytes. A stamp on its own is still worth nothing.
 
 Bumping the pin means changing TAG and the whole PINS table together, then
 re-running the checks AGENTS.md attaches to a PDFium bump: `remove_probe` for
@@ -104,22 +124,59 @@ def library_path(key: str) -> str:
     return "bin/pdfium.dll" if key.startswith("win") else "lib/libpdfium.dylib"
 
 
-def installed_digest(dest: Path) -> "str | None":
-    """Reads the digest a previous install recorded, if it is still coherent.
+def file_digest(path: Path) -> str:
+    """Returns the sha256 of a file, streamed a megabyte at a time."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
 
-    Returns None when nothing is installed, when SHA256.txt is missing or
-    malformed, or when the library it claims to describe is not there -- a
-    stamp without the artefact it stamps is worth nothing, and treating it as
-    an install is how a half-deleted vendor tree survives a --check.
+
+def read_stamp(dest: Path) -> "tuple[str, str | None, str | None] | None":
+    """Reads SHA256.txt as (archive digest, library digest, library path).
+
+    Returns None when there is no stamp or its first line is not a digest --
+    i.e. when there is nothing here that claims to be an install at all.
+
+    The last two are None for a stamp written before the library line existed.
+    That case is honoured rather than rejected, and `check` says so out loud:
+    treating an old stamp as "no install" would fail the gate on every machine
+    holding a perfectly good tree fetched last month, which is a checker
+    breaking working installs rather than finding broken ones.
     """
     stamp = dest / "SHA256.txt"
     if not stamp.is_file():
         return None
-    if not any(any((dest / d).glob("*pdfium*")) for d in ("lib", "bin")):
+
+    lines = stamp.read_text(encoding="utf-8").splitlines()
+    first = lines[0].split() if lines else []
+    if not first or len(first[0]) != 64:
         return None
 
-    first = stamp.read_text(encoding="utf-8").split("\n", 1)[0].split()
-    return first[0] if first and len(first[0]) == 64 else None
+    second = lines[1].split() if len(lines) > 1 else []
+    if len(second) == 2 and len(second[0]) == 64:
+        return first[0], second[0], second[1]
+    return first[0], None, None
+
+
+def installed_complete(key: str, dest: Path) -> bool:
+    """True when `dest` holds a pin-matching install with an intact library.
+
+    Deliberately stricter than `check`: it also requires the library digest
+    line, so re-running the installer over a stamp written before that line
+    existed replaces the tree and records one, instead of leaving the weaker
+    check in place for as long as the machine lives.
+    """
+    stamp = read_stamp(dest)
+    if stamp is None:
+        return False
+
+    archive, recorded, name = stamp
+    library = dest / library_path(key)
+    if archive != PINS[key] or recorded is None or name != library_path(key):
+        return False
+    return library.is_file() and file_digest(library) == recorded
 
 
 def download(url: str, target: Path) -> str:
@@ -172,7 +229,7 @@ def install(key: str, dest: Path, force: bool) -> int:
     if "v8" in asset:
         sys.exit(f"[FAIL] refusing a V8 build: {asset}")
 
-    if not force and installed_digest(dest) == expected:
+    if not force and installed_complete(key, dest):
         print(f"[OK] pdfium {TAG} {key} already installed at {dest}")
         return 0
 
@@ -204,7 +261,13 @@ def install(key: str, dest: Path, force: bool) -> int:
             sys.exit(f"[FAIL] {asset} contains no {library_path(key)}")
 
         (staging / "VERSION.txt").write_text(f"{TAG}\n", encoding="utf-8")
-        (staging / "SHA256.txt").write_text(f"{expected}  {asset}\n", encoding="utf-8")
+        # Two lines: the archive, and the library extracted from it. The second
+        # is hashed here, while the bytes are still the ones the pinned archive
+        # produced and nothing else has been near them.
+        (staging / "SHA256.txt").write_text(
+            f"{expected}  {asset}\n{file_digest(library)}  {library_path(key)}\n",
+            encoding="utf-8",
+        )
 
         # Swap late: the old tree stays usable until the new one is complete.
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -218,18 +281,81 @@ def install(key: str, dest: Path, force: bool) -> int:
 
 
 def check(key: str, dest: Path) -> int:
-    """Verifies the install matches the pin, without the network."""
-    actual = installed_digest(dest)
-    if actual is None:
+    """Verifies the install matches the pin, without the network.
+
+    Three questions, and until 2026-08-02 this asked only the first: is the
+    recorded archive the pinned one, is the loadable library actually there,
+    and is it still the library that was extracted. The second is asked about
+    `library_path(key)` by name rather than about a directory or a glob, for
+    the reason the module docstring gives.
+    """
+    stamp = read_stamp(dest)
+    if stamp is None:
         print(f"[FAIL] no pdfium install at {dest}", file=sys.stderr)
         print("       Run scripts/fetch_pdfium.py", file=sys.stderr)
         return 1
-    if actual != PINS[key]:
+
+    archive, recorded, name = stamp
+    library = dest / library_path(key)
+
+    if archive != PINS[key]:
         print(f"[FAIL] {dest} is not the pinned build", file=sys.stderr)
         print(f"       expected {PINS[key]} ({TAG} {key})", file=sys.stderr)
-        print(f"       recorded {actual}", file=sys.stderr)
+        print(f"       recorded {archive}", file=sys.stderr)
         return 1
-    print(f"[OK] pdfium {TAG} {key} verified at {dest}")
+
+    if not library.is_file():
+        print(
+            f"[FAIL] {dest} has a stamp and no library: {library_path(key)} "
+            "is missing.\n"
+            "       A stamp without the artefact it stamps is worth nothing. "
+            "Run\n       scripts/fetch_pdfium.py --force",
+            file=sys.stderr,
+        )
+        return 1
+
+    if recorded is None:
+        # An install predating the library line. The tree is the one the pinned
+        # archive produced -- that was checked when it was fetched -- so this is
+        # not a failure, but the check is the weaker one and has to say which
+        # check it just ran. Refusing here would turn a good tree on a machine
+        # that fetched it last month into a red gate.
+        print(
+            f"[WARN] {dest}/SHA256.txt predates the library digest line, so "
+            "this run\n       verified that "
+            f"{library_path(key)} exists, not that it is unaltered.\n"
+            "       Run scripts/fetch_pdfium.py to re-fetch and record it.",
+            file=sys.stderr,
+        )
+        print(f"[OK] pdfium {TAG} {key} present at {dest} (archive pin matches)")
+        return 0
+
+    if name != library_path(key):
+        print(
+            f"[FAIL] {dest} is stamped for {name}, but {key} loads "
+            f"{library_path(key)}.\n"
+            "       This tree was installed for a different platform.",
+            file=sys.stderr,
+        )
+        return 1
+
+    actual = file_digest(library)
+    if actual != recorded:
+        print(
+            f"[FAIL] {library_path(key)} is not the library that was installed",
+            file=sys.stderr,
+        )
+        print(f"       recorded {recorded}", file=sys.stderr)
+        print(f"       on disk   {actual}", file=sys.stderr)
+        print(
+            "       The archive digest still matches the pin, so the stamp is "
+            "the pinned\n       build and the library beside it is not. Run "
+            "scripts/fetch_pdfium.py --force.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"[OK] pdfium {TAG} {key} verified at {dest} ({library_path(key)} unaltered)")
     return 0
 
 

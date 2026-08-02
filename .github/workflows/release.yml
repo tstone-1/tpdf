@@ -24,6 +24,25 @@ name: Release
 # repository spends most of its documentation on.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# ACTION SUPPLY CHAIN. This job runs with `contents: write` and the six APPLE_*
+# secrets in scope, so every action here executes beside the signing key and the
+# App Store Connect key -- and `APPLE_API_KEY_P8` is the one credential in the
+# portfolio Apple issues exactly once.
+#
+# A tag is not a version. It is a pointer its owner may repoint at any commit,
+# so `@v0` grants that owner, and anyone who takes their account, the ability to
+# run code in this job at a time of their choosing. Every action is therefore
+# pinned by **commit SHA**, with the tag it was resolved from in the comment
+# beside it. The comment is for humans; the SHA is the pin. To bump one, resolve
+# the tag again -- `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha` -- and
+# check the SHA belongs to that repository before writing it down.
+#
+# The fork threat model in `ci.yml` covers the other direction (untrusted code
+# arriving as a pull request). This is the direction it does not: trusted code
+# arriving under a name that has not changed.
+# ---------------------------------------------------------------------------
+
 on:
   push:
     tags:
@@ -46,9 +65,9 @@ jobs:
         platform: [macos-latest, windows-2025]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (v5.0.0)
         with:
           node-version: 24
           cache: npm
@@ -63,7 +82,7 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup show
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (v2.9.1 + a changelog commit)
         with:
           workspaces: src-tauri
 
@@ -111,9 +130,9 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (v5.0.0)
         with:
           node-version: 24
           cache: npm
@@ -128,7 +147,7 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup show
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (v2.9.1 + a changelog commit)
         with:
           workspaces: src-tauri
 
@@ -210,7 +229,7 @@ jobs:
             || { echo "::error::vendored PDFium lacks the hardened runtime"; exit 1; }
 
       - name: Build and publish release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (action-v0.6.2)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

@@ -40,4 +40,7 @@ testdata/columns-manifest.json
 testdata/tagged-manifest.json
 testdata/multilingual-manifest.json
 testdata/encodings-manifest.json
+# Not "-manifest.json" on purpose: viewer_check.py binds that suffix to the
+# reading-order check, and the mixed fixture makes no claim about reading order.
+testdata/mixed-geometry.json
 __pycache__/

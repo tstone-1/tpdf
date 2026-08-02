@@ -31,6 +31,14 @@
 //! depth, a bounded number of elements, and **the truncation is reported**, so a
 //! document that hits a bound is not silently shown a partial reading order.
 //!
+//! Bounding the *walk* is not the same as bounding the *work*, and the tree
+//! multiplies two things the walk does not visit. Each element states how many
+//! marked-content ids it has, and following one costs a scan of every character
+//! on the page --- so elements x marks x characters is the real cost and the walk
+//! bounds only the first factor. [`MAX_MARKS`] and [`MAX_RUNS`] bound the other
+//! two, page-wide rather than per element, and both report through the same
+//! truncation flag: a bound is a bound whichever one was reached.
+//!
 //! ## What it does not do
 //!
 //! It reports the order and the element types. It does not interpret them --- a
@@ -53,6 +61,28 @@ const MAX_DEPTH: usize = 32;
 /// bounds a hostile document without touching a real one. A 775-page manual's
 /// structure tree is thousands of elements *in total*, and this is per page.
 const MAX_ELEMENTS: usize = 10_000;
+
+/// Most marked-content ids the walk will follow, over the whole page.
+///
+/// A budget for the page rather than a limit per element, and that is the whole
+/// of it: following one id costs a full [`spans_of`] scan of the page's
+/// characters, so a per-element limit would still be multiplied by
+/// [`MAX_ELEMENTS`] and the expensive product --- elements x marks x characters
+/// --- would stay unbounded with every factor in it named. The count an element
+/// reports is the file's to choose and nothing else checks it.
+///
+/// Ten thousand is generous against a real page: a tagged paragraph is one id,
+/// a table cell is one, and a dense page spends a few hundred.
+const MAX_MARKS: usize = 10_000;
+
+/// Most runs the walk will keep.
+///
+/// Memory rather than time, and it needs its own bound because the two are not
+/// the same limit: one id can name characters all over the page, so a single
+/// mark within the budget above can produce arbitrarily many spans, and each one
+/// clones the path it sits under --- a `Vec<String>` per run. Nothing honest has
+/// ten thousand separately-tagged fragments on one page.
+const MAX_RUNS: usize = 10_000;
 
 /// Longest element type accepted, in UTF-16 code units.
 ///
@@ -193,11 +223,14 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageStru
 
     let mut walk = Walk {
         bindings: tree.bindings,
-        of_char: &of_char,
-        codes: &codes,
-        runs: Vec::new(),
+        found: Found {
+            of_char: &of_char,
+            codes: &codes,
+            runs: Vec::new(),
+            marks: 0,
+            truncated: false,
+        },
         visited: 0,
-        truncated: false,
     };
 
     // SAFETY: `tree.handle` is non-null and owned by `tree`.
@@ -214,16 +247,33 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageStru
         }
     }
 
-    let mut claimed = 0u32;
-    for run in &walk.runs {
-        claimed += run.end - run.start;
-    }
+    let Found {
+        runs, truncated, ..
+    } = walk.found;
     Ok(PageStructure {
-        runs: walk.runs,
+        untagged_chars: untagged(chars, &runs),
+        runs,
         chars,
-        untagged_chars: chars.saturating_sub(claimed),
-        truncated: walk.truncated,
+        truncated,
     })
+}
+
+/// Characters no run claims.
+///
+/// The sum is `u64` and the subtraction saturates, because neither operand is
+/// ours: a run is as wide as the document's own marked content and there can be
+/// [`MAX_RUNS`] of them, and two elements naming the same id claim the same
+/// characters twice, so the total can pass the index space the addends live in.
+/// A `u32` sum panics there in debug and wraps in release --- and the wrap is the
+/// one to spend a bound on, because a wrapped total reports a page as *more*
+/// tagged than it is, which quietly removes text from a reading order rather
+/// than obviously breaking one.
+fn untagged(chars: u32, runs: &[TaggedRun]) -> u32 {
+    let claimed: u64 = runs
+        .iter()
+        .map(|run| u64::from(run.end.saturating_sub(run.start)))
+        .sum();
+    chars.saturating_sub(u32::try_from(claimed).unwrap_or(u32::MAX))
 }
 
 /// Owns the tree handle so it is closed on every path out, panics included.
@@ -243,11 +293,63 @@ impl Drop for TreeHandle {
 /// The state a depth-first walk carries.
 struct Walk<'a> {
     bindings: Bindings,
+    found: Found<'a>,
+    visited: usize,
+}
+
+/// What the walk has found, and the two bounds on how much more it may find.
+///
+/// Split out of [`Walk`] because it holds no PDFium: a [`Walk`] carries
+/// [`Bindings`], which is a loaded library, so a bound tested through one could
+/// only be reached by finding a document that has ten thousand of something.
+/// Everything the bounds govern happens in [`Found::mark`], and the tests drive
+/// **that** function rather than a copy of it --- the same reason [`spans_of`]
+/// is a free function.
+struct Found<'a> {
     of_char: &'a [i32],
     codes: &'a [u32],
     runs: Vec<TaggedRun>,
-    visited: usize,
+    /// Marked-content ids followed so far, over the whole page. See [`MAX_MARKS`].
+    marks: usize,
     truncated: bool,
+}
+
+impl Found<'_> {
+    /// Emits the runs one marked-content id claims, or reports a bound stopping.
+    ///
+    /// `false` means this element has nothing further to contribute and its
+    /// caller should stop asking. Both bounds are page-wide, so a `false` here is
+    /// final rather than local --- every later call would answer the same way,
+    /// and continuing to ask is only cheaper than not asking.
+    ///
+    /// The budget is charged before `mcid` is looked at, so an element declaring
+    /// two billion ids that all name nothing is bounded too. That is the shape a
+    /// hostile file would take: the run cap cannot fire on marks that claim no
+    /// characters, and the loop asking for them is otherwise as long as the file
+    /// says it is.
+    fn mark(&mut self, mcid: i32, tag: &str, path: &[String]) -> bool {
+        if self.marks >= MAX_MARKS {
+            self.truncated = true;
+            return false;
+        }
+        self.marks += 1;
+        if mcid < 0 {
+            return true;
+        }
+        for (start, end) in spans_of(self.of_char, self.codes, mcid) {
+            if self.runs.len() >= MAX_RUNS {
+                self.truncated = true;
+                return false;
+            }
+            self.runs.push(TaggedRun {
+                tag: tag.to_owned(),
+                path: path.to_vec(),
+                start,
+                end,
+            });
+        }
+        true
+    }
 }
 
 impl Walk<'_> {
@@ -258,7 +360,7 @@ impl Walk<'_> {
     /// contains a `/Span` reads.
     fn element(&mut self, element: FPDF_STRUCTELEMENT, path: &mut Vec<String>, depth: usize) {
         if depth >= MAX_DEPTH || self.visited >= MAX_ELEMENTS {
-            self.truncated = true;
+            self.found.truncated = true;
             return;
         }
         self.visited += 1;
@@ -277,16 +379,12 @@ impl Walk<'_> {
                 self.bindings
                     .FPDF_StructElement_GetMarkedContentIdAtIndex(element, index)
             };
-            if mcid < 0 {
-                continue;
-            }
-            for (start, end) in spans_of(self.of_char, self.codes, mcid) {
-                self.runs.push(TaggedRun {
-                    tag: tag.clone(),
-                    path: path.clone(),
-                    start,
-                    end,
-                });
+            // The count above is the document's claim and nothing bounds it, so
+            // the loop is left to the budget rather than clamped here: the first
+            // refusal ends it, and it is page-wide so a later element cannot
+            // start a fresh one.
+            if !self.found.mark(mcid, &tag, path) {
+                break;
             }
         }
 
@@ -472,6 +570,87 @@ mod tests {
         // it is *marked*, so it belongs to element 3 and bridging over it would
         // move another element's characters into this one's run.
         assert_eq!(walk_with_gaps(&[7, 3, 7], "a b"), vec![(0, 1), (2, 3)]);
+    }
+
+    /// A [`Found`] over a page, ready to be driven a mark at a time.
+    ///
+    /// The bounds are reached by calling the real [`Found::mark`], not by a
+    /// document that has ten thousand of anything: what they bound is that
+    /// function, and a fixture large enough to reach them through PDFium would
+    /// mostly be testing the fixture generator.
+    fn found<'a>(of_char: &'a [i32], codes: &'a [u32]) -> Found<'a> {
+        Found {
+            of_char,
+            codes,
+            runs: Vec::new(),
+            marks: 0,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn the_mark_budget_stops_a_page_that_keeps_offering_them() {
+        // Every mark here claims nothing, which is the case the run cap cannot
+        // see: no run is pushed, so only the budget can end this. An element is
+        // free to declare two billion marked-content ids, and each one costs a
+        // scan of the page whether or not it turns out to name a character.
+        let of_char = [3, 3, 3];
+        let codes = ['x' as u32; 3];
+        let mut found = found(&of_char, &codes);
+        for spent in 0..MAX_MARKS {
+            assert!(found.mark(7, "P", &[]), "stopped after {spent}");
+        }
+        assert!(!found.truncated, "nothing has been cut yet");
+        assert!(!found.mark(7, "P", &[]), "the budget is spent");
+        assert!(found.truncated, "and spending it is a truncation");
+    }
+
+    #[test]
+    fn the_run_cap_stops_one_mark_that_fragments_the_whole_page() {
+        // One id, alternating with characters belonging to another, so a single
+        // call produces a span per pair. This is the memory bound rather than
+        // the time one: each run clones the path it sits under, and the budget
+        // above would let this happen ten thousand times over.
+        let of_char: Vec<i32> = (0..(MAX_RUNS + 1) * 2)
+            .map(|at| if at % 2 == 0 { 7 } else { 3 })
+            .collect();
+        let codes: Vec<u32> = of_char.iter().map(|_| 'x' as u32).collect();
+        let mut found = found(&of_char, &codes);
+        let path = vec!["Document".to_owned(), "P".to_owned()];
+        assert!(!found.mark(7, "P", &path), "the cap stops it mid-mark");
+        assert_eq!(found.runs.len(), MAX_RUNS);
+        assert!(found.truncated);
+    }
+
+    #[test]
+    fn a_mark_within_both_bounds_is_kept_whole() {
+        // The control for the two above. A cap that fired early would satisfy
+        // them just as well, and this is the page they must not touch.
+        let of_char = [7, 7, 3, 7];
+        let codes = ['x' as u32; 4];
+        let mut found = found(&of_char, &codes);
+        assert!(found.mark(7, "P", &["P".to_owned()]));
+        assert_eq!(found.runs.len(), 2);
+        assert!(!found.truncated);
+    }
+
+    #[test]
+    fn a_claimed_total_past_the_index_space_does_not_wrap() {
+        // Wider runs than a page can hold, and deliberately so: `untagged` adds
+        // up numbers the document chose, over a count of runs the document
+        // influences, and it must not depend on either being small. A `u32` sum
+        // panics here in debug and wraps in release --- and the wrap is the
+        // dangerous half, because it reports the page as *more* tagged than it
+        // is, which removes text from a reading order without saying so.
+        let run = |start, end| TaggedRun {
+            tag: "P".to_owned(),
+            path: Vec::new(),
+            start,
+            end,
+        };
+        assert_eq!(untagged(10, &[run(0, u32::MAX), run(0, u32::MAX)]), 0);
+        // The control: it is still arithmetic, not a clamp to zero.
+        assert_eq!(untagged(10, &[run(0, 4)]), 6);
     }
 
     /// A structure with `count` runs, truncated or not.

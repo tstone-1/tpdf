@@ -31,6 +31,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { pause, Report, settle as settleFor } from "./checkreport";
+import { basename } from "./paths";
 import type { Viewer } from "./viewer";
 
 /** How long any single wait may take before the check gives up. */
@@ -152,7 +153,7 @@ function windowKey(k: string, shift = false): void {
 function describe(host: SessionCheckHost): string {
   const viewer = host.viewer();
   if (!viewer) return "no document open";
-  const file = host.path().split("/").pop() ?? "";
+  const file = basename(host.path());
   return (
     `${file} page ${viewer.position.page} zoom ${viewer.currentZoom.toFixed(2)} ` +
     `turns ${viewer.rotation} sidebar ${host.sidebarShown() ? "open" : "closed"}` +

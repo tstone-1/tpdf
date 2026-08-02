@@ -38,11 +38,14 @@
 //! ## Where the document is actually parsed
 //!
 //! Two backends sit behind this one interface, chosen by [`Backend`]. The
-//! default on macOS is [`Backend::Worker`]: every document is parsed in a
-//! sandboxed child process, because `docs/THREAT-MODEL.md` requires it and
-//! `AGENTS.md` records why it cannot be a later hardening pass. The in-process
-//! path is kept, and not out of sentiment --- it is the control the worker is
-//! compared against, and `examples/backend_probe.rs` is that comparison.
+//! default on both platforms that have a boundary --- macOS and Windows --- is
+//! [`Backend::Worker`]: every document is parsed in a contained child process,
+//! because `docs/THREAT-MODEL.md` requires it and `AGENTS.md` records why it
+//! cannot be a later hardening pass. Anywhere else the default is the
+//! in-process path *with a warning it records*, for the reason
+//! [`Backend::default_here`] gives at length. That path is kept, and not out of
+//! sentiment --- it is the control the worker is compared against, and
+//! `examples/backend_probe.rs` is that comparison.
 //!
 //! Almost nothing above this module changes with the switch. What does:
 //!
@@ -265,9 +268,9 @@ impl Backend {
             static SAID: std::sync::Once = std::sync::Once::new();
             SAID.call_once(|| {
                 mark(UNSANDBOXED_MARK);
-                eprintln!(
+                crate::diag::note(
                     "[WARN] no sandbox on this platform: documents are parsed in the app \
-                     process, uncontained. See BUILD.md."
+                     process, uncontained. See BUILD.md.",
                 );
             });
             Self::InProcess

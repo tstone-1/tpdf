@@ -23,7 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installFakeDom, settle, type FakeDom } from "./testdom";
-import type { PageText } from "./text";
+import { TEXT_CACHE_CHARS, type PageText } from "./text";
 import { Viewer, type ViewerOptions, type ViewerStatus } from "./viewer";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -61,9 +61,94 @@ function build(
   return new Viewer(dom.root as unknown as HTMLElement, {
     doc: 1,
     pageCount: 3,
-    page: { width_pt: 600, height_pt: 800 },
+    pages: [{ width_pt: 600, height_pt: 800 }],
     ...callbacks,
   });
+}
+
+/**
+ * Presses the pointer inside a page's first glyph, left of its midpoint.
+ *
+ * Inside the glyph and well clear of the midpoint: the midpoint is where the
+ * caret flips to the following character, and a screen point converted back
+ * through the zoom lands a floating-point step either side of it.
+ */
+function press(dom: FakeDom, viewer: Viewer, page: number): void {
+  const at = viewer.screenPoint(page, 12, 15);
+  dom.root.dispatch("pointerdown", {
+    button: 0,
+    pointerId: 1,
+    target: dom.root,
+    clientX: at.x,
+    clientY: at.y,
+  });
+}
+
+/** Moves a drag to a point already measured, which a closed document cannot. */
+function movePointerTo(dom: FakeDom, at: { x: number; y: number }): void {
+  dom.root.dispatch("pointermove", {
+    pointerId: 1,
+    target: dom.root,
+    clientX: at.x,
+    clientY: at.y,
+  });
+}
+
+/** Moves a drag into a page's second glyph. */
+function movePointer(dom: FakeDom, viewer: Viewer, page: number): void {
+  movePointerTo(dom, viewer.screenPoint(page, 22, 15));
+}
+
+/**
+ * Drags a selection from one page to another, leaving those between them never
+ * asked for.
+ *
+ * Through the viewer's own pointer handlers rather than by reaching into its
+ * selection, because the interesting case is the one the pointer produces: a
+ * drag can only place a caret on a page whose text is already loaded, so the
+ * pages *between* the ends are exactly the ones nothing has fetched.
+ */
+async function dragAcrossPages(
+  dom: FakeDom,
+  viewer: Viewer,
+  from: number,
+  to: number,
+): Promise<void> {
+  // The first press on each end only asks for the text; the caret cannot be
+  // placed until it arrives.
+  press(dom, viewer, from);
+  await settle();
+  press(dom, viewer, to);
+  await settle();
+
+  press(dom, viewer, from);
+  movePointer(dom, viewer, to);
+  dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root });
+  await settle();
+}
+
+/**
+ * Installs a clipboard that records what it was handed.
+ *
+ * Returns whatever descriptor was there, for the test to put back: `navigator`
+ * is a global, and a suite that left this one behind would decide what the next
+ * one is testing.
+ */
+function installClipboard(written: string[]): PropertyDescriptor | undefined {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", {
+    value: {
+      clipboard: {
+        writeText: (text: string) => {
+          written.push(text);
+          return Promise.resolve();
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+  return previous;
 }
 
 /** Runs frames until the loop stops of its own accord, or gives up. */
@@ -234,6 +319,66 @@ describe("Viewer lifetime", () => {
     viewer.destroy();
   });
 
+  it("stops a drag the document was closed under", async () => {
+    // `pointermove` and `pointerup` are added on the root when a drag starts
+    // and removed when it ends --- and a document closed mid-drag never reaches
+    // the end. `life.ended` stops the frame loop but says nothing about a
+    // listener still bound: the move goes on extending the selection and goes
+    // on asking for the text of every page it crosses, one IPC call each, for a
+    // document the backend has closed.
+    const viewer = build(dom);
+    // Two presses: the first only asks for the text, since a caret cannot be
+    // placed on a page that has not arrived.
+    press(dom, viewer, 0);
+    await settle();
+    press(dom, viewer, 0);
+    expect(asked).toEqual([0]);
+    // Measured while the document is still open. A point is what a pointer
+    // event carries, and asking a torn-down scroller where a page is would be
+    // testing something else.
+    const across = viewer.screenPoint(2, 22, 15);
+
+    viewer.destroy();
+    movePointerTo(dom, across);
+    await settle();
+
+    expect(asked).toEqual([0]);
+  });
+
+  it("still extends a drag while the document is open", async () => {
+    // The control. The listener is the feature --- a drag across a page
+    // boundary has to fetch what it crosses, or the highlight stops at the
+    // boundary and the copy quietly omits it --- so a teardown that removed it
+    // one press too early would pass the test above and break selecting.
+    const viewer = build(dom);
+    press(dom, viewer, 0);
+    await settle();
+    press(dom, viewer, 0);
+
+    movePointerTo(dom, viewer.screenPoint(2, 22, 15));
+    await settle();
+
+    expect(asked).toContain(2);
+    viewer.destroy();
+  });
+
+  it("stops a scrollbar drag the document was closed under", () => {
+    // The same shape on the other surface that binds listeners for the length
+    // of a gesture. Nothing here reaches the backend, so all the leak can move
+    // is the closed viewer's own scroll offset --- which is both the extent of
+    // the damage and the only thing that can say the listener is still bound.
+    const viewer = build(dom);
+    const track = dom.root.children[dom.root.children.length - 1];
+    expect(track).toBeDefined();
+    track?.dispatch("pointerdown", { pointerId: 2, target: track, clientY: 0 });
+    const start = viewer.offset;
+
+    viewer.destroy();
+    track?.dispatch("pointermove", { pointerId: 2, target: track, clientY: 400 });
+
+    expect(viewer.offset).toBe(start);
+  });
+
   it("retries select-all exactly once when the text does arrive", async () => {
     // The control. The retry is the feature --- a reader who presses ⌘A before
     // the extraction lands must still get the page selected --- so a guard that
@@ -245,6 +390,102 @@ describe("Viewer lifetime", () => {
 
     expect(asked.filter((page) => page === 0).length).toBe(1);
     expect(viewer.selectedText).toBe("ab");
+    viewer.destroy();
+  });
+});
+
+/**
+ * What the status callback is allowed to stay quiet about.
+ *
+ * `report` fires only when something a reader could notice has changed, and it
+ * decides that by joining the fields it considers noticeable into a summary
+ * string. Anything the UI renders and that summary omits is a control that
+ * sticks: the toolbar button keeps its old `class:on` and its old
+ * `aria-pressed` while the viewer's actual setting has flipped. With an empty
+ * query the search toggles move nothing else at all, so the omission is total.
+ */
+describe("Viewer status", () => {
+  let dom: FakeDom;
+  let statuses: ViewerStatus[];
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    failingPages = new Set();
+    asked = [];
+    statuses = [];
+    core.invoke.mockReset();
+    core.invoke.mockImplementation((command: string, args: { page: number }) => {
+      if (command !== "page_text") return Promise.resolve(null);
+      asked.push(args.page);
+      return Promise.resolve(pageText());
+    });
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    // Failing rather than pending, for the reason the lifetime suite gives: it
+    // is what lets the loop reach idle, and every test here starts from idle.
+    tiles.fetchTile.mockImplementation(() => Promise.reject(new Error("boom")));
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    dom.restore();
+  });
+
+  it("reports a status for a search option flipped with no query", async () => {
+    const viewer = build(dom, { onStatus: (s: ViewerStatus) => statuses.push(s) });
+    await quiesce(viewer, dom);
+
+    // One at a time, and each asserted on its own: the summary names the
+    // fields it watches individually, so a version that carried `matchCase` and
+    // not `regex` would pass any test that flipped only the first.
+    for (const option of ["matchCase", "wholeWord", "regex"] as const) {
+      const before = statuses.length;
+      viewer.setSearchOptions({ ...viewer.searchOptionsNow, [option]: true });
+      dom.runFrames();
+
+      expect(statuses.length).toBeGreaterThan(before);
+      expect(statuses[statuses.length - 1]?.search.options[option]).toBe(true);
+    }
+    viewer.destroy();
+  });
+
+  it("reports a status when the search is confined to the selection", async () => {
+    const viewer = build(dom, { onStatus: (s: ViewerStatus) => statuses.push(s) });
+    viewer.selectPage();
+    await settle();
+    await quiesce(viewer, dom);
+    // The selection is already reported by the time this runs, so the only
+    // thing left to move is the scope itself --- without which this would be a
+    // test of `selected`.
+    expect(statuses[statuses.length - 1]?.selected).toBe(2);
+    const before = statuses.length;
+
+    expect(viewer.scopeSearchToSelection()).toBe(true);
+    dom.runFrames();
+
+    expect(statuses.length).toBeGreaterThan(before);
+    expect(statuses[statuses.length - 1]?.search.scoped).toBe(true);
+    viewer.destroy();
+  });
+
+  it("stays quiet when a frame changes nothing", async () => {
+    // The control, and the two tests above are worth nothing without it: a
+    // `report` that fired on every frame would satisfy them while telling a
+    // status line nothing about what changed. It also pins the reason the
+    // assertions above are attributable to the flip --- waking the loop and
+    // running a frame is, by itself, not an event.
+    const viewer = build(dom, { onStatus: (s: ViewerStatus) => statuses.push(s) });
+    await quiesce(viewer, dom);
+    const before = statuses.length;
+
+    viewer.wake();
+    dom.runFrames();
+
+    expect(statuses.length).toBe(before);
     viewer.destroy();
   });
 });
@@ -274,19 +515,7 @@ describe("Viewer copy", () => {
     tiles.nextRequestId.mockImplementation(() => ++rid);
     tiles.fetchTile.mockImplementation(() => Promise.resolve(null));
 
-    previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
-    Object.defineProperty(globalThis, "navigator", {
-      value: {
-        clipboard: {
-          writeText: (text: string) => {
-            written.push(text);
-            return Promise.resolve();
-          },
-        },
-      },
-      configurable: true,
-      writable: true,
-    });
+    previousNavigator = installClipboard(written);
   });
 
   afterEach(() => {
@@ -296,52 +525,9 @@ describe("Viewer copy", () => {
     dom.restore();
   });
 
-  /**
-   * Drags a selection from page 0 to page 2, leaving page 1 never asked for.
-   *
-   * Through the viewer's own pointer handlers rather than by reaching into its
-   * selection, because the interesting case is the one the pointer produces: a
-   * drag can only place a caret on a page whose text is already loaded, so the
-   * pages *between* the ends are exactly the ones nothing has fetched.
-   */
-  async function dragAcrossPages(viewer: Viewer): Promise<void> {
-    const down = (page: number): void => {
-      // Inside the first glyph and well clear of its midpoint: the midpoint is
-      // where the caret flips to the following character, and a screen point
-      // converted back through the zoom lands a floating-point step either side
-      // of it.
-      const at = viewer.screenPoint(page, 12, 15);
-      dom.root.dispatch("pointerdown", {
-        button: 0,
-        pointerId: 1,
-        target: dom.root,
-        clientX: at.x,
-        clientY: at.y,
-      });
-    };
-
-    // The first press on each end only asks for the text; the caret cannot be
-    // placed until it arrives.
-    down(0);
-    await settle();
-    down(2);
-    await settle();
-
-    down(0);
-    const focus = viewer.screenPoint(2, 22, 15);
-    dom.root.dispatch("pointermove", {
-      pointerId: 1,
-      target: dom.root,
-      clientX: focus.x,
-      clientY: focus.y,
-    });
-    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root });
-    await settle();
-  }
-
   it("copies a selection whose pages all load", async () => {
     const viewer = build(dom, { onError: (message: string) => errors.push(message) });
-    await dragAcrossPages(viewer);
+    await dragAcrossPages(dom, viewer, 0, 2);
 
     const copied = await viewer.copySelection();
 
@@ -353,12 +539,12 @@ describe("Viewer copy", () => {
   });
 
   it("copies nothing when a page in the middle cannot be read", async () => {
-    // The silent partial. `loadPages` resolves whether or not the extractions
-    // succeeded, and `Selection.text` skips a page it cannot read by design ---
-    // so without a second completeness test the clipboard quietly ends up
-    // holding a selection with a page missing from the middle of it.
+    // The silent partial. A load resolves whether or not the extraction
+    // succeeded --- `TextCache.load` resolves to `null` rather than rejecting
+    // --- so a copy that took whatever text it happened to get would put a
+    // selection with a page missing from the middle of it on the clipboard.
     const viewer = build(dom, { onError: (message: string) => errors.push(message) });
-    await dragAcrossPages(viewer);
+    await dragAcrossPages(dom, viewer, 0, 2);
     failingPages.add(1);
 
     const copied = await viewer.copySelection();
@@ -382,13 +568,324 @@ describe("Viewer copy", () => {
       writable: true,
     });
     const viewer = build(dom, { onError: (message: string) => errors.push(message) });
-    await dragAcrossPages(viewer);
+    await dragAcrossPages(dom, viewer, 0, 2);
 
     const copied = await viewer.copySelection();
 
     expect(copied).toBeNull();
     expect(errors.length).toBe(1);
     expect(errors[0]).toContain("denied");
+    viewer.destroy();
+  });
+});
+
+/**
+ * Copying a selection larger than the text cache can hold.
+ *
+ * `TextCache` evicts least-recently-used down to {@link TEXT_CACHE_CHARS}, and a
+ * copy loads its pages ascending and touches each of them exactly once --- so
+ * the eviction order *is* the page order, and the front of a large selection is
+ * dropped while its tail is still arriving. A copy that read the cache after
+ * the wait could therefore never succeed past the bound, and reported it in the
+ * one wording that is certainly wrong: that the document's text could not be
+ * read, when every page of it had been read fine.
+ *
+ * This is the drag-to-the-end-of-775-pages case the copy path exists for, so
+ * the fixture is deliberately built to cross the bound rather than to be small.
+ */
+describe("Viewer copy past the text cache", () => {
+  /** Pages in the document, all of them selected. */
+  const PAGES = 10;
+  /** Characters on each. Ten pages of these is comfortably past the bound. */
+  const CHARS = 45_000;
+  /** Characters per line, so a page is a few dozen lines rather than one. */
+  const PER_LINE = 500;
+
+  let dom: FakeDom;
+  let written: string[];
+  let errors: string[];
+  let previousNavigator: PropertyDescriptor | undefined;
+  let big: PageText;
+
+  /** A page of `CHARS` characters, laid out in rows of 10-point cells. */
+  function bigPage(): PageText {
+    const first = "a".codePointAt(0) ?? 0;
+    const codes: number[] = [];
+    const boxes: number[] = [];
+    for (let index = 0; index < CHARS; index++) {
+      codes.push(first + (index % 26));
+      // The first two boxes are those of `pageText()` above, which is what the
+      // drag helpers aim at.
+      const left = 10 + (index % PER_LINE) * 10;
+      const top = 10 + Math.floor(index / PER_LINE) * 14;
+      boxes.push(left, top, left + 10, top + 12);
+    }
+    return { codes, boxes, width_pt: 600, height_pt: 800, quarter_turns: 0, extract_ms: 0 };
+  }
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    failingPages = new Set();
+    asked = [];
+    written = [];
+    errors = [];
+    // Built once and handed out for every page: the cache counts characters,
+    // not objects, so ten references to one page cost exactly what ten pages
+    // would --- and building ten of these is the slowest thing here by far.
+    big = bigPage();
+    core.invoke.mockReset();
+    core.invoke.mockImplementation((command: string, args: { page: number }) => {
+      if (command !== "page_text") return Promise.resolve(null);
+      asked.push(args.page);
+      if (failingPages.has(args.page)) return Promise.reject(new Error("no text"));
+      return Promise.resolve(big);
+    });
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => Promise.resolve(null));
+
+    previousNavigator = installClipboard(written);
+  });
+
+  afterEach(() => {
+    if (previousNavigator) {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+    dom.restore();
+  });
+
+  function buildBig(onError: (message: string) => void): Viewer {
+    return new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: PAGES,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onError,
+    });
+  }
+
+  it("copies a selection whose pages cannot all be held at once", async () => {
+    // The precondition, asserted against the constant rather than assumed:
+    // raising the cache bound must turn this red rather than quietly leave a
+    // fixture that fits in the cache and discriminates nothing.
+    expect(PAGES * CHARS).toBeGreaterThan(TEXT_CACHE_CHARS);
+    const viewer = buildBig((message) => errors.push(message));
+    await dragAcrossPages(dom, viewer, 0, PAGES - 1);
+
+    const copied = await viewer.copySelection();
+
+    // Every page but the last in full, the last up to the caret after its first
+    // character, and a newline between each pair.
+    expect(copied?.length).toBe((PAGES - 1) * CHARS + 1 + (PAGES - 1));
+    expect(errors).toEqual([]);
+    expect(written.length).toBe(1);
+    expect(written[0]).toBe(copied);
+    viewer.destroy();
+  });
+
+  it("still copies nothing when a page of a large selection cannot be read", async () => {
+    // The control, and the one that keeps the fix honest: a copy that stopped
+    // consulting the cache could equally well have stopped checking that it had
+    // every page, which is the silent partial the whole path exists to prevent.
+    // A page in the middle of a selection this size is exactly where nobody
+    // would notice it missing.
+    const viewer = buildBig((message) => errors.push(message));
+    await dragAcrossPages(dom, viewer, 0, PAGES - 1);
+    failingPages.add(4);
+
+    const copied = await viewer.copySelection();
+
+    expect(asked).toContain(4);
+    expect(copied).toBeNull();
+    expect(written).toEqual([]);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toContain("nothing was copied");
+    viewer.destroy();
+  });
+});
+
+/**
+ * What the viewer does with a document whose pages are not all the same size.
+ *
+ * The backend sends page 1's geometry alone unless `TPDF_EAGER_GEOMETRY` is set,
+ * so every other page starts out estimated and is corrected as the reader
+ * arrives at it. That correction rides the text extraction the frame loop was
+ * performing anyway, which is why these tests drive `page_text` rather than any
+ * new command --- there is no second request to intercept.
+ *
+ * Both were checked by mutating `viewer.ts` and confirming they went red; the
+ * mutations are named beside the assertions they are aimed at.
+ */
+describe("Viewer geometry on a mixed-size document", () => {
+  let dom: FakeDom;
+  let warn: ReturnType<typeof vi.spyOn>;
+  /** Page sizes `page_text` reports, by page. */
+  let sizes: Map<number, { width_pt: number; height_pt: number }>;
+  /** Pages whose extraction is held open, so a test can time its arrival. */
+  let held: Map<number, () => void>;
+
+  /** A two-character page of a stated size, which is enough to carry geometry. */
+  function sized(width_pt: number, height_pt: number): PageText {
+    return { ...pageText(), width_pt, height_pt };
+  }
+
+  /**
+   * Runs frames whether or not the loop is awake.
+   *
+   * `quiesce` above stops as soon as the viewer idles, which here would stop
+   * *before* the extraction lands: the reply's `.then` calls `wake`, and a wake
+   * schedules a callback that something still has to run. A fixed number of
+   * rounds is what lets a reply that arrives after the loop went quiet still be
+   * acted on --- and every assertion below names the state it is waiting for, so
+   * a round count that was too small fails rather than passing quietly.
+   */
+  async function pump(rounds = 24): Promise<void> {
+    for (let round = 0; round < rounds; round++) {
+      dom.runFrames();
+      await settle();
+    }
+  }
+
+  function build3(): Viewer {
+    return new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 3,
+      // A lazy open: page 1 and nothing else, which is what the default path
+      // hands over and the state every document starts in.
+      pages: [{ width_pt: 600, height_pt: 800 }],
+    });
+  }
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    sizes = new Map();
+    held = new Map();
+    asked = [];
+    core.invoke.mockReset();
+    core.invoke.mockImplementation((command: string, args: { page: number }) => {
+      if (command !== "page_text") return Promise.resolve(null);
+      asked.push(args.page);
+      const size = sizes.get(args.page) ?? { width_pt: 600, height_pt: 800 };
+      const text = sized(size.width_pt, size.height_pt);
+      if (!held.has(args.page)) return Promise.resolve(text);
+      return new Promise<PageText>((resolve) => {
+        held.set(args.page, () => resolve(text));
+      });
+    });
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => Promise.reject(new Error("boom")));
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    dom.restore();
+  });
+
+  it("fits the page being read rather than page 1", async () => {
+    // Mutation: `displayedPage()` reading `this.opts.pages[0]` instead of the
+    // scroller's size for the current page. Every fit then follows page 1 and
+    // the wide page overflows the window with no way to reach its edge.
+    sizes.set(1, { width_pt: 1200, height_pt: 800 });
+    const viewer = build3();
+    await pump();
+
+    viewer.setFit("width");
+    const onNarrow = viewer.currentZoom;
+    expect(onNarrow).toBeGreaterThan(0);
+
+    viewer.goToPage(1);
+    await pump();
+    // The precondition, asserted rather than assumed: without the size having
+    // been learned there is nothing for the fit to be different about, and the
+    // comparison below would be measuring one page twice.
+    expect(viewer.knowsPageSize(1)).toBe(true);
+    expect(viewer.pageSize(1).width_pt).toBe(1200);
+
+    viewer.setFit("width");
+    const onWide = viewer.currentZoom;
+    // Half, give or take the fixed margin a fit leaves around the page.
+    expect(onWide).toBeLessThan(onNarrow * 0.55);
+
+    // The control. A viewer that had simply halved its zoom and stayed there
+    // would pass everything above; fitting page 1 again has to return the
+    // original number.
+    viewer.goToPage(0);
+    await pump();
+    viewer.setFit("width");
+    expect(viewer.currentZoom).toBeCloseTo(onNarrow, 6);
+    viewer.destroy();
+  });
+
+  it("corrects the scrollbar extent without moving the reader off their line", async () => {
+    // Mutation: dropping the re-anchor at the end of `learnGeometry`. The
+    // extent still corrects --- so an assertion on `maxOffset` alone cannot see
+    // it --- while the reader slides to a quarter of the way down a page they
+    // were halfway through.
+    sizes.set(1, { width_pt: 600, height_pt: 1600 });
+    held.set(1, () => {});
+    const viewer = build3();
+    await pump();
+
+    viewer.goToPage(1);
+    await pump();
+    // Half a page down, through the wheel handler a trackpad reaches.
+    dom.root.dispatch("wheel", {
+      deltaY: viewer.pageBoxCss.height / 2,
+      deltaMode: 0,
+      target: dom.root,
+    });
+    await pump();
+
+    expect(viewer.knowsPageSize(1)).toBe(false);
+    const before = viewer.position;
+    const fractionBefore = before.top / viewer.pageSize(1).height_pt;
+    const extentBefore = viewer.maxOffset;
+    // The precondition. At the top of a page every fraction is zero and is
+    // preserved by doing nothing at all, which is the shape of assertion this
+    // repository has already been caught writing.
+    expect(before.page).toBe(1);
+    expect(fractionBefore).toBeGreaterThan(0.3);
+
+    held.get(1)?.();
+    await pump();
+
+    expect(viewer.knowsPageSize(1)).toBe(true);
+    expect(viewer.pageSize(1).height_pt).toBe(1600);
+    // The extent corrected: the document really is taller than it was laid out.
+    expect(viewer.maxOffset).toBeGreaterThan(extentBefore + 700);
+    // And the reader is where they were, to within the fixed gap between pages
+    // --- which does not scale with the page and so cannot be preserved exactly.
+    const after = viewer.position;
+    expect(after.page).toBe(1);
+    expect(Math.abs(after.top / viewer.pageSize(1).height_pt - fractionBefore))
+      .toBeLessThan(0.02);
+    viewer.destroy();
+  });
+
+  it("records the document's geometry, not the rotated view's", async () => {
+    // Mutation: recording `PageText`'s width and height as they arrive, without
+    // taking the view's own rotation back out. An identity at every even number
+    // of quarter-turns, which is why nothing else here can see it: the two are
+    // different only on a rotated document whose pages are not square.
+    sizes.set(1, { width_pt: 600, height_pt: 1600 });
+    const viewer = build3();
+    await pump();
+
+    viewer.rotateBy(1);
+    viewer.goToPage(1);
+    await pump();
+
+    expect(viewer.knowsPageSize(1)).toBe(true);
+    expect(viewer.pageSize(1)).toEqual({ width_pt: 600, height_pt: 1600 });
+    // The control, and the reason the assertion above is not a tautology: the
+    // text layer really does report this page the other way round, so a viewer
+    // that stored what it was handed would have stored 1600 x 600.
+    expect(viewer.textOn(1)?.width_pt).toBe(1600);
     viewer.destroy();
   });
 });

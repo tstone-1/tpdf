@@ -29,7 +29,8 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { Scroller, type Layout, type PageSize } from "./scroller";
+import type { DocumentInfo, PageSize } from "./ipc";
+import { Scroller, type Layout } from "./scroller";
 
 interface ScrollBenchConfig {
   path: string;
@@ -44,12 +45,6 @@ interface ScrollBenchConfig {
   max_in_flight: number;
   prefetch_screens: number;
   cancels: number[];
-}
-
-interface DocumentInfo {
-  id: number;
-  pages: PageSize[];
-  page_count: number;
 }
 
 /** One variant: a layout at a zoom, with its own persistent scroller. */
@@ -300,7 +295,12 @@ function buildVariants(
           scroller: new Scroller(host, {
             doc: doc.id,
             pageCount: doc.page_count,
-            page,
+            // Page 1 alone, and nothing here learns the rest. The benchmark
+            // opens one corpus at a time and every one of them is uniform, so a
+            // learning channel would add a variable to a measurement rather than
+            // correctness to it --- and the frame cost this measures is the same
+            // whichever size the pages are.
+            pages: [page],
             zoom,
             // Upright: the benchmark measures scrolling, and a rotation would
             // add a dimension to a table that already has three.

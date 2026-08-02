@@ -111,7 +111,7 @@ export function turnedView(text: PageText, turns: number): PageText {
   }
 
   const sideways = quarters % 2 === 1;
-  return {
+  const view: PageText = {
     codes: text.codes,
     boxes,
     width_pt: sideways ? height : width,
@@ -119,6 +119,16 @@ export function turnedView(text: PageText, turns: number): PageText {
     quarter_turns: (text.quarter_turns + quarters) % 4,
     extract_ms: text.extract_ms,
   };
+  // The tags come through untouched: a run is a range of character indices and
+  // a rotation renumbers no characters. Dropping them here is invisible rather
+  // than broken, which is what makes it worth stating --- `reading.ts`'s
+  // `usableRuns` reads an absent value as "this page is untagged" and falls
+  // back to the XY-cut, so one quarter turn would demote a tagged page to
+  // geometric order for the screen reader and for `Selection.text` both.
+  // Assigned rather than spread because the field is absent on most pages and
+  // `exactOptionalPropertyTypes` distinguishes absent from `undefined`.
+  if (text.runs) view.runs = text.runs;
+  return view;
 }
 
 /**

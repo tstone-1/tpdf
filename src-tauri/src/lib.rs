@@ -8,6 +8,7 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+pub mod diag;
 pub mod encoding;
 pub mod invert;
 pub mod launch;
@@ -36,6 +37,11 @@ pub mod structure;
 pub mod sweep;
 pub mod text;
 pub mod worker;
+// The four modules `worker.rs` was split into at 2,861 lines. Public, and
+// re-exported by `worker` itself, so both the defining path and the path every
+// caller already used resolve --- a split that renamed a path would have had to
+// edit its consumers to prove it changed nothing.
+pub mod worker_argv;
 // The child half of the process boundary. POSIX and Windows both, since
 // 2026-07-29: the mapping handover and the boundary itself are what differ, and
 // each is one function with two implementations rather than a module that only
@@ -44,6 +50,9 @@ pub mod worker;
 // which is the point: a Windows worker that shared no code with the macOS one
 // would be a second worker to keep correct.
 pub mod worker_child;
+pub mod worker_handover;
+pub mod worker_proto;
+pub mod worker_shm;
 pub mod workers;
 
 use std::path::PathBuf;
@@ -168,6 +177,27 @@ fn session_file(app: &tauri::AppHandle) -> PathBuf {
         .app_config_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("session.json")
+}
+
+/// Where the diagnostics that outlive the run are kept.
+///
+/// The log directory rather than the config directory beside the session, and
+/// that is the one difference from [`session_file`] worth stating: this is not
+/// configuration, it is a record, and both platforms have a place they expect to
+/// find one --- `~/Library/Logs/<app>` and `%LOCALAPPDATA%\<app>\logs`. A user
+/// asked for it over the phone will be looking there.
+///
+/// `TPDF_LOG_FILE` overrides it, for the same reason `TPDF_SESSION_FILE` does:
+/// an automated run must be able to point this somewhere of its own rather than
+/// appending to the file belonging to whoever uses this machine.
+fn log_file(app: &tauri::AppHandle) -> PathBuf {
+    if let Some(override_path) = std::env::var_os("TPDF_LOG_FILE") {
+        return PathBuf::from(override_path);
+    }
+    app.path()
+        .app_log_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("tpdf.log")
 }
 
 /// The subdirectory of `vendor/pdfium/` holding the *loadable* library.
@@ -540,11 +570,11 @@ fn present_job(
         let Some(mtm) = objc2::MainThreadMarker::new() else {
             // Unreachable by construction, and silence here would be a print
             // command that does nothing and says nothing.
-            eprintln!("[print] dispatched off the main thread; no panel shown");
+            diag::note("[print] dispatched off the main thread; no panel shown");
             return;
         };
         if let Err(e) = print_macos::present(&bytes, &title, mtm) {
-            eprintln!("[print] {e}");
+            diag::note(&format!("[print] {e}"));
         }
     })
     .map_err(|e| e.to_string())
@@ -598,7 +628,7 @@ fn present_job(
     std::thread::spawn(move || {
         let owner = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void));
         if let Err(e) = print_win::present(&bytes, &title, owner) {
-            eprintln!("[print] {e}");
+            diag::note(&format!("[print] {e}"));
         }
     });
     Ok(())
@@ -773,6 +803,21 @@ fn viewercheck_path() -> Option<String> {
 #[tauri::command]
 fn reading_manifest() -> Option<String> {
     std::fs::read_to_string(spike_env("TPDF_READING_MANIFEST")?).ok()
+}
+
+/// The page geometry a check should assert the layout against, if any.
+///
+/// The same arrangement as [`reading_manifest`] and separate from it on purpose.
+/// `viewer_check.py` binds any `<fixture>-manifest.json` to that variable and the
+/// reading-order check then asserts it page by page, so a fixture that makes no
+/// claim about reading order cannot use that name --- `testdata/mixed.pdf`
+/// carries markers at its own corners rather than a sentence, and a manifest
+/// under the other name would enrol it in a check it was not built for and
+/// cannot pass. Its generator writes `mixed-geometry.json`, and this is the
+/// variable that carries it.
+#[tauri::command]
+fn geometry_manifest() -> Option<String> {
+    std::fs::read_to_string(spike_env("TPDF_GEOMETRY_MANIFEST")?).ok()
 }
 
 /// Path to time a cold open of on startup, from `TPDF_STARTUP` (spike 0.2).
@@ -1039,6 +1084,21 @@ pub fn run() {
     let app = builder
         .setup(move |app| {
             startup::mark("tauri setup");
+            // First, and before the render service exists, so that everything
+            // said on the way up is caught rather than only what happens once
+            // the application is running. It is a `OnceLock` set and nothing
+            // else --- no directory is created and no file is opened until
+            // there is a line to write --- so a launch that never has anything
+            // to say pays nothing for this.
+            //
+            // This is also the earliest it *can* happen: the path comes from
+            // Tauri's resolver, which needs the app. Anything diagnosed before
+            // here --- the backend refusal in `run`, the watchdog --- is on
+            // stderr only, which is correct for both: they are reached under a
+            // `TPDF_*` variable by a harness that captures stderr, and the
+            // first of them exits before there is an event loop to lose a
+            // message in.
+            diag::start(log_file(app.handle()));
             let dir = pdfium_library_dir(app.handle());
             let service = RenderService::start(dir);
             if let Some(pending) = start_eager_open(&service) {
@@ -1109,6 +1169,7 @@ pub fn run() {
             autobench_path,
             viewercheck_path,
             reading_manifest,
+            geometry_manifest,
             sessioncheck_mode,
             opencheck_mode,
             startup_path,

@@ -31,28 +31,76 @@
  * step of section 4's "if the webview is not fast enough" escalation, and
  * measuring it now costs one afternoon rather than one architecture.
  *
- * Page geometry is taken from page 1 and assumed uniform. That is the same
- * assumption the lazy-geometry startup path makes (section 4), and it holds on
- * both corpora here; a mixed-size document would need the correcting estimate
- * described there, which is a scrollbar problem rather than a frame-rate one.
+ * ## Page geometry is per page, estimated where it is not yet known
+ *
+ * This class held **one** `PageSize` until 2026-08-02, taken from page 1 and
+ * multiplied by the page index. The cost of that was larger than a scrollbar:
+ * `computeGeometry` derived `rows` and `cols` from that one size, and those
+ * decide which tiles are ever *requested*, so an A3 insert in an A4 document was
+ * asked for only as far as A4 reached and drawn cropped, silently and with no
+ * error anywhere. Every page after a differing one sat somewhere it is not.
+ * Content truncation and a drifting position, not cosmetics --- and the comment
+ * that used to stand here called it a scrollbar problem, which was true of the
+ * benchmark it was written for and false of the shipped viewer.
+ *
+ * What replaces it is section 4's table: {@link sizes} holds one entry per page,
+ * `null` where the size is not known yet, and {@link boxes} is the layout derived
+ * from it with each page's `top` accumulated from the heights *before* it rather
+ * than assumed. Nothing here multiplies.
+ *
+ * The table starts almost empty on purpose. Collecting every page's size at open
+ * costs 86 ms on the 775-page corpus (section 4's startup measurement), so the
+ * backend sends page 1 alone unless `TPDF_EAGER_GEOMETRY` is set --- which is why
+ * an estimate is needed at all rather than being a concession. Unknown pages are
+ * laid out at the running mean of the sizes that *are* known, which is page 1's
+ * size until a second one arrives and is exact immediately on the overwhelming
+ * majority of documents, where every page is the same. {@link notePageSize} is
+ * how a real size arrives; `viewer.ts` feeds it from the text extractions it
+ * already performs for every visible page, so the correction rides an IPC round
+ * trip that was happening anyway.
+ *
+ * Correcting a page invalidates **that page** rather than the document. Each page
+ * carries its own {@link epochs} counter, bumped when its box moves, and a reply
+ * naming a stale epoch is dropped on arrival exactly as a stale generation is.
+ * A single global counter would have been fewer lines and would repaint the whole
+ * screen every time a page's size was learned --- once per page, on a document
+ * being read straight through.
+ *
+ * `testdata/make_mixed_pdf.py` generates the document that can tell any of this
+ * apart; every other fixture in the corpus is uniform, which is why no check
+ * could go red on it before that file existed.
  */
 
 import { Backoff } from "./backoff";
+import type { PageSize } from "./ipc";
 import { Lifetime } from "./lifetime";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
 export type Layout = "tiles" | "viewport";
 
-export interface PageSize {
-  width_pt: number;
-  height_pt: number;
-}
+// Re-exported rather than moved out of the callers' reach: `viewer.ts` and
+// `thumbnails.ts` take their page geometry from the scroller alongside
+// `displayedSize`, and the type they mean is the backend's, not one of ours.
+// The declaration lives in `ipc.ts` because `render.rs` owns it.
+export type { PageSize };
 
 export interface ScrollerOptions {
   doc: number;
   pageCount: number;
-  /** Geometry of page 1, taken as representative of the document. */
-  page: PageSize;
+  /**
+   * Geometry of the pages whose size is known, index-aligned from page 1.
+   *
+   * Shorter than `pageCount` whenever the open was lazy, which is the default:
+   * `render.rs` sends `[page 1]` alone unless `TPDF_EAGER_GEOMETRY` is set. The
+   * pages past the end of this array are laid out at an estimate until
+   * {@link Scroller.notePageSize} learns them.
+   *
+   * A non-empty tuple rather than an array, so "a document laid out from no
+   * size at all" is not a state this class has to have an answer for. There is
+   * no honest fallback --- inventing Letter would put every page of a document
+   * somewhere it is not --- and the callers all have page 1 in hand.
+   */
+  pages: [PageSize, ...PageSize[]];
   /** CSS pixels per PDF point. 1.0 is "100%" for this spike's purposes. */
   zoom: number;
   /**
@@ -205,10 +253,34 @@ interface TileEntry {
   rect: TileRect;
 }
 
+/**
+ * One page's layout, in device pixels, CSS pixels and document coordinates.
+ *
+ * Both pixel spaces are derived from the device-pixel size so the two can never
+ * disagree by a rounding step, and `top` is accumulated over the pages before
+ * this one rather than multiplied --- which is the whole of what a mixed-size
+ * document needs and the whole of what the single-`PageSize` layout could not do.
+ */
+interface PageBox {
+  widthDev: number;
+  heightDev: number;
+  widthCss: number;
+  heightCss: number;
+  cols: number;
+  rows: number;
+  /** CSS-pixel top of the page in the scrolled document. */
+  top: number;
+}
+
 /** A request that has been issued and has not settled. */
 interface Outstanding {
   /** Server-side id, by which the request can be withdrawn. */
   rid: number;
+  /**
+   * The page it is for, so a size correction can withdraw that page's work
+   * without touching the rest of the document's.
+   */
+  page: number;
   /**
    * Whether this is still worth paying for, tested against the window as it is
    * now rather than as it was when the request went out. A closure because the
@@ -227,6 +299,15 @@ interface Arrival {
   rect: TileRect;
   bitmap: ImageBitmap;
   generation: number;
+  /**
+   * The page's layout epoch when the request went out.
+   *
+   * Separate from `generation`, and for the same reason `placeholderGeneration`
+   * is separate from it: a size correction invalidates one page's pixels and
+   * nothing else's, and a counter that could only say "everything" would repaint
+   * the whole screen once per page on a document being read through.
+   */
+  epoch: number;
 }
 
 function keyOf(k: TileKey): string {
@@ -324,6 +405,8 @@ export class Scroller {
     page: number;
     bitmap: ImageBitmap;
     generation: number;
+    /** The page's layout epoch when it was asked for. See {@link Arrival}. */
+    epoch: number;
   }[] = [];
 
   private scrollTop = 0;
@@ -362,18 +445,48 @@ export class Scroller {
     evicted: 0,
   };
 
-  // Page geometry, in device pixels and in CSS pixels. Both are derived from
-  // the device-pixel size so the two can never disagree by a rounding step.
-  private pageWidthDev = 0;
-  private pageHeightDev = 0;
-  private pageWidthCss = 0;
-  private pageHeightCss = 0;
-  private cols = 0;
-  private rows = 0;
+  /**
+   * Each page's size in points, or `null` where it is not known yet.
+   *
+   * Seeded from `opts.pages`, which on a lazy open is page 1 alone. Written by
+   * {@link notePageSize} as the viewer learns real sizes.
+   */
+  private readonly sizes: (PageSize | null)[];
+  /**
+   * What an unknown page is laid out at: the mean of the sizes that are known.
+   *
+   * A mean rather than page 1's size, which is what section 4 asks for --- "the
+   * scroller estimates total height from the pages it has loaded". With one
+   * known page the two are the same thing, so nothing is lost on the uniform
+   * case; with several they are not, and the mean is the better guess about the
+   * pages still unseen.
+   */
+  private estimate: PageSize;
+  /** The layout, one entry per page. Rebuilt by {@link computeGeometry}. */
+  private boxes: PageBox[] = [];
+  /** Total scrollable height in CSS pixels, accumulated with the boxes. */
+  private totalHeight = 0;
+  /**
+   * Per-page invalidation counters, bumped when a page's box moves.
+   *
+   * A request carries the epoch it was issued under and its reply is dropped if
+   * that has moved on --- the per-page analogue of {@link generation}, and
+   * per-page precisely because a size correction is per-page. See the header.
+   */
+  private readonly epochs: number[];
 
   constructor(host: HTMLElement, opts: ScrollerOptions) {
     this.host = host;
     this.opts = opts;
+
+    this.sizes = new Array<PageSize | null>(Math.max(0, opts.pageCount)).fill(null);
+    for (let page = 0; page < this.sizes.length; page++) {
+      this.sizes[page] = opts.pages[page] ?? null;
+    }
+    this.epochs = new Array<number>(this.sizes.length).fill(0);
+    // Before `computeGeometry`, which reads it for every page whose size the
+    // open did not carry.
+    this.estimate = this.meanKnownSize();
 
     this.computeGeometry();
     this.mount();
@@ -393,26 +506,174 @@ export class Scroller {
     return this.surface;
   }
 
-  /** The page's size in points as displayed, i.e. after the view rotation. */
-  private displayedPage(): PageSize {
-    return displayedSize(this.opts.page, this.opts.turns);
+  /**
+   * A page's size in points, real if it is known and the estimate if it is not.
+   *
+   * The one place the two are conflated, deliberately: everything that lays out
+   * or requests wants "how big is this page", and a caller that had to ask
+   * whether the answer was real would be a caller that could forget to.
+   * {@link knowsPageSize} is there for the one consumer --- a check --- whose
+   * question genuinely is which of the two it got.
+   */
+  pageSize(page: number): PageSize {
+    return this.sizes[page] ?? this.estimate;
   }
 
-  /** Derives page and tile geometry from the current zoom and rotation. */
+  /** Whether a page's size is the document's own rather than the estimate. */
+  knowsPageSize(page: number): boolean {
+    return this.sizes[page] != null;
+  }
+
+  /** A page's size in points as displayed, i.e. after the view rotation. */
+  private displayedPageSize(page: number): PageSize {
+    return displayedSize(this.pageSize(page), this.opts.turns);
+  }
+
+  /** The mean of the page sizes that are known, which is never none. */
+  private meanKnownSize(): PageSize {
+    let width = 0;
+    let height = 0;
+    let known = 0;
+    for (const size of this.sizes) {
+      if (!size) continue;
+      width += size.width_pt;
+      height += size.height_pt;
+      known++;
+    }
+    // A document with no pages has no known size and nothing to lay out; page 1
+    // is what the type guarantees, so the fallback names something real rather
+    // than a paper size nobody asked for.
+    if (known === 0) return this.opts.pages[0];
+    return { width_pt: width / known, height_pt: height / known };
+  }
+
+  /**
+   * Rebuilds every page's box from the sizes, zoom and rotation as they are now.
+   *
+   * O(pageCount), and run on a zoom, a rotation and every size correction. On
+   * the 775-page corpus that is 775 iterations of arithmetic --- measurably
+   * nothing beside the 86 ms the backend would spend collecting the same table
+   * eagerly, which is why the table is built here from what arrives rather than
+   * asked for up front.
+   */
   private computeGeometry(): void {
-    const { zoom, dpr, tilePx } = this.opts;
-    const page = this.displayedPage();
-    this.pageWidthDev = Math.round(page.width_pt * zoom * dpr);
-    this.pageHeightDev = Math.round(page.height_pt * zoom * dpr);
-    this.pageWidthCss = this.pageWidthDev / dpr;
-    this.pageHeightCss = this.pageHeightDev / dpr;
-    this.cols = Math.ceil(this.pageWidthDev / tilePx);
-    this.rows = Math.ceil(this.pageHeightDev / tilePx);
+    const { zoom, dpr, tilePx, pageCount } = this.opts;
+    const boxes: PageBox[] = new Array<PageBox>(Math.max(0, pageCount));
+    let top = 0;
+    for (let page = 0; page < boxes.length; page++) {
+      const shown = this.displayedPageSize(page);
+      const widthDev = Math.round(shown.width_pt * zoom * dpr);
+      const heightDev = Math.round(shown.height_pt * zoom * dpr);
+      boxes[page] = {
+        widthDev,
+        heightDev,
+        widthCss: widthDev / dpr,
+        heightCss: heightDev / dpr,
+        cols: Math.ceil(widthDev / tilePx),
+        rows: Math.ceil(heightDev / tilePx),
+        top,
+      };
+      top += heightDev / dpr + PAGE_GAP;
+    }
+    this.boxes = boxes;
+    // The trailing gap is between pages, so the last page does not get one.
+    this.totalHeight = Math.max(0, top - PAGE_GAP);
+  }
+
+  /**
+   * Records a page's real size, relaying out if it differs from what was assumed.
+   *
+   * Returns whether anything moved, which is the caller's cue to re-anchor the
+   * reader: the scroll offset is in CSS pixels down a document that has just
+   * changed length, so leaving it alone teleports the view. `viewer.ts` owns the
+   * offset and does exactly that.
+   *
+   * A size that matches what was already laid out returns `false` and touches
+   * nothing --- which is every page of every uniform document, i.e. almost every
+   * page this will ever be called for. The learning is still recorded, because a
+   * page whose size is *known* stops depending on an estimate that can move.
+   */
+  notePageSize(page: number, size: PageSize): boolean {
+    if (page < 0 || page >= this.boxes.length) return false;
+    const known = this.sizes[page];
+    if (
+      known &&
+      known.width_pt === size.width_pt &&
+      known.height_pt === size.height_pt
+    ) {
+      return false;
+    }
+    this.sizes[page] = size;
+    return this.applySizes();
+  }
+
+  /**
+   * Rebuilds the layout after a size changed, invalidating whatever moved.
+   *
+   * Every page is compared, not only the one that was learned: the estimate is a
+   * mean over the known sizes, so learning one page relocates every page whose
+   * size is still unknown. A page whose *box* changed had its tiles rendered for
+   * a different rectangle and is invalidated; a page that only slid down the
+   * document keeps its pixels and is merely re-placed.
+   */
+  private applySizes(): boolean {
+    const before = this.boxes;
+    const beforeTotal = this.totalHeight;
+    this.estimate = this.meanKnownSize();
+    this.computeGeometry();
+
+    let changed = this.totalHeight !== beforeTotal;
+    for (let page = 0; page < this.boxes.length; page++) {
+      const was = before[page];
+      const now = this.boxes[page];
+      if (!was || !now) continue;
+      if (was.widthDev !== now.widthDev || was.heightDev !== now.heightDev) {
+        this.invalidatePage(page);
+        changed = true;
+      } else if (was.top !== now.top) {
+        changed = true;
+      }
+    }
+    if (changed) this.relayout();
+    return changed;
+  }
+
+  /**
+   * Throws away one page's pixels and the work still out for them.
+   *
+   * The epoch bump is what covers the race the withdrawal cannot: a render that
+   * had already finished still arrives, and adopting it would paint a tile drawn
+   * for the old box into the new one --- which on the page whose size was just
+   * corrected is exactly the crop the correction exists to remove.
+   */
+  private invalidatePage(page: number): void {
+    this.epochs[page] = (this.epochs[page] ?? 0) + 1;
+
+    for (const [id, entry] of this.tiles) {
+      if (entry.key.page !== page) continue;
+      this.release(entry);
+      this.tiles.delete(id);
+    }
+    const placeholder = this.placeholders.get(page);
+    if (placeholder) {
+      placeholder.close();
+      this.placeholders.delete(page);
+    }
+    const canvas = this.placeholderCanvases.get(page);
+    if (canvas) {
+      canvas.remove();
+      this.placeholderCanvases.delete(page);
+    }
+    // The tier-1 wait, because the placeholder is about to be asked for again at
+    // a size nothing has tried yet. The tier-2 waits are left: their ids are
+    // per tile and a failing tile is still failing at a different rectangle.
+    this.backoff.clear(`p${page}`);
+    this.withdraw((outstanding) => outstanding.page === page);
   }
 
   /** Total scrollable height in CSS pixels. */
   get documentHeight(): number {
-    return this.opts.pageCount * (this.pageHeightCss + PAGE_GAP) - PAGE_GAP;
+    return this.totalHeight;
   }
 
   /** The furthest the viewport can be scrolled. */
@@ -491,13 +752,15 @@ export class Scroller {
    * for --- so a caller can check that a rotation reached this class and not
    * only the one above it. The two are separately capable of being wrong.
    */
-  get pageBoxCss(): { width: number; height: number } {
-    return { width: this.pageWidthCss, height: this.pageHeightCss };
+  pageBoxCssOf(page: number): { width: number; height: number } {
+    const box = this.boxes[page];
+    return { width: box?.widthCss ?? 0, height: box?.heightCss ?? 0 };
   }
 
-  /** Tiles per page, so a run can report its working set. */
-  get tilesPerPage(): number {
-    return this.cols * this.rows;
+  /** Tiles a page is divided into, so a run can report its working set. */
+  tilesOnPage(page: number): number {
+    const box = this.boxes[page];
+    return box ? box.cols * box.rows : 0;
   }
 
   /**
@@ -620,16 +883,19 @@ export class Scroller {
   private relayout(): void {
     if (this.spacer) this.spacer.style.height = `${this.documentHeight}px`;
 
-    const left = this.pageLeftCss();
     for (const [page, canvas] of this.placeholderCanvases) {
-      canvas.style.left = `${left}px`;
-      canvas.style.top = `${this.pageTop(page)}px`;
-      canvas.style.width = `${this.pageWidthCss}px`;
-      canvas.style.height = `${this.pageHeightCss}px`;
+      const box = this.boxes[page];
+      if (!box) continue;
+      canvas.style.left = `${this.pageLeftCss(page)}px`;
+      canvas.style.top = `${box.top}px`;
+      canvas.style.width = `${box.widthCss}px`;
+      canvas.style.height = `${box.heightCss}px`;
     }
     for (const entry of this.tiles.values()) {
       if (!entry.canvas) continue;
-      entry.canvas.style.left = `${left + entry.rect.x / this.opts.dpr}px`;
+      entry.canvas.style.left = `${
+        this.pageLeftCss(entry.key.page) + entry.rect.x / this.opts.dpr
+      }px`;
       entry.canvas.style.top = `${
         this.pageTop(entry.key.page) + entry.rect.y / this.opts.dpr
       }px`;
@@ -743,7 +1009,15 @@ export class Scroller {
    */
   private drain(): void {
     for (const arrival of this.arrived.splice(0)) {
-      if (arrival.generation !== this.generation) {
+      // The page's own epoch as well as the document's generation. A tile
+      // rendered for the box a page had *before* its size was corrected is not a
+      // superseded tile --- nothing about the scroll invalidated it --- so
+      // counting it as one would report a queue failure that did not happen, and
+      // drawing it would paint the crop the correction just removed.
+      if (
+        arrival.generation !== this.generation ||
+        arrival.epoch !== (this.epochs[arrival.key.page] ?? 0)
+      ) {
         arrival.bitmap.close();
         continue;
       }
@@ -756,8 +1030,13 @@ export class Scroller {
       this.adopt(arrival);
     }
 
-    for (const { page, bitmap, generation } of this.arrivedPlaceholders.splice(0)) {
-      if (generation !== this.placeholderGeneration) {
+    for (const { page, bitmap, generation, epoch } of this.arrivedPlaceholders.splice(
+      0,
+    )) {
+      if (
+        generation !== this.placeholderGeneration ||
+        epoch !== (this.epochs[page] ?? 0)
+      ) {
         bitmap.close();
         continue;
       }
@@ -817,7 +1096,7 @@ export class Scroller {
    * of it drifting is a highlight that sits beside the text rather than on it.
    */
   pageOrigin(page: number): { left: number; top: number } {
-    return { left: this.pageLeftCss(), top: this.pageTop(page) };
+    return { left: this.pageLeftCss(page), top: this.pageTop(page) };
   }
 
   /** Pages any part of which is currently on screen. */
@@ -825,13 +1104,25 @@ export class Scroller {
     return this.pagesIn(this.scrollTop, this.scrollTop + this.opts.viewport.height);
   }
 
-  /** Zero-based index of the page occupying a scroll offset. */
+  /**
+   * Zero-based index of the page occupying a scroll offset.
+   *
+   * A binary search over the accumulated tops rather than a division, which is
+   * what a per-page layout costs here and it is the whole cost: the tops are
+   * non-decreasing by construction, so the answer is the last page starting at
+   * or before `css`. An offset in the gap below a page belongs to that page,
+   * which is what the pitch-based division it replaced also did.
+   */
   pageAt(css: number): number {
-    const pitch = this.pageHeightCss + PAGE_GAP;
-    return Math.max(
-      0,
-      Math.min(this.opts.pageCount - 1, Math.floor(css / pitch)),
-    );
+    let low = 0;
+    let high = this.boxes.length - 1;
+    if (high < 0) return 0;
+    while (low < high) {
+      const mid = (low + high + 1) >> 1;
+      if ((this.boxes[mid]?.top ?? 0) <= css) low = mid;
+      else high = mid - 1;
+    }
+    return low;
   }
 
   /** Scroll offset that puts a page's top edge at the top of the viewport. */
@@ -840,28 +1131,32 @@ export class Scroller {
   }
 
   /**
-   * Distance from one page's top to the next, in CSS pixels.
+   * Distance from a page's top to the next page's, in CSS pixels.
    *
    * Exposed so a caller can express a position as a fraction through a page and
-   * restore it after the geometry changes underneath it, which is what rotating
-   * the view does.
+   * restore it after the geometry changes underneath it --- which is what
+   * rotating the view does, and what learning a page's real size does.
    */
-  get pagePitchCss(): number {
-    return this.pageHeightCss + PAGE_GAP;
+  pagePitchOf(page: number): number {
+    return (this.boxes[page]?.heightCss ?? 0) + PAGE_GAP;
   }
 
   /** CSS-pixel top of a page in the scrolled document. */
   private pageTop(page: number): number {
-    return page * (this.pageHeightCss + PAGE_GAP);
+    return this.boxes[page]?.top ?? 0;
   }
 
   /** Pages intersecting a CSS-pixel band, clamped to the document. */
   private pagesIn(top: number, bottom: number): number[] {
-    const pitch = this.pageHeightCss + PAGE_GAP;
-    const first = Math.max(0, Math.floor(top / pitch));
-    const last = Math.min(this.opts.pageCount - 1, Math.floor(bottom / pitch));
     const pages: number[] = [];
-    for (let page = first; page <= last; page++) pages.push(page);
+    // `pageAt` clamps, so a band starting above the document has to enter the
+    // walk at page 0 rather than at whatever the clamp returned.
+    let page = top <= 0 ? 0 : this.pageAt(top);
+    for (; page < this.boxes.length; page++) {
+      const box = this.boxes[page];
+      if (!box || box.top > bottom) break;
+      pages.push(page);
+    }
     return pages;
   }
 
@@ -877,18 +1172,20 @@ export class Scroller {
 
   /** Device-pixel rect of one tile within its scaled page. */
   private tileRect(
+    page: number,
     col: number,
     row: number,
   ): { x: number; y: number; width: number; height: number } {
     const x = col * this.opts.tilePx;
     const y = row * this.opts.tilePx;
+    const box = this.boxes[page];
     return {
       x,
       y,
       // Clamped at the page edge: a tile hanging off the page would carry
       // several megabytes of white and cost the same to move as real content.
-      width: Math.min(this.opts.tilePx, this.pageWidthDev - x),
-      height: Math.min(this.opts.tilePx, this.pageHeightDev - y),
+      width: Math.min(this.opts.tilePx, (box?.widthDev ?? 0) - x),
+      height: Math.min(this.opts.tilePx, (box?.heightDev ?? 0) - y),
     };
   }
 
@@ -912,13 +1209,15 @@ export class Scroller {
     for (const page of this.pagesIn(top, bottom)) {
       this.requestPlaceholder(page, now);
 
-      const pageTop = this.pageTop(page);
-      for (let row = 0; row < this.rows; row++) {
+      const box = this.boxes[page];
+      if (!box) continue;
+      const pageTop = box.top;
+      for (let row = 0; row < box.rows; row++) {
         const tileTop = pageTop + (row * this.opts.tilePx) / this.opts.dpr;
         const tileBottom = tileTop + this.opts.tilePx / this.opts.dpr;
         if (tileBottom < top || tileTop > bottom) continue;
 
-        for (let col = 0; col < this.cols; col++) {
+        for (let col = 0; col < box.cols; col++) {
           const key: TileKey = { page, col, row };
           const id = keyOf(key);
           if (this.tiles.has(id) || this.inFlight.has(id)) continue;
@@ -977,12 +1276,17 @@ export class Scroller {
 
   private send(key: TileKey): void {
     const id = keyOf(key);
-    const rect = this.tileRect(key.col, key.row);
+    const rect = this.tileRect(key.page, key.col, key.row);
     const generation = this.generation;
+    const epoch = this.epochs[key.page] ?? 0;
     const rid = nextRequestId();
     this.inFlight.set(id, {
       rid,
-      isWanted: () => this.generation === generation && this.isWanted(key),
+      page: key.page,
+      isWanted: () =>
+        this.generation === generation &&
+        this.epochs[key.page] === epoch &&
+        this.isWanted(key),
       survivesClear: false,
       withdrawn: false,
     });
@@ -1019,7 +1323,13 @@ export class Scroller {
             this.stats.bytes += result.bytes;
             this.stats.renderMs += result.renderUs / 1000;
             this.stats.decodeMs += result.decodeMs;
-            this.arrived.push({ key, rect, bitmap: result.bitmap, generation });
+            this.arrived.push({
+              key,
+              rect,
+              bitmap: result.bitmap,
+              generation,
+              epoch,
+            });
           },
           // Landed after teardown: `arrived` is drained by a frame loop that no
           // longer runs, so pushing it here is how the bitmap is lost.
@@ -1043,13 +1353,13 @@ export class Scroller {
    */
   private isWanted(key: TileKey): boolean {
     const { top, bottom } = this.band();
-    const rect = this.tileRect(key.col, key.row);
+    const rect = this.tileRect(key.page, key.col, key.row);
 
     const tileTop = this.pageTop(key.page) + rect.y / this.opts.dpr;
     const tileBottom = tileTop + rect.height / this.opts.dpr;
     if (tileBottom < top || tileTop > bottom) return false;
 
-    const tileLeft = this.pageLeftCss() + rect.x / this.opts.dpr;
+    const tileLeft = this.pageLeftCss(key.page) + rect.x / this.opts.dpr;
     const tileRight = tileLeft + rect.width / this.opts.dpr;
     return tileRight >= 0 && tileLeft <= this.opts.viewport.width;
   }
@@ -1064,7 +1374,7 @@ export class Scroller {
       canvas.height = rect.height;
       canvas.style.cssText =
         `position:absolute;` +
-        `left:${this.pageLeftCss() + rect.x / this.opts.dpr}px;` +
+        `left:${this.pageLeftCss(key.page) + rect.x / this.opts.dpr}px;` +
         `top:${this.pageTop(key.page) + rect.y / this.opts.dpr}px;` +
         `width:${rect.width / this.opts.dpr}px;height:${rect.height / this.opts.dpr}px;`;
       const ctx = canvas.getContext("2d", { alpha: false });
@@ -1082,9 +1392,17 @@ export class Scroller {
     this.tiles.set(keyOf(key), entry);
   }
 
-  /** CSS-pixel left edge of a page, centred in the viewport. */
-  private pageLeftCss(): number {
-    return Math.max(0, (this.opts.viewport.width - this.pageWidthCss) / 2);
+  /**
+   * CSS-pixel left edge of a page, centred in the viewport.
+   *
+   * Per page rather than per document, because on a mixed-size document the
+   * pages are not the same width --- an A3 insert centres on the same axis the
+   * A4 pages around it do, which is what makes the column of pages read as one
+   * document rather than as two left-aligned stacks.
+   */
+  private pageLeftCss(page: number): number {
+    const width = this.boxes[page]?.widthCss ?? 0;
+    return Math.max(0, (this.opts.viewport.width - width) / 2);
   }
 
   /**
@@ -1100,11 +1418,12 @@ export class Scroller {
     if (this.placeholders.has(page) || this.inFlight.has(id)) return;
     if (this.backoff.blocked(id, now)) return;
 
-    const displayed = this.displayedPage();
+    const displayed = this.displayedPageSize(page);
     const scale = TIER1_WIDTH / displayed.width_pt;
     const height = Math.round(displayed.height_pt * scale);
     const rid = nextRequestId();
     const generation = this.placeholderGeneration;
+    const epoch = this.epochs[page] ?? 0;
     // Withdrawable like any other request, and for the same reason: a
     // placeholder is permanent once it lands, but a page that has left the band
     // is not one the renderer should be spending 1.5 s on while the visible
@@ -1112,7 +1431,8 @@ export class Scroller {
     // back.
     this.inFlight.set(id, {
       rid,
-      isWanted: () => this.pageInBand(page),
+      page,
+      isWanted: () => this.epochs[page] === epoch && this.pageInBand(page),
       survivesClear: true,
       withdrawn: false,
     });
@@ -1148,6 +1468,7 @@ export class Scroller {
               page,
               bitmap: result.bitmap,
               generation,
+              epoch,
             });
           },
           // As the tier-2 arrival above: `destroy` empties this queue once and
@@ -1164,8 +1485,9 @@ export class Scroller {
   /** Whether any part of a page lies in the current band. */
   private pageInBand(page: number): boolean {
     const { top, bottom } = this.band();
-    const pageTop = this.pageTop(page);
-    return pageTop + this.pageHeightCss >= top && pageTop <= bottom;
+    const box = this.boxes[page];
+    if (!box) return false;
+    return box.top + box.heightCss >= top && box.top <= bottom;
   }
 
   /**
@@ -1177,13 +1499,15 @@ export class Scroller {
    */
   private mountPlaceholder(page: number, bitmap: ImageBitmap): void {
     if (this.placeholderCanvases.has(page)) return;
+    const box = this.boxes[page];
+    if (!box) return;
     const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
     canvas.style.cssText =
       `position:absolute;z-index:0;` +
-      `left:${this.pageLeftCss()}px;top:${this.pageTop(page)}px;` +
-      `width:${this.pageWidthCss}px;height:${this.pageHeightCss}px;`;
+      `left:${this.pageLeftCss(page)}px;top:${box.top}px;` +
+      `width:${box.widthCss}px;height:${box.heightCss}px;`;
     canvas.getContext("2d", { alpha: false })?.drawImage(bitmap, 0, 0);
     this.spacer?.appendChild(canvas);
     this.placeholderCanvases.set(page, canvas);
@@ -1199,13 +1523,14 @@ export class Scroller {
     ctx.fillStyle = this.surround;
     ctx.fillRect(0, 0, surface.width, surface.height);
 
-    const left = this.pageLeftCss();
-
     for (const page of this.pagesIn(
       this.scrollTop,
       this.scrollTop + viewport.height,
     )) {
-      const top = this.pageTop(page) - this.scrollTop;
+      const box = this.boxes[page];
+      if (!box) continue;
+      const left = this.pageLeftCss(page);
+      const top = box.top - this.scrollTop;
 
       const placeholder = this.placeholders.get(page);
       if (placeholder) {
@@ -1213,14 +1538,14 @@ export class Scroller {
           placeholder,
           left * dpr,
           top * dpr,
-          this.pageWidthCss * dpr,
-          this.pageHeightCss * dpr,
+          box.widthCss * dpr,
+          box.heightCss * dpr,
         );
         this.drawnThisFrame++;
       }
 
-      for (let row = 0; row < this.rows; row++) {
-        for (let col = 0; col < this.cols; col++) {
+      for (let row = 0; row < box.rows; row++) {
+        for (let col = 0; col < box.cols; col++) {
           const entry = this.tiles.get(keyOf({ page, col, row }));
           if (!entry?.bitmap) continue;
           ctx.drawImage(
@@ -1252,19 +1577,22 @@ export class Scroller {
     let any = 0;
 
     for (const page of this.pagesIn(top, bottom)) {
-      const pageTop = this.pageTop(page);
+      const box = this.boxes[page];
+      if (!box) continue;
+      const pageTop = box.top;
+      const pageLeft = this.pageLeftCss(page);
       const hasPlaceholder = this.placeholders.has(page);
 
-      for (let row = 0; row < this.rows; row++) {
-        const rect = this.tileRect(0, row);
+      for (let row = 0; row < box.rows; row++) {
+        const rect = this.tileRect(page, 0, row);
         const tileTop = pageTop + rect.y / this.opts.dpr;
         const tileBottom = tileTop + rect.height / this.opts.dpr;
         const overlap = Math.min(bottom, tileBottom) - Math.max(top, tileTop);
         if (overlap <= 0) continue;
 
-        for (let col = 0; col < this.cols; col++) {
-          const columnRect = this.tileRect(col, row);
-          const tileLeft = this.pageLeftCss() + columnRect.x / this.opts.dpr;
+        for (let col = 0; col < box.cols; col++) {
+          const columnRect = this.tileRect(page, col, row);
+          const tileLeft = pageLeft + columnRect.x / this.opts.dpr;
           const tileRight = tileLeft + columnRect.width / this.opts.dpr;
           // Horizontal intersection too: at 400% half the page hangs off the
           // side of the viewport, and counting it would charge the scroller

@@ -9,8 +9,10 @@
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
   import { handleWindowKey, registerAppCommands, type AppActions } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
+  import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label } from "./lib/keys";
   import { Palette } from "./lib/palette";
+  import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Outline } from "./lib/outline";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
@@ -20,19 +22,6 @@
   import { Serial } from "./lib/serial";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
   import { describeFit, percentOf } from "./lib/zoom";
-
-  interface PageSize {
-    width_pt: number;
-    height_pt: number;
-  }
-  interface DocumentInfo {
-    id: number;
-    pages: PageSize[];
-    page_count: number;
-    lazy_geometry: boolean;
-    open_ms: number;
-    at_ms: number;
-  }
 
   let surface = $state<HTMLDivElement | null>(null);
   let sidebarHost = $state<HTMLDivElement | null>(null);
@@ -560,6 +549,15 @@
 
       const page = doc.pages[0];
       if (!page) throw new Error("document reports no pages");
+      // The whole table the open carried, not only its first entry. On a lazy
+      // open --- the default, because collecting every page's size costs 86 ms
+      // on a long document --- that *is* only the first entry, and the viewer
+      // estimates the rest and corrects them as it reads. What it must not do is
+      // discard sizes the backend already sent, which is what handing over
+      // `pages[0]` alone did: with `TPDF_EAGER_GEOMETRY` set the whole document's
+      // geometry arrived and every page after the first was still laid out at
+      // page 1's.
+      const pages: [PageSize, ...PageSize[]] = [page, ...doc.pages.slice(1)];
 
       // Whatever the outgoing document was owed, before its path is replaced.
       places.flush();
@@ -573,7 +571,7 @@
       sidebar?.destroy();
       sidebar = null;
       status = null;
-      title = path.split("/").pop() ?? path;
+      title = basename(path);
       openPathName = path;
       openPageCount = doc.page_count;
 
@@ -604,6 +602,11 @@
         pages: {
           doc: doc.id,
           pageCount: doc.page_count,
+          // Page 1 alone, and the strip lays every row out at it. Deliberately
+          // left on the uniform assumption the viewer has just stopped making,
+          // and it is a *known* gap rather than a proof of harmlessness: see
+          // `thumbnails.ts`, which states what a mixed-size document costs there
+          // and why the fix is a separate piece of work from this one.
           page,
           // The viewer is created below, so the strip reaches it lazily rather
           // than being handed a reference that does not exist yet.
@@ -619,7 +622,7 @@
       viewer = new Viewer(surface, {
         doc: doc.id,
         pageCount: doc.page_count,
-        page,
+        pages,
         onStatus: (next) => {
           status = next;
           // What keeps thumbnails out of the way of the page: the strip stops

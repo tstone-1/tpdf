@@ -800,8 +800,14 @@ which is what makes it evidence rather than a milestone.
 
    - **Frontend** — `scripts/check_webview_sinks.py`, the `sinks` gate. No markup sink, no
      computed attribute name, no dangerous literal attribute (`href`, `src`, `on*`), no
-     URL-bearing element created, no assignment to a navigating property. Every rule shown
-     to fire by mutation, with a control (`this.onChange`, an ordinary field) shown *not* to.
+     URL-bearing element created, no element created from a computed name without a stated
+     reason, no assignment to a navigating property — each read in its namespaced spelling
+     too, since `.setAttribute(` does not match `.setAttributeNS(` and the gate reported
+     `[OK]` on a planted `setAttributeNS(null, "href", <document text>)` until 2026-08-02.
+     Every rule shown to fire by mutation, with a control (`this.onChange`, an ordinary
+     field) shown *not* to. One exemption: `a11y.ts` builds a heading or a paragraph from
+     the document's structure tag through `elementFor`, a total whitelist of `p` and
+     `h1`..`h6`.
    - **Backend** — `outline.rs`'s `no_target_variant_may_carry_a_url`. `Target` has no
      URL-bearing variant, and adding one **fails to compile**: `error[E0004]:
      non-exhaustive patterns: Target::Uri { .. } not covered`. That is the strongest verdict
@@ -866,6 +872,30 @@ which is what makes it evidence rather than a milestone.
     page pays it on every request that reaches it, and nothing remembers that the page is
     bad. The frontend's per-request backoff (§7.10) is what keeps that from repeating at
     frame rate; there is no equivalent for text, search or outline requests.
+
+13. **What the coordinator diagnoses now survives the run; what its workers say still does
+    not.** A worker killed on its deadline, a crashed worker replaced under a reader who saw
+    nothing, a pre-spawn that failed, a print that did not present — every one of those was
+    an `eprintln!`, and a GUI process started by double-clicking a PDF has no stderr at all,
+    so the diagnostics this codebase words most carefully were exactly the ones a user could
+    never send back. Nine parent-process sites go through `diag::note` since 2026-08-02: it
+    writes the line to stderr byte for byte as before — that channel is what `viewer_check.py`,
+    `worker-probe` and `backend-probe` capture, and a line quietly moved off it would be a
+    regression in checks that have nothing to do with logging — and appends a UTC-stamped copy
+    to `tpdf.log` in the platform's log directory, `TPDF_LOG_FILE` overriding it. Bounded at
+    256 KiB plus one kept predecessor. Serialized by a lock, because `eprintln!` is several
+    writes and `docs/TRAPS.md` records a torn one that read as a worker dying with an empty
+    reason. A failed append is swallowed — a diagnostics channel that can fail a request is
+    worse than none — but counted, and the count is written out ahead of the next line that
+    lands, so a hole in the file reads as a hole rather than as a quiet period.
+
+    **The open half is the one nearest the parser.** A worker writes to the stderr it
+    inherited from the parent (§T3) and starts no sink of its own, deliberately: a contained
+    process holding a writable path outside its own mappings is a hole in §5. So a worker's
+    dying words still evaporate on a GUI launch, and closing that means the parent reading
+    its children's pipes and re-emitting what arrives — a change to the boundary rather than
+    to the logging, and still future work. A crash of the coordinator itself logs nothing
+    either, by construction: the process that would write the line is the one that died.
 
 ## 8. How to re-verify any of this
 

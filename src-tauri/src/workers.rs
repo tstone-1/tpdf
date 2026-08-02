@@ -791,10 +791,10 @@ impl Workers {
             // answering" and would otherwise have no way to tell a deadline kill
             // from a crash --- and those are opposite diagnoses: one is a
             // document doing too much, the other is PDFium falling over.
-            eprintln!(
+            crate::diag::note(&format!(
                 "[render] worker {pid}: no reply in {:.0} s; killing it",
                 self.deadline.as_secs_f64()
-            );
+            ));
             kill_pid(*pid);
         }
         overdue.len()
@@ -866,7 +866,9 @@ impl Workers {
             // running` here for the reason above --- and said out loud, because
             // the error the caller receives is about a pipe rather than about a
             // request that took too long.
-            eprintln!("[render] document {doc}: worker killed for exceeding its deadline");
+            crate::diag::note(&format!(
+                "[render] document {doc}: worker killed for exceeding its deadline"
+            ));
             self.discard(doc, worker);
             return Err(format!("{error} --- the request exceeded its deadline"));
         }
@@ -874,10 +876,10 @@ impl Workers {
         // Said out loud, once, because a successful retry makes the death
         // invisible to the caller and a worker that dies quietly is the hardest
         // thing in this design to diagnose.
-        eprintln!(
+        crate::diag::note(&format!(
             "[render] document {doc}: worker {}; starting a replacement",
             worker.epitaph()
-        );
+        ));
         self.discard(doc, worker);
 
         // The discard freed a slot, so this checkout cannot block: it takes an
@@ -1165,7 +1167,9 @@ impl Engine for Workers {
                 // reason is said out loud because a spare that dies every time
                 // would otherwise show up only as the saving quietly vanishing.
                 Err(e) => {
-                    eprintln!("[render] a pre-spawned worker could not take the document: {e}");
+                    crate::diag::note(&format!(
+                        "[render] a pre-spawned worker could not take the document: {e}"
+                    ));
                     let worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
                     mark("worker spawned");
                     worker
@@ -1437,7 +1441,9 @@ pub(crate) fn watch_calls(engine: &Arc<Workers>, deadline: Duration) {
             engine.kill_overdue();
         });
     if spawned.is_err() {
-        eprintln!("[render] no deadline supervisor: a request that hangs will hold its thread");
+        crate::diag::note(
+            "[render] no deadline supervisor: a request that hangs will hold its thread",
+        );
     }
 }
 
@@ -1601,6 +1607,38 @@ mod tests {
         assert!(
             killed(&status),
             "the process ended some other way: {status:?}"
+        );
+    }
+
+    #[test]
+    fn a_deadline_kill_reaches_the_log_file() {
+        // The wiring, end to end, through the site rather than through the
+        // logging module: `kill_overdue` is one of the eight places whose line
+        // used to exist only on a stderr that a double-clicked GUI process does
+        // not have. What this asserts is that the line the supervisor writes is
+        // in the file afterwards -- not that `diag` can write files, which is
+        // its own module's business.
+        //
+        // The one test in this binary that starts the process-wide sink. It is a
+        // `OnceLock`, so a second test doing the same would silently get the
+        // first one's file and assert against a path nothing writes to.
+        let dir = std::env::temp_dir().join("tpdf-diag-workers");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("tpdf.log");
+        crate::diag::start(path.clone());
+
+        let workers = supervisor(Duration::from_millis(1));
+        let mut child = sleeper();
+        let pid = child.id();
+        let _watch = CallWatch::start(&workers, pid);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(workers.kill_overdue(), 1, "nothing was found to kill");
+        child.wait().expect("the child can be reaped");
+
+        let written = std::fs::read_to_string(&path).expect("the log was written");
+        assert!(
+            written.contains(&format!("[render] worker {pid}: no reply in")),
+            "the kill is not in the log: {written:?}"
         );
     }
 

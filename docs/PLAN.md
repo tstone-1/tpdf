@@ -773,12 +773,57 @@ built, not after.
 The first draft had geometry "computed up front from the page size table so the scrollbar is
 correct from the first frame". The startup measurement above kills that: building the table
 costs 86 ms on a 775-page document and is the single largest avoidable item in the budget.
-Geometry is therefore lazy — the scroller estimates total height from the pages it has
-loaded and corrects as it learns more. A scrollbar that settles within the first few hundred
-milliseconds is a far better trade than one that is exact but arrives 86 ms late, and page
-sizes within a document are overwhelmingly uniform, so the estimate is usually exact
-immediately. Documents with mixed page sizes are where it visibly adjusts, and that is the
-case to design the correction behaviour around.
+Geometry is therefore lazy. The design is that the scroller estimates total height from the
+pages it has loaded and corrects as it learns more: a scrollbar that settles within the first
+few hundred milliseconds is a far better trade than one that is exact but arrives 86 ms late,
+and page sizes within a document are overwhelmingly uniform, so the estimate is usually exact
+immediately. Documents with mixed page sizes are where it would visibly adjust, and that is
+the case to design the correction behaviour around.
+
+**That correction was designed here and not built for eleven days**, and what stood in its
+place was weaker than an estimate: `App.svelte` passed `doc.pages[0]` and nothing else, and
+`Scroller` held one `PageSize` and multiplied it by the page index. There was no per-page
+table, so there was nothing to learn from and nothing that adjusted. Nor was the assumption
+confined to the scrollbar --- the same single size decided the tile grid, so a page larger
+than page 1 was only ever *requested* as far as page 1 reached and was drawn cropped,
+silently, while every page after a differing one sat at a wrong offset. Recorded rather than
+deleted because the passage above explains why lazy geometry exists at all, and because the
+gap between a design written down and a design built is the thing this file is worst at
+showing.
+
+**Built 2026-08-02.** `Scroller` holds one size per page, `null` where it is not known yet,
+and accumulates each page's own height into the next page's top; the tile grid, the tier-1
+placeholder's scale, the centring and the scrollbar extent are all per page. Unknown pages
+are laid out at the **mean of the sizes that are known**, which is page 1's size until a
+second one arrives --- so the uniform case, which is almost every document, is exact
+immediately and costs nothing.
+
+The learning channel is the one that was already there: `viewer.ts` reads the size out of the
+`PageText` it fetches for every visible page and hands it to `Scroller.notePageSize`. No new
+command and no second request --- the round trip was happening anyway, which is why the
+correction is affordable on the critical path the 86 ms measurement ruled out. Three
+consequences worth stating because each was a decision:
+
+- **A correction invalidates one page, not the document.** Each page carries its own epoch,
+  and a reply naming a stale one is dropped on arrival. A single counter would have repainted
+  the whole screen once per page on a document being read straight through.
+- **The reader is re-anchored, not left where the offset happens to point.** The scroll
+  offset is CSS pixels down a document that has just changed length; what is preserved is the
+  page and the fraction through it, exactly as a rotation preserves them.
+- **A fit follows the page being read.** Fitting an A3 insert to page 1's width leaves it
+  overflowing the window with no way to reach its edge.
+
+`testdata/make_mixed_pdf.py` generates the document that discriminates all of this, and
+`mixed-geometry.json` beside it states every page's size and every marker's position --- so
+the viewer check compares the layout against a file a different program wrote rather than
+against the backend it renders through. The rest of the corpus is uniform, and the three
+layout checks say `[SKIP]` there with that as the reason.
+
+**The page strip is deliberately still uniform.** `thumbnails.ts` sizes every row from page 1
+and requests every thumbnail at page 1's scale, so a wide page's thumbnail is cropped. Its
+own header states this rather than implying it is safe. It is a separate piece of work: the
+strip extracts no text, so it has no channel to learn a size, and sizing rows per page changes
+a virtualised list whose arithmetic is currently one row height times an index.
 
 ### If the webview is not fast enough
 
@@ -3495,8 +3540,11 @@ a process boundary is an architectural rewrite, so it is one now rather than one
 the justification is `docs/THREAT-MODEL.md` and **not** the coverage floor: measured above, a
 pool buys 3.2× on a screenful of the A0 sheet and leaves it just as unscrollable.
 
-`src/worker.rs` is the parent half and the shared contract: the protocol, the shared mapping,
-spawn/call/withdraw, the epitaph, footprint supervision, and the measured SBPL profile. Every
+`src/worker.rs` is the parent half --- spawn/call/withdraw, the epitaph, footprint
+supervision, and the measured SBPL profile --- with the shared contract beside it in the
+modules split out on 2026-08-02: `worker_proto.rs` (the wire protocol), `worker_shm.rs` (the
+shared mapping), `worker_handover.rs` (the macOS document handover) and `worker_argv.rs` (the
+Windows command line). Every
 design decision in it is a spike 0.5 number rather than a preference — the document crosses as
 a **mapped descriptor and never a path**, which is the whole reason a sandbox that denies
 `file-read*` can work at all; payloads cross through the mapping at 0.11 ms against 0.61 ms

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 218 entries
+The one thing this file does *not* carry in full is the trap list --- 220 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -373,6 +373,61 @@ in `target/release/examples/`.
 `--bins`. An undefined extern called from one example's `main` turns the gate red with
 `LNK2019`, which is the check that says the flag does something.
 
+**The JavaScript harness does ship, and as of 2026-08-02 that is a decision rather than the
+unexamined half of the same hygiene.** `App.svelte` statically imports all six webview entry
+points --- `viewercheck`, `scrollbench`, `sessioncheck`, `opencheck`, `autobench`, `startup`
+--- so the functional check and its five siblings sit in `dist/assets/index-*.js`, which
+`frontendDist` embeds whole into the binary. Read out of the shipped file rather than off the
+import list: check names such as *"a bare k does not open the palette"* and the timeline's
+`TIMELINE-JSON` marker are literals in the minified bundle,
+and `dist/shell.html` (9.0 kB), the framework-free page `ShellMode::Blank` loads, ships
+beside it. The weight is **77.1 kB of a 221.2 kB bundle, 34.9%**, measured two ways that
+agree: attributing the bundle's own sourcemap back to its sources, and separately minifying
+each of the six with every import external, which lands at 77.8 kB --- 0.9% apart.
+
+**It stays, and the first reason is the one the checks are built on.** Their whole design is
+that they observe the artifact that ships; the frame loop, the input handlers and the layout
+they assert against exist nowhere else, which is why they need a real window at all.
+Excluding them at build time would run the 109-name invariant against a bundle nobody
+installs --- a checked artifact and a shipped artifact that agree about everything except the
+difference between them, which is the writer-and-its-own-reader failure this repository has
+already recorded twice from other directions.
+
+**The second reason is measured, and not marginally.** Priority 1 is a cold start under
+300 ms, and the frontend payload is not what decides it: the `blank` variant deletes the
+*entire* payload --- no module graph, no Svelte, no `@tauri-apps/api` --- and moved warm
+start by -8.4, +9.9 and -0.2 ms across three interleaved runs (`docs/PLAN.md` §0). The reason
+is the trap *"The shell floor is ~250 ms"*: the webview's first request over a Tauri custom
+protocol costs ~45 ms and whichever request is first pays it, so a smaller payload only moves
+which line of the table wears it. 77 kB inside a floor built from a WKWebView and a protocol
+toll is not a lever. The six launch-time probes are the same shape --- each entry point asks
+Rust for its variable through `spike_env` and returns on `None` --- and the baseline's first
+IPC costs 0.0 ms, because the module fetch has already paid the toll.
+
+**The 2026-07-31 removal does not transfer, and the difference is authority rather than
+size.** The 17 that left were *executables*: independently launchable, each with its own
+hostile-input surface, sitting in the install directory where anything that can run a file
+can run them. They were also 8.7 MB of a 16.7 MB MSI, over a hundred times this harness.
+Dead JS in an embedded bundle is launchable by nothing: it holds no authority the bundle does
+not already have, and it cannot start itself, since every entry point is inert unless its
+variable is set in the app process's own environment. That environment surface is the
+binary's, not the bundle's --- the 32 `TPDF_*` levers are read in `src-tauri/src`, and **no
+`TPDF_` string occurs in the shipped JS at all**. Read the *"payload of three files"* above as
+the statement about executables that it is; the frontend rides inside `tpdf.exe`.
+
+**The honest cost is `spike_print` and `spike_exit`**, registered in `generate_handler` and
+therefore callable by any script the webview runs: one prints to stdout, the other calls
+`process::exit` with the code it is handed. Two things bound that, and neither is a promise
+about the harness. The CSP is `default-src 'self'` with no `'unsafe-inline'`, so the only
+script that runs is the one that shipped --- residual risk 7 in `docs/THREAT-MODEL.md` carries
+that, the T8 invariant that keeps document text from becoming script or navigation, and the
+seam it leaves, since a grep over TypeScript cannot see the Rust half. The marginal authority
+is nil: a caller able to reach `spike_exit` can already reach `open_document` and the print
+path, so what these two add is a denial of service, not an escalation. **What would reopen
+the decision**: a spike command with authority past print-and-exit, or a harness grown to
+where bundle size moves the shell floor. The second is 45 ms of protocol toll away --- but
+this is a decision about the numbers above, to be re-measured rather than inherited.
+
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
 JavaScript and launch actions are **disabled by default**. All `lopdf` stream decoding is
@@ -504,13 +559,35 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently eleven: a toolchain-pin check, a PDFium pin check, `cargo fmt --check`, `cargo
-clippy --all-targets -- -D warnings`, `cargo test --locked`, `cargo build --locked --bins
---examples`, a webview-sink check, `npm run check`, `npm run test`, `npm run build`, and a
-third-party-notices check. Two of them are ordered rather than merely present: `toolchain`
-runs **first**, because every result after it is a statement about whichever compiler
-actually ran, and `notices` runs **last**, because it reads the build's own sourcemaps to
-see which npm packages shipped.
+Currently twelve: a toolchain-pin check, a PDFium pin check, a trap-index check, `cargo fmt
+--check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --locked`, `cargo build
+--locked --bins --examples`, a webview-sink check, `npm run check`, `npm run test`, `npm run
+build`, and a third-party-notices check. Two of them are ordered rather than merely present:
+`toolchain` runs **first**, because every result after it is a statement about whichever
+compiler actually ran, and `notices` runs **last**, because it reads the build's own
+sourcemaps to see which npm packages shipped.
+
+**`pdfium` verifies the library, not the stamp beside it**, as of 2026-08-02. It compared the
+pin against a digest the installer itself had written, and its only fact about the tree was
+that *something* matching `*pdfium*` sat in `lib/` or `bin/` --- which on Windows the import
+library `lib/pdfium.dll.lib` satisfies alone, so deleting `bin/pdfium.dll`, the blob that
+parses every hostile document, left the gate green. `SHA256.txt` now carries a second line
+recording the extracted library's own digest, and `--check` asks for `library_path(key)` by
+name and re-hashes it. An install predating that line is not refused --- it was admitted by
+the archive check and the machines holding one are fine --- but the run prints a `[WARN]`
+saying which of the two checks it actually ran. The trap *"A directory that exists is not the
+library you need"* had arrived inside the script whose docstring names that same mistake.
+
+**`traps` compares `docs/TRAPS.md`'s titles against this file's index as sets.** The count
+here has an authority (`grep -c '^### '`) and stopped drifting; the index did not, and was
+three entries short on 2026-08-02 --- added by the commit that had updated the number. So the
+tally was right while the list nobody counts was wrong, which is the doctrine one level up:
+the invariant is the set of titles, and a set diff needs no number. The rule it enforces is
+the file's own --- a bullet is the title verbatim, optionally with a parenthetical the index
+adds where a title misleads on its own. It refuses an empty scan on either side and a
+duplicate on either side, since two bullets covering one title can hide a third going
+missing. Proved by removing a bullet, adding one naming nothing, duplicating one, and by
+disabling the parenthetical rule inside the checker; all four red.
 
 **`sinks` enforces `docs/THREAT-MODEL.md` T8**, which until 2026-08-02 was the one mitigation
 in that document held by convention rather than by a line. Document text --- outline titles,
@@ -519,13 +596,29 @@ narrow invariant that makes that checkable at all, **no markup-parsing sink anyw
 frontend**, which is sufficient rather than merely necessary because without a sink the only
 routes left do not parse markup.
 
-Four further rules close the routes by which a string that cannot become *markup* can still
+Five further rules close the routes by which a string that cannot become *markup* can still
 become a *navigation or a script*: a computed `setAttribute` name, a dangerous literal one
-(`href`, `src`, `on*`), an assignment to a navigating property, and --- the blunt one that
-makes the others nearly moot --- **creating a URL-bearing element at all**. It also refuses a
-scan that found no files or no `setAttribute` calls, since a pattern that stops occurring
-passes exactly like a clean one. Every rule proved to fire by mutation, with a control
-(`this.onChange`, an ordinary field) proved *not* to.
+(`href`, `src`, `on*`), an assignment to a navigating property, and --- the blunt ones that
+make the others nearly moot --- **creating a URL-bearing element at all**, by a literal name
+or a computed one. It also refuses a scan that found no files, no `setAttribute` calls or no
+`createElement` calls, since a pattern that stops occurring passes exactly like a clean one.
+Every rule proved to fire by mutation, with a control (`this.onChange`, an ordinary field)
+proved *not* to.
+
+**Each rule reads the namespaced spelling too**, added 2026-08-02 with the computed-element
+rule. `.setAttribute(` does not match `.setAttributeNS(`, and the control for that is worth
+keeping: the gate as it stood reported `[OK]` on a planted
+`element.setAttributeNS(null, "href", <document text>)`, which is the sufficiency claim
+falsified by two letters. A namespaced call whose arguments the pattern cannot parse is
+flagged rather than skipped, on the principle the rest of the file is about.
+
+The **one exemption** in the tree is `a11y.ts`'s `createElement(elementFor(block.tag))` ---
+the tag is the document's, the element name is not, because `elementFor` is total and
+answers `p` or `h1`..`h6` for every input. The marker (`webview-sink-ok:`) is honoured on
+the flagged line or the one immediately above it, since a justification that has to fit on
+the end of the line it justifies gets written as "safe", which is not a reason. A marker
+that ends up beside no finding is printed as a `[WARN]`: an allowlist entry naming something
+that no longer exists is how an allowlist rots into a blanket permission.
 
 **The backend half is enforced by the type**, and the two halves cannot see each other.
 `outline.rs` refuses `/URI`, `/Launch` and `/GoToR` into `Target::Refused { action }`, whose
@@ -682,12 +775,15 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 218 of them and the full text
-was 93% of this file --- an instruction budget spent on the 212 traps that are not
+titles. Only the titles are here, because there are 220 of them and the full text
+was 93% of this file --- an instruction budget spent on the 214 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
-`grep -c '^### ' docs/TRAPS.md` rather than this sentence.
+`grep -c '^### ' docs/TRAPS.md` rather than this sentence. The *titles* have their own
+authority now, and it is mechanical rather than prose: `scripts/check_trap_index.py`
+diffs the set both ways and is one of the gates, so an entry added to one file and not
+the other goes red instead of going unnoticed.
 What the index has to preserve is knowing that a trap *exists*;
 the paragraphs matter once you are in that area.
 
@@ -695,7 +791,11 @@ So: **before working in any area named below, read its entry.** A title is a cla
 the lesson --- several of them are the opposite of what they sound like, which is why they
 were written down. Grep the title in `docs/TRAPS.md`.
 
-New traps go in `docs/TRAPS.md` with a line added here, in the same commit.
+New traps go in `docs/TRAPS.md` with a line added here, in the same commit. That is a rule
+with a gate behind it since 2026-08-02: `traps` in `scripts/gates.py` diffs the two as
+**sets** and fails on either side having something the other lacks. The prose count above
+still has to be moved by hand --- a number in a sentence is exactly what the gate does not
+depend on.
 
 **Code comments and the other documents say "`AGENTS.md` records ..." in about a hundred
 places, and those references are still good** --- they were written when the entries lived
@@ -767,6 +867,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - FIFO dequeue is not FIFO completion
 - A worker killed a moment ago still says it is running
 - The cleanup after an fd shuffle can close what it just installed
+- A per-page invalidation counter is not the same as a generation
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
@@ -855,6 +956,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A wrap is correct when there is nothing ahead, so the check cannot fire
 - A check with no precondition reports a sparse fixture as a defect
 - A test that refuses an empty fixture set is what makes CI's absence visible
+- A feature made a standing check false, and the only corpus that could tell had never been opened
+- A negative assertion needs an observable saying the question was asked
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -892,6 +995,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A measured string transcribed off a terminal loses what the terminal does not draw
 - A mutation aimed at one branch when the fixture only reaches the other
 - A snapshot taken after the first mutation restores the mutation, and verifies itself clean
+- A rewritten line leaves a mutation aimed at nothing, and only the harness says so
+- A stream split done for the failing direction leaves the passing one where it was
 
 ### Windows and portability
 - The gates had never run on the platform where they fail

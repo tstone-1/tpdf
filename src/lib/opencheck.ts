@@ -26,6 +26,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { pause, Report, settle } from "./checkreport";
+import { basename } from "./paths";
 import { SIDEBAR_CLASS } from "./sidebar";
 
 /** How long to wait for a document that should already be on its way. */
@@ -89,9 +90,7 @@ export async function runOpenCheckIfRequested(host: OpenCheckHost): Promise<bool
 }
 
 /** The tail of a path, for a detail column that has to stay readable. */
-function name(path: string): string {
-  return path.split("/").pop() ?? path;
-}
+const name = basename;
 
 /** How many sidebars are mounted. More than one is the defect `race` looks for. */
 function sidebars(): number {

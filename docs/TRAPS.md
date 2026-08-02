@@ -5706,3 +5706,83 @@ timeout, a fetch, a subscription, an event that was not delivered --- in every c
 passing state and the not-yet-started state are the same state, and only an explicit
 "finished" observable tells them apart. The cost is one boolean on a production type, which
 is a fair price for a control that would otherwise be decoration.
+### A stream split done for the failing direction leaves the passing one where it was
+
+The entry above --- *"A wrapper's own verdicts are on the other stream, in the same shape as a
+check's"* --- was written, the fix was applied, and the fix covered half the cases. On
+2026-08-02 `scripts/viewer_check.py` still printed
+
+```
+[OK]   the app process never mapped the PDF parser 43 modules at peak over 115 samples
+```
+
+on **stdout**, beside its two `[FAIL]` forms on stderr, and `scripts/mutate_viewer.py`'s
+`run_check` docstring asserted the opposite in so many words: *"Only stdout carries check
+results."* So on Windows --- the only platform where that audit runs at all --- every baseline
+silently carried one extra "check name" that no mutation could ever turn red. The number the
+harness prints for a reader to sanity-check against `BUILD.md` was **164** where the transcript
+had 163 checks.
+
+Two things it cost, and the second is the one that would have been hard to diagnose:
+
+- **`BUILD.md`'s cross-platform name count could not be reconciled by anyone reading both.**
+  `viewercheck.ts` produces the names, the table records them, and one of the two machines
+  quietly added one from outside.
+- **`hits = [line for line in baseline if after_marker(line).startswith(m.expect)]`** matches an
+  expectation against the wrapper's line as readily as against a check's. A mutation whose
+  expected name happened to share a prefix with *"the app process never mapped the PDF parser"*
+  would have been validated against, and then judged by, a line the mutation cannot affect ---
+  reported as `SURVIVED`, which this file already records as the most misleading verdict a
+  mutation pass can print.
+
+The existing cross-check did **not** catch it, and that is not a fault in the cross-check: it
+compares the `[FAIL]` count against the summary's arithmetic, and this line is an `[OK]`. A
+consistency check proves agreement, never completeness, and what it cannot see here is an extra
+*passing* line --- the direction nobody reads.
+
+So the lesson is narrower and more useful than "split the streams": **when a stream split is
+made because one direction was misclassified, move every direction the same day.** A pass is
+where the drift hides, because a green run is the run nobody re-reads. The fix is three lines
+(`file=sys.stderr`), and what proves it is not the code but the harness's own baseline print
+going from 164 to 163 --- so if a wrapper prints a verdict at all, check the count it produces
+against the transcript it wraps, on the passing path.
+
+### A per-page invalidation counter is not the same as a generation
+
+`scroller.ts` had two epoch counters before per-page geometry landed, and they are the right
+model for what they do: `generation` is bumped when tier 2 is cleared, `placeholderGeneration`
+when tier 1 is dropped, and a reply naming a stale one is closed on arrival rather than drawn.
+Both are **document-wide**, because the events that bump them --- a zoom, a rotation, an
+inversion --- change every page at once.
+
+Learning a page's real size is not that event. It changes one page's box and leaves every other
+page's pixels perfectly valid, and the temptation is to reuse the counter that is already there,
+because it is one line and it is *correct*: bumping `generation` does invalidate the stale tile.
+It also invalidates every other tile on screen. On a document being read straight through, each
+page's size is learned exactly once as it comes into the band, so the whole screen would be
+thrown away and re-rendered **once per page** --- an invalidation storm with no wrong pixel
+anywhere to say it is happening, on the one code path whose entire justification is that
+correcting geometry is cheap enough to do on the frame loop.
+
+What replaces it is an `epochs: number[]`, one entry per page, captured into the request closure
+and compared in `drain`. The shape is worth naming because the choice recurs: **the granularity
+of the counter has to match the granularity of the event, and a coarser counter is not a
+conservative approximation --- it is a performance defect that no correctness test can see.**
+
+Three details that are not obvious from the outside:
+
+- **A withdrawal is not enough on its own.** `withdraw` is gated on the `cancel` variant flag and
+  in any case cannot reach a render that has already finished, so the epoch is what actually
+  drops the reply. Both are needed and they do different jobs; a mutation replacing the epoch
+  comparison with `false` turns the test red while every withdrawal still happens.
+- **The entry stays in `inFlight` until its reply lands**, so `request` will not issue a
+  duplicate for a tile still on its way. The consequence is that the corrected page is asked for
+  again only after the stale requests settle --- a test that takes a frame immediately after the
+  correction sees the one genuinely new column and reports that as the whole answer. It did.
+- **The stale reply must be counted as neither delivered nor discarded.** Nothing about the
+  scroll invalidated it, so charging it to `discarded` would report a supersedable-queue failure
+  that did not happen, in a counter that a benchmark reads.
+
+And the mutation that proves the whole thing is not the epoch check but the layout: reverting
+`computeGeometry` to lay every page out at page 1's size turns five unit tests red *and* three
+checks in the real app, one of them reporting `0% page` where the A3 page's own ink is.

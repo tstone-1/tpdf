@@ -11,6 +11,108 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### An independent review of the whole tree, and what fixing its findings changed
+
+- **The sharpest finding was in a gate, not in the code.** `fetch_pdfium.py --check`
+  certified a stamp it had itself written, and its only fact about the artefact was a
+  `*pdfium*` glob that the import library satisfies alone --- so deleting or swapping
+  `bin/pdfium.dll`, the parser the whole containment story is about, left the gate green.
+  The stamp now records the extracted library's own digest and `--check` re-hashes it;
+  a missing library, an altered byte and a wrong-platform stamp each turn it red, proved
+  by doing each of those things.
+- **Rotating the view no longer discards the document's tagged reading order.**
+  `turnedView` returned every field but `runs`, so one quarter-turn silently demoted a
+  tagged page to geometric order for the screen reader and for copy. Runs are index-based
+  and rotation renumbers nothing; they pass through now, with a test that was red first.
+- **A selection larger than the text cache copies correctly.** Copy re-read the cache
+  after loading, and LRU order is page order for pages loaded once --- so past 400k
+  characters the front was always evicted while the tail arrived, deterministically, and
+  the error blamed the document. The text is taken from each page's own reply as it
+  arrives; the cache is an optimization again rather than a correctness dependency.
+- **A thumbnail render that finished before its withdrawal landed is dropped, not kept.**
+  Rotation and inversion withdraw the in-flight request, but a request that had already
+  completed returned in full and was stored in the old orientation, permanently --- the one
+  of three render paths with no generation check now has one. The withdrawal counter also
+  stopped charging rotation and inversion to the contention metric.
+- **Four toolbar states joined the status change-detection summary** --- the three search
+  options and the scoped flag, which could flip without a status event when the query was
+  empty, leaving the button and its `aria-pressed` stuck. The scoped fact was also read
+  from the searcher's last scan rather than from the viewer's own scope, so it was stale
+  even when a status did fire.
+- **The Windows title bar shows the file's name rather than its full path.** Three copies
+  of a `/`-only basename split became one `paths.ts` helper that knows both separators.
+- **`structure.rs` bounds its output as well as its walk.** Depth and element count were
+  capped; the per-element mark count and the runs they emit were the document's to choose,
+  a `elements x marks x chars` budget with one factor bounded. A page-wide mark budget and
+  a run cap set the existing `truncated` flag, and the untagged-character count no longer
+  wraps.
+- **`parse_bmp` refuses a pixel array shorter than its header declares** --- the one field
+  it did not validate was the one that decides how much memory GDI reads, including the
+  palette and mask block read through the same pointer, and an `i32::MIN` height no longer
+  aborts in debug.
+- **The trap index has a gate.** The index in `AGENTS.md` had fallen four titles behind
+  `docs/TRAPS.md` --- the same-commit rule held by convention, and the head commit had
+  already broken it. `check_trap_index.py` is the twelfth gate: a title-set diff both
+  ways, with the annotation rule the real index taught it. `README.md`'s count of the
+  traps is now a shape, not a number, for the reason the number was twelve behind.
+- **The sinks gate sees `setAttributeNS` and a computed `createElement`.** Both were
+  outside its patterns while a computed `createElement` already existed in the tree ---
+  whitelisted, but unexamined. Five rules now, each proved to fire by mutation, with an
+  exemption marker that warns when it marks nothing.
+- **The workflows pin their actions by commit, not by tag.** The release workflow runs
+  with the signing secrets in scope, and a moved tag on a third-party action was the one
+  supply-chain direction its fork threat model did not cover. Every SHA verified against
+  its repository and tag before it was written down.
+- **`worker.rs`'s header tells the truth about Windows again.** It opened with "Windows
+  has none of this" above the Windows implementation --- the two-platform account it
+  actually has now, and a sweep of every other module header against its `cfg`s found and
+  fixed one more (`render.rs` said workers were the macOS default; they are the default on
+  both).
+- **`viewercheck.ts` reports through `checkreport.Report`.** The largest harness carried a
+  private, already-drifted copy of the machinery the shared module was written to prevent;
+  240 call sites migrated with the 109 check names byte-identical, `mutate_viewer.py`
+  parses after the marker instead of slicing a column, and a new test pins the line format
+  the Python parsers grep --- so format drift goes red here before it breaks a parser.
+- **The wire types have one owner.** `DocumentInfo` and `PageSize` were hand-mirrored in
+  four files, two of them already drifted to a subset; `ipc.ts` owns them now, with
+  `render.rs` named as the authority.
+- **The page-1 geometry assumption is stated at its true cost.** The scroller comment
+  called a mixed-size document "a scrollbar problem"; it is content truncation, since the
+  one size decides which tiles are ever requested. The comment and `docs/PLAN.md` now say
+  what is actually built, and `testdata/make_mixed_pdf.py` generates the document that can
+  discriminate the correction --- the corpus was uniform, so no check could go red on any
+  of this.
+- **And the correction landed.** The scroller holds one size per page, accumulates each
+  page's own height into the next page's top, and derives the tile grid, the placeholder
+  scale, the centring and the scrollbar extent per page; a page whose size is not known yet
+  is laid out at the mean of the sizes that are, which is page 1's until a second arrives.
+  Real sizes are learned from the text extraction the frame loop already performs for every
+  visible page --- no new command, no second request --- and correcting one invalidates that
+  page alone, re-anchors the reader on the page and the fraction through it, and refits if a
+  fit is following. On `mixed.pdf` the A3 insert was drawn cropped to A4 with nothing on
+  screen to say so; reinstating the uniform layout now turns three checks red, one of them
+  reporting `0% page` where the page's own ink is.
+- **What the coordinator diagnoses now survives the run.** Every worker and print
+  diagnostic was an `eprintln!`, and a double-clicked Windows GUI process has no stderr, so
+  the lines this codebase words most carefully were the ones a user could never send back.
+  Nine parent-process sites go through `diag::note` now: stderr gets the line byte for byte
+  as before --- that channel is what the harnesses parse, and a test re-runs the binary to
+  prove no line moved off it --- and a UTC-stamped copy lands in `tpdf.log` under the
+  platform's log directory, 256 KiB plus one predecessor, `TPDF_LOG_FILE` overriding.
+  Residual risk 13 keeps the honest half: a worker's own dying words still evaporate,
+  because a contained child holding a writable path would be a hole in the sandbox.
+- **`worker.rs` is five files instead of 2,861 lines.** The wire protocol, the shared
+  mapping, the macOS handover and the Windows command line each hold their own seam, with
+  every public path re-exported so no consumer changed --- proven a redistribution rather
+  than a rewrite by attributing every moved line to its original, and by 285 tests whose
+  names are byte-identical before and after.
+- **The JavaScript harness ships, and that is now a recorded decision.** 77 kB of the
+  221 kB bundle is the checks --- measured two independent ways --- kept because they exist
+  to observe the artifact that ships, because deleting the entire payload measures at the
+  noise floor of a ~250 ms shell floor, and because the two spike commands they can reach
+  add denial of service, not authority. The record in `AGENTS.md` names what would reopen
+  it.
+
 ### The encoding path, opened in a window for the first time --- on Windows
 
 - **The feature had never run.** `encoding.rs` to `document_mapping` to `Search` to the
