@@ -23,10 +23,14 @@ The names come from a clean baseline run, and a name that cannot go red reports
 SURVIVED and reads as a gap in the checks rather than as a typo here.
 
 **Expected names are matched as a prefix of the line after the marker**, never
-by slicing the padded name column. `viewercheck.ts` pads names to 40 and a name
-*longer* than that is followed by a single space, so a column parse silently
-stops matching the day a check gets a long name -- which has happened here once
-already, in the direction that looks like good news.
+by slicing the padded name column. The width is `checkreport.ts`'s, and is 46
+today; it was 40 while `viewercheck.ts` carried its own copy of the reporter,
+and the two having drifted a column apart unnoticed is the reason this file
+encodes neither. A name *longer* than the width is followed by
+a single space, so a column parse silently stops matching the day a check gets a
+long name -- which has happened here once already, in the direction that looks
+like good news. `after_marker` strips the label and whatever spacing follows it,
+which is what `session_check.py` does and is indifferent to both widths.
 
 **Files are restored by bytes and verified by digest**, not by `write_text`,
 whose locale codec rewrites every line ending on Windows and compares equal
@@ -390,8 +394,21 @@ MUTATIONS = [
     ),
 ]
 
-MARKER = re.compile(r"^\[(OK|FAIL|SKIP)\]\s")
+MARKER = re.compile(r"^\[(OK|FAIL|SKIP)\]\s+")
 SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed")
+
+
+def after_marker(line: str) -> str:
+    """The check's name and detail, with the label and its spacing removed.
+
+    Every producer -- `checkreport.ts` and the two Rust probes -- happens to put
+    the name at column 7 today, and that is exactly the coincidence not to build
+    on: the label widths are three separate literals in three files. Matching the
+    marker instead means a wider label is a formatting change rather than a
+    parser that quietly stops finding anything.
+    """
+    found = MARKER.match(line)
+    return line[found.end() :] if found else line
 
 
 def npm() -> str:
@@ -513,8 +530,9 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     """Runs the viewer check. Returns its result lines, its stdout, and its stderr.
 
     Only **stdout** carries check results. `viewer_check.py` writes its own
-    verdicts on the run -- `[FAIL] exit 1`, a timeout, the loaded-module audit --
-    to stderr in the same `[FAIL] ` shape, and the first version of this harness
+    verdicts on the run -- `[FAIL] exit 1`, a timeout, and the loaded-module
+    audit in **both** directions -- to stderr, in the same shape a check line
+    has, and the first version of this harness
     read both streams and counted that wrapper line as an eleventh failing check.
     Every one of ten mutations then came back off by exactly one and was reported
     as a broken run. That is the cross-check working: the count from the lines
@@ -562,7 +580,7 @@ def verdict(lines: list[str], text: str, stderr: str) -> tuple[set[str], str | N
         # page that never ran, an occluded window.
         said = " / ".join(line for line in stderr.splitlines() if line.startswith("[FAIL]"))
         return set(), f"no summary line: the run did not finish ({said or 'nothing on stderr'})"
-    failed = {line[7:] for line in lines if line.startswith("[FAIL]")}
+    failed = {after_marker(line) for line in lines if line.startswith("[FAIL]")}
     passed, ran = int(summary.group(1)), int(summary.group(2))
     stated = ran - passed
     if stated != len(failed):
@@ -637,7 +655,7 @@ def main() -> int:
     # A prefix matching two checks would report the wrong one as the catcher.
     problems = []
     for m in chosen:
-        hits = [line for line in baseline[m.runner] if line[7:].startswith(m.expect)]
+        hits = [line for line in baseline[m.runner] if after_marker(line).startswith(m.expect)]
         if len(hits) != 1:
             problems.append(f"{m.name!r} expects {m.expect!r}, which matches {len(hits)} checks")
         # A check that *skipped* in the baseline is present in the name set and

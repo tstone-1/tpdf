@@ -192,6 +192,7 @@ uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testd
 python3 testdata/make_outline_pdf.py testdata
 python3 testdata/make_rotated_pdf.py testdata
 python3 testdata/make_columns_pdf.py testdata
+python3 testdata/make_mixed_pdf.py testdata
 python3 testdata/make_tagged_pdf.py testdata
 uv run --with fonttools testdata/make_multilingual_pdf.py testdata
 uv run --with fonttools testdata/make_encodings_pdf.py testdata
@@ -239,6 +240,23 @@ look identical and must read identically, which is an assertion neither page can
 agreeing with itself. It writes `columns-manifest.json` beside the PDF, and
 `viewer_check.py` passes any `<stem>-manifest.json` it finds through to the check --- so
 what reading order is compared against is a file a different program wrote.
+
+`make_mixed_pdf.py` is the only fixture whose pages are not all the same size. Every other
+document in the corpus is uniform --- `make_rotated_pdf.py` builds a second, uniform file for
+exactly that reason --- so until this existed no check could fail on the frontend's largest
+layout assumption. It is A4 with an A3-landscape insert (wider, same height, so a failure is
+the crop and not the offset), an A5 page (shorter, so a failure is the offset), and an A4
+control before and after both. Each page carries a marker at every one of its own edges, and
+page 3 carries one just past A4's width, so a cropped render loses a named string rather than
+losing something unnamed.
+
+It writes `mixed-geometry.json` rather than `mixed-manifest.json`, because the
+`-manifest.json` suffix enrols a fixture in the reading-order check and this one makes no
+claim about reading order. `viewer_check.py` binds that sidecar to `TPDF_GEOMETRY_MANIFEST`,
+the `geometry_manifest` command hands its contents to the webview, and the three layout checks
+assert against it --- against a file a different program wrote, rather than against the backend
+the viewer renders through. On every other fixture those three say `[SKIP] no geometry sidecar
+for this fixture`.
 
 ---
 
@@ -543,6 +561,15 @@ with unchanged ran/skipped splits, no `[WARN]`, 44--45 modules at peak, no `pdfi
 That line is printed *outside* the check names on purpose --- those are `viewercheck.ts`'s
 and are the cross-platform invariant, and adding a Windows-only name to that set would make the
 two platforms look divergent when they are not.
+
+**Outside** means on **stderr**, and the passing direction of it went to stdout until
+2026-08-02. `mutate_viewer.py` reads check results from stdout alone for exactly this reason
+and its own docstring says so, so on Windows every baseline silently carried a 
+"check name" that no mutation could turn red --- and a mutation whose expected name happened
+to be a prefix of that line would have been matched against the wrapper rather than against a
+check. Both `[FAIL]` forms had been on stderr from the start; only the `[OK]` was not, which is
+the direction nobody reads. Same family as the repository's own trap about a wrapper's verdicts
+sharing a check's shape, arriving in the harness written after that trap was recorded.
 
 #### Pre-spawning, and what it is worth here
 
@@ -1294,46 +1321,67 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all ten corpora. Every run reports the same **160 check names**; what differs is how
+Run all eleven corpora. Every run reports the same **163 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch. **Nine of the ten rows below were measured on Windows
-on 2026-08-02**, against the extracted MSI with the development library moved aside;
-`text-heavy.pdf` is a real document this machine does not have, and its row is the
-2026-08-01 macOS split plus the three checks added since, marked as derived.
+bug this arrangement exists to catch. **Ten of the eleven rows below were measured on Windows
+on 2026-08-02**; `text-heavy.pdf` is a real document this machine does not have, and its row
+is the 2026-08-01 macOS split plus the checks added since, marked as derived.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 142* | 18* | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 148 | 12 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 148 | 12 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 91 | 69 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 104 | 56 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 139 | 21 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 137 | 23 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 132 | 28 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 130 | 30 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 130 | 30 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `text-heavy.pdf` | 142* | 21* | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 148 | 15 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 148 | 15 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 91 | 72 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 104 | 59 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 139 | 24 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 137 | 26 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 132 | 31 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 130 | 33 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 130 | 33 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 138 | 25 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
 
 `*` derived, not measured --- see above.
 
-**Eight of the nine measured rows are the macOS split plus exactly the arithmetic of the
-three new checks** (+2 that run everywhere, +1 that skips off `encodings.pdf`), which is a
-stronger statement than a matching total: the *same* checks skip on both platforms for the
-same documents. `multilingual.pdf` is the ninth and differs by one, legitimately --- its
-generator picks a font per page from what the machine has, so the Windows fixture is a
-different document and one check that skipped on macOS for want of text has text to work on
-here. A ran/skip split is a property of the document, and that corpus is the only one whose
-document is not the same on both platforms.
+**Every measured row is its previous split with exactly three more skips**, which is a
+stronger statement than a matching total: the three layout checks added on 2026-08-02 skip
+on every fixture but `mixed.pdf`, for the stated reason that the fixture has no geometry
+sidecar, and nothing else moved. `mixed.pdf` is the eleventh row and the only one where they
+run.
+
+The earlier note that eight of nine rows were the macOS split plus arithmetic still holds
+underneath this one, and so does the exception: `multilingual.pdf`'s generator picks a font
+per page from what the machine has, so the Windows fixture is a different document and one
+check that skipped on macOS for want of text has text to work on here. A ran/skip split is a
+property of the document, and that corpus is the only one whose document is not the same on
+both platforms.
+
+**One check was red on `multilingual.pdf` in the 2026-08-02 measured run** --- `a page reads
+in the order its generator laid it out`, reporting `folding: line 0 is "cafélatte", wanted
+"café latte"`, i.e. a missing space between two words of that fixture's folding page. It is
+recorded here rather than left out of the table because a row that quietly omits its one
+failure is the shape this file works hardest against. `readingChecks` builds its own
+`TextCache` and never touches the viewer or the scroller, so it is downstream of `text.rs`,
+`reading.ts` and the fixture's machine-local fonts and of nothing in the layout.
 
 **`multilingual.pdf` has one failing check on Windows and it is not new work.** The reading
 check compares each page against what the generator *wrote*, and the folding page comes back
 `cafélatte` where the manifest says `café latte`. What is established: PDFium's extraction
 does contain the space --- `text-probe --mode order` shows `café`, a space run, then `latte`
 across 100 characters --- so it is dropped between extraction and the line's *ranges*, not by
-PDFium. What is **not** established is whether that is a gap in `reading.ts`'s fragment
-building or an artifact of this fixture's font (the folding page is laid out in
-`msgothic.ttc` here and in Arial Unicode on the Mac, and a space's box is a font's business).
-Do not read the green macOS run as evidence either way: it is a different document.
+PDFium. The mechanism is established too, measured through `FPDFText_GetCharBox` against the
+vendored library: the space at index 4 comes back **placed**, with a real box 0.02 pt tall at
+y 752.00--752.02, while every letter on the line sits at 752.14--766.08 --- the two bands miss
+each other by 0.12 pt. `reading.ts`'s own war story covers a sliver-thin space that *touches*
+its line ("a space overlaps anything it touches by 100% of itself"); this font's space touches
+nothing, so it is neither re-attached the way a four-zeroes box would be nor banded with the
+words beside it, and it falls out of every line's ranges. That is a font's business meeting a
+rule written for a different font's spaces: the folding page is laid out in `msgothic.ttc`
+here and in Arial Unicode on the Mac, and only one of them floats its space below the letter
+boxes. The fix direction is in the module already --- a box under some epsilon height is
+information about the font, not about the page, and should be re-attached by preceding index
+exactly as an unplaced character is. Until that lands, do not read the green macOS run as
+evidence either way: it is a different document under a different substitute.
 
 **The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
 checks red that had been green on every corpus for a week --- two nav probes guarded on "more

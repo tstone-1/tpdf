@@ -68,8 +68,22 @@ metadata` structurally cannot see: the fourteen C++ libraries compiled into
 libpdfium, enumerated from `vendor/pdfium/licenses/`. All three of its failure
 modes were proved by mutation before it was trusted.
 
+`traps` is the one gate whose subject is prose, and it is here because prose is
+the only artifact in this repository that nothing mutates. `docs/TRAPS.md` is
+indexed by title in `AGENTS.md`, the index is what an agent actually loads, and
+an index missing an entry answers "is there a trap about this?" with a confident
+no. The *count* had already been moved to `grep -c` authority and stopped
+drifting; the titles had not, and were three short on the day this was written.
+It compares the two as **sets**, which is the invariant -- a tally goes stale the
+next time an entry is added, and a set diff needs no number at all.
+
 `vitest` covers the front-end logic that has an answer which can be *wrong*
-rather than merely ugly -- currently command ranking. Behaviour that needs a
+rather than merely ugly: command ranking and matching, the viewer's lifetime and
+status plumbing, the scroller's geometry, thumbnails, the outline tree, the a11y
+mapping, search's index-to-page mapping and the text stack's rotation and
+folding, with session, recents, key and click handling, zoom and the tile
+bookkeeping beside them. Deliberately no count here -- `npm run test` prints one,
+and a number in a doc comment is wrong the next time a file is added. Behaviour that needs a
 document and a window is asserted by `scripts/viewer_check.py` instead, which is
 not a gate: it needs a built bundle and a generated fixture, neither of which a
 gate run has.
@@ -105,6 +119,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "pdfium",
             [sys.executable, str(REPO / "scripts" / "fetch_pdfium.py"), "--check"],
             "vendor/pdfium is absent or is not the pinned build",
+        ),
+        (
+            "traps",
+            [sys.executable, str(REPO / "scripts" / "check_trap_index.py")],
+            "docs/TRAPS.md and the AGENTS.md trap index name different sets of traps",
         ),
         (
             "fmt",

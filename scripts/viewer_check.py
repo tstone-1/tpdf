@@ -61,6 +61,16 @@ def main() -> int:
     if os.path.exists(manifest):
         env["TPDF_READING_MANIFEST"] = manifest
 
+    # And a `-geometry.json` sidecar states every page's size and where every
+    # marker was drawn, which the layout checks assert against. A second name
+    # rather than a second field of the one above, because the `-manifest.json`
+    # suffix *enrols* a fixture in the reading-order check: `mixed.pdf` carries
+    # markers at its own corners rather than a sentence, so a manifest under that
+    # name would put it in a check it was not built for and cannot pass.
+    geometry = os.path.splitext(args.pdf)[0] + "-geometry.json"
+    if os.path.exists(geometry):
+        env["TPDF_GEOMETRY_MANIFEST"] = geometry
+
     # Launched rather than run, so that something can look at the process *while*
     # it holds a document open. `communicate` below gives back the timeout and
     # partial-transcript behaviour `run` had, which the comments underneath are
@@ -173,6 +183,17 @@ def _report_containment(state) -> int:
     produces as the cross-platform invariant, and quietly adding a Windows-only
     name to that set would make the two platforms look divergent when they are
     not.
+
+    **On stderr, all three verdicts, including the passing one.** This is the
+    wrapper's own verdict on the run rather than one of the viewer's checks, and
+    `mutate_viewer.py` takes the check names from stdout alone precisely so that
+    the wrapper's lines cannot be counted as checks -- its `run_check` says so
+    outright. The two `[FAIL]` forms were on stderr from the start and the `[OK]`
+    was not, so on Windows the baseline carried an extra "check name" that no
+    mutation could ever turn red, and a mutation whose expectation happened to be
+    a prefix of this line would have been matched against the wrapper instead of
+    against a check. A pass is the case where nobody looks, which is exactly why
+    it is the one that drifted.
     """
     if state is None:
         return 0
@@ -190,7 +211,10 @@ def _report_containment(state) -> int:
     if state["mapped"]:
         print(f"[FAIL] the app process mapped the PDF parser   {detail}", file=sys.stderr)
         return 1
-    print(f"[OK]   the app process never mapped the PDF parser {detail}")
+    print(
+        f"[OK]   the app process never mapped the PDF parser {detail}",
+        file=sys.stderr,
+    )
     return 0
 
 

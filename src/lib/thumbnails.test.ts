@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installFakeDom, settle, type FakeDom } from "./testdom";
-import { nextWanted, rowHeightFor, stripWindow, Thumbnails } from "./thumbnails";
+import {
+  nextWanted,
+  rowHeightFor,
+  stripWindow,
+  Thumbnails,
+  type ThumbnailOptions,
+} from "./thumbnails";
 
 const tiles = vi.hoisted(() => ({
   fetchTile: vi.fn(),
@@ -20,6 +26,23 @@ function window(first: number, last: number): { first: number; last: number } {
 function rendered(...pages: number[]): (page: number) => boolean {
   const set = new Set(pages);
   return (page) => set.has(page);
+}
+
+/** A 40-page strip on the fake root, with nothing to borrow unless asked. */
+function makeStrip(dom: FakeDom, opts: Partial<ThumbnailOptions> = {}): Thumbnails {
+  return new Thumbnails(dom.root as unknown as HTMLElement, {
+    doc: 1,
+    pageCount: 40,
+    page: { width_pt: 600, height_pt: 800 },
+    tier1: { placeholderFor: () => null },
+    onNavigate: () => {},
+    ...opts,
+  });
+}
+
+/** A settled render, carrying a bitmap whose disposal a test can watch. */
+function render(close: () => void): unknown {
+  return { bitmap: { close } as unknown as ImageBitmap, bytes: 1, renderUs: 1, decodeMs: 1 };
 }
 
 describe("stripWindow", () => {
@@ -181,13 +204,7 @@ describe("Thumbnails lifetime", () => {
   });
 
   function strip(): Thumbnails {
-    return new Thumbnails(dom.root as unknown as HTMLElement, {
-      doc: 1,
-      pageCount: 40,
-      page: { width_pt: 600, height_pt: 800 },
-      tier1: { placeholderFor: () => null },
-      onNavigate: () => {},
-    });
+    return makeStrip(dom);
   }
 
   it("asks for nothing more once it has been destroyed", async () => {
@@ -223,13 +240,7 @@ describe("Thumbnails lifetime", () => {
       })) as typeof globalThis.createImageBitmap;
 
     const borrowed = { close: vi.fn() } as unknown as ImageBitmap;
-    const pages = new Thumbnails(dom.root as unknown as HTMLElement, {
-      doc: 1,
-      pageCount: 40,
-      page: { width_pt: 600, height_pt: 800 },
-      tier1: { placeholderFor: () => borrowed },
-      onNavigate: () => {},
-    });
+    const pages = makeStrip(dom, { tier1: { placeholderFor: () => borrowed } });
     pages.setActive(true);
     // Borrowing, not rendering: no request should have gone out at all, which
     // is also what says this test is exercising the path it claims to.
@@ -321,6 +332,135 @@ describe("Thumbnails lifetime", () => {
   });
 });
 
+/**
+ * What the strip does with a render that beat its own withdrawal.
+ *
+ * `setTurns` and `setInvert` drop every bitmap and withdraw whatever is
+ * outstanding --- but a withdrawal only marks a request that is still queued or
+ * running, and one that has already finished comes back a *full result*. Kept,
+ * that is a picture of the previous orientation which `have()` then reports as
+ * drawn, so the page is never rendered again for the life of the document: one
+ * sideways or one un-inverted thumbnail, permanently, in a strip where every
+ * other row obeyed the reader.
+ *
+ * The other two rendering paths guard exactly this --- the borrow path with
+ * `borrowing`, the scroller with its placeholder generation --- and this was the
+ * one of the three without an epoch.
+ */
+describe("Thumbnails orientation", () => {
+  let dom: FakeDom;
+  /** Settles the one outstanding render, whenever the test wants it to. */
+  let deliver: (result: unknown) => void;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    deliver = () => {};
+    tiles.fetchTile.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  /** What the strip last asked the renderer for. */
+  function lastRequest(): { page: number; turns: number; invert: boolean } {
+    const calls = tiles.fetchTile.mock.calls;
+    return calls[calls.length - 1]?.[0] as { page: number; turns: number; invert: boolean };
+  }
+
+  it("drops a thumbnail that finished before a rotation withdrew it", async () => {
+    const stale = vi.fn();
+    const fresh = vi.fn();
+    const pages = makeStrip(dom);
+    pages.setActive(true);
+    const asked = lastRequest();
+    expect(asked.turns).toBe(0);
+
+    pages.setTurns(1);
+    deliver(render(stale));
+    await settle();
+
+    expect(stale).toHaveBeenCalledTimes(1);
+    expect(pages.rendered).not.toContain(asked.page);
+    // Dropped is only half of it: a page left undrawn and not asked for again
+    // is the same blank row by another route, and `have()` reads a kept bitmap
+    // as "done". The re-render must be in the orientation the reader is now in.
+    expect(lastRequest()).toMatchObject({ page: asked.page, turns: 1 });
+
+    // The control, in the same test rather than beside it, because the mutation
+    // it guards against is "close every result": that would satisfy every
+    // assertion above and leave the strip permanently empty.
+    deliver(render(fresh));
+    await settle();
+    expect(fresh).not.toHaveBeenCalled();
+    expect(pages.rendered).toContain(asked.page);
+
+    pages.destroy();
+  });
+
+  it("drops one that finished before an inversion withdrew it", async () => {
+    // The same race on the other epoch. Two paths bump it, and a guard that
+    // followed only the rotation would pass the test above and leave a strip of
+    // white thumbnails behind a reader who asked for dark ones.
+    const stale = vi.fn();
+    const fresh = vi.fn();
+    const pages = makeStrip(dom);
+    pages.setActive(true);
+    const asked = lastRequest();
+    expect(asked.invert).toBe(false);
+
+    pages.setInvert(true);
+    deliver(render(stale));
+    await settle();
+
+    expect(stale).toHaveBeenCalledTimes(1);
+    expect(pages.rendered).not.toContain(asked.page);
+    expect(lastRequest()).toMatchObject({ page: asked.page, invert: true });
+
+    deliver(render(fresh));
+    await settle();
+    expect(fresh).not.toHaveBeenCalled();
+    expect(pages.rendered).toContain(asked.page);
+
+    pages.destroy();
+  });
+
+  it("counts a withdrawal made for the viewer, and not one made for a rotation", async () => {
+    // `yieldCount` is read by `viewercheck.ts` as a *contention* metric --- it
+    // decides whether the strip got out of the way within two frames of the
+    // viewer wanting tiles. A rotation withdraws too, and for an unrelated
+    // reason: the picture asked for is no longer the one wanted. Counted
+    // together, the number says less the more the reader rotates.
+    const pages = makeStrip(dom);
+    pages.setActive(true);
+    expect(pages.yieldCount).toBe(0);
+
+    pages.setTurns(1);
+    expect(pages.yieldCount).toBe(0);
+
+    // Settled first: a request already withdrawn is withdrawn only once, so
+    // without this the viewer's own withdrawal below would find nothing to do
+    // and the assertion would hold for the wrong reason.
+    deliver(null);
+    await settle();
+    expect(pages.outstanding).toBe(true);
+
+    pages.setViewerBusy(true);
+    expect(pages.yieldCount).toBe(1);
+
+    pages.destroy();
+  });
+});
+
 describe("Thumbnails keyboard activation", () => {
   let dom: FakeDom;
 
@@ -343,13 +483,7 @@ describe("Thumbnails keyboard activation", () => {
    * a single row -- so every row past the first has to be laid out on purpose.
    */
   function stripWithRows(navigated: number[]): Thumbnails {
-    const pages = new Thumbnails(dom.root as unknown as HTMLElement, {
-      doc: 1,
-      pageCount: 40,
-      page: { width_pt: 600, height_pt: 800 },
-      tier1: { placeholderFor: () => null },
-      onNavigate: (page: number) => navigated.push(page),
-    });
+    const pages = makeStrip(dom, { onNavigate: (page: number) => navigated.push(page) });
     const host = dom.root.children[dom.root.children.length - 1]!;
     host.clientHeight = 700;
     host.dispatch("scroll", {});

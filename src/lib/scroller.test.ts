@@ -17,7 +17,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { displayedSize, Scroller, type ScrollerOptions } from "./scroller";
+import {
+  displayedSize,
+  Scroller,
+  type PageSize,
+  type ScrollerOptions,
+} from "./scroller";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 
 const tiles = vi.hoisted(() => ({
@@ -33,7 +38,7 @@ function options(): ScrollerOptions {
   return {
     doc: 1,
     pageCount: 1,
-    page: { width_pt: 600, height_pt: 800 },
+    pages: [{ width_pt: 600, height_pt: 800 }],
     zoom: 1,
     turns: 0,
     invert: false,
@@ -224,6 +229,239 @@ describe("Scroller teardown", () => {
 
     expect(tile.close).not.toHaveBeenCalled();
     expect(scroller.stats.bytes).toBe(1);
+  });
+});
+
+/**
+ * The three page sizes `testdata/mixed.pdf` is built from, in points.
+ *
+ * The same three, and for the same reasons its generator gives: A3 landscape
+ * differs from A4 on the width axis **only**, so a failure there is the tile
+ * grid and cannot be an offset; A5 is shorter, which is the axis that moves
+ * every later page. A property with one value present is the same as none.
+ */
+const A4 = { width_pt: 595, height_pt: 842 };
+const A3_LANDSCAPE = { width_pt: 1191, height_pt: 842 };
+const A5 = { width_pt: 420, height_pt: 595 };
+
+/** A tile request as the scroller issued it. */
+interface Issued {
+  page: number;
+  scale: number;
+  x: number;
+  width: number;
+}
+
+/**
+ * The tier-2 requests issued so far, in order.
+ *
+ * Tier-1 placeholders are filtered out by their scale: they are rendered to a
+ * fixed 150 px, so their scale is `150 / width_pt` and never the view's own.
+ * Counting them here would make "how many columns was this page asked for in"
+ * answer a different question on every page size.
+ */
+function issuedTiles(zoom = 1): Issued[] {
+  return tiles.fetchTile.mock.calls
+    .map((call) => call[0] as Issued)
+    .filter((request) => request.scale === zoom);
+}
+
+/** The device-pixel column the requests for a page reach, and how many. */
+function reach(page: number): { right: number; columns: number } {
+  const forPage = issuedTiles().filter((request) => request.page === page);
+  return {
+    right: Math.max(0, ...forPage.map((r) => r.x + r.width)),
+    columns: new Set(forPage.map((r) => r.x)).size,
+  };
+}
+
+describe("Scroller geometry on a mixed-size document", () => {
+  let dom: FakeDom;
+
+  /** Options laying out `pages` with every page of a `count`-page document. */
+  function mixed(
+    pages: [PageSize, ...PageSize[]],
+    count = pages.length,
+  ): ScrollerOptions {
+    return {
+      ...options(),
+      pageCount: count,
+      pages,
+      // Small enough that the widest page needs three columns and the narrowest
+      // two: a tile larger than every page cannot tell one grid from another.
+      tilePx: 512,
+      // Tall and wide enough to hold the whole document, so every page is in the
+      // band and the assertions below are about the layout rather than about
+      // which pages happened to be on screen.
+      viewport: { width: 1400, height: 4000 },
+      maxInFlight: 64,
+    };
+  }
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => Promise.resolve(null));
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  it("accumulates each page's own height into the next page's offset", () => {
+    // The four-page shape of the fixture: A4, A3 landscape (same height), A5
+    // (shorter), A4 again. The last one is what makes this discriminate --- a
+    // layout that multiplies page 1's height by the index agrees about the first
+    // three offsets in a document whose first three pages are 842 points tall.
+    const scroller = new Scroller(dom.root as unknown as HTMLElement, mixed([
+      A4,
+      A3_LANDSCAPE,
+      A5,
+      A4,
+    ]));
+
+    // Read rather than asserted: `PAGE_GAP` is the scroller's own constant and
+    // nothing outside it should be pinning the number. What is pinned is that
+    // the *same* gap separates every pair, and that the heights between them are
+    // each page's own.
+    const gap = scroller.pageTopOf(1) - A4.height_pt;
+    expect(gap).toBeGreaterThan(0);
+
+    expect(scroller.pageTopOf(0)).toBe(0);
+    expect(scroller.pageTopOf(2)).toBe(2 * (A4.height_pt + gap));
+    expect(scroller.pageTopOf(3)).toBe(
+      2 * (A4.height_pt + gap) + A5.height_pt + gap,
+    );
+    expect(scroller.documentHeight).toBe(
+      scroller.pageTopOf(3) + A4.height_pt,
+    );
+  });
+
+  it("asks for an oversized page as far as its own right edge", () => {
+    // The half the offsets cannot see, and the one that loses content: the tile
+    // grid comes from the page's width, so a page laid out at page 1's width is
+    // never *asked for* past it and is drawn cropped, with no error anywhere.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4, A3_LANDSCAPE]),
+    );
+    scroller.frame(0, performance.now());
+
+    // The control first, and it is the half that says the reach is a property of
+    // the page rather than of the document: page 1 must *not* be asked for past
+    // its own edge either.
+    expect(reach(0)).toEqual({ right: A4.width_pt, columns: 2 });
+    expect(reach(1)).toEqual({ right: A3_LANDSCAPE.width_pt, columns: 3 });
+  });
+
+  it("lays an unknown page out at the mean of the sizes it knows", () => {
+    // A lazy open carries page 1 alone, so this is the state every document
+    // starts in. One known size makes the mean page 1's size, which is what
+    // section 4 relies on: page sizes within a document are overwhelmingly
+    // uniform, so the estimate is usually exact immediately.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 3),
+    );
+    expect(scroller.knowsPageSize(1)).toBe(false);
+    expect(scroller.pageSize(1)).toEqual(A4);
+
+    expect(scroller.notePageSize(1, A3_LANDSCAPE)).toBe(true);
+    expect(scroller.knowsPageSize(1)).toBe(true);
+    // And the estimate for what is *still* unknown follows what has been seen,
+    // rather than staying pinned to page 1 for the life of the document.
+    expect(scroller.pageSize(2).width_pt).toBe(
+      (A4.width_pt + A3_LANDSCAPE.width_pt) / 2,
+    );
+  });
+
+  it("reports no change when a learned size is the one already assumed", () => {
+    // The control for the test above, and the case that matters for cost: every
+    // page of every uniform document arrives here, and a scroller that relaid
+    // out and threw its tiles away each time would repaint the screen once per
+    // page on a document being read straight through.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 3),
+    );
+    const height = scroller.documentHeight;
+    expect(scroller.notePageSize(1, { ...A4 })).toBe(false);
+    expect(scroller.notePageSize(1, { ...A4 })).toBe(false);
+    expect(scroller.documentHeight).toBe(height);
+  });
+
+  it("drops a tile rendered before its page was corrected, and keeps its neighbour's", async () => {
+    const late: Array<(value: unknown) => void> = [];
+    tiles.fetchTile.mockImplementation(
+      () => new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+    );
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 2),
+    );
+    scroller.frame(0, performance.now());
+
+    // Which resolver belongs to which page, taken from the requests themselves.
+    // A withdrawal cannot reach a render that has already finished, so this is
+    // the race the epoch exists for and the tile has to arrive to exercise it.
+    const calls = tiles.fetchTile.mock.calls.map((call) => call[0] as Issued);
+    const stale = calls.findIndex((r) => r.page === 1 && r.scale === 1);
+    const neighbour = calls.findIndex((r) => r.page === 0 && r.scale === 1);
+    expect(stale).toBeGreaterThanOrEqual(0);
+    expect(neighbour).toBeGreaterThanOrEqual(0);
+
+    expect(scroller.notePageSize(1, A3_LANDSCAPE)).toBe(true);
+
+    const bitmapFor = () => {
+      const bitmap = { close: vi.fn(), width: 64, height: 64 };
+      return {
+        close: bitmap.close,
+        result: {
+          bitmap: bitmap as unknown as ImageBitmap,
+          bytes: 1,
+          renderUs: 1,
+          decodeMs: 1,
+        },
+      };
+    };
+    const dropped = bitmapFor();
+    const kept = bitmapFor();
+    late[stale]?.(dropped.result);
+    late[neighbour]?.(kept.result);
+    await settle();
+    scroller.frame(0, performance.now());
+
+    expect(dropped.close).toHaveBeenCalledTimes(1);
+    // The control, and not a formality: a scroller that closed every arrival
+    // would pass the line above perfectly while drawing nothing at all.
+    expect(kept.close).not.toHaveBeenCalled();
+    // Counted as neither delivered nor discarded --- nothing about the scroll
+    // invalidated it, so reporting it as a superseded tile would be a queue
+    // failure that did not happen.
+    expect(scroller.stats.discarded).toBe(0);
+  });
+
+  it("asks for the corrected page again, at its new width", async () => {
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 2),
+    );
+    scroller.frame(0, performance.now());
+    expect(reach(1)).toEqual({ right: A4.width_pt, columns: 2 });
+
+    scroller.notePageSize(1, A3_LANDSCAPE);
+    // Waited for on purpose. A withdrawal is a request to stop rather than proof
+    // of having stopped, so the entries stay in flight until their replies land
+    // and `request` will not issue a duplicate for one that is still on its way
+    // --- a frame taken here would see the one genuinely new column and nothing
+    // else, and report that as the whole answer.
+    await settle();
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, performance.now());
+    expect(reach(1)).toEqual({ right: A3_LANDSCAPE.width_pt, columns: 3 });
   });
 });
 

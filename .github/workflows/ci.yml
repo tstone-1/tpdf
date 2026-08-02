@@ -25,6 +25,16 @@ name: CI
 #     unreachable from a fork.
 #
 # Keep that split. It is the whole of the fork threat model.
+#
+# THIRD-PARTY ACTIONS ARE PINNED BY COMMIT SHA, with the tag they were resolved
+# from in the comment beside them. A tag is a moving pointer that its owner can
+# repoint at any commit, so `@v5` is not a version, it is a promise from a
+# third party to keep being trustworthy. The comment is for humans and the SHA
+# is the pin; when bumping one, resolve the tag again
+# (`gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`) and update both. This
+# workflow holds no secrets, so the exposure here is a poisoned cache or a
+# tampered checkout rather than a stolen key -- `release.yml` is where the
+# stakes are, and both are pinned the same way so neither is the odd one out.
 # ---------------------------------------------------------------------------
 #
 # WHAT THIS CANNOT COVER. `scripts/viewer_check.py` and `scripts/mutate_*.py`
@@ -55,9 +65,9 @@ jobs:
         platform: [macos-latest, windows-2025]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (v5.0.0)
         with:
           node-version: 24
           cache: npm
@@ -72,7 +82,7 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup show
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (v2.9.1 + a changelog commit)
         with:
           workspaces: src-tauri
 

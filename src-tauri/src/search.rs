@@ -715,7 +715,15 @@ fn find_across(
         let stop = last + 1;
         matches.push(Match {
             page: carry.page,
-            start: carry.from + first as u32,
+            // Saturating, because `from` is the caller's claim about a page this
+            // call never sees: a `Carry` arrives over the wire like every other
+            // request field, and one naming a `from` near the end of the range
+            // would panic here in debug and wrap in release. Wrapping is the
+            // outcome worth spending a word on --- it turns an impossible index
+            // into a small *plausible* one, so the result would scroll to a real
+            // position on the previous page and nothing downstream could tell.
+            // Clamped, it stays impossible and reads as the nonsense it is.
+            start: carry.from.saturating_add(first as u32),
             end: (stop - split) as u32,
             end_page: Some(page),
             // Context from the joined text on the left and from this page on the
@@ -1273,6 +1281,35 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].start, (CARRY_CHARS * 2 - 1) as u32);
         assert_eq!(found[0].end, 1);
+    }
+
+    #[test]
+    fn a_carry_naming_an_impossible_offset_is_clamped_and_not_wrapped() {
+        // A `Carry` is not something this module produced: it is round-tripped
+        // through the frontend and arrives as a request field like any other, so
+        // `from` is a claim. This one cannot be true --- no page starts five
+        // characters below the end of the index space --- and the arithmetic on
+        // it must not panic in debug or wrap in release.
+        //
+        // The straddling hit is asserted as well as the offset, because a
+        // refusal that dropped the match would satisfy an assertion about the
+        // offset alone. The control that a *sane* carry still reports a sane
+        // offset is `a_long_page_carries_only_its_end`, which pins an exact one.
+        let carry = Carry {
+            page: 0,
+            from: u32::MAX - 5,
+            codes: "at the foot: raster".chars().map(|ch| ch as u32).collect(),
+        };
+        let found = search_page(
+            &page("appearance, at the head"),
+            1,
+            "raster appearance",
+            PLAIN,
+            Some(&carry),
+        )
+        .matches;
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].start, u32::MAX, "clamped, not wrapped: {found:?}");
     }
 
     #[test]

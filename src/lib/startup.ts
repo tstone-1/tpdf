@@ -22,22 +22,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { calibrateProcessClock } from "./clock";
+import type { DocumentInfo } from "./ipc";
 import { fetchRequiredTile } from "./tiles";
-
-interface PageSize {
-  width_pt: number;
-  height_pt: number;
-}
-
-interface DocumentInfo {
-  id: number;
-  /** Every page's size, or only page 1's when the open was lazy. */
-  pages: PageSize[];
-  page_count: number;
-  lazy_geometry: boolean;
-  open_ms: number;
-  at_ms: number;
-}
 
 /** Largest tile dimension to ask for, per the spike 0.1 tile-size finding. */
 const MAX_TILE = 4096;

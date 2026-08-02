@@ -47,7 +47,16 @@ const MAX_DECODE: usize = 64 * 1024 * 1024;
 pub enum Pages {
     /// Every page, in document order.
     All,
-    /// Exactly these, one-based, in the order given.
+    /// Exactly these, one-based --- and printed in **document order**, not in
+    /// the order they are listed here.
+    ///
+    /// [`build`] produces a subset by *deleting* the pages nobody asked for, so
+    /// the survivors keep the positions they already had; `[3, 1]` prints page 1
+    /// then page 3. Assembling a new page tree in the listed order is a
+    /// different operation and this is not it. Said here rather than left to be
+    /// discovered because nothing downstream would report it: [`expect_pages`]
+    /// compares how many pages came out, never which, so a reordering that the
+    /// caller expected and did not get is invisible until it is on paper.
     Only(Vec<u32>),
 }
 

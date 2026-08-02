@@ -273,6 +273,10 @@ export class AccessibleText {
     // producer made about the page, not part of what it says.
     const joined = texts.filter((text) => text.length > 0).join(" ");
     if (!joined) return [];
+    // The tag comes from the document; the element name does not. `elementFor`
+    // is total and answers "p" or "h1".."h6" for every input, so no URL-bearing
+    // element can come out of here whatever the file asked for.
+    // webview-sink-ok: `elementFor` is a total whitelist of "p" and "h1".."h6"
     const element = document.createElement(elementFor(block.tag));
     element.textContent = joined;
     // The document's own word for it, on every block including the ones that

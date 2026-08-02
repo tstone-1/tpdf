@@ -173,8 +173,15 @@ export interface ViewerStatus {
 export interface ViewerOptions {
   doc: number;
   pageCount: number;
-  /** Geometry of page 1, taken as representative --- see `scroller.ts`. */
-  page: PageSize;
+  /**
+   * Geometry of the pages the open reported, index-aligned from page 1.
+   *
+   * Usually just page 1: the open is lazy by default because collecting the
+   * whole table costs 86 ms on a long document. The rest is learned as the
+   * reader arrives at it --- see {@link Viewer.learnGeometry} --- and estimated
+   * meanwhile by `scroller.ts`.
+   */
+  pages: [PageSize, ...PageSize[]];
   /** Tile edge in device pixels. Section 4 measured 1024--2048 as the range. */
   tilePx?: number;
   onStatus?: (status: ViewerStatus) => void;
@@ -220,6 +227,15 @@ const ARROW_STEP = 60;
 
 /** Fraction of a screen that Page Up/Down moves, leaving context behind. */
 const PAGE_OVERLAP = 0.9;
+
+/**
+ * Pages a copy asks for at once.
+ *
+ * Small enough that a tile the reader is waiting for never queues behind more
+ * than a handful of extractions, large enough that a copy of a long selection
+ * is not one round trip per page. See `Viewer.selectionText`.
+ */
+const COPY_CHUNK = 16;
 
 /**
  * Overlay fills, all painted with `multiply` so the glyphs stay legible.
@@ -442,11 +458,16 @@ export class Viewer {
     this.track.appendChild(this.thumb);
     root.appendChild(this.track);
 
-    this.zoom = this.zoomFor("width");
+    // Page 1 by name rather than through {@link zoomFor}, which asks the
+    // scroller which page is being read and the scroller does not exist yet. The
+    // answer at this instant is page 1 in any case, and the fit that matters
+    // arrives through the ResizeObserver: the constructor runs before the layout
+    // that gives `root` a width, so this one is against a viewport of one pixel.
+    this.zoom = fitZoom("width", this.viewportSize(), displayedSize(opts.pages[0], 0));
     this.scroller = new Scroller(this.surfaceHost, {
       doc: opts.doc,
       pageCount: opts.pageCount,
-      page: opts.page,
+      pages: opts.pages,
       zoom: this.zoom,
       turns: 0,
       invert: false,
@@ -488,7 +509,19 @@ export class Viewer {
     this.root.removeEventListener("wheel", this.onWheel);
     this.root.removeEventListener("keydown", this.onKeyDown);
     this.root.removeEventListener("pointerdown", this.onSelectStart);
+    // A drag adds these two and its own `pointerup` takes them away again ---
+    // which a document closed mid-drag never reaches. Removing a listener that
+    // was never added is a no-op, so this needs no flag to consult; what it
+    // must not do is rely on `life.ended`, which stops the frame loop and does
+    // nothing about a move still extending a selection and still asking the
+    // backend for the text of every page it crosses.
+    this.root.removeEventListener("pointermove", this.onSelectMove);
+    this.root.removeEventListener("pointerup", this.onSelectEnd);
     this.track.removeEventListener("pointerdown", this.onTrackPointerDown);
+    // The scrollbar's drag is the same shape, and the same closed document can
+    // be left in the middle of one.
+    this.track.removeEventListener("pointermove", this.onTrackPointerMove);
+    this.track.removeEventListener("pointerup", this.onTrackPointerUp);
     this.scroller.destroy();
     this.root.replaceChildren();
   }
@@ -584,6 +617,11 @@ export class Viewer {
 
   private readonly tick = (): void => {
     const now = performance.now();
+    // Before the frame, so a correction reaches the tile requests this frame
+    // issues rather than the next one's: a page laid out at the wrong width is
+    // asked for at the wrong width, and every one of those tiles is then thrown
+    // away by the correction that follows it.
+    this.learnGeometry();
     const stats = this.scroller.frame(this.scrollTop, now);
     this.prefetchText();
     this.syncAccessibleText();
@@ -609,6 +647,66 @@ export class Viewer {
   };
 
   /**
+   * Tells the scroller the real size of any visible page it is guessing at.
+   *
+   * The open is lazy --- `render.rs` sends page 1's geometry alone, because
+   * collecting the whole table costs 86 ms on a long document --- so every other
+   * page starts out estimated. This is where the estimate is corrected, and it
+   * costs nothing extra: {@link prefetchText} already asks for the text of every
+   * visible page, every `PageText` carries the page's size, and the round trip
+   * was happening anyway. There is no second request and no new command.
+   *
+   * A page is asked about once. Once its size is known it stops being read from
+   * the cache, which also keeps this off the LRU: `peek` counts as a use, and
+   * touching every visible page here as well as in the paint path would be
+   * bookkeeping for an answer already held.
+   *
+   * The re-anchor is the half that is easy to leave out. The scroll offset is
+   * CSS pixels down a document that has just changed length, so a correction
+   * three pages up moves the reader without them touching anything --- which on
+   * a long document is far enough that they have simply lost their place. What is
+   * preserved is the page and the fraction through it, exactly as
+   * {@link rotateBy} preserves them across a change of proportions.
+   */
+  private learnGeometry(): void {
+    const anchor = this.scroller.pageAt(this.scrollTop);
+    const pitch = this.scroller.pagePitchOf(anchor);
+    const through =
+      pitch > 0 ? (this.scrollTop - this.scroller.pageTopOf(anchor)) / pitch : 0;
+
+    let moved = false;
+    for (const page of this.scroller.visiblePages()) {
+      if (this.scroller.knowsPageSize(page)) continue;
+      const text = this.text.peek(page);
+      if (!text) continue;
+      // `PageText` reports the page as *displayed*, so the view's own rotation
+      // has to come back out before this is the document's geometry. The two
+      // are the same thing at an even number of quarter-turns, which is why
+      // getting it wrong is invisible until somebody rotates a mixed document.
+      const shown = { width_pt: text.width_pt, height_pt: text.height_pt };
+      if (this.scroller.notePageSize(page, displayedSize(shown, -this.turns))) {
+        moved = true;
+      }
+    }
+    if (!moved) return;
+
+    // The fit follows the page being read, so a page that has just turned out to
+    // be A3 is refitted rather than left at the previous page's scale. Before
+    // the re-anchor: a fit changes the zoom, which changes the pitch the
+    // fraction below is resolved against.
+    this.applyFit();
+    this.scrollTop = Math.max(
+      0,
+      Math.min(
+        this.scroller.pageTopOf(anchor) +
+          through * this.scroller.pagePitchOf(anchor),
+        this.scroller.maxScroll,
+      ),
+    );
+    this.wake();
+  }
+
+  /**
    * The page a reader would say they are on.
    *
    * Taken at the middle of the viewport rather than its top edge, so the number
@@ -621,7 +719,16 @@ export class Viewer {
     );
   }
 
-  /** Emits a status only when something a reader could notice has changed. */
+  /**
+   * Emits a status only when something a reader could notice has changed.
+   *
+   * The summary below is the whole of that decision, so every field the UI
+   * renders has to appear in it. One that does not is a control that sticks:
+   * with an empty query the search toggles and the scope move nothing else in
+   * here, so the button keeps its old `class:on` and its old `aria-pressed`
+   * while the viewer's setting has already flipped --- silently, and for a
+   * screen reader as well as on screen.
+   */
   private report(stats: { sharp: number; any: number }): void {
     const status: ViewerStatus = {
       page: this.currentPage() + 1,
@@ -649,6 +756,10 @@ export class Viewer {
       status.failed,
       status.selected,
       status.search.query,
+      status.search.options.matchCase,
+      status.search.options.wholeWord,
+      status.search.options.regex,
+      status.search.scoped,
       status.search.total,
       status.search.index,
       status.search.scanned,
@@ -668,9 +779,26 @@ export class Viewer {
     };
   }
 
-  /** The page's size in points as displayed, i.e. after the view rotation. */
+  /**
+   * The size of the page being read, as displayed, i.e. after the view rotation.
+   *
+   * The page being read rather than page 1, which is what a fit is about: on a
+   * document with an A3 insert, fit-width means "fit the sheet in front of me",
+   * and fitting every page to page 1's width leaves the wide one overflowing the
+   * window with no way to see its edge.
+   */
   private displayedPage(): PageSize {
-    return displayedSize(this.opts.page, this.turns);
+    return displayedSize(this.scroller.pageSize(this.currentPage()), this.turns);
+  }
+
+  /** A page's size in points, real or estimated. For the check harness. */
+  pageSize(page: number): PageSize {
+    return this.scroller.pageSize(page);
+  }
+
+  /** Whether a page's size is the document's own rather than an estimate. */
+  knowsPageSize(page: number): boolean {
+    return this.scroller.knowsPageSize(page);
   }
 
   /** The zoom `mode` asks for, against the viewport and page as they are now. */
@@ -791,9 +919,32 @@ export class Viewer {
     return this.scroller.compositedSurface;
   }
 
-  /** A page's size on screen, as the scroller laid it out. */
+  /**
+   * The size on screen of the page being read, as the scroller laid it out.
+   *
+   * The page being read, for the same reason {@link displayedPage} is: it is the
+   * page a fit is computed against, so a check comparing the two has to be
+   * looking at the same one. Identical on a uniform document.
+   */
   get pageBoxCss(): { width: number; height: number } {
-    return this.scroller.pageBoxCss;
+    return this.scroller.pageBoxCssOf(this.currentPage());
+  }
+
+  /** A page's size on screen, whichever page a caller means. */
+  pageBoxCssOf(page: number): { width: number; height: number } {
+    return this.scroller.pageBoxCssOf(page);
+  }
+
+  /**
+   * CSS-pixel top of a page in the scrolled document.
+   *
+   * For the check harness, which asserts that the gap between two pages' tops is
+   * the *first* page's own height. `goToPage` scrolls there and is not a
+   * substitute: it clamps to `maxScroll`, so the last page's top is unreadable
+   * through it on any document shorter than the window.
+   */
+  pageTopCss(page: number): number {
+    return this.scroller.pageTopOf(page);
   }
 
   /**
@@ -815,7 +966,7 @@ export class Viewer {
     if (next === this.turns) return;
 
     const page = this.currentPage();
-    const before = this.scroller.pagePitchCss;
+    const before = this.scroller.pagePitchOf(page);
     const through =
       before > 0 ? (this.scrollTop - this.scroller.pageTopOf(page)) / before : 0;
 
@@ -830,7 +981,7 @@ export class Viewer {
     this.scrollTop = Math.max(
       0,
       Math.min(
-        this.scroller.pageTopOf(page) + through * this.scroller.pagePitchCss,
+        this.scroller.pageTopOf(page) + through * this.scroller.pagePitchOf(page),
         this.scroller.maxScroll,
       ),
     );
@@ -1300,26 +1451,24 @@ export class Viewer {
    * the kind of bug a user discovers in someone else's document.
    *
    * **Waiting is not the same as having it**, which is the half that was
-   * missing. `loadPages` resolves whether or not the extractions succeeded ---
+   * missing. A load resolves whether or not the extraction succeeded ---
    * `TextCache.load` resolves to `null` on failure --- and `Selection.text`
-   * skips a page it cannot read, by design and as its own docstring says. So the
-   * completeness test has to be made again *after* the wait; before it, it only
-   * decides whether to wait at all.
+   * skips a page it cannot read, by design and as its own docstring says. So
+   * the text is taken from each reply as it lands, and a reply that carries
+   * nothing is an error rather than a page quietly left out. See
+   * {@link selectionText}.
    */
   async copySelection(): Promise<string | null> {
     const selection = this.selection;
     if (!selection) return null;
 
-    if (!selection.isComplete(this.text)) {
-      await this.loadPages(selection.pages());
-    }
-    if (!selection.isComplete(this.text)) {
+    const text = await this.selectionText(selection);
+    if (text === null) {
       this.opts.onError?.(
         "Some of the selected pages' text could not be read, so nothing was copied.",
       );
       return null;
     }
-    const text = selection.text(this.text);
     if (!text) return null;
 
     try {
@@ -1336,26 +1485,47 @@ export class Viewer {
   }
 
   /**
-   * Loads several pages' text without flooding the render queue.
+   * The whole of a selection's text, loading whatever has not arrived, or
+   * `null` if any page of it could not be read.
    *
-   * A selection dragged to the end of the 775-page corpus names 775 pages, and
-   * `Promise.all` over them issues 775 extractions at once --- onto the single
-   * FIFO queue that also draws the page in front of the reader. `prefetchText`
-   * and `TextCache` both go out of their way to avoid exactly that ("asking for
-   * all of it up front would put a minute of extraction in front of the first
-   * tile"); the copy path let it back in through the other door.
+   * Chunked rather than one `Promise.all`, because a selection dragged to the
+   * end of the 775-page corpus names 775 pages and asking for them at once puts
+   * 775 extractions onto the single FIFO queue that also draws the page in
+   * front of the reader. `prefetchText` and `TextCache` both go out of their
+   * way to avoid exactly that ("asking for all of it up front would put a
+   * minute of extraction in front of the first tile"); the copy path let it
+   * back in through the other door. Chunked rather than *capped*, because a
+   * copy has to be complete --- silently copying the part that fitted is the
+   * bug this whole path exists to avoid.
    *
-   * Chunked rather than capped, because a copy has to be *complete* --- silently
-   * copying the part that fitted is the bug this whole path exists to avoid. The
-   * chunk is what keeps a tile from waiting behind more than a handful of them.
+   * Each page's text is taken from its own reply, as it lands, and never read
+   * back out of the cache afterwards. That is not tidiness: `TextCache` evicts
+   * least-recently-used down to `TEXT_CACHE_CHARS`, and this loop touches each
+   * page exactly once and in ascending order --- so the eviction order *is* the
+   * order of the selection, and the front of it is dropped while the tail is
+   * still arriving. A copy that re-read the cache could therefore never succeed
+   * past the bound, and blamed the document for it. The cache is an
+   * optimisation; correctness here may not rest on it holding anything.
    */
-  private async loadPages(pages: number[]): Promise<void> {
-    const CHUNK = 16;
-    for (let at = 0; at < pages.length; at += CHUNK) {
-      await Promise.all(
-        pages.slice(at, at + CHUNK).map((page) => this.text.load(page)),
+  private async selectionText(selection: Selection): Promise<string | null> {
+    const pages = selection.pages();
+    const parts: string[] = [];
+    for (let at = 0; at < pages.length; at += COPY_CHUNK) {
+      const chunk = await Promise.all(
+        pages.slice(at, at + COPY_CHUNK).map(async (page) => ({
+          page,
+          text: await this.text.load(page),
+        })),
       );
+      for (const { page, text } of chunk) {
+        // The page could not be read at all. Reported rather than skipped ---
+        // see {@link copySelection}.
+        if (!text) return null;
+        const part = selection.textFrom(page, text);
+        if (part !== null) parts.push(part);
+      }
     }
+    return parts.join("\n");
   }
 
   /** The selected text, without touching the clipboard. For the check harness. */
@@ -1408,7 +1578,14 @@ export class Viewer {
       index: this.currentMatch < 0 ? 0 : this.currentMatch + 1,
       scanned: this.searcher.scanned,
       toScan: this.searcher.toScan,
-      scoped: this.searcher.scope !== null,
+      // The viewer's own scope, not the scan's copy of it. They agree the
+      // moment there is a query --- `search` hands one to the other in the same
+      // synchronous step --- and disagree exactly when there is not: a scope
+      // taken with an empty find bar is remembered here and never reaches the
+      // scan, so the scan's copy said "not scoped" while the button that sets
+      // it toggles on {@link searchScoped}. Pressing it then rendered off and
+      // behaved on, which is the one state a toggle must not have.
+      scoped: this.searchScope !== null,
       running: this.searcher.running,
       textless: this.searcher.textless,
       unsearchablePages: this.searcher.unsearchablePages,

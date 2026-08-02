@@ -298,6 +298,21 @@ const BMP_FILE_HEADER: usize = 14;
 /// header is copied by its own declared length rather than by a fixed 40.
 const DIB_HEADER_MIN: usize = 40;
 
+/// `biCompression` for an uncompressed image, the one the OS encoder produces.
+///
+/// Named here rather than imported: the `windows` crate wraps it in a newtype
+/// that would have to be unwrapped to compare against a field read out of a byte
+/// slice, which buys nothing over the two numbers the format defines.
+const BI_RGB: u32 = 0;
+
+/// `biCompression` for an uncompressed image whose channels are given as masks.
+///
+/// Uncompressed like [`BI_RGB`] --- the name is the format's, not a description
+/// --- so the pixel data is the same size. What differs is that three 32-bit
+/// masks follow a 40-byte header, in the space a palette would occupy, and GDI
+/// reads them through the same pointer as the header itself.
+const BI_BITFIELDS: u32 = 3;
+
 /// A parsed BMP, with its header copied somewhere GDI can read it.
 ///
 /// **The header is owned, not borrowed, and that is not a stylistic choice.** A
@@ -324,11 +339,90 @@ impl Dib<'_> {
     }
 }
 
+/// How many bytes of pixel data `StretchDIBits` reads for a declared image.
+///
+/// **The one quantity in a BMP that is not in the BMP.** Every other field can be
+/// checked against the buffer it came from; this one GDI *computes* from the
+/// geometry and then reads that much through a pointer, so a `bits` slice shorter
+/// than this is an out-of-bounds read inside the driver rather than an error
+/// anybody sees --- and at `offset == bytes.len()` the slice is empty and the
+/// pointer handed over is dangling.
+///
+/// Rows are padded to a 4-byte boundary, which is the part that is easy to omit
+/// and impossible to notice: 32-bit rows are aligned already, so a stride
+/// computed as `width * bpp / 8` agrees with this on exactly the format the OS
+/// encoder produces and disagrees on every other one.
+///
+/// Saturating rather than wrapping, because both factors come from the file: a
+/// declared 2-billion-pixel image at 65,535 bits per pixel overflows the
+/// multiplication, and a wrapped product is a *small* number, which is the one
+/// answer that would wave the buffer through.
+fn pixel_bytes(
+    width: i32,
+    rows: u32,
+    bpp: u16,
+    compression: u32,
+    size_image: u32,
+) -> Result<u64, String> {
+    if compression != BI_RGB && compression != BI_BITFIELDS {
+        // RLE, embedded JPEG and embedded PNG: the geometry says nothing about
+        // the byte count and `biSizeImage` is the only statement of it, which the
+        // format requires to be present for exactly this reason. Nothing here
+        // produces one --- but guessing a stride for it would produce a bound
+        // that is too small, which is worse than refusing.
+        if size_image == 0 {
+            return Err(format!(
+                "BMP compression {compression} declares no image size"
+            ));
+        }
+        return Ok(u64::from(size_image));
+    }
+    let stride = (u64::from(width.unsigned_abs()) * u64::from(bpp)).div_ceil(32) * 4;
+    Ok(stride.saturating_mul(u64::from(rows)))
+}
+
+/// How much GDI reads through the *header* pointer, which is more than the header.
+///
+/// `BITMAPINFO` is a header followed by whatever the format puts in its trailing
+/// array, and GDI reads that array through the same pointer [`Dib::info`] hands
+/// it. Two things live there and both are sized by fields in the header itself,
+/// so neither is covered by the `biSize` check: the channel masks of a
+/// [`BI_BITFIELDS`] image with the original 40-byte header, and the palette of an
+/// indexed one.
+///
+/// Nothing this module renders is either --- the OS encoder produces 32-bit
+/// `BI_RGB` --- but a *header* saying it is would walk the aligned copy off its
+/// end, which is the same class of read as a short `bits` and is invisible for
+/// the same reason.
+fn header_bytes(declared: usize, bpp: u16, compression: u32, clr_used: u32) -> u64 {
+    let mut needed = declared as u64;
+    if compression == BI_BITFIELDS && declared == DIB_HEADER_MIN {
+        needed += 12;
+    }
+    if bpp <= 8 {
+        // Zero means "all of them", which is what an image using every entry of
+        // its depth is entitled to leave unsaid.
+        let entries = if clr_used == 0 {
+            1u64 << bpp
+        } else {
+            u64::from(clr_used)
+        };
+        needed += entries * 4;
+    }
+    needed
+}
+
 /// Reads just enough of a BMP to hand it to GDI.
 ///
 /// Refuses rather than guesses, and reports which field was wrong. A BMP that
 /// cannot be parsed here means WinRT produced something unexpected, and passing a
 /// bad header to `StretchDIBits` is an access violation rather than an error.
+///
+/// The last two checks are about **how much memory GDI will read**, which the
+/// header states only indirectly --- see [`pixel_bytes`] and [`header_bytes`].
+/// They are the ones that make the sentence above true: a header can be
+/// self-consistent in every field and still describe an image larger than the
+/// bytes that arrived.
 fn parse_bmp(bytes: &[u8]) -> Result<Dib<'_>, String> {
     if bytes.len() < BMP_FILE_HEADER + DIB_HEADER_MIN {
         return Err(format!("a {}-byte BMP is too short", bytes.len()));
@@ -350,8 +444,41 @@ fn parse_bmp(bytes: &[u8]) -> Result<Dib<'_>, String> {
     }
     let width = i32::from_le_bytes([header[4], header[5], header[6], header[7]]);
     let height = i32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-    if width <= 0 || height == 0 {
+    // A negative height means a top-down DIB, which is legal, so only the
+    // magnitude is a size. Taken unsigned rather than through `abs`, because
+    // `i32::MIN` has no positive counterpart and `abs` panics on it in debug ---
+    // a hostile header should be refused here, not abort the process that was
+    // about to refuse it. Exactly that one magnitude does not fit back into the
+    // `i32` `StretchDIBits` wants, so it is refused rather than clamped.
+    let rows = height.unsigned_abs();
+    let Ok(source_rows) = i32::try_from(rows) else {
         return Err(format!("BMP reports a {width}x{height} image"));
+    };
+    if width <= 0 || rows == 0 {
+        return Err(format!("BMP reports a {width}x{height} image"));
+    }
+
+    let bpp = u16::from_le_bytes([header[14], header[15]]);
+    let compression = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
+    let size_image = u32::from_le_bytes([header[20], header[21], header[22], header[23]]);
+    let clr_used = u32::from_le_bytes([header[32], header[33], header[34], header[35]]);
+
+    let reads = header_bytes(declared, bpp, compression, clr_used);
+    if reads > header.len() as u64 {
+        return Err(format!(
+            "BMP needs {reads} bytes of header, masks and palette at {bpp} bpp, with {} available",
+            header.len()
+        ));
+    }
+
+    let bits = &bytes[offset..];
+    let needed = pixel_bytes(width, rows, bpp, compression, size_image)?;
+    if (bits.len() as u64) < needed {
+        return Err(format!(
+            "BMP declares a {width}x{height} image at {bpp} bpp, needing {needed} bytes of \
+             pixels, with {} available",
+            bits.len()
+        ));
     }
 
     // Everything between the declared header and the pixels, which is the colour
@@ -371,11 +498,11 @@ fn parse_bmp(bytes: &[u8]) -> Result<Dib<'_>, String> {
 
     Ok(Dib {
         header: aligned,
-        bits: &bytes[offset..],
+        bits,
         width,
-        // A negative height means a top-down DIB, which is legal and which
-        // `StretchDIBits` handles from the header. Only the magnitude is a size.
-        height: height.abs(),
+        // The magnitude, since `StretchDIBits` takes the source rectangle in
+        // whole rows and reads a top-down DIB's direction from the header.
+        height: source_rows,
     })
 }
 
@@ -663,7 +790,7 @@ pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, S
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_bmp, read, render_page};
+    use super::{header_bytes, parse_bmp, pixel_bytes, read, render_page, BI_BITFIELDS, BI_RGB};
 
     /// A minimal one-page PDF, assembled here rather than by `lopdf`.
     ///
@@ -758,5 +885,61 @@ mod tests {
         let mut wrong_magic = render_page(&one_page(0), 0, 72.0).expect("render");
         wrong_magic[0] = b'X';
         assert!(parse_bmp(&wrong_magic).is_err());
+    }
+
+    #[test]
+    fn a_bmp_with_fewer_pixels_than_it_declares_is_refused() {
+        // Only the pixel data is cut here, so every other check in `parse_bmp`
+        // passes and this is the one that has to fire --- which is the point: a
+        // header can be self-consistent in every field it states and still
+        // describe an image larger than the bytes that arrived. `StretchDIBits`
+        // would read the declared amount regardless, past the end of the buffer,
+        // and at exactly the pixel offset the pointer it is handed is dangling.
+        let full = render_page(&one_page(0), 0, 72.0).expect("render");
+        let offset = u32::from_le_bytes([full[10], full[11], full[12], full[13]]) as usize;
+        assert!(
+            parse_bmp(&full).is_ok(),
+            "the control: the whole image still parses"
+        );
+        // One byte short as well as the two obvious truncations, because a bound
+        // that is off by a row would let the first two through.
+        for short in [full.len() - 1, offset + 1, offset] {
+            let mut cut = full.clone();
+            cut.truncate(short);
+            assert!(
+                parse_bmp(&cut).is_err(),
+                "{short} bytes of {} were accepted",
+                full.len()
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_is_padded_to_four_bytes_which_the_rendered_fixture_cannot_show() {
+        // Three 24-bit pixels are nine bytes and a row of them is twelve: BMP
+        // rows are padded to a 4-byte boundary. Asserted directly because the
+        // fixture above is 32 bpp, where every row is aligned already -- so the
+        // one format this module ever sees cannot tell a padded stride from an
+        // unpadded one, and an unpadded one is too *small*, which is the
+        // direction that lets GDI read past the buffer.
+        assert_eq!(pixel_bytes(3, 2, 24, BI_RGB, 0), Ok(24));
+        // The control, and it is the same number by a different route: at 32 bpp
+        // the padding is already there, so the arithmetic must not add any.
+        assert_eq!(pixel_bytes(3, 2, 32, BI_RGB, 0), Ok(24));
+    }
+
+    #[test]
+    fn a_palette_and_a_mask_block_are_counted_as_header_gdi_reads() {
+        // Both live in `BITMAPINFO`'s trailing array and both are read through
+        // the pointer the header is handed on, so neither is covered by the
+        // `biSize` check. An 8-bit image that names no palette size is entitled
+        // to all 256 entries.
+        assert_eq!(header_bytes(40, 8, BI_RGB, 0), 40 + 256 * 4);
+        assert_eq!(header_bytes(40, 8, BI_RGB, 5), 40 + 5 * 4);
+        assert_eq!(header_bytes(40, 32, BI_BITFIELDS, 0), 40 + 12);
+        // The two controls: the masks are inside a later header rather than
+        // after it, and the format the OS encoder produces needs nothing extra.
+        assert_eq!(header_bytes(124, 32, BI_BITFIELDS, 0), 124);
+        assert_eq!(header_bytes(40, 32, BI_RGB, 0), 40);
     }
 }

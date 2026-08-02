@@ -32,14 +32,21 @@ serde_json = "1"
 # comes from worker processes (spike 0.5), never from threads.
 pdfium-render = "0.9"
 
-# Low-level PDF object graph and content-stream operators.
+# A reader's own search pattern, when the find bar is in regex mode. Already in
+# the tree transitively through the toolchain, so declaring it added no package.
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode"] }
+
+# Low-level PDF object graph and content-stream operators.
 lopdf = "0.44"
 
 parking_lot = "0.12"
 anyhow = "1"
 
-# Tile encoding, for the encoded-vs-raw transfer A/B in spike 0.1.
+# Tile encoding. `png` is one of the two formats the tile protocol serves --- see
+# `TileFormat` in `render.rs` and `parse_format` in `protocol.rs` --- so it is
+# linked into the shipping binary rather than being a spike leftover. What is
+# still spike 0.1 is the *comparison*: the scroller and the thumbnail strip both
+# ask for `raw`, and `autobench` is what measures the two against each other.
 png = "0.17"
 
 # getrusage, for peak RSS in the tile bench. Pdfium allocates natively, so a

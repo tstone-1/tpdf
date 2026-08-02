@@ -160,6 +160,24 @@ export function nextWanted(
  * than re-rendered, and those are produced in whatever orientation the view is
  * in. Rows sized from the file would leave a gap under every one of them while
  * the borrowed bitmap overflowed.
+ *
+ * **One page's size for the whole strip, and on a mixed-size document that is
+ * wrong.** Stated rather than left to be discovered: the viewer stopped assuming
+ * a uniform document on 2026-08-02 --- `scroller.ts` holds a size per page now
+ * --- and this did not. Every row is page 1's aspect, and the render request is
+ * `TIER1_WIDTH` wide at `TIER1_WIDTH / page1.width_pt`, so a page wider than
+ * page 1 is asked for only as far as page 1 reaches and its thumbnail is
+ * cropped. It is a smaller fault than the viewer's was, because a thumbnail is
+ * an index rather than the content, and the row it sits in is a fixed box that a
+ * reader reads as one --- but it is a fault, not a case that happens to be safe.
+ *
+ * Fixing it is a separate piece of work rather than an oversight in this one. It
+ * needs a size per page here too, and the strip has no channel to learn one: the
+ * viewer's comes from the text extraction it already performs for every visible
+ * page, and the strip extracts no text. What it would take is either that lookup
+ * threaded through from the viewer, or rows sized from the bitmap that arrives
+ * --- and the second changes the virtualised list's arithmetic, which is
+ * currently one row height times an index.
  */
 export function rowHeightFor(page: PageSize, turns = 0): number {
   const shown = displayedSize(page, turns);
@@ -173,6 +191,19 @@ interface Outstanding {
   /** Set when the request has been withdrawn, so it is withdrawn only once. */
   withdrawn: boolean;
 }
+
+/**
+ * Why an outstanding request is being given up.
+ *
+ * Two different events, and only one of them is contention. A `yield` is the
+ * renderer being wanted elsewhere --- the viewer has work, or the panel is
+ * hidden and so has no claim on the one thread --- and that is what
+ * {@link Thumbnails.yieldCount} reports and what `viewercheck.ts` reads as the
+ * strip getting out of the way in time. A `discard` is the *picture* no longer
+ * being the one wanted: a rotation, an inversion, a teardown. Counting the two
+ * together made the contention metric say less the more the reader rotated.
+ */
+type Withdrawal = "yield" | "discard";
 
 export class Thumbnails {
   private readonly opts: ThumbnailOptions;
@@ -235,8 +266,24 @@ export class Thumbnails {
   private current = 0;
   /** Row holding the roving tabindex. */
   private focused = 0;
+  /**
+   * Which picture the strip is currently asking for: bumped by every change of
+   * orientation or polarity.
+   *
+   * A withdrawal only reaches a request that is still queued or running. One
+   * that had already finished comes back a full result, and keeping it leaves
+   * a single thumbnail in the previous orientation for the life of the
+   * document --- `have()` reads a kept bitmap as "this page is drawn", so it is
+   * never asked for again. This is the render path's copy of the guard the
+   * borrow path gets from `borrowing` and the scroller gets from its
+   * placeholder generation; it was the one of the three without one.
+   */
+  private generation = 0;
 
-  /** Requests withdrawn to get out of the viewer's way. For the check harness. */
+  /**
+   * Requests withdrawn to get out of the viewer's way, and only those --- see
+   * {@link Withdrawal}. For the check harness.
+   */
   private yielded = 0;
   /** Thumbnails taken from the viewer's tier 1 rather than rendered again. */
   private borrowed = 0;
@@ -291,7 +338,7 @@ export class Thumbnails {
     // all of it for a document nobody is looking at any more and all of it in
     // front of the tiles for the one they are.
     this.active = false;
-    this.withdraw();
+    this.withdraw("discard");
     for (const bitmap of this.bitmaps.values()) bitmap.close();
     this.bitmaps.clear();
     this.rows.clear();
@@ -338,7 +385,7 @@ export class Thumbnails {
   setActive(active: boolean): void {
     if (this.active === active) return;
     this.active = active;
-    if (!active) this.withdraw();
+    if (!active) this.withdraw("yield");
     else {
       this.layout();
       this.scrollTo(this.current);
@@ -359,7 +406,7 @@ export class Thumbnails {
   setViewerBusy(busy: boolean): void {
     if (this.busy === busy) return;
     this.busy = busy;
-    if (busy) this.withdraw();
+    if (busy) this.withdraw("yield");
     else this.pump();
   }
 
@@ -387,7 +434,8 @@ export class Thumbnails {
   setInvert(invert: boolean): void {
     if (invert === this.invert) return;
     this.invert = invert;
-    this.withdraw();
+    this.generation++;
+    this.withdraw("discard");
 
     for (const bitmap of this.bitmaps.values()) bitmap.close();
     this.bitmaps.clear();
@@ -400,7 +448,8 @@ export class Thumbnails {
     const next = ((turns % 4) + 4) % 4;
     if (next === this.turns) return;
     this.turns = next;
-    this.withdraw();
+    this.generation++;
+    this.withdraw("discard");
 
     for (const bitmap of this.bitmaps.values()) bitmap.close();
     this.bitmaps.clear();
@@ -448,10 +497,10 @@ export class Thumbnails {
   }
 
   /** Withdraws the outstanding request, if there is one. */
-  private withdraw(): void {
+  private withdraw(why: Withdrawal): void {
     if (!this.request || this.request.withdrawn) return;
     this.request.withdrawn = true;
-    this.yielded++;
+    if (why === "yield") this.yielded++;
     cancelTile(this.request.rid);
   }
 
@@ -509,6 +558,11 @@ export class Thumbnails {
     const rid = nextRequestId();
     const outstanding: Outstanding = { page, rid, withdrawn: false };
     this.request = outstanding;
+    // Read before the request goes out, and compared when it comes back. See
+    // {@link generation}: a withdrawal cannot reach a render that has already
+    // finished, so this is what tells the reply apart from one the reader still
+    // wants.
+    const generation = this.generation;
 
     void fetchTile({
       rid,
@@ -530,7 +584,16 @@ export class Thumbnails {
             // `null` is the withdrawal landing: the page keeps no thumbnail and
             // is asked for again by the next pump, which is what makes yielding
             // safe to do at any moment rather than only between requests.
-            if (result) this.keep(page, result.bitmap);
+            //
+            // A *result* after a rotation or an inversion is the other outcome
+            // of the same withdrawal --- the render beat it, so there was
+            // nothing left to cancel --- and it is a picture of the orientation
+            // the reader has just left. Dropped rather than kept, so the next
+            // pump asks for the page again in the one they are now in.
+            if (result) {
+              if (generation === this.generation) this.keep(page, result.bitmap);
+              else result.bitmap.close();
+            }
             this.pump();
           },
           // Withdrawal races the renderer, so a thumbnail that had already

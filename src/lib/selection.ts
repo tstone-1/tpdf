@@ -8,6 +8,14 @@
  * so the focus precedes the anchor. Those are much easier to get wrong than to
  * test, and testing them should not require a webview.
  *
+ * There is no `isComplete` either, and it is worth saying why it went. It
+ * answered "does the cache hold every page this selection touches" --- a
+ * question the copy path asked twice, before and after loading --- and the
+ * answer became worthless the moment a selection outgrew the cache: the cache
+ * evicts, so the second reading was a fact about the bound rather than about
+ * the document. A caller that must have every page now holds each reply as it
+ * lands ({@link Selection.textFrom}), which cannot be undone by an eviction.
+ *
  * There is no `isEmpty`. There was, and every call site guarded on it before
  * doing anything --- and a mutation making it return `false` unconditionally
  * changed no observable behaviour at all, because an anchor equal to the focus
@@ -23,7 +31,7 @@
  */
 
 import { readingTextOf } from "./reading";
-import { runsFor, type Caret, type Quad, type TextCache } from "./text";
+import { runsFor, type Caret, type PageText, type Quad, type TextCache } from "./text";
 
 /** Which of two carets comes first in reading order. */
 function precedes(a: Caret, b: Caret): boolean {
@@ -83,32 +91,44 @@ export class Selection {
    * The selected text, pages joined by a newline.
    *
    * Returns what is *available*: a page whose text has not arrived contributes
-   * nothing rather than blocking. That is the right trade for a copy triggered
-   * by a keystroke --- but it means a caller must not treat the result as proof
-   * the whole selection was included, and `isComplete` is what answers that.
+   * nothing rather than blocking. That is the right trade for a status line and
+   * for the check harness --- but it means a caller must not treat the result
+   * as proof the whole selection was included. A caller that needs that has to
+   * hold each page's reply and see them all, which is what
+   * {@link textFrom} is for and what `Viewer.selectionText` does.
    */
   text(cache: TextCache): string {
     const { start, end } = this.ordered;
     const parts: string[] = [];
     for (let page = start.page; page <= end.page; page++) {
-      const range = this.rangeOn(page);
-      const text = range && cache.peek(page);
-      if (!range || !text) continue;
-      // In the order the page reads rather than the order the file was written
-      // in --- see `readingTextOf`. The two differ only where a producer
-      // interleaved its columns, and there the difference is the whole point.
-      parts.push(readingTextOf(text, range.from, range.to));
+      const text = cache.peek(page);
+      if (!text) continue;
+      const part = this.textFrom(page, text);
+      if (part !== null) parts.push(part);
     }
     return parts.join("\n");
   }
 
-  /** Whether every page the selection touches has its text loaded. */
-  isComplete(cache: TextCache): boolean {
-    const { start, end } = this.ordered;
-    for (let page = start.page; page <= end.page; page++) {
-      if (!cache.peek(page)) return false;
-    }
-    return true;
+  /**
+   * What one page contributes, given that page's own text.
+   *
+   * Takes the text rather than the cache, which is what lets a caller holding a
+   * page's reply take its contribution *there and then* instead of asking the
+   * cache for it again later. `TextCache` is bounded, so a large selection is
+   * partly evicted by the time its last page arrives, and a caller that went
+   * back to the cache would find the front of its own selection gone --- see
+   * `Viewer.selectionText`, where that was a copy that could never succeed.
+   *
+   * `null` for a page the selection does not touch, which {@link pages} never
+   * names.
+   */
+  textFrom(page: number, text: PageText): string | null {
+    const range = this.rangeOn(page);
+    if (!range) return null;
+    // In the order the page reads rather than the order the file was written
+    // in --- see `readingTextOf`. The two differ only where a producer
+    // interleaved its columns, and there the difference is the whole point.
+    return readingTextOf(text, range.from, range.to);
   }
 
   /** Pages the selection touches, for a caller that must load them all. */

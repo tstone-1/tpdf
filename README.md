@@ -102,10 +102,11 @@ issue for one.
 ## A note on the documentation
 
 [`docs/TRAPS.md`](docs/TRAPS.md) is a numbered list of every mistake this project has made
-that was expensive enough to be worth writing down — currently 206 of them, indexed by
-title in [`AGENTS.md`](AGENTS.md). A good half are not about PDFs at all but about
-measurement and about writing checks that are capable of failing, which is the recurring
-subject: a test that cannot go red passes exactly like one that can.
+that was expensive enough to be worth writing down — over two hundred of them, indexed by
+title in [`AGENTS.md`](AGENTS.md), and a gate keeps the two lists the same list. A good half
+of the entries are not about PDFs at all but about measurement and about writing checks that
+are capable of failing, which is the recurring subject: a test that cannot go red passes
+exactly like one that can.
 
 It is kept for the next person working on this, and that has generally been me a fortnight
 later. It is public on the theory that it is more useful than it is embarrassing.

@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { usableRuns } from "./reading";
 import {
   caretAt,
   lineAt,
@@ -329,6 +330,35 @@ describe("turnedView", () => {
   it("returns the page itself when nothing is rotated", () => {
     const text = twoShortLines();
     expect(turnedView(text, 0)).toBe(text);
+  });
+
+  it("carries the document's own reading order through the turn", () => {
+    // A run is a half-open range of *character indices*, and a rotation
+    // renumbers no characters --- so the tags come through a turn untouched.
+    // Losing them is not a visible failure, which is why it needs pinning:
+    // `usableRuns` reads an absent value as "this page is untagged" and falls
+    // back to the XY-cut, so one quarter turn silently demotes a tagged page to
+    // geometric order --- for the screen reader, and for a copy taken while the
+    // view is rotated, which then differs from the same copy taken upright.
+    const text: PageText = {
+      ...twoShortLines(),
+      runs: [
+        { tag: "P", path: ["Document", "P"], start: 0, end: 2 },
+        { tag: "P", path: ["Document", "P"], start: 2, end: 4 },
+      ],
+    };
+    // The control on the fixture: a page whose runs did not cover every visible
+    // character is one `usableRuns` refuses upright as well, and the assertions
+    // below would then be red for a reason that has nothing to do with turning.
+    expect(usableRuns(text)).toEqual(text.runs);
+
+    for (const turns of [1, 2, 3]) {
+      const turned = turnedView(text, turns);
+      expect(turned.runs).toEqual(text.runs);
+      // And through the consumer, which is the decision the loss actually
+      // changes: `null` here is the fallback firing.
+      expect(usableRuns(turned)).toEqual(text.runs);
+    }
   });
 });
 
