@@ -48,19 +48,32 @@ AGPL / commercial, and the AGPL path costs three things that matter here:
 
 - **It is viral across all of tpdf.** Every line of Rust and Svelte becomes AGPL.
 - **It would forbid reusing tpdf code in private or work repositories.** Lifting tpdf's
-  text extraction or page-splitting into a Nexperia tool that processes customer
-  declarations or IMDS documents would require AGPL-ing that tool, which is impossible.
-  This is the cost that actually bites, given the surrounding portfolio.
+  text extraction or page-splitting into an internal tool that processes documents at
+  work would require AGPL-ing that tool, which is not something an employer's codebase
+  can absorb. This is the cost that actually bites, given the surrounding portfolio.
 - **It would make relicensing later impossible** without an Artifex commercial licence
   (quoted case by case, $1,500 to $50,000+).
 
 It would also rule out the Mac App Store, whose terms conflict with the GPL family.
 Direct notarized distribution (what `screenpick` does) is unaffected.
 
-The repository is currently **private**. Because every dependency is permissive, it can
-be flipped to public at any time with no licensing work. Do not introduce a dependency
-that removes that option. If a copyleft library ever looks necessary, raise it as a
-decision rather than adding it.
+The repository is **public** and MIT-licensed, which is what that decision was protecting.
+The option is now spent rather than held: a copyleft dependency added today would not
+merely close a door, it would contradict the licence already granted to everyone who has
+cloned this. Do not introduce one. If a copyleft library ever looks necessary, raise it as
+a decision rather than adding it.
+
+Two obligations follow from shipping binaries rather than only source. PDFium is
+BSD-3-Clause and the crate tree is MIT / Apache-2.0, and **both require their notices to be
+reproduced in binary distributions**. That notice file **does not exist yet** and is a
+blocker on the first release, not on the repository being public --- nothing is distributed
+as a binary today. It should be generated from `cargo metadata` plus the registry's licence
+texts rather than hand-maintained, because a hand-written one is wrong the first time a
+dependency changes and nothing says so.
+
+And a new dependency's licence is checked with `cargo metadata` over the whole tree, never
+read off the crate's README; the sweep looks for the copyleft families by name across all
+531 packages.
 
 ### Redaction must be genuine
 
@@ -495,10 +508,26 @@ scaffolding, and the rule was that they land when there is something for them to
 front-end logic with an answer that can be wrong rather than merely ugly. `npm run lint`
 still does not exist, for the same reason as before.
 
-**There is no CI for ordinary commits, and there is a release workflow as of 2026-07-31.**
-The reasoning for the first half is unchanged: one machine, and a workflow that ran on every
-push would add a second place for the gate list to live while catching nothing
-`scripts/gates.py` does not catch locally first.
+**There is CI for ordinary commits as of 2026-08-02, and a release workflow since
+2026-07-31.** This paragraph said the opposite for two days and the reasoning it gave was
+half right, which is the more interesting half: the objection was never cost, it was that a
+workflow restating the gate commands in YAML would be *a second place for the gate list to
+live*. `ci.yml` does not restate them --- it invokes `scripts/gates.py`, exactly as
+`release.yml` does --- so that objection never applied to the workflow that was eventually
+written. What changed materially is that the repository went public, and macOS runner
+minutes bill at 10x against a private allowance and are free here. The stated reason and the
+operative reason were different, which is worth noticing: "one machine" was a description of
+the circumstances, not an argument.
+
+It runs on `pull_request` rather than `pull_request_target`, asks for `contents: read`, and
+**references no secret** --- see the fork threat model under Repository facts, and the header
+comment in the file, which is the copy that has to stay right.
+
+What CI structurally cannot cover, and the reason `BUILD.md` still schedules them by hand:
+`viewer_check.py` and `mutate_viewer.py` drive a real window and need an unlocked,
+unoccluded screen, so on a headless runner they do not fail, **they hang** --- which is the
+failure shape this repository is least able to read, since a hang and a pass both produce no
+red. The mutation harnesses rebuild per mutation and take minutes.
 
 `.github/workflows/release.yml` fires only on a CalVer tag, and it exists because **the
 predicted trigger was the wrong one**. This file expected CI to arrive with the repo going
@@ -853,7 +882,18 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 
 ## Repository facts
 
-- GitHub: `tstone-1/tpdf`, **private**.
+- GitHub: `tstone-1/tpdf`, **public**, MIT (`LICENSE`).
+- Public since 2026-08-02, and it needed no history scrub: all 108 commits across every
+  ref were authored and committed as `48162401+tstone-1@users.noreply.github.com`, there
+  were no tags, no `refs/pull/*`, no forks and no workflow run logs to become visible.
+  That is the cheap case, and it held only because the clone was made with a repo-local
+  identity --- a fresh clone on the Windows flat layout has no `includeIf` rule and would
+  silently commit under a work address. Set `user.email` / `user.name` repo-locally there.
+- **The `APPLE_*` secrets survive the flip; a workflow that reads them must not.**
+  Repository secrets are not exposed by making a repository public, but fork pull requests
+  now exist. `release.yml` is tag-push-only and therefore unreachable from a fork; `ci.yml`
+  references no secret, runs on `pull_request` rather than `pull_request_target`, and asks
+  for `contents: read`. Keep that split --- it is the whole of the fork threat model.
 - Commit identity resolves automatically from the path via the `includeIf "gitdir:"` rule
   in `~/.gitconfig` --- anything under `~/Developer/github.com/tstone-1/` gets
   `48162401+tstone-1@users.noreply.github.com`. Verify rather than assume if the clone

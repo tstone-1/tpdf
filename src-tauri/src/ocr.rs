@@ -624,12 +624,12 @@ mod tests {
         let v = adjudicate(
             &engine(),
             &control(),
-            &Ok(vec![in_band("K7QX2"), outside("Nexperia")]),
+            &Ok(vec![in_band("K7QX2"), outside("Aldebaran")]),
         );
         match v {
             Legibility::Legible { found } => {
                 assert_eq!(found.len(), 1);
-                assert_eq!(found[0].text, "Nexperia");
+                assert_eq!(found[0].text, "Aldebaran");
             }
             other => panic!("surviving text was not reported legible: {other:?}"),
         }
@@ -640,7 +640,7 @@ mod tests {
         // Windows OCR reports no per-word confidence. If absent confidence were
         // treated as low and filtered, every Windows survivor would vanish and
         // the gate would certify the page.
-        let mut it = outside("Nexperia");
+        let mut it = outside("Aldebaran");
         it.confidence = None;
         let v = adjudicate(&engine(), &control(), &Ok(vec![in_band("K7QX2"), it]));
         assert!(!v.certifies(), "an unscored survivor certified the page");
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn a_low_confidence_survivor_still_counts() {
-        let mut it = outside("Nexperia");
+        let mut it = outside("Aldebaran");
         it.confidence = Some(0.01);
         let v = adjudicate(&engine(), &control(), &Ok(vec![in_band("K7QX2"), it]));
         assert!(!v.certifies(), "a marginal survivor certified the page");
@@ -708,7 +708,7 @@ mod tests {
 
         for bad in [
             Legibility::Legible {
-                found: vec![outside("Nexperia")],
+                found: vec![outside("Aldebaran")],
             },
             Legibility::NotVerified {
                 why: "engine crashed".into(),

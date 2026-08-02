@@ -24,6 +24,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Timo Stein",
+    "copyright": "Copyright (c) 2026 Timo Stein. MIT licensed.",
+    "category": "Productivity",
+    "homepage": "https://github.com/tstone-1/tpdf",
+    "shortDescription": "Fast, lightweight PDF viewer and editor",
+    "longDescription": "A PDF viewer and editor for macOS and Windows. Every document is parsed and rendered in sandboxed worker processes with no filesystem or network authority, and every command is reachable from the command palette.",
     "fileAssociations": [
       {
         "ext": ["pdf"],

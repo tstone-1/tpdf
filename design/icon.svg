@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#232732"/>
+      <stop offset="1" stop-color="#0C0E13"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FCFAF5"/>
+      <stop offset="1" stop-color="#E7E1D3"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2A2E36"/>
+      <stop offset="1" stop-color="#07080A"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="230" ry="230" fill="url(#tile)"/>
+
+  <rect x="252" y="168" width="520" height="688" rx="44" fill="url(#page)"/>
+
+  <g fill="#CBC2AC">
+    <rect x="316" y="282" width="392" height="40" rx="20"/>
+    <rect x="316" y="368" width="392" height="40" rx="20"/>
+    <rect x="316" y="638" width="392" height="40" rx="20"/>
+    <rect x="316" y="724" width="248" height="40" rx="20"/>
+  </g>
+
+  <rect x="158" y="446" width="708" height="136" rx="28" fill="#F5A524"/>
+  <rect x="158" y="446" width="708" height="112" rx="28" fill="url(#bar)"/>
+</svg>
