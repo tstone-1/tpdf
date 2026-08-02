@@ -291,7 +291,24 @@ Two of them are worth understanding rather than just running:
   third population is the one nothing else can see --- the fourteen C++ libraries inside
   libpdfium, read from `vendor/pdfium/licenses/`, which `cargo metadata` is structurally
   blind to. Regenerate with `scripts/third_party_notices.py` and commit the result; never
-  hand-edit the file.
+  hand-edit the file. On a mismatch it prints the **diff**, not the word "stale" --- a gate
+  that fails on a machine you are not sitting at is only actionable if its message carries
+  the evidence.
+
+  **After any PDFium pin bump, cross-check the two archives.** They ship the same fifteen
+  licence files and nine of them differ --- eight by line endings, and `pdfium.txt` by
+  carrying a `//` comment prefix on macOS and none on Windows. A document generated from
+  whichever archive is installed is then a function of the platform, which is how this gate
+  came to be green on macOS and red on Windows with nothing wrong:
+
+  ```
+  scripts/fetch_pdfium.py --platform win-x64 --dest /tmp/pdfium-win
+  scripts/third_party_notices.py --cross-check /tmp/pdfium-win
+  ```
+
+  Note this is doable **from either machine** --- the other platform's archive is a download,
+  not a machine you have to be sitting at. Worth reaching for before waiting on a CI round
+  trip to diagnose a platform difference.
 
 ### CI runs per push and per pull request, and again on a tag
 

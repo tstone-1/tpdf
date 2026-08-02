@@ -5343,3 +5343,44 @@ part that needs saying out loud is what it does *not* generate: anything from
 `make_incremental_pdf.py` writes ~550 MB on purpose. Those tests still skip in CI. A
 workflow that silently covers two thirds of a fixture set is the same failure one level up,
 so the omission is written in the workflow beside the step.
+
+### A document meant to cover both platforms was generated from platform-specific inputs
+
+`THIRD-PARTY-NOTICES.md` is one document describing what both installers contain. It is
+generated from `vendor/pdfium/licenses/`, and **`vendor/pdfium` is whichever platform's
+archive this machine installed.** So the "platform-independent" document was a function of
+the platform, and the `notices` gate was green on macOS and red on Windows with nothing
+wrong on either.
+
+`bblanchon/pdfium-binaries` ships the same fifteen licence files in both archives. Nine
+differ. Eight of those are CRLF, which `read_text` already normalised, so they were
+invisible --- and that is the interesting half: **the failure that survives is the one whose
+sibling you already handle by habit.** Normalising line endings is reflex; it made eight of
+the nine differences vanish and left one, which then looked like a mystery rather than an
+instance of a pattern.
+
+The ninth is `licenses/pdfium.txt`, shipped with every line prefixed `// ` on macOS and with
+none on Windows. Same licence, different packaging.
+
+Three things worth carrying.
+
+- **The threshold I first wrote was a guess dressed as a safeguard.** `normalise_licence_text`
+  originally stripped the prefix only when 80% of a file's lines carried it, reasoning that a
+  whole-file comment prefix is safe to remove and a stray `//` is not. But `pdfium.txt` is
+  PDFium's own licence followed by a dozen other projects' --- only the first block is
+  prefixed, 27 lines of 196 --- so the guard declined, the output was unchanged, and the
+  verification still failed. The number was chosen from an imagined input and was off by a
+  factor of five. Per line and unconditional is both simpler and correct, because a leading
+  `//` in a licence text is never content.
+- **The property is now testable rather than claimed**: `--cross-check <other-pdfium-dir>`
+  renders against a second archive and requires byte equality. Run it after any pin bump.
+  Its refusal to accept a directory with no `licenses/` is not defensive noise --- without it,
+  pointing at the wrong path renders a document with the whole PDFium section missing, which
+  "differs" and would read as the very failure being tested for.
+- **This was found from a Mac, without a Windows machine**, by staging the other platform's
+  archive with `fetch_pdfium.py --platform win-x64 --dest`. Worth remembering before waiting
+  on a CI round trip to diagnose something: the input that differs can usually be fetched.
+
+And the reason it was diagnosable at all is that `--check` was changed, in the same session,
+to print the diff rather than the word "stale". A gate that fails on a machine you are not
+sitting at is only actionable if its message carries the evidence.
