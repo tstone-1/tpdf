@@ -1099,8 +1099,6 @@ pub fn phys_footprint(_pid: u32) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::Request;
-
     /// The lock both arms of [`QuietChildStderr`] take.
     ///
     /// Process-wide state needs process-wide exclusion, and libtest runs these
@@ -1320,7 +1318,7 @@ mod tests {
 
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let answer = worker.call(&Request::Open {
+            let answer = worker.call(&super::Request::Open {
                 lazy_geometry: false,
             });
             let _ = tx.send(answer.map(|_| ()));

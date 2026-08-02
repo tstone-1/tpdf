@@ -1378,10 +1378,18 @@ nothing, so it is neither re-attached the way a four-zeroes box would be nor ban
 words beside it, and it falls out of every line's ranges. That is a font's business meeting a
 rule written for a different font's spaces: the folding page is laid out in `msgothic.ttc`
 here and in Arial Unicode on the Mac, and only one of them floats its space below the letter
-boxes. The fix direction is in the module already --- a box under some epsilon height is
-information about the font, not about the page, and should be re-attached by preceding index
-exactly as an unplaced character is. Until that lands, do not read the green macOS run as
-evidence either way: it is a different document under a different substitute.
+boxes.
+
+**The fix landed on 2026-08-02 and has not been run on the platform that fails.** `reading.ts`
+now refuses a box under `SLIVER_PT` (0.1 pt) across the line and re-attaches it by preceding
+index exactly as an unplaced character is --- the direction this paragraph called for. Of the
+two controls it wanted, macOS could only run the first: all eleven corpora stayed green with
+byte-identical name sets, and five mutations each turned their intended test red and nothing
+else. The second control is this line going green, and macOS structurally cannot supply it,
+for the reason above --- its document is a different one under a different substitute, so
+neither its old green run nor its new one is evidence either way. Delete this paragraph when
+a Windows run reads `café latte` here; until then it records an open verification, not an
+open defect.
 
 **The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
 checks red that had been green on every corpus for a week --- two nav probes guarded on "more

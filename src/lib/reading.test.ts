@@ -509,6 +509,66 @@ describe("a line with punctuation on it", () => {
   });
 });
 
+describe("a space whose font floated its box off the line", () => {
+  /**
+   * The `multilingual.pdf` folding page as laid out in `msgothic.ttc`, which is
+   * the substitute Windows picks and macOS does not.
+   *
+   * Measured through `FPDFText_GetCharBox` and recorded in `BUILD.md`: the space
+   * comes back **placed**, 0.02 pt tall, with its band 0.12 pt clear of the
+   * 13.94 pt band every letter on the line sits in. The offsets are the point
+   * and the origin is not, so they are laid out here from 100 in `charQuad`'s
+   * frame (`text.ts`: PDF points from the page's *top-left*, so below the line
+   * is the larger number) rather than at the y the fixture happens to use.
+   *
+   * This is a Windows defect reproduced on any platform, because the input is
+   * geometry. The macOS run of the same fixture is green under Arial Unicode,
+   * whose space sits inside the letters' band --- so the corpus cannot discriminate
+   * here and only these numbers can.
+   */
+  function floatedSpace(): PageText {
+    const chars: [string, [number, number, number, number] | null][] = [];
+    let x = 170;
+    for (const char of "ab cd") {
+      if (char === " ") chars.push([char, [x, 114.06, x + 3.3, 114.08]]);
+      else chars.push([char, [x, 100, x + 5, 113.94]]);
+      x += 6;
+    }
+    return page(chars);
+  }
+
+  it("stays on the line, in its own place", () => {
+    // What it did instead: "abcd" --- the space matched no band, so it became a
+    // fragment of its own and fell out of the line's ranges entirely. The
+    // fixture's own line read `cafélatte`.
+    //
+    // Asserting the whole line rather than "the space is somewhere in it": a
+    // character re-attached to the wrong index gives `abcd ` and reads aloud
+    // exactly as wrong as dropping it.
+    expect(linesAs(floatedSpace())).toEqual(["ab cd"]);
+  });
+
+  it("does not swallow a mark that is merely short", () => {
+    // The control for the rule, and it has to be a *near* miss to certify
+    // anything. `tagged.pdf`'s real comma is 2.89 pt tall --- short enough to
+    // need `SHORT_MARK`, and 29 times the sliver threshold. If the new rule were
+    // "a short box joins by index" rather than "a box with no height does", this
+    // is what it would break.
+    //
+    // Asserted on the *box*, because it reads the same either way: a character
+    // routed by index keeps its place in the ranges and stops contributing its
+    // extent, so the only observable is that the line no longer reaches the
+    // comma's descender.
+    const chars: [string, [number, number, number, number] | null][] = [
+      ["a", [170, 227.41, 175, 236.13]],
+      ["b", [176, 227.41, 181, 236.13]],
+      [",", [182, 234.8, 183.3, 237.69]],
+    ];
+    const [line] = readingLines(page(chars));
+    expect(line?.box.bottom).toBeCloseTo(237.69);
+  });
+});
+
 describe("characters no tagged run claims", () => {
   /**
    * Two tagged blocks with an unplaced separator between them, unclaimed.

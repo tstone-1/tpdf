@@ -11,6 +11,48 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### The macOS half of the Windows work, and the defect only a unit test could reach
+
+- **The five-file `worker.rs` split was a pure move, and the one thing that did not survive
+  it was an import.** `use super::Request` sat at the test module's top while its only user
+  is a `#[cfg(windows)]` test, so the platform that could see the problem was the one that
+  could not compile it --- `cargo test` passed it as a warning and only `clippy
+  --all-targets -- -D warnings` was fatal. It reads as `super::Request::Open` at the call
+  site now, matching the `super::Worker::spawn` beside it, so there is no cfg-gated import
+  to fall out of step again. Everything else in the split, `worker_handover.rs` and the
+  macOS halves of `worker.rs` and `worker_shm.rs` included, compiled unchanged: gates
+  12/12.
+- **A space whose font parks its box off the line stays on the line.** `reading.ts` bands
+  characters by overlap, and `msgothic.ttc` reports the space in `café latte` as *placed*,
+  0.02 pt tall and 0.12 pt clear of the letters' band --- so it matched nothing, became a
+  fragment of its own, and fell out of the line's ranges. The line read `cafélatte`, aloud
+  and on the clipboard. A box under `SLIVER_PT` across the line is now re-attached by
+  preceding index the way an unplaced character is, and deliberately *not* absorbed into the
+  preceding box the way a combining mark is --- a mark is drawn over its base, a sliver
+  would drag the line's box down to meet it.
+
+  **The corpus could not have found this and cannot verify it.** The fixture's generator
+  picks a font from what the machine has, so the folding page is `msgothic.ttc` on Windows
+  and Arial Unicode here, and Arial Unicode puts its space inside the letters' band. What
+  discriminates is a unit test carrying the measured geometry, which fails on any platform:
+  removing the clause turns it red alone, and raising the threshold until it swallows a
+  2.89 pt comma turns its control red instead.
+- **`tpdf.log` lands where macOS puts logs**, which no Windows machine could check. Proved
+  by forcing a diagnostic rather than by opening a document --- every `diag::note` site is
+  an exceptional event, so a healthy run writes nothing and "no file" would have been
+  indistinguishable from a wrong path. Killing a render worker mid-run creates
+  `~/Library/Logs/com.timostein.tpdf/tpdf.log`, directory and all, with the line stamped;
+  with `TPDF_LOG_FILE` set the line goes there instead and the default directory is not
+  created, which is the half that makes it a measurement rather than a coincidence.
+- **`fetch_pdfium.py --check` verifies the library on this machine now.** The July stamp
+  predates the digest line, so it warned and fell back to an existence check exactly as
+  designed; one re-fetch records the digest and the gate is strong.
+- **All eleven corpora at 163 check names, byte-identical name sets**, diffed pairwise
+  rather than counted, with `session_check.py` green on all four phases and both controls.
+  `text-heavy` read 143/20 before the change and 142/21 after, which is the withdrawal race
+  BUILD.md already documents and not a regression --- the names are the invariant, and they
+  did not move.
+
 ### An independent review of the whole tree, and what fixing its findings changed
 
 - **The sharpest finding was in a gate, not in the code.** `fetch_pdfium.py --check`
