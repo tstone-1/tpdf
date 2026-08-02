@@ -708,6 +708,17 @@ It runs on `pull_request` rather than `pull_request_target`, asks for `contents:
 **references no secret** --- see the fork threat model under Repository facts, and the header
 comment in the file, which is the copy that has to stay right.
 
+**So `gh run list --workflow=ci.yml --branch main --limit 1` is now the cheapest first thing
+to do in a session, and it answers a question a handover cannot.** On 2026-08-02 the macOS
+handover predicted, correctly and in detail, that the worker split would break here --- while
+CI had already proved it 26 minutes earlier and gone red on `macos-latest` for exactly that
+reason. A handover is written before the run it triggers finishes, so it is authoritative
+about the code and structurally stale about the build; and on a two-platform repository the
+machine that files it is the one that cannot compile half of what it moved. Establishing
+green first costs one command, and it converts every later failure into a statement about
+your own change. Select the workflow rather than taking the newest run, and read the job
+count beside the conclusion --- two jobs, not one.
+
 What CI structurally cannot cover, and the reason `BUILD.md` still schedules them by hand:
 `viewer_check.py` and `mutate_viewer.py` drive a real window and need an unlocked,
 unoccluded screen, so on a headless runner they do not fail, **they hang** --- which is the
