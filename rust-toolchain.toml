@@ -1,0 +1,27 @@
+# The Rust toolchain, pinned.
+#
+# Until 2026-08-02 there was no pin: the Macs used whatever rustup had installed
+# and CI used whatever `stable` was that morning. With `-D warnings` in the
+# clippy gate, that means a new lint in a new stable turns `main` red with no
+# code change and nobody having done anything -- and it lands on whoever pushes
+# next rather than on whoever chose to upgrade.
+#
+# The cost of pinning is real and worth stating: new lints, new diagnostics and
+# new language features do not arrive until this line is edited. That is a
+# deliberate trade. Bumping it is a small commit of its own, run through
+# `scripts/gates.py` like anything else, rather than something that happens to
+# you.
+#
+# `components` matters as much as `channel`. When rustup installs a pinned
+# toolchain on demand it installs exactly what is listed here, so omitting these
+# gives a CI runner a toolchain with no clippy and no rustfmt, and two gates then
+# fail on a missing binary rather than on anything real.
+#
+# `scripts/check_toolchain.py` asserts that the rustc actually running matches
+# this file. That is not ceremony: `RUSTUP_TOOLCHAIN` in the environment
+# overrides this file completely and silently, which is precisely what a CI
+# action that installs its own toolchain may set. A pin nothing verifies is
+# indistinguishable from no pin.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]

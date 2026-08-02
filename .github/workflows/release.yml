@@ -53,7 +53,15 @@ jobs:
           node-version: 24
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # NOT `dtolnay/rust-toolchain@stable`, which installs whatever stable is
+      # today and sets RUSTUP_TOOLCHAIN -- and that environment variable
+      # overrides `rust-toolchain.toml` completely and silently. The pin would
+      # then be present in the repository, absent from the build, and green
+      # either way. `rustup show` installs exactly what the pin file names
+      # (rustup ships on both runner images), so the file is the single source
+      # of truth and the `toolchain` gate asserts the result.
+      - name: Install the pinned Rust toolchain
+        run: rustup show
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -110,7 +118,15 @@ jobs:
           node-version: 24
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # NOT `dtolnay/rust-toolchain@stable`, which installs whatever stable is
+      # today and sets RUSTUP_TOOLCHAIN -- and that environment variable
+      # overrides `rust-toolchain.toml` completely and silently. The pin would
+      # then be present in the repository, absent from the build, and green
+      # either way. `rustup show` installs exactly what the pin file names
+      # (rustup ships on both runner images), so the file is the single source
+      # of truth and the `toolchain` gate asserts the result.
+      - name: Install the pinned Rust toolchain
+        run: rustup show
 
       - uses: Swatinem/rust-cache@v2
         with:
