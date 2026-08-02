@@ -142,7 +142,25 @@ single "initial release" line.
   characters and the hardcoded width of 8 broke the alignment the day it was added. Nothing
   parses that output, but a hardcoded column width is the same shape as the padded-column
   trap.
-- 4 new traps, 210 in the index.
+- **The pin is verified on both platforms**: `pinned=1.97.1 rustc=1.97.1
+  RUSTUP_TOOLCHAIN=(unset)` on macOS and Windows alike, so `rustup show` plus the file does
+  what the action would have prevented.
+- **And the Windows `notices` failure was never staleness.** The script had **crashed**, and
+  `gates.py` printed that gate's static reason --- "THIRD-PARTY-NOTICES.md is stale" ---
+  which sent two rounds of investigation after a content difference. `subprocess.run(...,
+  text=True)` decodes with the locale codec, cp1252 on Windows, and `cargo metadata` emits
+  UTF-8 containing `0x81`: it comes from a crate author's name, `Emilio Cobos Álvarez`, whose
+  `Á` is `C3 81`. `.stdout` then arrives as `None` and `json.loads(None)` raises a TypeError
+  about JSON types that mentions no encoding.
+- This is a trap **this repository already had an entry for**, reintroduced in a new script
+  on the same byte, in a session that had read it. Fixed with `encoding="utf-8"` in
+  `third_party_notices.py`, `check_toolchain.py`, and `mutate_rust.py` --- the last a
+  pre-existing latent instance in a harness documented as passing on Windows, which reads
+  `cargo test` output from a crate whose sources contain that byte.
+- `gates.py` prints the **exit code** on failure and words the reason as "usually means". A
+  checker that dies and a checker that reports a failure are different events, and they had
+  the same label.
+- 5 new traps, 211 in the index.
 
 ### Phase 1 --- case folding in search
 

@@ -166,17 +166,19 @@ def gates() -> "list[tuple[str, list[str], str]]":
     ]
 
 
-def run(name: str, argv: "list[str]") -> "tuple[bool, float]":
-    """Runs one gate, streaming its output. Returns (passed, seconds)."""
+def run(name: str, argv: "list[str]") -> "tuple[bool, float, int]":
+    """Runs one gate, streaming its output. Returns (passed, seconds, exit code)."""
     print(f"\n=== {name}: {' '.join(argv)}", flush=True)
     started = time.monotonic()
+    code = -1
     try:
         completed = subprocess.run(argv, cwd=REPO, check=False)
-        ok = completed.returncode == 0
+        code = completed.returncode
+        ok = code == 0
     except FileNotFoundError:
         print(f"[FAIL] {argv[0]} not found on PATH", file=sys.stderr)
         ok = False
-    return ok, time.monotonic() - started
+    return ok, time.monotonic() - started, code
 
 
 def main() -> int:
@@ -207,12 +209,20 @@ def main() -> int:
 
     results = [(name, *run(name, argv), reason) for name, argv, reason in selected]
 
-    width = max(len(name) for name, _, _, _ in results)
+    width = max(len(name) for name, _, _, _, _ in results)
     print("\n=== summary")
     failed = 0
-    for name, ok, seconds, reason in results:
+    for name, ok, seconds, code, reason in results:
         status = "[OK]  " if ok else "[FAIL]"
-        detail = "" if ok else f"  -- {reason}"
+        # "usually means", not "means". The reason is a static hint attached to
+        # the gate, and a non-zero exit can just as easily be the checker itself
+        # falling over. On 2026-08-02 `third_party_notices.py` crashed on a
+        # Windows encoding bug and this line reported "THIRD-PARTY-NOTICES.md is
+        # stale", which sent two rounds of investigation after a content
+        # difference that did not exist. The exit code is printed for the same
+        # reason: 1 is a checker saying no, and anything else is usually a
+        # traceback.
+        detail = "" if ok else f"  -- exit {code}; usually means: {reason}"
         # Width from the actual names, not a literal: `toolchain` is 9 and the
         # hardcoded 8 silently broke the column the day it was added. Nothing
         # parses this output -- the mutation harnesses read `cargo test` -- so

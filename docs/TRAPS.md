@@ -5428,3 +5428,43 @@ Two things went wrong writing that check, both worth keeping.
 The mutation also settled the premise rather than leaving it to the action's documentation:
 `RUSTUP_TOOLCHAIN=beta` produced rustc 1.98.0 against a 1.97.1 pin. The override is real,
 and now so is the check.
+
+### A gate's static reason turned a crash into a wrong diagnosis, twice over
+
+Windows CI reported `[FAIL] notices -- THIRD-PARTY-NOTICES.md is stale, or a forbidden
+licence appeared`. It was neither. `third_party_notices.py` had **crashed before producing
+any verdict at all**, and `gates.py` printed the reason string attached to that gate, which
+is a hint written when the gate was added and not a statement about what happened.
+
+That cost two rounds. The message named a content difference, so the investigation went
+looking for one --- and found a real one, the `//` prefix on `pdfium.txt`, fixed it, and the
+gate stayed red, because the genuine bug was somewhere else entirely.
+
+The real failure is a trap **this repository already had an entry for**, reintroduced in a
+new script on the same byte. `subprocess.run(..., text=True)` decodes with the *locale*
+codec --- cp1252 on Windows --- and `cargo metadata` emits UTF-8 containing `0x81`. It gets
+there from a crate author's name: `Emilio Cobos Álvarez`, whose `Á` is `C3 81`. cp1252
+leaves `0x81` undefined, so the reader thread raises `UnicodeDecodeError`, `.stdout` comes
+back `None`, and `json.loads(None)` fails with *"the JSON object must be str, bytes or
+bytearray, not NoneType"* --- a message about JSON types, mentioning no encoding, from a
+line that has nothing to do with the cause.
+
+Four things worth keeping.
+
+- **Always `encoding="utf-8"` on `subprocess.run(..., text=True)`.** Not when you expect
+  non-ASCII --- always. The offending byte here is in a *dependency's author metadata*, which
+  no amount of thinking about your own inputs would predict. `mutate_frontend.py` already
+  carried this fix with a comment; `mutate_rust.py` did not, despite being documented as
+  passing 22/22 on Windows, and reads `cargo test` output from a crate whose sources contain
+  the same byte. Both are fixed now.
+- **Knowing a trap does not prevent it.** The entry existed, was read this same session, and
+  was written into a new file anyway. What actually stops it is the keyword argument, not the
+  paragraph --- which this repository has already said once, about a cross-check that was
+  described and never implemented.
+- **A gate's reason string is a guess about the future.** Print the **exit code** beside it
+  and word it as *"usually means"*: 1 is a checker saying no, anything else is usually a
+  traceback, and the two want different first moves. A checker that dies and a checker that
+  reports a failure are different events wearing the same label.
+- **The diff the gate was taught to print never appeared**, and its absence was itself the
+  evidence --- a `--check` that reaches its comparison always prints one. A missing diagnostic
+  is information about *where* execution stopped, if you notice you did not get it.

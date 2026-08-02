@@ -37,7 +37,12 @@ def running_version(argv: "list[str]") -> "str | None":
     """Returns the `x.y.z` a toolchain binary reports, or None if it will not run."""
     try:
         out = subprocess.run(
-            argv, cwd=REPO, check=True, capture_output=True, text=True
+            argv,
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         ).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
@@ -49,7 +54,12 @@ def commit_hash(argv: "list[str]") -> "str | None":
     """Returns the toolchain commit hash a binary reports in parentheses."""
     try:
         out = subprocess.run(
-            argv, cwd=REPO, check=True, capture_output=True, text=True
+            argv,
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         ).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
