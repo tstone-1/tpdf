@@ -135,6 +135,7 @@ export class Results {
     current: number,
     query: string,
     running: boolean,
+    unsearchablePages = 0,
   ): void {
     // A different array, or one that has been emptied, means a new query: the
     // rows describe matches that no longer exist and appending to them would
@@ -156,7 +157,7 @@ export class Results {
     this.built = Math.min(matches.length, MAX_RESULT_ROWS);
 
     this.highlight(current);
-    this.say(matches.length, query, running);
+    this.say(matches.length, query, running, unsearchablePages);
   }
 
   /** Moves the highlight, scrolling the row into view if it is off screen. */
@@ -180,8 +181,13 @@ export class Results {
   }
 
   /** Writes the line above the list, if it has changed. */
-  private say(total: number, query: string, running: boolean): void {
-    const text = statusFor(total, query, running);
+  private say(
+    total: number,
+    query: string,
+    running: boolean,
+    unsearchablePages: number,
+  ): void {
+    const text = statusFor(total, query, running, unsearchablePages);
     if (text === this.said) return;
     this.said = text;
     this.notice.textContent = text;
@@ -248,13 +254,39 @@ function strong(text: string): HTMLElement {
  * decision rather than DOM, and it has four cases that a reader reads as four
  * different situations.
  */
-export function statusFor(total: number, query: string, running: boolean): string {
+export function statusFor(
+  total: number,
+  query: string,
+  running: boolean,
+  unsearchablePages = 0,
+): string {
   if (!query) return "Type in the find field to search.";
-  if (total === 0) return running ? "Searching…" : "No matches.";
-  const found = `${total} match${total === 1 ? "" : "es"}`;
+  if (running) return total === 0 ? "Searching…" : `${countOf(total)}, still searching…`;
+
+  // The line this whole path exists for. A page whose fonts state no character
+  // mapping was never searchable, and "No matches." claims the opposite about
+  // it: the query *was* tested and *was* absent. Said only once the scan has
+  // finished, because until then "Searching…" is true and complete.
+  //
+  // Said whether or not there were hits, and that is the case worth defending:
+  // three matches from a document with an unreadable page is a partial answer
+  // presented as a total one, which is the same defect in a quieter form.
+  if (unsearchablePages > 0) {
+    const pages =
+      unsearchablePages === 1 ? "1 page" : `${unsearchablePages} pages`;
+    const found = total === 0 ? "No matches" : countOf(total);
+    return `${found}. ${pages} could not be searched — the text there is not stored as readable characters.`;
+  }
+
+  if (total === 0) return "No matches.";
   // The cap is stated, never silently applied: a list that stopped at 2,000 rows
   // without saying so is a document that appears to have 2,000 hits in it.
   const capped =
     total > MAX_RESULT_ROWS ? `, showing the first ${MAX_RESULT_ROWS}` : "";
-  return running ? `${found}${capped}, still searching…` : `${found}${capped}`;
+  return `${countOf(total)}${capped}`;
+}
+
+/** "1 match" / "7 matches". */
+function countOf(total: number): string {
+  return `${total} match${total === 1 ? "" : "es"}`;
 }

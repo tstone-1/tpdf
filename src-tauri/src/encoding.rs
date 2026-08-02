@@ -59,6 +59,21 @@
 //! `/ToUnicode` is ordinarily fine, and flagging one would report most of the
 //! world's PDFs as broken. Only composite (`/Type0`) fonts are considered.
 //!
+//! ## What it costs
+//!
+//! Measured in release over the fixtures, because the first design here was
+//! built on a guess: **0.1 ms** on a small document, **5.8 ms** on the 775-page
+//! one, **11.9 ms** on the 337 MB scan. `lopdf` parses the cross-reference table
+//! and object headers rather than every content stream, so the cost tracks the
+//! **object count** and barely notices the byte count --- the 337 MB file is
+//! mostly image data in very few objects.
+//!
+//! That is cheap enough that the original justification for computing it lazily
+//! ("the dominant cost of opening a document") was simply false. It is still
+//! computed lazily, for a reason that survives measurement: warm startup is
+//! ~276 ms against a 300 ms target, so ~25 ms is the entire margin and 6--12 ms
+//! of it is a quarter. Off the critical path this is free.
+//!
 //! ## Hostile input
 //!
 //! The same document as everywhere else. The walk is bounded in every dimension

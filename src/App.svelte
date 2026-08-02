@@ -643,6 +643,7 @@
               viewer.matchIndex,
               next.search.query,
               next.search.running,
+              next.search.unsearchablePages,
             );
           }
           notePlace();

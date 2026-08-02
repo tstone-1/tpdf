@@ -407,6 +407,39 @@ async fn document_outline(
     rx.recv().map_err(|_| "render thread stopped".to_string())?
 }
 
+/// Reports, per page, whether the text means anything or PDFium is guessing.
+///
+/// A CID font with no `/ToUnicode` makes PDFium read glyph ids as character
+/// codes, so a page comes back with text of the right length, in the right
+/// places, that means nothing --- and the reader searching for a word they can
+/// plainly see is told there are no matches. `encoding.rs` has the rule.
+///
+/// **Asked for lazily, and the cost is measured rather than assumed.** 0.1 ms on
+/// a small document, 5.8 ms on the 775-page one, 11.9 ms on the 337 MB scan ---
+/// `lopdf` reads the xref and object headers, not every stream, so this tracks
+/// object count and not file size. Cheap, and still not free: warm startup has
+/// ~25 ms of margin against its target, so this is deliberately kept off the
+/// critical path rather than done at open. Cached for the document's lifetime.
+///
+/// In practice the frontend asks on the first frame after open, from the
+/// accessibility layer, rather than only after a fruitless search --- a
+/// screen-reader user may never search and is the reader least able to tell that
+/// what they are being read is nonsense.
+#[tauri::command]
+async fn document_mapping(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+) -> Result<Vec<encoding::PageMapping>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    service.mapping(
+        doc,
+        Box::new(move |result| {
+            let _ = tx.send(result);
+        }),
+    );
+    rx.recv().map_err(|_| "render thread stopped".to_string())?
+}
+
 /// Reads the remembered places, most recently read first.
 ///
 /// Synchronous on purpose: it is asked for during startup, where the whole
@@ -1065,6 +1098,7 @@ pub fn run() {
             page_text,
             search_page,
             document_outline,
+            document_mapping,
             launch_open_event,
             take_launch_paths,
             session_load,

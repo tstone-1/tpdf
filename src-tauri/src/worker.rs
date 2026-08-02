@@ -250,6 +250,12 @@ pub enum Request {
     },
     /// Read the document's outline.
     Outline,
+    /// Report, per page, whether the text means anything or PDFium is guessing.
+    ///
+    /// Document-level and lazy: it costs a full `lopdf` parse, so it is asked for
+    /// when a reader is about to be told something false --- a search that found
+    /// nothing --- rather than on every open. See `crate::encoding`.
+    Mapping,
 }
 
 /// A reply, one JSON object per line on the worker's stdout.

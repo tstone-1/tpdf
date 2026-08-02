@@ -102,6 +102,16 @@ export interface SearchStatus {
    */
   textless: boolean;
   /**
+   * How many pages store text that no search can read.
+   *
+   * A third state between "this page has text" and "this page has none": the
+   * page draws characters, and its fonts declare no mapping saying what they
+   * mean, so what is extracted is PDFium's guess. `textless` cannot see it ---
+   * the page is not textless --- and without this "No matches." is a lie about
+   * a page nobody could have searched. See `encoding.rs`.
+   */
+  unsearchablePages: number;
+  /**
    * Why the query could not be run at all, or "".
    *
    * Only a pattern can fail to be a query. Distinct from `total === 0` because
@@ -634,6 +644,7 @@ export class Viewer {
       status.search.scanned,
       status.search.running,
       status.search.textless,
+      status.search.unsearchablePages,
     ].join("/");
     if (summary === this.lastStatus) return;
     this.lastStatus = summary;
@@ -1390,6 +1401,7 @@ export class Viewer {
       scoped: this.searcher.scope !== null,
       running: this.searcher.running,
       textless: this.searcher.textless,
+      unsearchablePages: this.searcher.unsearchablePages,
       problem: this.searcher.problem,
     };
   }
@@ -1646,8 +1658,19 @@ export class Viewer {
    * alive across a scroll. See `a11y.ts`.
    */
   private syncAccessibleText(): void {
-    this.a11y.sync(this.scroller.visiblePages(), (page) =>
-      this.text.peek(page),
+    // Asked for here because a screen-reader user may never search, and is the
+    // reader least able to tell that what they are being read is nonsense.
+    //
+    // This runs every frame and is therefore what *actually* triggers the fetch
+    // for every document, ahead of the search path that was written first. At
+    // most one fetch per document however often this runs, and it is off the
+    // startup path -- which is the only place its measured 0.1--11.9 ms would
+    // matter, since warm startup has ~25 ms of margin against its target.
+    this.searcher.ensureMapping();
+    this.a11y.sync(
+      this.scroller.visiblePages(),
+      (page) => this.text.peek(page),
+      (page) => this.searcher.unreadablePage(page),
     );
     this.a11y.announce(this.currentPage());
   }

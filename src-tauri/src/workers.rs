@@ -1288,6 +1288,10 @@ impl Engine for Workers {
         self.ask(doc, &Request::Outline)
     }
 
+    fn mapping(&self, doc: u32) -> Result<Vec<crate::encoding::PageMapping>, String> {
+        self.ask(doc, &Request::Mapping)
+    }
+
     /// Drops the document, which kills every process holding it.
     ///
     /// **It waits for the pool to come home first**, and that wait is what keeps
