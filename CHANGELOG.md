@@ -118,7 +118,31 @@ single "initial release" line.
 - `--check` now prints the **diff** rather than the word "stale", which is the change that
   made any of this diagnosable. A gate that fails on a machine you are not sitting at is
   only actionable if its message carries the evidence.
-- 3 new traps, 209 in the index.
+- **The Rust toolchain is pinned** --- `rust-toolchain.toml` at 1.97.1 with clippy and
+  rustfmt. There was no pin before: the Macs used whatever rustup had and CI used whatever
+  `stable` was that morning, so with `-D warnings` a new lint could turn `main` red with
+  nobody having changed anything, landing on whoever pushed next rather than on whoever
+  chose to upgrade.
+- **The pin is enforced, not merely present, and that was the whole difficulty.**
+  `RUSTUP_TOOLCHAIN` overrides `rust-toolchain.toml` completely and silently, and all three
+  workflow jobs used `dtolnay/rust-toolchain@stable`. Adding the file alone would have given
+  the worst outcome available: the pin visible in the repository, absent from every CI build,
+  green either way. Both workflows now run `rustup show`, and `scripts/check_toolchain.py`
+  is the new **first** gate --- if the compiler is not the one we think, every result after it
+  is about a different toolchain.
+- Proved by mutation, which also settled the premise rather than trusting an action's
+  documentation: `RUSTUP_TOOLCHAIN=beta` produced rustc 1.98.0 against a 1.97.1 pin.
+- Two mistakes kept in the trap. A toolchain's components have **unrelated** version schemes
+  --- rustc 1.97.1, clippy 0.1.97, rustfmt 1.9.0-stable --- so the first draft's "the minors
+  match" failed on a correct toolchain; the real oracle is the shared **commit hash**. And
+  the mutation proving the gate was run through `| tail`, so the exit code read was `tail`'s
+  and printed `exit=0` for a run that had correctly failed --- in the one command whose entire
+  purpose was reading an exit code, with an entry in this repository saying not to.
+- `gates.py`'s summary column is derived from the gate names now; `toolchain` is nine
+  characters and the hardcoded width of 8 broke the alignment the day it was added. Nothing
+  parses that output, but a hardcoded column width is the same shape as the padded-column
+  trap.
+- 4 new traps, 210 in the index.
 
 ### Phase 1 --- case folding in search
 

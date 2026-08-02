@@ -279,6 +279,18 @@ Two of them are worth understanding rather than just running:
   outright. A locked macOS session cannot be unlocked from a script by design, so this is
   preventable and not recoverable.
 
+- **The `toolchain` gate runs first, and it is what makes the Rust pin real.**
+  `rust-toolchain.toml` names the compiler; `RUSTUP_TOOLCHAIN` in the environment overrides
+  that file completely and silently, so a pin with nothing asserting it is indistinguishable
+  from no pin. The gate compares the running rustc against the file, checks clippy and
+  rustfmt came from the same toolchain commit, and prints `RUSTUP_TOOLCHAIN` whether or not
+  it is set. Neither workflow uses a toolchain-installing action any more --- both run
+  `rustup show`, which installs exactly what the file names.
+
+  To move to a newer Rust: edit `rust-toolchain.toml`, run `scripts/gates.py`, and commit it
+  on its own. Expect `-D warnings` to surface new lints; that is the pin working, and dealing
+  with them in a dedicated commit is the whole reason it exists.
+
 - **The `pdfium` gate is a pin check, not a build step.** It fails if `vendor/pdfium` is
   missing or is not the pinned build --- which is the difference between a benchmark that
   means something and one that does not.

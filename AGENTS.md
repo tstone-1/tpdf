@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 209 entries
+The one thing this file does *not* carry in full is the trap list --- 210 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -506,9 +506,22 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently: a PDFium pin check, `cargo fmt --check`, `cargo clippy --all-targets -- -D
-warnings`, `cargo test --locked`, `cargo build --locked --bins`, `npm run check`,
-`npm run test`, `npm run build`. `--all-targets` covers test code, `-D warnings` makes lints
+Currently ten: a toolchain-pin check, a PDFium pin check, `cargo fmt --check`, `cargo clippy
+--all-targets -- -D warnings`, `cargo test --locked`, `cargo build --locked --bins
+--examples`, `npm run check`, `npm run test`, `npm run build`, and a third-party-notices
+check. Two of them are ordered rather than merely present: `toolchain` runs **first**,
+because every result after it is a statement about whichever compiler actually ran, and
+`notices` runs **last**, because it reads the build's own sourcemaps to see which npm
+packages shipped.
+
+**The Rust toolchain is pinned in `rust-toolchain.toml`** as of 2026-08-02, and the pin is
+enforced by `scripts/check_toolchain.py` rather than assumed. `RUSTUP_TOOLCHAIN` overrides
+that file silently, which is exactly what a CI action installing its own toolchain may set,
+so both workflows use `rustup show` instead of one --- and the gate asserts the result. See
+the trap of that name. Bumping the pin is a deliberate commit of its own; the cost of
+pinning is that new lints and diagnostics wait for it, which is the point.
+
+`--all-targets` covers test code, `-D warnings` makes lints
 fatal, and `--locked` catches a `Cargo.lock` that was not committed after a `cargo update`;
 dropping any of them silently weakens the gate. `--bins` is there because **none of the
 others links a binary** --- clippy stops at metadata and `cargo test` links each `[[bin]]`
@@ -643,7 +656,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 209 of them and the full text
+titles. Only the titles are here, because there are 210 of them and the full text
 was 93% of this file --- an instruction budget spent on the 205 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -860,6 +873,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A directory that exists is not the library you need
 - A list of documented blockers can be wrong in the direction that looks thorough
 - A gate list that never links a binary cannot see a link error
+- A pin that nothing verifies is indistinguishable from no pin
 - A custom URI scheme is not spelled the same way on every platform
 - One constant standing for two platform distinctions breaks the moment they diverge
 - A release build is not a production build; a cargo *feature* decides that

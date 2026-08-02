@@ -5384,3 +5384,47 @@ Three things worth carrying.
 And the reason it was diagnosable at all is that `--check` was changed, in the same session,
 to print the diff rather than the word "stale". A gate that fails on a machine you are not
 sitting at is only actionable if its message carries the evidence.
+
+### A pin that nothing verifies is indistinguishable from no pin
+
+`rust-toolchain.toml` states a channel and rustup honours it --- unless
+`RUSTUP_TOOLCHAIN` is set in the environment, which overrides the file **completely and
+silently**. No warning, no note in `rustup show`, nothing in the build output.
+
+That is not an exotic corner. It is what a CI action whose job is installing a toolchain may
+reasonably do, and all three workflow jobs here used `dtolnay/rust-toolchain@stable`. Adding
+the pin file alone would have produced the worst available outcome: the pin visible in the
+repository, absent from every CI build, and green either way. The thing it was added to
+prevent --- a new stable's lint turning `main` red under `-D warnings`, with nobody having
+changed anything --- would have gone on happening, now with a file in the tree that looked
+like it had been dealt with.
+
+Two halves to the fix, and the second is the one that generalises:
+
+- `rustup show` in place of the action. rustup ships on both runner images and that command
+  installs exactly what the pin file names, so the file is the single source of truth.
+  `components = ["clippy", "rustfmt"]` is not optional there: an on-demand install takes
+  only what is listed, and omitting them gives a runner a toolchain where two gates fail on
+  a missing binary rather than on anything real.
+- **A gate that asserts the result.** `scripts/check_toolchain.py` compares the running
+  rustc against the file and prints `RUSTUP_TOOLCHAIN` whether or not it is set, so the
+  override is visible in every log rather than only when it bites. It runs *first*: if the
+  compiler is not the one we think, every result after it is about a different toolchain.
+
+Two things went wrong writing that check, both worth keeping.
+
+- **The version numbers of a toolchain's own components do not agree, and cannot be compared
+  arithmetically.** rustc is `1.97.1`, clippy is `0.1.97`, rustfmt is `1.9.0-stable`. The
+  first draft asserted "the minors match" and failed on a perfectly correct toolchain,
+  because clippy's `97` is its *patch* and rustfmt's version tracks nothing here at all. What
+  all three do carry is the **commit hash of the toolchain build**, which is the actual
+  oracle for "same toolchain" --- rustc prints nine characters of it and the others ten, so
+  compare on the shorter.
+- **The mutation that proved the gate was tested through `| tail`, and the exit code read was
+  `tail`'s.** It printed `exit=0` for a run that had correctly failed. This repository has an
+  entry saying not to do that; knowing it did not prevent doing it, in the one command whose
+  entire purpose was reading an exit code. Re-run unpiped: `cmd > out.txt 2>&1; echo $?`.
+
+The mutation also settled the premise rather than leaving it to the action's documentation:
+`RUSTUP_TOOLCHAIN=beta` produced rustc 1.98.0 against a 1.97.1 pin. The override is real,
+and now so is the check.

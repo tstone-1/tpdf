@@ -9,11 +9,15 @@ the checklist verbatim, flags and all, and to keep re-checking that the copy
 still matches.
 
 This script removes the copy. `BUILD.md` names one command; the gates live
-here, once. If remote CI is added later -- and it is deliberately not here
-while the project is pre-release and single-machine -- the workflow should
-invoke this script rather than re-list the commands in YAML, which is what
-makes the checklist and the gate the same object rather than two things that
-agree today.
+here, once. Both `.github/workflows/ci.yml` and `release.yml` invoke this script
+rather than re-listing the commands in YAML, which is what makes the checklist,
+the local run and CI the same object rather than three things that agree today.
+
+(This paragraph said remote CI was "deliberately not here while the project is
+pre-release and single-machine" until 2026-08-02. Being single-machine was never
+an argument for skipping CI -- it is an argument *for* it, and the first run
+found three real defects, one of them a Windows build that had been broken for
+two days on a commit whose author had watched this script report 9/9.)
 
 Usage:
     scripts/gates.py              # run all gates, report, exit 1 if any failed
@@ -44,6 +48,15 @@ would stop shipping them. `backend_probe.rs` --- the file that motivated this ga
 in the first place --- is one of them, so dropping `--examples` would silently
 narrow the gate back to the state it was added to fix, and the only target left
 under `--bins` is the app itself.
+
+`toolchain` runs **first, and must**: if the compiler is not the one we think,
+every result after it is a statement about a different toolchain. It asserts that
+the running rustc matches `rust-toolchain.toml`, and that clippy and rustfmt were
+built from the same commit. The failure it exists for is invisible otherwise --
+`RUSTUP_TOOLCHAIN` in the environment overrides the pin file completely and
+silently, which a CI action whose job is installing a toolchain may well set, and
+then the pin added to stop a new stable turning `main` red is doing nothing while
+everything stays green. A pin nothing verifies is indistinguishable from no pin.
 
 `notices` runs **last, and must**: it reads `dist/assets/*.js.map` to find which npm
 packages the bundler actually put in the shipped output, so it needs the `build`
@@ -83,6 +96,11 @@ def npm() -> str:
 def gates() -> "list[tuple[str, list[str], str]]":
     """Returns the gate list. A function, so npm is resolved at run time."""
     return [
+        (
+            "toolchain",
+            [sys.executable, str(REPO / "scripts" / "check_toolchain.py")],
+            "the running rustc is not the one rust-toolchain.toml pins",
+        ),
         (
             "pdfium",
             [sys.executable, str(REPO / "scripts" / "fetch_pdfium.py"), "--check"],
@@ -189,12 +207,18 @@ def main() -> int:
 
     results = [(name, *run(name, argv), reason) for name, argv, reason in selected]
 
+    width = max(len(name) for name, _, _, _ in results)
     print("\n=== summary")
     failed = 0
     for name, ok, seconds, reason in results:
         status = "[OK]  " if ok else "[FAIL]"
         detail = "" if ok else f"  -- {reason}"
-        print(f"{status} {name:8} {seconds:6.1f}s{detail}")
+        # Width from the actual names, not a literal: `toolchain` is 9 and the
+        # hardcoded 8 silently broke the column the day it was added. Nothing
+        # parses this output -- the mutation harnesses read `cargo test` -- so
+        # this is only legibility, but the fixed literal is the same shape as
+        # the padded-column parsing trap in `docs/TRAPS.md`.
+        print(f"{status} {name:{width}} {seconds:6.1f}s{detail}")
         failed += 0 if ok else 1
 
     print(f"\n{len(results) - failed}/{len(results)} gates passed")
