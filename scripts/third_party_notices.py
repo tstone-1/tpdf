@@ -36,14 +36,29 @@ than no allowlist, because it goes on excusing something that has changed.
 Usage:
     scripts/third_party_notices.py            # regenerate the notices file
     scripts/third_party_notices.py --check    # gate: up to date, and no copyleft
+    scripts/third_party_notices.py --cross-check <other-pdfium-dir>
 
 `--check` is what `scripts/gates.py` runs. It fails if the committed file does
 not match what this script would generate right now, which is what keeps the
 notices honest across a `cargo update` -- a hand-maintained notices file is
-wrong the first time a dependency changes and nothing says so.
+wrong the first time a dependency changes and nothing says so. On a mismatch it
+prints the diff, because a gate that fails on a machine you are not sitting at
+is only actionable if its message carries the evidence.
+
+`--cross-check` renders again against another platform's PDFium install and
+requires the two to be byte-identical. **Run it after any PDFium pin bump.** The
+archives differ in line endings and in comment prefixes for the same upstream
+licences, so this document -- which is supposed to be one document covering both
+products -- can silently become one document per platform. That is not a
+hypothetical: it is how the `notices` gate came to be green on macOS and red on
+Windows with nothing wrong, on the first CI run that reached it.
+
+    scripts/fetch_pdfium.py --platform win-x64 --dest /tmp/pdfium-win
+    scripts/third_party_notices.py --cross-check /tmp/pdfium-win
 """
 
 import argparse
+import difflib
 import json
 import re
 import subprocess
@@ -114,6 +129,39 @@ LICENCE_FILENAMES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE")
 def read_text(path: Path) -> str:
     """Reads a file as UTF-8, tolerating the odd stray byte in a licence text."""
     return path.read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def normalise_licence_text(body: str) -> str:
+    """Strips a wholesale `//` comment prefix from a licence text.
+
+    Not cosmetic. `bblanchon/pdfium-binaries` ships `licenses/pdfium.txt` with
+    every line prefixed `// ` in the macOS archive and with none in the Windows
+    one -- the same licence, packaged differently. Generating this document from
+    whichever archive happens to be installed therefore produced two different
+    files, and the `notices` gate could be green on one platform and red on the
+    other with nothing wrong. It was, on the first CI run that got that far.
+
+    The general lesson is worth more than the fix: **a document intended to be
+    platform-independent is not, if its inputs are platform-specific.** CRLF was
+    the other half of the same problem and is handled in `read_text`; that one
+    was invisible because normalising it is already habit, which is exactly why
+    this one was not.
+
+    Stripping is **per line and unconditional**, and the first attempt got that
+    wrong in a way worth keeping. It only stripped when 80% of a file's lines
+    were commented, on the reasoning that a whole-file prefix is a safe thing to
+    remove and a stray `//` is not. But `pdfium.txt` is PDFium's own licence
+    followed by a dozen other projects' -- only the first block carries the
+    prefix, 27 lines of 196 -- so the guard declined, the output was unchanged,
+    and the verification below still failed. A threshold chosen from what one
+    imagines the input looks like is a guess; this one was off by a factor of
+    five.
+
+    Per line is safe because a leading `//` in a licence text is never content.
+    A URL is `https://...`, which does not start with `//` once indentation is
+    removed.
+    """
+    return "\n".join(re.sub(r"^\s*//\s?", "", line) for line in body.split("\n"))
 
 
 def licence_files(directory: Path) -> "list[Path]":
@@ -221,7 +269,13 @@ def npm_shipped_packages() -> "list[dict]":
     names: "set[str]" = set()
     for path in maps:
         for source in json.loads(read_text(path)).get("sources", []):
-            hit = NODE_MODULE_IN_SOURCEMAP.search(source)
+            # Separators are normalised before matching. Rollup builds these
+            # with the host's path semantics, so a Windows run can emit
+            # `..\node_modules\svelte\...`; a pattern written against the
+            # forward slashes visible on a Mac then matches nothing, the npm
+            # section comes out empty, and the only symptom is the whole file
+            # comparing unequal on one platform.
+            hit = NODE_MODULE_IN_SOURCEMAP.search(source.replace("\\", "/"))
             if hit:
                 names.add(hit.group(1))
 
@@ -340,7 +394,7 @@ def render(
         add(f"### {label}")
         add("")
         add("```")
-        add(read_text(path).strip())
+        add(normalise_licence_text(read_text(path)).strip())
         add("```")
         add("")
 
@@ -387,7 +441,7 @@ def render(
         spdx = pkg.get("license") or ""
         directory = Path(pkg["manifest_path"]).parent
         for path in licence_files(directory):
-            body = read_text(path).strip()
+            body = normalise_licence_text(read_text(path)).strip()
             key = f"{spdx} — {path.name}"
             texts.setdefault(key, body)
     for key in sorted(texts):
@@ -429,11 +483,24 @@ def render(
 
 def main() -> int:
     """Regenerates or checks the notices file."""
+    global PDFIUM
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check",
         action="store_true",
         help="fail if the committed file is stale or a forbidden licence appears",
+    )
+    parser.add_argument(
+        "--cross-check",
+        metavar="OTHER_PDFIUM_DIR",
+        help=(
+            "render again against another platform's PDFium install and require "
+            "the two to be byte-identical. Stage one with "
+            "`scripts/fetch_pdfium.py --platform win-x64 --dest <dir>`. Run it "
+            "after any PDFium pin bump: the archives differ in line endings and "
+            "in comment prefixes, and this document is supposed to be one "
+            "document rather than one per platform."
+        ),
     )
     args = parser.parse_args()
 
@@ -478,17 +545,72 @@ def main() -> int:
 
     rendered = render(cargo, npm, pdfium)
 
+    if args.cross_check:
+        other = Path(args.cross_check)
+        if not (other / "licenses").is_dir():
+            print(
+                f"[FAIL] {other} has no licenses/ directory -- that is not a "
+                "PDFium install, and rendering against it would compare this "
+                "document against a version of itself with the whole PDFium "
+                "section missing, which would 'differ' for the wrong reason.",
+                file=sys.stderr,
+            )
+            return 1
+        PDFIUM = other
+        against = render(cargo, npm, pdfium_components())
+        if against != rendered:
+            diff = list(
+                difflib.unified_diff(
+                    rendered.splitlines(),
+                    against.splitlines(),
+                    fromfile="rendered from vendor/pdfium",
+                    tofile=f"rendered from {other}",
+                    lineterm="",
+                    n=1,
+                )
+            )
+            print(
+                f"[FAIL] the two archives produce different documents "
+                f"({len(diff)} diff lines); first 30:",
+                file=sys.stderr,
+            )
+            for line in diff[:30]:
+                print(f"  {line}", file=sys.stderr)
+            return 1
+        print(f"[OK] byte-identical against {other}")
+        return 0
+
     if args.check:
         if not OUTPUT.is_file():
             print(f"[FAIL] {OUTPUT.name} does not exist -- run this script without "
                   "--check", file=sys.stderr)
             return 1
-        if read_text(OUTPUT) != rendered:
+        committed = read_text(OUTPUT)
+        if committed != rendered:
             print(
                 f"[FAIL] {OUTPUT.name} is stale. Re-run "
                 "scripts/third_party_notices.py and commit the result.",
                 file=sys.stderr,
             )
+            # Say *how* it differs, not merely that it does. A gate that fails
+            # on a machine you are not sitting at -- a CI runner, the other
+            # platform -- is only actionable if its message carries the
+            # evidence, and "stale" carries none. This was written after a
+            # Windows CI run reported exactly that and the cause had to be
+            # guessed at from a Mac.
+            diff = list(
+                difflib.unified_diff(
+                    committed.splitlines(),
+                    rendered.splitlines(),
+                    fromfile=f"{OUTPUT.name} (committed)",
+                    tofile=f"{OUTPUT.name} (regenerated here)",
+                    lineterm="",
+                    n=1,
+                )
+            )
+            print(f"\n{len(diff)} diff line(s); first 40:", file=sys.stderr)
+            for line in diff[:40]:
+                print(f"  {line}", file=sys.stderr)
             return 1
         print(f"[OK] {OUTPUT.name} is current, and no forbidden licence appears.")
         return 0

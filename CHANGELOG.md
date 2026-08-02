@@ -100,7 +100,25 @@ single "initial release" line.
   no fixtures. `ci.yml` now generates the two dependency-free ones and **states in the
   workflow which it deliberately does not** --- the fonttools ones embed a per-runner system
   font, and `make_incremental_pdf.py` writes ~550 MB on purpose.
-- 2 new traps, 208 in the index.
+- **And the notices file was a function of the platform that generated it**, found on the
+  next CI run when macOS went 9/9 and Windows failed `notices` alone. `bblanchon/pdfium-binaries`
+  ships the same fifteen licence files in both archives and **nine differ**: eight by line
+  endings, which `read_text` already normalised and which were therefore invisible --- the
+  failure that survives is the one whose sibling you handle by habit --- and `licenses/pdfium.txt`
+  by carrying a `//` comment prefix on macOS and none on Windows. Stripped per line now, and
+  the property is testable rather than claimed: `--cross-check <other-pdfium-dir>` renders
+  against a second archive and requires byte equality. Run it after any pin bump.
+- Diagnosed **from a Mac**, by staging the Windows archive with `fetch_pdfium.py --platform
+  win-x64 --dest`, rather than by waiting on CI. The input that differs can usually be fetched.
+- The first fix for it did not work and is recorded: `normalise_licence_text` originally
+  stripped the prefix only when 80% of a file's lines carried it, but `pdfium.txt` is
+  PDFium's licence followed by a dozen others and only the first block is prefixed --- 27
+  lines of 196 --- so the guard declined and the verification still failed. A threshold
+  chosen from an imagined input, off by a factor of five.
+- `--check` now prints the **diff** rather than the word "stale", which is the change that
+  made any of this diagnosable. A gate that fails on a machine you are not sitting at is
+  only actionable if its message carries the evidence.
+- 3 new traps, 209 in the index.
 
 ### Phase 1 --- case folding in search
 
