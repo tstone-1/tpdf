@@ -519,10 +519,28 @@ in that document held by convention rather than by a line. Document text --- out
 search results --- is attacker-controlled and reaches the DOM as data; the gate pins the
 narrow invariant that makes that checkable at all, **no markup-parsing sink anywhere in the
 frontend**, which is sufficient rather than merely necessary because without a sink the only
-routes left do not parse markup. It carries a second rule for the one exception,
-`.setAttribute(` with a computed attribute name, and it refuses a scan that found no files or
-no `setAttribute` calls --- a pattern that stops occurring passes exactly like a clean one.
-Four failure modes proved by mutation before it was trusted.
+routes left do not parse markup.
+
+Four further rules close the routes by which a string that cannot become *markup* can still
+become a *navigation or a script*: a computed `setAttribute` name, a dangerous literal one
+(`href`, `src`, `on*`), an assignment to a navigating property, and --- the blunt one that
+makes the others nearly moot --- **creating a URL-bearing element at all**. It also refuses a
+scan that found no files or no `setAttribute` calls, since a pattern that stops occurring
+passes exactly like a clean one. Every rule proved to fire by mutation, with a control
+(`this.onChange`, an ordinary field) proved *not* to.
+
+**The backend half is enforced by the type**, and the two halves cannot see each other.
+`outline.rs` refuses `/URI`, `/Launch` and `/GoToR` into `Target::Refused { action }`, whose
+string is one of five literals chosen there rather than anything the document said, and
+`no_target_variant_may_carry_a_url` matches `Target` exhaustively --- so adding a URL-bearing
+variant is `error[E0004]`, not a red test. Read the two together: a grep over TypeScript
+cannot see Rust, so a Rust change cannot turn the gate red, and that seam is residual risk 7.
+
+The gate's own first version, shipped hours earlier the same day, is why this is spelled out:
+it enforced only that an attribute *name* be a literal, while the threat model claimed
+sufficiency from "every `setAttribute` passes a constant name, so there is no URL-bearing
+attribute to poison" --- and `setAttribute("href", row.title)` satisfies both. Correct about
+the tree in front of it, wrong about what it guaranteed.
 
 **The Rust toolchain is pinned in `rust-toolchain.toml`** as of 2026-08-02, and the pin is
 enforced by `scripts/check_toolchain.py` rather than assumed. `RUSTUP_TOOLCHAIN` overrides
