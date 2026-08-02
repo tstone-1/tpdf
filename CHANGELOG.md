@@ -11,6 +11,44 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### A fix that moved its failure to another corpus
+
+- **Nine spike binaries could not find PDFium on Windows without being told where it is.** They
+  hardcoded `vendor/pdfium/lib`, which is right on macOS and wrong on Windows in the way that
+  is hardest to read: `lib/` exists there too and holds the *import* library, so the path looks
+  present and the bind fails much later. They take `tpdf_lib::PDFIUM_SUBDIR` now, which is the
+  constant that exists for this. Its doc comment claimed four remained and it was nine --- a
+  count in prose, inside the one place written to stop this being rediscovered, and the reason
+  it was rediscovered a third time. It names the grep now instead of a number. The two
+  binaries that keep a literal `lib` are macOS-only, where it is correct. All nine were run on
+  Windows without `--lib` rather than only compiled.
+
+- **qpdf is a requirement, not an option, and the prerequisites table said otherwise.**
+  `testdata/make_hostile_pdf.py` shells out to it, so without qpdf there is no
+  `hostile-manifest.json` and `sanitize-rewrite` cannot start --- while `BUILD.md` listed qpdf as
+  "optional ... not needed to build or run". The script also failed opaquely, with a bare
+  `FileNotFoundError` out of `CreateProcess` that named neither qpdf nor the fixture it was
+  building. It checks up front now and says what is missing and what depends on it.
+
+- **A page whose font reports no metrics at all is read as one line.** The rule added a day
+  earlier --- refuse a character box under a tenth of a point across the line, and re-attach it
+  by preceding index --- fixed the missing space in `café latte` and broke `encodings.pdf`.
+  Page 2 of that fixture is set in a predefined CMap with no embedded font, so PDFium reports
+  **every** character 0.018 pt tall; all of them were refused, nothing was placed, and the page
+  came back as a single fragment with its two lines, 632 pt apart, joined into one. Read aloud
+  and copied that way.
+
+  The rule is a conjunction now: a box is bookkeeping when it is thin absolutely *and* thin
+  against `typicalCross`, the median height of the page's placed characters. The two measured
+  samples are three orders of magnitude apart on the second quantity and adjacent on the first,
+  and `tagged.pdf`'s comma --- a third of its letters --- is clear of both and stays
+  `SHORT_MARK`'s business. Both halves proved by mutation, one red test each; the median proved
+  against a maximum, which survived the whole suite until a control was written for it.
+
+  **Nothing aimed at the fix could have caught this.** Its own corpus went green, its unit
+  tests went green, and macOS was green on all eleven because its substitute font has real
+  metrics. What found it was re-running every corpus and diffing the name sets.
+
 ### The macOS half of the Windows work, and the defect only a unit test could reach
 
 - **The five-file `worker.rs` split was a pure move, and the one thing that did not survive

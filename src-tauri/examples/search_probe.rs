@@ -63,7 +63,7 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut library = PathBuf::from("../vendor/pdfium/lib");
+    let mut library = PathBuf::from("../vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
     let mut file = PathBuf::from("../testdata/multilingual.pdf");
     let mut manifest: Option<PathBuf> = None;
 

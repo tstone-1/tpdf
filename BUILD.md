@@ -15,7 +15,7 @@ are in [`docs/PLAN.md`](docs/PLAN.md). This file is only the mechanics.
 | Node 20+ and npm | |
 | Python 3.9+ | Only for `scripts/`; not a runtime dependency of tpdf. |
 | `uv` | Only for the test fixtures that need `fontTools` or `pyhanko`. |
-| `qpdf` | Optional. A structural oracle for spike 0.4; not needed to build or run. |
+| `qpdf` | Not needed to build or run tpdf, and **required** for the hostile corpus --- `testdata/make_hostile_pdf.py` shells out to it, so without it there is no `hostile-manifest.json` and `sanitize-rewrite` cannot start. Also the structural oracle for spike 0.4. On Windows the winget package needs elevation; the release's `msvc64.zip` unpacks anywhere and needs none. |
 
 ---
 
@@ -1356,40 +1356,50 @@ check that skipped on macOS for want of text has text to work on here. A ran/ski
 property of the document, and that corpus is the only one whose document is not the same on
 both platforms.
 
-**One check was red on `multilingual.pdf` in the 2026-08-02 measured run** --- `a page reads
-in the order its generator laid it out`, reporting `folding: line 0 is "cafélatte", wanted
-"café latte"`, i.e. a missing space between two words of that fixture's folding page. It is
-recorded here rather than left out of the table because a row that quietly omits its one
-failure is the shape this file works hardest against. `readingChecks` builds its own
-`TextCache` and never touches the viewer or the scroller, so it is downstream of `text.rs`,
-`reading.ts` and the fixture's machine-local fonts and of nothing in the layout.
+**Every measured row above is green as of 2026-08-02, and getting there took two rules rather
+than one.** The check involved is `a page reads in the order its generator laid it out`, which
+compares each page against what the generator *wrote*. It is downstream of `text.rs`,
+`reading.ts` and the fixture's machine-local fonts and of nothing in the layout ---
+`readingChecks` builds its own `TextCache` and never touches the viewer or the scroller --- so
+it is the check that sees a font substitution, and both failures below were one.
 
-**`multilingual.pdf` has one failing check on Windows and it is not new work.** The reading
-check compares each page against what the generator *wrote*, and the folding page comes back
-`cafélatte` where the manifest says `café latte`. What is established: PDFium's extraction
-does contain the space --- `text-probe --mode order` shows `café`, a space run, then `latte`
-across 100 characters --- so it is dropped between extraction and the line's *ranges*, not by
-PDFium. The mechanism is established too, measured through `FPDFText_GetCharBox` against the
-vendored library: the space at index 4 comes back **placed**, with a real box 0.02 pt tall at
-y 752.00--752.02, while every letter on the line sits at 752.14--766.08 --- the two bands miss
-each other by 0.12 pt. `reading.ts`'s own war story covers a sliver-thin space that *touches*
-its line ("a space overlaps anything it touches by 100% of itself"); this font's space touches
-nothing, so it is neither re-attached the way a four-zeroes box would be nor banded with the
-words beside it, and it falls out of every line's ranges. That is a font's business meeting a
-rule written for a different font's spaces: the folding page is laid out in `msgothic.ttc`
-here and in Arial Unicode on the Mac, and only one of them floats its space below the letter
-boxes.
+**`multilingual.pdf` was red for a missing space, and that is fixed.** The folding page came
+back `cafélatte` where the manifest says `café latte`. PDFium's extraction *does* contain the
+space --- `text-probe --mode order` shows `café`, a space run, then `latte` --- so it was
+dropped between extraction and the line's *ranges*. Measured through `FPDFText_GetCharBox`
+against the vendored library: the space at index 4 comes back **placed**, 0.02 pt tall at
+y 752.00--752.02, while every letter on the line sits at 752.14--766.08, the two bands missing
+each other by 0.12 pt. `reading.ts` refuses a box that thin and re-attaches it by preceding
+index. The page reads `café latte` here as of the run above.
 
-**The fix landed on 2026-08-02 and has not been run on the platform that fails.** `reading.ts`
-now refuses a box under `SLIVER_PT` (0.1 pt) across the line and re-attaches it by preceding
-index exactly as an unplaced character is --- the direction this paragraph called for. Of the
-two controls it wanted, macOS could only run the first: all eleven corpora stayed green with
-byte-identical name sets, and five mutations each turned their intended test red and nothing
-else. The second control is this line going green, and macOS structurally cannot supply it,
-for the reason above --- its document is a different one under a different substitute, so
-neither its old green run nor its new one is evidence either way. Delete this paragraph when
-a Windows run reads `café latte` here; until then it records an open verification, not an
-open defect.
+**Fixing it broke `encodings.pdf`, and only running the whole corpus found that.** The rule as
+it first landed was absolute --- under `SLIVER_PT`, a tenth of a point --- which is a claim
+about glyphs and turns out to be a claim about *metrics*. Page 2 of `encodings.pdf` is set in a
+predefined CMap with no embedded font, so PDFium has no metrics for it and reports **every**
+character 0.018 pt tall. All of them were refused, nothing was placed, and the page came back
+as a single fragment: its two lines, 632 pt apart, read as one. Established by reverting
+`reading.ts` alone and rebuilding, which gives exactly complementary results:
+
+| | `multilingual` | `encodings` |
+|---|---|---|
+| absolute rule absent | **129/130** `cafélatte` | 130/130 |
+| absolute rule present | 130/130 `café latte` | **129/130** `日本語の符号\r\n日本語の符号` |
+
+**The rule is a conjunction now**: `height < SLIVER_PT && height < SLIVER_OF_LINE * typical`,
+where `typical` is the median height of the page's placed characters and `SLIVER_OF_LINE` is a
+twentieth. The two measured samples are three orders of magnitude apart on the relative
+quantity and adjacent on the absolute one --- 0.02 pt against 13.94 pt letters is 0.0014 of
+them, 0.018 pt against a page median of 0.018 is 1.0 of it --- and `tagged.pdf`'s comma, at a
+third of its letters, is well clear of both and stays `SHORT_MARK`'s business. Each half was
+proved by a mutation turning exactly one test red; the median was proved against a maximum,
+which survived the whole suite until a control was written for it. See the traps for the full
+account.
+
+**What this cost, and the discipline that paid for it:** the fix was verified on the corpus it
+was written for and on macOS, where all eleven were green because that machine's substitute
+font has real metrics. Nothing in either run could see the regression. It surfaced only from
+re-running every corpus and diffing the name sets, which is what the standing instruction above
+asks for and the reason it is worth its wall-clock.
 
 **The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
 checks red that had been green on every corpus for a week --- two nav probes guarded on "more

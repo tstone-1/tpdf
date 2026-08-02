@@ -43,7 +43,7 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut library = PathBuf::from("../vendor/pdfium/lib");
+    let mut library = PathBuf::from("../vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
     let mut file = PathBuf::from("../testdata/tagged.pdf");
     let mut manifest: Option<PathBuf> = None;
     let mut untagged = Some(PathBuf::from("../testdata/text-base14.pdf"));

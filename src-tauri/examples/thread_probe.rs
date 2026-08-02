@@ -358,10 +358,16 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// `vendor/pdfium/lib` at the repo root, matching the other spike binaries.
+/// `vendor/pdfium/<subdir>` at the repo root, matching the other spike binaries.
+///
+/// The subdirectory comes from [`tpdf_lib::PDFIUM_SUBDIR`] rather than a literal
+/// `lib`, which is right on macOS and wrong on Windows in the way that is
+/// hardest to read: `lib/` exists there too and holds the *import* library, so
+/// the path looks present and the bind fails much later.
 fn default_library_dir() -> PathBuf {
+    let subdir = tpdf_lib::PDFIUM_SUBDIR;
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium/lib"))
-        .unwrap_or_else(|| PathBuf::from("vendor/pdfium/lib"))
+        .map(|root| root.join("vendor/pdfium").join(subdir))
+        .unwrap_or_else(|| PathBuf::from("vendor/pdfium").join(subdir))
 }

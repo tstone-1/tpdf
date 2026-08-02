@@ -548,6 +548,86 @@ describe("a space whose font floated its box off the line", () => {
     expect(linesAs(floatedSpace())).toEqual(["ab cd"]);
   });
 
+  /**
+   * The `encodings.pdf` predefined-CMap page, measured through
+   * `FPDFText_GetCharBox` against the vendored library on Windows: the font has
+   * no embedded metrics, so PDFium reports **every** character 0.018 pt tall ---
+   * the two lines at y 89.982--90.000 and 721.982--722.000, 632 pt apart, with
+   * the `\r\n` between them placed nowhere.
+   *
+   * This is the sample that says the sliver rule cannot be absolute. Under one,
+   * every character here is refused, nothing is placed, and `fragmentsOf`
+   * returns the whole page as a single fragment: the two lines came back as one,
+   * read aloud and copied that way.
+   */
+  function degenerateMetrics(): PageText {
+    const chars: [string, [number, number, number, number] | null][] = [];
+    for (const [line, top] of [
+      [0, 89.982],
+      [1, 721.982],
+    ] as const) {
+      let x = 60;
+      for (const char of "日本語の符号") {
+        chars.push([char, [x, top, x + 18, top + 0.018]]);
+        x += 18;
+      }
+      if (line === 0) {
+        chars.push(["\r", [168, 90, 168, 90]]);
+        chars.push(["\n", [168, 90, 168, 90]]);
+      }
+    }
+    return page(chars);
+  }
+
+  it("does not refuse a page whose every glyph is that thin", () => {
+    // Two lines, not one. Asserting both lines rather than the count: a rule
+    // that split the page anywhere would give two lines of the wrong text, and
+    // the defect this replaces was legible only in the text.
+    expect(linesAs(degenerateMetrics())).toEqual(["日本語の符号\r\n", "日本語の符号"]);
+  });
+
+  it("is not thrown off by one glyph the page did find metrics for", () => {
+    // The control for the median, which a maximum would fail. Written because
+    // the maximum passed every other test here: a page mostly without metrics
+    // needs only one substituted glyph -- which the broken-map page of the same
+    // fixture shows is an ordinary thing for this document to contain -- and a
+    // maximum then reads 13 pt as typical, calls every real character of the
+    // page a twentieth of it, and collapses the two lines exactly as before.
+    const chars: [string, [number, number, number, number] | null][] = [];
+    for (const [line, top] of [
+      [0, 89.982],
+      [1, 721.982],
+    ] as const) {
+      let x = 60;
+      for (const char of "日本語の符号") {
+        // One glyph on the first line has real metrics; the rest have none.
+        const tall = line === 0 && char === "語";
+        chars.push([char, tall ? [x, top - 13, x + 18, top + 0.018] : [x, top, x + 18, top + 0.018]]);
+        x += 18;
+      }
+      if (line === 0) {
+        chars.push(["\r", [168, 90, 168, 90]]);
+        chars.push(["\n", [168, 90, 168, 90]]);
+      }
+    }
+    expect(linesAs(page(chars))).toEqual(["日本語の符号\r\n", "日本語の符号"]);
+  });
+
+  it("does not refuse small real type on a page of large type", () => {
+    // The control for the *absolute* half of the conjunction, and the only
+    // constructed geometry here: no corpus has display type, so this is the case
+    // the clause exists for rather than a case that has occurred. A 5 pt
+    // character on a page whose median is 200 pt is a twentieth of it, so the
+    // relative clause alone would refuse it and append it to the line before --
+    // and 5 pt is ordinary footnote type, not bookkeeping.
+    const chars: [string, [number, number, number, number] | null][] = [
+      ["A", [60, 100, 260, 300]],
+      ["B", [260, 100, 460, 300]],
+      ["1", [60, 400, 65, 405]],
+    ];
+    expect(linesAs(page(chars))).toEqual(["AB", "1"]);
+  });
+
   it("does not swallow a mark that is merely short", () => {
     // The control for the rule, and it has to be a *near* miss to certify
     // anything. `tagged.pdf`'s real comma is 2.89 pt tall --- short enough to

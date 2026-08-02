@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 221 entries
+The one thing this file does *not* carry in full is the trap list --- 222 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -34,44 +34,56 @@ bloated), `dblitz` (DB Browser for SQLite was missing things).
 
 ---
 
-## HANDOVER --- open on Windows, written 2026-08-02 from macOS
+## HANDOVER --- open on macOS, written 2026-08-02 from Windows
 
 **Delete this whole section once the one item below is done.** It is a transient note in an
 auto-loaded file, so it costs every agent on every machine until it goes.
 
-The five-item macOS handover this replaces is discharged. Gates 12/12 --- the worker split
-was a pure move and the only casualty was an import used solely by a `#[cfg(windows)]` test,
-which `cargo test` passed as a warning and clippy caught. All eleven corpora ran at **163
-check names with byte-identical name sets**, diffed pairwise rather than counted;
-`session_check.py` green on four phases with both controls; the pdfium digest recorded, so
-`--check` is strong here; and `tpdf.log` proved to land under
-`~/Library/Logs/com.timostein.tpdf`, by forcing a diagnostic rather than by opening a
-document and hoping.
+The Windows handover this replaces is discharged, and it found a defect on the way. The
+folding fix works: `multilingual.pdf` reads `café latte` here. But the rule as it landed was
+absolute, and an absolute rule refuses a page whose every glyph is degenerate --- which
+`encodings.pdf` page 2 is, at 0.018 pt per character, so its two lines came back as one. That
+was a *new* failure introduced by the fix, invisible to the corpus the fix was written for and
+invisible on macOS, and it surfaced only from re-running all ten corpora and diffing the name
+sets. `reading.ts`'s rule is a conjunction now --- absolute **and** relative to the page's
+median character height. `docs/TRAPS.md` has the whole account under *"An absolute epsilon
+refuses a page whose every glyph is that thin"*; `BUILD.md` has the measurements.
 
-### The folding fix has one control left, and only this platform has it
+Verified here: gates **12/12**, unit tests **400**, all ten corpora green at **163 check
+names** with the name sets diffed pairwise, every ran/skipped split matching `BUILD.md`'s
+table exactly, and the parser unmapped throughout (43--44 modules at peak). Four mutations
+were run against the new rule, one per claim, and each turned exactly the intended test red.
 
-`reading.ts` refuses a character box under `SLIVER_PT` (0.1 pt) across the line and
-re-attaches it by preceding index --- the fix `BUILD.md`'s analysis called for, for the
-missing space in `cafélatte`. Everything that could be proved on macOS was: five mutations
-aimed at the rule and its control each turned the intended test red and nothing else, and
-every one of the eleven corpora stayed green afterwards with the same name set.
+### The corpus that carries the case is again the one this platform does not have
 
-**But macOS cannot exercise the case the rule exists for.** `make_multilingual_pdf.py` picks
-a font per page from what the machine has, so the folding page is `msgothic.ttc` there and
-Arial Unicode here, and only the first floats its space clear of the letters' band. The Mac's
-document does not have the defect, so its green run says nothing either way --- which is the
-same reason the failure was recorded as Windows-only in the first place.
+`reading.ts` is shared, so this needs a macOS run, and the reason is the same asymmetry as
+last time pointing the other way. `make_multilingual_pdf.py` and `make_encodings_pdf.py` pick
+fonts from what the machine has: the folding page is `msgothic.ttc` here and Arial Unicode
+there, and the predefined-CMap page has no metrics here and may well have real ones there. So
+**neither of the two documents that discriminate exists on the Mac**, and its corpus run can
+only be a regression check --- which is exactly what is wanted from it.
 
-So: run `viewer_check.py` on `multilingual.pdf` and read the line for **`a page reads in the
-order its generator laid it out`**. It was the one red check on that corpus; it should now be
-`[OK]`, with the folding page reading `café latte`. Confirm the other ten stay green with the
-same name set, then delete this section and the `BUILD.md` paragraph beginning
-*"**One check was red on `multilingual.pdf`"*, which still records the failure as open.
+So: regenerate the fixtures, run `viewer_check.py` on all eleven, and confirm 163 names with
+identical name sets and no new red. The three unit tests carrying the measured Windows
+geometry (`reading.test.ts`, under *"a space whose font floated its box off the line"*) are
+platform-independent and should pass anywhere; if one of them fails on macOS, the geometry in
+it is wrong rather than the rule, and that is worth knowing before anything else is touched.
 
-If it is still red, the epsilon is the thing to question before the mechanism: the geometry
-is measured and in `docs/TRAPS.md` under *"A font can float a space's box clear of its own
-line"*, but 0.1 pt was chosen against what a legible glyph can be, not against a second
-sample.
+**The spike binaries take `tpdf_lib::PDFIUM_SUBDIR` now**, so they find the library on Windows
+without `--lib`. Nine were changed --- `incremental_save`, `outline_probe`, `remove_probe`,
+`sanitize_rewrite`, `search_probe`, `structure_probe`, `text_probe`, `text_roundtrip`,
+`thread_probe` --- and the two that keep a literal `lib`, `fdpass_probe` and `ocr_probe`, are
+inside `#[cfg(target_os = "macos")]`, where `lib` is simply the right answer. The constant's own
+doc comment said *four* remained and it was nine, which is what let `text-probe` rediscover this
+a third time; it now names the grep rather than a number.
+
+All nine were **run** here without `--lib`, not merely compiled --- which took installing qpdf,
+because `sanitize-rewrite` could not start without it. That turned up a second wrong thing:
+`BUILD.md` called qpdf *"optional ... not needed to build or run"*, and it is **required** for
+the hostile corpus, since `testdata/make_hostile_pdf.py` shells out to it. Without qpdf that
+script died on a bare `FileNotFoundError` out of `CreateProcess`, naming neither the tool nor
+the fixture; it now refuses up front and says which. On Windows the winget package wants
+elevation and the release's `msvc64.zip` does not.
 
 ## Hard constraints
 
@@ -825,8 +837,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 221 of them and the full text
-was 93% of this file --- an instruction budget spent on the 220 traps that are not
+titles. Only the titles are here, because there are 222 of them and the full text
+was 93% of this file --- an instruction budget spent on the 221 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -878,6 +890,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A dense page of uniform lines cannot detect a y-flip
 - A comma opens a line of its own, and every space on the line joins it
 - A font can float a space's box clear of its own line, and overlap banding drops it
+- An absolute epsilon refuses a page whose every glyph is that thin (the fix for the entry above, which moved the failure to another corpus rather than removing it)
 - A paragraph is one mark and several text objects, and the gap between them belongs to neither
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
 - An outline can be infinite, and PDFium says so in its own documentation

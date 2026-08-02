@@ -77,7 +77,7 @@ fn parse_args() -> Result<Args, String> {
         mode: Mode::Align,
         view_turns: 0,
         rounds: 5,
-        library: PathBuf::from("vendor/pdfium/lib"),
+        library: PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR),
     };
 
     while let Some(flag) = args.next() {
