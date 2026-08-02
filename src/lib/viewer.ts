@@ -112,6 +112,16 @@ export interface SearchStatus {
    */
   unsearchablePages: number;
   /**
+   * Whether the backend has answered the question `unsearchablePages` reports.
+   *
+   * Zero means "no page is unreadable" and "nobody has asked yet", and no
+   * consumer that draws a line for a reader needs to tell those apart --- both
+   * say nothing. The check harness does: without it, the assertion that an
+   * ordinary document reports no unreadable page is satisfied by a backend that
+   * never answers at all.
+   */
+  mappingKnown: boolean;
+  /**
    * Why the query could not be run at all, or "".
    *
    * Only a pattern can fail to be a query. Distinct from `total === 0` because
@@ -1402,6 +1412,7 @@ export class Viewer {
       running: this.searcher.running,
       textless: this.searcher.textless,
       unsearchablePages: this.searcher.unsearchablePages,
+      mappingKnown: this.searcher.mappingKnown,
       problem: this.searcher.problem,
     };
   }

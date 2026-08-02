@@ -11,6 +11,127 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### The encoding path, opened in a window for the first time --- on Windows
+
+- **The feature had never run.** `encoding.rs` to `document_mapping` to `Search` to the
+  status the viewer emits to `Results` to `statusFor` is six hops, every one typechecked
+  and unit-tested, and none of them had executed in a webview on either platform. Eleven
+  gates, 352 frontend tests, 92 Rust tests, 95 frontend mutations and CI on two platforms
+  all stayed green, correctly: none of them opens a document.
+- **Three checks in `viewer_check.py` now do it** --- the backend's count reaching the
+  frontend, the line a reader reads, and the accessibility layer withholding a guessed
+  page's characters. On `encodings.pdf` the panel says *"2 matches. 1 page could not be
+  searched --- the text there is not stored as readable characters."*, which is the case
+  worth defending: a partial answer presented as a total one is the same defect in a
+  quieter form.
+- **The expectation comes from the fixture's generator, not from the subject.**
+  `encodings.pdf` names its first page `no-mapping`, written by a program that has never
+  heard of `encoding.rs`. Waiting for `unsearchablePages` to go positive --- the obvious
+  shape --- would make a backend that always answered zero pass on every corpus, including
+  the one built so that it cannot.
+- **Two of the three run on every corpus rather than skipping**, so every document with
+  nothing to report is the control. A one-sided check here is satisfied by a panel that
+  says the sentence about every document.
+- **And running it found one.** `a11y.ts` withholds a guessed page's characters and gives a
+  reason instead, so the standing check *"the text read out is the page's own text"* is
+  false by design there --- and went red the first time `encodings.pdf` was opened in a
+  window, the day after the feature shipped. The check was wrong, not the code: it branches
+  three ways now, on the manifest, so a layer that quietly stopped withholding fails rather
+  than skips.
+- **`Search.mappingKnown`**, one boolean carried on the status. Without it the negative
+  assertion is satisfied before anything happens --- the count starts at the value being
+  asserted, so a frontend that never asked the backend anything passes.
+- **`encoding::` joined `mutate_rust.py`**, which covered `search::`, `structure::` and
+  `text::` only, so nothing re-checked the new module. 5 mutations, all caught, 36/36
+  overall. The one that matters keys the rule on `/Encoding` instead of the descendant's
+  `/Ordering`; only the two synthetic diagonals catch it, because every page of
+  `encodings.pdf` has those fields covarying.
+- **A stale anchor in `mutate_frontend.py`**, left by the same day's rewrite of `statusFor`.
+  The harness reported *"its anchor appears 0 times"*, which is it working --- but for a day
+  the suite had 94 live mutations and a summary saying 95. 95/95 after re-aiming it.
+- **`mutate_viewer.py` runs on Windows**, where `APP` was a macOS `.app` path, the build
+  asked for a bundle type that does not exist here, and the probe runners pointed at
+  `vendor/pdfium/lib` rather than `bin`. A `viewer-encodings` runner besides, and 3 new
+  mutations --- one per new check, the middle one aimed at the *control* corpus because on
+  `encodings.pdf` a panel that always says the line is indistinguishable from one that says
+  it correctly. All three caught.
+- **`searchmapping.test.ts` was in no mutation harness**, the same gap `encoding::` had on
+  the Rust side: the file's own header says the truncated-versus-guessing distinction was
+  established by an ad-hoc mutation, and nothing re-checked it afterwards. It is in
+  `TEST_FILES` now, with 3 mutations --- folding *unknown* in with *unreadable*, which puts a
+  warning on every encrypted document, and both directions of the answered flag. 98/98.
+- 2 new unit tests, 3 new traps, 218 in the index.
+
+### Windows, verified against the distributable
+
+- **`BUILD.md` step 8, run for the first time since the notices landed.** The MSI payload is
+  **four** files rather than the three recorded: `THIRD-PARTY-NOTICES.md` (469 KB) ships
+  beside `tpdf.exe`, `tpdf_lib.dll` and `pdfium.dll`, and only an extraction can confirm
+  that a file the licences require actually shipped.
+- **With the development library moved aside, and with the negative control the step asks
+  for.** Hiding the *bundled* `pdfium.dll` as well fails at `0/1 checks passed`, naming that
+  exact path --- which is what makes the pass mean the bundled library resolved rather than
+  the development tree the run can also see.
+- **Build before hiding it, not after**: the bundler copies that DLL as a resource, so a
+  build with it already moved aside dies at `resource path ... doesn't exist`, which reads
+  like a broken checkout rather than like the sequence being wrong.
+- **`multilingual.pdf` could not run here at all**, and the failure looked like a broken
+  build: `viewer_check.py` read the app's output with the locale codec, so the first
+  Japanese character in a check *detail* killed `communicate` inside its own reader thread
+  with `UnicodeDecodeError`, leaving a traceback, exit 1 and a transcript file holding the
+  word `None`. Fixing the decode moved it one step to `UnicodeEncodeError` on `print`,
+  since Python's stdout encodes with the same codec. Both fixed --- the second in
+  `live_output.py`, which is where all three harnesses get their streams. The same defect
+  the day's own `mutate_rust.py` fix was about, surviving in the third harness.
+- **Nine corpora measured on Windows**, against the extracted MSI with the development
+  library moved aside: **160 check names** on every one, and eight of the nine are the macOS
+  split plus exactly the arithmetic of the three new checks --- the same checks skipping on
+  both platforms for the same documents, which is a stronger statement than a matching
+  total. `multilingual.pdf` is the ninth and differs by one legitimately: its generator picks
+  a font per page from what the machine has, so that fixture is a different document here.
+- **One failing check on that corpus, and it is not new work.** The folding page reads back
+  `cafélatte` where its manifest says `café latte`. PDFium's extraction *does* carry the
+  space, so it is lost between extraction and the line's ranges; whether that is a gap in
+  `reading.ts` or an artifact of the font this machine laid the page out in is **not**
+  settled, and the green macOS run is no evidence either way. Recorded in `BUILD.md`.
+- **The fixture list in `BUILD.md` generated neither `multilingual.pdf` nor
+  `encodings.pdf`**, while the corpus table below it told a reader to run the viewer check
+  against both --- so the instruction that produces a fixture and the instruction that
+  consumes it disagreed, and the failure is an absent file reported as a broken bundle.
+### A markup-sink gate, and the third state a page's text can be in
+
+Recorded after the fact, on 2026-08-02: the six commits these describe added no changelog
+entry, so the two largest changes of the day were absent from the release history.
+
+- **`scripts/check_webview_sinks.py`**, the eleventh gate, enforcing `docs/THREAT-MODEL.md`
+  T8 --- until then the one mitigation in that document held by convention rather than by a
+  line. Document text reaches the DOM as data; the gate pins the narrow invariant that
+  makes that checkable at all, **no markup-parsing sink anywhere in the frontend**, plus
+  four rules closing the routes by which a string that cannot become markup can still
+  become a navigation. It refuses a scan that found no files or no `setAttribute` calls,
+  since a pattern that stops occurring passes exactly like a clean one.
+- **The gate's own first version was not sufficient**, which is why the reasoning is
+  written down rather than assumed: it enforced only that an attribute *name* be a literal,
+  while the threat model claimed sufficiency --- and `setAttribute("href", row.title)`
+  satisfies both. Correct about the tree in front of it, wrong about what it guaranteed.
+- **`src-tauri/src/encoding.rs`** --- the third state between "this page has text" and
+  "this page has none". A CID font with no `/ToUnicode` is ordinary in the wild and PDFium
+  does not fail on it: it reads glyph ids as character codes and returns text of the right
+  length, in the right places, with the right word lengths. The page is therefore not
+  textless, so the one honest signal the find bar had did not fire, a reader searching for a
+  word they can see was told there were no matches, and the accessibility tree read the
+  nonsense out.
+- **It is a `lopdf` question, not a PDFium one.** Garbage of the right length cannot be
+  told from a language nobody here reads, so every rule over the code points is a heuristic
+  that will call a real document broken. The file answers it directly: a font either
+  declares what its glyphs mean or it does not. The operative field is the descendant's
+  `/CIDSystemInfo /Ordering`, **not** the encoding name --- `/Encoding` decides code to CID
+  and says nothing about CID to Unicode.
+- **A page `lopdf` cannot account for is unknown, never clean.** The two parsers disagree
+  about page counts more often than one would like and always in the dangerous direction:
+  `lopdf` reports zero pages for `incr-encrypted-pw.pdf`, which PDFium paginates normally,
+  and an empty answer reads as "no page has a problem".
+
 ### Public, MIT-licensed, and CI on both platforms
 
 - **The repository is public and MIT-licensed.** `LICENSE` had to land *before* the flip,

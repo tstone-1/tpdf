@@ -66,7 +66,26 @@ def main() -> int:
     # partial-transcript behaviour `run` had, which the comments underneath are
     # about and which is not being traded away for this.
     process = subprocess.Popen(
-        [args.binary], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        [args.binary],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        # `text=True` alone decodes with the locale codec, which is cp1252 on
+        # Windows. Every check detail the app prints is document text --- a word
+        # off the page, a line read out of the accessibility tree --- so on
+        # `multilingual.pdf` the stream carries UTF-8 whose bytes include 0x81,
+        # undefined in cp1252, and `communicate` died inside its own reader
+        # thread with `UnicodeDecodeError`. The run then produced a traceback,
+        # exit 1 and a transcript file holding the word `None`: the corpus was
+        # unrunnable on this platform and looked like a broken build.
+        #
+        # `errors="replace"` as well, because a decoder that raises here takes
+        # the whole run down for a character in a *detail string*, and the
+        # detail is not the verdict. Same fix as `mutate_rust.py` and
+        # `mutate_frontend.py` carry, arriving in the third harness.
+        encoding="utf-8",
+        errors="replace",
     )
     watcher = _watch_modules(process)
 

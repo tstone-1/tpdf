@@ -482,6 +482,7 @@ async function run(path: string): Promise<void> {
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
   await resultsChecks(viewer, sidebar, doc, seen);
+  await mappingChecks(viewer, sidebar, doc, seen);
   await crossPageChecks(viewer, doc, seen);
   await scopedSearchChecks(root, viewer, seen);
   await paletteChecks(viewer, doc.page_count);
@@ -519,6 +520,8 @@ async function run(path: string): Promise<void> {
 /** What a fixture's generator says each of its pages should read as. */
 interface ReadingManifest {
   pages: { page: number; name: string; lines: string[] }[];
+  /** Searches the generator states the outcome of. Only some fixtures have any. */
+  queries?: { name: string; query: string; hits: number }[];
 }
 
 /**
@@ -1392,6 +1395,124 @@ async function resultsChecks(
   sidebar.selectTab("outline");
 }
 
+/** The page name a generator gives a page whose fonts state no mapping. */
+const UNMAPPED_PAGE = "no-mapping";
+/** The manifest query that is on such a page and cannot be found. */
+const UNMAPPED_QUERY = "unmapped-text-is-not-found";
+
+/** The two checks {@link mappingChecks} records. Both run on every fixture. */
+const MAPPING_CHECKS = [
+  "the pages whose text is a guess reach the frontend",
+  "a reader is told when a page could not be searched",
+] as const;
+
+/**
+ * The third state: a page that has text, in the right places, meaning nothing.
+ *
+ * `encoding.rs` decides it, and until this ran the whole path from that decision
+ * to the line a reader reads had never executed in a window on any platform ---
+ * six hops, each typechecked and unit-tested, which is exactly the arrangement
+ * that passes while the wiring between two of them is missing.
+ *
+ * **The expectation comes from the fixture's generator, not from the subject.**
+ * `encodings.pdf` names its first page `no-mapping`, and that name is written by
+ * a program that has never heard of `encoding.rs`. Waiting for
+ * `unsearchablePages` to go positive instead --- the obvious shape --- would make
+ * a backend that always answered zero pass on all ten corpora, including the one
+ * built so that it must not.
+ *
+ * **Both checks run everywhere**, and the nine fixtures with nothing to report
+ * are the control: the same query, the same panel, and the line must be absent.
+ * A one-sided check here would be satisfied by a frontend that said it about
+ * every document.
+ *
+ * The wait is on `mappingKnown` rather than on the count, because on those nine
+ * the count starts at the value being asserted --- see the getter's own note.
+ */
+async function mappingChecks(
+  viewer: Viewer,
+  sidebar: Sidebar,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const manifest = await manifestOf();
+  const unreadable = (manifest?.pages ?? []).filter(
+    (page) => page.name === UNMAPPED_PAGE,
+  ).length;
+  // A query the generator says is on the page and cannot be found, so what a
+  // reader sees is the whole defect: a word plainly visible, "No matches.", and
+  // now the sentence saying why. Elsewhere any absent query does, since what is
+  // being asserted there is that the sentence stays away.
+  const query =
+    manifest?.queries?.find((entry) => entry.name === UNMAPPED_QUERY)?.query ??
+    "qxzjabsentfromeverything";
+
+  sidebar.selectTab("results");
+  const results = sidebar.results;
+
+  viewer.search(query);
+  await settle(
+    () =>
+      !viewer.searching &&
+      (seen.status?.search.scanned ?? 0) >= doc.page_count &&
+      (seen.status?.search.mappingKnown ?? false),
+  );
+
+  const known = seen.status?.search.mappingKnown ?? false;
+  const reported = seen.status?.search.unsearchablePages ?? 0;
+  check(
+    MAPPING_CHECKS[0],
+    known && reported === unreadable,
+    known
+      ? `"${query}" -> ${viewer.searchMatches.length} matches; the backend reports ` +
+        `${reported} unsearchable page(s) and the generator wrote ${unreadable}`
+      : "the backend never answered which pages store unreadable text",
+  );
+
+  // Fed from the status the viewer emitted, which is the object `App.svelte`
+  // reads at its own call site -- not from a number computed here, which would
+  // be a second implementation agreeing with the first.
+  results.update(
+    viewer.searchMatches,
+    viewer.matchIndex,
+    seen.status?.search.query ?? "",
+    viewer.searching,
+    reported,
+  );
+
+  const said = results.status;
+  const names = said.includes("could not be searched");
+  const counts =
+    unreadable === 0 ||
+    said.includes(unreadable === 1 ? "1 page" : `${unreadable} pages`);
+  check(
+    MAPPING_CHECKS[1],
+    names === (unreadable > 0) && counts,
+    `${unreadable} page(s) unreadable, the panel says "${said}"`,
+  );
+
+  viewer.clearSearch();
+  results.update(viewer.searchMatches, viewer.matchIndex, "", false, 0);
+  sidebar.selectTab("outline");
+}
+
+/**
+ * The fixture's manifest, or null when it has none.
+ *
+ * {@link readingChecks} parses it separately and on purpose: a manifest that
+ * does not parse is a broken fixture and it fails there, loudly and once,
+ * rather than in every phase that reads one.
+ */
+async function manifestOf(): Promise<ReadingManifest | null> {
+  const raw = await invoke<string | null>("reading_manifest").catch(() => null);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ReadingManifest;
+  } catch {
+    return null;
+  }
+}
+
 /** The three checks {@link searchOptionChecks} records, for the skip path. */
 const SEARCH_OPTION_CHECKS = [
   "matching case rejects the hit that ignoring it accepted",
@@ -1699,6 +1820,10 @@ async function stepToAnotherPage(
  * What is **not** checked, and is not claimed: that any of this is *pleasant* to
  * listen to. That needs a screen reader and a person.
  */
+/** The check that a guessed page is not read aloud, named once for its skips. */
+const GUESSED_TEXT_CHECK =
+  "a page whose characters mean nothing is not read out";
+
 async function accessibilityChecks(
   root: HTMLElement,
   viewer: Viewer,
@@ -1719,6 +1844,21 @@ async function accessibilityChecks(
   }).catch(() => null);
   const spoken = spokenText(viewer.accessibleText.elementFor(0));
 
+  // Three states, not two, and the third is why this branch was restructured on
+  // 2026-08-02: a page can have text of the right length that means nothing.
+  // `a11y.ts` withholds those characters and gives the reason instead, so the
+  // check below --- "what is read out is the page's own text" --- is *false by
+  // design* there and failed the first time `encodings.pdf` was ever opened in a
+  // window. Which page that is comes from the fixture's manifest, never from
+  // `unreadablePage`: branching on the subject's own answer would make a layer
+  // that had stopped withholding skip the check instead of failing it.
+  const manifest = await manifestOf();
+  const guessed = new Set(
+    (manifest?.pages ?? [])
+      .filter((page) => page.name === UNMAPPED_PAGE)
+      .map((page) => page.page),
+  );
+
   if (!extracted || extracted.codes.length === 0) {
     check(
       "a page with no text says so rather than falling silent",
@@ -1729,11 +1869,35 @@ async function accessibilityChecks(
       "the text read out is the page's own text",
       "the page has no extractable text",
     );
+    skip(GUESSED_TEXT_CHECK, "the page has no extractable text");
+  } else if (guessed.has(0)) {
+    skip(
+      "a page with no text says so rather than falling silent",
+      "this page has text",
+    );
+    skip(
+      "the text read out is the page's own text",
+      "this page's characters are a guess, so what is read out is deliberately " +
+        "not them",
+    );
+    const characters = flatten(String.fromCodePoint(...extracted.codes));
+    // The second half is the load-bearing one. An element holding the notice
+    // *and* the characters would be read out in full, which is the outcome
+    // being avoided, and a check for the notice alone passes on it.
+    const sample = characters.slice(0, 8);
+    check(
+      GUESSED_TEXT_CHECK,
+      spoken.includes("cannot be read") &&
+        sample.length > 0 &&
+        !spoken.includes(sample),
+      `reads "${preview(spoken)}"; the page extracts as "${preview(characters)}"`,
+    );
   } else {
     skip(
       "a page with no text says so rather than falling silent",
       "this page has text",
     );
+    skip(GUESSED_TEXT_CHECK, "this page states what its characters mean");
     // Compared against an independent extraction, not against the viewer's
     // cache, so the layer cannot be confirmed by agreeing with itself.
     const expected = flatten(String.fromCodePoint(...extracted.codes));
