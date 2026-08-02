@@ -34,6 +34,63 @@ bloated), `dblitz` (DB Browser for SQLite was missing things).
 
 ---
 
+## HANDOVER --- open on macOS, written 2026-08-02 from Windows
+
+**Delete this whole section once the five items below are done.** It is a transient note in
+an auto-loaded file, so it costs every agent on every machine until it goes.
+
+Everything after `7dd6170` --- a full-tree review, fixes for its sixteen warnings, and the
+work it recommended --- was **written and verified on Windows only**. CI covers the twelve
+gates on both platforms; it structurally cannot cover `viewer_check.py`, `session_check.py`
+or the mutation harnesses. The surface is unusually broad: the worker split, the per-page
+layout, the reporting migration and the logging all cross platforms.
+
+### 1. Build first, and expect the worker split to be where it breaks
+
+`worker.rs` was split into five files as a proven pure move --- proven on a machine where
+`#[cfg(target_os = "macos")]` code **does not compile**. `worker_handover.rs` (the fd-passing
+document handover) and the macOS halves of `worker.rs`/`worker_shm.rs` have never been
+through a compiler since they moved, so the first `scripts/gates.py` run here is the actual
+verification of that split. A failure in those files is the move (a `use` that did not
+follow, a visibility too narrow under the macOS cfg), not whatever was being worked on.
+
+### 2. Re-run the window harnesses; the invariant is 163 names now
+
+Regenerate fixtures first (`testdata/make_mixed_pdf.py` is new; its `mixed-geometry.json`
+sidecar is gitignored and wired through `TPDF_GEOMETRY_MANIFEST`). Then `viewer_check.py`
+on all corpora --- `mixed.pdf` is the eleventh, 138/25 on Windows --- and `session_check.py`.
+Diff name sets against `BUILD.md`'s table per the standing discipline; the wrapper's
+module-audit verdict moved to stderr, so `mutate_viewer.py`'s baseline must say 163 here
+too. `viewercheck.ts` now reports through `checkreport.Report`: pad width 46, ASCII skip
+join, `not applicable` summary tail --- the three deltas every parser was checked against.
+
+### 3. The pdfium stamp will warn once, and the warning is the upgrade path
+
+`fetch_pdfium.py --check` now hashes the installed library against a digest the installer
+records. A stamp from July predates that line, so `--check` prints `[WARN]` and falls back
+to an existence check rather than going red. Run `python scripts/fetch_pdfium.py` once; it
+re-fetches, records the digest, and `--check` is strong from then on.
+
+### 4. Expect `multilingual.pdf` green here, and do not read that as the bug being gone
+
+The folding page fails on Windows --- `cafélatte` for `café latte` --- and the mechanism is
+measured in `BUILD.md`: `msgothic.ttc` gives the space a box 0.02 pt tall floating 0.12 pt
+below the line's band, so `reading.ts` bands it with nothing and drops it. Arial Unicode
+puts its space in-band, so macOS stays green on a different document. The fix is open work
+for whichever machine reaches it first: treat a box under some epsilon height as unplaced
+and re-attach it by preceding index, with two controls --- every macOS-green corpus stays
+green, and the Windows folding line goes green.
+
+### 5. Confirm the log file lands where macOS puts logs
+
+Nine coordinator diagnostics now also append to `tpdf.log` via `diag::note` --- stderr is
+untouched, and a test re-runs the binary to prove it. What no Windows machine can check:
+that a real macOS run writes under `app_log_dir` (`~/Library/Logs/...`). Open a document,
+kill nothing, and look for the file; then `TPDF_LOG_FILE` for the override path.
+
+---
+
+
 ## Hard constraints
 
 ### Licensing: permissive dependencies only
