@@ -1443,7 +1443,7 @@ as UTF-16 in the cross-page check.
 **And it established that the vendored build carries the predefined Adobe-Japan1 CMaps**, which
 is a fact about the `chromium/7881` pin to re-establish if the pin moves.
 
-##### Open: a page whose text is present, positioned and meaningless
+##### A page whose text is present, positioned and meaningless — done 2026-08-02
 
 The finding that needs a decision rather than a fix. A CID font with **no `/ToUnicode`** is
 ordinary in the wild, and PDFium does not fail on it — it reads the glyph ids as character codes
@@ -1460,11 +1460,49 @@ The detector needs no heuristic on the characters: the font dictionary either de
 `/ToUnicode` or it does not, and `Identity` ordering with no CMap is PDFium guessing by
 construction — a `lopdf` question with a yes-or-no answer.
 
-What is undecided is the **product** half: whether a reader is told, where, and in what words. A
-banner is intrusive on a document someone only wants to look at; a line in the find bar is
-invisible until they search, which is arguably exactly when it matters; a badge in the sidebar is
-neither. Not built, because guessing at that is how a viewer acquires a nag. The corpus exists so
-the decision is made against a measurement.
+The product half was the undecided one — whether a reader is told, where, and in what words —
+and it was taken rather than guessed, because guessing at that is how a viewer acquires a nag.
+**Told in the find bar and nowhere else; search and the accessibility tree corrected, copy left
+alone.** A banner is intrusive on a document someone only wants to look at, and a sidebar badge
+is neither one thing nor the other.
+
+`src/encoding.rs` is the detector, reached over the worker boundary by `Request::Mapping` — the
+`lopdf` parse happens in the sandboxed process, because a scan in the coordinator would falsify
+`docs/THREAT-MODEL.md` §3.
+
+**The rule turns on the ordering, not the encoding name**, and the corpus cannot tell those two
+apart: page 0 is `Identity-H` *and* `Ordering (Identity)`, page 2 is `UniJIS-UCS2-H` *and*
+`Ordering (Japan1)`, so the fields covary and a mutation swapping the rules passes every fixture.
+Four synthetic documents supply the missing diagonal. `/Encoding` decides code→CID and says
+nothing about CID→Unicode; what supplies CID→Unicode without a `/ToUnicode` is the
+registry-and-ordering, and PDFium ships tables for Adobe-Japan1, GB1, CNS1 and Korea1 and none
+for Identity.
+
+Three findings the work produced that this section did not predict:
+
+- **The cost was a guess and the guess was wrong.** Four files said it "costs a full `lopdf`
+  parse, the dominant cost of opening a large document". Measured in release: **0.1 ms** small,
+  **5.8 ms** on the 775-page document, **11.9 ms** on the 337 MB scan. `lopdf` reads the
+  cross-reference table and object headers rather than every stream, so the cost tracks **object
+  count** and barely notices file size. It is still computed off the startup path, because warm
+  startup is ~276 ms against a 300 ms target and 6–12 ms is a quarter of the whole margin.
+- **Unknown is not unreadable**, and a mutation folding the two together survived the entire
+  suite until a test existed for it. `lopdf` reports **zero pages** for `incr-encrypted-pw.pdf`,
+  which PDFium paginates normally, so every page comes back truncated — counting those would put
+  a warning on every encrypted document, a false alarm on a file that searches perfectly well.
+  `scan` therefore takes the page count from PDFium and returns exactly that many entries,
+  marking what it could not reach as *known to be unknown*.
+- **The accessibility layer made the search-side laziness moot**, found by a mutation surviving
+  rather than by reading: `syncAccessibleText` asks every frame, so the fetch happens on the
+  first frame after open for any document that renders text.
+
+Verified across all 36 fixtures: exactly one page in ~1,700 flags, and it is the page built to be
+that case. Zero truncations on any hostile fixture.
+
+**What has no end-to-end evidence yet** is the chain from the Tauri command to the line a reader
+reads — six hops, each typechecked and unit-tested, none exercised in a running window.
+`viewer_check.py` has no `encodings.pdf` phase, and that is the gap to close before this is
+called finished.
 
 #### Cancellable rendering — done 2026-07-27
 
