@@ -126,9 +126,43 @@ NODE_MODULE_IN_SOURCEMAP = re.compile(r"node_modules/((?:@[^/]+/)?[^/]+)/")
 LICENCE_FILENAMES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE")
 
 
+# Files that needed a codec other than UTF-8, so a run can say so once rather
+# than silently. Keyed by path, so reading a file twice reports it once.
+FALLBACK_DECODES: "dict[Path, str]" = {}
+
+
 def read_text(path: Path) -> str:
-    """Reads a file as UTF-8, tolerating the odd stray byte in a licence text."""
-    return path.read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n")
+    """Reads a licence file as text, without destroying what it cannot decode.
+
+    This was `decode("utf-8", errors="replace")`, and "tolerating the odd stray
+    byte in a licence text" was the defect rather than the tolerance: a byte that
+    is not UTF-8 became U+FFFD. The file that happens to is
+    `vendor/pdfium/licenses/freetype.txt`, which is Latin-1, and its 0xA9 is the
+    (c) in the credit line FreeType's licence *requires* be reproduced --- so a
+    document whose entire purpose is faithful reproduction shipped that
+    attribution with the copyright sign replaced by a question mark in a diamond.
+    Exactly one U+FFFD in 469 KB, which is why it survived review.
+
+    Same family as the `text=True` entry, and the quiet direction of it: there,
+    an undefined cp1252 byte crashed and the failure was loud. Here the reader
+    was *asked* to substitute, so the corruption is silent and lands in the
+    shipped artifact. A decoder told to continue past what it cannot read will.
+
+    Order matters. UTF-8 first, because a UTF-8 file read as cp1252 is the
+    mojibake direction and never raises. cp1252 next, being what Windows tools
+    emit. Then latin-1, which maps every byte and cannot fail --- so no path
+    reaches `errors="replace"` any more.
+    """
+    raw = path.read_bytes()
+    for codec in ("utf-8", "cp1252", "latin-1"):
+        try:
+            text = raw.decode(codec)
+        except UnicodeDecodeError:
+            continue
+        if codec != "utf-8":
+            FALLBACK_DECODES[path] = codec
+        return text.replace("\r\n", "\n")
+    raise AssertionError("latin-1 decodes every byte sequence")  # unreachable
 
 
 def normalise_licence_text(body: str) -> str:
@@ -556,6 +590,14 @@ def main() -> int:
         return 1
 
     rendered = render(cargo, npm, pdfium)
+
+    # A fallback decode is not an error -- but it is a licence text that is not
+    # UTF-8, and the reader this replaced turned exactly that into U+FFFD without
+    # a word. Name the files, so the next one is noticed rather than absorbed.
+    # After render(), because render() is what reads them.
+    for path, codec in sorted(FALLBACK_DECODES.items()):
+        rel = path.relative_to(REPO) if path.is_relative_to(REPO) else path
+        print(f"[note] {rel} is not UTF-8; decoded as {codec}")
 
     if args.cross_check:
         other = Path(args.cross_check)

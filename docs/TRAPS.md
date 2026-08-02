@@ -5468,3 +5468,75 @@ Four things worth keeping.
 - **The diff the gate was taught to print never appeared**, and its absence was itself the
   evidence --- a `--check` that reaches its comparison always prints one. A missing diagnostic
   is information about *where* execution stopped, if you notice you did not get it.
+
+### A decoder told to replace what it cannot read does, and the result ships
+
+`read_text` in `third_party_notices.py` was `decode("utf-8", errors="replace")`, and the
+docstring justified it as "tolerating the odd stray byte in a licence text". The tolerance
+was the defect. `vendor/pdfium/licenses/freetype.txt` is Latin-1, and its `0xA9` is the `©`
+in the credit line FreeType's licence **requires** be reproduced:
+
+    Portions of this software are copyright <?> <year> The FreeType Project
+
+So the document whose entire purpose is faithful reproduction shipped a required attribution
+with the copyright sign replaced by a question mark in a diamond. **Exactly one U+FFFD in
+469 KB** --- which is why it survived generation, review, a gate that compares the file
+against a fresh render, and a cross-platform byte-equality check. Every one of those passed,
+correctly: the corruption is deterministic, so a regeneration reproduces it exactly and the
+comparison agrees.
+
+This is the quiet direction of the `text=True` entry two above. There, an undefined cp1252
+byte raised, `.stdout` came back `None`, and the failure was loud and immediate. Here the
+decoder was *asked* to carry on past what it could not read, so nothing raised, nothing
+logged, and the damage went into the artifact. **The loud one cost two rounds of debugging;
+the quiet one cost a wrong legal notice in every installer built for a week.**
+
+The fix is a codec chain, and the order carries the reasoning: UTF-8 first, because a UTF-8
+file read as cp1252 is the mojibake direction and *never raises*; cp1252 next, being what
+Windows tools emit; then latin-1, which maps every byte and cannot fail --- which is what
+removes any path back to `errors="replace"`. A fallback is reported with a `[note]` naming
+the file and codec, because a licence text that is not UTF-8 is worth seeing once rather
+than absorbing silently.
+
+Generalises past licences: **`errors="replace"` is only correct where the output is for a
+human to glance at.** Anywhere the decoded text is copied into something that ships --- a
+notice, a manifest, a signature payload, an invoice --- substitution is data loss with a
+plausible-looking placeholder, and it is invisible to any check that goes through the same
+decoder. Grep for it before trusting a generated artifact.
+
+### A toolchain pin can match on version and still be the wrong ABI
+
+`rust-toolchain.toml` pins `channel = "1.97.1"`, and `check_toolchain.py` asserts rustc
+reports that version with clippy and rustfmt built from the same commit hash. On this
+project's Windows desktop all of that passed and the build then died three gates later:
+
+    error: error calling dlltool 'dlltool.exe': program not found
+
+A bare `channel` carries **no target triple**, so rustup resolves it against its *default
+host triple* --- which is a **different setting** from the default *toolchain*, with nothing
+keeping the two in step. That machine's default toolchain was
+`stable-x86_64-pc-windows-msvc`, which is what every Windows measurement in `AGENTS.md` was
+taken on and what built the MSI; its default host triple was `x86_64-pc-windows-gnu`. Adding
+the pin therefore moved the machine from MSVC to GNU, and the GNU ABI wants MinGW binutils
+that were never installed.
+
+Two things make it worth an entry rather than a footnote:
+
+- **The gate that exists to catch "the compiler is not the one we think" said `[OK]`.** It
+  was not wrong about anything it checked --- version matched, hashes matched. It simply did
+  not check the axis that had moved. A pin verified on one axis reads exactly like a pin
+  verified on all of them.
+- **CI cannot see it.** GitHub's `windows-2025` runners default to MSVC, so the pin resolves
+  correctly there and stays green forever. It is per-machine, invisible from the other
+  platform *and* from CI --- which is precisely the shape that has to live in a gate, because
+  nothing else in the system is standing where it happens.
+
+Fix the machine, not the pin: `rustup set default-host x86_64-pc-windows-msvc`. Writing a
+full triple into `rust-toolchain.toml` would pin one platform's ABI into a file both
+platforms read.
+
+The check now compares `rustc -vV`'s `host:` line against the ABI the platform actually
+ships. Proved with a **real** wrong toolchain rather than a synthetic one --- the GNU install
+was still on the box, so `RUSTUP_TOOLCHAIN=1.97.1-x86_64-pc-windows-gnu` gives the same
+version, the same commit hashes, every pre-existing check passing, and only the new one
+firing. That is the exact state the machine was in.
