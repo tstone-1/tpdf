@@ -1,0 +1,82 @@
+name: CI
+
+# Runs the quality gates on every push to main and every pull request.
+#
+# This exists because the repository is public: macOS runner minutes bill at
+# 10x against a private allowance and are free here, which is what changed. The
+# original objection to having CI at all was not cost but duplication -- a
+# workflow that restated the gate commands in YAML would be a second place for
+# them to live, and one that quietly loses a `--locked` or an `--all-targets`
+# and then gates something weaker than the real gate. That objection is
+# answered the same way `release.yml` answers it: invoke `scripts/gates.py`,
+# which *is* the gate list. Never restate its commands here.
+#
+# ---------------------------------------------------------------------------
+# FORK THREAT MODEL. Public repositories accept pull requests from forks, and
+# this workflow runs their code.
+#
+#   * `pull_request`, never `pull_request_target`. The latter runs with the
+#     base repository's secrets and a writable token against the *fork's* code,
+#     which is the standard way a public repository gets compromised.
+#   * `permissions: contents: read`. Nothing here needs to write.
+#   * NO SECRETS ARE REFERENCED. The six APPLE_* secrets survive the flip to
+#     public -- GitHub does not expose repository secrets -- and they must stay
+#     confined to `release.yml`, which triggers on a tag push and is therefore
+#     unreachable from a fork.
+#
+# Keep that split. It is the whole of the fork threat model.
+# ---------------------------------------------------------------------------
+#
+# WHAT THIS CANNOT COVER. `scripts/viewer_check.py` and `scripts/mutate_*.py`
+# are not here and cannot be: the viewer harnesses drive a real window and need
+# an unlocked, unoccluded screen, so on a headless runner they do not fail,
+# they hang. The mutation harnesses rebuild per mutation and take minutes.
+# Both stay local, and `BUILD.md` schedules them at release time.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: Gates (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-2025]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS deps
+        run: npm ci
+
+      # `vendor/pdfium/` is gitignored -- the engine is fetched by digest, not
+      # committed. The first gate is `fetch_pdfium.py --check`, which fails on a
+      # missing or mismatched install, so this step is a prerequisite rather
+      # than a convenience.
+      - name: Install the pinned PDFium
+        run: python scripts/fetch_pdfium.py
+
+      - name: Quality gates
+        run: python -u scripts/gates.py

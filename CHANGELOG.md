@@ -11,6 +11,56 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### Public, MIT-licensed, and CI on both platforms
+
+- **The repository is public and MIT-licensed.** `LICENSE` had to land *before* the flip,
+  not after: a public repository with no licence is all-rights-reserved, and anyone who
+  cloned in the gap would have had no grant.
+- **No history rewrite was needed**, which is the expensive half of going public and the
+  one that cannot be undone cheaply. All 108 commits across every ref were authored and
+  committed as the `tstone-1` noreply address; there were no tags, no `refs/pull/*`, no
+  forks and no workflow run logs to become visible. Verified by scanning every ref rather
+  than by comparing local tags to remote ones --- the portfolio records a tag that survived
+  a first cleanup round precisely because it was stale on *both* sides and therefore
+  matched.
+- **The pre-flip audit found two files, and neither was a secret.** The AGPL rationale
+  named an employer and its internal systems as its worked example, and `ocr.rs` used the
+  employer's name as a test string in five places. Both were associations rather than
+  leaks, and the licensing argument reads the same without them. The scan that matters is
+  for *values* across the tracked tree, not for gitignored *paths*: `testdata/private/`
+  has been gitignored since the beginning against exactly this, and it turned out never to
+  have existed, so the only real question was what had been pasted into source.
+- **`.github/workflows/ci.yml`** --- the gates on `macos-latest` and `windows-2025`, on
+  every push to `main` and every pull request. It invokes `scripts/gates.py` rather than
+  restating its commands, so the gate list still lives in exactly one executable place.
+  Written for a hostile fork: `pull_request` not `pull_request_target`, `contents: read`,
+  and no secret referenced --- the six `APPLE_*` secrets survive the flip and stay confined
+  to `release.yml`, which triggers on a tag push and is unreachable from a fork.
+- **`SECURITY.md`**, with a scope section that says what a *correct* answer looks like: a
+  redaction reported as `not verified` is by design and is not a finding, and PDFium's own
+  defects belong to Chromium, which ships it to rather more people.
+- Bundle metadata --- publisher, copyright, category, homepage, descriptions --- which was
+  empty and would have shipped an installer with no author on it.
+- **An app icon**, replacing the Tauri scaffold logo that had been in place since the first
+  commit. A paper page on a charcoal tile with a black bar across it that overhangs both
+  page edges, and a thin amber rule under the bar. The bar is a redaction, which is the one
+  capability that is both the differentiator and a hard constraint in the design, and a
+  solid horizontal is the shape most likely to survive 32 px. The vector source is
+  `design/icon.svg` and the seventeen raster files regenerate from it with
+  `npx tauri icon design/icon.svg`. It is kept **outside** `src-tauri/icons/` deliberately:
+  this repository has already been bitten once by a bundler enumerating a directory and
+  registering what it found there. Two earlier candidates were rejected after rendering
+  them rather than by argument --- a paper tile with the same bar read as a list with a
+  selected row once the page silhouette was gone, and a diagonal cut vanished into the dark
+  tile at small sizes. The mobile icon sets `tauri icon` also emits were deleted; this is a
+  macOS and Windows application.
+- Two present-tense claims about a third-party notice file were written into `README.md`
+  and `AGENTS.md` and then corrected in the same session before either was committed. The
+  file does not exist; the obligation is real (PDFium is BSD-3-Clause, the crate tree is
+  MIT / Apache-2.0, and both require notices reproduced in *binary* distributions) and it
+  blocks the first release rather than the repository being public. `BUILD.md` step 6
+  exists for this exact failure and it still took writing the sentence twice to catch it.
+
 ### Phase 1 --- case folding in search
 
 - **The fold case-folds rather than lowercasing.** `char::to_lowercase` is the operation for
