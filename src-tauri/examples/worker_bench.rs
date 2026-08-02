@@ -710,7 +710,8 @@ mod imp {
          (deny file-read* file-write*)\n\
          (deny network*)\n";
 
-    /// `targeted` with the one hole a render worker actually needs.
+    /// `targeted` with the one hole a render worker actually needs: **the
+    /// production profile**, not a copy of it.
     ///
     /// Arrived at by bisection, not by guessing, because the obvious version of
     /// it is wrong. Denying `file-read*` and allowing `file-read*` back on the
@@ -722,15 +723,20 @@ mod imp {
     ///
     /// The residual is that a hostile document could still learn which paths
     /// exist. It cannot read one, write one, or open a socket.
-    const PROFILE_WORKER: &str = "(version 1)\n\
-         (allow default)\n\
-         (deny network*)\n\
-         (deny file-write*)\n\
-         (deny file-read*)\n\
-         (allow file-read-metadata)\n\
-         (allow file-read-data\n\
-           (subpath \"/System/Library/Fonts\")\n\
-           (subpath \"/Library/Fonts\"))\n";
+    ///
+    /// **This was a second copy of that text until 2026-08-02**, and the two
+    /// agreed only because nobody had edited either. `docs/THREAT-MODEL.md` §8
+    /// names `--mode authority` as *the* re-verification for the shipped
+    /// sandbox after a PDFium bump — so a local copy meant that check certified
+    /// this file rather than the thing it was run to certify, and a divergence
+    /// would have shown up as a passing run. The trap is *"two copies of a
+    /// distinction drift, and a mutation of one survives"*.
+    ///
+    /// Everything else in this spike is deliberately its own — its worker, its
+    /// fd passing, its spawn — because an independent implementation is what
+    /// makes a cross-check worth running. A profile is **data**, not a
+    /// mechanism, and there is nothing to cross-check about a string.
+    const PROFILE_WORKER: &str = tpdf_lib::worker::SANDBOX_PROFILE;
 
     /// Applies a seatbelt profile to this process, irrevocably.
     #[cfg(target_os = "macos")]

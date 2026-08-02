@@ -10,7 +10,24 @@ fire is indistinguishable from one that keeps passing, and this repository has b
 by that twice already (a crash test the optimizer deleted, a stray-file check that was
 inert on macOS for months). An unmarked assertion here would be a third.
 
-Written 2026-07-26.
+Written 2026-07-26. Reviewed against the code 2026-08-02 (`BUILD.md` release step 6).
+
+**That review found seven claims that had drifted, and six of them drifted in the direction
+this document did not warn about.** The rule above guards against a mitigation *claimed* and
+absent; the fourth consecutive review found mostly the inverse — mitigations present and
+disclaimed, because the sections describing them were written before they were wired and
+nothing re-read them afterwards. §6 called Windows uncontained four days after it was
+contained, §7.4 carried the matching residual, §T8 rested on a premise the sidebar had
+falsified, §7.7 called a narrowed CSP a scaffold default, §5 named a copy of the sandbox
+profile that nothing ships, and §8's re-verification commands stopped being runnable when the
+spikes became `[[example]]` targets. Only one — `JOB_OBJECT_LIMIT_JOB_TIME`, claimed by §6's
+table and set nowhere — was the over-claim the rule anticipates.
+
+An under-claim is the quieter failure and the more expensive one. An over-claim is corrected
+the first time someone checks it; an under-claim reads as diligence, and it is what a reader
+budgets their remaining work against. So the rule needs a second half: **a mitigation marked
+untested must be re-read when the thing it describes is built, and the commit that wires a
+control is the commit that owes this document a line.**
 
 ---
 
@@ -69,15 +86,26 @@ at all — which is what makes a `(deny file-read*)` worker possible in the firs
 Measured in spike 0.5: a worker under that policy opens a 775-page document and renders it
 pixel-identically to an unsandboxed one.
 
-**The coordinator's "never parses PDF syntax itself" became true on 2026-07-28**, and not
-before. Until then the boundary existed and was measured, but the viewer's own render path
-still opened documents in the app process; this table described the architecture rather
-than the running program. `RenderService` now defaults to worker processes on macOS, and
-what says so is not a comment: `backend-probe` reads the **dynamic linker's** image table
-and finds no `libpdfium` mapped in a process that has just opened a 775-page document and
-rendered a tile from it — then starts the in-process backend, watches the image appear, and
-so proves the scan can see one. Everything below the first row of that table was already
-true of the worker; this is the row above it catching up.
+**The coordinator's "never parses PDF syntax itself" became true on 2026-07-28 on macOS and
+2026-07-29 on Windows**, and not before. Until then the boundary existed and was measured,
+but the viewer's own render path still opened documents in the app process; this table
+described the architecture rather than the running program. `Backend::default_here` now
+returns `Backend::Worker` on both — one `cfg!(any(target_os = "macos", windows))`, which is
+the line that keeps this row.
+
+What says so is not a comment, and the two platforms are attested differently:
+
+- **macOS**: `backend-probe` reads the **dynamic linker's** image table and finds no
+  `libpdfium` mapped in a process that has just opened a 775-page document and rendered a
+  tile from it — then starts the in-process backend, watches the image appear, and so proves
+  the scan can see one.
+- **Windows**: `scripts/win_modules.py` reads the app's module list through Toolhelp from
+  *outside* the process, which is stronger evidence in kind — a milestone we record says what
+  our code believes it did. It was run **before** the flip and reported the parser mapped
+  (47 modules at peak, `[FAIL]`); that control is why the pass after it means anything.
+
+Everything below the first row of that table was already true of the worker; this is the row
+above it catching up.
 
 **Printing is the exception, and it is a real one.** Added 2026-07-28, and the row above
 said "never parses PDF syntax itself" for two days while it did. Three call paths parse
@@ -509,23 +537,55 @@ open question, and it bit `screenpick`'s release path before.
 
 **The threat.** Content injected into the UI layer reaching Tauri's command surface.
 
-**What stops it.** The webview loads no remote content: the frontend is bundled, tiles
-arrive over a custom URI protocol as raw pixels rather than as anything parsed as markup,
-and no document-derived string is interpolated into HTML. Document text that must be
-displayed — outline entries, search results, form field labels — is attacker-controlled and
-must be treated as data at every point. Today none of it reaches the UI at all — the
-frontend renders tiles and nothing else, and there is no `@html` or `innerHTML` anywhere in
-it — so this is a rule to hold to rather than a property that has been tested.
+**What stops it.** The webview loads no remote content: the frontend is bundled, and tiles
+arrive over a custom URI protocol as raw pixels rather than as anything parsed as markup.
+Document text that must be displayed — outline entries, search results, form field labels —
+is attacker-controlled and must be treated as data at every point.
 
-**Untested.** No CSP audit has been done, and the Tauri capability set is still the
-scaffold default. This is Phase 1 work and is a gap, not a mitigation.
+**This section said "today none of it reaches the UI at all — the frontend renders tiles and
+nothing else" until 2026-08-02, and that stopped being true when the sidebar and search
+landed.** Outline titles reach the DOM (`sidebar.ts`, `title.textContent = row.title ||
+"(untitled)"`) and so does every search result (`results.ts`), including the matched
+substring the query is highlighted in.
+
+The mitigation survived the change, and it is a **better** one than the sentence it replaces,
+because it is a property of the code rather than an absence of features: every one of those
+strings is assigned through **`textContent`**, which sets character data and never parses
+markup. There is no markup-parsing sink anywhere in `src/` — no `innerHTML`, no `outerHTML`,
+no `insertAdjacentHTML`, no `document.write`, no Svelte `{@html}` — checked by grep over the
+whole frontend, which is the whole of it.
+
+Two things follow, and the first is the one that changed:
+
+- It is now a **testable** property rather than a rule to hold to. "No markup sink exists" is
+  a grep, and "document strings go through `textContent`" is a grep. Neither is wired as a
+  check yet, which makes this the one mitigation in this document enforced by a convention
+  and a reading rather than by a line — see residual risk 7.
+- A sink added later would not fail anything. `textContent` is the default idiom in this
+  frontend rather than a decision recorded anywhere near the code that depends on it.
+
+**CSP is real and is not the scaffold default**, which this document also had wrong.
+`tauri.conf.json` sets `default-src 'self'` with `img-src`/`connect-src` widened only to the
+tile protocol and the IPC origin, and no `'unsafe-inline'` anywhere. Tauri's scaffold ships
+`"csp": null` — no policy at all — so this is a narrowed policy, not an unexamined one. What
+is still scaffold is the **capability set**: `core:default` plus `dialog:allow-open`, where
+`core:default` is the template's own bundle and has not been pared to what the app calls.
 
 ## 5. The sandbox policy
 
 macOS, applied in the worker after the mappings are in place and PDFium is bound, and
-irrevocable thereafter. The authoritative copy is `PROFILE_WORKER` in
-`src-tauri/examples/worker_bench.rs`; it is reproduced here because a threat model that
-describes a policy without showing it cannot be checked.
+irrevocable thereafter. The authoritative copy is **`worker::SANDBOX_PROFILE`**
+(`src-tauri/src/worker.rs`), which `worker_child.rs` applies to itself; it is reproduced
+here because a threat model that describes a policy without showing it cannot be checked.
+
+**This section named the wrong copy until 2026-08-02**, pointing at `PROFILE_WORKER` in
+`src-tauri/examples/worker_bench.rs` — the *spike's* profile, which nothing ships. The two
+agree today, and §8 below had the right file the whole time, so the document disagreed with
+itself about which text governs. That is worth more than the typo it resembles: the shipped
+profile and the bench profile are **two copies of one distinction with nothing asserting
+they match**, which is the trap of that name. A bisection run against the bench copy
+certifies the bench copy. If they are ever to diverge, the bench is where it will happen
+silently, because it is the one with no user.
 
 ```
 (version 1)
@@ -593,56 +653,80 @@ the same probe image, sized from the smallest box the redaction covered — a co
 than the redacted text proves only that the engine reads larger text. Every engine failure, and
 a missing control, produce `NotVerified`, never `Illegible`.
 
-## 6. Windows — a gap, not a policy
+## 6. Windows — a policy, and a different one
 
-Untested, and it shares no mechanism with any of the above.
+Contained since 2026-07-29, and it shares no mechanism with §5.
 
-**What is known, as of 2026-07-29**, and it is worth stating precisely because "untested"
-undersells it in the wrong direction. The tree now compiles on `x86_64-pc-windows-msvc` and
-all seven gates pass, so the *behaviour* there is no longer unknown — it is known and it is
-bad: `Worker::spawn` refuses off macOS, `Backend::default_here()` therefore selects
-`Backend::InProcess`, and PDFium would parse hostile input **in the app process** with none
-of §5's containment. Every threat in §3 that is answered by "the worker cannot do that"
-is unanswered on Windows.
+**This section was titled "a gap, not a policy" and said "none of it is wired" until
+2026-08-02, four days after it was wired.** It is the largest instance of the failure this
+document's review step exists to catch, and the *inverse* of the usual one: not a mitigation
+claimed and absent, but a mitigation present and disclaimed. Both are dangerous and this
+direction is the quieter of the two — an over-claim gets corrected the first time someone
+checks it, while an under-claim reads as diligence and is what a reader budgets their
+remaining work against. Anyone planning from this section on 2026-08-01 would have scheduled
+a Windows sandbox that already existed, and anyone reasoning about §7.4's residual would have
+carried a risk that had been closed.
 
-**This fails open, not closed, and the distinction is the whole point of writing it down.**
-`Worker::spawn`'s refusal is enforced rather than described — two tests in `worker.rs` assert
-it, and one was shown to go red under mutation — but that refusal is only reached by a caller
-that *asks* for the worker backend (`TPDF_BACKEND=worker`). The default never asks: it
-selects `Backend::InProcess`, which spawns a render thread and binds PDFium directly. So a
-Windows user opening a PDF does not get an error; they get a working viewer with no
-containment at all. Nothing in this section is wired; the refusal guards a path nobody takes.
+**The mechanism, and where each half lives.** macOS gets its boundary from `sandbox_init`,
+which the child applies *to itself* after `exec` — there is a "before" in which to bind
+PDFium. Windows has no counterpart, so the **parent** builds the boundary instead, while the
+child is still suspended and has executed no instruction: a low-integrity token inside a job
+object (`sandbox_win::Containment`, `Job::create`, `low_integrity_token`). Spawning is
+`Worker::spawn`; selecting it is `Backend::default_here`, which returns `Backend::Worker` on
+both platforms.
 
-**The Windows column below is no longer intent.** As of 2026-07-29 `examples/win_sandbox_probe.rs`
-has measured it: a **job object plus a low integrity level** renders pixel-identically to an
-uncontained render while denying writes to the user profile and `OpenProcess` on the parent.
-A **restricting SID** — the stronger rung, and the one that would deny reads too — kills the
-child in the loader with `STATUS_DLL_NOT_FOUND` before `main`, because on Windows the token
-is in force from the first instruction and there is no "before" in which to bind PDFium.
-Reaching it needs Chromium's initial-token / lockdown-token handover.
+**What low integrity buys is write-denial and process-isolation, not read-denial.** A
+contained worker could still read any file the user can. That is why the document and the
+output are handed over as **inherited handles** rather than paths — the Windows analogue of
+the macOS `dup2`, and a structural necessity here rather than a convenience.
 
-So the row below is right about the *ingredients* and was optimistic about one of them. What
-low integrity buys is write-denial and process-isolation, **not** read-denial: a contained
-worker could still read any file the user can. That is why the probe hands the child its
-document and its output as inherited handles and never a path, and why a real worker must do
-the same rather than treating it as a convenience.
+**The stronger rung is not reachable by a flag.** A restricting SID would deny reads too, and
+kills the child in the loader with `STATUS_DLL_NOT_FOUND` before `main`, because on Windows
+the token is in force from the first instruction. Reaching it needs Chromium's initial-token
+/ lockdown-token handover, which is real work rather than a parameter
+(`examples/win_sandbox_probe.rs` measured all six rungs).
 
-None of it is wired. The probe proves the mechanism; `RenderService` still selects in-process
-off macOS, so everything above about failing open remains true today.
-
-The shape, with the Windows column now measured except where noted:
+The shape, with every Windows cell either wired or marked:
 
 | macOS | Windows |
 |---|---|
-| `sandbox_init` SBPL profile | Job object + low integrity level (**measured**); restricted token blocked on the loader |
-| No memory rlimit; a `proc_pid_rusage` poll is measured and **not wired** (§T3) | `JOB_OBJECT_LIMIT_PROCESS_MEMORY` — a real kernel bound, no polling |
-| Parent deadline per request, **wired** (`workers::watch_calls`); `RLIMIT_CPU` measured and not set, being a lifetime budget | `JOB_OBJECT_LIMIT_JOB_TIME`, parent deadline |
-| Unlinked temp file passed by descriptor | Named section object, or an inherited handle |
-| `dup2` to fixed fds before `exec` | Handle inheritance with an explicit attribute list |
+| `sandbox_init` SBPL profile (`worker::SANDBOX_PROFILE`), applied post-`exec` | Job object + low integrity, applied by the parent pre-`resume` (`sandbox_win`) — **wired**; restricting SID blocked on the loader, **not reachable** |
+| No memory rlimit; a `proc_pid_rusage` poll is measured and **not wired** (§T3) | `JOB_OBJECT_LIMIT_PROCESS_MEMORY` at `WORKER_MEMORY_CAP` (**1 GiB**) — a real kernel bound, no polling, **wired** |
+| Parent deadline per request, **wired** (`workers::watch_calls` + `kill_pid`); `RLIMIT_CPU` measured and not set, being a lifetime budget | Parent deadline, the same one, **wired** — `kill_pid` is `OpenProcess` + `TerminateProcess`. `JOB_OBJECT_LIMIT_JOB_TIME` **not set**, deliberately: see below |
+| — | `ActiveProcessLimit = 1`, `KILL_ON_JOB_CLOSE`, `DIE_ON_UNHANDLED_EXCEPTION` — **wired**, no macOS counterpart |
+| Unlinked temp file passed by descriptor | Section object, passed as an inherited handle |
+| `dup2` to fixed fds before `exec` | `DuplicateHandle` into the suspended child's table, the number named in argv |
 
-The memory row is the one worth looking forward to: Windows has the kernel bound macOS
-lacks, so the overshoot term in T3 should not exist there. The rest needs its own spike
-before the architecture can be called cross-platform.
+**`JOB_OBJECT_LIMIT_JOB_TIME` was claimed by this table and set nowhere**, found in the same
+review. It is now marked rather than wired, and the reason is that wiring it would repeat a
+mistake this document has already measured its way out of once: job time is a **lifetime** CPU
+budget, which is exactly the shape `RLIMIT_CPU` was rejected for on macOS (§T3 — under a 3 s
+limit a 1.72 s render succeeds and the next dies 1.30 s in). A lifetime budget on a *pooled*
+worker kills a reader's third page for the sins of the first two. The per-request deadline is
+the bound that was wanted, it is wired on both platforms, and job time would add a second
+mechanism that can only fire on the wrong thing.
+
+**The memory row is the one where Windows is stronger, and it is stronger by construction.**
+The kernel charges **committed** memory at `VirtualAlloc` time, so an allocation past the cap
+is refused before a byte of it exists — a decompression bomb is stopped one step earlier than
+any sampling scheme can reach, and T3's "polling bounds a leak, not a burst" negative result
+does not apply here. It is also why `Worker::footprint` returning `None` on Windows is not
+the gap it resembles: there is a kernel bound there instead of a poll.
+
+Both job limits were claimed by `win_sandbox_probe`'s own table and **tested by nothing**
+until 2026-07-30 — its three authority probes are all integrity-level properties, so every
+rung reported on `lowil` and above while the job's limits went unexercised. Now probed, with
+the uncontained rung as the control: `bare` commits 1 GB and starts a second process; every
+rung with a job is refused with `1455` (`ERROR_COMMITMENT_LIMIT`) and `1816`
+(`ERROR_NOT_ENOUGH_QUOTA`). `KILL_ON_JOB_CLOSE` is still only claimed — testing it means
+killing the probe itself.
+
+**Evidence that the whole path works, not just the pieces**: `worker-probe` passes 11/11 on
+`text-base14`, `text-cid`, `vector-heavy` and `rotated`, including **pixel-identical** tiles
+against an in-process render — so the font substitution the macOS sandbox caused did not
+recur here, as `win_sandbox_probe` predicted. `backend-probe` passes 38–40/42 across four
+corpora with byte-identical name sets. And the module check in §3 is external to the process,
+which is what makes it evidence rather than a milestone.
 
 ## 7. Residual risk, in one place
 
@@ -665,18 +749,28 @@ before the architecture can be called cross-platform.
    bounded by anything smaller than the pool size. Isolation is unaffected: every worker is
    separately sandboxed and separately killable, and one dying costs its document one
    process rather than the document.
-4. **Windows compiles and is entirely uncontained** (§6) — the tree gates green there, the
-   default backend is in-process, and a document opens and renders in the app process. This
-   fails open, though no longer silently: the uncontained default records
-   `render::UNSANDBOXED_MARK` and prints a `[WARN]`. Since 2026-07-29 the *remedy* is measured
-   rather than assumed — a job object plus low integrity renders pixel-identically and denies
-   writes (`examples/win_sandbox_probe.rs`) — but nothing uses it, so the risk is undiminished. Its
-   ceiling is now known too: low integrity does not deny reads, so even the wired version
-   would leave a contained worker able to read any file the user can.
+4. **A contained Windows worker can still read any file the user can** (§6). This entry read
+   "Windows compiles and is entirely uncontained ... nothing uses it, so the risk is
+   undiminished" until 2026-08-02, and the containment had been wired since 2026-07-29 — the
+   correction is in §6, along with why an under-claim is the more expensive direction to get
+   wrong. What remains is the ceiling rather than the gap: low integrity denies writes and
+   `OpenProcess`, **not** reads. Closing it needs a restricting SID, which stops the loader
+   before `main` and is only reachable through Chromium's initial-token handover. The
+   mitigation meanwhile is that the worker is never given a path — document and output arrive
+   as inherited handles — so a compromised worker must guess at what to read rather than
+   being handed it. A platform with neither mechanism still falls back to in-process, records
+   `render::UNSANDBOXED_MARK` and prints a `[WARN]`; no such platform is shipped.
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is
    exposed before any form feature exists.
-7. **Webview CSP and Tauri capabilities are scaffold defaults.**
+7. **Nothing enforces the webview's "data, never markup" rule** (§T8). The rule holds today
+   — every document-derived string reaches the DOM through `textContent`, and the frontend
+   contains no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write` or `{@html}`
+   — but it holds by convention, and both halves are a grep that nothing runs. This entry
+   said "CSP and Tauri capabilities are scaffold defaults" until 2026-08-02, which was wrong
+   about the CSP: `default-src 'self'` with no `'unsafe-inline'` is a narrowed policy where
+   the scaffold ships `"csp": null`. The **capability set** is the part that is still
+   scaffold — `core:default` plus `dialog:allow-open`, unpared.
 8. **A compromised worker can lie about what it saw** — no verification result may rest on
    a single worker's word.
 9. **Nothing here protects previous copies, backups, or free sectors.**
@@ -723,23 +817,52 @@ before the architecture can be called cross-platform.
 
 ## 8. How to re-verify any of this
 
+These are **`[[example]]` targets, not `[[bin]]` targets**, since 2026-07-31 — they were moved
+out of the installer, which had been shipping all 17 of them including a sandbox prober. The
+bare `worker-bench <file.pdf>` form this section carried until 2026-08-02 has not been
+runnable since. `cargo run --example worker_bench` is not it either: cargo matches the target
+name, which is hyphenated, and the underscored form fails as *"no such target"* — which reads
+like a missing harness rather than a misspelling. `BUILD.md` has the same trap.
+
 ```
-worker-bench <file.pdf> --mode engine     --lib vendor/pdfium/lib
-worker-bench <file.pdf> --mode authority  --lib vendor/pdfium/lib   # use a base-14 fixture
-worker-bench <file.pdf> --mode footprint  --lib vendor/pdfium/lib --budget-mb 128 \
-                                          --poll-ms 0,1,5,20,50
-worker-bench <file.pdf> --mode crash      --lib vendor/pdfium/lib
-worker-bench <file.pdf> --mode limits     --lib vendor/pdfium/lib
-worker-probe  <file.pdf>                  # the boundary itself
-backend-probe <file.pdf>                  # that the viewer's own path goes through it
+# macOS and Windows both. Add --release or measure a debug build by mistake.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example worker-bench -- \
+    <file.pdf> --mode engine     --lib vendor/pdfium/lib
+cargo run --release --manifest-path src-tauri/Cargo.toml --example worker-bench -- \
+    <file.pdf> --mode authority  --lib vendor/pdfium/lib   # use a base-14 fixture
+cargo run --release --manifest-path src-tauri/Cargo.toml --example worker-bench -- \
+    <file.pdf> --mode footprint  --lib vendor/pdfium/lib --budget-mb 128 \
+                                 --poll-ms 0,1,5,20,50
+cargo run --release --manifest-path src-tauri/Cargo.toml --example worker-bench -- \
+    <file.pdf> --mode crash      --lib vendor/pdfium/lib
+cargo run --release --manifest-path src-tauri/Cargo.toml --example worker-bench -- \
+    <file.pdf> --mode limits     --lib vendor/pdfium/lib
+
+cargo build --release --manifest-path src-tauri/Cargo.toml --example worker-probe
+./src-tauri/target/release/examples/worker-probe  <file.pdf>   # the boundary itself
+./src-tauri/target/release/examples/backend-probe <file.pdf>   # that the viewer's path uses it
 
 # §5.1, macOS only. Bare first: the control must read its own string back, or the
 # sandboxed runs below are unreadable rather than informative.
 swiftc -O -o /tmp/vision_probe scripts/vision_sandbox_probe.swift
 /tmp/vision_probe
-/tmp/vision_probe /tmp/prod.sb            # the profile extracted from worker.rs
+/tmp/vision_probe /tmp/prod.sb            # worker::SANDBOX_PROFILE, extracted from worker.rs
 ```
+
+**`worker-bench` is macOS-only** and correctly so: it carries its own POSIX worker, fd passing
+and SBPL profiles included, and shares no mechanism with the Windows model. That is a
+genuine refusal rather than an unported one — `AGENTS.md` records four separate lists of
+"Windows blockers" that were wrong by over-reporting, so the distinction is worth stating.
+`worker-probe` and `backend-probe` run on both.
+
+**On Windows, `--mode engine` reports `[NOT VERIFIED]` rather than a clean bill** (§T2): the
+shipped `pdfium.dll` carries no local C++ symbols, so `v8::` and `CXFA_` being absent from it
+means nothing. Do not read that as a pass. What stands there instead is the asset name and
+the pinned digest `scripts/fetch_pdfium.py` asserts — a claim about *which file was fetched*
+rather than about what is in it.
 
 `--mode engine` and `--mode authority` are the two that must be re-run after every PDFium
 bump: the first because the absence of a JavaScript engine is a property of the build, the
-second because font handling under the sandbox is a property of the mapper.
+second because font handling under the sandbox is a property of the mapper. Windows adds a
+third: `win_sandbox_probe`, since the pixel-identity of a contained render is a property of
+the font mapper under a token as much as under a profile.
