@@ -5540,3 +5540,49 @@ ships. Proved with a **real** wrong toolchain rather than a synthetic one --- th
 was still on the box, so `RUSTUP_TOOLCHAIN=1.97.1-x86_64-pc-windows-gnu` gives the same
 version, the same commit hashes, every pre-existing check passing, and only the new one
 firing. That is the exact state the machine was in.
+
+---
+
+### A mitigation present and disclaimed is quieter than one claimed and absent
+
+`docs/THREAT-MODEL.md` opens with a rule: every mitigation is either measured, with the
+spike named, or marked untested. That rule is aimed squarely at the **over-claim** --- a
+sentence in the present tense describing a control nobody wired --- and this repository has
+been bitten by it three times, most sharply when §T3 gave the timing of a kill that could
+not happen.
+
+The fourth review, on 2026-08-02, found seven drifted claims and **six of them drifted the
+other way**. §6 was still titled *"Windows --- a gap, not a policy"* and said *"none of it
+is wired"*, four days after `Backend::default_here` started returning `Backend::Worker`
+there and `sandbox_win` started building a job object and a low-integrity token around
+every worker. Residual risk 4 carried the matching *"nothing uses it, so the risk is
+undiminished"*. §T8 rested on *"none of it reaches the UI at all"*, which the sidebar and
+search had falsified. §7.7 called a real `default-src 'self'` policy a scaffold default,
+where Tauri's scaffold ships `"csp": null`. Only one --- `JOB_OBJECT_LIMIT_JOB_TIME`,
+claimed by §6's table and set nowhere --- was the over-claim the rule anticipates.
+
+**The asymmetry is the lesson, and it runs opposite to intuition.** An over-claim is
+self-correcting on contact: it is a specific, checkable assertion, so the first person to
+look for the line finds nothing and the document gets fixed. An under-claim is checked by
+nobody, because nobody audits a document for being *too modest* --- it reads as diligence,
+and diligence is not a defect anyone goes looking for. It survives exactly as long as it
+takes for someone to independently rediscover the work.
+
+And it costs more than a stale sentence. A threat model is what a reader plans against: a
+reader budgeting from §6 on 2026-08-01 would have scheduled a Windows sandbox that already
+existed, and one reasoning about the residual would have carried a risk that had been
+closed. The over-claim wastes a check; the under-claim wastes the work.
+
+The mechanism is mundane and is the part worth defending against: these sections were
+written *before* the thing they describe was built, and the commit that built it touched
+code, tests and `AGENTS.md` --- never the document whose job was to say whether it existed.
+Nothing points from `sandbox_win.rs` back to the paragraph that disclaims it.
+
+So the rule needs a second half, and it is now in the document: **a mitigation marked
+untested must be re-read when the thing it describes is built, and the commit that wires a
+control is the commit that owes the threat model a line.** The same review is what caught
+§5 naming `worker_bench.rs`'s copy of the sandbox profile as authoritative when the shipped
+one is `worker::SANDBOX_PROFILE` --- so `--mode authority`, which §8 names as *the*
+re-verification after a PDFium bump, was certifying the spike's copy rather than the
+profile that ships. That copy is now the production constant; the entry *"two copies of a
+distinction drift"* is the general form.
