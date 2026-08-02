@@ -22,22 +22,30 @@ and `setAttribute` left to travel by, and none of those parses markup. So this
 check does not need to know *which* strings came from a document, which is the
 part no grep could ever decide.
 
-Two things bound that argument, and both were checked by hand on 2026-08-02
-rather than assumed:
+One thing bounds that argument: a string that cannot become **markup** can still
+become a **navigation or a script** by reaching `href`, `src` or an event
+handler. So four more rules close the three routes those have --- a computed
+attribute name, a dangerous literal one, and a direct property assignment ---
+plus the blunt one that makes the others nearly moot: **no URL-bearing element is
+ever created.** With no `<a>`, `<img>` or `<iframe>` in existence there is
+nothing for a URL to be assigned to.
 
-- **`setAttribute` can be a sink** when the attribute is `href`, `src` or an
-  event handler and the value is attacker-controlled. Every `setAttribute` call
-  in this frontend passes a **constant** attribute name --- `role`, `aria-label`,
-  `aria-selected`, `tabindex` --- so there is no URL-bearing attribute to poison.
-- **No document-derived URL crosses the boundary at all.** `outline.rs` refuses
-  `/URI`, `/Launch` and `/GoToR` actions and reports them as
-  `Target::Refused { action }`, so an outline entry can never carry a
-  `javascript:` destination into the UI.
+The first version of this gate, shipped earlier the same day, enforced only that
+the attribute *name* be a literal, and `docs/THREAT-MODEL.md` justified
+sufficiency with "every `setAttribute` passes a constant name, so there is no
+URL-bearing attribute to poison". That is an observation about the attributes
+that happen to be used, not a property the check enforced:
+`setAttribute("href", row.title)` names a constant and would have passed. The
+weaker version was correct about the tree in front of it and wrong about what it
+guaranteed, which is the distinction this whole file exists to hold.
 
-If either of those changes --- a `href` built from document text, or the outline
-starting to follow URI actions --- this check goes on passing and stops being
-sufficient. That is the one way it can be wrong, and it is recorded here rather
-than left to be discovered.
+**What remains outside the check**, and is therefore residual risk 7 rather than
+a claim: no document-derived URL crosses the boundary at all, because
+`outline.rs` refuses `/URI`, `/Launch` and `/GoToR` and reports them as
+`Target::Refused { action }` whose string is one of five literals we choose. That
+is enforced in Rust --- `outline.rs`'s `no_target_variant_may_carry_a_url` fails
+to *compile* if a variant is added --- but nothing links the two, so a Rust
+change cannot turn this check red. Read the two together.
 
 ## Why a script and not a vitest test
 
@@ -49,6 +57,7 @@ Usage:
     scripts/check_webview_sinks.py
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -88,6 +97,50 @@ EXEMPT = "webview-sink-ok:"
 # `setAttribute` with a computed name. Dotted, so this matches a *call* and not
 # the method definition in `testdom.ts`.
 ATTRIBUTE_CALL = ".setAttribute("
+
+# Attributes whose *value* is a URL or a script, so a literal name is no defence.
+#
+# The first version of this gate required only that the attribute **name** be a
+# literal, and the threat model justified sufficiency with "every setAttribute
+# passes a constant name, so there is no URL-bearing attribute to poison". That
+# is a statement about the attributes that happen to be used, not one the check
+# enforced --- `setAttribute("href", row.title)` names a constant and would have
+# passed. Closed 2026-08-02, hours after shipping the weaker version.
+DANGEROUS_ATTRS = r"href|src|srcdoc|action|formaction|xlink:href|data|ping|on\w+"
+
+# Elements that carry a URL or execute. The frontend creates none of them, which
+# is a stronger invariant than policing their attributes: with no `<a>`, `<img>`
+# or `<iframe>` in existence there is nothing for a URL to be assigned *to*.
+URL_ELEMENTS = r"a|iframe|img|object|embed|form|script|link|base|source|track|video|audio"
+
+# DOM properties that navigate or execute when assigned. Lowercase and exact, on
+# purpose: `this.onChange = onChange` in `search.ts` is an ordinary field, and a
+# rule matching `.on[a-z]+` in any case flags it. Real DOM handlers are all
+# lowercase, so case-sensitivity is what separates the two without an allowlist.
+URL_PROPS = (
+    r"href|src|srcdoc|action|formaction|"
+    r"onclick|onload|onerror|onmouseover|onmouseenter|onfocus|onblur|onsubmit|"
+    r"onchange|oninput|onkeydown|onkeyup|onkeypress|onauxclick|onpointerdown"
+)
+
+RULES = [
+    (
+        "setAttribute(<computed name>)",
+        re.compile(r"\.setAttribute\(\s*(?![\"'])"),
+    ),
+    (
+        "setAttribute(<url/script attribute>)",
+        re.compile(rf"\.setAttribute\(\s*[\"'](?:{DANGEROUS_ATTRS})[\"']", re.I),
+    ),
+    (
+        "createElement(<url-bearing element>)",
+        re.compile(rf"createElement\(\s*[\"'](?:{URL_ELEMENTS})[\"']", re.I),
+    ),
+    (
+        "assignment to a navigating property",
+        re.compile(rf"\.(?:{URL_PROPS})\s*=(?!=)"),
+    ),
+]
 
 
 def indices(haystack: str, needle: str) -> "list[int]":
@@ -141,18 +194,15 @@ def main() -> int:
             lines_scanned += 1
             found = [s for s in SINKS if s in line]
 
-            # The second rule, and the one that keeps the first rule
-            # *sufficient*: `setAttribute` is a sink when the attribute is
-            # `href`, `src` or an event handler, so the argument that decides
-            # whether it is one must not be computed. Matched on the dotted
-            # form, which is a call --- the bare form is `testdom.ts`'s own
-            # method definition, and excluding it by shape beats excusing it by
-            # name.
-            for index in indices(line, ATTRIBUTE_CALL):
-                attribute_calls += 1
-                rest = line[index + len(ATTRIBUTE_CALL) :].lstrip()
-                if not rest.startswith(('"', "'")):
-                    found.append(ATTRIBUTE_CALL.lstrip("."))
+            # The rules that keep the sink list *sufficient*. A string that
+            # cannot become markup can still become a navigation or a script if
+            # it reaches `href`, `src` or an event handler, by any of the three
+            # routes those have: a computed attribute name, a dangerous literal
+            # one, or a direct property assignment. The element rule is the
+            # blunt one and the strongest --- with no `<a>` or `<iframe>` ever
+            # created, there is nothing for a URL to be assigned to.
+            attribute_calls += len(indices(line, ATTRIBUTE_CALL))
+            found += [name for name, pattern in RULES if pattern.search(line)]
 
             if not found:
                 continue
@@ -166,7 +216,8 @@ def main() -> int:
     # nothing cannot read as a clean bill.
     print(
         f"scanned {len(files)} files, {lines_scanned} lines, "
-        f"{len(SINKS)} sink patterns, {attribute_calls} setAttribute call(s), "
+        f"{len(SINKS)} sink patterns, {len(RULES)} rules, "
+        f"{attribute_calls} setAttribute call(s), "
         f"{exempted} exemption(s) honoured"
     )
 

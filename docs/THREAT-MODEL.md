@@ -582,11 +582,19 @@ nowhere at all** (refused — a pattern that stops occurring passes identically 
 finds nothing). The exemption marker `webview-sink-ok:` works and every use of it is counted
 and printed, so it cannot silence the check quietly.
 
-What the gate does **not** cover is the second bound above: that no document-derived URL
-reaches the frontend at all. That rests on `outline.rs` refusing `/URI`, `/Launch` and
-`/GoToR`, which is enforced in Rust and tested there, but nothing ties the two facts
-together. If the outline ever starts following URI actions, this gate goes on passing and
-stops being sufficient. That is the one way it can be wrong, and it is residual risk 7.
+`setAttribute` is not the only route a *non-markup* string can still navigate or execute by,
+so three more rules close the rest: a dangerous literal attribute name (`href`, `src`,
+`onclick`, …), an assignment to a navigating property, and the blunt one that makes the
+others nearly moot — **no URL-bearing element is ever created**. With no `<a>`, `<img>` or
+`<iframe>` in existence there is nothing for a URL to be assigned to. Each was proved to fire,
+and `this.onChange = onChange` — an ordinary field, not a DOM handler — was proved *not* to,
+which is what says the rule discriminates rather than matching everything.
+
+The backend half is enforced by the type. `outline.rs` refuses `/URI`, `/Launch` and `/GoToR`
+into `Target::Refused { action }`, whose string is one of five literals chosen in that file;
+`no_target_variant_may_carry_a_url` matches `Target` exhaustively, so adding a URL-bearing
+variant is `error[E0004]` rather than a test failure. What is *not* enforced is the link
+between the two halves — see residual risk 7.
 
 **CSP is real and is not the scaffold default**, which this document also had wrong.
 `tauri.conf.json` sets `default-src 'self'` with `img-src`/`connect-src` widened only to the
@@ -787,18 +795,34 @@ which is what makes it evidence rather than a milestone.
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is
    exposed before any form feature exists.
-7. **The `sinks` gate is sufficient only while no document-derived URL reaches the frontend**
-   (§T8). The "data, never markup" rule is enforced as of 2026-08-02 — no markup sink exists
-   and every `.setAttribute(` names a literal attribute, both gated and both proved by
-   mutation. The argument that this covers everything has one load-bearing premise the gate
-   cannot see: `outline.rs` refuses `/URI`, `/Launch` and `/GoToR`, so no attacker-controlled
-   URL crosses. Wire those two together, or a change on the Rust side will silently retire a
-   green check on the TypeScript side.
+7. **The webview invariant is enforced on both sides, and nothing links the two sides**
+   (§T8). Both halves landed 2026-08-02 and each is proved:
 
-   This entry said "CSP and Tauri capabilities are scaffold defaults" until 2026-08-02, which
-   was wrong about the CSP: `default-src 'self'` with no `'unsafe-inline'` is a narrowed
-   policy where the scaffold ships `"csp": null`. The **capability set** is the part that is
-   still scaffold — `core:default` plus `dialog:allow-open`, unpared.
+   - **Frontend** — `scripts/check_webview_sinks.py`, the `sinks` gate. No markup sink, no
+     computed attribute name, no dangerous literal attribute (`href`, `src`, `on*`), no
+     URL-bearing element created, no assignment to a navigating property. Every rule shown
+     to fire by mutation, with a control (`this.onChange`, an ordinary field) shown *not* to.
+   - **Backend** — `outline.rs`'s `no_target_variant_may_carry_a_url`. `Target` has no
+     URL-bearing variant, and adding one **fails to compile**: `error[E0004]:
+     non-exhaustive patterns: Target::Uri { .. } not covered`. That is the strongest verdict
+     a mutation can get — not caught, but unmakeable.
+
+   The residual is the seam. The frontend gate's sufficiency depends on the backend fact, and
+   a grep over TypeScript cannot see Rust — so a Rust change cannot turn the gate red, and
+   the two are held together by these paragraphs and two doc comments that name each other.
+   That is better than a convention and weaker than a check.
+
+   The first version of the gate, shipped hours earlier, is the reason to state this
+   precisely: it enforced only that an attribute *name* be a literal, while the threat model
+   claimed sufficiency from "every `setAttribute` passes a constant name, so there is no
+   URL-bearing attribute to poison". `setAttribute("href", row.title)` satisfies both the
+   check and the sentence. Correct about the tree in front of it, wrong about what it
+   guaranteed.
+
+   This entry also said "CSP and Tauri capabilities are scaffold defaults" until 2026-08-02,
+   which was wrong about the CSP: `default-src 'self'` with no `'unsafe-inline'` is a
+   narrowed policy where the scaffold ships `"csp": null`. The **capability set** is the part
+   that is still scaffold — `core:default` plus `dialog:allow-open`, unpared.
 8. **A compromised worker can lie about what it saw** — no verification result may rest on
    a single worker's word.
 9. **Nothing here protects previous copies, backups, or free sectors.**

@@ -699,4 +699,77 @@ mod tests {
         }
         .any());
     }
+
+    /// No [`Target`] variant may carry a URL, and adding one must not compile.
+    ///
+    /// This is the Rust half of a two-sided invariant, and the halves cannot see
+    /// each other. `scripts/check_webview_sinks.py` proves the frontend has no
+    /// way to turn a string into markup, a navigation or a script; that proof is
+    /// *sufficient* only because no attacker-controlled URL ever reaches the
+    /// frontend to be turned into anything. This is what makes that true:
+    /// `/URI`, `/Launch` and `/GoToR` become [`Target::Refused`], whose `action`
+    /// is one of five literals chosen here rather than anything the document
+    /// said.
+    ///
+    /// The match below is **exhaustive and deliberately not a wildcard**. A new
+    /// variant --- `Target::Uri { url: String }`, say --- is a compile error
+    /// here, which is the strongest verdict available: the mistake cannot be
+    /// made and then caught, it cannot be made. `AGENTS.md` records the
+    /// preference for moving an impossibility into the type over guarding it at
+    /// runtime, and a non-exhaustive match is that in its cheapest form.
+    ///
+    /// If a variant genuinely must carry a URL one day, this test failing to
+    /// compile is the notice that `docs/THREAT-MODEL.md` T8 and the sinks gate
+    /// both need revisiting first.
+    #[test]
+    fn no_target_variant_may_carry_a_url() {
+        /// Every field of every variant, as the frontend would receive it.
+        fn fields(target: &Target) -> Vec<String> {
+            match target {
+                // Numbers. A page index and an offset cannot be a URL.
+                Target::Page { page, top_pt } => {
+                    vec![page.to_string(), format!("{top_pt:?}")]
+                }
+                // Unit variants carry nothing at all.
+                Target::Broken | Target::None => vec![],
+                // The one string, and it is ours.
+                Target::Refused { action } => vec![action.clone()],
+            }
+        }
+
+        // Every refusal this module can build, by construction rather than by
+        // listing them again: these are the five `refused()` call sites.
+        let refusals = ["remote", "uri", "launch", "embedded", "unsupported"];
+        for kind in refusals {
+            let Target::Refused { action } = refused(kind) else {
+                panic!("refused() must build a Refused");
+            };
+            assert_eq!(
+                action, kind,
+                "the action name must be ours, not the document's"
+            );
+            assert!(
+                !action.contains(':') && !action.contains('/'),
+                "an action name that can hold a scheme or a path is a URL in disguise: {action:?}"
+            );
+        }
+
+        // And the walk never produces a target carrying anything URL-shaped.
+        for target in [
+            Target::Page {
+                page: 3,
+                top_pt: Some(1.0),
+            },
+            Target::Broken,
+            Target::None,
+            refused("uri"),
+        ] {
+            for field in fields(&target) {
+                assert!(
+                    !field.contains("://") && !field.starts_with("javascript:"),
+                    "a Target field reached the frontend looking like a URL: {field:?}"
+                );
+            }
+        }
+    }
 }
