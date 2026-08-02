@@ -5283,3 +5283,63 @@ Two things worth carrying:
   normalised the page, not because of anything in `search.rs`. A check that passes for a
   different reason than its name gives is the failure mode the three-way labelling exists to
   prevent, and it caught itself here.
+
+### The gates had never run on the platform where they fail
+
+`examples/ocr_probe.rs` did `use tpdf_lib::ocr_vision::Vision;` at the top level, and
+`ocr_vision` is `#[cfg(target_os = "macos")]` in `lib.rs`. On Windows that is an
+unresolved import, so `clippy --all-targets`, `cargo test` and `cargo build --examples`
+all failed --- three of the nine gates, red for **two days**, on a commit whose author had
+run the full sweep and seen 9/9.
+
+Both facts are true at once because gates run where you are standing. The OCR interfaces
+landed 2026-07-31 on a Mac; the next Windows work was on a different day and a different
+branch of the checklist. Nothing in the repository knew the difference, and nothing could:
+a green sweep is a statement about one machine, and it reads exactly like a statement about
+the product.
+
+The repository's **first ever CI run** found it in six minutes. That is the entry: not the
+`cfg` mistake, which is ordinary, but that a two-platform project verified by one machine
+has an entire platform's worth of compile errors it cannot see, and the size of that blind
+spot is unknowable from inside it. It was three gates. It could have been thirty.
+
+Two things follow.
+
+- **Fix it with a module gate, never a crate-root `#![cfg]`.** That is a separate trap with
+  its own entry: `#![cfg(...)]` at the top of a target removes every item including `main`,
+  and cargo then reports "`main` function not found", which reads like a missing entry point
+  rather than a deliberately empty target. The shape that works is a refusing `main` under
+  `#[cfg(not(...))]`, a dispatching `main` under `#[cfg(...)]`, and the body in
+  `src/probes/` reached by `#[path]` --- and the body's `main` must be `pub`, or the
+  dispatcher gets `E0603: function main is private`, which is how this fix failed its first
+  compile.
+- **A cross-compile check is available and is not free.** `cargo check --target
+  x86_64-pc-windows-msvc --all-targets` catches exactly this class locally, but it needs the
+  *other* platform's PDFium staged in `vendor/` (the Tauri build script validates that the
+  resource exists) and then still stops at `tauri-winres`, which wants `llvm-rc`. Both were
+  attempted here; the second was not worth a 1.5 GB LLVM install when CI answers the same
+  question for nothing.
+
+### A test that refuses an empty fixture set is what makes CI's absence visible
+
+The same first CI run failed on macOS too, and for the opposite reason: nothing was wrong.
+
+`print.rs`'s third-parser check iterates six fixtures, `[SKIP]`s each absent one, and then
+asserts `examined > 0`. `testdata/*.pdf` is gitignored and generated, and the workflow did
+not generate any --- so the check printed six SKIP lines and refused, exactly as designed.
+The assertion was added because *"a run where every fixture was absent prints six SKIP lines
+and otherwise looks exactly like a run where every one passed"*, and this is that sentence
+collecting.
+
+Worth recording for the shape rather than the fix. A guard written against a hypothetical
+--- nobody had a fixture-less environment when it was written, because everyone's checkout
+had run the generators --- sat inert for weeks and then fired the first time a genuinely new
+environment appeared. **The environments a check will meet are not enumerable in advance,
+which is the argument for asserting the precondition rather than trusting it.**
+
+The fix is a fixture step in `ci.yml` generating the two **dependency-free** ones, and the
+part that needs saying out loud is what it does *not* generate: anything from
+`make_text_pdf.py` needs fonttools and embeds a *system* font that differs per runner, and
+`make_incremental_pdf.py` writes ~550 MB on purpose. Those tests still skip in CI. A
+workflow that silently covers two thirds of a fixture set is the same failure one level up,
+so the omission is written in the workflow beside the step.

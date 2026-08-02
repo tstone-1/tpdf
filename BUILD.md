@@ -283,11 +283,33 @@ Two of them are worth understanding rather than just running:
   missing or is not the pinned build --- which is the difference between a benchmark that
   means something and one that does not.
 
-### CI runs on a tag, and on nothing else
+- **The `notices` gate runs last because it reads the build's output.** It derives which
+  npm packages ship from `dist/assets/*.js.map` --- the bundler's own account of what it
+  emitted --- so it needs the `build` gate above it to have run. Two checks in one command:
+  that `THIRD-PARTY-NOTICES.md` still matches the dependency tree, which is the
+  binary-distribution obligation; and that no GPL, LGPL or AGPL licence has appeared. Its
+  third population is the one nothing else can see --- the fourteen C++ libraries inside
+  libpdfium, read from `vendor/pdfium/licenses/`, which `cargo metadata` is structurally
+  blind to. Regenerate with `scripts/third_party_notices.py` and commit the result; never
+  hand-edit the file.
 
-There is still no per-push CI, for the reason there never was: one machine, and a workflow
-running on every commit would add macOS-runner minutes and a second place for the gate list
-to live, in exchange for catching nothing `scripts/gates.py` does not catch locally first.
+### CI runs per push and per pull request, and again on a tag
+
+`.github/workflows/ci.yml` runs the gates on `macos-latest` and `windows-2025` for every
+push to `main` and every pull request, since 2026-08-02.
+
+This section said "CI runs on a tag, and on nothing else" until then, and the reason it
+gave was half wrong in a way worth keeping. The objection was never runner minutes --- it was
+that a workflow would be **a second place for the gate list to live**. `ci.yml` does not
+restate the commands, it invokes `scripts/gates.py`, so that objection never applied to the
+workflow that was eventually written. What changed materially is that the repository went
+public and macOS minutes stopped costing 10x against a private allowance. "One machine" was
+a description of the circumstances, not an argument.
+
+**What CI cannot cover, and why the harnesses below stay manual.** `viewer_check.py` and
+`mutate_viewer.py` drive a real window and need an unlocked, unoccluded screen. On a
+headless runner they do not fail, **they hang** --- which is the failure shape this project
+reads worst, since a hang and a pass both produce no red. Do not add them to a workflow.
 
 `.github/workflows/release.yml` fires on a CalVer tag. It **invokes `scripts/gates.py`** on
 both platforms rather than re-listing commands in YAML, so the checklist and the gate stay
