@@ -64,10 +64,12 @@ there, and the predefined-CMap page has no metrics here and may well have real o
 only be a regression check --- which is exactly what is wanted from it.
 
 So: regenerate the fixtures, run `viewer_check.py` on all eleven, and confirm 163 names with
-identical name sets and no new red. The three unit tests carrying the measured Windows
-geometry (`reading.test.ts`, under *"a space whose font floated its box off the line"*) are
-platform-independent and should pass anywhere; if one of them fails on macOS, the geometry in
-it is wrong rather than the rule, and that is worth knowing before anything else is touched.
+identical name sets and no new red. That is the whole of it --- **the unit-test half is already
+answered**, and by CI rather than by anyone's prediction: `Gates (macos-latest)` is green on
+`29e1907`, and `gates.py` runs vitest, so the three tests carrying the measured Windows
+geometry (`reading.test.ts`, under *"a space whose font floated its box off the line"*) pass on
+that platform. Read this before re-deriving it; the corpus run is what CI structurally cannot
+do, because `viewer_check.py` needs a real unoccluded window.
 
 **The spike binaries take `tpdf_lib::PDFIUM_SUBDIR` now**, so they find the library on Windows
 without `--lib`. Nine were changed --- `incremental_save`, `outline_probe`, `remove_probe`,
