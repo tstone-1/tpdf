@@ -14,6 +14,72 @@ informed one rather than a guess.
 
 ---
 
+## HANDOVER — open on Windows, written 2026-08-02 from macOS
+
+**Delete this whole section once the four items below are done.** It is a transient note in
+an auto-loaded file, so it costs every agent on every machine until it goes.
+
+Six commits landed today (`b3f80e2..211854d`) and **every one was written and verified on
+macOS only**. CI covers the eleven gates on both platforms; it structurally cannot cover the
+rest, because `viewer_check.py` and the mutation harnesses need a real unlocked screen and
+minutes of rebuilds. The traps *"the gates had never run on the platform where they fail"*
+and *"a harness that has never run on a platform produces no failures there"* are both about
+exactly this gap.
+
+What landed: a `sinks` gate (`scripts/check_webview_sinks.py`, the eleventh), a threat-model
+correction, and a new `src-tauri/src/encoding.rs` wired through the worker to the find bar
+and the accessibility layer. `docs/PLAN.md` Phase 1 has the feature; `docs/THREAT-MODEL.md`
+§6 and §T8 have the corrections.
+
+### 1. Run the two mutation harnesses
+
+Neither runs in CI, and both were fixed on 2026-07-30 to work on Windows at all --- so a run
+there is worth more than usual.
+
+```
+scripts/mutate_rust.py
+scripts/mutate_frontend.py
+```
+
+### 2. `encoding::` is not in the standing mutation harness --- add it
+
+`scripts/mutate_rust.py`'s `FILTERS` is `["search::", "structure::", "text::"]`. The new
+module is covered by **ad-hoc** mutations run once from a scratch script, not by the harness,
+so nothing re-checks it. Five mutations were proved to be caught, each by the test aimed at
+it, and they are the ones to encode:
+
+| mutation | caught by |
+|---|---|
+| key on `/Encoding` instead of `/CIDSystemInfo /Ordering` | `a_known_ordering_...`, `identity_encoding_over_a_known_ordering_...` |
+| ignore `/ToUnicode` entirely | `a_tounicode_settles_it_even_over_identity_ordering` |
+| treat simple fonts as composite | `a_simple_font_is_not_considered` |
+| call an unjudgeable font clean | `a_font_that_cannot_be_judged_is_reported_as_unknown` |
+| add `Identity` to `MAPPABLE_ORDERINGS` | `a_page_lopdf_cannot_account_for_is_unknown` |
+
+The first is the one that matters: `encodings.pdf` cannot discriminate the two rules, because
+its pages have encoding and ordering covarying. Only the synthetic tests catch it.
+
+### 3. The feature has no end-to-end evidence on any platform
+
+Six hops --- Tauri command -> `Search` -> status -> `App.svelte` -> `Results` -> `statusFor`
+--- each typechecked and unit-tested, none ever exercised in a running window.
+`scripts/viewer_check.py` has no `encodings.pdf` phase. Adding one is the single most
+valuable thing outstanding, and it is not Windows-specific: whichever machine gets there
+first should do it.
+
+What it must assert: open `testdata/encodings.pdf`, search for a word visible on page 1, and
+find the find-bar line naming a page that could not be searched. Give it the control the
+harness rules demand --- the same search on `text-heavy.pdf` must **not** produce that line,
+or a check that always fires reads identically to one that works.
+
+### 4. Windows bundle check, `BUILD.md` step 8
+
+Never run against this state. **Move `vendor/pdfium/bin/pdfium.dll` aside first**, or the
+check runs against the development tree rather than the distributable --- until 2026-07-31 no
+bundle contained PDFium at all and every check passed anyway.
+
+---
+
 ## What tpdf is
 
 A desktop PDF viewer and editor for macOS and Windows. Built because nothing on the
