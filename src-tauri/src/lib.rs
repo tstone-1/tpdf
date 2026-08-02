@@ -210,8 +210,14 @@ fn log_file(app: &tauri::AppHandle) -> PathBuf {
 /// binaries on two separate days (`worker-probe`, then `backend-probe`), which is
 /// once more than a fact should be rediscovered.
 ///
-/// Four spike binaries still hardcode `lib`. They have never been run on Windows;
-/// the next one that is should take this instead of adding a third copy.
+/// Every binary that can run on Windows now takes it. That sentence replaces a
+/// count --- "four spike binaries still hardcode `lib`" --- which was nine by the
+/// time anyone checked, and which is why this was rediscovered a *third* time, by
+/// `text-probe` failing to bind on 2026-08-02. A number in prose is exactly what
+/// nobody updates; the authority is
+/// `grep -rn 'vendor/pdfium/lib' src-tauri/examples`, and what it should return
+/// is the two macOS-only binaries, `fdpass-probe` and `ocr-probe`, where `lib` is
+/// simply correct.
 pub const PDFIUM_SUBDIR: &str = if cfg!(windows) { "bin" } else { "lib" };
 
 /// The file whose presence proves [`PDFIUM_SUBDIR`] is the right directory.

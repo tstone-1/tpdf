@@ -48,6 +48,7 @@ The output is gitignored. Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zlib
@@ -665,6 +666,20 @@ def build_encrypted(path: str) -> "list[dict]":
     password in any reader, so a user has every reason to expect a rewrite to
     work on it.
     """
+    # Refused before anything is written, not just before the call: the check
+    # raises, so a guard placed after the intermediate is built leaks it -- the
+    # `finally` that removes it is never entered. Named at all because the
+    # failure otherwise is a bare `FileNotFoundError: [WinError 2] The system
+    # cannot find the file specified` out of `_winapi.CreateProcess`, which names
+    # neither qpdf nor this fixture and reads as a missing *input*.
+    if shutil.which("qpdf") is None:
+        raise SystemExit(
+            "[FAIL] qpdf is not on PATH, and this fixture is built with it.\n"
+            "       Without it there is no hostile-manifest.json, so"
+            " sanitize-rewrite cannot start.\n"
+            "       See the prerequisites table in BUILD.md."
+        )
+
     text = needle("encrypted")
     pdf = Pdf()
     catalog, _, _ = skeleton(

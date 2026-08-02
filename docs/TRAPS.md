@@ -4677,6 +4677,63 @@ meet it. The control that holds this is the comma --- 2.89 pt, twenty-nine times
 threshold --- and it has to be asserted **on the box**, because a character routed by index
 keeps its place in the ranges and reads identically either way.
 
+### An absolute epsilon refuses a page whose every glyph is that thin
+
+The entry above is correct and was not sufficient, and the gap cost a day. `SLIVER_PT` refuses
+a box under a tenth of a point across the line, on the reasoning that nothing a reader can see
+is that short at any legible size --- which is a claim about *glyphs* and turns out to be a
+claim about *metrics*. A page set in a predefined CMap with no embedded font gives PDFium no
+glyph metrics at all, and it reports every character on the page **0.018 pt tall**. Measured on
+`encodings.pdf` page 2 through `FPDFText_GetCharBox`:
+
+```
+idx  code       left      top    right   bottom   height
+  0  日 U+65E5  60.000   89.982  78.000   90.000  0.0180
+  8  日 U+65E5  60.000  721.982  78.000  722.000  0.0180
+```
+
+Two lines, 632 pt apart, and every character of both refused. `fragmentsOf` then has nothing
+placed, takes its `items.length === 0` branch, and returns the page as **one** fragment
+covering every index --- so the page read, aloud and on the clipboard, as
+`日本語の符号\r\n日本語の符号`. One line.
+
+**The two failures are exactly complementary, which is what makes this worth an entry.** The
+A/B, one file reverted and rebuilt:
+
+| | `multilingual` | `encodings` |
+|---|---|---|
+| absolute rule absent | **129/130** `cafélatte` | 130/130 |
+| absolute rule present | 130/130 `café latte` | **129/130** `日本語の符号\r\n日本語の符号` |
+
+A fix that *moves* a failure passes every check aimed at it. The corpus it was written for goes
+green, its unit tests go green, and the run that would contradict it is the one nobody re-runs
+because nothing changed there. Only the standing rule --- run the whole corpus and diff the name
+sets --- reaches it, and the handover that asked for exactly that is why this was caught on the
+same day rather than shipped.
+
+**The question is not "is this box thin" but "is it thin compared with what it sits among".**
+The two measured samples are three orders of magnitude apart on that quantity and adjacent on
+the absolute one: the floated space is 0.02 pt against letters of 13.94 pt (0.0014 of them),
+while the predefined page is 0.018 pt against a page median of 0.018 (1.0 of it). So the rule
+is a conjunction --- `height < SLIVER_PT && height < SLIVER_OF_LINE * typical` --- and both
+halves are load-bearing, each proved by a mutation that turns exactly one test red. Absolute
+alone refuses the degenerate page; relative alone would refuse ordinary 5 pt footnote type on a
+page set in 200 pt display type, and append it to the line before.
+
+**The reference is a median, and the maximum passed everything until a test was written for
+it.** A maximum needs only one substituted glyph on an otherwise metric-less page --- and the
+`broken-map` page of the same fixture shows that a document of this kind contains exactly that
+--- to read 13 pt as typical, call every real character a twentieth of it, and collapse the page
+again. The mutation survived the whole suite first time; the control for it is a page of
+degenerate boxes with one tall glyph among them.
+
+**And the platform asymmetry is the same one, a second time.** macOS was green on all eleven
+corpora after the absolute rule landed, because its PDFium substitutes a font with real metrics
+where Windows has none --- so the machine that could see the defect was again the only one with
+the document that has it. Two rules now carry measured Windows geometry into unit tests for
+this reason. When a geometric threshold is chosen against one sample, the second sample is not
+a confirmation to look for later; it is the thing that decides the *shape* of the rule.
+
 ### A test cannot see the direction of an attachment it puts in index order
 
 The check for "an unclaimed character stays with the text it follows" was written over two

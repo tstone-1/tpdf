@@ -52,7 +52,7 @@ fn parse_args() -> Result<Args, String> {
         file: PathBuf::from(file),
         mode: Mode::Read,
         manifest: PathBuf::from("testdata/outline-manifest.json"),
-        library: PathBuf::from("vendor/pdfium/lib"),
+        library: PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR),
     };
 
     while let Some(flag) = args.next() {

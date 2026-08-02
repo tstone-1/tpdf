@@ -116,6 +116,6 @@ fn pdfium_dir() -> PathBuf {
     }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("vendor/pdfium/lib"))
+        .map(|root| root.join("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR))
         .unwrap_or_else(|| PathBuf::from("."))
 }

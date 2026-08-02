@@ -208,21 +208,75 @@ const SHORT_MARK = 0.5;
  * entirely. The line read `cafélatte`.
  *
  * The same font on macOS is Arial Unicode, whose space sits inside the letters'
- * band, so the page was green there and the defect was a Windows one. That is
- * the point of the rule being absolute: a box this thin is information about the
- * font, not about the page, and where the font chose to float it is not
- * something the page's geometry should be asked to interpret.
+ * band, so the page was green there and the defect was a Windows one.
+ *
+ * **Absolute is necessary and was not sufficient**, which cost `encodings.pdf` a
+ * day later and is why {@link SLIVER_OF_LINE} sits beside it. A page set in a
+ * predefined CMap with no embedded font gives PDFium no glyph metrics, and it
+ * reports *every* character 0.018pt tall --- so an absolute rule refused the
+ * whole page, nothing was ever placed, and {@link fragmentsOf} returned the page
+ * as one fragment. Its two lines, 632pt apart, read as one.
  */
 const SLIVER_PT = 0.1;
+
+/**
+ * How thin a box has to be *against its own page* to be bookkeeping.
+ *
+ * A twentieth. The quantity that actually matters is not "thin" but "thin
+ * compared with the text it sits among", and the two measured samples are three
+ * orders of magnitude apart on it: the floated space is 0.02pt against letters
+ * of 13.94pt (0.0014), while every character of the predefined page is 0.018pt
+ * against a page median of the same (1.0). Anything between them separates the
+ * cases; a twentieth is placed well clear of the nearest thing that must *not*
+ * be caught --- `tagged.pdf`'s comma at 2.89pt against 8.72pt letters, which is
+ * a third, and is {@link SHORT_MARK}'s business rather than this rule's.
+ */
+const SLIVER_OF_LINE = 0.05;
+
+/**
+ * The typical character height of a page, or 0 when no placed character on it
+ * has any height at all.
+ *
+ * The median rather than the maximum: one display capital on a page of body text
+ * would drag a maximum up far enough to start calling the body type thin, and
+ * the statistic is meant to say what the page is *mostly* set in. Zero-height
+ * boxes are excluded --- they are the separators PDFium synthesises, and
+ * including them would drag the median to nothing on a page with many of them,
+ * which is the same failure this reference exists to prevent.
+ */
+function typicalCross(text: PageText, axes: Axes): number {
+  const heights: number[] = [];
+  for (let index = 0; index < text.codes.length; index++) {
+    const box = charQuad(text, index);
+    if (!placed(box)) continue;
+    const extents = extentsOf(box, axes);
+    const height = extents.crossEnd - extents.crossStart;
+    if (height > 0) heights.push(height);
+  }
+  if (heights.length === 0) return 0;
+  heights.sort((a, b) => a - b);
+  return heights[Math.floor(heights.length / 2)] ?? 0;
+}
 
 /**
  * Whether a box is too thin across the line to be placed at all.
  *
  * Cross extent rather than along: a space is legitimately narrow along the line
  * and that is not what makes it unplaceable.
+ *
+ * Both halves, and the conjunction is the rule. Absolute alone refuses a page
+ * whose every glyph is degenerate; relative alone would start refusing real 5pt
+ * footnote type on a page set in 200pt display type.
+ *
+ * There is deliberately no `typical > 0` guard, which the first draft had and
+ * which cannot fire: {@link typicalCross} medians exactly the population this is
+ * called on --- placed characters --- so `typical === 0` implies every placed box
+ * has zero height, implies `height === 0`, and `0 < 0` is already false. An
+ * unreachable guard reads as load-bearing and can quietly become wrong.
  */
-function sliver(extents: Extents): boolean {
-  return extents.crossEnd - extents.crossStart < SLIVER_PT;
+function sliver(extents: Extents, typical: number): boolean {
+  const height = extents.crossEnd - extents.crossStart;
+  return height < SLIVER_PT && height < SLIVER_OF_LINE * typical;
 }
 
 /**
@@ -333,6 +387,10 @@ function combining(code: number): boolean {
  */
 export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[] {
   const items: Placed[] = [];
+  // Read before the loop rather than folded into it: {@link sliver} asks whether
+  // a box is thin *for this page*, and a running statistic would answer
+  // differently for the first character than for the last.
+  const typical = typicalCross(text, axes);
   /** Where each unplaced character should be re-attached, by the index before it. */
   const trailing = new Map<number, number[]>();
   let last = -1;
@@ -350,7 +408,7 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
     // *not* absorbed into the preceding box the way a mark is --- a mark is
     // drawn over its base and belongs in the line's box, and a sliver floating
     // 0.12pt below the line would drag the line's box down to meet it.
-    if (!placed(box) || sliver(extents) || mark) {
+    if (!placed(box) || sliver(extents, typical) || mark) {
       const at = trailing.get(last) ?? [];
       at.push(index);
       trailing.set(last, at);
