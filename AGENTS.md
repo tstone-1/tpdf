@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 220 entries
+The one thing this file does *not* carry in full is the trap list --- 221 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -34,62 +34,44 @@ bloated), `dblitz` (DB Browser for SQLite was missing things).
 
 ---
 
-## HANDOVER --- open on macOS, written 2026-08-02 from Windows
+## HANDOVER --- open on Windows, written 2026-08-02 from macOS
 
-**Delete this whole section once the five items below are done.** It is a transient note in
-an auto-loaded file, so it costs every agent on every machine until it goes.
+**Delete this whole section once the one item below is done.** It is a transient note in an
+auto-loaded file, so it costs every agent on every machine until it goes.
 
-Everything after `7dd6170` --- a full-tree review, fixes for its sixteen warnings, and the
-work it recommended --- was **written and verified on Windows only**. CI covers the twelve
-gates on both platforms; it structurally cannot cover `viewer_check.py`, `session_check.py`
-or the mutation harnesses. The surface is unusually broad: the worker split, the per-page
-layout, the reporting migration and the logging all cross platforms.
+The five-item macOS handover this replaces is discharged. Gates 12/12 --- the worker split
+was a pure move and the only casualty was an import used solely by a `#[cfg(windows)]` test,
+which `cargo test` passed as a warning and clippy caught. All eleven corpora ran at **163
+check names with byte-identical name sets**, diffed pairwise rather than counted;
+`session_check.py` green on four phases with both controls; the pdfium digest recorded, so
+`--check` is strong here; and `tpdf.log` proved to land under
+`~/Library/Logs/com.timostein.tpdf`, by forcing a diagnostic rather than by opening a
+document and hoping.
 
-### 1. Build first, and expect the worker split to be where it breaks
+### The folding fix has one control left, and only this platform has it
 
-`worker.rs` was split into five files as a proven pure move --- proven on a machine where
-`#[cfg(target_os = "macos")]` code **does not compile**. `worker_handover.rs` (the fd-passing
-document handover) and the macOS halves of `worker.rs`/`worker_shm.rs` have never been
-through a compiler since they moved, so the first `scripts/gates.py` run here is the actual
-verification of that split. A failure in those files is the move (a `use` that did not
-follow, a visibility too narrow under the macOS cfg), not whatever was being worked on.
+`reading.ts` refuses a character box under `SLIVER_PT` (0.1 pt) across the line and
+re-attaches it by preceding index --- the fix `BUILD.md`'s analysis called for, for the
+missing space in `cafélatte`. Everything that could be proved on macOS was: five mutations
+aimed at the rule and its control each turned the intended test red and nothing else, and
+every one of the eleven corpora stayed green afterwards with the same name set.
 
-### 2. Re-run the window harnesses; the invariant is 163 names now
+**But macOS cannot exercise the case the rule exists for.** `make_multilingual_pdf.py` picks
+a font per page from what the machine has, so the folding page is `msgothic.ttc` there and
+Arial Unicode here, and only the first floats its space clear of the letters' band. The Mac's
+document does not have the defect, so its green run says nothing either way --- which is the
+same reason the failure was recorded as Windows-only in the first place.
 
-Regenerate fixtures first (`testdata/make_mixed_pdf.py` is new; its `mixed-geometry.json`
-sidecar is gitignored and wired through `TPDF_GEOMETRY_MANIFEST`). Then `viewer_check.py`
-on all corpora --- `mixed.pdf` is the eleventh, 138/25 on Windows --- and `session_check.py`.
-Diff name sets against `BUILD.md`'s table per the standing discipline; the wrapper's
-module-audit verdict moved to stderr, so `mutate_viewer.py`'s baseline must say 163 here
-too. `viewercheck.ts` now reports through `checkreport.Report`: pad width 46, ASCII skip
-join, `not applicable` summary tail --- the three deltas every parser was checked against.
+So: run `viewer_check.py` on `multilingual.pdf` and read the line for **`a page reads in the
+order its generator laid it out`**. It was the one red check on that corpus; it should now be
+`[OK]`, with the folding page reading `café latte`. Confirm the other ten stay green with the
+same name set, then delete this section and the `BUILD.md` paragraph beginning
+*"**One check was red on `multilingual.pdf`"*, which still records the failure as open.
 
-### 3. The pdfium stamp will warn once, and the warning is the upgrade path
-
-`fetch_pdfium.py --check` now hashes the installed library against a digest the installer
-records. A stamp from July predates that line, so `--check` prints `[WARN]` and falls back
-to an existence check rather than going red. Run `python scripts/fetch_pdfium.py` once; it
-re-fetches, records the digest, and `--check` is strong from then on.
-
-### 4. Expect `multilingual.pdf` green here, and do not read that as the bug being gone
-
-The folding page fails on Windows --- `cafélatte` for `café latte` --- and the mechanism is
-measured in `BUILD.md`: `msgothic.ttc` gives the space a box 0.02 pt tall floating 0.12 pt
-below the line's band, so `reading.ts` bands it with nothing and drops it. Arial Unicode
-puts its space in-band, so macOS stays green on a different document. The fix is open work
-for whichever machine reaches it first: treat a box under some epsilon height as unplaced
-and re-attach it by preceding index, with two controls --- every macOS-green corpus stays
-green, and the Windows folding line goes green.
-
-### 5. Confirm the log file lands where macOS puts logs
-
-Nine coordinator diagnostics now also append to `tpdf.log` via `diag::note` --- stderr is
-untouched, and a test re-runs the binary to prove it. What no Windows machine can check:
-that a real macOS run writes under `app_log_dir` (`~/Library/Logs/...`). Open a document,
-kill nothing, and look for the file; then `TPDF_LOG_FILE` for the override path.
-
----
-
+If it is still red, the epsilon is the thing to question before the mechanism: the geometry
+is measured and in `docs/TRAPS.md` under *"A font can float a space's box clear of its own
+line"*, but 0.1 pt was chosen against what a legible glyph can be, not against a second
+sample.
 
 ## Hard constraints
 
@@ -832,8 +814,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 220 of them and the full text
-was 93% of this file --- an instruction budget spent on the 214 traps that are not
+titles. Only the titles are here, because there are 221 of them and the full text
+was 93% of this file --- an instruction budget spent on the 220 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -884,6 +866,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - PDFium's character order is not the page's line order
 - A dense page of uniform lines cannot detect a y-flip
 - A comma opens a line of its own, and every space on the line joins it
+- A font can float a space's box clear of its own line, and overlap banding drops it
 - A paragraph is one mark and several text objects, and the gap between them belongs to neither
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
 - An outline can be infinite, and PDFium says so in its own documentation

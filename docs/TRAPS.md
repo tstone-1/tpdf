@@ -4634,6 +4634,49 @@ first with 12 pt boxes 16 pt apart, it could not fail, because boxes that do not
 refused by the guard above the rule whatever the rule says. Real text lines overlap by their
 ascenders and descenders, which is the case that had to be held.
 
+### A font can float a space's box clear of its own line, and overlap banding drops it
+
+The entry above ends with a rule that reads as complete --- *a box too short to be a line of
+text joins the line it touches* --- and the load-bearing word turns out to be **touches**.
+`sameBand` requires overlap before it will consider anything, and it is right to: the
+short-mark clause exists for a comma that dips *into* the line, and loosening it to bridge a
+gap would start joining a mark to the line above it in tightly leaded text.
+
+So a space that touches nothing is banded with nothing. Measured through `FPDFText_GetCharBox`
+on `multilingual.pdf` laid out in `msgothic.ttc`, the space at index 4 of `café latte` comes
+back **placed**, with a real box 0.02 pt tall at y 752.00--752.02, while every letter on the
+line sits at 752.14--766.08. The two bands miss each other by 0.12 pt. The space matched no
+band, became a fragment of its own, and fell out of the line's ranges entirely:
+
+```
+café latte  ->  "cafélatte"
+```
+
+Three things make this worth an entry of its own rather than a sentence on the comma's.
+
+**It is a platform difference that is not a code difference.** The generator picks a font per
+page from what the machine has, so the same fixture is `msgothic.ttc` on Windows and Arial
+Unicode on macOS --- and Arial Unicode puts its space *inside* the letters' band, where the
+comma rule handles it. The macOS corpus was green throughout and could not have found this.
+It cannot fix it either: a corpus whose document differs per machine is not a control for a
+rule about geometry, so what discriminates is a unit test carrying the measured numbers,
+which fails on any platform.
+
+**"Placed" is the wrong question.** The existing route for a character that reads on a line
+but is not on it --- PDFium's synthesised separators --- keys on a box of four zeroes, and
+this box is not that. What it has in common with them is not the absence of a box but the
+absence of *information*: 0.02 pt is the font's bookkeeping about where it parked a space,
+not a claim about the page. The rule is therefore absolute rather than relative --- nothing a
+reader can see is a tenth of a point tall at any legible size, so `SLIVER_PT` is a statement
+about type in the same way `SHORT_MARK` is.
+
+**A sliver must not be absorbed the way a mark is.** Both re-attach by preceding index, and
+there the resemblance stops: a combining mark is drawn *over* its base and belongs in the
+line's box, while a sliver floating 0.12 pt below the line would drag the line's box down to
+meet it. The control that holds this is the comma --- 2.89 pt, twenty-nine times the
+threshold --- and it has to be asserted **on the box**, because a character routed by index
+keeps its place in the ranges and reads identically either way.
+
 ### A test cannot see the direction of an attachment it puts in index order
 
 The check for "an unclaimed character stays with the text it follows" was written over two

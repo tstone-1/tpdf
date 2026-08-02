@@ -180,11 +180,50 @@ function extentsOf(box: Quad, axes: Axes): Extents {
 /**
  * How short a box has to be, against the one it touches, to be a mark on it.
  *
- * Half. A comma is about a third of a line's height and a space PDFium reports
- * as a hundredth; a line of text is never half the height of the line beside it,
- * because it is set in the same type.
+ * Half. A comma is about a third of a line's height; a line of text is never
+ * half the height of the line beside it, because it is set in the same type.
+ *
+ * This used to say "and a space PDFium reports as a hundredth", which was true
+ * of the fonts it had been measured against and is no longer the mechanism that
+ * puts a space on its line: a box that thin is refused before banding now, by
+ * {@link sliver}. The clause here is the comma's, and only the comma's.
  */
 const SHORT_MARK = 0.5;
+
+/**
+ * How tall a box has to be, in points, to be a character rather than bookkeeping.
+ *
+ * A tenth of a point. Nothing a reader can see is that short at any legible
+ * size --- a full stop in 4pt type is still about 0.4pt --- so this is a
+ * statement about type in the same way {@link SHORT_MARK} is, rather than a
+ * constant tuned until a fixture passed.
+ *
+ * What it is for: a font may report a space with a box that has real extent and
+ * is nowhere near its own line. Measured on `multilingual.pdf` laid out in
+ * `msgothic.ttc`, the space at index 4 of `café latte` comes back **placed**,
+ * 0.02pt tall at y 752.00--752.02, while every letter on the line sits at
+ * 752.14--766.08. The two bands miss each other by 0.12pt, so {@link sameBand}
+ * --- which requires overlap before it will consider anything, and is right to
+ * --- put the space in a band of its own, and it fell out of the line's ranges
+ * entirely. The line read `cafélatte`.
+ *
+ * The same font on macOS is Arial Unicode, whose space sits inside the letters'
+ * band, so the page was green there and the defect was a Windows one. That is
+ * the point of the rule being absolute: a box this thin is information about the
+ * font, not about the page, and where the font chose to float it is not
+ * something the page's geometry should be asked to interpret.
+ */
+const SLIVER_PT = 0.1;
+
+/**
+ * Whether a box is too thin across the line to be placed at all.
+ *
+ * Cross extent rather than along: a space is legitimately narrow along the line
+ * and that is not what makes it unplaceable.
+ */
+function sliver(extents: Extents): boolean {
+  return extents.crossEnd - extents.crossStart < SLIVER_PT;
+}
 
 /**
  * Whether two boxes share a line.
@@ -299,13 +338,19 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
   let last = -1;
   for (let index = 0; index < text.codes.length; index++) {
     const box = charQuad(text, index);
+    const extents = extentsOf(box, axes);
     // A mark is attached the same way an unplaced character is --- it stays in
     // the ranges, so nothing is dropped --- and its box is folded into the
     // character it decorates, so the line's box still covers the accent. A mark
     // with nothing before it has no base to join and keeps its own band, which
     // is the honest answer for a document that starts a page with one.
     const mark = last >= 0 && combining(text.codes[index] ?? 0);
-    if (!placed(box) || mark) {
+    // A sliver joins by index for the same reason an unplaced character does:
+    // its box says where the font parked it, not where it reads. Deliberately
+    // *not* absorbed into the preceding box the way a mark is --- a mark is
+    // drawn over its base and belongs in the line's box, and a sliver floating
+    // 0.12pt below the line would drag the line's box down to meet it.
+    if (!placed(box) || sliver(extents) || mark) {
       const at = trailing.get(last) ?? [];
       at.push(index);
       trailing.set(last, at);
@@ -318,7 +363,7 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
       }
       continue;
     }
-    items.push({ index, box, extents: extentsOf(box, axes) });
+    items.push({ index, box, extents });
     last = index;
   }
   if (items.length === 0) {
