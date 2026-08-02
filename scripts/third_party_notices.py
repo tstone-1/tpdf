@@ -213,8 +213,20 @@ def cargo_shipped_packages() -> "list[dict]":
             "--filter-platform",
             target,
         ]
+        # `encoding="utf-8"` is not optional. `text=True` alone decodes with
+        # the *locale* codec, which is cp1252 on Windows, and `cargo metadata`
+        # emits UTF-8 containing byte 0x81 -- undefined in cp1252. The reader
+        # thread then raises UnicodeDecodeError, `.stdout` comes back None, and
+        # `json.loads(None)` fails with a TypeError about JSON types that says
+        # nothing about encodings. `docs/TRAPS.md` records the identical failure,
+        # same byte, in `mutate_rust.py`.
         raw = subprocess.run(
-            argv, cwd=REPO, check=True, capture_output=True, text=True
+            argv,
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         ).stdout
         meta = json.loads(raw)
 

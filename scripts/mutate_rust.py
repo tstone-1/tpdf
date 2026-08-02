@@ -347,6 +347,13 @@ def run_tests() -> tuple[set[str], int | None, str]:
         cwd=CRATE,
         capture_output=True,
         text=True,
+        # As in `mutate_frontend.py`: `text=True` alone decodes with the locale
+        # codec, cp1252 on Windows. `search.rs` holds characters whose UTF-8
+        # contains byte 0x81, which is undefined there, and a failing test that
+        # echoes one would take the whole harness down mid-run rather than
+        # reporting a survivor.
+        encoding="utf-8",
+        errors="replace",
         timeout=900,
     )
     out = done.stdout + done.stderr
