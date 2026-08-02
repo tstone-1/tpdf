@@ -8,6 +8,7 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+pub mod encoding;
 pub mod invert;
 pub mod launch;
 pub mod ocr;
