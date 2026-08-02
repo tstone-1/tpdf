@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -50,13 +51,37 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = ROOT / "src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf"
+WINDOWS = sys.platform == "win32"
+
+#: The built application the viewer runner drives.
+#:
+#: macOS needs a **bundle** --- WKWebView will not run a line of JavaScript
+#: without the bundle identity, and the failure is a blank window and silence.
+#: Windows has no such requirement, so the plain executable is the thing, and
+#: `npm run tauri build` produces it on the way to the installers.
+APP = (
+    ROOT / "src-tauri/target/release/tpdf.exe"
+    if WINDOWS
+    else ROOT / "src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf"
+)
+
+#: Where the vendored PDFium sits, which is not the same directory on both
+#: platforms --- see the trap of that name. The probe runners take it as an
+#: argument, so getting it wrong here is a probe that cannot load a document
+#: and a mutation that reports a broken run.
+PDFIUM_DIR = "vendor/pdfium/bin" if WINDOWS else "vendor/pdfium/lib"
+
 FIXTURE = ROOT / "testdata/outline-simple.pdf"
 #: The corpus the tagged-reading-order checks need. On every other fixture they
 #: `[SKIP]`, correctly and uselessly for a mutation: a check that skips cannot go
 #: red, so a mutation aimed at one would report SURVIVED against a harness that
 #: never ran it.
 TAGGED_FIXTURE = ROOT / "testdata/tagged.pdf"
+#: The corpus with a page whose fonts state no character mapping. The three
+#: checks about it assert the *presence* of a warning there and its *absence*
+#: everywhere else, so a mutation aimed at one of them on any other fixture is
+#: aimed at the branch that is not taken.
+ENCODINGS_FIXTURE = ROOT / "testdata/encodings.pdf"
 
 
 @dataclass(frozen=True)
@@ -330,21 +355,74 @@ MUTATIONS = [
         "",
         "leaves the viewer as the phase before it did",
     ),
+    Mutation(
+        # The frontend hop of the encoding path. `encoding.rs` is covered by
+        # `mutate_rust.py`, which says the *rule* is right; nothing said the
+        # answer reached a reader until this corpus was opened in a window.
+        "encoding: report no unsearchable page whatever the backend said",
+        "src/lib/search.ts",
+        "    return this.mapping.filter((page) => page.guessing > 0).length;",
+        "    return 0;",
+        "the pages whose text is a guess reach the frontend",
+        runner="viewer-encodings",
+    ),
+    Mutation(
+        # Aimed at the *control*, and it has to be: on `encodings.pdf` a panel
+        # that says the line unconditionally is indistinguishable from one that
+        # says it correctly. Only a document with nothing to report can tell,
+        # which is why the check runs on every corpus rather than skipping.
+        "encoding: say a page could not be searched on every document",
+        "src/lib/results.ts",
+        "  if (unsearchablePages > 0) {",
+        "  if (unsearchablePages >= 0) {",
+        "a reader is told when a page could not be searched",
+    ),
+    Mutation(
+        # The third symptom, and the one whose reader can least easily tell
+        # something is wrong: the guessed characters read aloud as though they
+        # were the page.
+        "encoding: read a guessed page's characters out anyway",
+        "src/lib/a11y.ts",
+        "    if (unreadable) {",
+        "    if (false) {",
+        "a page whose characters mean nothing is not read out",
+        runner="viewer-encodings",
+    ),
 ]
 
 MARKER = re.compile(r"^\[(OK|FAIL|SKIP)\]\s")
 SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed")
 
 
+def npm() -> str:
+    """Resolves npm, which is `npm.cmd` on Windows and not on PATH as `npm`."""
+    return shutil.which("npm") or "npm"
+
+
+#: Rebuilding the application. macOS asks for the `app` bundle and nothing else,
+#: since that is the only artifact the viewer runner can drive; on Windows the
+#: executable is the artifact, and naming a bundle type there is either wrong
+#: (`app` does not exist) or a WiX run per mutation for nothing.
+APP_BUILD = (
+    [npm(), "run", "tauri", "build", "--", "--no-bundle"]
+    if WINDOWS
+    else [npm(), "run", "tauri", "build", "--", "--bundles", "app"]
+)
+
+
 #: How each runner is built and invoked. The structure probe needs no webview
 #: and no bundle, so it neither waits for one nor requires an unlocked screen.
 RUNNERS = {
     "viewer": {
-        "build": ["npm", "run", "tauri", "build", "--", "--bundles", "app"],
+        "build": APP_BUILD,
         "run": None,  # built in `run_check`, which needs the app path
     },
     "viewer-tagged": {
-        "build": ["npm", "run", "tauri", "build", "--", "--bundles", "app"],
+        "build": APP_BUILD,
+        "run": None,
+    },
+    "viewer-encodings": {
+        "build": APP_BUILD,
         "run": None,
     },
     "search": {
@@ -360,7 +438,7 @@ RUNNERS = {
         "run": [
             "src-tauri/target/release/examples/search-probe",
             "--lib",
-            "vendor/pdfium/lib",
+            PDFIUM_DIR,
             "--file",
             "testdata/multilingual.pdf",
         ],
@@ -378,7 +456,7 @@ RUNNERS = {
         "run": [
             "src-tauri/target/release/examples/search-probe",
             "--lib",
-            "vendor/pdfium/lib",
+            PDFIUM_DIR,
             "--file",
             "testdata/encodings.pdf",
         ],
@@ -396,7 +474,7 @@ RUNNERS = {
         "run": [
             "src-tauri/target/release/examples/structure-probe",
             "--library",
-            "vendor/pdfium/lib",
+            PDFIUM_DIR,
             "--file",
             "testdata/tagged.pdf",
             "--untagged",
@@ -465,6 +543,8 @@ def execute(runner: str) -> tuple[list[str], str, str]:
         return run_check()
     if runner == "viewer-tagged":
         return run_check(TAGGED_FIXTURE)
+    if runner == "viewer-encodings":
+        return run_check(ENCODINGS_FIXTURE)
     return run_probe(runner)
 
 
@@ -519,7 +599,15 @@ def main() -> int:
         print(f"[FAIL] no mutation matches {args.only!r}")
         return 1
 
-    for needed in {FIXTURE, TAGGED_FIXTURE}:
+    # Only the fixtures the chosen runners actually open. Demanding all of them
+    # would refuse a `--runner viewer` run on a machine that has never built the
+    # tagged corpus, which is a fixture problem invented by the harness.
+    fixtures = {
+        "viewer": FIXTURE,
+        "viewer-tagged": TAGGED_FIXTURE,
+        "viewer-encodings": ENCODINGS_FIXTURE,
+    }
+    for needed in {fixtures[m.runner] for m in chosen if m.runner in fixtures}:
         if not needed.exists():
             print(f"[FAIL] {needed} is missing --- testdata is generated, not committed")
             return 1

@@ -5635,3 +5635,74 @@ Three habits, and the third is the cheap one:
 Related from the other direction: *"a text-mode restore is not a byte restore"* --- that one
 is about `read_text`/`write_text` corrupting content that compares equal; this one is about
 a byte-perfect restore of the wrong bytes.
+
+### A feature made a standing check false, and the only corpus that could tell had never been opened
+
+`encoding.rs` and its frontend landed on 2026-08-02 with a deliberate change to what a
+screen reader is handed: a page whose fonts declare no character mapping has its
+characters **withheld** and a sentence given instead, because reading PDFium's guess aloud
+is the symptom whose reader can least easily tell something is wrong.
+
+`viewercheck.ts` has asserted since long before that *"the text read out is the page's own
+text"*. On such a page that is now false **by design**, and the check went red the first
+time `encodings.pdf` was ever opened in a window --- which was the day after the feature
+shipped, on the other platform, during the handover. Eleven gates, 352 frontend tests, 92
+Rust tests, 95 frontend mutations and CI on two platforms all stayed green, correctly: none
+of them opens a document.
+
+The failure was in the *check*, not the code, and that is what makes it worth an entry. The
+new behaviour is right; the check encoded an assumption --- "spoken text is extracted text"
+--- that had been true of every fixture, and a fixture that breaks an assumption is exactly
+what a new corpus is for. It now branches three ways (no text / guessed text / stated text)
+with the branch taken from the **fixture's manifest**, so a layer that quietly stopped
+withholding fails rather than skips.
+
+Two things generalise past this repository:
+
+- **Adding a corpus is not the same as running it.** `encodings.pdf` had been in the fixture
+  table, in the search probes and in three mutation harnesses for days. None of those opens
+  a window, so the one assertion it contradicted never executed.
+- **When a feature changes what a subsystem produces, grep the check suite for the old
+  claim in the same commit.** The contradiction here was one sentence long and sitting in a
+  file the feature's author had edited that afternoon.
+
+### A rewritten line leaves a mutation aimed at nothing, and only the harness says so
+
+`statusFor` gained the unreadable-page branch, and in doing so its one-line running clause
+was restructured. `mutate_frontend.py` carried a mutation whose anchor was that exact line;
+after the rewrite the anchor matched nothing, and the run reported
+
+```
+[FAIL] results: do not say a scan is still running: its anchor appears 0 times
+```
+
+which is the harness working exactly as designed --- it counts occurrences *before* the run
+rather than inferring a stale anchor from a survivor afterwards. The point is what it cost
+to find out: the harness is not in CI, takes minutes, and had not been run since the change,
+so for a day the frontend suite had 94 live mutations and one that could not fire while the
+summary still said 95.
+
+**A mutation harness is a second consumer of every line it anchors on**, and nothing in a
+compiler or a test run knows that. Two habits: after editing a file the harness covers,
+`--list` is free and `grep` for the anchor is nearly so; and prefer the harness's own
+anchor-count refusal to any scheme that silently skips a mutation it cannot place. A skipped
+mutation reads as a passing one.
+
+### A negative assertion needs an observable saying the question was asked
+
+The check that a reader is told about an unreadable page runs on every corpus, and on nine
+of ten what it asserts is that the sentence is **absent**. That assertion is satisfied
+before anything happens: the count starts at zero, the panel starts empty, and a frontend
+that never asked the backend anything passes it perfectly.
+
+The obvious wait --- settle until `unsearchablePages` is what is expected --- cannot fix it,
+because on those nine the value waited for is the value it starts at. What fixes it is a
+separate observable for *asked and answered*, which is why `Search.mappingKnown` exists and
+is public: the wait is on that, and the assertion about the count is made only afterwards.
+
+The general shape, and it is common enough to be worth naming: **a check whose expected
+outcome is "nothing happened" needs a second signal that the machinery ran at all.** A
+timeout, a fetch, a subscription, an event that was not delivered --- in every case the
+passing state and the not-yet-started state are the same state, and only an explicit
+"finished" observable tells them apart. The cost is one boolean on a production type, which
+is a fair price for a control that would otherwise be decoration.

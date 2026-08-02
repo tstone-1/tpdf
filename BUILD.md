@@ -193,8 +193,17 @@ python3 testdata/make_outline_pdf.py testdata
 python3 testdata/make_rotated_pdf.py testdata
 python3 testdata/make_columns_pdf.py testdata
 python3 testdata/make_tagged_pdf.py testdata
+uv run --with fonttools testdata/make_multilingual_pdf.py testdata
+uv run --with fonttools testdata/make_encodings_pdf.py testdata
 python3 testdata/make_form_pdf.py
 ```
+
+The last two were missing from this list until 2026-08-02, while the corpus table
+below told a reader to run the viewer check against both --- so the instruction that
+produces a fixture and the instruction that consumes it disagreed, and the failure is
+an absent file reported as a broken bundle. `text-heavy.pdf` is deliberately not here:
+it is a real document rather than a generated one, and a machine that does not have it
+cannot make it.
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
 300 MB file is near-instant" can be tested at 300 MB.
@@ -1285,23 +1294,46 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all ten corpora. Every run reports the same **157 check names**; what differs is how
+Run all ten corpora. Every run reports the same **160 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch. The splits below were measured on 2026-08-01, with the
-tagged and multilingual corpora both in:
+bug this arrangement exists to catch. **Nine of the ten rows below were measured on Windows
+on 2026-08-02**, against the extracted MSI with the development library moved aside;
+`text-heavy.pdf` is a real document this machine does not have, and its row is the
+2026-08-01 macOS split plus the three checks added since, marked as derived.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 140 | 17 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 146 | 11 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 146 | 11 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 89 | 68 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 102 | 55 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 137 | 20 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 135 | 22 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 130 | 27 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 127 | 30 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 128 | 29 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `text-heavy.pdf` | 142* | 18* | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 148 | 12 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 148 | 12 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 91 | 69 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 104 | 56 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 139 | 21 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 137 | 23 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 132 | 28 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 130 | 30 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 130 | 30 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+
+`*` derived, not measured --- see above.
+
+**Eight of the nine measured rows are the macOS split plus exactly the arithmetic of the
+three new checks** (+2 that run everywhere, +1 that skips off `encodings.pdf`), which is a
+stronger statement than a matching total: the *same* checks skip on both platforms for the
+same documents. `multilingual.pdf` is the ninth and differs by one, legitimately --- its
+generator picks a font per page from what the machine has, so the Windows fixture is a
+different document and one check that skipped on macOS for want of text has text to work on
+here. A ran/skip split is a property of the document, and that corpus is the only one whose
+document is not the same on both platforms.
+
+**`multilingual.pdf` has one failing check on Windows and it is not new work.** The reading
+check compares each page against what the generator *wrote*, and the folding page comes back
+`cafélatte` where the manifest says `café latte`. What is established: PDFium's extraction
+does contain the space --- `text-probe --mode order` shows `café`, a space run, then `latte`
+across 100 characters --- so it is dropped between extraction and the line's *ranges*, not by
+PDFium. What is **not** established is whether that is a gap in `reading.ts`'s fragment
+building or an artifact of this fixture's font (the folding page is laid out in
+`msgothic.ttc` here and in Arial Unicode on the Mac, and a space's box is a font's business).
+Do not read the green macOS run as evidence either way: it is a different document.
 
 **The two-page one is worth having for a reason unrelated to tags.** Adding it turned three
 checks red that had been green on every corpus for a week --- two nav probes guarded on "more
@@ -1781,9 +1813,20 @@ starts at 0 and increments within the month.
    and benchmark executables, including a sandbox prober and a hostile-document harness,
    because they were `[[bin]]` targets of the bundled crate. They are `[[example]]` targets
    now: cargo still builds and links them, `scripts/gates.py`'s `bins` gate still covers
-   them via `--examples`, and the bundler does not see them. The MSI payload is three files
+   them via `--examples`, and the bundler does not see them. The MSI payload was three files
    --- `tpdf.exe`, `tpdf_lib.dll`, `pdfium.dll` --- verified by extracting it, and the MSI went
    16.7 -> 8.0 MB with the NSIS setup 8.8 -> 5.8 MB.
+
+   **It is four files as of 2026-08-02**, and the fourth is the point of the notices work:
+   `THIRD-PARTY-NOTICES.md`, 469 KB, which a binary distribution owes and which nothing but
+   an extraction can confirm actually shipped. Re-extract and list the payload after any
+   change to the resource map --- that is the only step here that reads the artifact rather
+   than the configuration that was meant to produce it.
+
+   **Build before hiding the development library, not after.** The bundler copies
+   `../vendor/pdfium/bin/pdfium.dll` as a resource, so a build with it already moved aside
+   fails at `resource path ... doesn't exist` --- which reads like a broken checkout rather
+   than like the sequence being wrong. Build, extract, *then* hide.
 
    **Run the bundle check with the development library moved aside.** This is not optional
    and it is not paranoia: until 2026-07-31 no bundle contained PDFium at all, and every

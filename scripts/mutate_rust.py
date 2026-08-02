@@ -6,11 +6,18 @@ test that has only ever passed looks exactly like one that cannot fail. Each
 mutation below names the test it is *expected* to turn red, and a mutation that
 nothing caught is reported as a defect in the suite rather than shrugged at.
 
-`search.rs` is the module it covers today. It is the densest piece of pure logic
+`search.rs` is the module it covers first. It is the densest piece of pure logic
 in the backend --- a fold, an index map back through it, and two options that
 each change what is accepted --- and every one of its assertions is over a
 fixture the module itself never wrote, which is what makes mutation the only
 thing that can say whether they bite.
+
+`text.rs`, `structure.rs` and `encoding.rs` are covered too, and `FILTERS` below
+is the list of record. `encoding.rs` is the one to be careful about, because its
+tests are the *only* thing that can catch its central mutation: `encodings.pdf`
+has `/Encoding` and `/Ordering` covarying on every page, so a rule keyed on the
+wrong one of the two passes every fixture on disk. A harness without those
+mutations would look thorough and prove nothing about the field that decides.
 
 Two properties carried over from the front-end harness, both because
 `docs/TRAPS.md` records what their absence costs:
@@ -47,7 +54,7 @@ CRATE = ROOT / "src-tauri"
 #: read as a mutation being caught. libtest takes several filters and ORs them,
 #: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
 #: which is worth knowing because it looks like the feature being unsupported.
-FILTERS = ["search::", "structure::", "text::"]
+FILTERS = ["search::", "structure::", "text::", "encoding::"]
 
 
 @dataclass(frozen=True)
@@ -330,6 +337,79 @@ MUTATIONS = [
         "        if self.truncated {\n            return Vec::new();\n        }",
         "",
         "a_truncated_walk_offers_nothing",
+    ),
+    Mutation(
+        # The one that matters, and the one no fixture can catch. `/Encoding`
+        # decides code -> CID and says nothing about CID -> Unicode; the
+        # descendant's `/Ordering` is what supplies it. Both fields covary on
+        # every page of `encodings.pdf` --- Identity-H with Identity, UniJIS with
+        # Japan1 --- so this rule passes the corpus completely. Only the two
+        # synthetic diagonals in `encoding.rs` reach it, and they are why the
+        # module carries unit tests at all.
+        "encoding: key on the font's /Encoding name instead of the ordering",
+        "src/encoding.rs",
+        "    let info = descendant.get(b\"CIDSystemInfo\").ok()?;\n"
+        "    let info = resolve_dict(document, info).ok()?;",
+        "    let info = descendant.get(b\"CIDSystemInfo\").ok()?;\n"
+        "    let info = resolve_dict(document, info).ok()?;\n"
+        "    let _ = info;\n"
+        "    return Some(\n"
+        "        font.get(b\"Encoding\")\n"
+        "            .ok()\n"
+        "            .and_then(|object| object.as_name().ok())\n"
+        "            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())\n"
+        "            .unwrap_or_default()\n"
+        "            .starts_with(\"Identity\"),\n"
+        "    );\n"
+        "    #[allow(unreachable_code)]",
+        "identity_encoding_over_a_known_ordering_is_not_a_guess",
+    ),
+    Mutation(
+        # A `/ToUnicode` states the mapping whatever else the font says, so
+        # ignoring it reports a document that answers the question as one that
+        # does not. Only the fixture carrying one can tell.
+        "encoding: ignore a /ToUnicode entirely",
+        "src/encoding.rs",
+        "    if font.get(b\"ToUnicode\").is_ok() {\n        return Some(false);\n    }",
+        "",
+        "a_tounicode_settles_it_even_over_identity_ordering",
+    ),
+    Mutation(
+        # The control on the composite rule, inverted. A Type1 font with no
+        # `/ToUnicode` is most PDFs ever made, and judging one reports the world
+        # as broken while every test above still passes.
+        "encoding: consider simple fonts as well as composite ones",
+        "src/encoding.rs",
+        "    font.get(b\"Subtype\")\n"
+        "        .and_then(Object::as_name)\n"
+        "        .map(|name| name == b\"Type0\")\n"
+        "        .unwrap_or(false)",
+        "    let _ = font;\n    true",
+        "a_simple_font_is_not_considered",
+    ),
+    Mutation(
+        # `None` is "this font cannot be judged", and dropping it silently makes
+        # the page's answer clean on evidence nobody has --- which is the exact
+        # lie the module was written one level up to stop.
+        "encoding: treat a font that cannot be judged as clean",
+        "src/encoding.rs",
+        "            None => mapping.truncated = true,",
+        "            None => {}",
+        "a_font_that_cannot_be_judged_is_reported_as_unknown",
+    ),
+    Mutation(
+        # `Identity` means "these numbers are glyph indices in this font", so
+        # there is no table to consult and PDFium is guessing. Listing it as
+        # mappable is the plausible mistake, and it turns the whole module off.
+        # The handover that specified this mutation recorded
+        # `a_page_lopdf_cannot_account_for_is_unknown` as its catcher, which also
+        # goes red; the test named for the rule is the one aimed at here.
+        "encoding: list Identity as an ordering PDFium can map",
+        "src/encoding.rs",
+        'const MAPPABLE_ORDERINGS: [&str; 5] = ["Japan1", "GB1", "CNS1", "Korea1", "KR"];',
+        'const MAPPABLE_ORDERINGS: [&str; 6] =\n'
+        '    ["Japan1", "GB1", "CNS1", "Korea1", "KR", "Identity"];',
+        "identity_ordering_without_a_tounicode_is_a_guess",
     ),
 ]
 

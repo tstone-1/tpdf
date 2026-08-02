@@ -421,11 +421,50 @@ MUTATIONS = [
         "states the row cap rather than applying it silently",
     ),
     Mutation(
+        # The anchor here went stale on 2026-08-02, when `statusFor` was
+        # restructured to say what an unreadable page means: the harness
+        # reported "its anchor appears 0 times", which is the right verdict and
+        # is why it is checked before the run rather than inferred from a
+        # survivor afterwards.
         "results: do not say a scan is still running",
         "src/lib/results.ts",
-        "  return running ? `${found}${capped}, still searching…` : `${found}${capped}`;",
-        "  return `${found}${capped}`;",
+        '  if (running) return total === 0 ? "Searching…" : `${countOf(total)}, '
+        "still searching…`;",
+        "",
         "says a scan is still running",
+    ),
+    Mutation(
+        # The tempting mistake, and `searchmapping.test.ts` says so in its own
+        # header: `truncated` and `guessing` are both "not known to be fine", and
+        # folding them together puts a warning on every encrypted document ---
+        # `lopdf` cannot paginate one at all, so every page of it comes back
+        # truncated. A false alarm on a file the reader can search perfectly well.
+        #
+        # It was proved by an ad-hoc mutation when the module landed and by
+        # nothing afterwards, because the test file was not in TEST_FILES above.
+        # Same gap `encoding::` had in `mutate_rust.py`, on the other side.
+        "mapping: report a page nobody could judge as unreadable",
+        "src/lib/search.ts",
+        "    return this.mapping.filter((page) => page.guessing > 0).length;",
+        "    return this.mapping.filter((page) => page.guessing > 0 || page.truncated).length;",
+        "does not count a page nobody could judge",
+    ),
+    Mutation(
+        "mapping: never say the backend has answered",
+        "src/lib/search.ts",
+        "    this.mappingSettled = true;",
+        "",
+        "says whether the question has been answered",
+    ),
+    Mutation(
+        # The other direction. Together they say the flag is *set by the fetch*
+        # rather than that one of its two values happens to satisfy the check
+        # harness that waits on it.
+        "mapping: say the backend has answered before it is asked",
+        "src/lib/search.ts",
+        "  private mappingSettled = false;",
+        "  private mappingSettled = true;",
+        "says whether the question has been answered",
     ),
     Mutation(
         "cache: never evict, whatever the bound says",
@@ -795,6 +834,7 @@ TEST_FILES = [
     "src/lib/zoom.test.ts",
     "src/lib/reading.test.ts",
     "src/lib/a11y.test.ts",
+    "src/lib/searchmapping.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

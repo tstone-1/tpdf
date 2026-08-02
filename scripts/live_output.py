@@ -25,16 +25,32 @@ import sys
 
 
 def stream_results() -> None:
-    """Makes stdout and stderr line-buffered even when they are not a terminal.
+    """Makes stdout and stderr line-buffered, and able to carry a document's text.
 
     Safe to call more than once, and safe on a stream that is already a tty ---
     it is then a no-op in effect. Wrapped in a try because `reconfigure` exists
     only on a `TextIOWrapper`: a caller whose stdout has been replaced (a test
     harness capturing it, for instance) should not crash over buffering.
+
+    **UTF-8, because a transcript is mostly document text.** A check's detail is a
+    word off the page, a line read out of the accessibility tree, a status the
+    panel wrote --- so on `multilingual.pdf` and `encodings.pdf` these streams
+    carry Japanese, Arabic and replacement characters. Python's stdout on Windows
+    encodes with the locale codec, cp1252, which has no code point for any of
+    them: `print` raised `UnicodeEncodeError` and took the run down *after* every
+    check had passed. The corpus was unrunnable on that platform and the failure
+    read as a broken build.
+
+    `errors="replace"` beside it, because a character in a *detail* must never
+    decide a run's verdict. The cost is that an interactive cp1252 console shows
+    mojibake for the non-Latin details; a redirected run --- which is how these
+    are always run --- gets the bytes right.
     """
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+            stream.reconfigure(  # type: ignore[union-attr]
+                line_buffering=True, encoding="utf-8", errors="replace"
+            )
         except (AttributeError, ValueError):
             # Nothing to do and nothing worth reporting: the caller's output is
             # someone else's object now, and buffering is their business.

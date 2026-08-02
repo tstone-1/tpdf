@@ -110,6 +110,39 @@ describe("Search.unsearchablePages", () => {
     expect(asks).toHaveLength(1);
   });
 
+  it("says whether the question has been answered, not only what the answer was", async () => {
+    // `unsearchablePages` reports 0 for "no page is unreadable" and for "nobody
+    // has asked yet", and no consumer that draws a line for a reader needs to
+    // tell those apart. The check harness does: almost every document has
+    // nothing to report, so the assertion there is that the sentence is absent,
+    // and an absent sentence is what a frontend that never asked also produces.
+    core.invoke.mockImplementation((command: string, args: { page?: number }) => {
+      if (command === "search_page") return Promise.resolve(noHits(args.page ?? 0));
+      if (command === "document_mapping") return Promise.resolve([mapping(0)]);
+      throw new Error(`unexpected command ${command}`);
+    });
+    const searcher = new Search(1, 1, () => {});
+    expect(searcher.mappingKnown).toBe(false);
+    await searcher.run("cat", 0);
+    expect(searcher.mappingKnown).toBe(true);
+    // And the answer itself is the same either side of it, which is the whole
+    // reason a second observable was needed.
+    expect(searcher.unsearchablePages).toBe(0);
+  });
+
+  it("is answered even when the backend refused", async () => {
+    // Asked-and-answered, not answered-successfully. A failed fetch settles the
+    // question --- the answer is "nobody knows" --- and a wait that never ended
+    // on it would hang every check on a document `lopdf` cannot parse.
+    core.invoke.mockImplementation((command: string, args: { page?: number }) => {
+      if (command === "search_page") return Promise.resolve(noHits(args.page ?? 0));
+      return Promise.reject(new Error("worker died"));
+    });
+    const searcher = new Search(1, 1, () => {});
+    await searcher.run("cat", 0);
+    expect(searcher.mappingKnown).toBe(true);
+  });
+
   it("reports nothing rather than something false when the backend fails", async () => {
     // A refusal is not evidence of a problem. The reader is told nothing, which
     // is the status quo, rather than told a document is broken because a parse

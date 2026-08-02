@@ -205,6 +205,9 @@ export class Search {
   /** Whether the backend has already been asked, so it is asked at most once. */
   private mappingAsked = false;
 
+  /** Whether the backend has *answered*, either way. */
+  private mappingSettled = false;
+
   /** The query being scanned for, or "". */
   query = "";
   /**
@@ -306,6 +309,25 @@ export class Search {
   unreadablePage(page: number): boolean {
     const entry = this.mapping?.[page];
     return entry !== undefined && entry.guessing > 0;
+  }
+
+  /**
+   * Whether the backend has answered, either way.
+   *
+   * For the check harness, and it is what makes that check able to fail. Almost
+   * every document has no unreadable page, so the assertion there is a negative
+   * one --- "the reader is told nothing" --- and a negative assertion made before
+   * the answer has arrived is satisfied by the answer never arriving. Waiting on
+   * `unsearchablePages` instead cannot serve: on those documents the value it
+   * would wait for is the value it starts at.
+   *
+   * True after a failed fetch as well as a successful one. The distinction this
+   * draws is asked-and-answered against still-in-flight; what the answer *was*
+   * is `unsearchablePages`, which reports zero for "clean" and for "nobody
+   * knows" alike, deliberately.
+   */
+  get mappingKnown(): boolean {
+    return this.mappingSettled;
   }
 
   /**
@@ -538,6 +560,7 @@ export class Search {
       // reader is told nothing rather than told something false.
       this.mapping = null;
     }
+    this.mappingSettled = true;
     if (generation === this.generation) this.onChange();
   }
 }
