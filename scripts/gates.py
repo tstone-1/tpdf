@@ -144,6 +144,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a binary does not link (clippy and cargo test never link one)",
         ),
         (
+            "sinks",
+            [sys.executable, str(REPO / "scripts" / "check_webview_sinks.py")],
+            "a markup-parsing sink appeared in the frontend (THREAT-MODEL T8)",
+        ),
+        (
             "check",
             [npm(), "run", "check"],
             "svelte-check or tsc found a type error",

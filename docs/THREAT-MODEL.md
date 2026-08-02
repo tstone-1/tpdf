@@ -555,14 +555,38 @@ markup. There is no markup-parsing sink anywhere in `src/` — no `innerHTML`, n
 no `insertAdjacentHTML`, no `document.write`, no Svelte `{@html}` — checked by grep over the
 whole frontend, which is the whole of it.
 
-Two things follow, and the first is the one that changed:
+**It is enforced by a gate as of 2026-08-02**, and was a convention for the few hours between
+that discovery and this one. `scripts/check_webview_sinks.py` is the `sinks` gate, and it
+pins the narrow checkable invariant rather than the broad one:
 
-- It is now a **testable** property rather than a rule to hold to. "No markup sink exists" is
-  a grep, and "document strings go through `textContent`" is a grep. Neither is wired as a
-  check yet, which makes this the one mitigation in this document enforced by a convention
-  and a reading rather than by a line — see residual risk 7.
-- A sink added later would not fail anything. `textContent` is the default idiom in this
-  frontend rather than a decision recorded anywhere near the code that depends on it.
+> there is no markup-parsing sink anywhere in the frontend
+
+That is **sufficient**, not merely necessary, and the reason is what lets a grep answer a
+question about taint. If no sink exists, a string reaching the DOM has only `textContent`,
+`createTextNode`, `value` and `setAttribute` left to travel by, and none of those parses
+markup — so the check never has to decide *which* strings came from a document, which is the
+part no grep could do. It scans 58 files and 22,073 lines for nine patterns
+(`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`,
+`createContextualFragment`, `srcdoc`, `{@html`, plus `eval(` and `new Function(`, which the
+CSP would turn into a production-only failure).
+
+`setAttribute` is the one of those four that *can* be a sink — with `href`, `src` or an event
+handler — so the gate carries a second rule: **every `.setAttribute(` call must name its
+attribute with a string literal.** All 45 do.
+
+Four failure modes were proved by mutation before the gate was trusted, each singly and with
+a byte-digest restore: an outline title assigned by `innerHTML` (caught, named to the line), a
+computed attribute name (caught), an empty scan population (refused, since a scan that
+examined nothing reports exactly what a clean one reports), and **`.setAttribute(` occurring
+nowhere at all** (refused — a pattern that stops occurring passes identically to one that
+finds nothing). The exemption marker `webview-sink-ok:` works and every use of it is counted
+and printed, so it cannot silence the check quietly.
+
+What the gate does **not** cover is the second bound above: that no document-derived URL
+reaches the frontend at all. That rests on `outline.rs` refusing `/URI`, `/Launch` and
+`/GoToR`, which is enforced in Rust and tested there, but nothing ties the two facts
+together. If the outline ever starts following URI actions, this gate goes on passing and
+stops being sufficient. That is the one way it can be wrong, and it is residual risk 7.
 
 **CSP is real and is not the scaffold default**, which this document also had wrong.
 `tauri.conf.json` sets `default-src 'self'` with `img-src`/`connect-src` widened only to the
@@ -763,14 +787,18 @@ which is what makes it evidence rather than a milestone.
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is
    exposed before any form feature exists.
-7. **Nothing enforces the webview's "data, never markup" rule** (§T8). The rule holds today
-   — every document-derived string reaches the DOM through `textContent`, and the frontend
-   contains no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write` or `{@html}`
-   — but it holds by convention, and both halves are a grep that nothing runs. This entry
-   said "CSP and Tauri capabilities are scaffold defaults" until 2026-08-02, which was wrong
-   about the CSP: `default-src 'self'` with no `'unsafe-inline'` is a narrowed policy where
-   the scaffold ships `"csp": null`. The **capability set** is the part that is still
-   scaffold — `core:default` plus `dialog:allow-open`, unpared.
+7. **The `sinks` gate is sufficient only while no document-derived URL reaches the frontend**
+   (§T8). The "data, never markup" rule is enforced as of 2026-08-02 — no markup sink exists
+   and every `.setAttribute(` names a literal attribute, both gated and both proved by
+   mutation. The argument that this covers everything has one load-bearing premise the gate
+   cannot see: `outline.rs` refuses `/URI`, `/Launch` and `/GoToR`, so no attacker-controlled
+   URL crosses. Wire those two together, or a change on the Rust side will silently retire a
+   green check on the TypeScript side.
+
+   This entry said "CSP and Tauri capabilities are scaffold defaults" until 2026-08-02, which
+   was wrong about the CSP: `default-src 'self'` with no `'unsafe-inline'` is a narrowed
+   policy where the scaffold ships `"csp": null`. The **capability set** is the part that is
+   still scaffold — `core:default` plus `dialog:allow-open`, unpared.
 8. **A compromised worker can lie about what it saw** — no verification result may rest on
    a single worker's word.
 9. **Nothing here protects previous copies, backups, or free sectors.**

@@ -5586,3 +5586,52 @@ one is `worker::SANDBOX_PROFILE` --- so `--mode authority`, which §8 names as *
 re-verification after a PDFium bump, was certifying the spike's copy rather than the
 profile that ships. That copy is now the production constant; the entry *"two copies of a
 distinction drift"* is the general form.
+
+---
+
+### A snapshot taken after the first mutation restores the mutation, and verifies itself clean
+
+Proving `scripts/check_webview_sinks.py` could fail meant four mutations, and the fourth
+needed a repo-wide edit --- rename every `.setAttribute(` so the rule's pattern occurs
+nowhere. The harness did this:
+
+```python
+t.write_bytes(renamed)                                 # mutate results.ts
+saves = {p: p.read_bytes() for p in paths}             # <-- snapshot, one line too late
+for p in paths: p.write_bytes(...)                     # mutate the rest
+...
+for p, b in saves.items(): p.write_bytes(b)            # restore
+print(all(p.read_bytes() == b for p, b in saves.items()))
+```
+
+`saves` captured `results.ts` **after** it had already been mutated, so the "restore" wrote
+the mutation back. Every other file restored correctly, which is what makes it hard to see.
+
+**The verification could not detect it, and this is the part that generalises.** It compares
+the file on disk against `saves` --- the same polluted snapshot the restore came from --- so
+the two agree *because* they share the error. It is the *"a writer and its own reader agree
+about output that is wrong"* family, arriving in a mutation harness rather than a PDF: a
+restore checked against its own backup can only tell you the copy succeeded, never that the
+backup was right.
+
+The printed `byte-identical=False` was real but arrived for an **unrelated** reason: a
+later line restored `results.ts` from the true backup, so the surviving disagreement was
+between the good file and the bad snapshot. A verdict that is correct by accident is worse
+than one that is wrong, because it retires the suspicion that would have found the cause.
+What actually established the tree was clean was `git status --porcelain src/` and
+`git diff HEAD -- src/` --- an oracle outside the harness.
+
+Three habits, and the third is the cheap one:
+
+- **Snapshot before the first mutation, always** --- including the file a previous step in
+  the same harness already touched. The bug is an ordering bug, and ordering bugs in
+  throwaway scripts are the norm rather than the exception.
+- **Verify a restore against something the harness did not produce.** In a git repository
+  that is free and total: `git diff HEAD -- <paths>` being empty is the whole check, and it
+  is indifferent to what the harness believes about its own bookkeeping.
+- **Prefer `git checkout -- <paths>` to a hand-rolled restore** when the mutations are of
+  tracked files. There is no snapshot to get wrong.
+
+Related from the other direction: *"a text-mode restore is not a byte restore"* --- that one
+is about `read_text`/`write_text` corrupting content that compares equal; this one is about
+a byte-perfect restore of the wrong bytes.

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 214 entries
+The one thing this file does *not* carry in full is the trap list --- 215 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -506,13 +506,23 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently ten: a toolchain-pin check, a PDFium pin check, `cargo fmt --check`, `cargo clippy
---all-targets -- -D warnings`, `cargo test --locked`, `cargo build --locked --bins
---examples`, `npm run check`, `npm run test`, `npm run build`, and a third-party-notices
-check. Two of them are ordered rather than merely present: `toolchain` runs **first**,
-because every result after it is a statement about whichever compiler actually ran, and
-`notices` runs **last**, because it reads the build's own sourcemaps to see which npm
-packages shipped.
+Currently eleven: a toolchain-pin check, a PDFium pin check, `cargo fmt --check`, `cargo
+clippy --all-targets -- -D warnings`, `cargo test --locked`, `cargo build --locked --bins
+--examples`, a webview-sink check, `npm run check`, `npm run test`, `npm run build`, and a
+third-party-notices check. Two of them are ordered rather than merely present: `toolchain`
+runs **first**, because every result after it is a statement about whichever compiler
+actually ran, and `notices` runs **last**, because it reads the build's own sourcemaps to
+see which npm packages shipped.
+
+**`sinks` enforces `docs/THREAT-MODEL.md` T8**, which until 2026-08-02 was the one mitigation
+in that document held by convention rather than by a line. Document text --- outline titles,
+search results --- is attacker-controlled and reaches the DOM as data; the gate pins the
+narrow invariant that makes that checkable at all, **no markup-parsing sink anywhere in the
+frontend**, which is sufficient rather than merely necessary because without a sink the only
+routes left do not parse markup. It carries a second rule for the one exception,
+`.setAttribute(` with a computed attribute name, and it refuses a scan that found no files or
+no `setAttribute` calls --- a pattern that stops occurring passes exactly like a clean one.
+Four failure modes proved by mutation before it was trusted.
 
 **The Rust toolchain is pinned in `rust-toolchain.toml`** as of 2026-08-02, and the pin is
 enforced by `scripts/check_toolchain.py` rather than assumed. `RUSTUP_TOOLCHAIN` overrides
@@ -656,7 +666,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 214 of them and the full text
+titles. Only the titles are here, because there are 215 of them and the full text
 was 93% of this file --- an instruction budget spent on the 212 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -865,6 +875,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A harness sliced a code-point index with `String.prototype.slice`
 - A measured string transcribed off a terminal loses what the terminal does not draw
 - A mutation aimed at one branch when the fixture only reaches the other
+- A snapshot taken after the first mutation restores the mutation, and verifies itself clean
 
 ### Windows and portability
 - The gates had never run on the platform where they fail
