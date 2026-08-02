@@ -13,6 +13,10 @@ vendor/pdfium/
 
 # Local agent overrides (per shared-memory policy)
 AGENTS.local.md
+# The machine-local half of the Claude Code settings: tool permissions granted on
+# one box. Named rather than ignoring `.claude/` wholesale, because the sibling
+# `.claude/settings.json` is the *shared* half and should stay committable.
+.claude/settings.local.json
 
 # Test corpus - may contain confidential customer documents
 testdata/private/
