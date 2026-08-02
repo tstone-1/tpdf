@@ -40,6 +40,46 @@ describe("statusFor", () => {
     expect(statusFor(1, "cat", false)).toBe("1 match");
   });
 
+  it("does not claim a page was searched when its text could not be read", () => {
+    // The defect this exists for. A CID font with no /ToUnicode makes PDFium
+    // read glyph ids as character codes, so the page has text of the right
+    // length that means nothing -- and "No matches." asserts the query was
+    // tested and absent, which is false about a page nobody could search.
+    const said = statusFor(0, "cat", false, 1);
+    expect(said).not.toBe("No matches.");
+    expect(said).toContain("1 page");
+    expect(said).toContain("could not be searched");
+  });
+
+  it("says it even when there were hits, because a partial answer reads as a total one", () => {
+    // The quieter half of the same defect: three matches from a document with
+    // an unreadable page is not "3 matches", it is "3 matches out of what could
+    // be looked at".
+    const said = statusFor(3, "cat", false, 2);
+    expect(said).toContain("3 matches");
+    expect(said).toContain("2 pages");
+  });
+
+  it("agrees with itself about one unreadable page", () => {
+    expect(statusFor(0, "cat", false, 1)).toContain("1 page ");
+    expect(statusFor(0, "cat", false, 2)).toContain("2 pages ");
+  });
+
+  it("stays quiet until the scan has finished", () => {
+    // While running, "Searching…" is true and complete, and interrupting a
+    // reader with a caveat about a scan still in progress is a nag. The count
+    // is also not final yet -- the pages carrying it may not have been reached.
+    expect(statusFor(0, "cat", true, 3)).toBe("Searching…");
+  });
+
+  it("says nothing when no page is unreadable, which is almost every document", () => {
+    // The control. A rule that fired on a normal document would be worse than
+    // the defect it fixes: 36 fixtures and ~1,700 pages produce exactly one
+    // page that should trip this, so the common path must stay untouched.
+    expect(statusFor(0, "cat", false, 0)).toBe("No matches.");
+    expect(statusFor(3, "cat", false, 0)).toBe("3 matches");
+  });
+
   it("states the row cap rather than applying it silently", () => {
     // A list that stopped at the cap without saying so is a document that
     // appears to contain exactly that many hits.

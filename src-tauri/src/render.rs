@@ -75,6 +75,7 @@ use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
 
+use crate::encoding::PageMapping;
 use crate::outline::{self, Outline};
 use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
 use crate::queue::{Claim, SharedQueue};
@@ -349,6 +350,10 @@ pub(crate) enum Job {
     Outline {
         doc: u32,
         reply: Reply<Outline>,
+    },
+    Mapping {
+        doc: u32,
+        reply: Reply<Vec<PageMapping>>,
     },
     Close {
         doc: u32,
@@ -648,6 +653,17 @@ impl RenderService {
         }
     }
 
+    /// Reports, per page, whether the text means anything, on a service thread.
+    ///
+    /// Asked for lazily --- see [`crate::encoding`] and `RawDocument::mapping`.
+    /// The reply is always exactly one entry per page, and a page nobody could
+    /// judge comes back `truncated` rather than clean.
+    pub fn mapping(&self, doc: u32, reply: Reply<Vec<PageMapping>>) {
+        if self.tx.send(Job::Mapping { doc, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Withdraws a tile request by its `rid`.
     ///
     /// Safe to call at any point in the request's life, including after it has
@@ -727,6 +743,7 @@ pub(crate) trait Engine {
         carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
+    fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 }
 
@@ -749,6 +766,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             reply,
         } => reply(engine.search(doc, page, &query, options, carry.as_ref())),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
+        Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
     }
 }
@@ -769,6 +787,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Text { reply, .. } => reply(Err(error.to_string())),
             Job::Search { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
+            Job::Mapping { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
         }
     }
@@ -896,6 +915,10 @@ impl Engine for InProcess {
             options,
             carry,
         )
+    }
+
+    fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String> {
+        Ok(run_mapping(open_slot(&self.docs.borrow(), doc)?))
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
@@ -1055,6 +1078,14 @@ pub(crate) fn run_search(
 /// Walks a document's outline on the render thread.
 pub(crate) fn run_outline(document: &RawDocument) -> Outline {
     outline::read(document)
+}
+
+/// Reads the document's font dictionaries on the render thread.
+///
+/// Cached inside [`RawDocument`], so the `lopdf` parse this costs happens at most
+/// once per open document however often a reader searches.
+pub(crate) fn run_mapping(document: &RawDocument) -> Vec<PageMapping> {
+    document.mapping().to_vec()
 }
 
 #[cfg(test)]

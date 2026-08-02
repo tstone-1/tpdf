@@ -309,6 +309,7 @@ fn handle(
             Err(e) => Response::err(e),
         },
         Request::Outline => Response::json(&render::run_outline(document)),
+        Request::Mapping => Response::json(&render::run_mapping(document)),
     }
 }
 

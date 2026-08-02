@@ -30,16 +30,18 @@
 //! boundary is the [`CancelToken`], which is an `AtomicBool` and touches no
 //! PDFium state.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::os::raw::{c_int, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
+
+use crate::encoding::{self, PageMapping};
 
 /// `pdfium-render`'s `bindgen` module is private; only the handle *types* are
 /// `pub use`d out of it, so these values are restated rather than imported.
@@ -139,12 +141,47 @@ const PAGE_CACHE: usize = 4;
 /// thing safe: a `RawPage` borrows the document, so storing one inside the
 /// document would be self-referential. A handle is a plain pointer, copied out
 /// under a short borrow, and the document closes every one it holds on drop.
+/// Where a document's bytes came from, so its object graph can be read as well
+/// as rendered.
+///
+/// PDFium answers questions about *drawing*; some questions are only answerable
+/// from the file's own structure --- whether a font states what its glyphs mean
+/// is the one that forced this (`crate::encoding`). PDFium exposes no API for it,
+/// so the bytes have to be reachable a second time.
+///
+/// Two variants because the two backends genuinely differ: a worker is handed a
+/// mapping and never learns a path, which is the property `docs/THREAT-MODEL.md`
+/// §3 rests on, and the in-process backend has only a path.
+enum Source {
+    /// The mapping the worker was handed. Already in memory; no re-read.
+    Bytes(&'static [u8]),
+    /// A path the in-process backend opened. Read on demand, once.
+    Path(PathBuf),
+}
+
 pub struct RawDocument {
     bindings: Bindings,
     handle: FPDF_DOCUMENT,
     form: Option<RawForm>,
     /// Loaded page handles, and the order they were loaded in for eviction.
     pages: RefCell<(HashMap<u32, FPDF_PAGE>, VecDeque<u32>)>,
+    /// Where to find the bytes again, for questions PDFium cannot answer.
+    source: Source,
+    /// Per-page character-mapping verdicts, computed at most once.
+    ///
+    /// Lazy, and **not for the reason first written here**. The original comment
+    /// said this costs a full `lopdf` parse and that on a 337 MB document that is
+    /// the dominant cost of opening one --- a guess, and wrong. Measured in
+    /// release: 0.1 ms small, 5.8 ms on the 775-page document, 11.9 ms on the
+    /// 337 MB scan, because `lopdf` reads the xref and object headers rather than
+    /// every stream and the cost tracks object count, not bytes.
+    ///
+    /// It is still lazy, because warm startup is ~276 ms against a 300 ms target
+    /// (`docs/PLAN.md` §4) and 6--12 ms is a quarter of the whole margin. Off the
+    /// critical path that is free; on it, it is expensive. So it is computed when
+    /// first asked for --- after first paint, by a search that found nothing or by
+    /// the accessibility layer --- and cached for the document's lifetime.
+    mapping: OnceCell<Vec<PageMapping>>,
 }
 
 /// PDFium's form-fill environment, retained for exactly the document lifetime.
@@ -228,6 +265,8 @@ impl RawDocument {
             handle,
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
+            source: Source::Path(path.to_path_buf()),
+            mapping: OnceCell::new(),
         })
     }
 
@@ -257,6 +296,8 @@ impl RawDocument {
             handle,
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
+            source: Source::Bytes(bytes),
+            mapping: OnceCell::new(),
         })
     }
 
@@ -282,6 +323,40 @@ impl RawDocument {
         // SAFETY: `self.handle` is non-null for the lifetime of `self`.
         let count = unsafe { self.bindings.FPDF_GetPageCount(self.handle) };
         count.max(0) as u32
+    }
+
+    /// Per-page verdicts on whether the text means anything, computed once.
+    ///
+    /// Always exactly `page_count()` long, so index `n` is page `n`.
+    ///
+    /// **Every failure is "unknown", never "clean".** Bytes that cannot be read,
+    /// a document `lopdf` refuses, a page it cannot account for --- all produce a
+    /// `PageMapping` with `truncated` set and `certain()` false. That is the rule
+    /// `docs/PLAN.md` §6 states for a redaction verification, and it applies here
+    /// for the same reason: this exists so a reader is not told "no matches" on a
+    /// page nobody could search, and a scan that failed silently reporting clean
+    /// would reinstate exactly that.
+    pub fn mapping(&self) -> &[PageMapping] {
+        self.mapping.get_or_init(|| {
+            let count = self.page_count() as usize;
+            let unknown = || {
+                vec![
+                    PageMapping {
+                        truncated: true,
+                        ..PageMapping::default()
+                    };
+                    count
+                ]
+            };
+            let bytes = match &self.source {
+                Source::Bytes(bytes) => std::borrow::Cow::Borrowed(*bytes),
+                Source::Path(path) => match std::fs::read(path) {
+                    Ok(bytes) => std::borrow::Cow::Owned(bytes),
+                    Err(_) => return unknown(),
+                },
+            };
+            encoding::scan(&bytes, count).unwrap_or_else(|_| unknown())
+        })
     }
 
     /// Returns one page by zero-based index, loading it if it is not cached.

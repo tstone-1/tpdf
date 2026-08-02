@@ -152,6 +152,19 @@ interface Carry {
   codes: number[];
 }
 
+/**
+ * One page's verdict on whether its text means anything.
+ *
+ * Mirrors `encoding::PageMapping`. `guessing > 0` means a font on that page
+ * declares no character mapping, so PDFium reads glyph ids as character codes
+ * and returns text of the right length that means nothing --- see `encoding.rs`.
+ */
+interface PageMapping {
+  composite: number;
+  guessing: number;
+  truncated: boolean;
+}
+
 /** What one page contributed. */
 interface PageMatches {
   page: number;
@@ -171,6 +184,26 @@ export class Search {
   private readonly onChange: () => void;
   /** Bumped by every `run` and `cancel`; replies from an older one are dropped. */
   private generation = 0;
+
+  /**
+   * Per-page character-mapping verdicts, or null until the backend is asked.
+   *
+   * Asked for at most once per document. **Not once per search**, and an earlier
+   * version of this comment claimed a reader who finds hits never pays for it,
+   * which stopped being true the moment the accessibility layer became the
+   * second consumer: `Viewer.syncAccessibleText` calls `ensureMapping` every
+   * frame, so in practice the fetch happens on the first frame after open, for
+   * any document that renders text.
+   *
+   * That is affordable because it was measured rather than assumed --- 0.1 ms to
+   * 11.9 ms across the fixtures, tracking object count rather than file size ---
+   * and because it is off the startup path, which is where the ~25 ms of margin
+   * against the 300 ms target lives.
+   */
+  private mapping: PageMapping[] | null = null;
+
+  /** Whether the backend has already been asked, so it is asked at most once. */
+  private mappingAsked = false;
 
   /** The query being scanned for, or "". */
   query = "";
@@ -247,6 +280,49 @@ export class Search {
     return this.scanned > 0 && this.charsSeen === 0;
   }
 
+  /**
+   * How many pages store text no search can read.
+   *
+   * Zero until a completed scan has found nothing and the backend has answered,
+   * so a reader who finds hits is never told about it. Zero also when the
+   * question could not be settled --- an unreadable page and an *unknown* page
+   * are different, and only the first is worth interrupting a reader over. The
+   * unknown case is deliberately silent rather than cautious: a warning on every
+   * encrypted document, which `lopdf` cannot paginate, would be a false alarm
+   * far more often than a true one.
+   */
+  get unsearchablePages(): number {
+    if (this.mapping === null) return 0;
+    return this.mapping.filter((page) => page.guessing > 0).length;
+  }
+
+  /**
+   * Whether this page's text is PDFium's guess rather than the document's.
+   *
+   * False until the mapping has been fetched, and false for a page nobody could
+   * judge --- unknown is not unreadable. Used by the accessibility layer, which
+   * would otherwise read the guess aloud as though it were the page.
+   */
+  unreadablePage(page: number): boolean {
+    const entry = this.mapping?.[page];
+    return entry !== undefined && entry.guessing > 0;
+  }
+
+  /**
+   * Fetches the mapping if it has not been fetched, and repaints if it changed.
+   *
+   * Public because there are two consumers and only one of them is a search.
+   * The accessibility layer needs it for every document it renders text for, not
+   * only for a search that found nothing --- a screen-reader user who never
+   * searches would otherwise be read the guess aloud, which is the worst of the
+   * three symptoms and the one whose reader can least easily tell.
+   *
+   * Safe to call every frame: the fetch happens at most once per document.
+   */
+  ensureMapping(): void {
+    void this.learnMapping(this.generation);
+  }
+
   /** Abandons any scan in progress. */
   cancel(): void {
     this.generation++;
@@ -261,6 +337,9 @@ export class Search {
     this.scanned = 0;
     this.charsSeen = 0;
     this.problem = "";
+    // The mapping is a property of the *document*, not of the query, so it
+    // deliberately survives a clear: asking again would repeat a parse whose
+    // answer cannot have changed.
     this.onChange();
   }
 
@@ -420,5 +499,45 @@ export class Search {
     this.running = false;
     this.elapsedMs = performance.now() - this.startedAt;
     this.onChange();
+
+    // The scan is over and found nothing, which is the one moment "No matches."
+    // can be a lie: a page whose fonts state no character mapping was never
+    // searchable, and it looks exactly like a page that simply does not contain
+    // the query.
+    //
+    // **This call is redundant today and is kept deliberately.** The frame loop
+    // calls `ensureMapping` for the accessibility layer, so by the time any scan
+    // finishes the answer is already here -- a mutation deleting the condition
+    // below survives every test, and that is the correct result rather than a
+    // gap. It stays because the alternative is for this module's correctness to
+    // depend silently on another module's frame-loop policy: if the
+    // accessibility layer ever becomes conditional, search would stop learning
+    // the fact and nothing here would fail. `AGENTS.md` records that exact
+    // shape -- an impossibility enforced in a different module is not a guard to
+    // delete.
+    if (this.matches.length === 0) await this.learnMapping(generation);
+  }
+
+  /**
+   * Asks the backend which pages store unreadable text, at most once.
+   *
+   * `generation` guards the repaint, not the fetch: a newer scan may have
+   * started while this was in flight, and repainting then would show the older
+   * scan's conclusion over the newer scan's results. The *answer* is still worth
+   * keeping, because it describes the document rather than the query.
+   */
+  private async learnMapping(generation: number): Promise<void> {
+    if (this.mappingAsked) return;
+    this.mappingAsked = true;
+    try {
+      this.mapping = await invoke<PageMapping[]>("document_mapping", {
+        doc: this.doc,
+      });
+    } catch {
+      // Unknown, not clean. `unsearchablePages` reports 0 either way, and the
+      // reader is told nothing rather than told something false.
+      this.mapping = null;
+    }
+    if (generation === this.generation) this.onChange();
   }
 }

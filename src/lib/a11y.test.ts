@@ -11,7 +11,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { elementFor } from "./a11y";
+import { AccessibleText, elementFor } from "./a11y";
+import { installFakeDom } from "./testdom";
 
 describe("elementFor", () => {
   it("gives a heading the level the document stated", () => {
@@ -62,5 +63,64 @@ describe("elementFor", () => {
   it("makes an inferred block a paragraph", () => {
     // `null` is "the geometry drew this boundary", which is never a heading.
     expect(elementFor(null)).toBe("p");
+  });
+});
+
+describe("AccessibleText and a page whose text means nothing", () => {
+  /** One page of two characters, laid out on one line. */
+  function page() {
+    return {
+      codes: [72, 105],
+      boxes: [10, 100, 20, 90, 20, 100, 30, 90],
+      width_pt: 612,
+      height_pt: 792,
+      turns: 0,
+    };
+  }
+
+  /** Every string the layer put in the tree, joined. */
+  function render(unreadable: boolean): string {
+    const dom = installFakeDom();
+    try {
+      const layer = new AccessibleText(dom.root as never, 1);
+      layer.sync(
+        [0],
+        () => page() as never,
+        () => unreadable,
+      );
+      const said: string[] = [];
+      const walk = (element: { textContent: string; children: unknown[] }): void => {
+        if (element.textContent) said.push(element.textContent);
+        for (const child of element.children) {
+          walk(child as { textContent: string; children: unknown[] });
+        }
+      };
+      walk(dom.root as unknown as { textContent: string; children: unknown[] });
+      // Joined with nothing: the layer emits one element per *line*, so a
+      // two-character page arrives as "H" and "i" and any separator would break
+      // a word the assertion is looking for.
+      return said.join("");
+    } finally {
+      dom.restore();
+    }
+  }
+
+  it("withholds the characters when the document does not say what they mean", () => {
+    // PDFium returns text of the right length that means nothing, and a screen
+    // reader has nothing to tell it apart from the page. Reading it aloud is the
+    // symptom whose reader can least easily notice it, so the characters are
+    // withheld and the reason given instead.
+    const said = render(true);
+    expect(said).toContain("cannot be read");
+    expect(said).not.toContain("Hi");
+  });
+
+  it("reads the page normally when the document does say", () => {
+    // The control, and the one that matters: a rule that withheld text from an
+    // ordinary page would silence the accessibility layer for every document
+    // while passing the test above.
+    const said = render(false);
+    expect(said).toContain("Hi");
+    expect(said).not.toContain("cannot be read");
   });
 });

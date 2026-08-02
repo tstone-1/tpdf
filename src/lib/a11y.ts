@@ -148,7 +148,11 @@ export class AccessibleText {
    * which is the property the whole file exists for, and a page whose text has
    * not arrived is skipped rather than added empty.
    */
-  sync(visible: readonly number[], text: (page: number) => PageText | null): void {
+  sync(
+    visible: readonly number[],
+    text: (page: number) => PageText | null,
+    unreadable: (page: number) => boolean = () => false,
+  ): void {
     const wanted = new Set(visible);
 
     for (const [page, element] of this.pages) {
@@ -161,7 +165,7 @@ export class AccessibleText {
       if (this.pages.has(page)) continue;
       const content = text(page);
       if (!content) continue;
-      const element = this.build(page, content);
+      const element = this.build(page, content, unreadable(page));
       this.pages.set(page, element);
       this.insert(page, element);
     }
@@ -188,7 +192,7 @@ export class AccessibleText {
     this.host.insertBefore(element, before);
   }
 
-  private build(page: number, content: PageText): HTMLElement {
+  private build(page: number, content: PageText, unreadable = false): HTMLElement {
     const article = document.createElement("article");
     article.setAttribute("aria-label", `Page ${page + 1} of ${this.pageCount}`);
     // Focusable programmatically but not in the tab order: Tab through a
@@ -196,6 +200,24 @@ export class AccessibleText {
     // target for "go to this page".
     article.tabIndex = -1;
     article.dataset.page = String(page);
+
+    // A page whose fonts declare no character mapping has text of the right
+    // length that means nothing --- PDFium reads glyph ids as character codes, so
+    // `Encoding probe ABC` comes back as `(QFRGLQJ\x03SUREH\x03$%&`. Reading that
+    // aloud is the worst of the three symptoms this fixes: a sighted reader sees
+    // the search find nothing and can guess something is wrong, and a
+    // screen-reader user is simply read nonsense with nothing to say it is not
+    // the page. So the characters are withheld and the reason is given instead.
+    //
+    // Withheld rather than announced *alongside*: an element containing both
+    // would be read out in full, which is the outcome being avoided.
+    if (unreadable) {
+      const note = document.createElement("p");
+      note.textContent =
+        "This page's text cannot be read. The document does not say what its characters mean.";
+      article.appendChild(note);
+      return article;
+    }
 
     // `readingBlocks` rather than `linesOf`: a screen reader is handed the page
     // in the order it is read, which on a two-column page is not the order the
