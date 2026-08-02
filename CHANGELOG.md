@@ -61,6 +61,34 @@ single "initial release" line.
   blocks the first release rather than the repository being public. `BUILD.md` step 6
   exists for this exact failure and it still took writing the sentence twice to catch it.
 
+### A corrupted legal notice, and a pin that matched on the wrong axis
+
+- **The notices file shipped FreeType's required attribution with the copyright sign
+  destroyed.** `read_text` decoded with `errors="replace"`, and
+  `vendor/pdfium/licenses/freetype.txt` is Latin-1, so its `0xA9` became U+FFFD ---
+  `copyright <?> <year> The FreeType Project`, in the credit line that licence *requires*
+  be reproduced. Exactly one replacement character in 469 KB, which is how it passed
+  generation, review, the staleness gate and the cross-platform byte-equality check: the
+  corruption is deterministic, so every one of those compared it against itself and agreed.
+  Decoding is a codec chain now --- UTF-8, then cp1252, then latin-1, which maps every byte
+  and cannot fail, so no path reaches `errors="replace"`. A fallback prints a `[note]`
+  naming the file and codec. This is the quiet direction of the `text=True` bug above: that
+  one raised and cost two rounds of debugging, this one substituted silently and cost a
+  wrong legal notice in every installer built since the file was added.
+- **`check_toolchain.py` now asserts the host triple, not only the version.** A bare
+  `channel = "1.97.1"` carries no target triple, so rustup resolves it against its *default
+  host triple* --- a different setting from the default *toolchain*, with nothing keeping
+  the two in step. On the Windows desktop the default toolchain was
+  `stable-x86_64-pc-windows-msvc` and the default host was `x86_64-pc-windows-gnu`, so
+  adding the pin silently moved that machine from MSVC to GNU; rustc reported the pinned
+  1.97.1, clippy and rustfmt matched its commit hash, the gate said `[OK]`, and the build
+  died three gates later on a missing `dlltool.exe`. CI cannot catch it --- GitHub's windows
+  runners default to MSVC, so the pin resolves correctly there and stays green forever.
+  Fixed on the machine with `rustup set default-host`, and in the gate so the laptop and any
+  fresh clone are told rather than left to discover it. Proved with the real GNU toolchain
+  still installed: same version, same hashes, every pre-existing check passing, only the new
+  one firing.
+
 ### Third-party notices, and what CI found on its first run
 
 - **`THIRD-PARTY-NOTICES.md`** and `scripts/third_party_notices.py` that generates it ---

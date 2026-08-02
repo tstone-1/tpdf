@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 211 entries
+The one thing this file does *not* carry in full is the trap list --- 213 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -656,8 +656,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 211 of them and the full text
-was 93% of this file --- an instruction budget spent on the 205 traps that are not
+titles. Only the titles are here, because there are 213 of them and the full text
+was 93% of this file --- an instruction budget spent on the 212 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -855,6 +855,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A precondition that names the cause still lets the symptom print
 - A text-mode restore is not a byte restore, and the locale codec cannot even read the file
 - A gate's static reason turned a crash into a wrong diagnosis, twice over
+- A decoder told to replace what it cannot read does, and the result ships
 - A harness that synthesises input must reset the input's own state machine
 - The last page cannot reach the top of the viewport
 - An expected error line beside a passing suite makes a green run unreadable
@@ -875,6 +876,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A list of documented blockers can be wrong in the direction that looks thorough
 - A gate list that never links a binary cannot see a link error
 - A pin that nothing verifies is indistinguishable from no pin
+- A toolchain pin can match on version and still be the wrong ABI
 - A custom URI scheme is not spelled the same way on every platform
 - One constant standing for two platform distinctions breaks the moment they diverge
 - A release build is not a production build; a cargo *feature* decides that

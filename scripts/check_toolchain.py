@@ -50,6 +50,30 @@ def running_version(argv: "list[str]") -> "str | None":
     return hit.group(1) if hit else None
 
 
+def running_host() -> "str | None":
+    """Returns the host triple rustc reports, or None if it will not run."""
+    try:
+        out = subprocess.run(
+            ["rustc", "-vV"],
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    hit = re.search(r"^host:\s*(\S+)$", out, re.M)
+    return hit.group(1) if hit else None
+
+
+# The ABI each platform's product actually is. PDFium `win-x64` is an MSVC
+# build, the WiX and NSIS installers are MSVC, and every Windows measurement in
+# AGENTS.md was taken on MSVC. A GNU-ABI toolchain is a different product, not a
+# variation on this one.
+EXPECTED_ENV = {"win32": "pc-windows-msvc", "darwin": "apple-darwin"}
+
+
 def commit_hash(argv: "list[str]") -> "str | None":
     """Returns the toolchain commit hash a binary reports in parentheses."""
     try:
@@ -73,7 +97,10 @@ def main() -> int:
     rustc = running_version(["rustc", "--version"])
     override = os.environ.get("RUSTUP_TOOLCHAIN")
 
-    print(f"pinned={pin}  rustc={rustc}  RUSTUP_TOOLCHAIN={override or '(unset)'}")
+    print(
+        f"pinned={pin}  rustc={rustc}  host={running_host() or '(unknown)'}  "
+        f"RUSTUP_TOOLCHAIN={override or '(unset)'}"
+    )
 
     if rustc is None:
         print("[FAIL] rustc did not run -- is rustup installed?", file=sys.stderr)
@@ -102,6 +129,44 @@ def main() -> int:
                 file=sys.stderr,
             )
         return 1
+
+    # A version match is not a toolchain match. `channel = "1.97.1"` carries no
+    # target triple, so rustup resolves it against its **default host triple** --
+    # a different setting from the default *toolchain*, with nothing keeping the
+    # two in step. On this project's Windows desktop the default toolchain was
+    # `stable-x86_64-pc-windows-msvc` while the default host was
+    # `x86_64-pc-windows-gnu`, so adding the pin silently moved that machine from
+    # MSVC to GNU. rustc reported the pinned 1.97.1, clippy and rustfmt matched
+    # its commit hash, and this gate said [OK]; three gates later the build died
+    # on a missing `dlltool.exe`, because the GNU ABI wants MinGW binutils that
+    # were never installed.
+    #
+    # CI cannot catch it: GitHub's windows runners default to MSVC, so the pin
+    # resolves correctly there and stays green. It is per-machine and invisible
+    # from the other platform, which is why it has to live in the gate.
+    #
+    # Fix the machine, not the pin: `rustup set default-host <triple>`. Writing a
+    # full triple into rust-toolchain.toml would pin one platform's ABI into a
+    # file both platforms read.
+    host = running_host()
+    expected_env = EXPECTED_ENV.get(sys.platform)
+    if expected_env is not None:
+        if host is None:
+            print("[FAIL] rustc did not report a host triple.", file=sys.stderr)
+            return 1
+        if not host.endswith(expected_env):
+            print(
+                f"[FAIL] rustc's host triple is {host}, but this platform builds "
+                f"{expected_env}.\n"
+                "       The pin names a channel and no triple, so rustup resolved "
+                "it against\n"
+                "       `rustup show`'s default host -- which is not the same "
+                "setting as the\n"
+                "       default toolchain. Fix the machine:\n"
+                f"       rustup set default-host <arch>-{expected_env}",
+                file=sys.stderr,
+            )
+            return 1
 
     # clippy and rustfmt must come from the *same* toolchain, and their version
     # numbers cannot say so: the three schemes are unrelated -- rustc 1.97.1,
