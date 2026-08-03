@@ -397,8 +397,9 @@ workers are selected there, proved from outside the process. `AGENTS.md` carried
 pre-flip wording in its own gates section for a day after the flip, in flat contradiction of
 its own constraints section, which is the hazard this note exists to prevent here.
 
-`scripts/gates.py` reports **8/8 on `x86_64-pc-windows-msvc`**, and on 2026-07-29 a Windows
-build **opened documents and passed the full functional check**. A clean clone bootstraps
+`scripts/gates.py` reported **8/8 on `x86_64-pc-windows-msvc`** on 2026-07-29 --- a dated
+count, and there are twelve gates now, so ask `--list` rather than this line --- and the same
+day a Windows build **opened documents and passed the full functional check**. A clean clone bootstraps
 with no changes --- `npm install` and `scripts/fetch_pdfium.py` both do the right thing, the
 fetch script selects the `win-x64` asset and verifies its digest.
 
@@ -1332,8 +1333,8 @@ document* per machine, for the reason two paragraphs down.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 143 | 20 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 148 | 15 | the only fixture with an ordinary outline |
+| `text-heavy.pdf` | 142--143 | 20--21 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 147--148 | 15--16 | the only fixture with an ordinary outline |
 | `outline-hostile.pdf` | 148 | 15 | the only one with a `/Launch` entry to refuse |
 | `vector-heavy.pdf` | 91 | 72 | one page, no extractable text, and no white paper to invert |
 | `vector-multi.pdf` | 104 | 59 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
@@ -1348,6 +1349,14 @@ The `text-heavy.pdf` row was `142 / 21` and marked derived until 2026-08-03, whe
 on the only machine that has the document made it `143 / 20`. The derivation was one check
 out, which is the cost of carrying arithmetic in a column of measurements: it looks exactly
 like the rows either side of it.
+
+**Then the measurement replaced it with a point, and the true value is a range** --- two runs
+the same evening against the release bundle both reported `142 / 21`. Nothing regressed: the
+one check that moves is the withdrawal race described below, and this row and
+`outline-simple`'s are the two the note there says land on both sides. So the correction
+above fixed the arithmetic and reintroduced the shape of the original error, which is worth
+saying plainly: **a number measured once is still a point estimate of a quantity that varies**,
+and for these two fixtures the invariant is the name total, not the split.
 
 **The two A0 corpora straddle the watchdog's old 300 s default, and their spread is far wider
 than the bound.** Four runs on macOS on 2026-08-03: `vector-multi.pdf` at **275 s**, **387 s**
@@ -1829,22 +1838,37 @@ starts at 0 and increments within the month.
    says the tests can fail:
 
    ```
-   scripts/mutate_rust.py          # search.rs + structure.rs, 23 mutations, `cargo test --lib`
-   scripts/mutate_frontend.py      # text/clicks/commands/keys/search/results/reading.ts, 85
-   scripts/mutate_viewer.py        # appcommands/search/viewercheck, 15 mutations, viewer_check.py
-   scripts/mutate_viewer.py --runner structure       # structure.rs, 4, structure-probe
-   scripts/mutate_viewer.py --runner viewer-tagged   # reading.ts, 2, viewer_check on tagged.pdf
+   scripts/mutate_rust.py          # search/text/structure/encoding.rs, `cargo test --lib`
+   scripts/mutate_frontend.py      # ten modules under src/lib, `vitest`
+   scripts/mutate_viewer.py        # every runner below, in one pass
+
+   # Or one runner at a time. The three probe runners need no webview, no bundle
+   # and no unlocked screen; the three viewer ones need all three.
+   scripts/mutate_viewer.py --runner structure          # structure.rs, structure-probe
+   scripts/mutate_viewer.py --runner search             # search.rs + text.rs, search-probe on multilingual.pdf
+   scripts/mutate_viewer.py --runner encodings          # text.rs, search-probe on encodings.pdf
+   scripts/mutate_viewer.py --runner viewer             # appcommands/search/results/viewercheck.ts + search.rs
+   scripts/mutate_viewer.py --runner viewer-tagged      # a11y/reading/viewercheck.ts, viewer_check on tagged.pdf
+   scripts/mutate_viewer.py --runner viewer-encodings   # a11y/search.ts, viewer_check on encodings.pdf
    ```
+
+   **How many mutations each carries is `--list`, not this page.** It said 23, 85 and
+   15 on 2026-08-03 against an actual 36, 98 and 31 --- a tally in prose, in the one
+   document whose job is to schedule the run, and nothing could go red about it. The
+   module names above are the invariant; the counts are a property of the table and are
+   printed by `--list` in the shape `<name> -> expects: <test>`.
 
    `mutate_rust.py` filters on **two** module prefixes, and libtest takes several and ORs them
    --- but only after `--`. `cargo test --lib a:: b::` is cargo's own argument error, which
    reads like the feature being unsupported.
 
-   `mutate_viewer.py` drives three harnesses, chosen per mutation and filterable with
-   `--runner`. The `structure` one needs no webview and no bundle, so it neither waits for one
-   nor requires an unlocked screen; it rebuilds one example and runs it, at about 15 s a
-   mutation. All three print the same `[FAIL] <name>` lines and the same summary, so the
-   cross-check, the byte restore and the name validation are shared rather than copied.
+   `mutate_viewer.py` drives six runners, chosen per mutation and filterable with
+   `--runner`. The `structure`, `search` and `encodings` ones need no webview and no bundle, so
+   they neither wait for one nor require an unlocked screen; each rebuilds one example and runs
+   it, at about 15 s a mutation. All six print the same `[FAIL] <name>` lines and the same
+   summary, so the cross-check, the byte restore and the name validation are shared rather than
+   copied. `RUNNERS` in the script is the list; the three probe runners share `search-probe`
+   and differ only in the fixture they open.
 
    `viewer-tagged` is the viewer harness against `tagged.pdf`, and it exists because the two
    tagged-reading-order checks `[SKIP]` on every other corpus. A skipped check is in the name

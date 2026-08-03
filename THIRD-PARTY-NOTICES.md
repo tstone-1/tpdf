@@ -9187,13 +9187,11 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 |---|---|---|
 | @tauri-apps/api | 2.11.1 | Apache-2.0 OR MIT |
 | @tauri-apps/plugin-dialog | 2.7.2 | MIT OR Apache-2.0 |
-| esm-env | 1.2.2 | MIT |
 | svelte | 5.56.8 | MIT |
 
 ### Copyright notices
 
 - Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)
 - Copyright (c) 2017 - Present Tauri Apps Contributors
-- Copyright 2022 Benjamin McCann
 - copyright license to reproduce, prepare Derivative Works of,
 - copyright notice that is included in or attached to the work

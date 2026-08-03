@@ -1,6 +1,6 @@
 {
   "name": "tpdf",
-  "version": "26.7.0",
+  "version": "26.8.0",
   "private": true,
   "description": "Fast, lightweight PDF viewer and editor",
   "type": "module",
@@ -17,16 +17,14 @@
     "@tauri-apps/plugin-dialog": "^2.7.2"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^5",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@tauri-apps/cli": "^2",
     "svelte": "^5",
-    "svelte-check": "^4",
+    "svelte-check": "^4.7.4",
     "tslib": "^2",
-    "typescript": "^5.6",
-    "vite": "^6",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.0",
     "vitest": "^4.1.10"
   },
-  "allowScripts": {
-    "esbuild@0.25.12": true
-  }
+  "allowScripts": {}
 }
