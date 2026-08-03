@@ -5886,3 +5886,40 @@ Three details that are not obvious from the outside:
 And the mutation that proves the whole thing is not the epoch check but the layout: reverting
 `computeGeometry` to lay every page out at page 1's size turns five unit tests red *and* three
 checks in the real app, one of them reporting `0% page` where the A3 page's own ink is.
+
+### Two budgets for one run, and the one that was raised is not the one that decides
+
+`viewer_check.py` bounds a run at 900 s, and its comment says exactly why the number moved
+there from 300: *"`vector-multi` renders twelve A0 pages and measured 276 s, i.e. it passed or
+timed out depending on the machine's mood."* The raise was worth nothing. The app runs a
+watchdog of its own (`start_watchdog`), whose viewercheck default stayed at **300 s**, and that
+one calls `process::exit(2)` itself --- so the harness's `communicate` never got to arbitrate.
+The tighter of the two budgets is the one that decides, and it was not the one anybody was
+editing.
+
+Measured on macOS 2026-08-03, and the spread is the finding rather than any one figure:
+`vector-multi` ran **275 s**, **387 s**, and once past **600 s**, while `vector-heavy` was
+killed at 300 s and then finished in **249 s** on the same binary. Roughly 2.2x on one
+document, with the bound sitting inside it --- so this was a coin flip, not a consistent
+failure, which is exactly why it lasted. A check that fails every time gets fixed; one that
+fails half the time gets re-run, and the re-run passes.
+
+Three things worth carrying:
+
+- **A second enforcement point turns a fixed bug back into a live one, silently.** The comment
+  above is correct, prominent, and describes a defect that was still shipping. Nothing in
+  either file mentions the other, so reading either one leaves you sure the bound is what it
+  says. When a limit exists twice, the fix is one number with the other derived from it ---
+  `viewer_check.py` now sets `TPDF_VIEWERCHECK_TIMEOUT` from its own `--timeout`, keeping the
+  intended ordering (the watchdog fires first, because its timeline says *where* the run
+  stopped, which `communicate` cannot) as a consequence rather than a coincidence.
+- **The failure presented as a hang in whatever was last changed**, which is what it was
+  hunted as: it landed the day a shared `reading.ts` rule changed, on the two corpora that
+  came back red, and the merge was the obvious suspect. What it actually pointed at was the
+  fit-page setup on an A0 page --- the operation that defeats spatial culling, since the whole
+  page becomes visible and PDFium charges its large fixed cost per render call. The tell was
+  that two documents differing 12x in page count stopped at the *identical* check: a clock
+  running out stops wherever it stops, and a shared cost stops in the same place.
+- **The cheap decisive experiment is the bound, not the code.** Re-running with the watchdog
+  raised took one command and separated "slow" from "wedged" before anything was instrumented
+  or bisected. Same family as running a suspect binary bare before instrumenting it.

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 222 entries
+The one thing this file does *not* carry in full is the trap list --- 223 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -33,59 +33,6 @@ Sibling projects built on the same reasoning: `screenpick` (screenshot tools wer
 bloated), `dblitz` (DB Browser for SQLite was missing things).
 
 ---
-
-## HANDOVER --- open on macOS, written 2026-08-02 from Windows
-
-**Delete this whole section once the one item below is done.** It is a transient note in an
-auto-loaded file, so it costs every agent on every machine until it goes.
-
-The Windows handover this replaces is discharged, and it found a defect on the way. The
-folding fix works: `multilingual.pdf` reads `café latte` here. But the rule as it landed was
-absolute, and an absolute rule refuses a page whose every glyph is degenerate --- which
-`encodings.pdf` page 2 is, at 0.018 pt per character, so its two lines came back as one. That
-was a *new* failure introduced by the fix, invisible to the corpus the fix was written for and
-invisible on macOS, and it surfaced only from re-running all ten corpora and diffing the name
-sets. `reading.ts`'s rule is a conjunction now --- absolute **and** relative to the page's
-median character height. `docs/TRAPS.md` has the whole account under *"An absolute epsilon
-refuses a page whose every glyph is that thin"*; `BUILD.md` has the measurements.
-
-Verified here: gates **12/12**, unit tests **400**, all ten corpora green at **163 check
-names** with the name sets diffed pairwise, every ran/skipped split matching `BUILD.md`'s
-table exactly, and the parser unmapped throughout (43--44 modules at peak). Four mutations
-were run against the new rule, one per claim, and each turned exactly the intended test red.
-
-### The corpus that carries the case is again the one this platform does not have
-
-`reading.ts` is shared, so this needs a macOS run, and the reason is the same asymmetry as
-last time pointing the other way. `make_multilingual_pdf.py` and `make_encodings_pdf.py` pick
-fonts from what the machine has: the folding page is `msgothic.ttc` here and Arial Unicode
-there, and the predefined-CMap page has no metrics here and may well have real ones there. So
-**neither of the two documents that discriminate exists on the Mac**, and its corpus run can
-only be a regression check --- which is exactly what is wanted from it.
-
-So: regenerate the fixtures, run `viewer_check.py` on all eleven, and confirm 163 names with
-identical name sets and no new red. That is the whole of it --- **the unit-test half is already
-answered**, and by CI rather than by anyone's prediction: `Gates (macos-latest)` is green on
-`29e1907`, and `gates.py` runs vitest, so the three tests carrying the measured Windows
-geometry (`reading.test.ts`, under *"a space whose font floated its box off the line"*) pass on
-that platform. Read this before re-deriving it; the corpus run is what CI structurally cannot
-do, because `viewer_check.py` needs a real unoccluded window.
-
-**The spike binaries take `tpdf_lib::PDFIUM_SUBDIR` now**, so they find the library on Windows
-without `--lib`. Nine were changed --- `incremental_save`, `outline_probe`, `remove_probe`,
-`sanitize_rewrite`, `search_probe`, `structure_probe`, `text_probe`, `text_roundtrip`,
-`thread_probe` --- and the two that keep a literal `lib`, `fdpass_probe` and `ocr_probe`, are
-inside `#[cfg(target_os = "macos")]`, where `lib` is simply the right answer. The constant's own
-doc comment said *four* remained and it was nine, which is what let `text-probe` rediscover this
-a third time; it now names the grep rather than a number.
-
-All nine were **run** here without `--lib`, not merely compiled --- which took installing qpdf,
-because `sanitize-rewrite` could not start without it. That turned up a second wrong thing:
-`BUILD.md` called qpdf *"optional ... not needed to build or run"*, and it is **required** for
-the hostile corpus, since `testdata/make_hostile_pdf.py` shells out to it. Without qpdf that
-script died on a bare `FileNotFoundError` out of `CreateProcess`, naming neither the tool nor
-the fixture; it now refuses up front and says which. On Windows the winget package wants
-elevation and the release's `msvc64.zip` does not.
 
 ## Hard constraints
 
@@ -839,8 +786,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 222 of them and the full text
-was 93% of this file --- an instruction budget spent on the 221 traps that are not
+titles. Only the titles are here, because there are 223 of them and the full text
+was 93% of this file --- an instruction budget spent on the 222 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1063,6 +1010,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A snapshot taken after the first mutation restores the mutation, and verifies itself clean
 - A rewritten line leaves a mutation aimed at nothing, and only the harness says so
 - A stream split done for the failing direction leaves the passing one where it was
+- Two budgets for one run, and the one that was raised is not the one that decides
 
 ### Windows and portability
 - The gates had never run on the platform where they fail

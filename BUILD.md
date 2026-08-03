@@ -1324,12 +1324,15 @@ when the indices are off by one.
 Run all eleven corpora. Every run reports the same **163 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch. **Ten of the eleven rows below were measured on Windows
-on 2026-08-02**; `text-heavy.pdf` is a real document this machine does not have, and its row
-is the 2026-08-01 macOS split plus the checks added since, marked as derived.
+on 2026-08-02, and all eleven again on macOS on 2026-08-03**, name sets diffed pairwise and
+byte-identical on both. Nine rows agree exactly across the two platforms. The two that do not
+are the two that cannot: `text-heavy.pdf` is a real document Windows does not have, so its row
+was arithmetic until the macOS run measured it; and `multilingual.pdf` is a *different
+document* per machine, for the reason two paragraphs down.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 142* | 21* | the dense case, and search across 775 pages |
+| `text-heavy.pdf` | 143 | 20 | the dense case, and search across 775 pages |
 | `outline-simple.pdf` | 148 | 15 | the only fixture with an ordinary outline |
 | `outline-hostile.pdf` | 148 | 15 | the only one with a `/Launch` entry to refuse |
 | `vector-heavy.pdf` | 91 | 72 | one page, no extractable text, and no white paper to invert |
@@ -1337,11 +1340,27 @@ is the 2026-08-01 macOS split plus the checks added since, marked as derived.
 | `rotated-90.pdf` | 139 | 24 | every page at `/Rotate 90`, which nothing else in the corpus has |
 | `columns.pdf` | 137 | 26 | the only one whose content-stream order is not its reading order |
 | `tagged.pdf` | 132 | 31 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 130 | 33 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `multilingual.pdf` | 130 | 33 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP --- **129 / 34 on macOS**, see below |
 | `encodings.pdf` | 130 | 33 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
 | `mixed.pdf` | 138 | 25 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
 
-`*` derived, not measured --- see above.
+The `text-heavy.pdf` row was `142 / 21` and marked derived until 2026-08-03, when running it
+on the only machine that has the document made it `143 / 20`. The derivation was one check
+out, which is the cost of carrying arithmetic in a column of measurements: it looks exactly
+like the rows either side of it.
+
+**The two A0 corpora straddle the watchdog's old 300 s default, and their spread is far wider
+than the bound.** Four runs on macOS on 2026-08-03: `vector-multi.pdf` at **275 s**, **387 s**
+and once still going past **600 s**, and `vector-heavy.pdf` at **249 s** having been killed at
+300 s on the run before. So the bound was a coin flip rather than a consistent failure, which
+is why it survived --- a corpus that fails every time gets fixed, and one that fails half the
+time gets re-run. Do not read any single figure here as the cost; the spread is the
+measurement, and it is roughly 2.2x on one document. Both are the fit-page setup on an A0
+page, which is the operation
+that defeats spatial culling: the whole page becomes visible, and PDFium charges its large
+fixed cost per render call. The two bounds are one number now --- `viewer_check.py` derives
+`TPDF_VIEWERCHECK_TIMEOUT` from its own `--timeout` --- so raising the one people edit raises
+the one that decides. Before that they disagreed, and the app's was the tighter.
 
 **Every measured row is its previous split with exactly three more skips**, which is a
 stronger statement than a matching total: the three layout checks added on 2026-08-02 skip
