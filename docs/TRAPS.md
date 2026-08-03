@@ -6018,3 +6018,48 @@ fixes, and the gate now prints that listing on failure for exactly that reason. 
 inverse of the *"An oracle more forgiving than the thing it stands in for cannot fail"* entry
 above: an oracle **stricter** than the real thing fails when nothing is wrong, and the damage is
 that the honest response --- loosen the check --- is the wrong one.
+
+### The verification step failed after everything it verifies had succeeded, because `mapfile` is bash 4
+
+Third and last defect of the same tag sequence (2026-08-03, `rc3`). The macOS leg got all the
+way through: the vendored dylib signed, `tauri-action` built and published, the `.app`
+notarized `Accepted`, the DMG notarized, stapled, and `The staple and validate action worked!`
+printed. Then *"Verify the macOS build is signed, notarized and stapled"* exited **127** and
+took the job red.
+
+127 is "command not found", and the command was `mapfile`. **macOS ships bash 3.2 as
+`/bin/bash`** --- Apple froze it at the last GPLv2 release --- and GitHub's `shell: bash` on a
+macOS runner is that 3.2, so a bash 4 builtin is simply absent. Under `set -euo pipefail` the
+step then aborts with no message of its own, which is the worst possible shape here: the
+release was *fine*, and the thing that said otherwise was the checker.
+
+Three things worth carrying.
+
+- **A broken verifier and a real failure are indistinguishable from the outside**, and the
+  instinct on seeing a red "verify signed and notarized" step is to go looking at the
+  signature. The tell was the exit code: no `::error::` line from any of the step's own
+  guards, each of which prints one, and 127 rather than 1. **When a step with explicit error
+  messages fails without printing one, suspect the script before the subject.**
+- **This is locally reproducible and nobody thinks to try**, because the ambient shell is
+  modern. `zsh` is the login shell on these Macs and `/opt/homebrew/bin/bash` is 5.x, so every
+  local rehearsal runs under something newer than the runner. `/bin/bash` **is** 3.2 on the
+  same machine: prefixing a rehearsal with `/bin/bash -c` reproduces the runner's shell
+  exactly, and it reproduced this in one command. Do that for any workflow shell body before
+  pushing a tag to find out.
+- **The portable form is three lines and has no downside**, so there is no reason to reach for
+  `mapfile` in CI at all:
+
+  ```bash
+  ARR=()
+  while IFS= read -r item; do ARR+=("$item"); done < <(some-command)
+  ```
+
+  The same family: `readarray`, `declare -A`, `${var,,}`/`${var^^}`, and `globstar`. All are
+  bash 4, all are absent on a macOS runner, and all fail as 127 or as a silently wrong value.
+
+The wider lesson is the one this file keeps arriving at from new directions: **the last step of
+a pipeline is the least-tested code in it**, because everything before it has to succeed before
+it runs even once. Three tags were needed here and each one failed one step later than the
+last --- the gates, then the signing, then the verification. That is not bad luck, it is the
+shape of testing a sequence end to end for the first time, and it is an argument for rehearsal
+tags rather than against them.

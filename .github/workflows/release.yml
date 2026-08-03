@@ -390,7 +390,18 @@ jobs:
           # the resource map did not survive into the bundle, which is the
           # defect fixed on 2026-07-31 and would ship an app that cannot open a
           # document at all.
-          mapfile -t DYLIBS < <(find "$APP" -name 'libpdfium.dylib')
+          #
+          # NO `mapfile` HERE. It is a bash 4 builtin, macOS ships bash 3.2 as
+          # /bin/bash, and GitHub's `shell: bash` on a macOS runner is that
+          # 3.2 -- so it exits 127 "command not found". Under `set -e` that
+          # aborts the step with no message of its own, which is how this
+          # verification failed on 2026-08-03 *after* the app and the DMG had
+          # both notarized successfully: everything it checks was fine and the
+          # checker could not run. Keep this loop portable.
+          DYLIBS=()
+          while IFS= read -r found; do
+            DYLIBS+=("$found")
+          done < <(find "$APP" -name 'libpdfium.dylib')
           echo "PDFium in the bundle at: ${DYLIBS[*]:-<none>}"
           [ "${#DYLIBS[@]}" -eq 1 ] \
             || { echo "::error::expected exactly one libpdfium.dylib, found ${#DYLIBS[@]}"; exit 1; }
