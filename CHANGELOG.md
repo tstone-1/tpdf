@@ -74,6 +74,28 @@ single "initial release" line.
   guard that turns "no fixtures" into a failure rather than a page of skips has now paid for
   itself twice.
 
+- **Then the macOS leg ran for the first time and died on `***: no identity found`.** With the
+  gates fixed, the second tag got both gate legs green, built and published the **Windows**
+  leg successfully, and failed on *"Sign the vendored PDFium"* --- the one genuinely new part
+  of the Apple half, since neither sibling repository ships a native library. Nothing had
+  imported the certificate into a keychain yet: the step's own comment said the Tauri CLI
+  imports it and no manual keychain step is needed, which is true of the CLI and false of the
+  job, because the CLI's import happens inside `tauri-action`, two steps later. The dylib has
+  to be signed *before* the bundler copies it, so the step's prerequisite was being created
+  after it ran. The certificate is now imported into a keychain in `RUNNER_TEMP` during the
+  preparation step, and the `***` in that error is GitHub masking the signing identity --- the
+  one thing a reader needs is the thing the masking removes.
+
+- **That fix was rehearsed locally against a synthetic certificate, and the rehearsal's
+  verdict was wrong in the dangerous direction.** `security find-identity -v -p codesigning`
+  reported zero identities, which reads as the fix not working; `-v` means *valid identities
+  only*, and an `openssl` self-signed certificate is `CSSMERR_TP_NOT_TRUSTED` by construction,
+  so it can never be valid whatever the import did. Loosening the check to make the rehearsal
+  pass would have removed the one thing that catches a `.p12` shipped without its intermediate
+  --- which otherwise surfaces forty minutes later at `notarytool`. The flag stays, the comment
+  says why not to drop it, and the failure path now prints the unfiltered listing, since one
+  identity present-but-untrusted and zero identities want completely different fixes.
+
 - **The bundle was checked with the development library moved aside**, and then with the
   bundled one moved aside as well: `text-heavy` 142/142 and `vector-heavy` 91/91 with the
   documented skips, then a deliberate failure naming the paths it tried. A pass alone cannot
