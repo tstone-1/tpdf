@@ -530,8 +530,21 @@ policy rather than by code today: the PDFium build's provenance (pinned build, r
 after every bump — see T2, and the `remove_probe` standing regression) and permissive-only
 licensing, which keeps the dependency set small enough to audit.
 
-**Untested.** The signing and notarization path for a bundled dylib (§10 q7) is a known
-open question, and it bit `screenpick`'s release path before.
+**Tested 2026-08-03, and this read "Untested" until then.** The signing and notarization
+path for a bundled dylib (§10 q7) was the open question here, and it bit `screenpick`'s
+release path before. It is answered: the `.app` notarizes `Accepted`, the DMG notarizes and
+staples, and both the app and `libpdfium.dylib` carry a Developer ID Application signature
+chaining to Apple Root CA with the hardened runtime. Confirmed from **outside** the workflow
+as well as by it --- the DMG was downloaded from the draft and checked on a machine that had
+not built it, where `spctl -a -t open` reports `source=Notarized Developer ID` and the
+stapled ticket validates. That distinction is not pedantry here: on the run before, every
+one of those properties held while the workflow's own verification step failed for a reason
+of its own, so the workflow's verdict and the artifact's state are separate facts.
+
+What is **still** untested is distribution over time rather than at the moment of release:
+nothing re-checks that a published artifact still validates once the signing certificate
+expires (2031-07-26) or if it were revoked, and there is no update channel to carry a fix,
+since tpdf ships no updater.
 
 ### T8 — The webview
 

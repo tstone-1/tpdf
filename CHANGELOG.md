@@ -96,6 +96,37 @@ single "initial release" line.
   says why not to drop it, and the failure path now prints the unfiltered listing, since one
   identity present-but-untrusted and zero identities want completely different fixes.
 
+- **The third rehearsal got the whole Apple path through, and then its verifier exited 127.**
+  The dylib signed, `tauri-action` built and published, the `.app` notarized `Accepted`, the
+  DMG notarized and stapled --- and *"Verify the macOS build is signed, notarized and
+  stapled"* died on `mapfile`, a bash 4 builtin, because macOS ships bash 3.2 as `/bin/bash`
+  and that is what a `run:` block gets. Under `set -euo pipefail` it aborted with no message
+  of its own, which is the worst shape available here: the release was fine and the checker
+  could not run. The tell was that none of the step's own guards printed an `::error::` line
+  --- **when a step with explicit error messages fails without printing one, suspect the
+  script before the subject.** Replaced with the portable `while IFS= read -r` form, and both
+  halves reproduced locally under `/bin/bash`, which on this machine is the same 3.2.57 the
+  runner has: `mapfile` exits 127 there, the new form returns the one dylib. Every shell body
+  in both workflows now passes `/bin/bash -n` rather than whatever bash is on `PATH`.
+
+- **The artifact was verified from outside the workflow, which is why that failure cost
+  nothing.** rc3's DMG was downloaded from its draft and checked on a machine that had not
+  built it: `spctl` accepts it as `source=Notarized Developer ID` with
+  `origin=Developer ID Application: Timo Stein (NVX72G8SJ8)`, the ticket staples on both the
+  DMG and the `.app`, both the app and the bundled `libpdfium.dylib` chain **Developer ID
+  Application -> Developer ID Certification Authority -> Apple Root CA** with
+  `flags=0x10000(runtime)`, and the payload holds exactly one engine and
+  `THIRD-PARTY-NOTICES.md`. So signing a bundled native library for notarization --- the one
+  part of this workflow with no precedent in any sibling repository --- works. `rc4` then
+  went green with the verification step included.
+
+- **Four rehearsal tags, each failing one step later than the last**, which is the shape of
+  running a sequence end to end for the first time rather than bad luck: **the last step of a
+  pipeline is its least-tested code, because everything before it has to succeed before it
+  runs even once.** `BUILD.md`'s release checklist ended at the commit and never said to push
+  a tag; the rehearsal habit is step 10 now, including the detail that deleting a tag does
+  **not** delete its draft release.
+
 - **The bundle was checked with the development library moved aside**, and then with the
   bundled one moved aside as well: `text-heavy` 142/142 and `vector-heavy` 91/91 with the
   documented skips, then a deliberate failure naming the paths it tried. A pass alone cannot
