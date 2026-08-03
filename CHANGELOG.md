@@ -9,7 +9,68 @@ measurements and a verdict on each load-bearing assumption, not a viewer. The en
 below are what exists in the tree, so that the first release has a history rather than a
 single "initial release" line.
 
-## [26.7.0] - Unreleased
+## [26.8.0] - 2026-08-03
+
+### The first release, and what cutting it found
+
+- **This is the first tag.** Everything below this section is what the tree accumulated
+  before anything shipped, kept rather than collapsed into one "initial release" line. What
+  ships is a reader --- sandboxed parsing on both platforms, search, selection, outline,
+  thumbnails, session restore and printing --- and nothing in it edits a document. The
+  generated release body says so in its first two paragraphs now, because a README's "Not
+  built yet" list sits a scroll below the fold and that is not where someone downloading a
+  binary reads.
+
+- **Four documents were wrong, and the code was not.** Running `BUILD.md`'s own checklist
+  end to end found: its mutation-harness line quoting 23, 85 and 15 against an actual 36, 98
+  and 31, and naming three runners where there are six; a dated `8/8` gate count read as
+  current when there are twelve; `PLAN.md` asserting in the present tense that Windows is
+  "entirely unverified", that "every PDF is still parsed in the app process", and that
+  containment is "still not wired in" so "Windows fails open today" --- all three closed
+  between 2026-07-29 and 2026-07-30, and the last of them contradicted by
+  `Backend::default_here` returning `Backend::Worker` on both platforms. The stale claims are
+  marked in place rather than deleted, since each names an obstacle the fix had to remove.
+  The counts are gone rather than corrected: `--list` is the authority, and a tally in the
+  document whose job is to schedule the run is exactly the thing nothing can turn red.
+
+- **`docs/THREAT-MODEL.md` needed no correction, which is the first time.** §3's boundary
+  table, §5's two SBPL profiles, §6's Windows row-by-row and §8's re-verify commands were
+  checked against the tree: `SANDBOX_PROFILE` still lives where §5 points, both profiles
+  match their source constants modulo line wrapping, `WORKER_MEMORY_CAP` is 1 GiB behind
+  `JOB_OBJECT_LIMIT_PROCESS_MEMORY`, `JOB_OBJECT_LIMIT_JOB_TIME` is still set nowhere as §6
+  says, `sweep::MAX_NESTING` is 256, and `Worker::footprint` still has no caller outside
+  `pool-bench` --- which is residual risk 2 and is stated as such. Three consecutive rounds
+  each found a claim that had become a description of an earlier phase; this one did not.
+
+- **A mutation was refused rather than surviving, and the difference matters.**
+  `mutate_frontend.py`'s anchor for *drop the characters PDFium placed nowhere* no longer
+  matched `reading.ts`: the sliver conjunction landed the day before and rewrote that line, so
+  the mutation was aimed at nothing. The harness said so instead of reporting a survivor,
+  which is the whole point of validating anchors --- a survivor reads as a gap in the tests.
+  Re-aimed, and 36 / 98 / 31 caught across the three harnesses with none surviving.
+
+- **The `text-heavy` row was corrected into a point estimate of something that varies.**
+  Yesterday's commit replaced a derived `142 / 21` with a measured `143 / 20`; two runs this
+  evening against the release bundle both report `142 / 21`. Nothing regressed --- the check
+  that moves is the thumbnail-withdrawal race that `BUILD.md` already documents in prose, and
+  this fixture is one of the two that note names as landing on both sides. Both rows are
+  ranges now. Fixing the arithmetic reintroduced the shape of the original error, which is
+  worth stating: a number measured once is still a point estimate of a quantity that varies.
+
+- **The bundle was checked with the development library moved aside**, and then with the
+  bundled one moved aside as well: `text-heavy` 142/142 and `vector-heavy` 91/91 with the
+  documented skips, then a deliberate failure naming the paths it tried. A pass alone cannot
+  say which candidate resolved; the failure does.
+
+- **Three frontend majors taken**: vite 6 → 8, `@sveltejs/vite-plugin-svelte` 5 → 7 and
+  TypeScript 5 → 6. TypeScript 7 is blocked and stays blocked --- `svelte-check@4` declares
+  `typescript: ^5 || ^6`. Taking the first two together is forced, since the plugin peers on
+  `vite: ^8`; `vitest@4.1.10` already declared `^6 || ^7 || ^8`, so nothing there had to move.
+  Two consequences the gates caught rather than a human: `esm-env` no longer ships, so
+  `THIRD-PARTY-NOTICES.md` was stale and the `notices` gate refused the build until it was
+  regenerated; and `allowScripts` still named `esbuild@0.25.12`, which vite 8 does not
+  install, leaving an allowlist entry for a package that is not in the tree. Emptied ---
+  an allowlist naming something absent is how one rots into a blanket permission.
 
 ### The macOS corpus run, and a bound that had been raised in the wrong place
 

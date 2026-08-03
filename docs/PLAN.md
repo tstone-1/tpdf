@@ -1408,13 +1408,16 @@ rediscovered:
 - ~~**The A0 vector page scrolls blank.**~~ Closed 2026-07-27 against the criterion as
   written — it never drops below its tier-1 placeholder — and not against what anyone would
   call a good experience, since it stays 6–10% sharp while moving. See Phase 1.
-- **Windows is entirely unverified** --- no build, no gate run, no measurement --- and the
-  tree does not currently compile there. `sanitize_rewrite.rs` and `tile_bench.rs` call
-  `libc::getrusage` with no `cfg` gate; PDFium's loadable library is at `bin/pdfium.dll`
-  rather than `lib/libpdfium.dylib`, which `pdfium_library_dir()` does not know; and the
-  worker sandbox is `sandbox_init` SBPL, so the containment argument in
-  `docs/THREAT-MODEL.md` is macOS-specific and needs its own answer there. `BUILD.md`
-  keeps the list.
+- ~~**Windows is entirely unverified** --- no build, no gate run, no measurement --- and the
+  tree does not currently compile there.~~ **Closed 2026-07-30.** It builds, gates, runs the
+  viewer, ships an MSI and an NSIS installer, and parses in contained workers. Each of the
+  three obstacles named here was real and each was removed: the ungated `libc::getrusage`
+  calls in `sanitize_rewrite.rs` and `tile_bench.rs`; `pdfium_library_dir()` not knowing
+  that the loadable library is `bin/pdfium.dll` there rather than `lib/libpdfium.dylib`; and
+  the worker sandbox being `sandbox_init` SBPL, which needed its own answer and got one --- a
+  low-integrity token inside a job object, applied while the child is still suspended, with
+  the evidence external (`scripts/win_modules.py` reads the app's module table from outside
+  and finds no `pdfium`). `BUILD.md` keeps the list.
 - ~~**There are no tests.**~~ Started 2026-07-27, with the request queue and the `tile://`
   parser --- 26 of them, each shown to fail against a deliberate mutation of the code it
   covers. Rendering is still asserted by the spike probes rather than by tests, which is the
@@ -3534,8 +3537,10 @@ rather than on anything about the bundle.
 
 #### The worker boundary — started 2026-07-28, parent half landed
 
-The one Phase 0 constraint that never landed. Every PDF is still parsed in the app process
-today, and `AGENTS.md` is explicit that this cannot be a later hardening pass — retrofitting
+The one Phase 0 constraint that never landed. Every PDF was still parsed in the app process
+**on the day this was written**, which is no longer true on either platform --- read the
+present tense in this entry as 2026-07-28's, not today's --- and `AGENTS.md` is explicit that
+this cannot be a later hardening pass — retrofitting
 a process boundary is an architectural rewrite, so it is one now rather than one later. Note
 the justification is `docs/THREAT-MODEL.md` and **not** the coverage floor: measured above, a
 pool buys 3.2× on a screenful of the A0 sheet and leaves it just as unscrollable.
@@ -4090,9 +4095,20 @@ Two diagnostics earned their place: with `restricted` failing, either ingredient
 plausible cause, and `sidonly` versus `noprivs` settled it in one run. See `docs/TRAPS.md`
 for that and for why `CreateProcessAsUser` rejected the first token derivation outright.
 
-**Still not wired in.** The probe proves the mechanism; no worker uses it. `RenderService`
-still selects in-process off macOS, so Windows fails open today exactly as it did this
-morning — with the difference that the shape of the fix is now measured rather than assumed.
+**Still not wired in** *on the day this was written*. The probe proves the mechanism; no
+worker uses it. `RenderService` still selects in-process off macOS, so Windows fails open
+today exactly as it did this morning — with the difference that the shape of the fix is now
+measured rather than assumed.
+
+> **Closed the next day, 2026-07-29 — read nothing below this line in the present tense.**
+> `Worker::spawn` builds a contained child on Windows, `Backend::default_here` returns
+> `Backend::Worker` there, and `render::UNSANDBOXED_MARK` no longer fires on either platform.
+> The evidence is external rather than a milestone of ours: `scripts/win_modules.py` reads
+> the app's module table through Toolhelp from outside the process and finds no `pdfium`,
+> with the module count printed beside it, and it was run **before** the flip and reported
+> the parser mapped. `docs/THREAT-MODEL.md` §6 is the current account. This paragraph and
+> the four below it are kept as the record of what the spike knew at the time, because the
+> obstacle each named is what the fix had to remove.
 
 Four pieces of that landed the same day, and the changelog has each in full:
 

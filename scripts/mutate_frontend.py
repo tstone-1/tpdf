@@ -661,9 +661,9 @@ MUTATIONS = [
     Mutation(
         "reading: drop the characters PDFium placed nowhere",
         "src/lib/reading.ts",
-        """    if (!placed(box) || mark) {
+        """    if (!placed(box) || sliver(extents, typical) || mark) {
       const at = trailing.get(last) ?? [];""",
-        """    if (!placed(box) || mark) {
+        """    if (!placed(box) || sliver(extents, typical) || mark) {
       if (!placed(box)) continue;
       const at = trailing.get(last) ?? [];""",
         "returns every character exactly once",

@@ -235,9 +235,23 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "tpdf ${{ github.ref_name }}"
+          # The scope paragraph is deliberate. tpdf is named and described as a
+          # viewer *and editor*, and nothing in this release edits a document ---
+          # the README says so a scroll below the fold, which is not where
+          # someone downloading a binary reads. A release that oversells itself
+          # is corrected by the first person who tries to annotate something.
           releaseBody: |
+            **What this is.** A PDF *reader*: fast, sandboxed — every document is
+            parsed and rendered in worker processes with no filesystem or network
+            authority — with search, selection, an outline, thumbnails, session
+            restore and printing.
+
+            **What it is not, yet.** Nothing here edits a document. Annotations,
+            page operations, true redaction, forms and text editing are not built.
+            See the roadmap in `docs/PLAN.md`.
+
             **macOS** — signed with a Developer ID identity and notarized by
-            Apple. Open it normally; no Gatekeeper bypass needed.
+            Apple. Open it normally; no Gatekeeper bypass needed. Apple Silicon only.
 
             **Windows** — unsigned. SmartScreen warns on first launch: choose
             *More info* → *Run anyway*.
