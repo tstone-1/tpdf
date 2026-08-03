@@ -52,6 +52,20 @@ def main() -> int:
 
     env = dict(os.environ, TPDF_VIEWERCHECK=args.pdf)
 
+    # The app runs a watchdog of its own, and raising the bound above was worth
+    # nothing while that one stayed at 300 s: it kills the process itself, so the
+    # *tighter* of the two budgets is the one that decides, and it was not the
+    # one anybody was editing. Measured 2026-08-03 on macOS --- `vector-multi` at
+    # 275 s, 387 s and once past 600 s, `vector-heavy` killed at 300 s and then
+    # green in 249 s --- so the old bound sat inside the spread and this was a
+    # coin flip rather than a consistent failure, which is why it lasted. See
+    # BUILD.md for the table. The watchdog is still meant to fire *first*, because
+    # its timeline says where the run stopped and `communicate` can only say
+    # that something took too long; that ordering is now a consequence of one
+    # number rather than a coincidence of two. An explicit setting still wins,
+    # so a caller can drive the watchdog on its own.
+    env.setdefault("TPDF_VIEWERCHECK_TIMEOUT", str(max(30, int(args.timeout) - 60)))
+
     # A fixture generated with a manifest states what each of its pages should
     # read as, and the reading-order checks assert against that rather than
     # against anything the viewer computed. Passed as a path and read in Rust:

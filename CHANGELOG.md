@@ -11,6 +11,30 @@ single "initial release" line.
 
 ## [26.7.0] - Unreleased
 
+### The macOS corpus run, and a bound that had been raised in the wrong place
+
+- **All eleven corpora are green on macOS at 163 check names**, name sets diffed pairwise and
+  byte-identical, every ran/skipped split matching `BUILD.md`. This is the run the Windows
+  handover asked for, and it clears the shared `reading.ts` rule --- the conjunction of an
+  absolute and a relative sliver test --- on this platform's fonts as well as the other's:
+  `a page reads in the order its generator laid it out` passes on both `multilingual.pdf` and
+  `encodings.pdf`, which are the two documents that discriminate and are a different document
+  on each machine.
+
+- **`text-heavy.pdf`'s row was arithmetic and was one out**, at `142 / 21` where the machine
+  that actually has the document reports `143 / 20`. It is measured now. A derived row in a
+  column of measurements looks exactly like the rows either side of it.
+
+- **Two timeouts bounded the same run, and raising the documented one changed nothing.**
+  `viewer_check.py` moved its bound to 900 s with a comment naming the corpus that forced it;
+  the app's own watchdog kept a 300 s default and calls `process::exit` itself, so the tighter
+  budget decided and it was not the one being edited. Measured here: `vector-multi` needs
+  **387 s**, so it could not pass unattended at any temperature, and `vector-heavy` **249 s**,
+  which straddles the bound --- killed on one run and green on the next, same binary. Both are
+  the fit-page setup on an A0 page, the operation that defeats spatial culling. The harness now
+  derives `TPDF_VIEWERCHECK_TIMEOUT` from its own `--timeout`, so there is one number and the
+  watchdog still fires first, which is what makes it print *where* a run stopped.
+
 ### A fix that moved its failure to another corpus
 
 - **Nine spike binaries could not find PDFium on Windows without being told where it is.** They
