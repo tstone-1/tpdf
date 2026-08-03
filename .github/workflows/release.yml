@@ -180,7 +180,19 @@ jobs:
       #
       # The CLI imports the certificate itself from APPLE_CERTIFICATE and
       # APPLE_CERTIFICATE_PASSWORD and sets the key partition list, so codesign
-      # never blocks on an interactive prompt. No manual keychain step.
+      # never blocks on an interactive prompt inside ITS step.
+      #
+      # THAT SENTENCE ENDED "No manual keychain step" AND WAS WRONG ABOUT THIS
+      # WORKFLOW, found by the second tag ever pushed (2026-08-03). It is a true
+      # statement about the Tauri CLI and a false one about the job, because the
+      # CLI's import happens inside `tauri-action` -- which runs AFTER the step
+      # below that signs the vendored dylib. At that point no keychain on the
+      # runner holds the identity, and `codesign` failed with the maximally
+      # unhelpful `***: no identity found`, the `***` being the masked secret.
+      # So the certificate is imported HERE, into a keychain that lives in
+      # RUNNER_TEMP and dies with the runner, and the CLI is still handed the
+      # same environment it expects and still does its own import for its own
+      # signing.
       - name: Prepare Apple signing and notarization
         if: runner.os == 'macOS'
         env:
@@ -204,6 +216,58 @@ jobs:
           KEYFILE="$KEYS/AuthKey_${APPLE_API_KEY}.p8"
           printf '%s\n' "$APPLE_API_KEY_P8" > "$KEYFILE"
           chmod 600 "$KEYFILE"
+
+          # A keychain of our own, so the dylib step below has an identity to
+          # sign with. RUNNER_TEMP dies with the runner, and the password is
+          # generated here rather than stored -- nothing needs to reopen this.
+          KEYCHAIN="$RUNNER_TEMP/tpdf-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          security default-keychain -s "$KEYCHAIN"
+
+          # macOS `base64` wants -D and GNU wants -d, and which one a runner
+          # image ships has changed before. Try the portable spelling first and
+          # fall back rather than pinning a flag that silently produces an empty
+          # file -- an empty .p12 imports as "no identity" and lands us back at
+          # the error this whole block exists to fix.
+          CERT="$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 -d > "$CERT" 2>/dev/null \
+            || printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$CERT"
+          [ -s "$CERT" ] || { echo "::error::APPLE_CERTIFICATE did not decode to anything"; exit 1; }
+
+          security import "$CERT" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -f pkcs12 -T /usr/bin/codesign
+          rm -f "$CERT"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+
+          # Positive evidence the import produced something codesign can use,
+          # counted rather than printed -- the identity's own name is a secret
+          # here, so a printed line arrives masked and a number does not.
+          #
+          # `-v` is "valid identities only" and is deliberate: an identity that
+          # does not chain to a trusted root cannot notarize, so catching it
+          # here beats catching it forty minutes later at notarytool. Do not
+          # drop the flag because a local rehearsal failed on it. A self-signed
+          # certificate is `CSSMERR_TP_NOT_TRUSTED` by construction and can
+          # never be valid, so a rehearsal against one is stricter than this
+          # runner and its failure says nothing about this step -- which is
+          # exactly what happened while writing it.
+          IDENTITIES=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep -c "Developer ID Application" || true)
+          echo "valid Developer ID Application identities in the build keychain: $IDENTITIES"
+          if [ "$IDENTITIES" -lt 1 ]; then
+            echo "::error::the certificate imported but yielded no VALID codesigning identity"
+            # The unfiltered listing is the diagnosis: an identity present here
+            # with CSSMERR_TP_NOT_TRUSTED means the .p12 carries the leaf
+            # without its intermediate, and nothing at all means the import
+            # itself did not take. The two want completely different fixes.
+            security find-identity -p codesigning "$KEYCHAIN" || true
+            exit 1
+          fi
 
           # Heredoc for the certificate: base64 may arrive wrapped, and a
           # multi-line value breaks the plain KEY=VALUE form.

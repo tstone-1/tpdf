@@ -5968,3 +5968,53 @@ duplicated YAML is not reviewed like duplicated code, because nothing compiles i
 imports it. If two jobs must be the same job, either they call one script or something
 compares them --- and the second is needed even after the first, since the setup steps around
 the shared call are exactly where the next copy will drift.
+
+### A step that signs before anything imports the certificate fails with the masked secret as its error
+
+The second half of the same tag push (2026-08-03). With the gates fixed, `release.yml` reached
+its macOS leg for the first time and died on *"Sign the vendored PDFium"* with:
+
+```
+***: no identity found
+```
+
+`***` is GitHub masking `APPLE_SIGNING_IDENTITY`, so the error names nothing at all --- the one
+piece of information a reader wants is exactly the piece the masking removes, and the message
+reads like a broken secret rather than a missing keychain.
+
+**The cause was an ordering error licensed by a true sentence.** The preparation step's comment
+said the Tauri CLI *"imports the certificate itself from `APPLE_CERTIFICATE` and
+`APPLE_CERTIFICATE_PASSWORD` and sets the key partition list ... No manual keychain step."*
+Every clause of that is correct about the CLI. It is false about the *job*, because the CLI's
+import happens inside `tauri-action`, which runs **after** the step that signs the vendored
+dylib --- and that step exists precisely because the dylib has to be signed before the bundler
+copies it. So the workflow contained a step whose prerequisite was created two steps later.
+
+Worth generalising: **a true statement about a tool is not a statement about when it runs.** The
+comment would have been correct in a job that only signed through the CLI, which is the job both
+sibling repositories have and this one was copied from. Whenever a workflow adds a step *before*
+the tool that was doing all the work, re-read the setup comments as claims about ordering rather
+than about capability.
+
+**And the local rehearsal was stricter than the runner, which nearly wasted the fix.** The block
+was rehearsed against a synthetic `openssl`-generated `.p12` before pushing, and its own
+verification failed: `security find-identity -v -p codesigning` reported **0**. That reads as the
+fix not working. It was the rehearsal: `-v` means *valid identities only*, and a self-signed
+certificate is `CSSMERR_TP_NOT_TRUSTED` by construction, so it can never be valid whatever the
+import did. Dropping `-v` to make the rehearsal pass would have removed the check that catches a
+`.p12` shipped without its intermediate --- a real failure mode, and one that otherwise surfaces
+forty minutes later at `notarytool`.
+
+The discriminating command is the same one without `-v`, which lists identities *and* why each
+is unusable:
+
+```
+1) BCBE...5F85 "Developer ID Application: ..." (CSSMERR_TP_NOT_TRUSTED)
+   1 identities found
+```
+
+One identity present-but-untrusted and zero identities are different failures wanting different
+fixes, and the gate now prints that listing on failure for exactly that reason. This is the
+inverse of the *"An oracle more forgiving than the thing it stands in for cannot fail"* entry
+above: an oracle **stricter** than the real thing fails when nothing is wrong, and the damage is
+that the honest response --- loosen the check --- is the wrong one.
