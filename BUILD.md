@@ -318,6 +318,16 @@ Two of them are worth understanding rather than just running:
   on its own. Expect `-D warnings` to surface new lints; that is the pin working, and dealing
   with them in a dedicated commit is the whole reason it exists.
 
+- **The `workflows` gate compares `ci.yml` and `release.yml`'s `gates` jobs, and only those.**
+  They must be the same job: one says a commit is good, the other stops a tag on a broken
+  commit producing artifacts, and if the release copy is weaker then every ordinary push is
+  checked harder than the thing that actually ships. They had drifted exactly that way ---
+  see step 10 of the release checklist for what it cost. The gate compares every `uses:` with
+  its pinned SHA and every `run:` body, in order; step *names* are not compared, since two
+  identical commands under different labels are still the same job. It deliberately says
+  nothing about the `release` job, the triggers or the permissions: those differ on purpose,
+  and that difference is the fork threat model rather than drift.
+
 - **The `pdfium` gate is a pin check, not a build step.** It fails if `vendor/pdfium` is
   missing or is not the pinned build --- which is the difference between a benchmark that
   means something and one that does not.
@@ -1979,7 +1989,41 @@ starts at 0 and increments within the month.
    The failing run before the fix is the negative control, and it is what makes the pass mean
    anything --- the same `.app`, the same command, the only difference being where the library
    sits. Keep both halves when repeating this.
-9. Commit as `Release vYY.M.MICRO: <summary>`.
+9. Commit as `Release vYY.M.MICRO: <summary>` and push it.
+
+10. **Rehearse on a throwaway tag, then tag for real.** This list ended at step 9 until
+    2026-08-03, which left the single riskiest action in the process written down nowhere
+    but a comment in `release.yml` --- and it is the action that runs unreviewed code paths
+    beside the signing key.
+
+    ```
+    git tag v26.8.0-rc1 && git push origin v26.8.0-rc1     # rehearsal
+    # ... watch it, fix what it finds, delete the tag and the draft, repeat ...
+    git tag v26.8.0     && git push origin v26.8.0         # the real one
+    ```
+
+    **The rehearsal is not optional the first time a workflow changes**, and the tag glob
+    `v[0-9][0-9].[0-9]*.[0-9]*` matches an `-rcN` suffix on purpose so it can be done at all.
+    Cutting `26.8.0` took **three** rehearsal tags, and each found a real defect that no
+    amount of reading had:
+
+    - `rc1` --- both gate legs red. `release.yml`'s `gates` job had been written from
+      `ci.yml` and the copy lost the fixture-generation step, so a unit test needing
+      `rotated.pdf` failed on both runners while passing in CI and locally.
+    - `rc2` --- gates green, Windows published, macOS died on `***: no identity found`.
+      Nothing had imported the certificate into a keychain yet; the step that signs the
+      vendored dylib has to run *before* the bundler copies it, and the Tauri CLI's own
+      import happens two steps later.
+    - `rc3` --- the notarization path itself.
+
+    Clean up between rehearsals, and note the two are separate: `git push --delete origin
+    <tag>` **does not remove the draft release**, which persists without its tag and will
+    sit in the release list looking like a real one. `gh release list` then
+    `gh release delete <tag> --yes`.
+
+    A failed run publishes nothing --- `release` needs `gates`, and both legs create the
+    release as a **draft** --- so the last checkpoint is a human publishing it, which is
+    also the last chance to edit the release body.
 
 Verify the bump landed everywhere:
 
