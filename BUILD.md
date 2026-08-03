@@ -387,16 +387,32 @@ repo going public or a second contributor. What actually forced it is notarizati
 a Mac, a Developer ID and Apple API credentials, and a signed macOS release should not
 depend on which machine is free.
 
-**Its macOS half has never run.** Ported from `screenpick`, whose version is proven; the
-part with no precedent is signing the bundled `libpdfium.dylib`, since neither sibling ships
-a native library. Notarization requires every Mach-O in the bundle to be Developer ID signed
-with the hardened runtime, so the dylib is signed in `vendor/` before the bundler copies it
---- correct whether or not Tauri re-signs nested resources. The verification step fails
-rather than warns, because a skipped notarization exits 0.
+**Its macOS half ran green on 2026-08-03**, and this paragraph said it had never run until
+that day. Ported from `screenpick`, whose version is proven; the part with no precedent is
+signing the bundled `libpdfium.dylib`, since neither sibling ships a native library.
+Notarization requires every Mach-O in the bundle to be Developer ID signed with the hardened
+runtime, so the dylib is signed in `vendor/` before the bundler copies it --- correct whether
+or not Tauri re-signs nested resources. The verification step fails rather than warns,
+because a skipped notarization exits 0.
 
-The first successful run also settles something the code cannot: `pdfium_library_dir`
-records the macOS bundle layout for a resource map as unverified, and the verification step
-prints where `libpdfium.dylib` actually landed.
+It took four rehearsal tags and each failed one step later than the last; step 10 of the
+release checklist has the sequence, and all three defects are in `docs/TRAPS.md`. What the
+green run establishes, beyond that the path works:
+
+- **Signing a bundled native library for notarization works.** The `.app` is `Accepted`, the
+  DMG is notarized and stapled, and both the app and the dylib chain **Developer ID
+  Application -> Developer ID Certification Authority -> Apple Root CA** with
+  `flags=0x10000(runtime)`.
+- **Verified from outside the workflow, not only by it.** rc3's DMG was downloaded from the
+  draft and checked on a machine that had not built it: `spctl -a -t open` reports
+  `source=Notarized Developer ID`, `stapler validate` passes on the DMG and on the `.app`,
+  the payload holds exactly one `libpdfium.dylib` and `THIRD-PARTY-NOTICES.md`. Worth doing
+  again on any release whose verification step has been touched --- rc3 is the case where
+  the artifact was perfect and the checker was broken.
+- **The macOS bundle layout for a resource map is settled**, which `pdfium_library_dir`
+  records as unverified and the code cannot answer: the engine lands at
+  `Contents/Resources/pdfium/libpdfium.dylib`, and the verification step prints the path it
+  found.
 
 ### Windows runs the viewer, and how it came to be contained
 

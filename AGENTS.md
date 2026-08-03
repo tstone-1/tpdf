@@ -715,14 +715,29 @@ It **invokes `scripts/gates.py`** rather than re-listing commands in YAML, which
 one instruction this file did get right --- a hand-copied command quietly loses a `--locked`
 and then gates something weaker than the real gate.
 
-**Nothing in its macOS half has ever run.** It is ported from `screenpick`'s working
-workflow, and the one part with no precedent anywhere in the portfolio is signing the
-bundled `libpdfium.dylib`: neither sibling ships a native library, and notarization requires
-every Mach-O in the bundle to carry a Developer ID signature and the hardened runtime. The
-dylib is therefore signed in `vendor/` *before* the bundler copies it, which is correct
-whether or not Tauri re-signs nested resources. Its verification step is written to fail
-rather than warn --- a skipped notarization exits 0 and produces an app Gatekeeper rejects on
-any machine that has never seen it.
+**Its macOS half ran green on 2026-08-03**, and this paragraph read "Nothing in its macOS
+half has ever run" until then. It is ported from `screenpick`'s working workflow, and the
+one part with no precedent anywhere in the portfolio is signing the bundled
+`libpdfium.dylib`: neither sibling ships a native library, and notarization requires every
+Mach-O in the bundle to carry a Developer ID signature and the hardened runtime. The dylib
+is therefore signed in `vendor/` *before* the bundler copies it, which is correct whether or
+not Tauri re-signs nested resources --- and is now known to be sufficient, since the `.app`
+notarized `Accepted` and both it and the dylib chain to Apple Root CA with the hardened
+runtime. Its verification step is written to fail rather than warn --- a skipped
+notarization exits 0 and produces an app Gatekeeper rejects on any machine that has never
+seen it.
+
+**It took four rehearsal tags, and the sequence is the lesson.** Each failed one step later
+than the last --- the gates job (a step lost when it was copied from `ci.yml`), then the
+dylib signing (nothing had imported the certificate yet), then the verification step itself
+(`mapfile` is bash 4; macOS runners give a `run:` block bash 3.2, so it exited 127 *after*
+the app and DMG had both notarized). That is the shape of running a sequence end to end for
+the first time rather than bad luck: **the last step of a pipeline is its least-tested code,
+because everything before it must succeed before it runs even once.** All three are in
+`docs/TRAPS.md`, and `BUILD.md`'s release checklist now has the rehearsal-tag habit as step
+10 --- it previously ended at the commit and never said to push a tag at all. The tag glob
+matches an `-rcN` suffix on purpose so a rehearsal is possible; a failed run publishes
+nothing, since `release` needs `gates` and the release is created as a **draft**.
 
 **Windows runs the viewer, and is contained.** On 2026-07-29 a Windows build opened documents
 and passed `viewer_check.py` on four corpora --- **86 check names** on each, which was the

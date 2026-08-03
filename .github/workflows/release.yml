@@ -13,15 +13,34 @@ name: Release
 #   git tag v26.8.0 && git push origin v26.8.0
 #
 # ---------------------------------------------------------------------------
-# NOTHING BELOW THE WINDOWS LEG HAS EVER RUN.
+# THIS ALL RAN GREEN ON 2026-08-03, and this banner said the opposite of that
+# until it did: "NOTHING BELOW THE WINDOWS LEG HAS EVER RUN". It was written on
+# Windows from `screenpick`'s working release workflow, and every part of the
+# Apple half -- the conditional export, the dylib signing, the DMG notarization,
+# the verification -- was a claim until a tag was pushed.
 #
-# This was written on Windows, from `screenpick`'s working release workflow.
-# Everything about the Apple half -- the conditional export, the dylib signing,
-# the DMG notarization, the verification -- is a claim until a tag is pushed.
-# The verification step at the end is written to FAIL rather than warn, because
-# a skipped notarization exits 0 and produces an app Gatekeeper rejects on any
-# machine that has never seen it, which is the "looks green" shape this
-# repository spends most of its documentation on.
+# It took FOUR rehearsal tags, and each failed one step later than the last,
+# which is the shape of running a sequence end to end for the first time rather
+# than bad luck:
+#
+#   rc1  both gate legs red -- this job was copied from `ci.yml` and the copy
+#        dropped the fixture-generation step, so a unit test needing
+#        `rotated.pdf` failed here while passing in CI and locally.
+#   rc2  gates green, Windows published, macOS died on `***: no identity found`
+#        -- nothing had imported the certificate into a keychain yet, because
+#        the Tauri CLI's own import happens two steps after the dylib signing.
+#   rc3  the whole Apple path succeeded -- app notarized Accepted, DMG notarized
+#        and stapled -- and then the step that VERIFIES it exited 127, because
+#        `mapfile` is a bash 4 builtin and macOS runners give a `run:` block
+#        bash 3.2. The release was fine; the checker could not run.
+#   rc4  green, verification included.
+#
+# All three are in `docs/TRAPS.md`. The verification step at the end is written
+# to FAIL rather than warn, because a skipped notarization exits 0 and produces
+# an app Gatekeeper rejects on any machine that has never seen it, which is the
+# "looks green" shape this repository spends most of its documentation on --
+# and rc3 is the reminder that a verifier can fail for reasons of its own, so
+# read its exit code before doubting its subject.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -327,6 +346,13 @@ jobs:
             **What it is not, yet.** Nothing here edits a document. Annotations,
             page operations, true redaction, forms and text editing are not built.
             See the roadmap in `docs/PLAN.md`.
+
+            **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
+            the `-setup.exe` if you prefer an installer that asks fewer
+            questions — they install the same three files. The
+            `.app.tar.gz` is the same macOS app without a disk image, for
+            anyone who would rather not mount one; it is not an update payload,
+            and tpdf has no auto-updater.
 
             **macOS** — signed with a Developer ID identity and notarized by
             Apple. Open it normally; no Gatekeeper bypass needed. Apple Silicon only.

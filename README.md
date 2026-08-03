@@ -4,14 +4,16 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
-**Status: Phase 0 closed, Phase 1 in progress. Nothing has been released yet.** The
-feasibility spikes are done and every load-bearing assumption has a measured verdict; on
-top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
-Windows. Nothing in it edits a document yet, and there are no tags and no installers to
-download — building it yourself is currently the only way to run it. See
-[`docs/PLAN.md`](docs/PLAN.md) for the architecture and roadmap,
-[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for the security position,
-[`BUILD.md`](BUILD.md) to build it, and [`AGENTS.md`](AGENTS.md) for project conventions.
+**Status: Phase 0 closed, Phase 1 in progress. First release: `26.8.0`.** The feasibility
+spikes are done and every load-bearing assumption has a measured verdict; on top of that
+evidence there is a viewer you can read a PDF in, on macOS arm64 and on Windows. **Nothing
+in it edits a document yet** — it is a reader, and the list further down says what is not
+built. Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
+macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
+SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the
+architecture and roadmap, [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for the security
+position, [`BUILD.md`](BUILD.md) to build it yourself, and [`AGENTS.md`](AGENTS.md) for
+project conventions.
 
 ## What the viewer does today
 
