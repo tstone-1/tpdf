@@ -57,6 +57,23 @@ single "initial release" line.
   ranges now. Fixing the arithmetic reintroduced the shape of the original error, which is
   worth stating: a number measured once is still a point estimate of a quantity that varies.
 
+- **The first tag went red on both runners, and the code was fine.** `release.yml`'s `gates`
+  job was written from `ci.yml` and the copy dropped one step --- the one generating the
+  fixtures a hosted runner can build --- so `print.rs`'s
+  `a_third_parser_checks_a_job_built_from_a_document_we_did_not_write`, which needs
+  `rotated.pdf`, failed on macOS and Windows while passing in CI and locally. The release
+  gate was weaker than the gate it exists to satisfy: the rule this repository already states
+  about hand-copied commands losing a `--locked`, with an entire step lost instead of a flag,
+  and in the one place where a weaker gate is worst. The `release` job was correctly skipped,
+  so nothing was published. Fixed twice over, and only the second one lasts: the list of
+  runner-generatable fixtures is `scripts/ci_fixtures.py` now, so both workflows call one
+  line, and a thirteenth gate --- `workflows` --- compares the two `gates` jobs step for step,
+  every `uses:` with its pin and every `run:` body, in order. Names are not compared and a
+  control proves it. Worth noting what actually caught the gap: `print.rs`'s
+  `assert!(examined > 0)`, which had already caught the same thing on CI's very first run. A
+  guard that turns "no fixtures" into a failure rather than a page of skips has now paid for
+  itself twice.
+
 - **The bundle was checked with the development library moved aside**, and then with the
   bundled one moved aside as well: `text-heavy` 142/142 and `vector-heavy` 91/91 with the
   documented skips, then a deliberate failure naming the paths it tried. A pass alone cannot

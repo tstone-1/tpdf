@@ -5923,3 +5923,48 @@ Three things worth carrying:
 - **The cheap decisive experiment is the bound, not the code.** Re-running with the watchdog
   raised took one command and separated "slow" from "wedged" before anything was instrumented
   or bisected. Same family as running a suspect binary bare before instrumenting it.
+
+### A workflow copied from CI can lose a whole step, and then the release gate is the weaker one
+
+Found 2026-08-03 by the first tag this repository ever pushed, which is a late and expensive
+place to find anything. `release.yml`'s `gates` job was written from `ci.yml`, and the copy
+dropped one step: the one that generates the fixtures a hosted runner can build. So
+`print.rs`'s `a_third_parser_checks_a_job_built_from_a_document_we_did_not_write` --- which
+needs `rotated.pdf` --- failed on **both** runners, while passing in CI and passing locally.
+
+Three things make this worth an entry rather than a one-line fix.
+
+- **The failure was maximally confusing in the direction that wastes time.** A Rust unit test
+  went red on a commit that changed no Rust source, on both platforms at once, minutes after
+  the same test passed in CI on the parent commit. Every instinct says flaky runner or a
+  toolchain roll. The reflex that settled it in one command was running the named test
+  locally, and then diffing the two workflows' step lists --- *not* reading the test.
+
+- **`AGENTS.md` already carried the rule and it did not help.** "A release checklist must
+  state the CI gates verbatim" is about `BUILD.md` losing a `--locked`; this is the same
+  failure in YAML, with a whole step missing instead of a flag. Both workflows even carried
+  comments explaining why the fixture step mattered. A comment cannot go red, and the copy
+  that dropped the step was made by someone who had read it. **The rule was written as prose
+  and was followed for the file it named**, which is exactly the "a rule written as a caution
+  gets nodded at, the same rule written as a line of code gets followed" entry above, arriving
+  in the one place where a weaker gate is worst: the thing that decides whether a tag ships.
+
+- **The assertion that caught it was already there, and had caught the same gap once before.**
+  `print.rs` guards with `assert!(examined > 0)`, so a run where every fixture is missing goes
+  red instead of reporting a suite of skips. `ci.yml`'s own comment records that this is why
+  the *first* CI run went red. One guard, two independent workflow gaps, and it is the only
+  reason either was found at all --- keep that shape whenever a test corpus is generated
+  rather than committed.
+
+The fix is two-part and only the second part is durable: the list of runner-generatable
+fixtures moved into `scripts/ci_fixtures.py`, so both workflows call one line and there is
+nothing left to copy; and `scripts/check_workflow_parity.py` is a gate that compares the two
+`gates` jobs step for step --- every `uses:` with its pin and every `run:` body, in order.
+Names are not compared, and a control proves it: rewording a step label stays green while
+repointing a pin, weakening a gate command, deleting a step and renaming the job all go red.
+
+**The generalisation, for any repository with two workflows that are supposed to agree:**
+duplicated YAML is not reviewed like duplicated code, because nothing compiles it and nothing
+imports it. If two jobs must be the same job, either they call one script or something
+compares them --- and the second is needed even after the first, since the setup steps around
+the shared call are exactly where the next copy will drift.

@@ -126,6 +126,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "docs/TRAPS.md and the AGENTS.md trap index name different sets of traps",
         ),
         (
+            "workflows",
+            [sys.executable, str(REPO / "scripts" / "check_workflow_parity.py")],
+            "ci.yml and release.yml no longer run the same gates job",
+        ),
+        (
             "fmt",
             ["cargo", "fmt", "--manifest-path", CARGO_MANIFEST, "--check"],
             "Rust formatting differs from rustfmt",

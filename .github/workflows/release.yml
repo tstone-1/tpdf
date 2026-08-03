@@ -96,6 +96,20 @@ jobs:
       - name: Install the pinned PDFium
         run: python scripts/fetch_pdfium.py
 
+      # THIS STEP WAS MISSING UNTIL 2026-08-03, and the first tag ever pushed is
+      # what found it. This job was written from `ci.yml` and the copy dropped
+      # the fixture generation, so `print.rs`'s
+      # `a_third_parser_checks_a_job_built_from_a_document_we_did_not_write` --
+      # which needs `rotated.pdf` -- failed on both runners while passing in CI
+      # and locally. The release gate was therefore weaker than the gate it
+      # exists to satisfy, which is the exact rule `AGENTS.md` states about
+      # hand-copied commands, with a whole step lost instead of a flag.
+      #
+      # It is the same one line as `ci.yml` now, and the list it generates lives
+      # in `scripts/ci_fixtures.py` so there is nothing left to copy.
+      - name: Generate the dependency-free test fixtures
+        run: python -u scripts/ci_fixtures.py
+
       - name: Quality gates
         run: python -u scripts/gates.py
 

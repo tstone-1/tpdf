@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 223 entries
+The one thing this file does *not* carry in full is the trap list --- 224 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -559,13 +559,31 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently twelve: a toolchain-pin check, a PDFium pin check, a trap-index check, `cargo fmt
---check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --locked`, `cargo build
---locked --bins --examples`, a webview-sink check, `npm run check`, `npm run test`, `npm run
-build`, and a third-party-notices check. Two of them are ordered rather than merely present:
-`toolchain` runs **first**, because every result after it is a statement about whichever
-compiler actually ran, and `notices` runs **last**, because it reads the build's own
-sourcemaps to see which npm packages shipped.
+Currently thirteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+workflow-parity check, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+`cargo test --locked`, `cargo build --locked --bins --examples`, a webview-sink check, `npm
+run check`, `npm run test`, `npm run build`, and a third-party-notices check. Two of them are
+ordered rather than merely present: `toolchain` runs **first**, because every result after it
+is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
+reads the build's own sourcemaps to see which npm packages shipped.
+
+**`workflows` exists because the first tag this repository ever pushed went red on both
+runners, and the code was fine.** `release.yml`'s `gates` job was written from `ci.yml` and
+the copy dropped the fixture-generation step, so `print.rs`'s
+`a_third_parser_checks_a_job_built_from_a_document_we_did_not_write` --- which needs
+`rotated.pdf` --- failed on macOS and Windows while passing in CI and locally. The release
+gate was therefore weaker than the gate it exists to satisfy, which is the rule this file
+already states about hand-copied commands, with a whole step lost rather than a flag. Two
+fixes, and the second is the one that lasts: the list of runner-generatable fixtures moved
+into `scripts/ci_fixtures.py` so both workflows call one line, and
+`scripts/check_workflow_parity.py` now compares the two `gates` jobs step for step --- every
+`uses:` with its pinned SHA and every `run:` body, in order. Step *names* are deliberately
+not compared, and a control proves it: rewording a label stays green while repointing a pin,
+weakening a gate command, deleting a step and renaming the job all go red. It refuses a job
+it cannot find and a job whose step scan came back empty, since both read exactly like two
+jobs that agree. What it does **not** compare is anything outside that job --- the triggers,
+permissions and the `release` job differ on purpose, and that difference is the fork threat
+model rather than drift.
 
 **`pdfium` verifies the library, not the stamp beside it**, as of 2026-08-02. It compared the
 pin against a digest the installer itself had written, and its only fact about the tree was
@@ -786,7 +804,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 223 of them and the full text
+titles. Only the titles are here, because there are 224 of them and the full text
 was 93% of this file --- an instruction budget spent on the 222 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1011,6 +1029,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A rewritten line leaves a mutation aimed at nothing, and only the harness says so
 - A stream split done for the failing direction leaves the passing one where it was
 - Two budgets for one run, and the one that was raised is not the one that decides
+- A workflow copied from CI can lose a whole step, and then the release gate is the weaker one
 
 ### Windows and portability
 - The gates had never run on the platform where they fail

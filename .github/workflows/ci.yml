@@ -103,20 +103,14 @@ jobs:
       # first CI run went red here rather than quietly testing nothing. The
       # assertion was right; the workflow was incomplete.
       #
-      # WHAT THIS DELIBERATELY DOES NOT GENERATE, so the gap is stated rather
-      # than discovered:
-      #   * anything from `make_text_pdf.py` (text-heavy, outline-hostile,
-      #     hostile-filters) -- it needs fonttools and embeds a *system* font,
-      #     which differs per runner and would make fixture-dependent assertions
-      #     depend on the image.
-      #   * `incr-scan-5p.pdf` -- `make_incremental_pdf.py` writes ~550 MB on
-      #     purpose and needs pyhanko.
-      # Tests wanting those still `[SKIP]` here and are covered locally, per
-      # BUILD.md. These two are the dependency-free ones, and they cost 0.5 s.
+      # The list of what a runner generates, and what it deliberately does not,
+      # lives in `scripts/ci_fixtures.py` and nowhere else. It used to be spelled
+      # out here, `release.yml` was written from this file, and the copy lost the
+      # step entirely -- so the release gate ran weaker than this one until a tag
+      # push made the same assertion fire again on 2026-08-03. One script, two
+      # callers, and adding a fixture reaches both.
       - name: Generate the dependency-free test fixtures
-        run: |
-          python testdata/make_rotated_pdf.py testdata
-          python testdata/make_vector_pdf.py testdata/vector-multi.pdf 200000 12
+        run: python -u scripts/ci_fixtures.py
 
       - name: Quality gates
         run: python -u scripts/gates.py
