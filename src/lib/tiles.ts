@@ -24,6 +24,14 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
+import { DocumentGone } from "./tilestatus";
+
+// Re-exported so a caller that already imports from here needs no second
+// import. The class itself lives elsewhere on purpose --- see `tilestatus.ts`,
+// which carries why a wholesale mock of this module must not be able to change
+// its identity.
+export { DocumentGone };
+
 export type TileFormat = "raw" | "png";
 
 export interface TileRequest {
@@ -114,7 +122,15 @@ export function resetTileOrigin(): void {
  */
 export function tileUrl(req: TileRequest): string {
   const scale = Math.round(req.scale * 1000);
-  const path = [req.doc, req.page, scale, req.x, req.y, req.width, req.height].join("/");
+  const path = [
+    req.doc,
+    req.page,
+    scale,
+    req.x,
+    req.y,
+    req.width,
+    req.height,
+  ].join("/");
   const rid = req.rid ? `&rid=${req.rid}` : "";
   const turns = req.turns ? `&turns=${req.turns}` : "";
   // Absent rather than `invert=0`, because the server refuses anything but `1`:
@@ -169,8 +185,15 @@ export function cancelTile(rid: number): void {
 export async function fetchTile(req: TileRequest): Promise<TileResult | null> {
   const t0 = performance.now();
   const response = await fetch(tileUrl(req));
+  // Before the general `!response.ok`, which would otherwise swallow this into
+  // an ordinary Error and lose the one thing that distinguishes it.
+  if (response.status === 410) {
+    throw new DocumentGone(await response.text());
+  }
   if (!response.ok) {
-    throw new Error(`tile ${req.page}@${req.x},${req.y}: ${await response.text()}`);
+    throw new Error(
+      `tile ${req.page}@${req.x},${req.y}: ${await response.text()}`,
+    );
   }
   if (response.status === 204) return null;
 
@@ -211,7 +234,9 @@ export async function fetchTile(req: TileRequest): Promise<TileResult | null> {
 export async function fetchRequiredTile(req: TileRequest): Promise<TileResult> {
   const result = await fetchTile({ ...req, rid: 0 });
   if (!result) {
-    throw new Error(`tile ${req.page}@${req.x},${req.y} was abandoned but never withdrawn`);
+    throw new Error(
+      `tile ${req.page}@${req.x},${req.y} was abandoned but never withdrawn`,
+    );
   }
   return result;
 }

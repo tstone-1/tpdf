@@ -201,6 +201,49 @@ pub fn idle_timeout() -> Duration {
 /// The worker dies; the work is lost, not paused.
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(30);
 
+/// Whether a mapped file has lost bytes the document was relying on.
+///
+/// Pure, and separate from [`Workers::outlived_its_file`] for one reason: the
+/// method around it needs a live pool and a *dead worker* to reach, and a rule
+/// that can only be exercised by killing a process is a rule nothing exercises.
+/// The arithmetic is the part that can be wrong in a way nobody notices.
+///
+/// `backing` is `None` where the platform cannot answer --- see
+/// [`Shm::backing_len`] on Windows --- and that is deliberately **not** a
+/// diagnosis. "I could not look" and "I looked and it shrank" are opposite
+/// findings, and treating the first as the second would condemn a document on
+/// every ordinary worker crash.
+fn shrunk(mapped: u64, backing: Option<u64>) -> Option<String> {
+    let backing = backing?;
+    // Only *shorter* is a diagnosis. A file that grew is the ordinary case of an
+    // incremental save appending a revision, and it takes nothing away: every
+    // byte the mapping covers is still there and still says what it said. The
+    // reader is looking at the previous revision, which is stale rather than
+    // broken --- exactly what a renamed-over file gives them, and that one is
+    // not visible here at all, since the mapping's descriptor still names the
+    // inode it was made from.
+    if backing >= mapped {
+        return None;
+    }
+    Some(format!(
+        "{OUTLIVED_MARK}: it was {mapped} bytes when it was opened and is {backing} now, so the \
+         part of the document past that point is gone. Open it again to read the new file."
+    ))
+}
+
+/// Opens every error caused by a document's file being truncated under it.
+///
+/// One constant with one producer and one consumer, rather than the same phrase
+/// written twice: [`Workers::outlived_its_file`] builds the message and
+/// `protocol::handle` matches on this to answer **410 Gone** instead of the 400
+/// every other failure gets. `AGENTS.md` records what two copies of a
+/// distinction cost --- they drift, and a mutation of one survives.
+///
+/// The frontend deliberately does **not** know this string. It keys on the
+/// status code, which is a fact about the protocol rather than a third copy of
+/// an English sentence that a reworded message would silently invalidate.
+pub const OUTLIVED_MARK: &str = "this file changed on disk while it was open";
+
 /// How long a request may run, in milliseconds, from `TPDF_CALL_MS`.
 ///
 /// Zero is **accepted and means zero**: every outstanding call is overdue at the
@@ -363,6 +406,26 @@ struct Held {
     /// one inside Pdfium. Removed on discard, since the entry holds a clone of
     /// the child's stdin and a stale one is a leaked descriptor.
     senders: Vec<(u32, WorkerSender)>,
+    /// Why this document can no longer be served, once that is established.
+    ///
+    /// Set when a worker dies and the file underneath the mapping turns out to
+    /// have been truncated --- see [`Workers::outlived_its_file`]. It is a
+    /// *latch* rather than a diagnosis recomputed per request, and it has to be:
+    /// once set, every checkout refuses without spawning anything.
+    ///
+    /// The alternative is what this replaced, and it is worth stating because it
+    /// looks like working software. The crash path replaces a dead worker with
+    /// one built from the same `doc` mapping --- deliberately, so a replacement
+    /// serves the same bytes --- so against a truncated file the replacement
+    /// faults exactly where its predecessor did. The reader scrolling into the
+    /// missing tail then pays two process spawns and two `SIGBUS` deaths **per
+    /// tile**, for a region that can never render, and the only trace is one
+    /// line in the log.
+    ///
+    /// Never cleared. A document whose bytes are gone does not come back, and
+    /// the way to read that file again is to open it again --- which builds a
+    /// new mapping, in a new slot, with no latch on it.
+    outlived: Option<String>,
 }
 
 /// Documents parsed in sandboxed child processes, several per document.
@@ -563,6 +626,13 @@ impl Workers {
         let mut docs = self.lock();
         loop {
             let held = open_slot_mut(&mut docs, doc)?;
+            // Refused before a worker is reached for, because for this document
+            // there is no worker that could succeed: every one of them --- and
+            // every replacement --- maps the same bytes, and those bytes are the
+            // ones that faulted. See [`Held::outlived`].
+            if let Some(reason) = &held.outlived {
+                return Err(reason.clone());
+            }
             if let Some(idle) = held.idle.pop() {
                 return Ok(idle.worker);
             }
@@ -580,6 +650,52 @@ impl Workers {
             // the caller's tile cannot start until a process is free anyway.
             docs = self.returned.wait(docs).unwrap_or_else(|e| e.into_inner());
         }
+    }
+
+    /// Whether a dead worker died because the document's file was truncated.
+    ///
+    /// Called only after a worker has already been established as dead, so the
+    /// question costs an `fstat` on a path that has just lost a process --- not
+    /// on every request. It is a *diagnosis*, not a guard: it cannot prevent the
+    /// fault, because the file can be shortened between any check and the read
+    /// that faults on it. What it prevents is the second fault, and the
+    /// hundredth.
+    ///
+    /// The comparison is against the length the mapping was made at, asked of
+    /// the descriptor rather than the path --- see [`Shm::backing_len`], which
+    /// carries why that distinction is the whole check rather than a detail.
+    ///
+    /// `None` on every other cause of death, including a platform that cannot
+    /// answer, and the caller then does what it did before: replace the worker
+    /// and retry once.
+    fn outlived_its_file(&self, doc: u32) -> Option<String> {
+        let mut docs = self.lock();
+        let held = open_slot_mut(&mut docs, doc).ok()?;
+        // Already diagnosed by whichever request got here first. Returned rather
+        // than recomputed: two threads can be inside a crash for the same
+        // document at once, and the second one's `fstat` is redundant.
+        if let Some(reason) = &held.outlived {
+            return Some(reason.clone());
+        }
+        // Read once and passed on, not read again for the message. A second
+        // `backing_len` could answer differently --- the writer that shortened
+        // the file is still running --- and then the log would name a length the
+        // decision was not made on.
+        let reason = shrunk(held.doc.len() as u64, held.doc.backing_len())?;
+        held.outlived = Some(reason.clone());
+        drop(docs);
+
+        // No epitaph, which is why this takes no worker: it runs microseconds
+        // after the death, when `try_wait` still answers "still running", so an
+        // epitaph here reads *"worker still running; this file changed on disk"*
+        // --- a sentence that contradicts itself and sends the next reader
+        // looking for a second failure. The deadline branch below omits one for
+        // the same reason. The diagnosis is about the file, and names the file.
+        crate::diag::note(&format!(
+            "[render] document {doc}: {reason} No replacement can serve it, so further \
+             requests are refused rather than retried."
+        ));
+        Some(reason)
     }
 
     /// Spawns a worker against a reservation already taken by [`checkout`].
@@ -851,6 +967,26 @@ impl Workers {
             }
             Err(e) => e,
         };
+
+        // Asked of the *file* before anything is concluded from the *process*,
+        // and the order is the whole of it. `is_running` is `try_wait`, so a
+        // worker that faulted microseconds ago reads as alive --- the trap this
+        // file already records for the deadline path, which turns out to reach
+        // the crash path too. Placed after that check, this diagnosis was simply
+        // skipped on the first failure: the corpse looked alive, was checked
+        // back into the pool, and the caller got "worker stopped answering"
+        // instead of a reason. Measured, not reasoned about --- `rewrite-probe`
+        // reported exactly that, with the diagnosis arriving on some later
+        // request once `try_wait` had caught up.
+        //
+        // Asking first costs an `fstat` on a path that has already failed, and
+        // it cannot produce a false diagnosis: a file that has lost bytes the
+        // mapping covers is a document that cannot be served, whether the worker
+        // that noticed died of it or answered with an ordinary error.
+        if let Some(reason) = self.outlived_its_file(doc) {
+            self.discard(doc, worker);
+            return Err(reason);
+        }
 
         // Only a *dead* worker is worth replacing. A live one that answered with
         // an error answered: restarting on that would hide a bug here behind a
@@ -1231,6 +1367,7 @@ impl Engine for Workers {
                 worker,
                 since: Instant::now(),
             }],
+            outlived: None,
         }));
         drop(docs);
         mark("document open complete");
@@ -1452,7 +1589,10 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
-    use super::{overdue, payload_length, CallWatch, InFlight, Workers, DEFAULT_IDLE};
+    use super::{
+        overdue, payload_length, shrunk, CallWatch, Held, InFlight, Workers, DEFAULT_IDLE,
+        OUTLIVED_MARK,
+    };
     use crate::queue::SharedQueue;
     use crate::render::{TileFormat, TileRequest};
     use crate::worker::Response;
@@ -1480,6 +1620,96 @@ mod tests {
                 .expect("the clock has not been running that briefly"),
             killed: false,
         }
+    }
+
+    /// Only a file that lost bytes is a diagnosis, and "cannot tell" is not one.
+    ///
+    /// Every direction, because they fail to opposite mistakes. A rule that
+    /// never fires leaves the reader scrolling into a region that respawns a
+    /// sandboxed process and kills it once per tile, silently. A rule that fires
+    /// on an unchanged file condemns every document the first time any worker
+    /// crashes for any reason --- and a crash is the only path that asks.
+    #[test]
+    fn only_a_file_that_lost_bytes_is_a_diagnosis() {
+        assert!(shrunk(4096, Some(1024)).is_some(), "truncated");
+        assert!(
+            shrunk(4096, Some(4095)).is_some(),
+            "one byte short is short"
+        );
+        assert!(shrunk(4096, Some(4096)).is_none(), "untouched");
+        assert!(shrunk(4096, Some(8192)).is_none(), "an appended revision");
+        // The platform that cannot look. Distinct from "it did not shrink" in
+        // what it means and identical in what it does, which is the point: the
+        // ordinary crash path keeps its retry.
+        assert!(shrunk(4096, None).is_none(), "no answer is not a finding");
+    }
+
+    /// The message carries the mark the protocol routes on, and both lengths.
+    ///
+    /// The mark because `protocol::failure` matches on it to answer 410, and a
+    /// message that lost it would silently go back to being a retryable 400 ---
+    /// visible nowhere, since the reader would see the same blank region either
+    /// way. The lengths because they are the whole diagnosis for anyone reading
+    /// the log afterwards.
+    #[test]
+    fn the_reason_says_what_happened_and_carries_the_mark() {
+        let reason = shrunk(4096, Some(1024)).expect("a truncation is a diagnosis");
+        assert!(reason.contains(OUTLIVED_MARK));
+        assert!(reason.contains("4096"));
+        assert!(reason.contains("1024"));
+    }
+
+    /// A document diagnosed as gone refuses without reserving a worker.
+    ///
+    /// The refusal is the visible half; **not reserving** is the half that
+    /// matters and the one a message check cannot see. Before this, the crash
+    /// path replaced the dead worker with one built from the same mapping, which
+    /// faulted in the same place --- so a reader scrolling through the missing
+    /// tail paid two process spawns and two faults per tile. `spawned` staying
+    /// at zero is that, stated as an observable.
+    ///
+    /// The closed-slot leg is the control: it proves the early return is
+    /// specific to the latch rather than a checkout that now refuses everything
+    /// with one message.
+    #[test]
+    fn a_document_whose_file_is_gone_refuses_without_spawning_anything() {
+        let pool = supervisor(Duration::from_secs(30));
+        let dir = std::env::temp_dir().join("tpdf-workers-gone");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("doc.bin");
+        std::fs::write(&path, vec![0u8; 4096]).expect("write");
+
+        {
+            let mut docs = pool.lock();
+            docs.push(Some(Held {
+                doc: std::sync::Arc::new(crate::worker::Shm::map_file(&path).expect("map")),
+                idle: Vec::new(),
+                spawned: 0,
+                senders: Vec::new(),
+                outlived: Some("gone: the file was truncated".into()),
+            }));
+            // A closed document beside it, for the control below.
+            docs.push(None);
+        }
+
+        // `err()` rather than `expect_err`, which wants the *success* type to be
+        // `Debug` and a `Worker` is not one --- it is a live child process.
+        let refused = pool.checkout(0).err().expect("a gone document refuses");
+        assert_eq!(refused, "gone: the file was truncated");
+        assert_eq!(
+            pool.lock()[0].as_ref().expect("still held").spawned,
+            0,
+            "no worker may be reserved for a document that cannot be served"
+        );
+
+        let closed = pool
+            .checkout(1)
+            .err()
+            .expect("a closed document refuses too");
+        assert_ne!(closed, "gone: the file was truncated");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

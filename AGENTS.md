@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 227 entries
+The one thing this file does *not* carry in full is the trap list --- 231 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -819,8 +819,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 227 of them and the full text
-was 93% of this file --- an instruction budget spent on the 222 traps that are not
+titles. Only the titles are here, because there are 231 of them and the full text
+was 93% of this file --- an instruction budget spent on the 226 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -914,6 +914,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A worker killed a moment ago still says it is running
 - The cleanup after an fd shuffle can close what it just installed
 - A per-page invalidation counter is not the same as a generation
+- A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
+- A pool that replaces a dead worker with the same bytes faults again, forever
+- A diagnosis placed after a liveness check inherits that check's race
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
@@ -1004,6 +1007,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test that refuses an empty fixture set is what makes CI's absence visible
 - A feature made a standing check false, and the only corpus that could tell had never been opened
 - A negative assertion needs an observable saying the question was asked
+- A class used with `instanceof` must not live in a module the tests mock wholesale
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing

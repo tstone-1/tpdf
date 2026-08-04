@@ -24,6 +24,11 @@ import {
   type ScrollerOptions,
 } from "./scroller";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
+// The real class, not a stand-in supplied by the mock factory above: it
+// lives outside the mocked module precisely so `instanceof` means the same
+// thing here as in production. `tiles.test.ts` owns the other half of the
+// chain --- that a 410 is what produces one.
+import { DocumentGone } from "./tilestatus";
 
 const tiles = vi.hoisted(() => ({
   fetchTile: vi.fn(),
@@ -158,6 +163,95 @@ describe("Scroller retries", () => {
   });
 });
 
+describe("Scroller when the document's file is gone", () => {
+  let dom: FakeDom;
+  let scroller: Scroller;
+  let warn: ReturnType<typeof vi.spyOn>;
+  let gone: string[];
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() =>
+      Promise.reject(new DocumentGone("this file changed on disk")),
+    );
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    gone = [];
+    scroller = new Scroller(dom.root as unknown as HTMLElement, {
+      ...options(),
+      onGone: (message) => gone.push(message),
+    });
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    dom.restore();
+  });
+
+  it("stops asking altogether rather than backing off", async () => {
+    // The distinction this whole mechanism exists for, and the reason the
+    // ordinary backoff is not good enough: a wait *schedules a retry*, and every
+    // retry of a vanished document is another refusal for as long as the reader
+    // leaves the window open. The control is the neighbouring suite, where the
+    // same two tiles do come back after 10 s.
+    const t0 = performance.now();
+    scroller.frame(0, t0);
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
+
+    await settle();
+    scroller.frame(0, t0 + 10_000);
+    scroller.frame(0, t0 + 100_000);
+    await settle();
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
+  });
+
+  it("wants no wake, because there is nothing to wake for", async () => {
+    // A scroller that latched but still asked for a timer would wake the window
+    // forever to do nothing --- which no coverage of the request count can see.
+    const t0 = performance.now();
+    scroller.frame(0, t0);
+    await settle();
+    expect(scroller.nextRetryMs(t0)).toBeNull();
+  });
+
+  it("reports once, however many tiles were in flight", async () => {
+    // Two tiles fail here, and they are one piece of news: the file is gone. A
+    // report per tile is a stack of identical messages at whatever the document
+    // had outstanding, which on a real page is a dozen.
+    const t0 = performance.now();
+    scroller.frame(0, t0);
+    await settle();
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
+    expect(gone).toEqual(["this file changed on disk"]);
+  });
+
+  it("says nothing to the console, having said it to the reader", async () => {
+    // The per-tile warning is for a failure nobody is told about. This one is
+    // reported to the window, so the same text in the console is noise --- and
+    // it is the ordinary-failure path's warning, which would mean the latch had
+    // not been taken.
+    const t0 = performance.now();
+    scroller.frame(0, t0);
+    await settle();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("keeps what is already painted", async () => {
+    // Not politeness. Those tiles are the last true picture of the document
+    // there will be, and a scroller that cleared on the way to reporting would
+    // replace something correct with a blank page.
+    const t0 = performance.now();
+    tiles.fetchTile.mockImplementationOnce(() => Promise.resolve(null));
+    scroller.frame(0, t0);
+    await settle();
+    expect(scroller.stats.failed).toBeGreaterThan(0);
+    expect(dom.root.children.length).toBeGreaterThan(0);
+  });
+});
+
 describe("Scroller teardown", () => {
   let dom: FakeDom;
   let scroller: Scroller;
@@ -168,7 +262,12 @@ describe("Scroller teardown", () => {
     return {
       bitmap: bitmap as unknown as ImageBitmap,
       close: bitmap.close,
-      result: { bitmap: bitmap as unknown as ImageBitmap, bytes: 1, renderUs: 1, decodeMs: 1 },
+      result: {
+        bitmap: bitmap as unknown as ImageBitmap,
+        bytes: 1,
+        renderUs: 1,
+        decodeMs: 1,
+      },
     };
   }
 
@@ -193,7 +292,10 @@ describe("Scroller teardown", () => {
     // that returned early here would leak exactly as much as one that queued it.
     const late: Array<(value: unknown) => void> = [];
     tiles.fetchTile.mockImplementation(
-      () => new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+      () =>
+        new Promise((resolve) =>
+          late.push(resolve as (value: unknown) => void),
+        ),
     );
 
     scroller.frame(0, performance.now());
@@ -206,12 +308,14 @@ describe("Scroller teardown", () => {
     scroller.destroy();
     // The control for the assertions below: nothing has released these *yet*,
     // so a `close` afterwards is the delivery's doing, not the teardown's.
-    for (const arrival of arrivals) expect(arrival.close).not.toHaveBeenCalled();
+    for (const arrival of arrivals)
+      expect(arrival.close).not.toHaveBeenCalled();
 
     late[0]?.(arrivals[0]!.result);
     late[1]?.(arrivals[1]!.result);
     await settle();
-    for (const arrival of arrivals) expect(arrival.close).toHaveBeenCalledTimes(1);
+    for (const arrival of arrivals)
+      expect(arrival.close).toHaveBeenCalledTimes(1);
   });
 
   it("still keeps a tile that lands while it is alive", async () => {
@@ -219,7 +323,10 @@ describe("Scroller teardown", () => {
     // closed every arrival would pass that one perfectly while drawing nothing.
     const late: Array<(value: unknown) => void> = [];
     tiles.fetchTile.mockImplementation(
-      () => new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+      () =>
+        new Promise((resolve) =>
+          late.push(resolve as (value: unknown) => void),
+        ),
     );
 
     scroller.frame(0, performance.now());
@@ -316,12 +423,10 @@ describe("Scroller geometry on a mixed-size document", () => {
     // (shorter), A4 again. The last one is what makes this discriminate --- a
     // layout that multiplies page 1's height by the index agrees about the first
     // three offsets in a document whose first three pages are 842 points tall.
-    const scroller = new Scroller(dom.root as unknown as HTMLElement, mixed([
-      A4,
-      A3_LANDSCAPE,
-      A5,
-      A4,
-    ]));
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4, A3_LANDSCAPE, A5, A4]),
+    );
 
     // Read rather than asserted: `PAGE_GAP` is the scroller's own constant and
     // nothing outside it should be pinning the number. What is pinned is that
@@ -335,9 +440,7 @@ describe("Scroller geometry on a mixed-size document", () => {
     expect(scroller.pageTopOf(3)).toBe(
       2 * (A4.height_pt + gap) + A5.height_pt + gap,
     );
-    expect(scroller.documentHeight).toBe(
-      scroller.pageTopOf(3) + A4.height_pt,
-    );
+    expect(scroller.documentHeight).toBe(scroller.pageTopOf(3) + A4.height_pt);
   });
 
   it("asks for an oversized page as far as its own right edge", () => {
@@ -396,7 +499,10 @@ describe("Scroller geometry on a mixed-size document", () => {
   it("drops a tile rendered before its page was corrected, and keeps its neighbour's", async () => {
     const late: Array<(value: unknown) => void> = [];
     tiles.fetchTile.mockImplementation(
-      () => new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+      () =>
+        new Promise((resolve) =>
+          late.push(resolve as (value: unknown) => void),
+        ),
     );
     const scroller = new Scroller(
       dom.root as unknown as HTMLElement,

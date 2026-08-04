@@ -193,6 +193,32 @@ impl Shm {
         self.file.as_raw_fd()
     }
 
+    /// How long the mapped file is *now*, which is not always [`len`](Self::len).
+    ///
+    /// A `MAP_SHARED` mapping does not pin the file's length. Another process
+    /// can shorten it while a document is open, and then every page beyond the
+    /// new end is unbacked: reading there raises `SIGBUS` at the faulting
+    /// instruction rather than returning an error, which kills the worker.
+    /// `examples/rewrite_probe.rs` measures exactly that, deterministically.
+    ///
+    /// **Asked of the descriptor, never of the path**, and the difference is the
+    /// whole reason this exists rather than a `metadata()` call at the call
+    /// site. The common way to replace a file is to write a temporary and rename
+    /// it over --- after which the *path* names a different inode of some
+    /// unrelated length, while the inode this mapping holds is alive and intact.
+    /// A check on the path reports that healthy document as broken, and reports
+    /// it every time the reader's own editor saves. The descriptor keeps naming
+    /// the file that was mapped, so the only thing that can shorten it is a
+    /// genuine truncation of the bytes underneath us.
+    ///
+    /// `None` when the length cannot be established, which is not the same as
+    /// "unchanged" --- see the caller, which treats it as "no diagnosis" and
+    /// leaves the ordinary crash path to do its work.
+    #[must_use]
+    pub fn backing_len(&self) -> Option<u64> {
+        self.file.metadata().ok().map(|m| m.len())
+    }
+
     /// Reads the mapping.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
@@ -411,6 +437,29 @@ impl Shm {
         self.mapping as usize
     }
 
+    /// Always `None` here, and the reason is a real platform difference.
+    ///
+    /// The POSIX twin exists because a `MAP_SHARED` mapping does not stop
+    /// another process shortening the file underneath it. Windows does stop it:
+    /// while a section object exists over a file, the file is held against
+    /// truncation, and `SetEndOfFile` fails with `ERROR_USER_MAPPED_FILE`. So
+    /// the condition the twin diagnoses is believed unreachable here rather than
+    /// merely undiagnosed.
+    ///
+    /// **Believed, not measured.** Nothing in this repository has provoked it on
+    /// Windows, and `AGENTS.md` is explicit that a refusal existing because
+    /// nobody wrote the code is not a guarantee. `None` is therefore the honest
+    /// answer and not a claim: the caller reads it as "no diagnosis available"
+    /// and falls through to the ordinary crash path, which is what would happen
+    /// anyway if the belief turns out to be wrong. There is a second reason it
+    /// could not answer even if we wanted it to --- `map_file` closes the file
+    /// handle once the section holds a reference to it, so there is nothing left
+    /// here to ask.
+    #[must_use]
+    pub fn backing_len(&self) -> Option<u64> {
+        None
+    }
+
     /// Reads the mapping.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
@@ -543,6 +592,112 @@ impl Drop for Shm {
 #[cfg(test)]
 mod tests {
     use super::Shm;
+
+    /// A directory that removes itself, so a failing test cannot leave litter.
+    #[cfg(unix)]
+    struct TempDir(std::path::PathBuf);
+
+    #[cfg(unix)]
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("tpdf-shm-{name}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("temp dir");
+            Self(dir)
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Truncation is visible through the mapping's own descriptor.
+    ///
+    /// The condition `workers.rs` diagnoses, asserted at the level that can see
+    /// it without a worker or a fault. Both directions, because they fail to
+    /// opposite mistakes: a check that never reports a shrink is a diagnosis
+    /// that does not exist, and one that reports an untouched file condemns
+    /// every document the first time any worker crashes for any reason.
+    #[cfg(unix)]
+    #[test]
+    fn a_mapping_reports_its_file_shrinking_and_not_a_file_that_did_not() {
+        let dir = TempDir::new("shrink");
+        let path = dir.0.join("doc.bin");
+        std::fs::write(&path, vec![7u8; 4096]).expect("write");
+
+        let shm = Shm::map_file(&path).expect("map");
+        assert_eq!(shm.len(), 4096);
+        assert_eq!(
+            shm.backing_len(),
+            Some(4096),
+            "before anything is done to it"
+        );
+
+        // Growing is not a diagnosis: an incremental save appends a revision and
+        // takes nothing away, so every byte the mapping covers still says what
+        // it said.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open")
+            .set_len(8192)
+            .expect("grow");
+        assert_eq!(shm.backing_len(), Some(8192));
+
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open")
+            .set_len(1024)
+            .expect("truncate");
+        assert_eq!(
+            shm.backing_len(),
+            Some(1024),
+            "after the file was truncated"
+        );
+    }
+
+    /// A file renamed over the path leaves the mapped inode alone.
+    ///
+    /// The check that decides whether this whole mechanism is usable, and the
+    /// reason `backing_len` asks the descriptor rather than calling
+    /// `metadata()` on the path at the call site. Writing a temporary and
+    /// renaming it over the original is how nearly everything replaces a file,
+    /// the reader's own editor included --- and it leaves the mapping perfectly
+    /// healthy, because the old inode is still there underneath it.
+    ///
+    /// A path-based check reports 64 bytes here, concludes the document has been
+    /// truncated from 4096, and condemns a document that is fine. The replacement
+    /// file is deliberately *shorter* so that mistake would be caught rather than
+    /// merely possible: with a longer one the wrong check passes too.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_renamed_over_the_path_does_not_look_like_a_truncation() {
+        let dir = TempDir::new("rename");
+        let path = dir.0.join("doc.bin");
+        std::fs::write(&path, vec![7u8; 4096]).expect("write");
+
+        let shm = Shm::map_file(&path).expect("map");
+
+        let staged = dir.0.join("doc.new");
+        std::fs::write(&staged, vec![9u8; 64]).expect("write");
+        std::fs::rename(&staged, &path).expect("rename");
+
+        // The control: the path really is a much smaller file now, so a check
+        // written against it would have something to go wrong with.
+        assert_eq!(std::fs::metadata(&path).expect("stat").len(), 64);
+        assert_eq!(
+            shm.backing_len(),
+            Some(4096),
+            "the mapped inode still holds every byte it did"
+        );
+        // And the mapping still reads what it always did, which is what makes
+        // "stale but coherent" a true description rather than a hope.
+        assert!(shm.as_slice().iter().all(|b| *b == 7));
+    }
 
     /// Off unix `Shm::create` refuses by design, so there is no mapping to
     /// assert anything about --- the refusal itself is covered below.

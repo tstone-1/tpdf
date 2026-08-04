@@ -9,6 +9,46 @@ measurements and a verdict on each load-bearing assumption, not a viewer. The en
 below are what exists in the tree, so that the first release has a history rather than a
 single "initial release" line.
 
+## [26.8.1] - Unreleased
+
+### A document rewritten on disk no longer fails silently
+
+- **A truncated file killed a worker per tile, and said nothing.** The document is a
+  `MAP_SHARED` mapping of the real file, which does not pin its length --- so a process that
+  shortens a PDF while it is open leaves every page past the new end unbacked, and reading
+  there is a `SIGBUS` rather than an error. The crash path then replaced the dead worker with
+  one built from the same bytes, which faulted in the same place. A reader scrolling into the
+  missing tail paid two process spawns and two faults *per tile*, for a region that could
+  never render, and saw a blank area with nothing to explain it.
+
+  Now diagnosed and latched: the pool compares the mapping's length against the file's, and
+  once bytes are missing every request is refused without spawning anything. Measured at
+  0.01 ms worst of twenty against 1.3 ms for the request that diagnosed it --- a spawn alone
+  is ~12 ms, so the number is the evidence that none is happening.
+
+- **The reader is told.** The refusal carries a sentence rather than a pipe error, the tile
+  protocol answers **410** instead of 400, and the scroller stops asking rather than backing
+  off --- a retry of a vanished document is another refusal, forever. What is already painted
+  stays painted, because those tiles are the last true picture of that document there will
+  be. 410 is the whole cross-language signal; the frontend never matches the message text.
+
+- **The check is on the descriptor, not the path**, which is what makes it usable at all.
+  Writing a temporary and renaming it over the original is how nearly everything replaces a
+  file, and it leaves the mapping healthy --- the old inode is still there. A path-based check
+  would condemn a perfectly good document every time the reader's own editor saved.
+
+- **`rewrite-probe` is the evidence**, and it covers the two benign cases as well as the fatal
+  one: a renamed-over file leaves the open document intact indefinitely, an in-place overwrite
+  fails closed, and only a truncation faults. Eighteen checks, exit 0.
+
+- Not fixed, because it cannot be: the fault itself. The file can be shortened between any
+  check and the read that faults on it. What is guaranteed is fail-stop --- the page never
+  renders --- and that the reader finds out.
+
+- Still unproven, and stated on the probe's own output: an in-place rewrite with *valid*
+  bytes. The filler used is unparseable, so PDFium refuses it; a real writer emits valid bytes
+  the old cross-reference offsets would point into.
+
 ## [26.8.0] - 2026-08-03
 
 ### The first release, and what cutting it found

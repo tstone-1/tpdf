@@ -6101,3 +6101,97 @@ Three things generalise.
 Proved rather than assumed: with the wait fixed, the mutation aimed at this check
 (`problem: Some(problem)` -> `problem: None` in `search.rs`) still turns it red, so the flake
 was removed without removing the failure the check exists for.
+
+### A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
+
+The viewer maps the document with `MAP_SHARED` and hands the worker a descriptor, which is
+what lets a sandboxed process read a file it has no authority to open. A mapping does **not**
+hold the file's length: another process can shorten it while the document is open, and every
+page beyond the new end is then unbacked. Reading there is not an error return --- it is
+`SIGBUS` at the faulting instruction, which kills the worker.
+
+Measured 2026-08-04, deterministically, by `examples/rewrite-probe`: eight runs, signal 10 on
+macOS every time. Two things beside it are worth as much as the finding.
+
+**The other two ways a file gets rewritten are both benign, and only one of them is
+obvious.** A temporary written and renamed over the path leaves the old inode alive under the
+mapping, so the reader keeps the whole document indefinitely --- stale but coherent, and the
+probe proves it by renaming a *deliberately invalid* file into place and then rendering a page
+the worker had never parsed. An in-place overwrite that keeps the length is visible to the
+worker, but fails closed: `FPDF_LoadPage` returns null rather than drawing from bytes it
+cannot parse. Only shrinking is fatal.
+
+**So the check is on the descriptor, never on the path**, and that is the whole design rather
+than a detail. `metadata()` on the path after a rename reports the *replacement* file's
+length, concludes the document was truncated, and condemns a document that is perfectly
+healthy --- every time the reader's own editor saves. `Shm::backing_len` asks the file the
+mapping was made from, which nothing but a real truncation can shorten.
+
+It cannot be prevented, and trying is the wrong instinct: the file can be shortened between
+any check and the read that faults on it. What it can be is **fail-stop and legible** --- the
+page never renders, the pool diagnoses it, and the reader is told.
+
+### A pool that replaces a dead worker with the same bytes faults again, forever
+
+The crash path's whole design is that a replacement worker is handed the **same** document
+mapping, so it serves the same bytes as the one that died --- deliberately, since re-reading
+the path would silently swap the reader's document for whatever is on disk now. Against the
+truncation above that guarantee inverts: the replacement maps bytes that are gone and faults
+exactly where its predecessor did.
+
+Nothing loops, so it never looks like a runaway. It is bounded by the requests the reader
+makes --- and a reader scrolling through the missing tail makes one per tile, each paying two
+process spawns and two `SIGBUS` deaths for a region that can never render, with one line in
+the log and a blank area on screen.
+
+The fix is a latch on the document rather than a smarter retry: once the file is known to have
+lost bytes, every checkout refuses without spawning anything. Measured after the change ---
+0.01 ms worst of twenty requests against 1.3 ms for the one that diagnosed it, which is the
+observable that says no process is being created, since a spawn alone is ~12 ms.
+
+### A diagnosis placed after a liveness check inherits that check's race
+
+The sharpest form of *"a worker killed a moment ago still says it is running"*, and it bit in
+a new place. That entry is about the deadline path; the same `try_wait` sampling decides the
+**crash** path, where `with_worker` asks `worker.is_running()` to tell "a live worker that
+answered with an error" from "a worker that died". A worker that faulted microseconds ago
+answers *still running*, so the corpse is checked back into the pool and the caller gets the
+raw pipe error.
+
+A new diagnosis placed *after* that check therefore never ran on the first failure. It ran on
+some later request, once `try_wait` had caught up --- so the log carried a correct explanation
+while the reader was handed `worker stopped answering (still running)`, and the mechanism
+looked like it worked.
+
+Two things follow. **Ask about the world before asking about the process**: the file check is
+an `fstat` on a path that has already failed, it cannot produce a false diagnosis, and it does
+not care whether the worker is reaped yet. And **an epitaph taken at that instant is worse
+than none** --- it renders as *"worker still running; this file changed on disk"*, a sentence
+that contradicts itself.
+
+Found by the probe, not by a unit test, and that is the honest limit: the ordering is only
+reachable with a real fault. Re-swapping the two reproduces the original defect exactly, which
+is the mutation that makes the fix a claim rather than a hope.
+
+### A class used with `instanceof` must not live in a module the tests mock wholesale
+
+Four test files replace the tile client with `vi.mock("./tiles", () => ({ ... }))`, and a
+factory supplies only what its author remembered to name. A failure class exported from that
+module is therefore `undefined` inside all of them, and `reason instanceof undefined` throws a
+`TypeError`.
+
+What makes it expensive is where it throws: inside the scroller's *failure* handler. The tile
+is never settled, the frame loop never quiesces, and six tests fail in two files that have
+nothing to do with the change, all saying **"the frame loop never settled"** --- which reads
+as a bug in the frame loop. Nothing points at the mock.
+
+Moving the class to a module nobody mocks fixes it for every existing test and, more to the
+point, for the next mock somebody writes without knowing this. It also *improves* the test
+that motivated the class: the scroller's suite can now throw the real one instead of a
+stand-in, so `instanceof` means the same thing there as in production.
+
+The general shape: **a wholesale module mock silently narrows that module's exports to
+whatever the factory lists**, so anything whose *identity* matters --- a class, a symbol, a
+sentinel object --- is fragile there in a way a function is not. A function comes back as
+`undefined` and fails loudly at the call site; an identity check fails as a type error deep
+inside a handler.

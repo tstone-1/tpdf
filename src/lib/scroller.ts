@@ -75,6 +75,11 @@ import { Backoff } from "./backoff";
 import type { PageSize } from "./ipc";
 import { Lifetime } from "./lifetime";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
+// From `tilestatus`, never from `./tiles`: four test files replace that
+// module wholesale, and a class reached through it would be `undefined`
+// inside them --- turning this `instanceof` into a TypeError thrown from a
+// failure handler, which surfaces as a frame loop that never settles.
+import { DocumentGone } from "./tilestatus";
 
 export type Layout = "tiles" | "viewport";
 
@@ -140,6 +145,18 @@ export interface ScrollerOptions {
    * what spike 0.8 measured as 60 fps over an empty screen.
    */
   cancel: boolean;
+  /**
+   * Called once when the document's file is found to have been truncated.
+   *
+   * Separate from any per-tile failure reporting, because it is not a tile that
+   * failed: the file the whole document was mapped from has lost the bytes those
+   * pages were in, no further request can succeed, and the reader needs telling
+   * rather than a blank region that quietly never fills.
+   *
+   * Optional so the benchmark harnesses, which drive a scroller with no UI to
+   * report into, do not each need a stub.
+   */
+  onGone?: (message: string) => void;
 }
 
 /** What one frame of scrolling cost and how much of it was covered. */
@@ -225,7 +242,7 @@ const PAGE_GAP = 16;
  * does not have to reason about the sign at all.
  */
 export function displayedSize(page: PageSize, turns: number): PageSize {
-  return ((turns % 4) + 4) % 4 % 2 === 0
+  return (((turns % 4) + 4) % 4) % 2 === 0
     ? page
     : { width_pt: page.height_pt, height_pt: page.width_pt };
 }
@@ -381,6 +398,20 @@ export class Scroller {
    */
   private readonly backoff = new Backoff();
   /**
+   * Whether the document's file was truncated on disk under this scroller.
+   *
+   * A latch, and one that is never cleared: it is set from a 410, which the
+   * backend serves only after it has stopped being able to build a worker that
+   * could answer. Reopening the file is what recovers, and that builds a new
+   * scroller.
+   *
+   * It gates `send` rather than the frame loop, so what is already painted stays
+   * painted. That is not politeness --- those tiles are the last true picture of
+   * the document there will be, and clearing them would replace something
+   * correct with a blank page.
+   */
+  private gone = false;
+  /**
    * Whether this scroller is still alive, for the tile arrivals to consult.
    *
    * `destroy` withdraws everything outstanding, and a withdrawal that lands in
@@ -479,7 +510,9 @@ export class Scroller {
     this.host = host;
     this.opts = opts;
 
-    this.sizes = new Array<PageSize | null>(Math.max(0, opts.pageCount)).fill(null);
+    this.sizes = new Array<PageSize | null>(Math.max(0, opts.pageCount)).fill(
+      null,
+    );
     for (let page = 0; page < this.sizes.length; page++) {
       this.sizes[page] = opts.pages[page] ?? null;
     }
@@ -1030,9 +1063,12 @@ export class Scroller {
       this.adopt(arrival);
     }
 
-    for (const { page, bitmap, generation, epoch } of this.arrivedPlaceholders.splice(
-      0,
-    )) {
+    for (const {
+      page,
+      bitmap,
+      generation,
+      epoch,
+    } of this.arrivedPlaceholders.splice(0)) {
       if (
         generation !== this.placeholderGeneration ||
         epoch !== (this.epochs[page] ?? 0)
@@ -1101,7 +1137,10 @@ export class Scroller {
 
   /** Pages any part of which is currently on screen. */
   visiblePages(): number[] {
-    return this.pagesIn(this.scrollTop, this.scrollTop + this.opts.viewport.height);
+    return this.pagesIn(
+      this.scrollTop,
+      this.scrollTop + this.opts.viewport.height,
+    );
   }
 
   /**
@@ -1269,12 +1308,34 @@ export class Scroller {
    */
   private noteFailure(id: string, reason: unknown): void {
     this.stats.failed++;
+    // Not a tile that failed --- a document that is gone. Backing this one off
+    // would schedule a retry of something the backend has already established
+    // can never succeed, and every retry is another refusal. The latch stops
+    // this scroller asking again at all, and reports once: the condition is a
+    // property of the document, so N failing tiles are one piece of news.
+    if (reason instanceof DocumentGone) {
+      if (!this.gone) {
+        this.gone = true;
+        this.opts.onGone?.(reason.message);
+      }
+      return;
+    }
     if (this.backoff.note(id, performance.now()) === 1) {
       console.warn(`tile ${id} could not be rendered: ${String(reason)}`);
     }
   }
 
   private send(key: TileKey): void {
+    // The document's bytes are gone; there is nothing any tile request can do
+    // but be refused.
+    //
+    // Gated here *and* in `requestPlaceholder`, because there are two request
+    // paths and not one. This comment claimed there was only this one, the test
+    // counted three requests where it expected two, and the placeholder was the
+    // third --- a tier-1 render of every page the reader scrolls onto, each one
+    // a refusal. Gating a "single choke point" that is not the only choke point
+    // looks exactly like gating the real thing.
+    if (this.gone) return;
     const id = keyOf(key);
     const rect = this.tileRect(key.page, key.col, key.row);
     const generation = this.generation;
@@ -1414,6 +1475,7 @@ export class Scroller {
    * alternative, blocking on it, would hide exactly that cost.
    */
   private requestPlaceholder(page: number, now: number): void {
+    if (this.gone) return;
     const id = `p${page}`;
     if (this.placeholders.has(page) || this.inFlight.has(id)) return;
     if (this.backoff.blocked(id, now)) return;
