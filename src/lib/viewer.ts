@@ -203,6 +203,17 @@ export interface ViewerOptions {
    * write. Both used to resolve to nothing and say nothing.
    */
   onError?: (message: string) => void;
+  /**
+   * Called once if the document's file is truncated on disk while it is open.
+   *
+   * Deliberately not folded into {@link onError}, whose contract above is "a
+   * command someone typed and is standing there waiting for". This is the
+   * opposite: nobody asked for it, it arrives while they are reading, and the
+   * cause is outside the application entirely. Keeping them apart is what lets
+   * that doc comment stay true --- and lets a caller present them differently if
+   * it ever wants to, without having to guess which kind a message is.
+   */
+  onGone?: (message: string) => void;
 }
 
 /**
@@ -463,7 +474,11 @@ export class Viewer {
     // answer at this instant is page 1 in any case, and the fit that matters
     // arrives through the ResizeObserver: the constructor runs before the layout
     // that gives `root` a width, so this one is against a viewport of one pixel.
-    this.zoom = fitZoom("width", this.viewportSize(), displayedSize(opts.pages[0], 0));
+    this.zoom = fitZoom(
+      "width",
+      this.viewportSize(),
+      displayedSize(opts.pages[0], 0),
+    );
     this.scroller = new Scroller(this.surfaceHost, {
       doc: opts.doc,
       pageCount: opts.pageCount,
@@ -483,6 +498,11 @@ export class Viewer {
       cacheTiles: 48,
       maxInFlight: 4,
       cancel: true,
+      // Passed straight through rather than handled here. The viewer has nothing
+      // useful to do about it --- it cannot re-read the file, and what is already
+      // painted is worth keeping --- so the only correct action is at the level
+      // that owns the window and can tell the reader.
+      onGone: (message) => this.opts.onGone?.(message),
     });
 
     this.sizeOverlay();
@@ -672,7 +692,9 @@ export class Viewer {
     const anchor = this.scroller.pageAt(this.scrollTop);
     const pitch = this.scroller.pagePitchOf(anchor);
     const through =
-      pitch > 0 ? (this.scrollTop - this.scroller.pageTopOf(anchor)) / pitch : 0;
+      pitch > 0
+        ? (this.scrollTop - this.scroller.pageTopOf(anchor)) / pitch
+        : 0;
 
     let moved = false;
     for (const page of this.scroller.visiblePages()) {
@@ -788,7 +810,10 @@ export class Viewer {
    * window with no way to see its edge.
    */
   private displayedPage(): PageSize {
-    return displayedSize(this.scroller.pageSize(this.currentPage()), this.turns);
+    return displayedSize(
+      this.scroller.pageSize(this.currentPage()),
+      this.turns,
+    );
   }
 
   /** A page's size in points, real or estimated. For the check harness. */
@@ -968,7 +993,9 @@ export class Viewer {
     const page = this.currentPage();
     const before = this.scroller.pagePitchOf(page);
     const through =
-      before > 0 ? (this.scrollTop - this.scroller.pageTopOf(page)) / before : 0;
+      before > 0
+        ? (this.scrollTop - this.scroller.pageTopOf(page)) / before
+        : 0;
 
     this.applyTurns(next);
     // A rotation changes the page's aspect, so a view that was fitted is no
@@ -981,7 +1008,8 @@ export class Viewer {
     this.scrollTop = Math.max(
       0,
       Math.min(
-        this.scroller.pageTopOf(page) + through * this.scroller.pagePitchOf(page),
+        this.scroller.pageTopOf(page) +
+          through * this.scroller.pagePitchOf(page),
         this.scroller.maxScroll,
       ),
     );
@@ -1312,7 +1340,10 @@ export class Viewer {
     if (!point) return null;
     const index = nearestChar(point.text, point.x, point.y);
     if (index < 0) return null;
-    const range = this.selectUnit === "line" ? lineAt(point.text, index) : wordAt(point.text, index);
+    const range =
+      this.selectUnit === "line"
+        ? lineAt(point.text, index)
+        : wordAt(point.text, index);
     return { page: point.page, from: range.from, to: range.to };
   }
 

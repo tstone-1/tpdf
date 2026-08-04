@@ -58,7 +58,7 @@ pub fn handle(service: &RenderService, request: Request<Vec<u8>>, responder: Uri
             let response = match result {
                 Ok(TileOutcome::Rendered(tile)) => ok(tile),
                 Ok(TileOutcome::Abandoned) => no_content(),
-                Err(message) => bad_request(&message),
+                Err(message) => failure(&message),
             };
             responder.respond(response);
         }),
@@ -249,6 +249,43 @@ fn no_content() -> Response<Vec<u8>> {
         .status(204)
         .header("Access-Control-Allow-Origin", "*")
         .body(Vec::new())
+        .expect("static header set is always valid")
+}
+
+/// Turns a failed tile into the response that says what kind of failure it was.
+///
+/// A function rather than a match arm at the call site so the routing itself is
+/// reachable from a test: the arm lives inside a closure that needs a
+/// [`RenderService`] and a live render thread to reach, and a rule nothing can
+/// exercise is a rule that quietly stops applying.
+fn failure(message: &str) -> Response<Vec<u8>> {
+    if message.contains(crate::workers::OUTLIVED_MARK) {
+        gone(message)
+    } else {
+        bad_request(message)
+    }
+}
+
+/// Served when the document's file was truncated while it was open.
+///
+/// 410 rather than the 400 every other failure gets, and the difference is doing
+/// real work rather than being tidy. A 400 says "this request was wrong", which
+/// invites the client to fix it and try again --- and the client does exactly
+/// that, backing off and retrying a tile that can never render. 410 says the
+/// resource is gone and will not be coming back, which is precisely true here:
+/// the bytes those pages were in are not in the file any more.
+///
+/// It is also the **whole cross-language signal**. The frontend distinguishes
+/// this case by status code alone and never by the message text, so rewording
+/// the sentence a reader sees cannot quietly turn the handling off. See
+/// [`crate::workers::OUTLIVED_MARK`], which is the one string in the chain and
+/// stays on this side of it.
+fn gone(message: &str) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(410)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(message.as_bytes().to_vec())
         .expect("static header set is always valid")
 }
 
@@ -471,5 +508,29 @@ mod tests {
         assert_eq!(withdrawal("/cancelled/42"), None);
         assert_eq!(withdrawal("/3/17/1500/64/96/512/256"), None);
         assert_eq!(withdrawal("/cancel"), None);
+    }
+
+    /// A vanished document answers 410, and every other failure still answers 400.
+    ///
+    /// Both directions, because the frontend keys on the status alone: a router
+    /// that never says 410 leaves the reader with a blank region and no reason,
+    /// and one that says it for any failure stops the scroller dead on a
+    /// malformed request it should have retried past.
+    ///
+    /// The message is built from the constant rather than retyped. A literal
+    /// here would keep passing after the real sentence was reworded, which is
+    /// the precise way a second copy of a distinction goes wrong.
+    #[test]
+    fn a_document_whose_file_vanished_answers_gone_and_others_still_answer_bad_request() {
+        let vanished = format!(
+            "{}: it was 100 bytes and is 10 now",
+            crate::workers::OUTLIVED_MARK
+        );
+        assert_eq!(failure(&vanished).status(), 410);
+        assert_eq!(failure("page 3 is outside a 2 page document").status(), 400);
+        assert_eq!(failure("").status(), 400);
+        // The body is carried through either way: 410 is the signal, and the
+        // sentence is still what the reader is shown.
+        assert_eq!(failure(&vanished).body(), vanished.as_bytes());
     }
 }

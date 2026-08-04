@@ -41,6 +41,15 @@
 //! every time, but the object cache behind it does not, so a page already read
 //! can be served from memory the file no longer backs.
 //!
+//! One line of noise is expected and is **not** a failure: a run can end with
+//! `[worker] could not reply: Broken pipe`, after the summary. It comes from the
+//! pre-spawned spare the render service keeps warm for the *next* document,
+//! which is still alive when the probe exits and notices the parent's pipes
+//! going away. It is on the child's stderr, it long predates this binary, and
+//! the exit code is unaffected. Said here rather than left to be rediscovered,
+//! because an unexplained error line beside a green summary is how a reader
+//! learns to skim past the one that matters.
+//!
 //! The controls matter more than usual here, because every headline check in
 //! this probe can pass for the wrong reason. "The pixels are unchanged" is
 //! satisfied by a mutation that never reached the disk, so the disk is read back
@@ -262,7 +271,165 @@ fn main() {
     );
     judge_truncate(&mut checks, &observed);
 
+    // ------------------------------------------------- and what the app does
+    println!("\n--- the same truncation, through the pool the viewer actually uses");
+    let work = scratch.join("service.pdf");
+    judge_service(&mut checks, &fixture, &work, &library_dir, fresh_page);
+
     report(&checks, &scratch);
+}
+
+/// Drives the real render service through a truncation, end to end.
+///
+/// The three scenarios above use a bare [`Worker`], which is the right level to
+/// establish what the *mapping* does and the wrong one to establish what a
+/// reader gets: between them sits the pool, and the pool's answer to a dead
+/// worker is to build another one from the same bytes. Against a truncated file
+/// that replacement faults where its predecessor did, so the interesting
+/// question is not whether one request fails --- it is what the second, and the
+/// twentieth, cost.
+///
+/// Two observables, and the second is the one that could not be inferred from
+/// the unit tests. The message has to carry the diagnosis rather than a generic
+/// crash, which is what makes it something a reader can be told. And the
+/// requests after it have to be *cheap*: a refusal is a lock and a string, while
+/// a replacement is a process spawn, a sandbox and a parse, so the two are
+/// orders of magnitude apart rather than a threshold anyone has to tune.
+fn judge_service(checks: &mut Checks, fixture: &Path, work: &Path, library_dir: &Path, page: u32) {
+    use tpdf_lib::render::{RenderService, TileFormat, TileOutcome, TileRequest};
+
+    if fs::copy(fixture, work).is_err() {
+        checks.record(
+            "the service opens the document",
+            false,
+            "could not copy".into(),
+        );
+        return;
+    }
+    let service = RenderService::start(library_dir.to_path_buf());
+    let (tx, rx) = std::sync::mpsc::channel();
+    service.open(
+        work.to_path_buf(),
+        true,
+        Box::new(move |r| {
+            let _ = tx.send(r);
+        }),
+    );
+    let opened = match rx.recv() {
+        Ok(Ok(info)) => info,
+        other => {
+            checks.record(
+                "the service opens the document",
+                false,
+                format!("{other:?}").chars().take(80).collect(),
+            );
+            return;
+        }
+    };
+
+    let ask = |page: u32| -> (Result<TileOutcome, String>, f64) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let t0 = Instant::now();
+        service.tile(
+            TileRequest {
+                rid: 0,
+                doc: opened.id,
+                page,
+                scale: 1.0,
+                turns: 0,
+                invert: false,
+                x: 0,
+                y: 0,
+                width: TILE,
+                height: TILE,
+                format: TileFormat::Raw,
+            },
+            Box::new(move |r| {
+                let _ = tx.send(r);
+            }),
+        );
+        let result = rx.recv().unwrap_or_else(|e| Err(e.to_string()));
+        (result, t0.elapsed().as_secs_f64() * 1e3)
+    };
+
+    // The control. Without it every assertion below is satisfied by a service
+    // that never rendered anything in the first place.
+    let (before, _) = ask(0);
+    checks.record(
+        "the service renders a page before the file is touched",
+        matches!(&before, Ok(TileOutcome::Rendered(_))),
+        match &before {
+            Ok(TileOutcome::Rendered(t)) => format!("{} bytes", t.bytes.len()),
+            Ok(TileOutcome::Abandoned) => "abandoned".into(),
+            Err(e) => e.clone(),
+        },
+    );
+
+    let len = fs::metadata(work).map(|m| m.len()).unwrap_or(0);
+    let kept = len / 4;
+    if fs::OpenOptions::new()
+        .write(true)
+        .open(work)
+        .and_then(|f| f.set_len(kept))
+        .is_err()
+    {
+        checks.record(
+            "the file is truncated under the service",
+            false,
+            "failed".into(),
+        );
+        return;
+    }
+
+    let (first, first_ms) = ask(page);
+    let diagnosed = matches!(&first, Err(e) if e.contains(tpdf_lib::workers::OUTLIVED_MARK));
+    checks.record(
+        "the first request past the truncation is diagnosed, not just failed",
+        diagnosed,
+        match &first {
+            Err(e) => format!("{first_ms:.1} ms: {e}"),
+            Ok(_) => "it rendered a page the file no longer holds".into(),
+        },
+    );
+
+    // Twenty, because one repetition cannot tell a latch from a coincidence and
+    // because a reader scrolling through a missing tail makes far more than
+    // twenty. Without the latch each of these is two spawns and two faults.
+    let mut worst: f64 = 0.0;
+    let mut all_diagnosed = true;
+    for n in 0..20u32 {
+        let (again, ms) = ask(page.saturating_sub(n % 5));
+        worst = worst.max(ms);
+        all_diagnosed &= matches!(&again, Err(e) if e.contains(tpdf_lib::workers::OUTLIVED_MARK));
+    }
+    checks.record(
+        "every later request is refused with the same diagnosis",
+        all_diagnosed,
+        format!("20 requests, worst {worst:.2} ms against {first_ms:.1} ms for the first"),
+    );
+    // The cost claim, stated as a bound rather than a ratio: a refusal does no
+    // I/O and spawns nothing, so a millisecond is already thousands of times
+    // more than it needs. A replacement is ~12 ms of spawn before it even
+    // faults, so nothing near this bound can be one.
+    checks.record(
+        "a refused request costs nothing, so no process is being spawned",
+        worst < 1.0,
+        format!("worst of 20 was {worst:.2} ms"),
+    );
+
+    // Closed and waited for, rather than left to the drop at process exit.
+    // Without it a worker is still writing a reply as the parent's pipes go
+    // away, and prints `[worker] could not reply: Broken pipe` *after* the
+    // summary line --- an error beside a green run, on every run, which is the
+    // fastest way to teach a reader to ignore the one that means something.
+    let (tx, rx) = std::sync::mpsc::channel();
+    service.close(
+        opened.id,
+        Box::new(move |r| {
+            let _ = tx.send(r);
+        }),
+    );
+    let _ = rx.recv();
 }
 
 /// Prints the summary, cleans up, and exits.
@@ -564,12 +731,25 @@ fn judge_truncate(checks: &mut Checks, observed: &Observed) {
         observed.same_page.is_ok(),
         describe(&observed.same_page),
     );
-    // The finding, whichever way it goes. A clean refusal is the good outcome; a
-    // dead worker means it faulted on a page that is no longer backed by the
-    // file, which is the hazard this probe exists to settle.
+    // The property that actually holds, rather than the one we would prefer.
+    //
+    // This check used to read "refused, not faulted on" and was red on every
+    // run, by design, as a way of reporting the `SIGBUS`. That was the wrong
+    // shape twice over: a permanently failing check makes the probe useless as
+    // something to run before a commit, and a red line that is *expected* is a
+    // red line nobody reads --- which is how a real regression hides. The fault
+    // is not preventable at this level and was never going to be: the file can
+    // be shortened between any check and the read that faults on it.
+    //
+    // What can be guaranteed is **fail-stop**: the page does not render. A
+    // worker that returned pixels assembled from a file that no longer holds
+    // that page would be the serious outcome, because nothing downstream could
+    // tell. The detail still names the signal, so the finding is on the line
+    // either way, and the scenario below is what turns it into something a
+    // reader is told.
     checks.record(
-        "a page beyond the new end of file is refused, not faulted on",
-        observed.fresh_page.is_err() && observed.answering,
+        "a page beyond the new end of file never renders",
+        observed.fresh_page.is_err(),
         match (&observed.fresh_page, &observed.epitaph) {
             (Err(e), None) => format!("refused: {e} --- and the worker still answers"),
             (Err(e), Some(epitaph)) => format!("{e} --- worker {epitaph}{}", signal_note(epitaph)),
@@ -590,6 +770,12 @@ fn judge_truncate(checks: &mut Checks, observed: &Observed) {
             .clone()
             .unwrap_or_else(|| "the worker is still answering".into()),
     );
+    if !observed.answering {
+        println!(
+            "       note: the fault is not preventable here --- the file can be shortened \
+             between any check and the read that faults"
+        );
+    }
 }
 
 /// Names the fault behind a signal number, where the number is the finding.

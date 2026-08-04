@@ -661,6 +661,15 @@
         onError: (message) => {
           error = message;
         },
+        // The one message here nobody asked for. It fires while someone is
+        // reading, because a process outside the application shortened the file
+        // underneath them --- so it goes to the same surface as the errors they
+        // did ask for, which is the only one this window has. The pages already
+        // painted stay painted; what this adds is the reason the rest never
+        // arrive.
+        onGone: (message) => {
+          error = message;
+        },
       });
       // Before the first paint, so the reader sees their page rather than page
       // one and then a jump --- and before `focus`, which does not move the view
