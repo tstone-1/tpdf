@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 232 entries
+The one thing this file does *not* carry in full is the trap list --- 233 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -819,8 +819,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 232 of them and the full text
-was 93% of this file --- an instruction budget spent on the 227 traps that are not
+titles. Only the titles are here, because there are 233 of them and the full text
+was 93% of this file --- an instruction budget spent on the 228 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1069,6 +1069,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - One constant standing for two platform distinctions breaks the moment they diverge
 - A release build is not a production build; a cargo *feature* decides that
 - A guard that degrades to a no-op off its platform stops being a guard
+- Reaching for a constant *because* it is portable, and picking the one that is absent
 - `CreateProcessAsUser` waives a privilege only for a token it still recognises
 - A restricting SID stops the loader, and the code never runs
 - One failing rung cannot say which ingredient failed
