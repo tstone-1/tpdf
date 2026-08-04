@@ -244,3 +244,7 @@ path = "examples/win_sandbox_probe.rs"
 [[example]]
 name = "print-probe"
 path = "examples/print_probe.rs"
+
+[[example]]
+name = "rewrite-probe"
+path = "examples/rewrite_probe.rs"
