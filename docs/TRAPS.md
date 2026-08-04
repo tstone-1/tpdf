@@ -6195,3 +6195,46 @@ whatever the factory lists**, so anything whose *identity* matters --- a class, 
 sentinel object --- is fragile there in a way a function is not. A function comes back as
 `undefined` and fails loudly at the call site; an identity check fails as a type error deep
 inside a handler.
+
+### A valid in-place rewrite is served silently, and a length check cannot see it
+
+The truncation entry above records the fatal case and the guard built for it, which compares
+the mapping's length against the file's. This is the case that guard is structurally blind to,
+and it is quieter than a fault.
+
+Measured 2026-08-04 by `rewrite-probe`, deterministically over three runs. Two documents are
+generated with identical structure whose content streams differ by one character --- so both
+are valid PDFs, every object sits at the same offset, and the files are the same length to the
+byte. Writing the second over the first, in place, under an open document produces:
+
+- page 2, already rendered, still shows **revision A**, because PDFium has it in its object
+  cache;
+- page 190, never touched, renders **revision B**, because the cross-reference offsets the
+  worker parsed at open still point at real objects --- belonging to a document it was never
+  given;
+- **no error anywhere**, and the length is unchanged, so nothing in `workers.rs` has anything
+  to compare.
+
+So the open document is one revision in its cache and another on disk, and a reader scrolling
+through it sees a document that has never existed. Everything downstream --- search hits, text
+extraction, a print job, a copied selection --- is drawn from whichever half answered.
+
+Three things worth carrying:
+
+- **Equal length is not "no change", and a length check was never a change detector.** It
+  answers exactly one question, "are the bytes I mapped still there", which is the question a
+  `SIGBUS` asks. Reading it as "has this file changed" is the mistake to avoid.
+- **What would detect it is `mtime` on the mapped descriptor**, not on the path --- the same
+  distinction the truncation entry makes, and for the same reason: a rename-over leaves the
+  mapped inode untouched and healthy, while an in-place write keeps the inode and moves its
+  timestamp. Those are opposite findings and a path-level file event cannot tell them apart.
+- **There is no crash to hang the check on.** The truncation guard runs on a path that has
+  already lost a worker, which is why it costs nothing. Nothing fails here, so noticing at all
+  means asking on some schedule --- which is a watcher, and a decision about polling rather
+  than a bug fix.
+
+The probe's own controls are what make this readable rather than a guess: the two revisions
+are asserted to *render differently* first, since if they looked alike "it served the new
+bytes" and "it served the old ones" would be the same picture; and the pair is asserted to be
+the same length, so a generator that drifts turns the scenario into a `[SKIP]` naming the two
+sizes instead of a finding about the wrong mechanism.
