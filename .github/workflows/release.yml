@@ -349,7 +349,7 @@ jobs:
 
             **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
             the `-setup.exe` if you prefer an installer that asks fewer
-            questions — they install the same three files. The
+            questions — they install the same four files. The
             `.app.tar.gz` is the same macOS app without a disk image, for
             anyone who would rather not mount one; it is not an update payload,
             and tpdf has no auto-updater.
