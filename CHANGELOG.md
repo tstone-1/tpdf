@@ -49,6 +49,22 @@ single "initial release" line.
   bytes. The filler used is unparseable, so PDFium refuses it; a real writer emits valid bytes
   the old cross-reference offsets would point into.
 
+### Reload from disk
+
+- **A `file.reload` command**, in the palette. The message above tells a reader to open the
+  file again, and until now the only way to do that was ⌘O and re-picking it. It is useful
+  either way, since a document rewritten in the background is not picked up at all.
+
+- **No keyboard binding, deliberately.** ⌘R is the rotate chord, and moving a binding a reader
+  already has is worse than a command reaching the palette alone --- which is what this
+  application is built around. "Show outline" and "Show page thumbnails" have none either.
+
+- **It keeps your place**, and that needed care: `session` is the snapshot loaded at launch and
+  is never updated, because places are written over IPC. Reopening the current path would
+  therefore restore where the reader was when the *application* started. The place is captured
+  at the moment of reload and handed to the open, then clamped to the document's new length ---
+  so reloading a file that got shorter lands somewhere that exists.
+
 ## [26.8.0] - 2026-08-03
 
 ### The first release, and what cutting it found

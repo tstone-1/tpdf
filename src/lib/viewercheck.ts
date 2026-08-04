@@ -41,7 +41,12 @@ import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { MAX_RESULT_ROWS } from "./results";
 import { PLAIN_SEARCH } from "./search";
-import { hasSideBySideLines, readingLines, textOfRanges, usableRuns } from "./reading";
+import {
+  hasSideBySideLines,
+  readingLines,
+  textOfRanges,
+  usableRuns,
+} from "./reading";
 import { TextCache, type PageText } from "./text";
 import { Sidebar } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
@@ -295,8 +300,7 @@ async function run(path: string): Promise<void> {
   // builds the rows its panel can show, so in a box of no height it would build
   // one row and every assertion about windowing would pass on nothing.
   const panel = document.createElement("div");
-  panel.style.cssText =
-    `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
+  panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
   const sidebar = new Sidebar(panel, {
     onNavigate: (target, top) => viewer.goToDestination(target, top),
@@ -341,7 +345,8 @@ async function run(path: string): Promise<void> {
         const ratio = (page.width_pt * viewer.currentZoom) / WIDTH;
         return ratio > 0.85 && ratio < 1.0;
       },
-      () => `page spans ${((page.width_pt * viewer.currentZoom) / WIDTH) * 100}% of the width`,
+      () =>
+        `page spans ${((page.width_pt * viewer.currentZoom) / WIDTH) * 100}% of the width`,
     ))
   ) {
     return;
@@ -880,8 +885,10 @@ async function selectionChecks(
     !located
       ? `selected ${high.length} and ${low.length} characters, not both located in the page's text`
       : `y=${HIGH_Y} gave "${preview(high)}" at ${highAt}; ` +
-        `y=${LOW_Y} gave "${preview(low)}" at ${lowAt}` +
-        (highAt < lowAt ? "" : " -- the page reads bottom to top, which it does not"),
+          `y=${LOW_Y} gave "${preview(low)}" at ${lowAt}` +
+          (highAt < lowAt
+            ? ""
+            : " -- the page reads bottom to top, which it does not"),
   );
 }
 
@@ -931,7 +938,9 @@ function granularityChecks(
     single !== ""
       ? `a single click already selected ${single.length} characters, so this proves nothing`
       : `"${preview(word)}" (${word.length} characters)` +
-        (/\s/u.test(word) ? " -- which contains whitespace, so it is not one word" : ""),
+          (/\s/u.test(word)
+            ? " -- which contains whitespace, so it is not one word"
+            : ""),
   );
 
   click(root, at[0], at[1], 3);
@@ -1017,10 +1026,12 @@ function granularityChecks(
     edges.foundAt < 0
       ? `"${preview(extended)}" was not found in the page's own text`
       : `"${preview(extended)}" against the same drag without the double-click, ` +
-        `"${preview(charDrag)}", which stopped before "${edgesOf(charDrag).after}"` +
-        (extended.length > charDrag.length ? "" : " -- the double-click changed nothing") +
-        (clean(edges.before) ? "" : " -- it began inside a word") +
-        (clean(edges.after) ? "" : " -- it stopped inside a word"),
+          `"${preview(charDrag)}", which stopped before "${edgesOf(charDrag).after}"` +
+          (extended.length > charDrag.length
+            ? ""
+            : " -- the double-click changed nothing") +
+          (clean(edges.before) ? "" : " -- it began inside a word") +
+          (clean(edges.after) ? "" : " -- it stopped inside a word"),
   );
 }
 
@@ -1124,32 +1135,14 @@ async function searchChecks(
         ? "page 1 has no extractable text"
         : `no word could be read out of page 1's ${first?.codes.length} characters`;
     skip("finds a word taken from the document", why);
-    skip(
-      "a match covers the characters searched for",
-      why,
-    );
+    skip("a match covers the characters searched for", why);
     skip("case is ignored", why);
-    skip(
-      "a word that is not there is not found",
-      why,
-    );
-    skip(
-      "searches forward from the page being read",
-      why,
-    );
+    skip("a word that is not there is not found", why);
+    skip("searches forward from the page being read", why);
     skipSearchOptions(why);
-    skip(
-      "finds something from the end of the document",
-      why,
-    );
-    skip(
-      "counts more than the matches on one page",
-      why,
-    );
-    skip(
-      "Cmd-G moves to a match on another page",
-      why,
-    );
+    skip("finds something from the end of the document", why);
+    skip("counts more than the matches on one page", why);
+    skip("Cmd-G moves to a match on another page", why);
     return;
   }
 
@@ -1299,7 +1292,8 @@ async function resultsChecks(
   const total = viewer.searchMatches.length;
   check(
     RESULTS_CHECKS[0],
-    results.rowCount === Math.min(total, MAX_RESULT_ROWS) && results.rowCount > 0,
+    results.rowCount === Math.min(total, MAX_RESULT_ROWS) &&
+      results.rowCount > 0,
     `${results.rowCount} rows for ${total} matches --- "${results.status}"`,
   );
 
@@ -1320,7 +1314,9 @@ async function resultsChecks(
     );
     check(
       RESULTS_CHECKS[1],
-      row.bold === onPage && row.page === String(hit.page + 1) && row.whole.includes(onPage),
+      row.bold === onPage &&
+        row.page === String(hit.page + 1) &&
+        row.whole.includes(onPage),
       `row 1 reads "${preview(row.whole)}" with "${row.bold}" bold on page ${row.page}; ` +
         `the document has "${preview(onPage)}" at ${hit.page}:${hit.start}`,
     );
@@ -1454,7 +1450,7 @@ async function mappingChecks(
     known && reported === unreadable,
     known
       ? `"${query}" -> ${viewer.searchMatches.length} matches; the backend reports ` +
-        `${reported} unsearchable page(s) and the generator wrote ${unreadable}`
+          `${reported} unsearchable page(s) and the generator wrote ${unreadable}`
       : "the backend never answered which pages store unreadable text",
   );
 
@@ -1476,7 +1472,7 @@ async function mappingChecks(
     said.includes(unreadable === 1 ? "1 page" : `${unreadable} pages`);
   check(
     MAPPING_CHECKS[1],
-    names === (unreadable > 0) && counts,
+    names === unreadable > 0 && counts,
     `${unreadable} page(s) unreadable, the panel says "${said}"`,
   );
 
@@ -1726,7 +1722,9 @@ async function searchesFromHere(
     name,
     found && !!first && first.page >= from,
     `reading page ${from + 1}, first hit on page ${first ? first.page + 1 : "none"}` +
-      (first && first.page < from ? " -- the scan restarted at the beginning" : ""),
+      (first && first.page < from
+        ? " -- the scan restarted at the beginning"
+        : ""),
   );
 }
 
@@ -1767,8 +1765,7 @@ async function stepToAnotherPage(
   // rather than a claim about searching, so it says so.
   await settle(() => !viewer.searching);
   const pages = new Set(viewer.searchMatches.map((m) => m.page));
-  const detail =
-    `${viewer.searchMatches.length} matches across ${pages.size} pages`;
+  const detail = `${viewer.searchMatches.length} matches across ${pages.size} pages`;
   if (pages.size < 2) {
     skip(spread, detail);
     skip(name, detail);
@@ -1841,7 +1838,8 @@ async function accessibilityChecks(
   await eventually(
     "the visible page reaches the accessibility tree",
     () => viewer.accessibleText.elementFor(0) !== null,
-    () => `pages present: ${viewer.accessibleText.present.join(", ") || "none"}`,
+    () =>
+      `pages present: ${viewer.accessibleText.present.join(", ") || "none"}`,
   );
 
   const extracted = await invoke<{ codes: number[] }>("page_text", {
@@ -1927,7 +1925,7 @@ async function accessibilityChecks(
       same
         ? `${spoken.length} characters match the extraction, ${moved} in another position`
         : `reads ${spoken.length} characters, extraction has ${expected.length}: ` +
-          `"${preview(spoken)}" vs "${preview(expected)}"`,
+            `"${preview(spoken)}" vs "${preview(expected)}"`,
     );
   }
 
@@ -2006,7 +2004,8 @@ async function accessibilityChecks(
       () =>
         !viewer.accessibleText.present.includes(0) &&
         viewer.accessibleText.present.includes(last),
-      () => `after End: pages ${viewer.accessibleText.present.join(", ") || "none"}`,
+      () =>
+        `after End: pages ${viewer.accessibleText.present.join(", ") || "none"}`,
     );
   }
 }
@@ -2027,7 +2026,9 @@ function spokenText(article: HTMLElement | null): string {
   // reading the page the day the layer gains another --- which would have shown
   // up here as the *page's text* being short by a heading, i.e. as a defect in
   // extraction rather than in this line.
-  return flatten([...article.children].map((child) => child.textContent ?? "").join(" "));
+  return flatten(
+    [...article.children].map((child) => child.textContent ?? "").join(" "),
+  );
 }
 
 /**
@@ -2093,7 +2094,8 @@ async function structureChecks(
   const spoken = spokenText(article);
   check(
     names[1],
-    spoken === flatten(tagged.join(" ")) && spoken !== flatten(geometric.join(" ")),
+    spoken === flatten(tagged.join(" ")) &&
+      spoken !== flatten(geometric.join(" ")),
     `tree reads "${preview(spoken)}"`,
   );
 
@@ -2105,7 +2107,9 @@ async function structureChecks(
   const headings = [...(article?.children ?? [])].filter((child) =>
     /^H[1-6]$/.test(child.tagName),
   );
-  const levels = headings.map((child) => child.tagName.toLowerCase()).join(", ");
+  const levels = headings
+    .map((child) => child.tagName.toLowerCase())
+    .join(", ");
   if (wanted.length === 0) {
     skip(names[2], "this page's tags contain no heading");
   } else {
@@ -2181,7 +2185,8 @@ async function scopedSearchChecks(
   await settle(() => viewer.idle);
 
   const done = (): boolean =>
-    !viewer.searching && (seen.status?.search.scanned ?? 0) >= (seen.status?.search.toScan ?? 1);
+    !viewer.searching &&
+    (seen.status?.search.scanned ?? 0) >= (seen.status?.search.toScan ?? 1);
 
   // A drag that starts part-way along a line and ends part-way down the page,
   // so the scope is a *range within* a page. Dragging the whole page would
@@ -2201,7 +2206,9 @@ async function scopedSearchChecks(
   // that finds nothing satisfies "fewer than before" perfectly.
   const needle = pickNeedle([...selected].map((ch) => ch.codePointAt(0) ?? 0));
   if (!needle) {
-    skipBoth(`the ${selected.length} selected characters yielded no word to search for`);
+    skipBoth(
+      `the ${selected.length} selected characters yielded no word to search for`,
+    );
     return;
   }
 
@@ -2215,7 +2222,9 @@ async function scopedSearchChecks(
   // those ends survived while this compared against `whole`.
   const onFirstPage = viewer.searchMatches.filter((m) => m.page === 0);
   if (whole < 2) {
-    skipBoth(`"${needle}" occurs ${whole} time(s) in the document, so a narrower search proves nothing`);
+    skipBoth(
+      `"${needle}" occurs ${whole} time(s) in the document, so a narrower search proves nothing`,
+    );
     viewer.clearSearch();
     viewer.clearSelection();
     return;
@@ -2244,8 +2253,12 @@ async function scopedSearchChecks(
   // into a `[SKIP]` instead of going red --- a defect that switches off the
   // check that would have caught it.
   const range = viewer.searchScopeRanges?.[0];
-  const droppedBefore = range ? onFirstPage.filter((m) => m.start < range.from).length : 0;
-  const droppedAfter = range ? onFirstPage.filter((m) => m.end > range.to).length : 0;
+  const droppedBefore = range
+    ? onFirstPage.filter((m) => m.start < range.from).length
+    : 0;
+  const droppedAfter = range
+    ? onFirstPage.filter((m) => m.end > range.to).length
+    : 0;
   if (!range || droppedBefore === 0 || droppedAfter === 0) {
     skipBoth(
       `"${needle}": the scope is ${range ? `[${range.from}, ${range.to})` : "absent"}, with ` +
@@ -2272,7 +2285,9 @@ async function scopedSearchChecks(
   await settle(done);
   check(
     NAMES[1],
-    !viewer.searchScoped && viewer.searchMatches.length === whole && whole > scoped.length,
+    !viewer.searchScoped &&
+      viewer.searchMatches.length === whole &&
+      whole > scoped.length,
     `unscoped -> ${viewer.searchMatches.length}, was ${whole} before scoping and ` +
       `${scoped.length} while scoped`,
   );
@@ -2323,9 +2338,10 @@ async function crossPageChecks(
   // the phrase lost its last letter while the comment below claimed to be checking
   // the index spaces against the pages.
   const codesOf = async (page: number): Promise<number[] | null> => {
-    const got = await invoke<{ codes: number[] }>("page_text", { doc: doc.id, page }).catch(
-      () => null,
-    );
+    const got = await invoke<{ codes: number[] }>("page_text", {
+      doc: doc.id,
+      page,
+    }).catch(() => null);
     return got ? got.codes : null;
   };
   const textOf = async (page: number): Promise<string | null> => {
@@ -2333,7 +2349,11 @@ async function crossPageChecks(
     return codes ? String.fromCodePoint(...codes) : null;
   };
   /** A page's text between two **code point** indices. */
-  const sliceOf = async (page: number, from: number, to?: number): Promise<string> => {
+  const sliceOf = async (
+    page: number,
+    from: number,
+    to?: number,
+  ): Promise<string> => {
     const codes = await codesOf(page);
     return codes ? String.fromCodePoint(...codes.slice(from, to)) : "";
   };
@@ -2355,7 +2375,8 @@ async function crossPageChecks(
   await settle(() => viewer.idle);
   viewer.search(query);
   await settle(
-    () => !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count,
+    () =>
+      !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count,
   );
 
   const across = viewer.searchMatches.find((m) => m.endPage !== undefined);
@@ -2557,9 +2578,12 @@ async function argumentChecks(
       problem: (raw) => {
         const trimmed = raw.trim();
         if (trimmed === "") return `Page number, 1 to ${pages}`;
-        if (!/^[0-9]+$/.test(trimmed)) return `"${trimmed}" is not a page number`;
+        if (!/^[0-9]+$/.test(trimmed))
+          return `"${trimmed}" is not a page number`;
         const page = Number(trimmed);
-        return page < 1 || page > pages ? `This document has ${pages} pages` : null;
+        return page < 1 || page > pages
+          ? `This document has ${pages} pages`
+          : null;
       },
       preview: (raw) => `Go to page ${Number(raw.trim())} of ${pages}`,
       run: (raw) => {
@@ -2626,12 +2650,17 @@ async function argumentChecks(
     const pinned = target === pages && viewer.offset >= viewer.maxOffset - 1;
     check(
       "a typed page number goes to that page",
-      !palette.isOpen && went === target - 1 && from !== target - 1 && (atTop || pinned),
+      !palette.isOpen &&
+        went === target - 1 &&
+        from !== target - 1 &&
+        (atTop || pinned),
       from === target - 1
         ? `already on page ${target} before the jump, so this proves nothing`
         : `typed ${target}, ran with page ${went + 1}, viewer shows page ${viewer.position.page + 1}` +
-          ` (from ${from + 1})` +
-          (atTop || !pinned ? "" : ", scrolled to the end since it is the last page"),
+            ` (from ${from + 1})` +
+            (atTop || !pinned
+              ? ""
+              : ", scrolled to the end since it is the last page"),
     );
   }
 
@@ -2700,6 +2729,7 @@ async function appCommandChecks(
     viewer: () => viewer,
     pageCount: () => doc.page_count,
     openDocument: () => fired.push("openDocument"),
+    reloadDocument: () => fired.push("reloadDocument"),
     busyOpening: () => busy,
     printDocument: () => fired.push("printDocument"),
     focusFind: () => fired.push("focusFind"),
@@ -3225,12 +3255,16 @@ async function appCommandChecks(
 
   const detached = new CommandRegistry();
   registerAppCommands(detached, { ...actions, viewer: () => null });
-  const withoutDocument = detached.search("").map((ranked) => ranked.command.title);
+  const withoutDocument = detached
+    .search("")
+    .map((ranked) => ranked.command.title);
 
   palette.open();
   const withDocument = palette.visible.slice();
   palette.close();
-  const missing = registered.filter((id) => !withDocument.includes(titleOf(id)));
+  const missing = registered.filter(
+    (id) => !withDocument.includes(titleOf(id)),
+  );
   check(
     "with no document only Open document is offered",
     withoutDocument.length === 1 &&
@@ -3845,8 +3879,12 @@ async function sampleLines(
   // edge, which is not a sample of anything.
   const total = shown.quarter_turns % 4;
   const sideways = total % 2 === 1;
-  const across = sideways ? [bounds.left, bounds.right] : [bounds.top, bounds.bottom];
-  const along = sideways ? [bounds.top, bounds.bottom] : [bounds.left, bounds.right];
+  const across = sideways
+    ? [bounds.left, bounds.right]
+    : [bounds.top, bounds.bottom];
+  const along = sideways
+    ? [bounds.top, bounds.bottom]
+    : [bounds.left, bounds.right];
   const lerp = (range: number[], t: number): number =>
     range[0]! + (range[1]! - range[0]!) * t;
 
@@ -3925,14 +3963,20 @@ async function rotatedDragCheck(
     return;
   }
 
-  const held = sameLine(after.early, before.early) && sameLine(after.late, before.late);
-  const swapped = sameLine(after.early, before.late) && sameLine(after.late, before.early);
+  const held =
+    sameLine(after.early, before.early) && sameLine(after.late, before.late);
+  const swapped =
+    sameLine(after.early, before.late) && sameLine(after.late, before.early);
   check(
     name,
     held,
     `"${preview(before.early)}" then "${preview(before.late)}" upright; ` +
       `"${preview(after.early)}" then "${preview(after.late)}" turned` +
-      (held ? "" : swapped ? " -- the two swapped, i.e. the turn went the wrong way" : ""),
+      (held
+        ? ""
+        : swapped
+          ? " -- the two swapped, i.e. the turn went the wrong way"
+          : ""),
   );
 }
 
@@ -3980,7 +4024,9 @@ async function rotatedTextLayerCheck(
   check(
     name,
     shown.quarter_turns === wanted &&
-      (swapped ? shown.width_pt !== raw.width_pt : shown.width_pt === raw.width_pt),
+      (swapped
+        ? shown.width_pt !== raw.width_pt
+        : shown.width_pt === raw.width_pt),
     `page is /Rotate ${raw.quarter_turns * 90}, view turned ${viewer.rotation * 90}: ` +
       `the text layer reports /Rotate ${shown.quarter_turns * 90} ` +
       `(wanted ${wanted * 90}) on a ${shown.width_pt.toFixed(0)} pt wide page ` +
@@ -4140,9 +4186,9 @@ async function rendererInvertCheck(
     wrong === 0
       ? `${plainPixels.length / 4} pixels match the closed form exactly`
       : `${wrong} bytes differ; pixel ${Math.floor(firstWrong / 4)} was ` +
-        `[${[0, 1, 2, 3].map((c) => plainPixels[(firstWrong & ~3) + c]).join(",")}], ` +
-        `wanted [${[0, 1, 2, 3].map((c) => wanted[(firstWrong & ~3) + c]).join(",")}], ` +
-        `got [${[0, 1, 2, 3].map((c) => darkPixels[(firstWrong & ~3) + c]).join(",")}]`,
+          `[${[0, 1, 2, 3].map((c) => plainPixels[(firstWrong & ~3) + c]).join(",")}], ` +
+          `wanted [${[0, 1, 2, 3].map((c) => wanted[(firstWrong & ~3) + c]).join(",")}], ` +
+          `got [${[0, 1, 2, 3].map((c) => darkPixels[(firstWrong & ~3) + c]).join(",")}]`,
   );
 }
 
@@ -4217,7 +4263,7 @@ async function screenInvertCheck(
     midSharp < 0.999
       ? `sharp coverage fell to ${(midSharp * 100).toFixed(1)}% one frame after the toggle`
       : `sharp coverage was still ${(midSharp * 100).toFixed(1)}% a frame after the toggle, ` +
-        `so nothing was discarded and "it went dark" could not have been earned`,
+          `so nothing was discarded and "it went dark" could not have been earned`,
   );
 
   await settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
@@ -4456,7 +4502,8 @@ async function navigateFromStrip(
   // --- the same clamp the outline's destination check already guards against.
   const candidates = strip.mounted.filter((page) => page !== here);
   const target =
-    candidates.filter((page) => page < doc.page_count - 1).pop() ?? candidates.pop();
+    candidates.filter((page) => page < doc.page_count - 1).pop() ??
+    candidates.pop();
   const element = target === undefined ? null : strip.elementFor(target);
   if (target === undefined || !element) {
     skip(name, `no row other than page ${here + 1} is currently built`);
@@ -4511,7 +4558,8 @@ async function yieldChecks(
     rendered: number[];
   },
 ): Promise<void> {
-  const yields = "the strip withdraws its work when the viewer needs the renderer";
+  const yields =
+    "the strip withdraws its work when the viewer needs the renderer";
   const quiet = "a hidden strip asks for nothing";
   const resumes = "and starts again when it is shown";
 
@@ -4522,7 +4570,8 @@ async function yieldChecks(
     return strip.outstanding;
   };
 
-  const why = "no thumbnail stayed in flight long enough to collide with anything";
+  const why =
+    "no thumbnail stayed in flight long enough to collide with anything";
   if (!(await caught())) {
     skip(yields, why);
     skip(quiet, why);
@@ -4654,7 +4703,9 @@ function pickNeedle(codes: number[]): string | null {
   const latin = text.match(/[A-Za-z]{5,}/g);
   if (latin?.length) {
     const lead = latin[0]?.toLowerCase();
-    return latin.find((word) => word.toLowerCase() !== lead) ?? latin[0] ?? null;
+    return (
+      latin.find((word) => word.toLowerCase() !== lead) ?? latin[0] ?? null
+    );
   }
   // Any script's letters, and **two** of them is a word in Chinese or Japanese.
   // Five would be a sentence, and the run this picks has to be short enough that
@@ -4791,9 +4842,12 @@ async function geometryChecks(
   seen: { status: ViewerStatus | null },
 ): Promise<void> {
   const names = [LAID_OUT, OFFSETS, DRAWN];
-  const raw = await invoke<string | null>("geometry_manifest").catch(() => null);
+  const raw = await invoke<string | null>("geometry_manifest").catch(
+    () => null,
+  );
   if (!raw) {
-    for (const name of names) skip(name, "no geometry sidecar for this fixture");
+    for (const name of names)
+      skip(name, "no geometry sidecar for this fixture");
     return;
   }
 
@@ -4875,7 +4929,7 @@ async function geometryChecks(
       wrongTop.length === 0,
       worst
         ? `page ${worst.page + 1} starts at ${worst.got.toFixed(0)} px, ` +
-          `${worst.want.toFixed(0)} wanted`
+            `${worst.want.toFixed(0)} wanted`
         : `${stated.length} pages, gap ${gap.toFixed(0)} px`,
     );
   }
@@ -4934,7 +4988,10 @@ async function drawnPastFirstPageCheck(
   const surface = viewer.compositedSurface;
   const ctx = surface?.getContext("2d", { willReadFrequently: true }) ?? null;
   if (!surface || !ctx) {
-    skip(DRAWN, "this layout composites per tile, so there is no single surface");
+    skip(
+      DRAWN,
+      "this layout composites per tile, so there is no single surface",
+    );
     return;
   }
 
@@ -4952,14 +5009,18 @@ async function drawnPastFirstPageCheck(
     const left = Math.max(0, Math.round(Math.min(a.x, b.x) * dpr));
     const upper = Math.max(0, Math.round(Math.min(a.y, b.y) * dpr));
     const right = Math.min(surface.width, Math.round(Math.max(a.x, b.x) * dpr));
-    const lower = Math.min(surface.height, Math.round(Math.max(a.y, b.y) * dpr));
+    const lower = Math.min(
+      surface.height,
+      Math.round(Math.max(a.y, b.y) * dpr),
+    );
     if (right - left < 2 || lower - upper < 2) return null;
     const { data } = ctx.getImageData(left, upper, right - left, lower - upper);
     let white = 0;
     let ink = 0;
     for (let at = 0; at < data.length; at += 4) {
       const lightness =
-        ((data[at] ?? 0) + (data[at + 1] ?? 0) + (data[at + 2] ?? 0)) / (3 * 255);
+        ((data[at] ?? 0) + (data[at + 1] ?? 0) + (data[at + 2] ?? 0)) /
+        (3 * 255);
       if (lightness > 0.85) white++;
       if (lightness < 0.4) ink++;
     }

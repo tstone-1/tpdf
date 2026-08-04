@@ -56,6 +56,8 @@ export interface AppActions {
   pageCount(): number;
   /** Ask for a file and open it. */
   openDocument(): void;
+  /** Open the current document's path again, keeping the reader's place. */
+  reloadDocument(): void;
   /**
    * Whether an open is already in flight.
    *
@@ -114,6 +116,23 @@ export function registerAppCommands(
       title: "Open document",
       keys: label("file.open"),
       run: () => actions.openDocument(),
+    },
+    {
+      // No keyboard binding, and not an oversight. ⌘R is already the rotate
+      // chord, and moving a binding a reader already has is worse than a
+      // command reaching the palette alone --- which is the shape this
+      // application is built around. "Show outline" and "Show page thumbnails"
+      // have none either.
+      //
+      // It exists because the backend now tells a reader whose file was
+      // truncated to open it again, and until this there was no way to do that
+      // except ⌘O and re-picking the file. It is useful either way: a document
+      // rewritten in the background is not picked up, so this is how you ask for
+      // the new one.
+      id: "file.reload",
+      title: "Reload from disk",
+      enabled: withDocument,
+      run: () => actions.reloadDocument(),
     },
     {
       // No page-range field of our own, deliberately: the system panel has one,

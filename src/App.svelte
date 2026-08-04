@@ -16,7 +16,13 @@
   import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Outline } from "./lib/outline";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
-  import { clampPlace, loadSession, SessionWriter, type Session } from "./lib/session";
+  import {
+    clampPlace,
+    loadSession,
+    SessionWriter,
+    type Place,
+    type Session,
+  } from "./lib/session";
   import { runSessionCheckIfRequested } from "./lib/sessioncheck";
   import { runOpenCheckIfRequested } from "./lib/opencheck";
   import { Serial } from "./lib/serial";
@@ -89,6 +95,7 @@
     viewer: () => viewer,
     pageCount: () => status?.pageCount ?? 0,
     openDocument: () => void pickAndOpen(),
+    reloadDocument: () => reloadDocument(),
     busyOpening: () => opening,
     printDocument: () => void printDocument(),
     focusFind: () => focusFind(),
@@ -154,17 +161,17 @@
   }
 
   /**
-   * Records where the reader is, for the next launch.
+   * Where the reader is, right now, in the shape the session keeps.
    *
-   * Called from both `onStatus` and `onPosition` because neither is enough on
-   * its own: the status fires when something a reader would notice changed and
-   * so misses scrolling *within* a page, and the position fires every frame and
-   * carries no zoom or rotation. The writer collapses the overlap.
+   * Extracted so {@link notePlace} and {@link reloadDocument} cannot drift: a
+   * reload that rebuilt this object by hand would be a second definition of
+   * "the reader's place", and the two would disagree the first time a field was
+   * added to `Place`.
    */
-  function notePlace() {
-    if (!viewer || !openPathName) return;
+  function currentPlace(): Place | null {
+    if (!viewer || !openPathName) return null;
     const where = viewer.position;
-    places.note({
+    return {
       path: openPathName,
       page: where.page,
       top_pt: where.top,
@@ -173,7 +180,41 @@
       turns: viewer.rotation,
       sidebar: sidebarShown,
       page_count: openPageCount,
-    });
+    };
+  }
+
+  /**
+   * Records where the reader is, for the next launch.
+   *
+   * Called from both `onStatus` and `onPosition` because neither is enough on
+   * its own: the status fires when something a reader would notice changed and
+   * so misses scrolling *within* a page, and the position fires every frame and
+   * carries no zoom or rotation. The writer collapses the overlap.
+   */
+  function notePlace() {
+    const where = currentPlace();
+    if (where) places.note(where);
+  }
+
+  /**
+   * Opens the current document's path again.
+   *
+   * The place is captured here and handed to the open, rather than left to the
+   * lookup that a launch restore uses. `session` is the snapshot loaded at
+   * startup and is never updated --- `places.note` writes over IPC to Rust ---
+   * so reopening the current path would put the reader back where they were
+   * when the *application* started, which on a long session is nowhere near
+   * where they are now.
+   *
+   * Nothing is guarded on the file having changed. Reload is also what someone
+   * reaches for when they know they have changed it, and a command that
+   * refuses because the app has not noticed yet is worse than one that always
+   * does what it says.
+   */
+  function reloadDocument() {
+    const path = openPathName;
+    if (!path) return;
+    void openPath(path, false, currentPlace());
   }
 
   /** Opens the sidebar if it is closed, on the tab asked for. */
@@ -491,8 +532,12 @@
    * double-click waits for the first open, which is why the body no longer waits
    * on `firstPaint()` --- see the outline note at the end of it.
    */
-  function openPath(path: string, resuming = false): Promise<void> {
-    return opens.run(() => openDocument(path, resuming));
+  function openPath(
+    path: string,
+    resuming = false,
+    resume: Place | null = null,
+  ): Promise<void> {
+    return opens.run(() => openDocument(path, resuming, resume));
   }
 
   /**
@@ -507,7 +552,11 @@
    * whose last document has since been deleted or unmounted needs an empty
    * window, not a dialog about a file they did not ask for.
    */
-  async function openDocument(path: string, resuming = false) {
+  async function openDocument(
+    path: string,
+    resuming = false,
+    override: Place | null = null,
+  ) {
     error = null;
     opening = true;
     /**
@@ -578,7 +627,10 @@
       // Fitted to the document as it is now, not as it was: the file may have
       // been rebuilt shorter since, and a viewer scrolled past its own last page
       // is a worse answer than the wrong page.
-      const remembered = session.places.find((kept) => kept.path === path);
+      // A caller that already knows where the reader is wins over the startup
+      // snapshot --- see `reloadDocument`, which is the only one that does.
+      const remembered =
+        override ?? session.places.find((kept) => kept.path === path);
       const resume = remembered ? clampPlace(remembered, doc.page_count) : null;
       sidebarShown = resume ? resume.sidebar : sidebarShown;
 
