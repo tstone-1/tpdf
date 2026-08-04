@@ -6238,3 +6238,43 @@ are asserted to *render differently* first, since if they looked alike "it serve
 bytes" and "it served the old ones" would be the same picture; and the pair is asserted to be
 the same length, so a generator that drifts turns the scenario into a `[SKIP]` naming the two
 sizes instead of a finding about the wrong mechanism.
+
+### Reaching for a constant *because* it is portable, and picking the one that is absent
+
+`rewrite-probe` names the signal behind a worker's death, and the doc comment beside it says
+why the number is not written as a literal: `SIGBUS` is 10 on macOS and 7 on Linux, so a
+literal would be right on one platform and quietly wrong on the other. `libc::SIGBUS` is the
+correct instinct and it broke the Windows build, because Windows has no POSIX signals and the
+constant does not exist there at all.
+
+The reasoning was right and the mechanism was not, which is the part worth keeping: portability
+thinking that stops at "which value" never asks "does this symbol exist". A literal `10` would
+have compiled everywhere and been wrong somewhere; the constant compiled nowhere on one
+platform. Both are portability bugs and only one of them is loud.
+
+Three things around it, and the second is the expensive one.
+
+- **It landed on `main` and went red in CI**, on a change whose macOS half was measured eight
+  ways. Every gate passed locally --- `bins` builds examples, so it *would* have caught this,
+  on a machine that could compile for Windows. This one cannot, which is the standing asymmetry
+  in this repository: the machine that writes the work is the machine that cannot compile half
+  of it.
+- **A local Windows compile check is closer than it looks, and still out of reach.**
+  `rustup target add x86_64-pc-windows-msvc` plus `fetch_pdfium.py --platform win-x64` gets as
+  far as the build script, which then panics in `tauri-winres` with `NotAttempted("llvm-rc")`.
+  Reaching a real `cargo check` needs LLVM installed for one binary. Worth knowing before
+  spending the download; not worth the download for a two-branch `cfg`.
+- **What *is* cheap is compiling the changed fragment alone.** `rustc --target
+  x86_64-pc-windows-msvc --emit=metadata` on a file holding just the two `cfg` arms needs no
+  build script, no crate graph and no linker, and it answers the only question at issue. With a
+  control: the same file with the split removed fails on the same line. Note the control fails
+  with *"unresolved crate `libc`"* rather than CI's *"cannot find value `SIGBUS`"*, because a
+  standalone compile links no `libc` --- same line, same conclusion, different message, and
+  saying so is the difference between a check and a demonstration.
+
+The related lesson for the probe itself: the truncation it provokes is **unreachable** on
+Windows, since a file with a section object mapped over it cannot be shortened
+(`ERROR_USER_MAPPED_FILE`). That refusal is a result rather than an obstacle --- it is the first
+test of a belief `Shm::backing_len` records and nothing had ever exercised --- so the scenario
+reports it as a `[SKIP]` naming the OS error rather than failing three checks that are not
+about the document.

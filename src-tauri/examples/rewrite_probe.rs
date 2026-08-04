@@ -127,6 +127,15 @@ struct Observed {
     epitaph: Option<String>,
     /// What the mutation reported doing, for the detail column.
     mutation: String,
+    /// Why the mutation could not be performed at all, if it could not.
+    ///
+    /// Distinct from every other failure here, and the distinction is a
+    /// platform fact rather than bookkeeping: Windows refuses to shorten a file
+    /// that has a section object mapped over it, so the truncation scenario
+    /// cannot run there **and that refusal is the finding**. Folded into
+    /// `baseline` --- which is what this used to do --- it reported the baseline
+    /// render as broken, which is both wrong and the opposite of the news.
+    mutation_error: Option<String>,
     /// Whether the file on disk really differs from the fixture afterwards.
     disk_changed: bool,
 }
@@ -729,6 +738,7 @@ fn observe(
         fresh_page: Err("the scenario did not get that far".into()),
         answering: false,
         epitaph: None,
+        mutation_error: None,
         mutation: String::new(),
         disk_changed: false,
     };
@@ -759,7 +769,10 @@ fn observe(
     observed.mutation = match mutate(work) {
         Ok(what) => what,
         Err(e) => {
-            observed.baseline = Err(format!("the mutation failed: {e}"));
+            // The baseline is left exactly as measured: it rendered, and saying
+            // otherwise would blame the document for the platform's refusal.
+            observed.mutation_error = Some(e);
+            worker.kill();
             return observed;
         }
     };
@@ -846,6 +859,17 @@ fn tile(worker: &mut Worker, page: u32) -> Result<Vec<u8>, String> {
 /// have produced content --- "the pixels are unchanged" is satisfied by two
 /// blank tiles, which is exactly what a render that never ran produces.
 fn baseline_usable(checks: &mut Checks, observed: &Observed) -> bool {
+    // A mutation the platform refused is reported before anything else, and as
+    // a skip rather than a failure: nothing about the document is in doubt, the
+    // scenario simply cannot be performed here. `judge_truncate` says what the
+    // refusal means, since on Windows it is the whole result.
+    if let Some(why) = &observed.mutation_error {
+        checks.skip(
+            "the page rendered before the file was touched, and has content",
+            &format!("the platform refused the rewrite: {why}"),
+        );
+        return false;
+    }
     match &observed.baseline {
         Ok(pixels) => {
             let blank = pixels
@@ -989,6 +1013,27 @@ fn judge_in_place(checks: &mut Checks, observed: &Observed) {
 
 /// Judges the truncation scenario: this is the one that may be a fault.
 fn judge_truncate(checks: &mut Checks, observed: &Observed) {
+    // The one scenario whose refusal is a result rather than an obstacle.
+    // `Shm::backing_len` records, as a *belief*, that Windows holds a mapped
+    // file against truncation and so cannot reach the fault this scenario
+    // exists to provoke. Nothing in this repository had ever tested that. A
+    // refusal here is that test, and it is stated as one so the first Windows
+    // run turns the belief into a measurement instead of into a red line.
+    if let Some(why) = &observed.mutation_error {
+        checks.skip(
+            "a page beyond the new end of file never renders",
+            &format!(
+                "the file could not be shortened while mapped: {why} --- which is the \
+                 documented Windows behaviour, and the fault below is unreachable here"
+            ),
+        );
+        checks.skip(
+            "the parent survives a truncation under its worker",
+            "no truncation happened, so there was nothing to survive",
+        );
+        let _ = baseline_usable(checks, observed);
+        return;
+    }
     if !baseline_usable(checks, observed) || !mutation_landed(checks, observed) {
         return;
     }
@@ -1057,12 +1102,31 @@ fn judge_truncate(checks: &mut Checks, observed: &Observed) {
 /// killed. Taken from `libc` rather than written as a number --- it is 10 on
 /// macOS and 7 on Linux, so a literal would be right on one platform and quietly
 /// wrong on the other.
+#[cfg(unix)]
 fn signal_note(epitaph: &str) -> &'static str {
     if epitaph.contains(&format!("signal {}", libc::SIGBUS)) {
         " (SIGBUS --- a read past the end of the shortened file)"
     } else {
         ""
     }
+}
+
+/// No signal to name off unix, and the reason is the whole platform difference.
+///
+/// Windows has no POSIX signals, so `libc::SIGBUS` does not exist there --- which
+/// is what broke the build: the doc above chose the constant over a literal
+/// *for* portability, and reached for the one spelling that is absent on the
+/// platform it was protecting. Worth keeping as written rather than tidying
+/// away, because the reasoning was right and the mechanism was not.
+///
+/// It should also never be reachable here. A file with a section object mapped
+/// over it cannot be shortened on Windows --- `SetEndOfFile` fails with
+/// `ERROR_USER_MAPPED_FILE` --- so the truncation this annotates is refused
+/// before any worker can fault on it. The scenario reports that refusal as its
+/// finding; see `judge_truncate`.
+#[cfg(not(unix))]
+fn signal_note(_epitaph: &str) -> &'static str {
+    ""
 }
 
 /// How many distinct byte values a tile holds, as evidence of content.
