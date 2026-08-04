@@ -1958,6 +1958,49 @@ starts at 0 and increments within the month.
    change to the resource map --- that is the only step here that reads the artifact rather
    than the configuration that was meant to produce it.
 
+   **Measured against the shipped `26.8.0` MSI it is three, and `tpdf_lib.dll` is not one of
+   them** (2026-08-04). Read from the released artifact rather than from a build tree, so
+   this is what people download:
+
+   | bytes | what it is |
+   |---|---|
+   | 14,072,832 | the executable |
+   | 478,495 | `THIRD-PARTY-NOTICES.md` |
+   | 7,211,520 | `pdfium.dll` |
+
+   The middle row is certain rather than inferred: the committed notices file is 469,298
+   bytes over 9,197 lines, and 469,298 + 9,197 = 478,495 exactly --- the Windows runner
+   checks out with CRLF, so the shipped copy carries one extra byte per line. The other two
+   are identified by size and elimination. **Whether `tpdf_lib.dll` ever shipped is not
+   settled here**: this is the first extraction taken from a released artifact rather than a
+   local build, so it may have been dropped, or the earlier list may have been read off the
+   build directory, where the `cdylib` does exist. Its absence is not a defect on its face,
+   since the binary links the `rlib` and does not load it --- but it is one more reason the
+   installed app has to be *run* on Windows and not only unpacked.
+
+   **This does not need Windows**, which is why it happened at all. An MSI is an OLE
+   compound file with a cabinet inside it, and both are readable anywhere:
+
+   ```
+   uv run --with olefile python -c "
+   import olefile, struct
+   ole = olefile.OleFileIO('tpdf_26.8.0_x64_en-US.msi')
+   cab = next(ole.openstream(s).read() for s in ole.listdir()
+              if ole.openstream(s).read(4) == b'MSCF')
+   off, = struct.unpack_from('<I', cab, 16)
+   n, = struct.unpack_from('<H', cab, 28)
+   for _ in range(n):
+       size, = struct.unpack_from('<I', cab, off)
+       end = cab.index(b'\x00', off + 16)
+       print(f'{size:>12,}  {cab[off+16:end].decode()}')
+       off = end + 1
+   "
+   ```
+
+   The names it prints are WiX **File table keys** (`Path`, `PathFile_I<guid>`), not
+   destination filenames, so identify the rows by size --- the count and the sizes are the
+   facts here, and the count is what disagreed with this document.
+
    **Build before hiding the development library, not after.** The bundler copies
    `../vendor/pdfium/bin/pdfium.dll` as a resource, so a build with it already moved aside
    fails at `resource path ... doesn't exist` --- which reads like a broken checkout rather
