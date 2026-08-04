@@ -6063,3 +6063,41 @@ it runs even once. Three tags were needed here and each one failed one step late
 last --- the gates, then the signing, then the verification. That is not bad luck, it is the
 shape of testing a sequence end to end for the first time, and it is an argument for rehearsal
 tags rather than against them.
+
+### A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
+
+`viewer_check.py`'s search phase keeps a `seen` object that the viewer fills through
+`onStatus`. One check searched for a deliberately broken pattern, waited for
+`!viewer.searching`, and read `seen.status.search.problem`. A broken pattern is rejected
+almost immediately, so the viewer can be idle again *before* the status carrying the problem
+has been delivered --- and the read then returns the previous search's status, with an empty
+`problem`, and the check fails.
+
+It failed **once in three runs against a byte-identical binary**, and the run it chose was
+the first check of a freshly notarized `26.8.0` release artifact, downloaded from its own
+draft. So the first evidence about the thing that was about to be published was a red check,
+in a document phase, on a build that had passed everything else. Two re-runs cleared it and a
+mutation confirmed the app was fine. **A flake costs most when it lands on the artifact you
+are deciding about**, which is exactly when a rare failure is most likely to be read as a
+discovery.
+
+Three things generalise.
+
+- **Waiting for "the operation finished" is not waiting for "its result arrived"** wherever
+  the result reaches you through a mirror --- a callback, a store, a subscription, an event.
+  The two are the same only if delivery is synchronous with completion, which for anything
+  crossing a frame or a channel it is not. Same family as the stale focus-mirror entry above.
+- **The obvious fix is the wrong one, and it is worth naming.** Waiting for `problem` to be
+  non-empty removes the flake completely --- and makes the check unable to fail, since
+  `problem` is the value being asserted. It could then only pass or hang, which this file has
+  a separate entry about. Wait on something that says *a delivery happened* and nothing about
+  its content: here a monotone `updates` counter incremented in `onStatus`, captured before
+  the search and compared after.
+- **The control needs the same wait for the opposite reason.** The literal-search control
+  asserts `problem` is empty, so a stale mirror there still holds the problem set a moment
+  earlier and the control fails rather than passing. One race, both directions, and only one
+  of them was visible.
+
+Proved rather than assumed: with the wait fixed, the mutation aimed at this check
+(`problem: Some(problem)` -> `problem: None` in `search.rs`) still turns it red, so the flake
+was removed without removing the failure the check exists for.

@@ -273,7 +273,15 @@ async function run(path: string): Promise<void> {
   root.style.cssText = `position:fixed;left:0;top:0;width:${WIDTH}px;height:${HEIGHT}px;`;
   document.body.replaceChildren(root);
 
-  const seen: { status: ViewerStatus | null } = { status: null };
+  // `updates` counts deliveries, and exists because `status` is a *mirror*: a
+  // check that waits for the viewer to go idle and then reads this object can
+  // be reading the state from before the thing it just did. Counting lets a
+  // wait say "a status has arrived since" without waiting on the value being
+  // asserted, which would make the assertion unable to fail. See the trap.
+  const seen: { status: ViewerStatus | null; updates: number } = {
+    status: null,
+    updates: 0,
+  };
   const sharp = () => seen.status?.sharp ?? 0;
   const covered = () => sharp() >= 0.999;
   const pct = () => `sharp=${(sharp() * 100).toFixed(1)}%`;
@@ -310,6 +318,7 @@ async function run(path: string): Promise<void> {
     pages: [page, ...doc.pages.slice(1)],
     onStatus: (next) => {
       seen.status = next;
+      seen.updates += 1;
       // The wiring the yield depends on, taken from `App.svelte` rather than
       // invented here: without this line the strip never learns the viewer is
       // busy and the check below would be testing a mechanism nothing drives.
@@ -1076,7 +1085,10 @@ async function searchChecks(
   root: HTMLElement,
   viewer: Viewer,
   doc: DocumentInfo,
-  seen: { status: ViewerStatus | null },
+  // Widened for `searchOptionChecks`, which needs the delivery counter and not
+  // only the mirrored value. Every other consumer of `seen` takes the narrower
+  // shape and still accepts this object.
+  seen: { status: ViewerStatus | null; updates: number },
 ): Promise<void> {
   key(root, "Home");
   await settle(() => viewer.idle);
@@ -1523,7 +1535,7 @@ function skipSearchOptions(why: string): void {
  */
 async function searchOptionChecks(
   viewer: Viewer,
-  seen: { status: ViewerStatus | null },
+  seen: { status: ViewerStatus | null; updates: number },
   needle: string,
   firstHit: { page: number; start: number } | undefined,
   pageCount: number,
@@ -1614,17 +1626,34 @@ async function searchOptionChecks(
 
   // An unclosed group. The reader has to be told the pattern is broken, because
   // "no matches" for it is a statement about the document instead.
+  //
+  // Both reads below wait for a status to have been DELIVERED since the search
+  // began, not merely for the viewer to be idle. `seen` is a mirror the viewer
+  // fills through `onStatus`, and a broken pattern is rejected almost
+  // immediately --- so `!viewer.searching` can be true while the mirror still
+  // holds the state from before, and the read then sees the *previous* search's
+  // `problem`. That is not hypothetical: it failed exactly once in three runs
+  // against an identical binary, and the run it failed was the first check of a
+  // freshly notarized release, where a flake reads as a release blocker.
+  //
+  // Waiting on `problem` itself would be the obvious fix and the wrong one: it
+  // is the value being asserted, so the check could then only pass or hang.
+  // `updates` is a counter of deliveries and says nothing about content.
   const broken = `${needle}(`;
   viewer.setSearchOptions({ ...PLAIN_SEARCH, regex: true });
+  const beforeBroken = seen.updates;
   viewer.search(broken);
-  await settle(() => !viewer.searching);
+  await settle(() => !viewer.searching && seen.updates > beforeBroken);
   const problem = seen.status?.search.problem ?? "";
   // The control: the same characters as a literal are a perfectly ordinary
   // query, so a `problem` there would mean the reporting is about the text
-  // rather than about the pattern.
+  // rather than about the pattern. It needs the same wait for the opposite
+  // reason --- a stale mirror here still holds the problem set just above, so
+  // reading too early fails the control rather than passing it.
   viewer.setSearchOptions({ ...PLAIN_SEARCH });
+  const beforeLiteral = seen.updates;
   viewer.search(broken);
-  await settle(done);
+  await settle(() => done() && seen.updates > beforeLiteral);
   check(
     SEARCH_OPTION_CHECKS[4],
     problem !== "" && (seen.status?.search.problem ?? "") === "",
