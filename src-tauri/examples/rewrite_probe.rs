@@ -271,12 +271,282 @@ fn main() {
     );
     judge_truncate(&mut checks, &observed);
 
+    // ------------------------------------- a rewrite that is *valid* this time
+    println!("\n--- valid bytes written in place, same length, different content");
+    judge_valid_in_place(&mut checks, &scratch, &library_dir);
+
     // ------------------------------------------------- and what the app does
     println!("\n--- the same truncation, through the pool the viewer actually uses");
     let work = scratch.join("service.pdf");
     judge_service(&mut checks, &fixture, &work, &library_dir, fresh_page);
 
     report(&checks, &scratch);
+}
+
+/// Pages in the generated pair. Large enough that a page near the end is one
+/// PDFium has had no reason to touch, which is the whole mechanism under test.
+const PAIR_PAGES: usize = 200;
+
+/// Builds two documents that differ in what they draw and in nothing else.
+///
+/// Every object, every offset and every length is identical between them:
+/// the content streams differ by exactly one character, `A` against `B`, at the
+/// same position on every page. That is what makes an in-place overwrite of one
+/// with the other a *valid* rewrite --- which is the case the scenario above
+/// could not test, since its filler is not a PDF and PDFium simply refuses it.
+///
+/// A real writer saving over a file produces bytes like these, and the question
+/// this settles is what a worker does with a page it has not read yet when the
+/// cross-reference offsets it already parsed still point at real objects ---
+/// belonging to a document it was never given.
+///
+/// Uncompressed content streams on purpose: a Flate stream of `A` and one of
+/// `B` are not the same length, and the equal length is the whole point. It is
+/// asserted rather than assumed by the caller.
+fn build_pair(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    use lopdf::{dictionary, Document, Object, Stream};
+
+    let build = |mark: char, path: &Path| -> Result<(), String> {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+
+        let mut kids = Vec::new();
+        for number in 1..=PAIR_PAGES {
+            // Padded to a fixed width so the *number* cannot change the byte
+            // length either --- page 7 and page 200 must produce streams of the
+            // same size as each other, or the two documents would still line up
+            // while a later edit to this generator quietly stopped them.
+            let content = format!(
+                "BT /F1 96 Tf 72 600 Td (revision {mark}) Tj ET\n\
+                 BT /F1 48 Tf 72 400 Td (page {number:04}) Tj ET"
+            );
+            let contents_id = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+            kids.push(Object::Reference(doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => contents_id,
+            })));
+        }
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => PAIR_PAGES as i64,
+                "Kids" => kids,
+                "Resources" => resources_id,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(path)
+            .map_err(|e| format!("could not write {path:?}: {e}"))?;
+        Ok(())
+    };
+
+    let first = dir.join("revision-a.pdf");
+    let second = dir.join("revision-b.pdf");
+    build('A', &first)?;
+    build('B', &second)?;
+    Ok((first, second))
+}
+
+/// Renders one page of a document in its own worker, as a reference.
+///
+/// Its own worker and its own mapping every time, so a reference render can
+/// never be served from a document some earlier step already had open.
+fn render_page(path: &Path, library_dir: &Path, page: u32) -> Result<Vec<u8>, String> {
+    let mut worker = Worker::spawn(path, library_dir)?;
+    worker.call(&Request::Open {
+        lazy_geometry: true,
+    })?;
+    let pixels = tile(&mut worker, page);
+    worker.kill();
+    pixels
+}
+
+/// What a worker serves after the file is replaced by a valid, equal-length one.
+///
+/// The scenario the earlier in-place check explicitly could not reach. Its
+/// filler is unparseable, so PDFium refuses the page and the outcome is safe by
+/// accident; here the replacement is a real document, so every offset the worker
+/// already parsed still lands on a real object.
+///
+/// Three renders make the finding readable, and the two references are what turn
+/// "the pixels changed" into a statement about *which document* they came from.
+/// Without them a changed page could be a render that failed, a blank buffer, or
+/// noise --- all of which look like a finding.
+fn judge_valid_in_place(checks: &mut Checks, dir: &Path, library_dir: &Path) {
+    let baseline_page: u32 = 2;
+    let fresh: u32 = (PAIR_PAGES - 10) as u32;
+
+    let (first, second) = match build_pair(dir) {
+        Ok(pair) => pair,
+        Err(e) => {
+            checks.record("a valid replacement document is built", false, e);
+            return;
+        }
+    };
+
+    let (len_a, len_b) = match (fs::metadata(&first), fs::metadata(&second)) {
+        (Ok(a), Ok(b)) => (a.len(), b.len()),
+        _ => {
+            checks.record(
+                "a valid replacement document is built",
+                false,
+                "no size".into(),
+            );
+            return;
+        }
+    };
+    // Not an assumption. If the two ever stop being the same length this is the
+    // grow-or-shrink case wearing this scenario's name, and every conclusion
+    // below would be about the wrong mechanism.
+    if len_a != len_b {
+        checks.skip(
+            "the replacement is the same length, so this is neither grow nor shrink",
+            &format!("{len_a} against {len_b} bytes --- the generator no longer produces a pair"),
+        );
+        return;
+    }
+    checks.record(
+        "the replacement is the same length, so this is neither grow nor shrink",
+        true,
+        format!("both {len_a} bytes, {PAIR_PAGES} pages"),
+    );
+
+    // The control that makes every later comparison mean something: the two
+    // documents have to *look different* on the page being examined. If they
+    // render alike, "it served the new bytes" and "it served the old ones" are
+    // the same picture and nothing below can fail.
+    let ref_a = render_page(&first, library_dir, fresh);
+    let ref_b = render_page(&second, library_dir, fresh);
+    let distinguishable = matches!((&ref_a, &ref_b), (Ok(a), Ok(b)) if a != b && !a.is_empty());
+    checks.record(
+        "the two revisions render differently, so the comparison can fail",
+        distinguishable,
+        match (&ref_a, &ref_b) {
+            (Ok(a), Ok(b)) if a == b => "identical --- this scenario would prove nothing".into(),
+            (Ok(a), Ok(b)) => format!(
+                "{} differing bytes of {}",
+                a.iter().zip(b.iter()).filter(|(x, y)| x != y).count(),
+                a.len()
+            ),
+            (Err(e), _) | (_, Err(e)) => e.clone(),
+        },
+    );
+    if !distinguishable {
+        return;
+    }
+
+    // Now the scenario itself, on a third copy so neither reference file is the
+    // one being written to.
+    let work = dir.join("valid-inplace.pdf");
+    if fs::copy(&first, &work).is_err() {
+        checks.record(
+            "the document opens before the rewrite",
+            false,
+            "copy failed".into(),
+        );
+        return;
+    }
+    let mut worker = match Worker::spawn(&work, library_dir) {
+        Ok(w) => w,
+        Err(e) => {
+            checks.record("the document opens before the rewrite", false, e);
+            return;
+        }
+    };
+    if let Err(e) = worker.call(&Request::Open {
+        lazy_geometry: true,
+    }) {
+        checks.record("the document opens before the rewrite", false, e);
+        return;
+    }
+    let baseline = tile(&mut worker, baseline_page);
+    checks.record(
+        "the document opens before the rewrite",
+        baseline.is_ok(),
+        describe(&baseline),
+    );
+
+    // The overwrite: revision B's bytes, into revision A's file, in place.
+    let replacement = match fs::read(&second) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            checks.record("valid bytes are written in place", false, e.to_string());
+            return;
+        }
+    };
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .open(&work)
+        .and_then(|mut f| {
+            f.seek(SeekFrom::Start(0))?;
+            f.write_all(&replacement)?;
+            f.sync_all()
+        });
+    checks.record(
+        "valid bytes are written in place",
+        written.is_ok(),
+        match &written {
+            Ok(()) => format!("{} bytes of revision B over revision A", replacement.len()),
+            Err(e) => e.to_string(),
+        },
+    );
+    if written.is_err() {
+        return;
+    }
+
+    let same_page = tile(&mut worker, baseline_page);
+    let fresh_page = tile(&mut worker, fresh);
+    worker.kill();
+
+    checks.record(
+        "the page already rendered is unchanged, as PDFium still has it",
+        matches!((&baseline, &same_page), (Ok(a), Ok(b)) if a == b),
+        match (&baseline, &same_page) {
+            (Ok(a), Ok(b)) if a == b => format!("{} bytes, identical", a.len()),
+            (Ok(a), Ok(b)) => format!(
+                "{} differing bytes of {}",
+                a.iter().zip(b.iter()).filter(|(x, y)| x != y).count(),
+                a.len()
+            ),
+            (_, Err(e)) | (Err(e), _) => e.clone(),
+        },
+    );
+
+    // The finding. Named for what is true rather than for what would be
+    // convenient: the page comes from the replacement, so the open document is
+    // now one revision in its cache and another on disk, and **nothing errors**.
+    let served_new = matches!((&fresh_page, &ref_b), (Ok(p), Ok(b)) if p == b);
+    let served_old = matches!((&fresh_page, &ref_a), (Ok(p), Ok(a)) if p == a);
+    checks.record(
+        "a page not yet read comes from the replacement, silently",
+        served_new,
+        match (&fresh_page, served_new, served_old) {
+            (Ok(p), true, _) => format!(
+                "page {fresh} is revision B while page {baseline_page} is revision A, {} bytes, no error",
+                p.len()
+            ),
+            (Ok(_), _, true) => "it served revision A --- PDFium had already read that page".into(),
+            (Ok(p), _, _) => format!("{} bytes matching neither revision", p.len()),
+            (Err(e), _, _) => e.clone(),
+        },
+    );
+    println!(
+        "       note: nothing detects this --- the length is unchanged, so the guard in \
+         `workers.rs` has nothing to compare"
+    );
 }
 
 /// Drives the real render service through a truncation, end to end.

@@ -45,9 +45,13 @@ single "initial release" line.
   check and the read that faults on it. What is guaranteed is fail-stop --- the page never
   renders --- and that the reader finds out.
 
-- Still unproven, and stated on the probe's own output: an in-place rewrite with *valid*
-  bytes. The filler used is unparseable, so PDFium refuses it; a real writer emits valid bytes
-  the old cross-reference offsets would point into.
+- **An in-place rewrite with *valid* bytes is served silently, and this fix cannot see it.**
+  Measured rather than left as a worry: two documents of identical structure and identical
+  length, differing by one character per page, and writing the second over the first under an
+  open document gives page 2 from revision A and page 190 from revision B, with no error. The
+  length is unchanged, so the guard above has nothing to compare. Detecting it means comparing
+  `mtime` on the mapped descriptor on some schedule, which is a watcher and a separate
+  decision. The probe reports it and says on its own output that nothing detects it.
 
 ### Reload from disk
 
