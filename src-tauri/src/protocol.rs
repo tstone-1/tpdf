@@ -26,6 +26,25 @@ use tauri::UriSchemeResponder;
 use crate::render::{RenderService, Tile, TileFormat, TileOutcome, TileRequest};
 use crate::worker::TILE_CAPACITY;
 
+/// The largest scale a request may name, in the path's own thousandths.
+///
+/// The lower bound is arithmetic --- a scale of zero renders nothing --- and this
+/// one is a policy, so it is written down with what it was derived from. The
+/// viewer's own ceiling is `MAX_ZOOM` (16, `src/lib/zoom.ts`) times
+/// `devicePixelRatio`, which nothing clamps: 32 on a Retina display and 64 under
+/// the most extreme HiDPI stacking. The thumbnail tier asks for `150 / width_pt`
+/// instead, which passes 64 only on a page under 2.3 pt wide. 256 is the next
+/// power of two above both.
+///
+/// Unbounded, [`Placement::tile`] saturates rather than failing: `page_pt *
+/// scale` is rounded into an `i32`, so a scale the wire format already accepted
+/// --- up to 9.2e15 --- hands a worker a page several million pixels across and
+/// holds it for the whole render deadline. The boundary contains that, exactly as
+/// it contains an oversized tile; refusing here is the same subtraction.
+///
+/// [`Placement::tile`]: crate::progressive::Placement::tile
+const MAX_SCALE_THOUSANDTHS: i64 = 256_000;
+
 /// Handles one `tile://` request. Never blocks the caller: the render service
 /// invokes the responder from the render thread when the tile is ready.
 pub fn handle(service: &RenderService, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
@@ -94,6 +113,11 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
     let scale_thousandths = field("scale", scale)?;
     if scale_thousandths <= 0 {
         return Err(format!("scale must be positive, got {scale_thousandths}"));
+    }
+    if scale_thousandths > MAX_SCALE_THOUSANDTHS {
+        return Err(format!(
+            "scale {scale_thousandths} is past {MAX_SCALE_THOUSANDTHS}, which is more than any viewport asks for"
+        ));
     }
 
     let page_index = field("page", page)?;
@@ -345,6 +369,24 @@ mod tests {
     fn a_scale_that_would_render_nothing_is_refused() {
         assert!(parse("/1/0/0/0/0/64/64", None).is_err());
         assert!(parse("/1/0/-1000/0/0/64/64", None).is_err());
+    }
+
+    #[test]
+    fn a_scale_larger_than_any_viewport_asks_for_is_refused_before_it_is_rendered() {
+        // The boundary from both sides, and the paths are built from the
+        // constant rather than retyped: a literal here would keep passing after
+        // the cap moved, pinning a number nothing enforces.
+        let at = format!("/1/0/{MAX_SCALE_THOUSANDTHS}/0/0/64/64");
+        let past = format!("/1/0/{}/0/0/64/64", MAX_SCALE_THOUSANDTHS + 1);
+        assert_eq!(ok(&at, None).scale, MAX_SCALE_THOUSANDTHS as f32 / 1000.0);
+        assert!(parse(&past, None).is_err());
+        // The scale a viewport really asks for, so the cap cannot be satisfied
+        // by a parser that refuses everything: 16x zoom on a 2x display.
+        assert_eq!(ok("/1/0/32000/0/0/64/64", None).scale, 32.0);
+        // And what the unbounded parser accepted, which is the allocation this
+        // bound exists for: `page_pt * scale` saturates to `i32::MAX` rather
+        // than failing, so nothing downstream refuses it.
+        assert!(parse("/1/0/9223372036854775807/0/0/64/64", None).is_err());
     }
 
     #[test]

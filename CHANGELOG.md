@@ -4,10 +4,15 @@ All notable changes to tpdf are recorded here.
 
 Versioning is CalVer `YY.M.MICRO` --- see [`BUILD.md`](BUILD.md).
 
-Nothing has shipped yet. Phase 0 is a feasibility investigation, and what it produced is
-measurements and a verdict on each load-bearing assumption, not a viewer. The entries
-below are what exists in the tree, so that the first release has a history rather than a
-single "initial release" line.
+The first release is `26.8.0`, tagged 2026-08-03. Everything below it predates any shipped
+binary: Phase 0 was a feasibility investigation, and what it produced is measurements and a
+verdict on each load-bearing assumption rather than a viewer. Those entries are kept rather
+than collapsed, so that the first release has a history instead of a single "initial
+release" line.
+
+(This preamble said "Nothing has shipped yet" until 2026-08-05, two days after the tag and
+the installers it built. A file whose header contradicts its own top entry is read header
+first.)
 
 ## [26.8.1] - Unreleased
 

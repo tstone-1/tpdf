@@ -242,6 +242,7 @@ def cargo_shipped_packages() -> "list[dict]":
             "metadata",
             "--format-version",
             "1",
+            "--locked",
             "--manifest-path",
             str(CARGO_MANIFEST),
             "--filter-platform",
