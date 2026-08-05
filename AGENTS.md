@@ -411,9 +411,13 @@ can run them. They were also 8.7 MB of a 16.7 MB MSI, over a hundred times this 
 Dead JS in an embedded bundle is launchable by nothing: it holds no authority the bundle does
 not already have, and it cannot start itself, since every entry point is inert unless its
 variable is set in the app process's own environment. That environment surface is the
-binary's, not the bundle's --- the 32 `TPDF_*` levers are read in `src-tauri/src`, and **no
+binary's, not the bundle's --- the `TPDF_*` levers are read in `src-tauri/src`, and **no
 `TPDF_` string occurs in the shipped JS at all**. Read the *"payload of three files"* above as
-the statement about executables that it is; the frontend rides inside `tpdf.exe`.
+the statement about executables that it is; the frontend rides inside `tpdf.exe`. (That
+sentence said "the 32 `TPDF_*` levers" until 2026-08-05, when there were 36. The number was
+never the invariant --- *which side of the boundary they are read on* is --- and it is
+deliberately not restated here, for the reason the trap count is a `grep -c` and not a
+sentence: `grep -rhoE 'TPDF_[A-Z0-9_]+' src-tauri/src | sort -u | wc -l`.)
 
 **The honest cost is `spike_print` and `spike_exit`**, registered in `generate_handler` and
 therefore callable by any script the webview runs: one prints to stdout, the other calls
@@ -560,7 +564,7 @@ scripts/gates.py --list
 ```
 
 Currently thirteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
-workflow-parity check, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+workflow-parity check, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
 `cargo test --locked`, `cargo build --locked --bins --examples`, a webview-sink check, `npm
 run check`, `npm run test`, `npm run build`, and a third-party-notices check. Two of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
@@ -660,7 +664,16 @@ pinning is that new lints and diagnostics wait for it, which is the point.
 
 `--all-targets` covers test code, `-D warnings` makes lints
 fatal, and `--locked` catches a `Cargo.lock` that was not committed after a `cargo update`;
-dropping any of them silently weakens the gate. `--bins` is there because **none of the
+dropping any of them silently weakens the gate.
+
+**`--locked` has to be on the *first* resolving command, and until 2026-08-05 it was not.**
+clippy carried `--all-targets` alone, and clippy is the earliest cargo command in the list
+that resolves dependencies --- so an edited `Cargo.toml` beside a stale committed
+`Cargo.lock` had the lockfile rewritten to match by the gate directly above `cargo test
+--locked`, and the lockfile gate then passed on a file that had just been corrected under
+it. Both carry `--locked` now. The general shape, which is the same one the release-checklist
+rule above is about: a gate is only as strong as the earliest command in the run that can
+undo what it checks, whatever flags the later ones carry. `--bins` is there because **none of the
 others links a binary** --- clippy stops at metadata and `cargo test` links each `[[bin]]`
 with `main` replaced by the harness's own, so a symbol reachable only from `main` is dropped
 as dead code. That gap let a 7/7 sweep sit beside a failing `npm run tauri build`.

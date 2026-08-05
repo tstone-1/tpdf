@@ -353,11 +353,30 @@ impl SpareSlot {
 /// still names that process, and the entry is gone before the worker can be
 /// dropped. Nothing else in this module signals by pid.
 ///
-/// One gap in that argument, named rather than left to be discovered: a worker
-/// that sends an over-long line is killed and reaped by `Worker::read_reply`
-/// *inside* the call, so for the microseconds until this entry is removed the
-/// number is free. A sweep landing exactly there would signal a reaped pid ---
-/// which names something else only if the pid space wraps inside that window.
+/// Two gaps in that argument, named rather than left to be discovered.
+///
+/// The first is *inside* the call: a worker that sends an over-long line is
+/// killed and reaped by `Worker::read_reply`, so for the microseconds until this
+/// entry is removed the number is free. A sweep landing exactly there would
+/// signal a reaped pid --- which names something else only if the pid space wraps
+/// inside that window.
+///
+/// The second is on the other side of the same entry, and it is the one the
+/// lifetime argument reads as impossible. [`Workers::kill_overdue`] marks
+/// `killed` under the `calls` lock and signals *outside* it. A reply already in
+/// the pipe arrives intact --- `Ok` and "killed" is a reachable pair, which
+/// [`Workers::watched`] says out loud --- so the blocked thread can finish, take
+/// this entry and hand its worker to [`Workers::discard`], which kills and reaps
+/// it, all before the signal is sent. From there the number is free for the same
+/// microseconds and by the same mitigation.
+///
+/// Neither is closed here, and the reason is a trade rather than an oversight.
+/// Re-checking membership just before the signal only moves the window: the
+/// entry can go between the re-check and the syscall exactly as it can now.
+/// Closing it means holding `calls` *across* the signal --- and across the
+/// `diag::note` that names the kill, which writes a file --- on a lock every
+/// request start and end contends on. That is a larger thing to be wrong about
+/// than a window a pid space would have to wrap inside.
 struct InFlight {
     pid: u32,
     /// When the request was handed over.
@@ -1212,7 +1231,15 @@ fn kill_pid(pid: u32) {
 /// different route: the blocked thread owns the `Worker`, which owns the
 /// `Contained`, which holds an open handle to the process --- and Windows will not
 /// recycle a pid while any handle to it is open. That is stronger than the unix
-/// argument, which has a window between reap and removal.
+/// argument wherever the thread is still blocked.
+///
+/// It is **not** stronger in the two windows [`InFlight`] names, and the reason is
+/// worth stating rather than inferring: in both of them the thread has already
+/// dropped the `Worker`, so the handle carrying that guarantee is closed and the
+/// pid is as free here as it is on unix. `OpenProcess` then either fails, which
+/// is the harmless branch, or names whatever now holds the number. Same
+/// mitigation, same size --- the pid space would have to wrap inside a few
+/// microseconds --- and no separate one to write here.
 #[cfg(windows)]
 fn kill_pid(pid: u32) {
     use windows_sys::Win32::Foundation::CloseHandle;
@@ -1446,6 +1473,12 @@ impl Engine for Workers {
     /// request to exit cleanly would be a message the one process in this design
     /// that is *assumed hostile* gets to ignore --- the reader would then wait on
     /// a shutdown that never comes.
+    ///
+    /// **The pool is killed outside the lock**, as it is in [`Workers::discard`]
+    /// and [`Workers::retire_idle`] and for the same reason: a kill and reap is
+    /// 1.2 ms each, and a grown pool is six of them, so closing one document
+    /// under the table would stall every *other* document's checkouts for the
+    /// duration. Emptying the slot first is what makes that safe --- see below.
     fn close(&self, doc: u32) -> Result<(), String> {
         let mut docs = self.lock();
         loop {
@@ -1459,7 +1492,15 @@ impl Engine for Workers {
             }
             docs = self.returned.wait(docs).unwrap_or_else(|e| e.into_inner());
         }
-        docs[doc as usize] = None;
+        // Taken rather than overwritten, so the processes can be killed after
+        // the lock is given back. The drain above is what says this is the whole
+        // pool: every worker is home, so all of them are in the `idle` this now
+        // owns, and nothing can be handed back to a slot that is already a hole
+        // --- `checkin` drops a worker whose document has gone, which is exactly
+        // what this does to the rest of them.
+        let held = docs[doc as usize].take();
+        drop(docs);
+        drop(held);
         Ok(())
     }
 }
@@ -1594,7 +1635,7 @@ mod tests {
         OUTLIVED_MARK,
     };
     use crate::queue::SharedQueue;
-    use crate::render::{TileFormat, TileRequest};
+    use crate::render::{Engine, TileFormat, TileRequest};
     use crate::worker::Response;
 
     /// A pool with nothing in it, for exercising the supervisor's bookkeeping.
@@ -1609,6 +1650,28 @@ mod tests {
             DEFAULT_IDLE,
             deadline,
         )
+    }
+
+    /// A document over a real mapping, believing in `spawned` workers.
+    ///
+    /// The mapping has to exist because [`Held`] owns one; nothing here reads a
+    /// byte of it. The workers are believed in rather than spawned, which is the
+    /// only way to reach the close drain from a unit test --- a real one needs
+    /// PDFium, a document and a sandboxed child.
+    fn held(name: &str, spawned: usize) -> (std::path::PathBuf, Held) {
+        let dir = std::env::temp_dir().join(format!("tpdf-workers-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("doc.bin");
+        std::fs::write(&path, vec![0u8; 4096]).expect("write");
+        let held = Held {
+            doc: std::sync::Arc::new(crate::worker::Shm::map_file(&path).expect("map")),
+            idle: Vec::new(),
+            spawned,
+            senders: Vec::new(),
+            outlived: None,
+        };
+        (dir, held)
     }
 
     /// An entry that has been outstanding for `age`.
@@ -1708,6 +1771,69 @@ mod tests {
             .err()
             .expect("a closed document refuses too");
         assert_ne!(closed, "gone: the file was truncated");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A close leaves a hole, and closing that hole again is an error.
+    ///
+    /// The hole is the half that carries the pool out of the lock: `close` takes
+    /// the entry and drops it afterwards, so a version that left the slot
+    /// occupied would be killing six processes with the document table held.
+    /// Both halves are asserted because the second is what makes the first
+    /// distinguishable from a close that emptied nothing.
+    #[test]
+    fn a_close_empties_the_slot_and_a_second_close_is_an_error() {
+        let workers = supervisor(Duration::from_secs(30));
+        let (dir, held) = held("close-slot", 0);
+        workers.lock().push(Some(held));
+
+        assert_eq!(workers.close(0), Ok(()));
+        assert!(workers.lock()[0].is_none(), "the slot was not emptied");
+        assert!(workers.close(0).is_err(), "a hole cannot be closed again");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A close waits for the pool before it takes the slot, not after.
+    ///
+    /// The order is the whole correctness argument: taking the slot first would
+    /// drop --- and therefore kill --- workers that are still inside a render,
+    /// which is precisely what the drain exists to prevent. The waiting
+    /// direction is asserted first because it is the one a reordering breaks,
+    /// and it is asserted as "has not answered yet" rather than by timing the
+    /// close, so nothing here depends on how long a wait takes.
+    #[test]
+    fn a_close_waits_for_the_pool_to_come_home_before_taking_the_slot() {
+        let workers = std::sync::Arc::new(supervisor(Duration::from_secs(30)));
+        let (dir, held) = held("close-drain", 1);
+        workers.lock().push(Some(held));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let closing = workers.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(closing.close(0));
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "the close did not wait for a worker that had not come home"
+        );
+        assert!(
+            workers.lock()[0].is_some(),
+            "the slot was taken before the pool was drained"
+        );
+
+        // The last worker comes home. Through the count rather than through
+        // `checkin`, which wants a `Worker` --- a live sandboxed child.
+        workers.lock()[0].as_mut().expect("still held").spawned = 0;
+        workers.returned.notify_all();
+
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(Ok(())),
+            "the close never finished"
+        );
+        assert!(workers.lock()[0].is_none(), "the slot was not emptied");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

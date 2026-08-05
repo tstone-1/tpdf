@@ -28,7 +28,7 @@ serde_json = "1"
 # -- see AGENTS.md. `thread_safe` is a default feature and is left ON, but note it
 # does NOT serialize calls behind a mutex despite what the crate README says: it
 # only makes `Pdfium` Send + Sync and awaits the global bindings. Concurrent
-# renders are undefined behaviour and crash (bin/thread_probe.rs). Parallelism
+# renders are undefined behaviour and crash (examples/thread_probe.rs). Parallelism
 # comes from worker processes (spike 0.5), never from threads.
 pdfium-render = "0.9"
 
@@ -85,7 +85,7 @@ objc2-vision = { version = "0.3.2", default-features = false, features = ["VNReq
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGImage", "CGDataProvider", "CGColorSpace", "std"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "std"] }
 
-# Windows containment, for `bin/win_sandbox_probe.rs`. macOS gets its boundary
+# Windows containment, for `examples/win_sandbox_probe.rs`. macOS gets its boundary
 # from `sandbox_init`, which has no counterpart here: job objects, integrity
 # levels and restricted tokens are all Win32, so there is no version of this that
 # avoids a direct dependency. `windows-sys 0.61` is already in the tree

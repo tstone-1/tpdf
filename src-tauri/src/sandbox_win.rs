@@ -32,9 +32,17 @@
 //! narrows that to an explicit set. Handles in the list must still be marked
 //! inheritable --- the list restricts, it does not grant --- so both steps are
 //! required and neither alone is sufficient.
+//!
+//! That protects *our* spawns and nothing else's. The mark is a property of the
+//! handle, so a document's mapping left inheritable is authority any other
+//! spawn in this process would hand over --- a third party calling
+//! `CreateProcess` with `bInheritHandles: TRUE` and no list gives its child a
+//! copy of every document tpdf has open. [`Marked`] is why the mark lasts one
+//! `CreateProcess` rather than the document's lifetime.
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
+use std::sync::Mutex;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT,
@@ -649,6 +657,102 @@ impl Stdio {
     }
 }
 
+/// Handles marked inheritable for a spawn that has not finished, and by how many.
+///
+/// Keyed on the handle's numeric value because a `HANDLE` is a raw pointer and
+/// therefore not `Send`. Empty except while a spawn is between its mark and its
+/// `CreateProcess`, which is nearly never.
+static MARKED: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
+/// The marks, poisoning recovered from as it is in the pool: a panic in one
+/// spawn is no reason to leave every later one unable to hand over a document.
+fn marked() -> std::sync::MutexGuard<'static, Vec<(usize, usize)>> {
+    MARKED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Handles made inheritable for the length of one spawn, and no longer.
+///
+/// The mark has to be in place at `CreateProcess` --- the handle list restricts
+/// and does not grant --- and has to be gone afterwards, because until it is, the
+/// handle is authority any *other* spawn in this process would hand over. See the
+/// module note. The child's own copy is made during the call and is untouched by
+/// the clear.
+///
+/// **Counted rather than simply cleared on drop**, and that is the whole reason
+/// this is a type rather than two lines around the call. A document's mapping is
+/// one handle shared by every worker of that document --- `Worker::spawn_mapped`
+/// takes an `Arc<Shm>` --- and the pool grows from several service threads at
+/// once, so a plain clear would land inside a concurrent spawn's own window
+/// between its mark and its `CreateProcess`. That spawn then fails with the
+/// parameter error that names neither the handle nor the reason, under
+/// contention, which is the worst shape a failure can have here. While any spawn
+/// holds a mark the flag stays set; only the last one out clears it.
+struct Marked {
+    /// Marked so far, so a failure part way along releases exactly those.
+    handles: Vec<HANDLE>,
+}
+
+impl Marked {
+    /// Marks every handle inheritable until the returned value is dropped.
+    ///
+    /// # Errors
+    ///
+    /// `SetHandleInformation` failing on any of them.
+    ///
+    /// # Safety
+    ///
+    /// Every handle must be live and owned by this process.
+    unsafe fn hold(handles: &[HANDLE]) -> Result<Self, String> {
+        let mut held = Self {
+            handles: Vec::new(),
+        };
+        for handle in handles {
+            // Counted, and recorded on `held`, *before* the call that can fail:
+            // the drop of a partially built value is then the only release path,
+            // rather than one here that would have to know how far it got.
+            {
+                let mut marks = marked();
+                match marks
+                    .iter_mut()
+                    .find(|(value, _)| *value == *handle as usize)
+                {
+                    Some((_, count)) => *count += 1,
+                    None => marks.push((*handle as usize, 1)),
+                }
+            }
+            held.handles.push(*handle);
+            // SAFETY: the caller's obligation, restated on this function.
+            unsafe { make_inheritable(*handle)? };
+        }
+        Ok(held)
+    }
+}
+
+impl Drop for Marked {
+    fn drop(&mut self) {
+        // The lock is held across the clear rather than only across the count.
+        // That is what orders this against a concurrent `hold`: one of the two
+        // takes the lock first, and if it is the `hold` then the count is above
+        // zero here and nothing is cleared out from under it.
+        let mut marks = marked();
+        for handle in &self.handles {
+            let value = *handle as usize;
+            let Some(index) = marks.iter().position(|(other, _)| *other == value) else {
+                continue;
+            };
+            marks[index].1 -= 1;
+            if marks[index].1 > 0 {
+                continue;
+            }
+            marks.remove(index);
+            // SAFETY: a live handle owned by this process, and the mask names the
+            // one flag being cleared. A failure leaves the handle as it was, which
+            // is the state that was already survivable.
+            unsafe { SetHandleInformation(*handle, HANDLE_FLAG_INHERIT, 0) };
+        }
+    }
+}
+
 /// Spawns `command` contained, suspended, reaching only `handles`.
 ///
 /// `handles` are made inheritable here rather than by the caller, because
@@ -656,12 +760,24 @@ impl Stdio {
 /// splitting them is how a handle ends up in the list but not inheritable ---
 /// which fails the spawn with a parameter error that names neither.
 ///
+/// The mark is also *taken back* here, on every path out, because only this
+/// function knows when the last `CreateProcess` relying on it has happened. See
+/// [`Marked`] --- the caller cannot do it, since a document's handle outlives any
+/// one spawn and is re-marked by the next worker of the same document.
+///
 /// `stdio`, when given, is folded into that same set. It has to be: with a handle
 /// list present, a standard handle the child is told to use and that is *not* in
 /// the list is not inherited, and the child starts with a stream it cannot read.
-/// The caller therefore does not pass its stdio handles in `handles` --- doing so
-/// would be harmless but would suggest the two sets are independent, and they are
-/// not.
+/// The caller therefore does not pass its stdio handles in `handles` --- which
+/// now matters rather than merely reading oddly, since the two sets are marked on
+/// different terms.
+///
+/// **Only `handles` is taken back.** The two stdio pipes are this spawn's own and
+/// are closed by the caller as soon as it returns, so their mark dies with them;
+/// `stderr` is the process's *own* handle, borrowed from `GetStdHandle` and
+/// shared with whatever gave this process a console. Clearing a flag on that
+/// would be reaching outside this module to change how unrelated code's children
+/// are started, for a handle that carries no document.
 ///
 /// # Errors
 ///
@@ -672,13 +788,19 @@ pub fn spawn_contained(
     containment: &Containment,
     stdio: Option<&Stdio>,
 ) -> Result<Contained, String> {
+    // Held to the end of this function, which is what bounds the window: every
+    // path out of here, `CreateProcess` failing included, clears the mark.
+    // SAFETY: the caller's obligation, restated on this function.
+    let _marked = unsafe { Marked::hold(handles)? };
+
     let mut handles = handles.to_vec();
     if let Some(stdio) = stdio {
-        handles.extend_from_slice(&[stdio.stdin, stdio.stdout, stdio.stderr]);
-    }
-    for handle in &handles {
-        // SAFETY: the caller's obligation, restated on this function.
-        unsafe { make_inheritable(*handle)? };
+        let ours = [stdio.stdin, stdio.stdout, stdio.stderr];
+        for handle in ours {
+            // SAFETY: as above; `Stdio` holds live handles by construction.
+            unsafe { make_inheritable(handle)? };
+        }
+        handles.extend_from_slice(&ours);
     }
 
     let token = if containment.low_integrity {
@@ -954,6 +1076,8 @@ pub fn describe_exit(code: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use windows_sys::Win32::Foundation::GetHandleInformation;
+
     use super::*;
 
     /// A job can be created and carries the limits asked for.
@@ -1257,6 +1381,111 @@ mod tests {
             CloseHandle(their_stdout);
             CloseHandle(my_stdin);
             CloseHandle(my_stdout);
+        }
+    }
+
+    /// Whether a handle would be inherited, or `None` if it cannot be read.
+    ///
+    /// Masked rather than compared whole: `HANDLE_FLAG_PROTECT_FROM_CLOSE` lives
+    /// in the same word, and a check on the whole value would be about both.
+    fn inherit_flag(handle: HANDLE) -> Option<u32> {
+        let mut flags: u32 = 0;
+        // SAFETY: a live handle this test owns; `flags` outlives the call.
+        let ok = unsafe { GetHandleInformation(handle, &raw mut flags) };
+        (ok != 0).then_some(flags & HANDLE_FLAG_INHERIT)
+    }
+
+    /// A handed-over handle is inheritable for the spawn and not after it.
+    ///
+    /// Three properties, and the first is what makes the other two mean
+    /// something. **It was marked**: a handle in the attribute list that is not
+    /// inheritable fails `CreateProcess` with a parameter error, so the spawn
+    /// returning `Ok` is that assertion --- `pipe` hands back ends that are not
+    /// inheritable, so nothing else could have marked this one. **It was
+    /// cleared**: left set, the handle is authority any unrelated
+    /// `CreateProcess(bInheritHandles: TRUE)` in this process would hand its own
+    /// child, which is what the module note is about. **It can be marked again**:
+    /// a document's mapping is handed to every worker of that document, so a
+    /// clear that could not be undone would work once and then fail every later
+    /// worker of the same document --- and only under contention.
+    ///
+    /// The stdio leg is the control on the second property: those are marked and
+    /// deliberately not taken back, so a `Marked` that cleared everything, or one
+    /// whose clear ran over the whole set, goes red here rather than passing for
+    /// looking tidy.
+    #[test]
+    fn a_handed_over_handle_is_inheritable_for_the_spawn_and_not_afterwards() {
+        let (their_stdin, my_stdin) = pipe().expect("a request pipe");
+        let (my_stdout, their_stdout) = pipe().expect("a reply pipe");
+        let stdio =
+            Stdio::with_inherited_stderr(their_stdin, their_stdout).expect("stdio for the child");
+        // In the caller's set rather than in `stdio`, because that is the set a
+        // document's mapping arrives in --- and the only one taken back.
+        let (carried, carried_other) = pipe().expect("a handle to hand over");
+
+        for round in 0..2 {
+            let child = spawn_contained(
+                "cmd.exe /c exit 0",
+                &[carried],
+                &Containment::default(),
+                Some(&stdio),
+            )
+            .unwrap_or_else(|e| panic!("round {round}: {e}"));
+            child.resume().expect("the child runs");
+            assert_eq!(child.wait(), Ok(0), "round {round}");
+            assert_eq!(
+                inherit_flag(carried),
+                Some(0),
+                "round {round}: the mark outlived the spawn"
+            );
+        }
+
+        assert_eq!(
+            inherit_flag(their_stdin),
+            Some(HANDLE_FLAG_INHERIT),
+            "the spawn's own stdio must keep its mark"
+        );
+
+        // SAFETY: live handles this process owns and closes once.
+        unsafe {
+            CloseHandle(their_stdin);
+            CloseHandle(their_stdout);
+            CloseHandle(my_stdin);
+            CloseHandle(my_stdout);
+            CloseHandle(carried);
+            CloseHandle(carried_other);
+        }
+    }
+
+    /// A spawn that never happened takes its marks back too.
+    ///
+    /// The path that a clear written after the call would miss, and the one that
+    /// leaves the mark behind for good: nothing later in the process has a reason
+    /// to touch a handle whose spawn failed, so it would stay inheritable until
+    /// the document was closed.
+    #[test]
+    fn a_failed_spawn_leaves_no_handle_inheritable() {
+        let (carried, carried_other) = pipe().expect("a handle to hand over");
+
+        let err = spawn_contained(
+            "tpdf-no-such-program.exe",
+            &[carried],
+            &Containment::default(),
+            None,
+        )
+        .map(|_| ())
+        .expect_err("there is no such program");
+        assert!(err.contains("CreateProcess failed"), "{err}");
+        assert_eq!(
+            inherit_flag(carried),
+            Some(0),
+            "a spawn that failed left the handle inheritable"
+        );
+
+        // SAFETY: live handles this process owns and closes once.
+        unsafe {
+            CloseHandle(carried);
+            CloseHandle(carried_other);
         }
     }
 

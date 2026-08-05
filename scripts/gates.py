@@ -33,6 +33,16 @@ on a `Cargo.lock` that was not committed after a `cargo update`, and it compiles
 the test targets, which is where `--all-targets` clippy findings and broken
 test-only code show up.
 
+That second promise could not fire until 2026-08-05, and the reason is gate
+*order* rather than anything wrong with the command. clippy is the first cargo
+command in this list that resolves dependencies, and it carried no `--locked` --
+so an edited `Cargo.toml` sitting beside a stale committed `Cargo.lock` had the
+lockfile quietly rewritten to match, by the gate directly above the one whose job
+is to notice. `cargo test --locked` then read a lockfile that was already correct
+and said so. clippy takes `--locked` now as well. The shape worth carrying: a
+lockfile gate is only as strong as the *earliest* resolving command in the run,
+whatever flags the later ones carry.
+
 `cargo build --bins --examples` is there because **neither of the two gates above
 links a binary**, and on 2026-07-29 this sweep reported 7/7 on Windows while
 `npm run tauri build` failed outright. clippy stops at metadata and never calls
@@ -142,6 +152,7 @@ def gates() -> "list[tuple[str, list[str], str]]":
                 "clippy",
                 "--manifest-path",
                 CARGO_MANIFEST,
+                "--locked",
                 "--all-targets",
                 "--",
                 "-D",

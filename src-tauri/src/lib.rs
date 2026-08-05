@@ -56,7 +56,6 @@ pub mod worker_shm;
 pub mod workers;
 
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
 
 use parking_lot::Mutex;
 use render::{DocumentInfo, RenderService};
@@ -120,7 +119,7 @@ struct EagerOpen {
     /// What was opened, to be compared against what is asked for.
     path: PathBuf,
     /// The pending result, taken by the first matching request.
-    pending: Mutex<Option<Receiver<Result<DocumentInfo, String>>>>,
+    pending: Mutex<Option<ReplyRx<DocumentInfo>>>,
 }
 
 /// Whether page geometry should be collected lazily rather than up front.
@@ -303,6 +302,51 @@ fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
     resources.unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Where one command's reply from the render service arrives.
+///
+/// The runtime's channel and not `std::sync::mpsc`, and the difference is not
+/// the channel but what waiting on it costs. Every command below is an
+/// `async fn`, so a blocking `recv` parks one of the runtime's few worker
+/// threads for as long as the engine takes --- and nothing bounds how many at
+/// once: a search walks a document one call per page, and a reader who scrolls
+/// during it adds more. Awaiting suspends the *task* instead, which is the
+/// resource there are millions of.
+///
+/// Capacity one, for one message. [`render::Reply`] is `FnOnce`, so the send in
+/// [`reply_channel`] cannot find the channel full --- which is what lets it be
+/// a `try_send` and never block the render thread either.
+type ReplyRx<T> = tauri::async_runtime::Receiver<Result<T, String>>;
+
+/// A reply callback to hand the render service, and where its answer lands.
+///
+/// Built here rather than at each call site so that the sender's half of the
+/// arrangement --- the capacity, and the send that must not block --- is stated
+/// once for every caller, the eager open in `start_eager_open` included.
+fn reply_channel<T: Send + 'static>() -> (render::Reply<T>, ReplyRx<T>) {
+    let (tx, rx) = tauri::async_runtime::channel(1);
+    (
+        Box::new(move |result| {
+            // A dropped receiver is a command that is no longer waiting, which
+            // is a reply with nowhere to go and not an error.
+            let _ = tx.try_send(result);
+        }),
+        rx,
+    )
+}
+
+/// Waits for the render service's answer to `command`.
+///
+/// `command` is a parameter because the failure is otherwise
+/// indistinguishable across every caller: all of them see the render thread
+/// gone, and a persisted `render thread stopped` (see `diag.rs`) then says a
+/// thread died without saying what was being asked of it. The name is the one
+/// piece a reader sending the log back cannot supply.
+async fn await_reply<T>(command: &str, mut rx: ReplyRx<T>) -> Result<T, String> {
+    rx.recv()
+        .await
+        .ok_or_else(|| format!("render thread stopped ({command})"))?
+}
+
 /// Opens a document and returns its page geometry.
 ///
 /// Collects an eager open if one is outstanding, which is why this takes the
@@ -315,28 +359,25 @@ async fn open_document(
     path: String,
 ) -> Result<DocumentInfo, String> {
     let wanted = PathBuf::from(&path);
-    if let Some(eager) = app.try_state::<EagerOpen>() {
+    // The receiver comes out of the lock before anything is awaited, and it has
+    // to: the guard is not `Send`, so holding one across the wait below would
+    // not compile.
+    let eager = app
+        .try_state::<EagerOpen>()
         // Only for the path it was started on. A mismatch falls through to an
         // ordinary open and leaves the eager result where it is: it costs the
         // head start, which is what a speculative optimisation is allowed to
         // lose, rather than returning the wrong document.
-        if eager.path == wanted {
-            if let Some(rx) = eager.pending.lock().take() {
-                startup::mark("eager open collected");
-                return rx.recv().map_err(|_| "render thread stopped".to_string())?;
-            }
-        }
+        .filter(|eager| eager.path == wanted)
+        .and_then(|eager| eager.pending.lock().take());
+    if let Some(rx) = eager {
+        startup::mark("eager open collected");
+        return await_reply("open_document", rx).await;
     }
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    service.open(
-        wanted,
-        lazy_geometry(),
-        Box::new(move |result| {
-            let _ = tx.send(result);
-        }),
-    );
-    rx.recv().map_err(|_| "render thread stopped".to_string())?
+    let (reply, rx) = reply_channel();
+    service.open(wanted, lazy_geometry(), reply);
+    await_reply("open_document", rx).await
 }
 
 /// Releases a document the reader has finished with.
@@ -357,14 +398,9 @@ async fn open_document(
 /// the file they asked for, and that is the only decision this end makes.
 #[tauri::command]
 async fn close_document(service: tauri::State<'_, RenderService>, doc: u32) -> Result<(), String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    service.close(
-        doc,
-        Box::new(move |result| {
-            let _ = tx.send(result);
-        }),
-    );
-    rx.recv().map_err(|_| "render thread stopped".to_string())?
+    let (reply, rx) = reply_channel();
+    service.close(doc, reply);
+    await_reply("close_document", rx).await
 }
 
 /// Extracts one page's characters and their positions.
@@ -380,15 +416,9 @@ async fn page_text(
     doc: u32,
     page: u32,
 ) -> Result<text::PageText, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    service.text(
-        doc,
-        page,
-        Box::new(move |result| {
-            let _ = tx.send(result);
-        }),
-    );
-    rx.recv().map_err(|_| "render thread stopped".to_string())?
+    let (reply, rx) = reply_channel();
+    service.text(doc, page, reply);
+    await_reply("page_text", rx).await
 }
 
 /// Finds a query in one page, returning character ranges.
@@ -409,18 +439,9 @@ async fn search_page(
     options: search::Options,
     carry: Option<search::Carry>,
 ) -> Result<search::PageMatches, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    service.search(
-        doc,
-        page,
-        query,
-        options,
-        carry,
-        Box::new(move |result| {
-            let _ = tx.send(result);
-        }),
-    );
-    rx.recv().map_err(|_| "render thread stopped".to_string())?
+    let (reply, rx) = reply_channel();
+    service.search(doc, page, query, options, carry, reply);
+    await_reply("search_page", rx).await
 }
 
 /// Reads a document's outline --- its bookmarks --- as a bounded tree.
@@ -433,14 +454,9 @@ async fn document_outline(
     service: tauri::State<'_, RenderService>,
     doc: u32,
 ) -> Result<outline::Outline, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    service.outline(
-        doc,
-        Box::new(move |result| {
-            let _ = tx.send(result);
-        }),
-    );
-    rx.recv().map_err(|_| "render thread stopped".to_string())?
+    let (reply, rx) = reply_channel();
+    service.outline(doc, reply);
+    await_reply("document_outline", rx).await
 }
 
 /// Reports, per page, whether the text means anything or PDFium is guessing.
@@ -466,14 +482,9 @@ async fn document_mapping(
     service: tauri::State<'_, RenderService>,
     doc: u32,
 ) -> Result<Vec<encoding::PageMapping>, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    service.mapping(
-        doc,
-        Box::new(move |result| {
-            let _ = tx.send(result);
-        }),
-    );
-    rx.recv().map_err(|_| "render thread stopped".to_string())?
+    let (reply, rx) = reply_channel();
+    service.mapping(doc, reply);
+    await_reply("document_mapping", rx).await
 }
 
 /// Reads the remembered places, most recently read first.
@@ -736,22 +747,52 @@ struct ScrollBenchConfig {
     cancels: Vec<u8>,
 }
 
+/// What `raw` means for `name`, or `None` --- having said so through `say`.
+///
+/// A *set* value that cannot be read is announced, because the alternative is a
+/// run that quietly used the default and reported it as the variant that was
+/// asked for: `TPDF_SCROLL_ROUNDS=1O` measures five rounds, and every number
+/// downstream is then about a configuration nobody chose. An absent variable is
+/// the ordinary case and says nothing --- the callers return before reaching
+/// here.
+///
+/// The sink is a parameter for the reason `diag::note_to` takes one: the line is
+/// otherwise observable only on stderr, so a check for it would have to re-exec
+/// the test binary to read its own output.
+fn parse_setting<T: std::str::FromStr>(name: &str, raw: &str, say: &dyn Fn(&str)) -> Option<T> {
+    match raw.parse() {
+        Ok(value) => Some(value),
+        Err(_) => {
+            // Quoted, so the two values that are invisible in a shell line ---
+            // an empty one, and one carrying whitespace --- can be seen here.
+            say(&format!(
+                "[WARN] {name}={raw:?} could not be read; using the default"
+            ));
+            None
+        }
+    }
+}
+
 /// Reads a `TPDF_`-prefixed environment variable, falling back to `default`.
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(default)
+    let Ok(raw) = std::env::var(name) else {
+        return default;
+    };
+    parse_setting(name, &raw, &diag::note).unwrap_or(default)
 }
 
 /// Reads a comma-separated list, falling back to `default`.
+///
+/// Per item, so a list with one unreadable entry names that entry rather than
+/// the whole value --- and keeps the entries either side of it, which is what
+/// it did before anything was said out loud.
 fn env_list<T: std::str::FromStr>(name: &str, default: Vec<T>) -> Vec<T> {
     let Ok(raw) = std::env::var(name) else {
         return default;
     };
     let parsed: Vec<T> = raw
         .split(',')
-        .filter_map(|item| item.trim().parse().ok())
+        .filter_map(|item| parse_setting(name, item.trim(), &diag::note))
         .collect();
     if parsed.is_empty() {
         default
@@ -964,14 +1005,8 @@ fn start_eager_open(service: &RenderService) -> Option<EagerOpen> {
     std::env::var_os("TPDF_EAGER_OPEN")?;
     let path = PathBuf::from(std::env::var("TPDF_STARTUP").ok()?);
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    service.open(
-        path.clone(),
-        lazy_geometry(),
-        Box::new(move |result| {
-            let _ = tx.send(result);
-        }),
-    );
+    let (reply, rx) = reply_channel();
+    service.open(path.clone(), lazy_geometry(), reply);
     startup::mark("eager open requested");
     Some(EagerOpen {
         path,
@@ -1228,8 +1263,12 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{spike_env, WEBVIEW_ALIVE};
+    use super::{
+        await_reply, env_list, env_or, parse_setting, reply_channel, spike_env, WEBVIEW_ALIVE,
+    };
     use crate::startup;
+    use std::cell::RefCell;
+    use tauri::async_runtime::block_on;
 
     fn alive() -> bool {
         startup::timeline()
@@ -1255,5 +1294,106 @@ mod tests {
         // does on every launch, not that the spike was requested.
         assert_eq!(spike_env("TPDF_NO_SUCH_VARIABLE_4711"), None);
         assert!(alive());
+    }
+
+    /// The reply the render service was never able to send has to say which
+    /// command was waiting for it.
+    ///
+    /// Every one of the seven shares this failure and used to share the whole
+    /// sentence, so an error persisted by `diag.rs` could say that a thread had
+    /// stopped and nothing about what had been asked of it.
+    #[test]
+    fn a_lost_reply_names_the_command_that_was_waiting_for_it() {
+        // The control, and the reason the two below mean anything: a helper
+        // that always failed --- or one that lost the answer --- would satisfy
+        // an assertion that only looked at the error.
+        let (reply, rx) = reply_channel::<u32>();
+        reply(Ok(4711));
+        assert_eq!(block_on(await_reply("page_text", rx)), Ok(4711));
+
+        // And the service's own refusals pass through untouched, rather than
+        // being reworded into a channel failure.
+        let (reply, rx) = reply_channel::<u32>();
+        reply(Err("no such document".to_string()));
+        assert_eq!(
+            block_on(await_reply("page_text", rx)),
+            Err("no such document".to_string())
+        );
+
+        // Dropping the callback without calling it is what a caller sees when
+        // the thread behind it is gone.
+        let (reply, rx) = reply_channel::<u32>();
+        drop(reply);
+        let said = block_on(await_reply("page_text", rx)).unwrap_err();
+        assert!(said.contains("render thread stopped"), "{said:?}");
+        assert!(
+            said.contains("page_text"),
+            "the command is the one part of this a reader sending the log back cannot supply: {said:?}"
+        );
+
+        // A second name, because a constant baked into the helper would pass
+        // every assertion above.
+        let (reply, rx) = reply_channel::<u32>();
+        drop(reply);
+        let said = block_on(await_reply("document_outline", rx)).unwrap_err();
+        assert!(said.contains("document_outline"), "{said:?}");
+    }
+
+    /// A sink that keeps what it was told, standing in for `diag::note`.
+    fn recorded(lines: &RefCell<Vec<String>>) -> impl Fn(&str) + '_ {
+        |line: &str| lines.borrow_mut().push(line.to_owned())
+    }
+
+    #[test]
+    fn a_setting_that_cannot_be_read_names_itself_and_the_value_it_refused() {
+        let lines = RefCell::new(Vec::new());
+        let say = recorded(&lines);
+
+        // The control. Announcing every value read would satisfy a check that
+        // only asserts the malformed one produced a line.
+        assert_eq!(
+            parse_setting::<usize>("TPDF_SCROLL_ROUNDS", "5", &say),
+            Some(5)
+        );
+        assert!(
+            lines.borrow().is_empty(),
+            "a value that was read fine was announced: {:?}",
+            lines.borrow()
+        );
+
+        assert_eq!(
+            parse_setting::<usize>("TPDF_SCROLL_ROUNDS", "1O", &say),
+            None
+        );
+        let lines = lines.borrow();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("[WARN]"), "{:?}", lines[0]);
+        assert!(
+            lines[0].contains("TPDF_SCROLL_ROUNDS"),
+            "the variable is what the reader has to go and correct: {:?}",
+            lines[0]
+        );
+        assert!(
+            lines[0].contains("1O"),
+            "the rejected value says which end the typo is at: {:?}",
+            lines[0]
+        );
+    }
+
+    /// An absent variable still reaches its default through both readers.
+    ///
+    /// It asserts the value and **not** the silence beside it, and the name says
+    /// so on purpose: the two callers return before the announcer is reachable,
+    /// but a line written there would go to stderr, which this process cannot
+    /// read without re-execing itself the way `diag::tests` does. Nothing is set
+    /// here either --- `cargo test` runs these in one process, and setting a
+    /// variable beside a thread reading one is a data race whatever the name is.
+    #[test]
+    fn an_unset_setting_falls_back_to_the_default() {
+        assert_eq!(env_or("TPDF_NO_SUCH_VARIABLE_4711", 5_usize), 5);
+        assert_eq!(
+            env_list("TPDF_NO_SUCH_VARIABLE_4711", vec![1.0_f64]),
+            vec![1.0]
+        );
     }
 }
