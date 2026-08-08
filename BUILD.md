@@ -1360,7 +1360,7 @@ document* per machine, for the reason two paragraphs down.
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
 | `text-heavy.pdf` | 142--143 | 20--21 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 147--148 | 15--16 | the only fixture with an ordinary outline |
+| `outline-simple.pdf` | 147--149 | 14--16 | the only fixture with an ordinary outline |
 | `outline-hostile.pdf` | 148 | 15 | the only one with a `/Launch` entry to refuse |
 | `vector-heavy.pdf` | 91 | 72 | one page, no extractable text, and no white paper to invert |
 | `vector-multi.pdf` | 104 | 59 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
@@ -1383,6 +1383,14 @@ one check that moves is the withdrawal race described below, and this row and
 above fixed the arithmetic and reintroduced the shape of the original error, which is worth
 saying plainly: **a number measured once is still a point estimate of a quantity that varies**,
 and for these two fixtures the invariant is the name total, not the split.
+
+**`outline-simple`'s range was widened to `147--149 / 14--16` on 2026-08-08**, on six Windows
+runs: three at `149 / 14`, then two at `148 / 15` and one at `149 / 14`. The total is 163 in
+all six, which is the invariant the paragraph above says it is --- and the widening is the
+same lesson a third time, since `147--148` was itself two platforms' point estimates read as
+a bound. Do not narrow it back on the strength of one green run. The three runs that came
+first also carried the stale-focus-mirror failure described in `docs/TRAPS.md`, so treat any
+row of this table as a statement about the split, never about whether the run passed.
 
 **The two A0 corpora straddle the watchdog's old 300 s default, and their spread is far wider
 than the bound.** Four runs on macOS on 2026-08-03: `vector-multi.pdf` at **275 s**, **387 s**

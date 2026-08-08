@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 233 entries
+The one thing this file does *not* carry in full is the trap list --- 236 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -832,8 +832,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 233 of them and the full text
-was 93% of this file --- an instruction budget spent on the 228 traps that are not
+titles. Only the titles are here, because there are 236 of them and the full text
+was 93% of this file --- an instruction budget spent on the 235 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -998,6 +998,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A check that derives its inputs from the thing it is testing cannot fail
 - A closure and a direct read of the same variable disagreed, and it is unexplained
 - A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
+- A synchroniser is not a fix, and the entry above called the arrows fixed anyway (it is the entry above that was wrong, six days later)
 - A page fitted to the element's own width is measured under the scrollbar
 - A synthetic heading that does not reach the second column tests nothing
 - Whatever a fixture is meant to discriminate, it needs two of
@@ -1022,6 +1023,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A feature made a standing check false, and the only corpus that could tell had never been opened
 - A negative assertion needs an observable saying the question was asked
 - A class used with `instanceof` must not live in a module the tests mock wholesale
+- A command deliberately left out of the window harness still has to be classified (the count reasoning was right and the run was red anyway)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1083,6 +1085,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A release build is not a production build; a cargo *feature* decides that
 - A guard that degrades to a no-op off its platform stops being a guard
 - Reaching for a constant *because* it is portable, and picking the one that is absent
+- The same platform refusal, a result in one scenario and a failure in the next
 - `CreateProcessAsUser` waives a privilege only for a token it still recognises
 - A restricting SID stops the loader, and the code never runs
 - One failing rung cannot say which ingredient failed

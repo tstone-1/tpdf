@@ -3097,12 +3097,20 @@ async function appCommandChecks(
     },
   ];
 
-  // The two the list above cannot drive, each with the reason it cannot, so
-  // that "not covered" is a decision in the table rather than an absence.
+  // The ones the list above cannot drive, each with the reason it cannot, so
+  // that "not covered" is a decision in the table rather than an absence. Not
+  // counted in this comment: the count belongs to the entries, and saying it
+  // here went stale the first time one was added.
   const undriven: Record<string, string> = {
     "find.next": "needs a live search with more than one match",
     "find.previous": "needs a live search with more than one match",
     "edit.copy": "its outcome is the system clipboard",
+    // Driving it would reopen the document, which replaces the viewer, the
+    // text cache and the tile state that every later check reads --- so it
+    // cannot run here without ending the run. Its wiring is covered by
+    // `appcommands.test.ts` instead: that it reaches its own action and no
+    // other, is withheld with no document, and ranks first for its own name.
+    "file.reload": "it reopens the document, discarding the state later checks read",
   };
 
   const registered = registry.all().map((command) => command.id);
