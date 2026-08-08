@@ -74,6 +74,66 @@ first.)
   at the moment of reload and handed to the open, then clamped to the document's new length ---
   so reloading a file that got shorter lands somewhere that exists.
 
+### What the first Windows run of the week's macOS work found
+
+- **A belief about Windows became a measurement.** `Shm::backing_len` has recorded, as a
+  belief nothing had ever exercised, that Windows holds a mapped file against truncation.
+  It does: `rewrite-probe` gets `ERROR_USER_MAPPED_FILE` (os error 1224), so the fault the
+  truncation scenario exists to provoke is unreachable here and the scenario reports it as
+  the finding it is. The other three scenarios reproduce macOS exactly --- including the
+  quiet one, where a valid in-place rewrite leaves page 2 on revision A and page 190 on
+  revision B with no error anywhere.
+
+- **The same refusal was fatal in the sibling scenario.** The service-level truncation
+  discarded the OS error, recorded `"failed"`, and `return`ed --- which dropped three check
+  names from the run rather than skipping them, so the Windows name set was 20 against
+  macOS's 22 and the summary read like an ordinary single failure. Both are fixed: the set
+  is 23 on both platforms and only the verdicts differ. The `return` had also been skipping
+  the service's `close`, which the comment below it exists to prevent.
+
+- **`file.reload` was never classified in `viewercheck.ts`**, so its completeness check ---
+  every registered command is either driven or listed with the reason it cannot be --- was
+  red on every corpus. The decision to cover the command by unit tests instead was right,
+  and the reasoning that it would not move the 163-name invariant was also right; it is
+  simply a different claim from "the harness stays green". Recorded in the `undriven` table
+  now, which is where that decision belongs. The comment above it said "the two" while
+  listing three, and is count-free now.
+
+- **Six corpora green at 163 check names on Windows**, name sets diffed pairwise and
+  byte-identical, with every ran/skipped split matching `BUILD.md`'s table exactly:
+  `tagged` 132/31, `outline-hostile` 148/15, `columns` 137/26, `mixed` 138/25, `encodings`
+  130/33, `multilingual` 130/33. Containment holds throughout --- 45--49 modules at peak
+  across up to 691 samples, none of them the PDF parser.
+
+- **Neither defect was reachable from CI**, and that is the durable part. `viewer_check.py`
+  needs a real window, so both sat under a green 13/13 gate run and two green CI jobs.
+
+### The outline's arrow keys acted on the wrong row
+
+- **ArrowLeft collapsed nothing, one run in three.** `sidebar.ts` looked the row up by
+  `focused` --- a mirror of the DOM's focus kept by a `focusin` listener --- and `focusin`
+  is not delivered when the document lacks system focus. The mirror then named a row the key
+  had never reached, so ArrowLeft fell through to "step out to the parent" or to nothing at
+  all. Real, not only a harness artifact: a reader whose window regained focus the wrong way
+  gets arrow keys that operate somewhere else.
+
+- **The row is resolved from `event.target` now**, once at the top of the handler, so
+  `move`, `toParent` and `activate` cannot disagree about which row the key reached. This is
+  the fix already applied to Enter in August; the arrows were recorded as fixed at the same
+  time and never were --- what they had was the `focusin` listener, which the same paragraph
+  had just finished explaining is not sufficient. `docs/TRAPS.md` carries both halves, and
+  the earlier entry's claim is corrected rather than left to contradict the new one.
+
+- **Covered by unit tests that were proved to discriminate.** The first pair passed against
+  the unfixed code: `setOutline` leaves the mirror on the first row, so dispatching to that
+  row cannot tell the mirror from the target. Only the mutation said so. They move the mirror
+  off the target first, and both go red under the old lookup while the two Enter tests stay
+  green.
+
+- **Six runs of `outline-simple` on Windows**, three before the fix and three after; the
+  three after are green. `BUILD.md`'s row for it is widened to `147--149 / 14--16`, the total
+  being 163 in every one.
+
 ## [26.8.0] - 2026-08-03
 
 ### The first release, and what cutting it found

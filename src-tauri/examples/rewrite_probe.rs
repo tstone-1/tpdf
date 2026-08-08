@@ -646,55 +646,81 @@ fn judge_service(checks: &mut Checks, fixture: &Path, work: &Path, library_dir: 
 
     let len = fs::metadata(work).map(|m| m.len()).unwrap_or(0);
     let kept = len / 4;
-    if fs::OpenOptions::new()
+    // The platform fact `judge_truncate` already states, arriving one level up.
+    // Windows refuses to shorten a file that has a section mapped over it, so
+    // the fault this scenario exists to provoke is unreachable there, and the
+    // refusal is a result rather than an obstacle. Recorded as a hard failure
+    // --- which is what this did until the first Windows run --- it reads as a
+    // broken probe; worse, the three checks below then vanished from the name
+    // set rather than skipping, which is the shape a run is meant to catch
+    // rather than produce. The name is recorded on the way through when the
+    // truncation *does* land, so all four exist on both platforms and only
+    // their verdicts differ.
+    let refused = fs::OpenOptions::new()
         .write(true)
         .open(work)
         .and_then(|f| f.set_len(kept))
-        .is_err()
-    {
+        .err();
+    if let Some(why) = &refused {
+        checks.skip(
+            "the file is truncated under the service",
+            &format!("the platform refused to shorten a mapped file: {why}"),
+        );
+        for name in [
+            "the first request past the truncation is diagnosed, not just failed",
+            "every later request is refused with the same diagnosis",
+            "a refused request costs nothing, so no process is being spawned",
+        ] {
+            checks.skip(
+                name,
+                "no truncation happened, so there was nothing to refuse",
+            );
+        }
+    } else {
         checks.record(
             "the file is truncated under the service",
-            false,
-            "failed".into(),
+            true,
+            format!("{len} bytes cut to {kept}"),
         );
-        return;
-    }
 
-    let (first, first_ms) = ask(page);
-    let diagnosed = matches!(&first, Err(e) if e.contains(tpdf_lib::workers::OUTLIVED_MARK));
-    checks.record(
-        "the first request past the truncation is diagnosed, not just failed",
-        diagnosed,
-        match &first {
-            Err(e) => format!("{first_ms:.1} ms: {e}"),
-            Ok(_) => "it rendered a page the file no longer holds".into(),
-        },
-    );
+        let (first, first_ms) = ask(page);
+        let diagnosed = matches!(&first, Err(e) if e.contains(tpdf_lib::workers::OUTLIVED_MARK));
+        checks.record(
+            "the first request past the truncation is diagnosed, not just failed",
+            diagnosed,
+            match &first {
+                Err(e) => format!("{first_ms:.1} ms: {e}"),
+                Ok(_) => "it rendered a page the file no longer holds".into(),
+            },
+        );
 
-    // Twenty, because one repetition cannot tell a latch from a coincidence and
-    // because a reader scrolling through a missing tail makes far more than
-    // twenty. Without the latch each of these is two spawns and two faults.
-    let mut worst: f64 = 0.0;
-    let mut all_diagnosed = true;
-    for n in 0..20u32 {
-        let (again, ms) = ask(page.saturating_sub(n % 5));
-        worst = worst.max(ms);
-        all_diagnosed &= matches!(&again, Err(e) if e.contains(tpdf_lib::workers::OUTLIVED_MARK));
+        // Twenty, because one repetition cannot tell a latch from a coincidence
+        // and because a reader scrolling through a missing tail makes far more
+        // than twenty. Without the latch each of these is two spawns and two
+        // faults.
+        let mut worst: f64 = 0.0;
+        let mut all_diagnosed = true;
+        for n in 0..20u32 {
+            let (again, ms) = ask(page.saturating_sub(n % 5));
+            worst = worst.max(ms);
+            all_diagnosed &=
+                matches!(&again, Err(e) if e.contains(tpdf_lib::workers::OUTLIVED_MARK));
+        }
+        checks.record(
+            "every later request is refused with the same diagnosis",
+            all_diagnosed,
+            format!("20 requests, worst {worst:.2} ms against {first_ms:.1} ms for the first"),
+        );
+        // The cost claim, stated as a bound rather than a ratio: a refusal does
+        // no I/O and spawns nothing, so a millisecond is already thousands of
+        // times more than it needs. A replacement is ~12 ms of spawn before it
+        // even faults, so nothing near this bound can be one.
+        checks.record(
+            "a refused request costs nothing, so no process is being spawned",
+            worst < 1.0,
+            format!("worst of 20 was {worst:.2} ms"),
+        );
     }
-    checks.record(
-        "every later request is refused with the same diagnosis",
-        all_diagnosed,
-        format!("20 requests, worst {worst:.2} ms against {first_ms:.1} ms for the first"),
-    );
-    // The cost claim, stated as a bound rather than a ratio: a refusal does no
-    // I/O and spawns nothing, so a millisecond is already thousands of times
-    // more than it needs. A replacement is ~12 ms of spawn before it even
-    // faults, so nothing near this bound can be one.
-    checks.record(
-        "a refused request costs nothing, so no process is being spawned",
-        worst < 1.0,
-        format!("worst of 20 was {worst:.2} ms"),
-    );
 
     // Closed and waited for, rather than left to the drop at process exit.
     // Without it a worker is still writing a reply as the parent's pipes go

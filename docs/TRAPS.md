@@ -3846,6 +3846,11 @@ the arrow keys. Adding a synchroniser makes a mirror *usually* right, and usuall
 the version that passes review and then fails once a month. The arrows were fixed and Enter
 went on reading the mirror.
 
+(That last sentence was wrong about the arrows, and the paragraph above it says why. A
+synchroniser is not a fix, and the arrows kept reading the mirror until 2026-08-08, when they
+failed on Windows exactly as this entry predicts --- once in three runs. See the entry
+immediately below.)
+
 Reproduced deterministically rather than waited for: dispatching Enter with a target that
 differs from the mirror is precisely the state a missed `focusin` leaves behind, and under
 the old code it activated page 0 while the key sat on page 3. Each class got that test plus
@@ -3864,6 +3869,46 @@ recurrence will confirm or refute it instead of restarting the argument.
 Fixed in both classes in one change, deliberately. Two copies of one mistake drift, and the
 outline tree's version had never failed a check --- which is what a latent defect looks like
 right up until it is the one on the screen.
+
+### A synchroniser is not a fix, and the entry above called the arrows fixed anyway
+
+`collapsing a row hides its children` failed one Windows run in three on `outline-simple`,
+with `7 rows -> 7 after collapsing "1"`. Same class, same mirror, same mechanism as the entry
+above --- and that entry had already written down the reason, one sentence before asserting
+the opposite about the very keys that failed. It is worth reading the two claims side by
+side, because both were made by someone who understood the defect:
+
+- *"Adding a synchroniser makes a mirror usually right, and usually-right is the version that
+  passes review and then fails once a month."* Correct, and it named the interval almost
+  exactly: six days.
+- *"The arrows were fixed and Enter went on reading the mirror."* The arrows were never
+  fixed. What they got was the `focusin` listener --- the synchroniser the previous sentence
+  had just finished disqualifying.
+
+`focusin` is not delivered when the document lacks system focus, so `element.focus()` moves
+`activeElement` and the mirror keeps naming whatever it named before. `onKeyDown` then looked
+the row up by the mirror, and ArrowLeft on a row the mirror did not name fell through to
+`toParent` or to `return` --- collapsing nothing, visibly, while every other check passed.
+The fix is the one already applied to Enter: resolve the row from `event.target`, which *is*
+the element the key landed on, and keep the mirror only as the fallback for a key that
+arrived on the tree rather than on a row. Resolved once at the top of the handler now, so
+`move`, `toParent` and `activate` cannot disagree about which row that is.
+
+Three things to carry, and the third is the one that cost the six days.
+
+- **A synchroniser converts a wrong answer into a rare wrong answer**, which is strictly
+  harder to find. The failure rate is set by how often the event is missed, and nothing about
+  the code says what that rate is.
+- **The first deterministic test passed against the unfixed code**, and only the mutation
+  said so. `setOutline` leaves the mirror on the first row, so a test that dispatches to that
+  row has the mirror and the target naming the same thing and cannot tell which one is read
+  --- the "property that holds by construction" trap, arriving inside the test written to
+  prove a fix. The mirror has to be moved off the target first; here by sending one ArrowDown.
+  The fake DOM's `focus()` sets a flag and dispatches no event, so it cannot move it.
+- **"Fixed" is a claim about a call site, not about a class.** The previous change fixed
+  Enter in two classes and recorded it as fixing the defect. Enumerate the call sites that
+  read the shared piece of state --- there were six here, one per key --- rather than the
+  classes that contain them.
 
 ### An expected error line beside a passing suite makes a green run unreadable
 
@@ -6278,3 +6323,66 @@ Windows, since a file with a section object mapped over it cannot be shortened
 test of a belief `Shm::backing_len` records and nothing had ever exercised --- so the scenario
 reports it as a `[SKIP]` naming the OS error rather than failing three checks that are not
 about the document.
+
+### The same platform refusal, a result in one scenario and a failure in the next
+
+The entry above is the reasoning, and it was applied to exactly one of the two places that
+needed it. `rewrite-probe` truncates twice --- once against a bare `Worker`, once through the
+render service the viewer actually uses --- and Windows refuses both identically, with
+`ERROR_USER_MAPPED_FILE` (os error 1224). The first scenario was built knowing that: it carries
+a `mutation_error` field whose entire purpose is to keep a refusal distinct from a failure, and
+it reports `[SKIP]`s naming the OS error. The second discarded the error and recorded `false`
+with the detail `"failed"`.
+
+So the first Windows run of a probe written to turn that belief into a measurement produced the
+measurement in one scenario and a red line in the other. Two defects, and the second outlives
+the first:
+
+- **The detail said `"failed"` and threw the error away**, so the one row holding the answer
+  printed the least informative string in the file. `os error 1224` *is* the finding.
+- **Three check names vanished rather than skipping.** The failure path `return`ed, so
+  `the first request past the truncation is diagnosed`, `every later request is refused with the
+  same diagnosis` and `a refused request costs nothing` were simply absent on Windows. A name
+  that goes missing is the failure this arrangement exists to *catch*, not one it should
+  produce --- and nothing said so, because the summary read `19/20` and looks exactly like an
+  ordinary single failure. The name set was 20 here against 22 on macOS.
+
+The fix records the name on the way through when the truncation does land, so the set is 23 on
+both platforms and only the verdicts differ. Proved by mutation in both directions on one
+platform: forcing the success branch turns two of the three red and leaves the total at 23.
+
+Two things to carry. **When a platform fact is handled somewhere, grep for the other places
+that meet it** --- the thinking had already been done and written into a field, a doc comment
+and a scenario, and the sibling twenty lines below never received it. And **an early `return`
+on a failure path is how a name set silently changes size**; here it also skipped the
+service's own `close`, which the comment immediately below it exists to prevent.
+
+### A command deliberately left out of the window harness still has to be classified
+
+`file.reload` was added with an explicit, reasoned decision *not* to drive it from
+`viewercheck.ts`: the commit argued that a thirtieth entry there proves little the others do
+not, while moving a per-corpus invariant that "cannot honestly be incremented by hand" and
+would need a full corpus run of a harness that requires an unlocked screen. Every part of that
+is correct, and the unit tests chosen instead genuinely cover the wiring.
+
+What it missed is that `viewercheck.ts` does not only *drive* commands. It also asserts that
+every registered command is **classified** --- either driven, or listed in `undriven` with the
+reason it cannot be. A command that is neither is unclassified, and the check goes red:
+
+```text
+[FAIL] every registered command is classified, and every classification is registered
+       30 registered, 26 driven, 3 not driven; unclassified [file.reload], stale []
+```
+
+The count reasoning was right: the invariant stayed at **163** names, because an `undriven`
+entry classifies without adding a check. The run was red anyway. **"This will not move the
+invariant" and "this leaves the harness green" are different claims**, and only the second is
+the one worth making. The completeness check exists precisely so that "not covered" is a
+decision recorded in a table rather than an absence --- which makes opting out an edit, not an
+omission.
+
+Two things made it expensive to find, and both generalise. It is **corpus-independent**, so it
+fails on every fixture identically and no amount of choosing a better fixture would have
+surfaced it earlier. And it is **invisible to CI**, because `viewer_check.py` needs a real
+window and a headless runner cannot run it at all --- so it sat under a green 13/13 gate run
+and two green CI jobs, and appeared on the first machine to open a window after the commit.

@@ -520,7 +520,20 @@ export class Sidebar {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    const row = this.rows.find((candidate) => candidate.id === this.focused);
+    // The event's target is authoritative: it *is* the element the key landed
+    // on, while `focused` is a mirror kept by the `focusin` listener, and a
+    // document without system focus moves `activeElement` without delivering
+    // that event. Enter derived this for itself and every other key read the
+    // mirror, so whenever it was stale ArrowLeft collapsed nothing and
+    // ArrowDown stepped from a row the reader was not on --- and because it
+    // depends on whether the window holds system focus, it presented as a
+    // check that failed one run in three rather than as a bug. Reconciled once
+    // here instead, so `move`, `toParent` and `activate` all agree about which
+    // row the key reached. The mirror stays as the fallback for a key that
+    // arrived on the tree rather than on a row. See the trap.
+    const from = (event.target as HTMLElement | null)?.dataset?.id ?? this.focused;
+    if (from && from !== this.focused && this.elements.has(from)) this.focus(from);
+    const row = this.rows.find((candidate) => candidate.id === from);
 
     switch (event.key) {
       case "ArrowDown":
@@ -551,15 +564,9 @@ export class Sidebar {
         break;
       case "Enter":
       case " ": {
-        // The row the key reached, for the reason the page strip records at the
-        // same point: `focused` is a mirror of the DOM's focus maintained by the
-        // `focusin` listener, and a document without system focus moves
-        // `activeElement` without delivering that event -- leaving the mirror
-        // naming a different row than the one the key actually landed on. The
-        // event's target is authoritative, because it *is* the focused element.
-        // The mirror stays as the fallback for a key that arrived on the tree
-        // rather than on a row.
-        const from = (event.target as HTMLElement | null)?.dataset?.id ?? this.focused;
+        // `from` is resolved once at the top of this handler, for the reason
+        // stated there. It used to be derived here and nowhere else, which is
+        // how the arrows kept reading the stale mirror for as long as they did.
         if (from) this.activate(from);
         break;
       }
