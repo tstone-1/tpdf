@@ -108,6 +108,36 @@ first.)
 - **Neither defect was reachable from CI**, and that is the durable part. `viewer_check.py`
   needs a real window, so both sat under a green 13/13 gate run and two green CI jobs.
 
+### Two commands did their work on the wrong thread
+
+- **`print_document` parsed the whole document on a runtime worker.** The previous
+  release left this open by name. Being `async` put it off the main thread, which was the
+  whole of the original argument and is half of one: it is `await` that yields a thread,
+  not `async`, so a synchronous parse inside an `async fn` holds a runtime worker for its
+  duration. It runs on the blocking pool now. This is deliberately *not* the choice the
+  seven render-service bridges made --- they wait for work happening on the render thread,
+  where a bigger pool only raises the bound; here the work is in the function.
+
+- **`session_remember` wrote the session file on the thread the webview draws on.** A
+  synchronous `#[tauri::command]` runs on the thread the IPC arrives on --- read from the
+  macro rather than assumed --- and this one is on the scroll path, throttled to one write
+  per second. Measured release-profile on a full 32-place session, 2,000 cycles: mean
+  **0.911 ms**, p99 **1.381 ms**, max **13.870 ms**. The mean fits inside a 120 Hz frame
+  and the maximum does not, so it was an occasional visible hitch rather than a steady
+  cost. Both writers are on the blocking pool now.
+
+- **The lock is the part that is easy to miss.** Both writers load, edit and save, which
+  is only safe together, and that was true by accident: the main thread serialized them.
+  Moving to the pool removes that, and `session_set_invert_pages` bypasses the frontend's
+  write chain, so it really can overlap a place write. `SESSION_WRITE` is what the main
+  thread used to be. Proved by a race test --- sixteen paths from two threads, twenty
+  rounds, all of which must survive --- that fails on the first round with the guard
+  removed.
+
+- **`session_load` stays synchronous**, and already carried the comment saying why: it is
+  read once during a ~50 ms startup budget, where a few kilobytes cost less than the round
+  trip needed to hand it back later.
+
 ### The outline's arrow keys acted on the wrong row
 
 - **ArrowLeft collapsed nothing, one run in three.** `sidebar.ts` looked the row up by

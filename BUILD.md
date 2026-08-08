@@ -1703,6 +1703,22 @@ from the remembered one, and nothing opened when nothing was remembered. Expect
 `Failed to unregister class Chrome_WidgetWin_0. Error = 1412` on each shutdown: that is
 WebView2 teardown noise on a *passing* run, not a failure.
 
+**Open, and intermittent: the `default` control can hang instead of running** (Windows,
+2026-08-08). It passed twice that day and then timed out three runs in a row, always the same
+phase and never any other. What the hung launch looks like from outside is the useful part: the
+process is alive, and `MainWindowHandle` is **0** --- it never created a window, so it stopped
+before any JavaScript could run and no frontend change can explain it. The shape fits a
+single-instance secondary that forwarded its argv and failed to exit; the phase launches
+immediately after the previous one's process goes away, and `tauri-plugin-single-instance` is
+Windows-only, so this race does not exist on macOS.
+
+It is **not** caused by the print or session threading changes in the same release: the run was
+repeated with those stashed and the transcript is identical line for line, through the record
+phase, the file inspection and the hang. Three of four phases pass either way, `verify` --- the
+one that actually tests restore --- at 8/8. Two things to do before chasing it: kill any stray
+`tpdf.exe` first, since one alive process changes what every later launch does, and check
+`MainWindowHandle` rather than assuming the app got as far as its checks.
+
 **The fixture must have at least eight pages.** The target page is 7 and `Viewer.goToPage` clamps
 to the last page, so a shorter document reports a wrong page rather than a wrong fixture ---
 `text-base14.pdf` gave *"page 0, wanted 7"*, stably, on a restore that was working. There is a
