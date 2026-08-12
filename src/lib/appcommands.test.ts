@@ -26,7 +26,7 @@ import { CommandRegistry } from "./commands";
  * guards read --- so the same builder serves both directions and the
  * with-document case cannot quietly become the only one tested.
  */
-function harness(hasDocument = true) {
+function harness(hasDocument = true, update: { available?: boolean; ready?: boolean } = {}) {
   const fired: string[] = [];
   const actions: AppActions = {
     // Not a real viewer: nothing here calls a method on it, and the guards ask
@@ -44,6 +44,12 @@ function harness(hasDocument = true) {
     toggleSidebar: () => fired.push("toggleSidebar"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
     toggleInvert: () => fired.push("toggleInvert"),
+    checkForUpdates: () => fired.push("checkForUpdates"),
+    applyUpdate: () => fired.push("applyUpdate"),
+    // Default false, so a test that says nothing about updates exercises the
+    // state a launch actually starts in rather than the convenient one.
+    updateAvailable: () => update.available ?? false,
+    updateReady: () => update.ready ?? false,
   };
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);
@@ -97,15 +103,84 @@ describe("Reload from disk", () => {
   });
 });
 
+/**
+ * The two update commands.
+ *
+ * `viewercheck.ts` classifies both as `undriven` --- one would reach the network
+ * from a check that is otherwise entirely offline, the other would replace the
+ * running binary mid-run --- so this is the only place their wiring is asserted
+ * at all. What matters is the pair of guards on the install command, because
+ * they encode a distinction a single "is there an update" flag would lose.
+ */
+describe("the update commands", () => {
+  it("checks for updates, reaching that action and no other", () => {
+    const { registry, fired } = harness();
+    expect(registry.run("app.checkForUpdates")).toBe(true);
+    expect(fired).toEqual(["checkForUpdates"]);
+  });
+
+  it("offers the check on every launch, including one with no document", () => {
+    // Deliberately unguarded: asking again is the only way back from a failed
+    // check, and a launch with no network is exactly when a reader would.
+    const offered = harness(false).registry.search("").map((r) => r.command.id);
+    expect(offered).toContain("app.checkForUpdates");
+  });
+
+  it("withholds the install until a check has found something", () => {
+    // The control for the test below. Without it, a guard that was always true
+    // would pass the "offered" case and nothing would notice.
+    const { registry, fired } = harness(true, { available: false });
+    expect(registry.search("").map((r) => r.command.id)).not.toContain("app.installUpdate");
+    expect(registry.run("app.installUpdate")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+
+  it("offers the install once an update has been found", () => {
+    const { registry, fired } = harness(true, { available: true });
+    expect(registry.search("").map((r) => r.command.id)).toContain("app.installUpdate");
+    expect(registry.run("app.installUpdate")).toBe(true);
+    expect(fired).toEqual(["applyUpdate"]);
+  });
+
+  it("withdraws the install once the update is applied and waiting on a restart", () => {
+    // The half a single flag would lose: `available` is still true here, and
+    // the command must be gone anyway. A command that stays live after it has
+    // run tells the reader the first run did not work.
+    const { registry, fired } = harness(true, { available: true, ready: true });
+    expect(registry.search("").map((r) => r.command.id)).not.toContain("app.installUpdate");
+    expect(registry.run("app.installUpdate")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+
+  it("finds both by typing, which is the only way to reach either", () => {
+    // Neither has a binding, so palette rank is not one route among several.
+    expect(harness().registry.search("check for updates")[0]?.command.id).toBe(
+      "app.checkForUpdates",
+    );
+    expect(harness(true, { available: true }).registry.search("install update")[0]?.command.id).toBe(
+      "app.installUpdate",
+    );
+  });
+});
+
 describe("the commands a document is needed for", () => {
-  it("leaves only Open document when there is none", () => {
+  it("leaves only the commands that genuinely need no document", () => {
     // The control for the withholding test above: it proves the guard is
     // `withDocument` rather than something that hides every command, and it
     // fails if a *new* command is registered without one --- which is the
     // mistake this catches that a check on `file.reload` alone cannot.
+    //
+    // It is an exact list rather than a `toContain`, and that is the whole
+    // value: this went red when the update check was added, which is correct,
+    // because "no document needed" is a claim each command has to earn. Two
+    // earn it. Opening one is how you get a document at all, and checking for
+    // updates has nothing to do with documents --- a reader whose launch found
+    // no network has no document open either, and asking again is their only
+    // route back. Installing an update is *not* here: it is guarded on having
+    // found one, which the default harness has not.
     const { registry } = harness(false);
     const offered = registry.search("").map((ranked) => ranked.command.id);
-    expect(offered).toEqual(["file.open"]);
+    expect(offered).toEqual(["file.open", "app.checkForUpdates"]);
   });
 
   it("offers the rest once one is open", () => {
@@ -130,7 +205,12 @@ describe("every registered command", () => {
       "find.next",
       "find.previous",
     ];
-    const { registry, fired } = harness();
+    // Built with an update on offer, because otherwise `app.installUpdate` is
+    // correctly disabled and this sweep would read a working guard as a
+    // no-op command. The sweep asks "does every command reach an action",
+    // which presumes each is in a state where it is allowed to run; the guard
+    // itself is asserted four tests above, in both directions.
+    const { registry, fired } = harness(true, { available: true });
     const shell = registry
       .all()
       .filter(

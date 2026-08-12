@@ -1140,7 +1140,18 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .manage(launch)
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        // The one place tpdf talks to the network, and the only code path that
+        // can replace the binary. It is deliberately inert until the frontend
+        // asks: the plugin registers commands and makes no request of its own,
+        // so a launch that never calls `check()` reaches no endpoint at all ---
+        // which is what keeps every spike and check run offline.
+        //
+        // What makes this safe to have at all is that the payload is verified
+        // against `plugins.updater.pubkey` in `tauri.conf.json` BEFORE anything
+        // is unpacked, so the archive parsers this pulls in (zip, tar) never see
+        // bytes that were not signed by the key in `docs/THREAT-MODEL.md` §T9.
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     // The Windows counterpart of the `RunEvent::Opened` arm at the bottom of this
     // file, and the reason it exists is parity rather than tidiness: without it a

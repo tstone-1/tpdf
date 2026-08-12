@@ -81,6 +81,21 @@ export interface AppActions {
   showTab(tab: Tab): void;
   /** Invert the page colours, and remember it. */
   toggleInvert(): void;
+  /** Ask the update endpoint whether there is a newer tpdf. */
+  checkForUpdates(): void;
+  /** Download and apply the update the last check found. */
+  applyUpdate(): void;
+  /**
+   * Whether an update is downloaded and waiting for a relaunch.
+   *
+   * Read by the two update commands' `enabled` guards, so that "Install update"
+   * is offered only when there is one and is withdrawn once it is applied ---
+   * the two states are different and a single "is there an update" flag would
+   * leave the command live after it had already run.
+   */
+  updateReady(): boolean;
+  /** Whether the last check found an update that has not been applied. */
+  updateAvailable(): boolean;
 }
 
 /**
@@ -133,6 +148,26 @@ export function registerAppCommands(
       title: "Reload from disk",
       enabled: withDocument,
       run: () => actions.reloadDocument(),
+    },
+    {
+      // No binding, same reasoning as the two above: a command nobody presses
+      // by accident belongs in the palette. Always enabled, deliberately ---
+      // asking again after a failed check is the only way back, and a guard
+      // that withheld it while `failed` would strand the reader on a launch
+      // that happened to have no network.
+      id: "app.checkForUpdates",
+      title: "Check for updates",
+      run: () => actions.checkForUpdates(),
+    },
+    {
+      // Two guards rather than one, because "there is an update" and "it is
+      // already applied" are different states and this must be withdrawn in the
+      // second. Applying twice is not harmful, but a command that stays live
+      // after it has run says the first run did not work.
+      id: "app.installUpdate",
+      title: "Install update and restart",
+      enabled: () => actions.updateAvailable() && !actions.updateReady(),
+      run: () => actions.applyUpdate(),
     },
     {
       // No page-range field of our own, deliberately: the system panel has one,

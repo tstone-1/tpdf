@@ -21,6 +21,17 @@
       "csp": "default-src 'self'; img-src 'self' tile: http://tile.localhost data: blob:; connect-src 'self' tile: http://tile.localhost ipc: http://ipc.localhost"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZCOUFFODJGQ0Q4QTQ1REMKUldUY1JZck5MK2lhKytvQjltaWlRa0V3VHU0aHA3cE82dEtmL2o3V1NyYWo4RDh1OS8rVi8wbVkK",
+      "endpoints": [
+        "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

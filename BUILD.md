@@ -2135,9 +2135,45 @@ starts at 0 and increments within the month.
     runs it and no gate covers it. The trap is *A draft release is invisible, and the tag
     beside it says the work shipped*.
 
+12. **Apply the update from the previous release, by hand.** This is the only end-to-end
+    proof the updater works, and no gate, harness or unit test can stand in for it:
+    `update.test.ts` fakes the plugin, so what it covers is the state machine and not
+    signature verification, TLS, or the shape of the real `latest.json`. Nothing in this
+    repository has ever fetched that file.
+
+    Needs two published releases, so it starts from the second one ever cut with the
+    updater — first opportunity is applying `26.8.2` from an installed `26.8.2`+1.
+
+    ```
+    # With the PREVIOUS release installed in /Applications, launched normally:
+    #   1. the toolbar offers "Update to <new version>" within a second or two
+    #   2. clicking it shows progress, then "Update ready — restart to finish"
+    #   3. quit, reopen, and Help/About or the palette reports the new version
+    curl -s https://github.com/tstone-1/tpdf/releases/latest/download/latest.json | head -20
+    ```
+
+    **Check the negative direction too, and it is the cheaper half:** launch the *newest*
+    release and confirm the toolbar stays empty. An updater that offers an update to the
+    version already running looks identical to a working one right up to the moment somebody
+    installs the same build twice.
+
+    If `latest.json` 404s, the release is still a draft — step 11 was skipped, and the
+    endpoint resolves only to published releases. That is by design: publishing is what
+    offers an update to anybody.
+
 Verify the bump landed everywhere:
 
 ```
 grep -n '"version"' package.json src-tauri/tauri.conf.json
 grep -n '^version' src-tauri/Cargo.toml
 ```
+
+**The updater needs two secrets and neither can be read back.**
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are set on the
+repository, and their only other copy is in KeePass under *"tpdf updater signing key
+(minisign)"*. Lose both and no installed copy of tpdf can ever be updated again — the public
+half is compiled into every binary, so the only route back is a new key, a new build, and
+every user installing it by hand. The private key is deliberately **not** on any development
+machine: see the trap *Turning on updater artifacts makes every build demand the signing
+key* for why `createUpdaterArtifacts` lives in a CI-only overlay rather than in
+`tauri.conf.json`.
