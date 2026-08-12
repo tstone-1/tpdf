@@ -9,6 +9,7 @@
 //! caller is a shell command in `BUILD.md`.
 
 pub mod diag;
+pub mod docmodel;
 pub mod encoding;
 pub mod invert;
 pub mod launch;

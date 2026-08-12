@@ -54,7 +54,7 @@ CRATE = ROOT / "src-tauri"
 #: read as a mutation being caught. libtest takes several filters and ORs them,
 #: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
 #: which is worth knowing because it looks like the feature being unsupported.
-FILTERS = ["search::", "structure::", "text::", "encoding::"]
+FILTERS = ["search::", "structure::", "text::", "encoding::", "docmodel::"]
 
 
 @dataclass(frozen=True)
@@ -410,6 +410,140 @@ MUTATIONS = [
         'const MAPPABLE_ORDERINGS: [&str; 6] =\n'
         '    ["Japan1", "GB1", "CNS1", "Korea1", "KR", "Identity"];',
         "identity_ordering_without_a_tounicode_is_a_guess",
+    ),
+    # ------------------------------------------------------------------
+    # docmodel.rs --- the working document and its journal.
+    #
+    # Every test in that module drives the model directly, so none of them is
+    # over a fixture anyone else wrote and all of them could in principle be
+    # tautologies. Two of the mutations below are aimed at claims made only in a
+    # comment: the statement ordering inside `Move`, and the stale-snapshot
+    # `retain`. `docs/TRAPS.md` records a comment that claimed an ordering
+    # mattered where no mutation could show it, which is what these are for.
+    # ------------------------------------------------------------------
+    Mutation(
+        # The ordering the comment above these two statements claims is
+        # load-bearing. Reading the anchor's position first overshoots by one
+        # whenever the moved page sits ahead of the anchor -- and leaves the
+        # other direction correct, which is why only one of the two move tests
+        # is named.
+        "docmodel: read the move anchor's position before removing the page",
+        "src/docmodel.rs",
+        "                let from = self.position(page);\n"
+        "                self.order.remove(from);\n"
+        "                let to = match after {\n"
+        "                    None => 0,\n"
+        "                    Some(anchor) => self.position(anchor) + 1,\n"
+        "                };",
+        "                let from = self.position(page);\n"
+        "                let to = match after {\n"
+        "                    None => 0,\n"
+        "                    Some(anchor) => self.position(anchor) + 1,\n"
+        "                };\n"
+        "                self.order.remove(from);",
+        "a_page_moved_after_one_that_follows_it_lands_immediately_after_it",
+    ),
+    Mutation(
+        # Insert before the anchor rather than after it. The off-by-one in the
+        # other direction, and the likelier of the two to be written.
+        "docmodel: move a page in front of its anchor instead of behind it",
+        "src/docmodel.rs",
+        "                    Some(anchor) => self.position(anchor) + 1,",
+        "                    Some(anchor) => self.position(anchor),",
+        "a_page_moved_after_one_that_follows_it_lands_immediately_after_it",
+    ),
+    Mutation(
+        # "No anchor" means the front. Sending it to the back instead is what a
+        # reader would see as the drag going to the wrong end of the document.
+        "docmodel: send an unanchored move to the back",
+        "src/docmodel.rs",
+        "                    None => 0,",
+        "                    None => self.order.len(),",
+        "a_page_moved_with_no_anchor_goes_to_the_front",
+    ),
+    Mutation(
+        # Collapse the two refusals into one. The model still refuses, the
+        # document is still correct, and the only thing lost is the distinction
+        # between an id that was deleted and one that never existed -- which is
+        # the whole reason `docs/PLAN.md` asks for tombstones.
+        "docmodel: report a deleted page as one that never existed",
+        "src/docmodel.rs",
+        "            Err(Refusal::PageDeleted(id))",
+        "            Err(Refusal::NoSuchPage(id))",
+        "a_command_naming_a_deleted_page_is_refused_as_deleted",
+    ),
+    Mutation(
+        # Delete without tombstoning. Indistinguishable from a correct delete in
+        # the document itself: the page is gone from the order and from the
+        # table, and only a later command naming it can tell.
+        "docmodel: delete a page without tombstoning its id",
+        "src/docmodel.rs",
+        "                self.graves.insert(page);",
+        "                let _ = &mut self.graves;",
+        "a_command_naming_a_deleted_page_is_refused_as_deleted",
+    ),
+    Mutation(
+        # A document with no pages is not a document.
+        "docmodel: allow the last page to be deleted",
+        "src/docmodel.rs",
+        "                if self.order.len() == 1 {",
+        "                if false {",
+        "the_last_page_cannot_be_deleted",
+    ),
+    Mutation(
+        # Let rotation accumulate past three. Every value below four is right, so
+        # only a test that turns a page four times can see it -- and a viewer
+        # that never turns a page more than twice would never show it either.
+        "docmodel: let quarter turns accumulate without wrapping",
+        "src/docmodel.rs",
+        "                p.extra_turns = (i16::from(p.extra_turns) + i16::from(turns)).rem_euclid(4) as u8;",
+        "                p.extra_turns = (i16::from(p.extra_turns) + i16::from(turns)).max(0) as u8;",
+        "a_rotation_accumulates_and_wraps_at_four",
+    ),
+    Mutation(
+        # Accept a crop box of zero width or height. It is the boundary, so every
+        # inverted box is still refused and only the degenerate one gets through.
+        "docmodel: accept a crop box enclosing no area",
+        "src/docmodel.rs",
+        "        self.urx > self.llx && self.ury > self.lly",
+        "        self.urx >= self.llx && self.ury >= self.lly",
+        "a_crop_enclosing_no_area_is_refused",
+    ),
+    Mutation(
+        # Keep snapshots the redo tail's discard has invalidated. Nothing looks
+        # wrong until a rebuild passes through one, and then every page after it
+        # is built from commands that were thrown away.
+        "docmodel: keep snapshots that the discarded redo tail produced",
+        "src/docmodel.rs",
+        "        self.snapshots.retain(|&at, _| at <= self.cursor);",
+        "        self.snapshots.retain(|_, _| true);",
+        "a_stale_snapshot_is_dropped_when_the_redo_tail_is_discarded",
+    ),
+    Mutation(
+        # Do not discard the redo tail on a new command, which turns the journal
+        # into a tree whose branches share a cursor.
+        "docmodel: keep the redo tail when a new command is applied",
+        "src/docmodel.rs",
+        "        self.journal.truncate(self.cursor);",
+        "        self.journal.truncate(self.journal.len());",
+        "applying_after_an_undo_discards_the_redo_tail",
+    ),
+    Mutation(
+        # Rebuild from the newest snapshot rather than the newest one at or below
+        # the target. Correct whenever undo has not crossed a snapshot, which is
+        # most of the time.
+        #
+        # `a_journal_replays_to_the_state_it_was_applied_to` was named here first
+        # and is the wrong test: it walks a mixed journal and every prefix of it,
+        # but applies eight commands where SNAPSHOT_EVERY is 32, so it never has
+        # a snapshot to pick the wrong one of. The harness reported it caught by
+        # something else, which is the cross-check earning its keep --- the
+        # mutation was aimed at code that test does not reach.
+        "docmodel: rebuild from the newest snapshot, wherever it is",
+        "src/docmodel.rs",
+        "            .filter(|&at| at <= upto)",
+        "            .filter(|&at| at <= upto.max(usize::MAX))",
+        "a_rebuild_never_starts_from_a_snapshot_ahead_of_its_target",
     ),
 ]
 

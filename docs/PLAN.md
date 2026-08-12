@@ -966,6 +966,53 @@ it is written inline there is no way to add an annotation without replacing a si
 structural object. Prefer extending the array object; when the producer inlined it, know
 that the edit is larger than it looks.
 
+### The first layer, built 2026-08-12
+
+`src-tauri/src/docmodel.rs` is the working document, the journal and undo/redo, for pages.
+It holds no file, no bytes and no `lopdf` object — the whole module is driven directly
+rather than through a document, which is what lets 26 tests exercise it and 11 mutations
+judge them.
+
+Four decisions were taken here that the design above left open.
+
+**Undo is replay, not inversion.** Storing an inverse per command is faster and was not
+taken: every inverse is a second implementation that has to agree with the first, and the
+cases where they disagree are exactly the ones undo exists for. Resurrecting a deleted page
+*at its old position with its own rotation and crop* is free under replay and is a
+written-out special case under inversion. The cost is bounded by snapshots every 32
+commands, so a rebuild replays at most 32.
+
+**Position is expressed as `Move { page, after: Option<PageId> }`** — after a neighbouring
+id, or to the front. This is where "commands address stable IDs, never indices" actually
+bites, since a destination is the one argument that wants to be a number.
+
+**Two refusals, not one.** `NoSuchPage` and `PageDeleted` are separate variants because an
+id that never existed and an id that was deleted are different diagnoses, and the tombstone
+§5 asks for exists precisely to keep them apart. A mutation collapsing them leaves every
+document correct and is caught only by the test that reads the refusal.
+
+**A refusal on replay panics.** Every journal entry was accepted against the state its
+predecessors produced, and replay reproduces those predecessors — so a refusal there means
+the model is broken, and carrying on would render a document that is not the one the
+journal describes.
+
+What is deliberately absent, and why it is not an oversight: **nothing creates a page.**
+Insert, extract, split, merge and duplicate all bring pages in from elsewhere and need an id
+allocator, and an allocator carries a property this module currently cannot get wrong — an
+id released by an undo must never be re-issued to a different page by a later redo. That is
+the first thing to prove when creation lands.
+
+**One property the tests cannot show, stated rather than implied.** Replay here always
+re-applies a whole prefix from the same baseline, and a position-based journal replayed that
+way would be self-consistent too. So there is no failing case for "ids are necessary", and a
+test claiming to prove it would be one that cannot fail. Ids are for the operations that
+change a prefix rather than replaying it — journal compaction and the rebase after save
+described above — and until those exist the type is what carries the property.
+
+Nothing is wired to the viewer yet. The seam for that is `Page::source`: a viewport position
+indexes `Working::order()`, which yields a `PageId`, whose `source` is the baseline page to
+ask a worker for, with `extra_turns` composed on top of the page's own `/Rotate`.
+
 ### External modification
 
 The first draft keyed recovery on a file hash and had no story for live races. If another
