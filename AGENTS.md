@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 239 entries
+The one thing this file does *not* carry in full is the trap list --- 240 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -844,7 +844,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 239 of them and the full text
+titles. Only the titles are here, because there are 240 of them and the full text
 was 93% of this file --- an instruction budget spent on the 235 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1074,6 +1074,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A harness sliced a code-point index with `String.prototype.slice`
 - A measured string transcribed off a terminal loses what the terminal does not draw
 - A mutation aimed at one branch when the fixture only reaches the other
+- A delivery counter cannot say WHICH delivery, and the guard was satisfied by the event it excluded (the control that proved the first fix's reasoning wrong, and was then deleted for asserting the race)
 - A snapshot taken after the first mutation restores the mutation, and verifies itself clean
 - A rewritten line leaves a mutation aimed at nothing, and only the harness says so
 - A stream split done for the failing direction leaves the passing one where it was

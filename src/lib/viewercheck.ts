@@ -1623,23 +1623,54 @@ async function searchOptionChecks(
   // An unclosed group. The reader has to be told the pattern is broken, because
   // "no matches" for it is a statement about the document instead.
   //
-  // Both reads below wait for a status to have been DELIVERED since the search
-  // began, not merely for the viewer to be idle. `seen` is a mirror the viewer
-  // fills through `onStatus`, and a broken pattern is rejected almost
-  // immediately --- so `!viewer.searching` can be true while the mirror still
-  // holds the state from before, and the read then sees the *previous* search's
-  // `problem`. That is not hypothetical: it failed exactly once in three runs
-  // against an identical binary, and the run it failed was the first check of a
-  // freshly notarized release, where a flake reads as a release blocker.
+  // Both reads below wait for a status DELIVERED AFTER THE SCAN STOPPED, and
+  // the emphasis is the whole of a fix made on 2026-08-12. `seen` is a mirror
+  // the viewer fills through `onStatus`; `viewer.searching` is a live read of
+  // the searcher. Those are different clocks.
+  //
+  // The wait used to be `!viewer.searching && seen.updates > beforeBroken`, and
+  // it flaked --- twice in about seven runs on the day it was fixed, against a
+  // comment here that recorded once in three.
+  //
+  // `Search.run` emits a status at the *start* of a scan, on purpose, because a
+  // search over 775 pages has to be visibly working. But `onSearchProgress`
+  // only calls `wake()`, so delivery waits for the next frame --- and a broken
+  // pattern is rejected so fast that the start and the completion normally both
+  // land before that frame. The mirror then sees one status carrying the final
+  // state, and the check passes. That is the usual run, and it is why this
+  // looked fine for weeks.
+  //
+  // Occasionally a frame lands *between* them. Now the first status delivered
+  // after `beforeBroken` is the start one: `running: true`, `problem: ""`. The
+  // counter half of the old wait was satisfied by exactly that status --- the
+  // event it existed to exclude --- and its other half, `!viewer.searching`, is
+  // a live read of the searcher that went false the moment the invoke resolved.
+  // Both true, mirror holding the start state, `problem` read as empty.
+  //
+  // Reading `running` OUT OF THE MIRROR fixes it by construction rather than by
+  // timing: whichever of the two statuses is delivered, only one taken after
+  // the scan stopped satisfies this. The counter stays and is still doing work
+  // --- it excludes the idle status from *before* the search, which also reads
+  // `running: false`.
   //
   // Waiting on `problem` itself would be the obvious fix and the wrong one: it
   // is the value being asserted, so the check could then only pass or hang.
-  // `updates` is a counter of deliveries and says nothing about content.
+  //
+  // A control asserting "the start status is always delivered first" was
+  // written before this and is deliberately **not** here: it went red on the
+  // first run, which is what corrected the account above. The start status is
+  // usually coalesced away, so that control asserted the race rather than the
+  // behaviour --- a check whose truth depends on the timing it is meant to
+  // remove. There is no deterministic control for this from inside the harness;
+  // what stands behind the fix is the construction argument plus repetition.
+  const settledScan = (since: number) =>
+    seen.updates > since && seen.status?.search.running === false;
+
   const broken = `${needle}(`;
   viewer.setSearchOptions({ ...PLAIN_SEARCH, regex: true });
   const beforeBroken = seen.updates;
   viewer.search(broken);
-  await settle(() => !viewer.searching && seen.updates > beforeBroken);
+  await settle(() => settledScan(beforeBroken));
   const problem = seen.status?.search.problem ?? "";
   // The control: the same characters as a literal are a perfectly ordinary
   // query, so a `problem` there would mean the reporting is about the text
@@ -1649,7 +1680,11 @@ async function searchOptionChecks(
   viewer.setSearchOptions({ ...PLAIN_SEARCH });
   const beforeLiteral = seen.updates;
   viewer.search(broken);
-  await settle(() => done() && seen.updates > beforeLiteral);
+  // `done()` reads the live `viewer.searching` and the mirror's `scanned`, so
+  // it carries the same defect as the wait above did; `settledScan` is what
+  // makes the delivered status the post-scan one. Both, because this one also
+  // needs the whole document scanned rather than merely stopped.
+  await settle(() => settledScan(beforeLiteral) && done());
   check(
     SEARCH_OPTION_CHECKS[4],
     problem !== "" && (seen.status?.search.problem ?? "") === "",

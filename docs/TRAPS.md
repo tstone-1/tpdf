@@ -1837,6 +1837,48 @@ WebKit suspends every window then. Two mechanisms, one silence, and the wrong on
 went into a commit message. Run the control before believing a failure you have just
 provoked.
 
+### A delivery counter cannot say WHICH delivery, and the guard was satisfied by the event it excluded
+
+The wait in front of the broken-pattern search check read
+`!viewer.searching && seen.updates > beforeBroken`, and flaked --- twice in about seven runs
+on the day it was fixed, against a comment recording once in three. It is worth reading as
+two separate mistakes, because the second one is the interesting half.
+
+**The instrument mixed two clocks.** `viewer.searching` is a live read of the searcher;
+`seen` is a mirror the viewer fills a frame later, through `wake()`. So the live half goes
+false the instant the `invoke` resolves, a whole frame before the status carrying `problem`
+is delivered.
+
+**The counter half, added to fix exactly that, was satisfiable by the event it existed to
+exclude.** `Search.run` emits a status at the *start* of a scan, deliberately, because a
+search over 775 pages has to look like it is working. When a frame happens to land between
+that start and the scan's completion, the first status delivered after `beforeBroken` is the
+start one — `running: true`, `problem: ""`. Counter satisfied, live flag false, mirror
+holding the empty value. **A guard whose condition the excluded event also satisfies is not
+a guard**, and it reads as one in every review.
+
+The fix is to read `running` **out of the mirror**: only a status taken after the scan
+stopped satisfies it, whichever of the two was delivered. The counter stays and still does
+work — it excludes the idle status from *before* the search, which also reads
+`running: false`. Waiting on `problem` itself would be the obvious fix and the wrong one: it
+is the value being asserted, so the check could then only pass or hang.
+
+**The control is the reason any of the above is right, and it went red.** The first attempt
+at this fix came with a check asserting the mechanism — *"a scan reports itself started
+before it reports a result"* — and it **failed on its first run**, reporting
+`running=false, problem="regex parse error:"`. The start status is normally *coalesced away*:
+both `onChange` calls land before the next frame, so the mirror usually sees one status
+carrying the final state. That is why the check passed for weeks, and the first written
+account of this trap — confident, detailed, and asserting the start status always arrives —
+was wrong. It was corrected by a control that could fail, not by re-reading the code.
+
+That control was then **deleted rather than kept**, which is the last lesson here: it
+asserted the race instead of the behaviour, so it could only pass on exactly the runs where
+the bug would have fired. A check whose truth depends on the timing it is meant to remove is
+worse than no check. There is no deterministic control for this from inside the harness;
+what stands behind the fix is the construction argument plus repetition — 4/4 clean runs,
+against 2 failures in the preceding 7.
+
 ### Turning on updater artifacts makes every build demand the signing key
 
 `createUpdaterArtifacts: true` in `tauri.conf.json`, beside a `plugins.updater.pubkey`, does
