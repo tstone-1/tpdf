@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 237 entries
+The one thing this file does *not* carry in full is the trap list --- 238 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -832,7 +832,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 237 of them and the full text
+titles. Only the titles are here, because there are 238 of them and the full text
 was 93% of this file --- an instruction budget spent on the 235 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -957,6 +957,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Tauri creates config windows *before* the setup hook, hiding the webview's cost
 - A page whose window is not visible is suspended --- so a JS watchdog cannot fire either
 - A refusal in the setup hook cannot speak, so it must happen before the event loop
+- A status element that comes and goes rearranges the toolbar it sits beside
 
 ### Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented

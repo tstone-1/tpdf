@@ -26,6 +26,7 @@
   import { runSessionCheckIfRequested } from "./lib/sessioncheck";
   import { runOpenCheckIfRequested } from "./lib/opencheck";
   import { Serial } from "./lib/serial";
+  import { DegradedLabel } from "./lib/degraded";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
   import { describeFit, percentOf } from "./lib/zoom";
 
@@ -35,6 +36,17 @@
   let error = $state<string | null>(null);
   let opening = $state(false);
   let status = $state<ViewerStatus | null>(null);
+  /**
+   * The degraded-state words currently on screen, or `null` for none.
+   *
+   * State rather than a `$derived`, because the decision reads the clock: a
+   * transient state has to have *lasted* before it is worth showing, and a
+   * derived that sampled `performance.now()` would be recomputing a different
+   * answer every time anything else in the header changed. `degradedGate` holds
+   * the episode clock; see `degraded.ts` for why there is one.
+   */
+  let degraded = $state<string | null>(null);
+  const degradedGate = new DegradedLabel();
   let query = $state("");
   let findField = $state<HTMLInputElement | null>(null);
   let sidebarShown = $state(false);
@@ -620,6 +632,7 @@
       sidebar?.destroy();
       sidebar = null;
       status = null;
+      degraded = degradedGate.update(null, performance.now());
       title = basename(path);
       openPathName = path;
       openPageCount = doc.page_count;
@@ -677,6 +690,10 @@
         pages,
         onStatus: (next) => {
           status = next;
+          // Here rather than in a `$derived`, because this is the only moment
+          // the coverage actually changes, and the gate wants one reading of
+          // the clock per change rather than one per render.
+          degraded = degradedGate.update(next, performance.now());
           // What keeps thumbnails out of the way of the page: the strip stops
           // asking, and withdraws what it asked for, whenever the viewer has
           // work outstanding. See `thumbnails.ts`.
@@ -786,6 +803,10 @@
         // `status` feeds the header, so one outliving the other is a header
         // describing a document that is no longer on screen.
         status = null;
+        // Cleared through the gate rather than by assignment, so the episode
+        // clock is reset too: a stale `#since` would show the next document's
+        // first blurry frame instantly, which is the flicker this removes.
+        degraded = degradedGate.update(null, performance.now());
         title = "";
         openPathName = "";
         openPageCount = 0;
@@ -801,29 +822,11 @@
   /**
    * What the surface is doing, when it is not simply showing the document.
    *
-   * docs/PLAN.md section 9 records that closing the A0 vector page against
-   * "never below the tier-1 placeholder" left the user owed a degraded state:
-   * that page is legitimately blurry for seconds at a time, and a viewer that
-   * says nothing about it is indistinguishable from one that is broken. The two
-   * failures are different and are reported as different --- `any` is whether
-   * there is a page at all, `sharp` is whether it can be read.
-   *
-   * The thresholds are just short of 1 rather than at it because coverage is a
-   * ratio of areas: a tile boundary that lands a rounding step inside the
-   * viewport leaves a fraction of a percent uncovered on a page that is fully
-   * rendered, and a status line that flickers on that is worse than none.
+   * The classification and the delay in front of it both live in
+   * `degraded.ts` --- docs/PLAN.md section 9 for why the state is owed at all,
+   * and that module's own comment for why it is not shown the instant it
+   * becomes true.
    */
-  const degraded = $derived.by(() => {
-    if (!status) return null;
-    // First, because it is the one state waiting does not fix. "preparing page"
-    // in front of a renderer that is erroring on every request is a lie by
-    // omission --- the honest failures here were previously invisible, since
-    // every `catch` in the scroller discarded them whole.
-    if (status.failed > 0) return "some pages could not be drawn";
-    if (status.any < 0.999) return "preparing page";
-    if (status.sharp < 0.999) return "sharpening";
-    return status.pending > 0 ? "loading ahead" : null;
-  });
 </script>
 
 <svelte:window onkeydown={onWindowKey} />
@@ -832,6 +835,18 @@
   <header>
     <button onclick={pickAndOpen} disabled={opening}>Open</button>
     <span class="title">{title}</span>
+    <!--
+      Beside the document's name, and deliberately not among the find controls
+      where it used to sit. The header is one flex row, so an element that comes
+      and goes on the right displaces everything to its left: a fast scroll made
+      the whole find toolbar step sideways, and squeezed the search field, every
+      time coverage dipped. Here it grows into the slack the spacer was holding,
+      so appearing and vanishing moves nothing at all. The delay in
+      `degraded.ts` stops it strobing; this stops it shoving.
+    -->
+    {#if degraded && status}
+      <span class="degraded">{degraded} — {Math.round(status.sharp * 100)}% sharp</span>
+    {/if}
     <span class="spacer"></span>
     {#if title}
       <input
@@ -880,11 +895,6 @@
         >{/if}
     {/if}
     {#if status}
-      {#if degraded}
-        <span class="degraded"
-          >{degraded} — {Math.round(status.sharp * 100)}% sharp</span
-        >
-      {/if}
       {#if status.selected > 0}
         <span class="stat">{status.selected} selected</span>
       {/if}
@@ -955,19 +965,30 @@
     font: inherit;
     padding: 0.2rem 0.8rem;
   }
+  /* Flex items shrink by default, so without a shrink discipline here the
+     header has no fixed shape: whichever element appears last steals width from
+     whatever happens to be beside it. The title is the one thing that may give
+     way, because it is the only item a reader can still identify from half of
+     it --- a search field at 6ch and a button reading "A" cannot be used. */
   .title {
     font-weight: 600;
+    min-width: 3ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .find {
     font: inherit;
     width: 14ch;
     padding: 0.15rem 0.5rem;
+    flex: none;
   }
   .toggle {
     font: inherit;
     font-size: 0.85em;
     padding: 0.1rem 0.35rem;
     opacity: 0.6;
+    flex: none;
   }
   .toggle.on {
     /* The pressed state has to survive both themes and both platforms' native
@@ -984,6 +1005,19 @@
   .degraded {
     font-variant-numeric: tabular-nums;
     opacity: 0.65;
+  }
+  /* Truncates rather than wraps or pushes: it is the least important thing in
+     the bar, and the one item here whose text changes while nobody has touched
+     anything. `tabular-nums` above keeps the percentage from jittering as the
+     digits change; this keeps a narrow window from turning it into a shove. */
+  .degraded {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .stat {
+    flex: none;
   }
   /* A pattern that did not compile is not a quieter version of a count. It sits
      where the counter sits, because that is where a reader is already looking,
