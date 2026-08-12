@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 236 entries
+The one thing this file does *not* carry in full is the trap list --- 237 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -832,7 +832,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 236 of them and the full text
+titles. Only the titles are here, because there are 237 of them and the full text
 was 93% of this file --- an instruction budget spent on the 235 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1068,6 +1068,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A step that signs before anything imports the certificate fails with the masked secret as its error
 - The verification step failed after everything it verifies had succeeded, because `mapfile` is bash 4
 - A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
+- A draft release is invisible, and the tag beside it says the work shipped
 
 ### Windows and portability
 - The gates had never run on the platform where they fail

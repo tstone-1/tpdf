@@ -6386,3 +6386,52 @@ fails on every fixture identically and no amount of choosing a better fixture wo
 surfaced it earlier. And it is **invisible to CI**, because `viewer_check.py` needs a real
 window and a headless runner cannot run it at all --- so it sat under a green 13/13 gate run
 and two green CI jobs, and appeared on the first machine to open a window after the commit.
+
+### A draft release is invisible, and the tag beside it says the work shipped
+
+`v26.8.0` was tagged and pushed on 2026-08-03. The `Release` run went green on all four jobs
+in 20m19s --- gates on both runners, then the Windows and macOS builds --- and uploaded four
+artifacts: a notarized DMG, an MSI, an NSIS setup and the bare `.app.tar.gz`. The release body
+was written. Nine days later the question was *"why is there no release yet tagged in github /
+available for download?"*, and the answer was that the release had been sitting as a **draft**
+the whole time, which GitHub shows to repository owners and to nobody else.
+
+That is `release.yml`'s `releaseDraft: true`, and it is deliberate --- a failed run must publish
+nothing, and the draft is the last chance to edit the body before it is public. The defect is
+not the flag. It is that **publishing was described and never listed**: `BUILD.md`'s checklist
+ended at step 10, whose own closing sentence read *"the last checkpoint is a human publishing
+it"*. A step named inside the prose of the step before it is not a step anybody executes.
+
+**Every instrument that was consulted was true and structurally unable to answer.** The tag is
+public and `git ls-remote --tags origin` shows it; `gh run list` shows the `Release` run
+`completed success` with its four jobs. Both are facts about the *build*, and neither says a
+word about publication --- so from outside, a public tag with no release beside it reads as a
+tag pushed by mistake. The one instrument that answers is `gh release list`, which had been
+printing the word `Draft` in its second column for nine days, and the asset URLs, which lived
+under `releases/download/untagged-dab938da94342ec9bfb5/` rather than under the tag. Neither was
+hidden. Neither was asked.
+
+Three things worth carrying.
+
+- **This is the last-step-of-a-pipeline lesson one step further out than the entries above it.**
+  The three rehearsal tags each failed one step later than the last --- gates, then signing,
+  then verification --- and this failed at the step *after* the last one any machine executes.
+  Nothing could go red: no runner runs it, no gate covers it, and a checklist cannot fail. The
+  earlier entries argue that the tail of an automated sequence is its least-tested code; the
+  tail of a *manual* sequence has no tests at all, so it has to be written down as an
+  imperative line rather than as a clause.
+- **"Green" is a claim about the run, not about the artifact reaching anyone.** A build that
+  succeeds, signs, notarizes and uploads has done everything except the thing the user wanted.
+  Distinguish *produced* from *published* whenever a document says a version shipped.
+- **Verify publication from outside the account.** `gh release list` reporting `Latest` is our
+  own view; an unauthenticated fetch of the download URL is the reader's. After publishing,
+  `curl -sIL -o /dev/null -w '%{http_code}'` against
+  `releases/download/<tag>/<asset>` returned **200** and followed through to GitHub's asset
+  CDN, which is the check that says the file is reachable by someone who is not signed in.
+
+The documentation failed in the same direction and is part of the trap. `CHANGELOG.md`'s
+preamble said *"The first release is `26.8.0`, tagged 2026-08-03"* --- true of the tag, false
+about anything downloadable --- in a file whose preamble already carried a parenthetical about
+having contradicted its own top entry once before. **A release date in prose is a claim that
+something is fetchable, and the word "tagged" does not weaken it enough for a reader to
+notice.**
