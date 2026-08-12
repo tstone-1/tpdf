@@ -17,6 +17,31 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.3] - Unreleased
+
+### A flake removed from the release gate
+
+- **Not a product change.** `viewer_check.py`'s broken-pattern search check waited on a
+  condition that two different clocks could satisfy, and failed roughly twice in seven runs
+  — in the harness the release checklist requires, where a flake is indistinguishable from a
+  regression until somebody re-runs it.
+
+- **The guard was satisfied by the event it existed to exclude.** `viewer.searching` is a
+  live read; `seen` is a mirror filled a frame later. The delivery counter added to bridge
+  them counted *any* status, and a scan emits one when it **starts** — so on a run where a
+  frame lands mid-scan, the counter was satisfied by the start status, the live flag was
+  already false, and the mirror still held `problem: ""`. Now both halves read the mirror,
+  so only a status taken after the scan stopped will do.
+
+- **The first attempt's reasoning was wrong, and a control is what said so.** It shipped
+  with a check asserting the start status always arrives first; that check went red
+  immediately, because the start and the completion normally land before the same frame and
+  the mirror sees only the final state. The control was then deleted rather than kept: it
+  asserted the race rather than the behaviour, so it could only pass on runs where the bug
+  would not have fired. `docs/TRAPS.md` carries all three parts.
+
+- **4/4 clean runs against 2 failures in the preceding 7**, name invariant unchanged at 163.
+
 ## [26.8.2] - 2026-08-12
 
 ### tpdf can update itself
