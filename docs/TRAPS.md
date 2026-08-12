@@ -1837,6 +1837,39 @@ WebKit suspends every window then. Two mechanisms, one silence, and the wrong on
 went into a commit message. Run the control before believing a failure you have just
 provoked.
 
+### A status element that comes and goes rearranges the toolbar it sits beside
+
+Reported by the user as *"scrolling fast, the toolbar with the find field is briefly
+overlaid/replaced"*. Nothing overlaid anything. The header is a single flex row, and the
+degraded-state label was the second-to-last item in it, so every time coverage dipped below
+the threshold the label entered the row and **displaced everything to its left** --- the
+whole find toolbar stepped sideways, and because flex items shrink by default and `.find`
+had a `width` but no `flex`, the search field was squeezed narrower at the same time. At
+scroll cadence that reads as the toolbar being replaced by a progress bar.
+
+Two independent defects, and fixing either alone leaves a visible fault:
+
+- **Position.** An element that appears and vanishes must not be able to move anything a
+  reader is aiming at. Moved next to the document title, where it grows into the slack the
+  spacer was already holding, so its arrival moves nothing at all.
+- **Rate.** It was truthful at display cadence, which is the failure. `degraded.ts` holds a
+  transient state back until it has lasted 300 ms, so a scroll that resolves in a few frames
+  says nothing. **The delay is deliberately not applied to a failure** --- `failed > 0` is
+  the one state waiting does not fix, and it can arrive with the frame loop already
+  quiescent, so delaying it would suppress it entirely rather than postpone it.
+
+The rate half was already half-known and written down one level lower: the thresholds are
+`0.999` rather than `1` because a tile boundary landing a rounding step inside the viewport
+leaves a fraction of a percent uncovered, and that comment says in its own words that "a
+status line that flickers on that is worse than none". **The same judgement had been made
+about the same indicator and not carried to the case that actually reaches a reader** ---
+the threshold answers "is this dip real", and nothing answered "is this dip worth saying".
+
+Worth stating because the symptom named the wrong component. The complaint was about the
+find toolbar, which is correct in that the toolbar is what visibly moved, and the toolbar's
+own markup and CSS are innocent --- the cause is an entirely different element two lines
+away, plus a default (`flex-shrink: 1`) that nobody wrote down anywhere.
+
 ### An outcome two mechanisms can produce cannot test either one
 
 Withdrawing a tile has two halves once the renderer is in another process: the parent's
