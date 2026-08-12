@@ -42,6 +42,40 @@ have the binary.)
 
 - **4/4 clean runs against 2 failures in the preceding 7**, name invariant unchanged at 163.
 
+### The first layer of the editing foundation
+
+- **Nothing user-facing yet.** `src-tauri/src/docmodel.rs` is the working document, the
+  journal and undo/redo, for pages — the layer every page operation and every annotation in
+  Phase 2 will address. Nothing is wired to the viewer, and nothing saves.
+
+- **Commands name pages, never positions.** `Move { page, after }` puts a page behind a
+  neighbouring *id*, or at the front. A position shifts under other commands, so a journal
+  built from positions replays differently depending on what preceded it — which is the
+  defect `docs/PLAN.md` §5 was rewritten to remove, and the type is what removes it.
+
+- **Undo is replay from a snapshot, not an inverse per command.** An inverse is a second
+  implementation that has to agree with the first, and the cases where they disagree are the
+  ones undo is for. Under replay, undoing a deletion restores the page at its old position
+  with its own rotation and crop for free; snapshots every 32 commands keep the cost bounded.
+
+- **A refusal is named, never silent.** A command naming a deleted page and one naming a
+  page that never existed are two different refusals, because a tombstone exists exactly to
+  tell them apart. A refusal leaves the document and the journal untouched, and a refusal
+  during *replay* panics — every entry was accepted against the state its predecessors
+  produced, so one being refused means the model is broken and the rendered document would
+  no longer be the one the journal describes.
+
+- **26 tests, and 11 mutations judging them** — all 11 caught by the test named for each,
+  including the two aimed at claims that were only made in a comment: the statement ordering
+  inside a move, and the discard of snapshots the redo tail invalidated.
+
+- **One of those eleven found a test that could not see what it looked like it covered.** The
+  general property test walks a mixed journal and every prefix of it, but applies eight
+  commands where the snapshot interval is 32, so it never has a snapshot to rebuild from. It
+  was caught by a different test and the harness said so, because it compares which test went
+  red rather than counting. Both that and a refusal that is not equal to itself when it
+  carries a `NaN` are in `docs/TRAPS.md`.
+
 ## [26.8.2] - 2026-08-12
 
 ### tpdf can update itself

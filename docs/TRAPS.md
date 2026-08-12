@@ -6555,3 +6555,79 @@ about anything downloadable --- in a file whose preamble already carried a paren
 having contradicted its own top entry once before. **A release date in prose is a claim that
 something is fetchable, and the word "tagged" does not weaken it enough for a reader to
 notice.**
+
+### A refusal that carries a `NaN` is not equal to itself, and both sides print the same
+
+`docmodel.rs` refuses a crop box enclosing no area, `NaN` corners included, and the refusal
+carries the offending rectangle so a caller can say which one. The test was written as the
+obvious equality:
+
+```rust
+assert_eq!(
+    doc.apply(Command::Crop { page: a, to: Some(bad) }),
+    Err(Refusal::DegenerateCrop(bad)),
+);
+```
+
+It failed on the first `NaN` case, and the failure is worth reading before the explanation:
+
+```
+assertion `left == right` failed
+  left: Err(DegenerateCrop(Rect { llx: NaN, lly: 20.0, urx: 30.0, ury: 40.0 }))
+ right: Err(DegenerateCrop(Rect { llx: NaN, lly: 20.0, urx: 30.0, ury: 40.0 }))
+```
+
+**Two identical lines and a failed comparison between them.** The code was right --- the
+rectangle was refused, with the right variant and the right payload. `PartialEq` on the
+rectangle compares the floats, and no comparison against `NaN` is true, so
+`Refusal::DegenerateCrop(nan) == Refusal::DegenerateCrop(nan)` is `false` and the derived
+equality on the enum inherits it. The fix is to match the variant rather than compare the
+value.
+
+Three things generalise past this one type.
+
+- **A derived `PartialEq` is only as reflexive as its fields.** Any type holding an `f32` or
+  `f64` --- a rectangle, a point, a matrix, a duration in seconds, a DPI --- makes every enum
+  and struct that contains it non-reflexive for the values that matter most, which are
+  exactly the pathological ones a test is written to pin down. Reach for `matches!` when the
+  payload can be `NaN`, and say so at the type rather than at each call site.
+- **This one fails loudly, which is the only reason it cost minutes rather than weeks.** The
+  usual shape in this file is an assertion that cannot *fail*; this is an assertion that
+  cannot *pass*, and the whole file is about preferring the second. It still has to be
+  recognised, because printed output showing two identical values either side of a failed
+  `==` reads as a broken harness, and the instinct is to distrust the test framework.
+- **The refusal itself is correct and stays correct.** Nothing here argues for changing the
+  comparison semantics of the rectangle to make the test easier: a crop box with a `NaN` in
+  it is not equal to another one, and a model that said otherwise would be lying about
+  geometry to suit an assertion.
+
+### A test that walks every prefix of a journal still could not see the snapshot rule
+
+`docmodel.rs` rebuilds its working document from the nearest snapshot at or below the target
+cursor. The mutation for that rule takes the newest snapshot instead, wherever it sits, and
+it was aimed at `a_journal_replays_to_the_state_it_was_applied_to` --- the general property
+test, which drives a mixed journal of rotations, moves, deletes and crops, then checks
+**every prefix** against a replay from the baseline, then every undo down and every redo back
+up. If any test covers "a rebuild lands on the right state", it is that one.
+
+It cannot see this rule at all. It applies **eight** commands and `SNAPSHOT_EVERY` is **32**,
+so no snapshot is ever taken, `nearest` returns 0 on both sides of the mutation, and the
+mutated build passes it. The mutation was still caught --- by a different test, which crossed
+a boundary and panicked on a reversed slice range --- and that is the whole finding:
+
+**A test's thoroughness is bounded by the constants it happens to exceed.** "Walks every
+prefix" sounds exhaustive and is exhaustive over the eight-command space it was written in.
+The mechanism under test switches on at 32. Nothing about the test's shape says so, and
+nothing about reading it would have.
+
+Two habits follow.
+
+- **When a rule is gated by a constant, the test for it must be written in terms of that
+  constant**, not in terms of a number that looked big enough. The replacement test loops
+  `SNAPSHOT_EVERY * 2 + 5` times and asserts `snapshots() >= 2` as its control, so it goes
+  red rather than vacuous if the constant is ever raised past it.
+- **A mutation harness that only counts red tests would have reported this as a clean
+  catch.** `scripts/mutate_rust.py` records which test each mutation is expected to turn red
+  and compares the names, so it reported `1 red, but NOT the expected one` and named the
+  substitute. That cross-check is what converted a passing result into a finding; without it
+  the general property test would still be carrying a reputation it had not earned.
