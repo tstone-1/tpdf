@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.1] - Unreleased
+## [26.8.1] - 2026-08-12
 
 ### A document rewritten on disk no longer fails silently
 
@@ -166,6 +166,40 @@ have the binary.)
 - **Six runs of `outline-simple` on Windows**, three before the fix and three after; the
   three after are green. `BUILD.md`'s row for it is widened to `147--149 / 14--16`, the total
   being 163 in every one.
+
+### The status label no longer shoves the toolbar it sits beside
+
+- **Reported as the find toolbar being "briefly overlaid/replaced" during a fast scroll.**
+  Nothing overlaid anything, and the toolbar's own markup was innocent. The header is a
+  single flex row and the degraded-state label was second-to-last in it, so every dip in
+  coverage put an element into the row and displaced everything to its left --- and because
+  flex items shrink by default and `.find` carried a `width` but no `flex`, the search field
+  was squeezed at the same moment. At scroll cadence that reads as a bar replacing the
+  toolbar.
+
+- **Two defects, and fixing either alone leaves a visible fault.** The label moved beside the
+  document title, where it grows into slack the spacer already held, so its arrival moves
+  nothing a reader is aiming at; the find field and the toggles are pinned with `flex: none`,
+  leaving the title as the only item allowed to give way. Separately, `src/lib/degraded.ts`
+  holds a transient state back until it has lasted 300 ms, so a scroll that resolves within a
+  few frames says nothing at all.
+
+- **Nothing about what counts as degraded changed**, and the delay is deliberately not
+  applied to a failure: `failed > 0` is the one state waiting does not fix, and it can arrive
+  with the frame loop already quiescent, so delaying it would suppress it rather than
+  postpone it.
+
+- **The judgement was already half-made one level down.** The coverage thresholds are `0.999`
+  rather than `1` because a tile boundary landing a rounding step inside the viewport leaves
+  a fraction of a percent uncovered, and that comment says in its own words that a status
+  line which flickers on that is worse than none. The threshold answers whether a dip is
+  real; nothing answered whether it is worth saying.
+
+- **12 tests, each shown to go red**, by mutating the ordering that puts a failure ahead of
+  slowness, the urgent early return, an episode clock that restarts on the wording rather
+  than the episode, one that never restarts between episodes, and the `0.999` threshold. All
+  five killed the test named for them. `viewer_check.py` on `text-heavy.pdf` reports
+  `143/143, 20 not applicable` against a stashed baseline of the same 163 names.
 
 ## [26.8.0] - 2026-08-03
 
