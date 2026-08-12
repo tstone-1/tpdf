@@ -2105,8 +2105,35 @@ starts at 0 and increments within the month.
     `gh release delete <tag> --yes`.
 
     A failed run publishes nothing --- `release` needs `gates`, and both legs create the
-    release as a **draft** --- so the last checkpoint is a human publishing it, which is
-    also the last chance to edit the release body.
+    release as a **draft**. That draft is the last chance to edit the release body, and
+    publishing it is step 11 rather than a clause here: see that step for what describing
+    it in this sentence cost.
+
+11. **Publish the draft, and check it from outside the account.** A green `Release` run
+    produces four artifacts and shows them to nobody --- GitHub hides a draft from everyone
+    but repository owners, and its assets sit under `releases/download/untagged-<hash>/`
+    rather than under the tag. Meanwhile the *tag* is public, so from outside the repository
+    the state reads as a tag pushed by mistake.
+
+    ```
+    gh release list --repo tstone-1/tpdf                      # second column: Draft
+    gh release edit vYY.M.MICRO --repo tstone-1/tpdf --draft=false
+    gh release list --repo tstone-1/tpdf                      # second column: Latest
+    curl -sIL -o /dev/null -w '%{http_code}\n' \
+      https://github.com/tstone-1/tpdf/releases/download/vYY.M.MICRO/<asset>   # expect 200
+    ```
+
+    **The `curl` is the point, not ceremony.** `gh release list` reporting `Latest` is our
+    own authenticated view; an unauthenticated fetch of a download URL is the reader's, and
+    it is the only one of the two that can tell a published release from a draft we happen
+    to be able to see.
+
+    This list ended at step 10 until 2026-08-12, with publishing named only in that step's
+    closing sentence --- and `26.8.0` sat as a draft for **nine days** after a green run that
+    had signed, notarized and uploaded everything. A step described inside the prose of
+    another step is not a step anybody executes; nothing can go red for it, since no runner
+    runs it and no gate covers it. The trap is *A draft release is invisible, and the tag
+    beside it says the work shipped*.
 
 Verify the bump landed everywhere:
 
