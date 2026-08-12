@@ -231,7 +231,7 @@ MUTATIONS = [
       title: "Zoom in",
       keys: label("view.zoomIn"),
 """,
-        "with no document only Open document is offered",
+        "with no document only the commands needing none are offered",
     ),
     Mutation(
         "a page break is not looked across at all",

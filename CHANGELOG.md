@@ -17,6 +17,53 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.2] - Unreleased
+
+### tpdf can update itself
+
+- **The problem it solves was demonstrated rather than imagined.** A defect was found,
+  fixed, released and published, and the machine that reported it went on running a
+  nine-day-old build, because nothing told it otherwise. Every release until now cost a
+  manual download, which is also a quiet argument for batching fixes; from here, cutting a
+  release for one fix is free.
+
+- **Check on launch, decide for yourself.** One check per launch, and it is the only network
+  request tpdf makes. If there is something newer the toolbar offers it; nothing is
+  downloaded or installed until you click. A failed check says nothing and is not retried —
+  a viewer that keeps dialling out after being told no is the behaviour this avoids. Two
+  palette commands: *Check for updates*, always available, and *Install update and restart*,
+  offered only while there is one to apply.
+
+- **Not silent, deliberately.** Swapping the binary under somebody with a document open is
+  rude, and for a reader an update is never urgent.
+
+- **Every payload is signed, and verified before it is unpacked.** The signature is checked
+  against a public key compiled into the binary, so the archive parsers this adds — `zip`
+  and `tar`, which run in the app process — never see bytes an attacker chose. The endpoint
+  is one pinned HTTPS URL that resolves only to a *published* release, so a draft offers
+  nothing and publishing by hand stays the act that ships an update. `docs/THREAT-MODEL.md`
+  §T9 is new and carries the four residual risks, including the one that does not go away:
+  the release workflow can sign anything every installed copy will accept.
+
+- **The launch check sits after every spike and check entry point returns**, which is what
+  keeps all seventeen harnesses in this repository entirely offline.
+
+- **48 new crates** (325 → 373), all permissive — the licence sweep runs over the whole tree
+  and is a gate, not a glance at a README.
+
+- **Costs found and fixed on the way.** `createUpdaterArtifacts` in the main config makes
+  *every* build demand the private signing key, which would have put the one secret capable
+  of forging an update onto every machine that builds; it lives in a CI-only overlay
+  instead. Passing that overlay has two wrong forms that fail only on a tag push, and both
+  were caught by control rather than by reading — see `docs/TRAPS.md`.
+
+- **17 tests over the state machine, 7 mutations each killing the test named for it**, plus
+  6 over the two new commands. Both are classified `undriven` in the window harness with
+  reasons, so the completeness check stays honest: 32 commands registered, 26 driven, 6 not.
+  `viewer_check.py` is 143/143 with 20 not applicable, 163 names. What none of that covers
+  is a real endpoint and a real signature; `BUILD.md` step 12 schedules that by hand,
+  because it cannot exist until two signed releases do.
+
 ## [26.8.1] - 2026-08-12
 
 ### A document rewritten on disk no longer fails silently

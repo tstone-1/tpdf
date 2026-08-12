@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 238 entries
+The one thing this file does *not* carry in full is the trap list --- 239 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -491,10 +491,22 @@ packages and looks for the copyleft families by name; the only hits are MPL-2.0 
 Servo's CSS crates via Tauri) and a triple-licensed `r-efi` whose `MIT OR Apache-2.0` arm
 applies, so the option of making this repository public is intact.
 
-Two plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open dialog,
-which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT); and, on Windows only,
+Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open dialog,
+which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT); on Windows only,
 `tauri-plugin-single-instance` (Apache-2.0 OR MIT), which is what gives that platform the
-document handover macOS gets from `RunEvent::Opened`. Checked against the licensing constraint
+document handover macOS gets from `RunEvent::Opened`; and `tauri-plugin-updater` (MIT OR
+Apache-2.0), which is the largest single addition the tree has taken --- **48 crates,
+325 to 373**, because it brings a TLS stack (`rustls`) and archive extraction (`zip`, `tar`).
+All permissive, swept as below.
+
+**That plugin is also the only network authority in the application, and it changed a
+property that had held until 26.8.2: tpdf made no request at all.** It is spent narrowly ---
+one check per launch, issued after every spike and check entry point has returned, so every
+harness here still runs offline; nothing downloads or installs without a click; and the
+payload's signature is verified against a compiled-in public key before anything is
+unpacked, which is what keeps those two new archive parsers from ever seeing attacker-chosen
+bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version, residual risks included.
+Checked against the licensing constraint
 above rather than assumed --- every dependency added has to be, because one copyleft crate
 anywhere in the tree removes the option of making this repository public. The check is
 `cargo metadata` over the whole tree, not a glance at the crate's own README.
@@ -832,7 +844,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 238 of them and the full text
+titles. Only the titles are here, because there are 239 of them and the full text
 was 93% of this file --- an instruction budget spent on the 235 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -957,6 +969,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Tauri creates config windows *before* the setup hook, hiding the webview's cost
 - A page whose window is not visible is suspended --- so a JS watchdog cannot fire either
 - A refusal in the setup hook cannot speak, so it must happen before the event loop
+- Turning on updater artifacts makes every build demand the signing key
 - A status element that comes and goes rearranges the toolbar it sits beside
 
 ### Rust and macOS

@@ -329,8 +329,41 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (action-v0.6.2)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update payloads with the minisign key whose public half is
+          # pinned in `tauri.conf.json`. Nothing else can produce a payload an
+          # installed tpdf will accept, and GitHub secrets cannot be read back
+          # out -- if both of these are ever lost, no installed copy can be
+          # updated again. `docs/THREAT-MODEL.md` §T9 carries what that means.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # `createUpdaterArtifacts` lives in an overlay config rather than in
+          # `tauri.conf.json`, and the reason is not tidiness. With it in the
+          # main config, EVERY build demands `TAURI_SIGNING_PRIVATE_KEY` -- so a
+          # plain `npm run tauri build` on a development machine fails with "A
+          # public key has been found, but no private key", and the release
+          # checklist's own bundle smoke-test cannot run without the signing key
+          # sitting on that machine. Which would put the one secret that can
+          # forge an update onto every laptop that builds. The overlay keeps
+          # signing where the key is, and nowhere else. See the trap of that name.
+          #
+          # An ABSOLUTE path, and both halves of that are deliberate. A relative
+          # one resolves against the invocation directory, which is this action's
+          # and not the one a local `npm run tauri build` uses; and the obvious
+          # alternative -- inline JSON -- does not survive the trip, because the
+          # args string is split shell-style and a shell eats the JSON's double
+          # quotes, leaving `{bundle:{createUpdaterArtifacts:true}}`. Checked
+          # with `shlex.split`, not guessed. Either mistake would surface only on
+          # a tag push, which is the most expensive place to find one.
+          args: --config ${{ github.workspace }}/src-tauri/tauri.updater.conf.json
           tagName: ${{ github.ref_name }}
+          # Writes `latest.json` beside the payloads and uploads it. That file is
+          # what an installed tpdf reads, through
+          # `releases/latest/download/latest.json` -- a URL that resolves only to
+          # a *published* release, which is what lets `releaseDraft: true` below
+          # stay as it is. A draft is invisible to it, so publishing the release
+          # by hand remains the act that offers the update to anybody.
+          includeUpdaterJson: true
           releaseName: "tpdf ${{ github.ref_name }}"
           # The scope paragraph is deliberate. tpdf is named and described as a
           # viewer *and editor*, and nothing in this release edits a document ---
@@ -349,10 +382,14 @@ jobs:
 
             **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
             the `-setup.exe` if you prefer an installer that asks fewer
-            questions — they install the same four files. The
-            `.app.tar.gz` is the same macOS app without a disk image, for
-            anyone who would rather not mount one; it is not an update payload,
-            and tpdf has no auto-updater.
+            questions — they install the same four files.
+
+            **Updating.** From this release on, tpdf checks for a newer version
+            once per launch and offers it in the toolbar; nothing is downloaded
+            or installed until you click. Every update is signed, and a copy
+            already installed accepts only payloads signed with the key baked
+            into it. The `.app.tar.gz`, `.sig` and `latest.json` files are how
+            that works — you do not need to download them by hand.
 
             **macOS** — signed with a Developer ID identity and notarized by
             Apple. Open it normally; no Gatekeeper bypass needed. Apple Silicon only.

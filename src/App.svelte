@@ -27,6 +27,7 @@
   import { runOpenCheckIfRequested } from "./lib/opencheck";
   import { Serial } from "./lib/serial";
   import { DegradedLabel } from "./lib/degraded";
+  import { Updates, updateLabel, type UpdateState } from "./lib/update";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
   import { describeFit, percentOf } from "./lib/zoom";
 
@@ -116,7 +117,42 @@
     toggleSidebar: () => toggleSidebar(),
     showTab: (tab) => showTab(tab),
     toggleInvert: () => toggleInvert(),
+    checkForUpdates: () => void updates.check(),
+    applyUpdate: () => void updates.install(),
+    updateAvailable: () => updates.state.kind === "available",
+    updateReady: () => updates.state.kind === "ready",
   };
+
+  /**
+   * The updater, and the one place this application uses the network.
+   *
+   * The Tauri plugin is reached through a thin adapter rather than imported by
+   * `update.ts`, so the state machine stays testable outside a webview --- the
+   * plugin answers only inside one. See `update.ts` and `docs/THREAT-MODEL.md`
+   * §T9.
+   */
+  let updateState = $state<UpdateState>({ kind: "idle" });
+  const updates = new Updates(
+    {
+      check: async () => {
+        const { check } = await import("@tauri-apps/plugin-updater");
+        const found = await check();
+        if (!found) return null;
+        return {
+          version: found.version,
+          downloadAndInstall: (onEvent) => found.downloadAndInstall(onEvent),
+        };
+      },
+    },
+    (s) => {
+      updateState = s;
+      // Relaunching is the shell's job rather than the state machine's: it ends
+      // the process, which is not something a module with unit tests should be
+      // able to do. Deferred to the reader's next launch instead of forced ---
+      // see `update.ts` on why nothing here swaps the binary under an open
+      // document.
+    },
+  );
 
   const commands = new CommandRegistry();
   registerAppCommands(commands, appActions);
@@ -428,6 +464,13 @@
       // After the spike entry points, which exit the process: none of them mount
       // the shell, and a palette attached to `document.body` would outlive it.
       palette = new Palette(commands);
+
+      // The launch check, and its position here is the whole of what keeps every
+      // spike, benchmark and check run offline: all of them return above this
+      // line. `void` rather than `await` because nothing downstream depends on
+      // the answer and a slow endpoint must not delay a document opening --- the
+      // reader is here to read, and an update is never urgent.
+      void updates.check();
 
       await getCurrentWebview().onDragDropEvent((event) => {
         if (event.payload.type !== "drop") return;
@@ -848,6 +891,24 @@
       <span class="degraded">{degraded} — {Math.round(status.sharp * 100)}% sharp</span>
     {/if}
     <span class="spacer"></span>
+    <!--
+      Left of the find controls and inside the slack, for the reason the
+      degraded label is: this appears without anybody touching the window, and
+      an element that arrives on its own must not move what a reader is aiming
+      at. `updateLabel` returns null for idle, checking, current and failed, so
+      on an ordinary launch nothing is added to the row at all.
+    -->
+    {#if updateLabel(updateState)}
+      <button
+        class="update"
+        class:ready={updateState.kind === "ready"}
+        disabled={updates.busy || updateState.kind === "ready"}
+        title={updateState.kind === "ready"
+          ? "Quit and open tpdf again to finish updating"
+          : "Download and apply this update"}
+        onclick={() => void updates.install()}>{updateLabel(updateState)}</button
+      >
+    {/if}
     {#if title}
       <input
         class="find"
@@ -1018,6 +1079,23 @@
   }
   .stat {
     flex: none;
+  }
+  /* Drawn as a real button, unlike the zoom readout, because this one asks the
+     reader to decide something rather than reporting a number they can also
+     change. `flex: none` for the same reason as the toolbar: it appears by
+     itself, and nothing that appears by itself may be squeezed. */
+  .update {
+    flex: none;
+    font: inherit;
+    font-size: 0.9em;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+  }
+  .update.ready {
+    font-weight: 600;
+  }
+  .update:disabled {
+    opacity: 0.65;
   }
   /* A pattern that did not compile is not a quieter version of a count. It sits
      where the counter sits, because that is where a reader is already looking,

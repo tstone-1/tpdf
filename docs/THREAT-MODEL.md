@@ -543,8 +543,64 @@ of its own, so the workflow's verdict and the artifact's state are separate fact
 
 What is **still** untested is distribution over time rather than at the moment of release:
 nothing re-checks that a published artifact still validates once the signing certificate
-expires (2031-07-26) or if it were revoked, and there is no update channel to carry a fix,
-since tpdf ships no updater.
+expires (2031-07-26) or if it were revoked. **There is an update channel to carry a fix as
+of 26.8.2** — see §T9, which is where the residual for it lives; this paragraph read "there
+is no update channel ... since tpdf ships no updater" until then.
+
+### T9 — The updater
+
+**The threat.** The updater is the only code path in tpdf that fetches bytes and then
+*executes* them, and it is the highest-authority feature the application has. A compromised
+endpoint, a downgrade to a version with a known defect, or an unsigned payload accepted by
+mistake, each ends with attacker-chosen code running as the user — outside every boundary
+the rest of this document builds, because the replacement binary *is* the boundary.
+
+It also changes a property that held until 26.8.2: **tpdf made no network request at all.**
+That was worth something and it is now spent. It is spent narrowly, and the narrowness is
+the mitigation rather than a footnote — see below.
+
+**What stops it.**
+
+- **The payload is verified before it is unpacked.** `tauri-plugin-updater` checks a
+  minisign signature against `plugins.updater.pubkey`, compiled into the binary at build
+  time, and only then extracts. That ordering is what keeps the archive parsers the plugin
+  brings in (`zip`, `tar`) from ever seeing bytes an attacker chose — they are as much a
+  parsing surface as PDFium is, and they run **in the app process**, not in a worker.
+- **The signing key is not the Apple key and is held only by CI.** It exists as
+  `TAURI_SIGNING_PRIVATE_KEY` (+ password) on the repository, and GitHub secrets cannot be
+  read back out. Compromising the release workflow is therefore the whole attack; a stolen
+  Developer ID would not help, and neither would write access to the releases page, since an
+  unsigned or wrongly-signed payload is refused by the installed copy.
+- **The endpoint is a single pinned HTTPS URL** —
+  `github.com/tstone-1/tpdf/releases/latest/download/latest.json` — which resolves only to a
+  *published* release. Draft releases are invisible to it, so the human act of publishing is
+  what offers an update to anybody, and a failed release run offers nothing.
+- **Nothing is fetched unasked beyond the check itself, and nothing is applied unasked.**
+  One `check()` per launch, issued after every spike and check entry point has returned, so
+  every harness in this repository still runs entirely offline. Downloading and applying
+  require the reader to click. `update.ts` carries why this is not silent.
+- **A failed check is reported and forgotten.** Nothing retries, so an endpoint that is
+  hostile, slow or absent cannot turn into a loop that keeps dialling out.
+
+**Residual, and there are four.**
+
+1. **The release workflow is the single point of trust.** Anyone who can run it can sign a
+   payload every installed copy will accept. That is the same exposure as any signed
+   auto-update and it is not reduced by anything here; it is bounded only by GitHub account
+   security and by the workflow being tag-triggered and unreachable from a fork PR (§7.6).
+2. **No downgrade protection of our own.** The plugin compares versions and offers only
+   newer ones, but that decision is made from `latest.json` — an attacker who could serve
+   that file could not forge a signature, but could withhold an update indefinitely. Nothing
+   here detects being pinned to an old version.
+3. **The archive parsers run in the app process.** Signature verification comes first, so
+   this only matters if the signing key is compromised — at which point it is the least of
+   the problems. Recorded because the boundary claim elsewhere in this document is about
+   *PDFium*, and this is a second parser family that the app process now links.
+4. **Untested against a real endpoint.** `update.test.ts` fakes the plugin, and the tests
+   there cover the state machine rather than signature verification, TLS, or the real
+   `latest.json`. The first genuine end-to-end proof is the first update applied from one
+   published release to the next, and `BUILD.md` schedules it as a manual step because it
+   cannot exist until two signed releases do. **Nothing below claims otherwise.**
 
 ### T8 — The webview
 

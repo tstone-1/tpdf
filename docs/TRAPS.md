@@ -1837,6 +1837,51 @@ WebKit suspends every window then. Two mechanisms, one silence, and the wrong on
 went into a commit message. Run the control before believing a failure you have just
 provoked.
 
+### Turning on updater artifacts makes every build demand the signing key
+
+`createUpdaterArtifacts: true` in `tauri.conf.json`, beside a `plugins.updater.pubkey`, does
+not mean "sign when a key is available". It means **every** `npm run tauri build` fails
+without one:
+
+```text
+Error A public key has been found, but no private key.
+      Make sure to set `TAURI_SIGNING_PRIVATE_KEY` environment variable.
+```
+
+Which is a security defect wearing a build error's clothes. The obvious fix is to put the
+key on the development machine — and that takes the one secret capable of forging an update
+that every installed copy will accept, and copies it onto every laptop that builds. The
+release checklist's own bundle smoke-test would require it, so it would not even be
+optional.
+
+The flag therefore lives in an overlay config passed only by CI, and the main config keeps
+only the **public** key, which the app genuinely needs at runtime to verify what it
+downloads. Signing stays where the key is.
+
+**Two ways to pass that overlay are wrong, and both fail only on a tag push** — the most
+expensive place in this repository to discover anything, since it runs unreviewed paths
+beside the signing key:
+
+- **A relative `--config` path** resolves against the invocation directory, and
+  `tauri-action`'s is not the one a local `npm run tauri build` uses.
+- **Inline JSON** does not survive the trip. The action's `args` string is split shell-style,
+  and a shell eats the JSON's double quotes, leaving `{bundle:{createUpdaterArtifacts:true}}`
+  — which is not the config that was written. Checked with `shlex.split`, not reasoned about:
+
+  ```text
+  '--config {"bundle":{"createUpdaterArtifacts":true}}'
+    -> ['--config', '{bundle:{createUpdaterArtifacts:true}}']
+  ```
+
+What works is an absolute path built from `${{ github.workspace }}`: no quotes to eat, no
+spaces to split on, and no assumption about the working directory.
+
+**The control that makes any of this a finding rather than a theory** is the pair, and it is
+worth keeping: building *with* the overlay and no key must fail with exactly that message
+(so the overlay is provably doing something), and building *without* it must succeed (so a
+development machine is provably unencumbered). Either half alone is satisfied by a config
+that does nothing.
+
 ### A status element that comes and goes rearranges the toolbar it sits beside
 
 Reported by the user as *"scrolling fast, the toolbar with the find field is briefly

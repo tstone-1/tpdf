@@ -2738,6 +2738,17 @@ async function appCommandChecks(
     toggleSidebar: () => fired.push("toggleSidebar"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
     toggleInvert: () => fired.push("toggleInvert"),
+    // Recorded like the rest, though neither command is driven here --- both are
+    // in `undriven` above. A recorder rather than a throw, so that the day one
+    // of them *is* driven the failure is a missing entry in `fired` rather than
+    // an exception from a helper nobody was looking at.
+    checkForUpdates: () => fired.push("checkForUpdates"),
+    applyUpdate: () => fired.push("applyUpdate"),
+    // False both, so the install command's `enabled` guard is exercised in the
+    // direction the check can assert: it must not appear in the palette on a
+    // run where nothing has been found.
+    updateReady: () => false,
+    updateAvailable: () => false,
   };
 
   // Where the viewer was on arrival, so it can be put back. Every phase after
@@ -3111,6 +3122,15 @@ async function appCommandChecks(
     // `appcommands.test.ts` instead: that it reaches its own action and no
     // other, is withheld with no document, and ranks first for its own name.
     "file.reload": "it reopens the document, discarding the state later checks read",
+    // Driving either would reach the network from a check that is otherwise
+    // entirely offline, and the install one would replace the running binary
+    // mid-run. Their wiring is covered by `appcommands.test.ts` and their
+    // behaviour by `update.test.ts`, which fakes the plugin; what neither
+    // covers is a real endpoint and a real signature, and `BUILD.md` schedules
+    // that as a manual step because it needs a published release to check
+    // against.
+    "app.checkForUpdates": "it would reach the network from an offline check",
+    "app.installUpdate": "it would replace the running binary mid-run",
   };
 
   const registered = registry.all().map((command) => command.id);
@@ -3256,7 +3276,16 @@ async function appCommandChecks(
   // Commands that a document alone does not enable are declared rather than
   // subtracted, so the next one of them turns this red instead of being
   // absorbed by a count.
-  const NEEDS_MORE_THAN_A_DOCUMENT = ["find.inSelection"];
+  const NEEDS_MORE_THAN_A_DOCUMENT = ["app.installUpdate", "find.inSelection"];
+
+  // And the other direction, declared for the same reason. This list was the
+  // literal `file.open` until the updater landed, and the check went red ---
+  // correctly, because "needs no document" is a claim each command has to earn
+  // rather than a fact about how many there are. Two earn it: opening one is
+  // how a reader gets a document at all, and checking for updates has nothing
+  // to do with documents. Installing one is NOT here: it is guarded on a check
+  // having found something, so it belongs above.
+  const NEEDS_NO_DOCUMENT = ["file.open", "app.checkForUpdates"];
 
   viewer.clearSelection();
   await settle(() => viewer.idle);
@@ -3274,9 +3303,8 @@ async function appCommandChecks(
     (id) => !withDocument.includes(titleOf(id)),
   );
   check(
-    "with no document only Open document is offered",
-    withoutDocument.length === 1 &&
-      withoutDocument[0] === titleOf("file.open") &&
+    "with no document only the commands needing none are offered",
+    withoutDocument.join() === NEEDS_NO_DOCUMENT.map(titleOf).join() &&
       missing.join() === NEEDS_MORE_THAN_A_DOCUMENT.join(),
     `no document: [${withoutDocument.join(", ")}]; with one and nothing selected: ` +
       `${withDocument.length} of ${registered.length}, withheld [${missing.join(", ")}]`,
