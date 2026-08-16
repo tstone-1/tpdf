@@ -699,8 +699,8 @@ MUTATIONS = [
         # which is every fixture here but the one written for it.
         "links: flip the offset against the wrong page",
         "src/links.rs",
-        "    let (_, height, turns) = *geometry.get(page as usize)?;",
-        "    let (_, height, turns) = *geometry.first()?;",
+        "    let shown = *geometry.get(page as usize)?;",
+        "    let shown = *geometry.first()?;",
         "the_offset_is_flipped_against_the_page_it_lands_on",
     ),
     Mutation(
@@ -748,8 +748,8 @@ MUTATIONS = [
         # normalise. Invisible on every rectangle written the usual way round.
         "links: trust /Rect's corner order",
         "src/links.rs",
-        "            values[0].min(values[2]) as f64,\n            values[1].min(values[3]) as f64,\n            values[0].max(values[2]) as f64,\n            values[1].max(values[3]) as f64,",
-        "            values[0] as f64,\n            values[1] as f64,\n            values[2] as f64,\n            values[3] as f64,",
+        "            values[0].min(values[2]) as f64 - ox,\n            values[1].min(values[3]) as f64 - oy,\n            values[0].max(values[2]) as f64 - ox,\n            values[1].max(values[3]) as f64 - oy,",
+        "            values[0] as f64 - ox,\n            values[1] as f64 - oy,\n            values[2] as f64 - ox,\n            values[3] as f64 - oy,",
         "a_rectangle_written_backwards_is_normalised",
     ),
     Mutation(
@@ -864,6 +864,45 @@ MUTATIONS = [
         "    match annot.get(b\"Dest\") {\n        Ok(dest) => destination(dest, document, numbers, geometry, limits),",
         "    match annot.get(b\"Dest\") {\n        Ok(dest) => match destination(dest, document, numbers, geometry, limits) {\n            Target::Broken => Target::None,\n            other => other,\n        },",
         "a_destination_that_resolves_nowhere_is_broken_not_absent",
+    ),
+    Mutation(
+        # Lay the page out from /MediaBox, which is what stood here before.
+        # PDFium lays it out from /CropBox, so every rectangle on a cropped page
+        # is out by the difference -- silently, on a page that looks normal.
+        "links: place rectangles against the media box rather than the crop box",
+        "src/links.rs",
+        "    let shown = match box_of(b\"CropBox\") {",
+        "    let shown = match None::<[f32; 4]> {",
+        "a_cropped_page_places_a_rectangle_in_the_crop_box_s_space",
+    ),
+    Mutation(
+        # Take the crop box's *size* and ignore its origin. Subtler than the one
+        # above and wrong in the same way: the page is the right shape and every
+        # rectangle on it is shifted.
+        "links: use the crop box's size but not its origin",
+        "src/links.rs",
+        "        origin: (shown[0], shown[1]),",
+        "        origin: (0.0, 0.0),",
+        "a_cropped_page_places_a_rectangle_in_the_crop_box_s_space",
+    ),
+    Mutation(
+        # Trust a crop box larger than the sheet, so the page is displayed bigger
+        # than its own paper and every rectangle is scaled against a size the
+        # renderer never uses.
+        "links: trust a crop box larger than the media box",
+        "src/links.rs",
+        "    let shown = match box_of(b\"CropBox\") {\n        Some(crop) => [\n            crop[0].max(media[0]),\n            crop[1].max(media[1]),\n            crop[2].min(media[2]),\n            crop[3].min(media[3]),\n        ],",
+        "    let shown = match box_of(b\"CropBox\") {\n        Some(crop) => crop,",
+        "a_crop_box_larger_than_the_page_is_intersected_with_it",
+    ),
+    Mutation(
+        # The same blindness in the comment scan, which computes its geometry
+        # separately -- so the two must be broken separately to prove each.
+        "annots: place rectangles against the media box rather than the crop box",
+        "src/annots.rs",
+        "    let crop = box_of(b\"CropBox\").map(|crop| {",
+        "    let crop = None::<[f32; 4]>.map(|crop: [f32; 4]| {",
+        "a_cropped_page_places_a_comment_in_the_crop_box_s_space",
     ),
 ]
 

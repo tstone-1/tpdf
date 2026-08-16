@@ -377,5 +377,37 @@
       "unreadable": 0,
       "unresolved_names": 0
     }
+  },
+  "links-cropped.pdf": {
+    "pages": 1,
+    "crop_box": [
+      50,
+      50,
+      545,
+      742
+    ],
+    "media_box": [
+      0,
+      0,
+      595,
+      842
+    ],
+    "expected": [
+      {
+        "page": 0,
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": 200
+        },
+        "note": "a link on a page displayed from an inset crop box"
+      }
+    ],
+    "limits": {
+      "crowded_pages": 0,
+      "over_budget": false,
+      "unreadable": 0,
+      "unresolved_names": 0
+    }
   }
 }

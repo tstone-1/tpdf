@@ -25,6 +25,21 @@ a real Downloads folder, one of them 7,694 of them.
                      ratio. A rotated page inside the main fixture reddens them
                      for a reason that has nothing to do with links.
 
+  links-cropped.pdf  One page whose `/CropBox` is inset 50 points from its
+                     `/MediaBox`. PDFium lays a page out from the crop box, so
+                     the viewer's coordinates start at *that* corner --- and
+                     reading `/MediaBox` put every rectangle and every character
+                     out by the difference, silently, on a page that looks
+                     entirely normal. Measured before the fix on a fixture of
+                     this shape: character boxes landed on ink **0%** of the
+                     time, against 100% uncropped.
+
+                     The inset is deliberately large. The one real document on
+                     this machine with an off-origin crop box is offset by 7.8
+                     points, which is small enough that a check asking whether a
+                     box lands on ink still passes --- a fixture has to be able
+                     to fail.
+
 Writes `links-corpus.json` next to them --- keyed by file name, like
 `comments-corpus.json`, and named so that `viewer_check.py`'s
 `<fixture>-manifest.json` rule does not enrol it in a check it never claimed.
@@ -491,6 +506,91 @@ def build_rotated(path: str) -> dict:
     }
 
 
+def build_cropped(path: str) -> dict:
+    """One page displayed from a `/CropBox` inset from its `/MediaBox`.
+
+    PDFium lays a page out from its crop box, so the viewer's coordinates start
+    at that box's corner --- while `links.rs` and `annots.rs` read `/MediaBox`
+    and `text.rs` combined PDFium's cropped *size* with character boxes in the
+    page's own space. Every rectangle and every character was out by the crop
+    origin, silently, on a page that looks entirely normal.
+
+    Measured on a fixture shaped like this one before the fix: character boxes
+    landed on ink **0%** of the time, against 100% for the same page uncropped.
+    One of the 43 PDFs on a real machine carries an off-origin crop box, so it is
+    live rather than theoretical.
+
+    The inset is large --- 50 points on both axes --- for the reason the real
+    document is not enough: its crop box is offset by 7.8 points, which is small
+    enough that a check asking whether a box lands on ink still passes. A fixture
+    has to be able to fail.
+    """
+    pdf = Pdf()
+    font = pdf.add(
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica"
+        b" /Encoding /WinAnsiEncoding >>"
+    )
+    pages = pdf.reserve()
+    # Written in the page's own space, which the crop box does not move.
+    lines = [
+        "BT /F1 24 Tf 100 %d Td (Cropped page) Tj ET\n" % (HEIGHT - 120),
+    ]
+    for row in range(ROWS):
+        lines.append(
+            "BT /F1 11 Tf 100 %d Td (%s) Tj ET\n"
+            % (
+                HEIGHT - 170 - row * LEADING,
+                escape(body_line(row, 0)).decode("latin-1"),
+            )
+        )
+    content = pdf.stream(b"<< >>", "".join(lines).encode("latin-1"))
+
+    # The page number is reserved before the annotation, because the link's
+    # destination names the page and the page names the link --- writing either
+    # first means guessing the other's object number, and a guess resolves to
+    # `broken` while looking exactly like a fixture that works.
+    page = pdf.reserve()
+    annot = pdf.add(
+        link(
+            [100, HEIGHT - 132, 300, HEIGHT - 108],
+            b"/A << /S /GoTo /D [%d 0 R /XYZ 100 %d 0] >>" % (page, HEIGHT - 300),
+        )
+    )
+    pdf.put(
+        page,
+        b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d]"
+        b" /CropBox [50 50 %d %d]"
+        b" /Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R /Annots [%d 0 R] >>"
+        % (pages, WIDTH, HEIGHT, WIDTH - 50, HEIGHT - 100, font, content, annot),
+    )
+    pdf.put(pages, b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page)
+    catalog = pdf.add(b"<< /Type /Catalog /Pages %d 0 R >>" % pages)
+    with open(path, "wb") as handle:
+        handle.write(pdf.serialize(catalog))
+
+    return {
+        "pages": 1,
+        "crop_box": [50, 50, WIDTH - 50, HEIGHT - 100],
+        "media_box": [0, 0, WIDTH, HEIGHT],
+        "expected": [
+            {
+                "page": 0,
+                # The destination is /XYZ at y = HEIGHT - 300 in the page's own
+                # space; the crop box starts at y = 50 and is 692 tall, so from
+                # the displayed top that is 692 - (542 - 50) = 200.
+                "target": {"kind": "page", "page": 0, "top_pt": 200},
+                "note": "a link on a page displayed from an inset crop box",
+            }
+        ],
+        "limits": {
+            "crowded_pages": 0,
+            "over_budget": False,
+            "unreadable": 0,
+            "unresolved_names": 0,
+        },
+    }
+
+
 def main() -> int:
     """Writes both fixtures and the manifest that describes them."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -511,6 +611,10 @@ def main() -> int:
     rotated_path = os.path.join(args.outdir, "links-rotated.pdf")
     manifest["links-rotated.pdf"] = build_rotated(rotated_path)
     print("[OK] wrote %s" % rotated_path)
+
+    cropped_path = os.path.join(args.outdir, "links-cropped.pdf")
+    manifest["links-cropped.pdf"] = build_cropped(cropped_path)
+    print("[OK] wrote %s" % cropped_path)
 
     # Keyed by file name, and named `-corpus` rather than `-manifest`: the
     # viewer harness binds any `<fixture>-manifest.json` to its reading-order

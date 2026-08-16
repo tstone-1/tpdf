@@ -345,7 +345,7 @@ fn read_page(
         return;
     };
 
-    let (width, height, turns) = page_geometry(document, page);
+    let (width, height, turns, ox, oy) = page_geometry(document, page);
     let mut on_this_page = 0usize;
 
     for entry in entries {
@@ -388,7 +388,16 @@ fn read_page(
 
         let id = items.len() as u32;
         items.push(comment(
-            annot, document, id, number, kind, width, height, turns, limits,
+            annot,
+            document,
+            id,
+            number,
+            kind,
+            width,
+            height,
+            turns,
+            (ox, oy),
+            limits,
         ));
         parents.push(match annot.get(b"IRT") {
             Ok(Object::Reference(target)) => Some(*target),
@@ -412,6 +421,8 @@ fn comment(
     width: f32,
     height: f32,
     turns: u8,
+    // The displayed page box's lower-left corner -- see `page_geometry`.
+    origin: (f32, f32),
     limits: &mut Limits,
 ) -> Comment {
     let (body, clipped) = text_field(annot, document, b"Contents", MAX_BODY_CHARS, true);
@@ -434,7 +445,7 @@ fn comment(
             .map(|object| resolve(document, object))
             .and_then(|object| object.as_str().ok())
             .and_then(parse_date),
-        rect: rect_of(annot, document, width, height, turns),
+        rect: rect_of(annot, document, width, height, turns, origin),
         // Filled in by `resolve_replies`, which is the only place that can know
         // whether a link would loop.
         reply_to: None,
@@ -482,33 +493,59 @@ fn text_field(
 /// anywhere in its ancestry is treated as by most readers. The rectangle is the
 /// only thing that depends on it, so a wrong guess misplaces a marker rather
 /// than losing a comment.
-fn page_geometry(document: &Document, page: ObjectId) -> (f32, f32, u8) {
-    let media = inherited(document, page, b"MediaBox")
-        .and_then(|object| numbers(document, &object, 4))
-        .map(|box_| {
-            let width = (box_[2] - box_[0]).abs();
-            let height = (box_[3] - box_[1]).abs();
-            (width, height)
-        })
-        .filter(|(width, height)| {
-            // `is_finite` as well as positive, for the reason `outline.rs`
+fn page_geometry(document: &Document, page: ObjectId) -> (f32, f32, u8, f32, f32) {
+    // `/CropBox` where there is one, else `/MediaBox`, intersected per §14.11.2.
+    // **PDFium lays a page out from its crop box**, so the viewer's coordinates
+    // start at that box's corner --- and reading the media box alone put every
+    // rectangle out by the difference, on a page that looks entirely normal. The
+    // measurement is on `crate::links::page_geometry`, which does the same thing
+    // and which `both_scans_agree_about_a_rotated_page` holds this one to.
+    let box_of = |key: &[u8]| {
+        inherited(document, page, key)
+            .and_then(|object| numbers(document, &object, 4))
+            // `is_finite` as well as ordered, for the reason `outline.rs`
             // states: a NaN read from the file passes `> 0.0` being false and
             // poisons every subtraction downstream.
-            width.is_finite() && *width > 0.0 && height.is_finite() && *height > 0.0
-        })
-        .unwrap_or((612.0, 792.0));
+            .filter(|values| values.iter().all(|value| value.is_finite()))
+            .map(|v| {
+                [
+                    v[0].min(v[2]),
+                    v[1].min(v[3]),
+                    v[0].max(v[2]),
+                    v[1].max(v[3]),
+                ]
+            })
+            .filter(|b| b[2] > b[0] && b[3] > b[1])
+    };
+
+    let media = box_of(b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0]);
+    let crop = box_of(b"CropBox").map(|crop| {
+        [
+            crop[0].max(media[0]),
+            crop[1].max(media[1]),
+            crop[2].min(media[2]),
+            crop[3].min(media[3]),
+        ]
+    });
+    // An intersection can be empty if the boxes do not overlap, which is a
+    // malformed document rather than a page of no size.
+    let shown = match crop {
+        Some(crop) if crop[2] > crop[0] && crop[3] > crop[1] => crop,
+        _ => media,
+    };
 
     let turns = inherited(document, page, b"Rotate")
         .and_then(|object| resolve(document, &object).as_i64().ok())
         .map(|degrees| (((degrees / 90) % 4 + 4) % 4) as u8)
         .unwrap_or(0);
 
+    let (width, height) = (shown[2] - shown[0], shown[3] - shown[1]);
     // The displayed size, which is what `/Rotate` produces and what the viewer
     // lays out --- so a quarter turn swaps them.
     if turns % 2 == 1 {
-        (media.1, media.0, turns)
+        (height, width, turns, shown[0], shown[1])
     } else {
-        (media.0, media.1, turns)
+        (width, height, turns, shown[0], shown[1])
     }
 }
 
@@ -568,6 +605,7 @@ fn rect_of(
     width: f32,
     height: f32,
     turns: u8,
+    origin: (f32, f32),
 ) -> [f32; 4] {
     let Some(values) = annot
         .get(b"Rect")
@@ -590,11 +628,20 @@ fn rect_of(
     // unrotated space while everything downstream works in the displayed one,
     // and a second implementation of that turn is a second place to get it
     // wrong.
+    // Shifted into crop space before the turn: `to_device` works in the
+    // displayed page's coordinates, and the displayed page starts at the crop
+    // box's corner rather than at the media box's.
+    let (ox, oy) = (origin.0 as f64, origin.1 as f64);
     let placed = crate::text::to_device(
         turns,
         width,
         height,
-        [left as f64, bottom as f64, right as f64, top as f64],
+        [
+            left as f64 - ox,
+            bottom as f64 - oy,
+            right as f64 - ox,
+            top as f64 - oy,
+        ],
     );
 
     [
@@ -939,6 +986,40 @@ mod tests {
         let comments = scan_annots(vec![note("visible")]);
         assert_eq!(comments.limits.pages_missed, 0);
         assert!(!comments.limits.any());
+    }
+
+    /// A page displayed from an inset `/CropBox` places a comment in *its*
+    /// space, not the media box's.
+    ///
+    /// The mirror of `links::a_cropped_page_places_a_rectangle_in_the_crop_box_s_space`,
+    /// and it has to exist separately: the two modules compute their geometry
+    /// independently, so a mutation that blinds one is invisible to the other's
+    /// tests. The control is the same page uncropped --- a rule that ignores the
+    /// origin is right there and wrong here, and only the pair discriminates.
+    #[test]
+    fn a_cropped_page_places_a_comment_in_the_crop_box_s_space() {
+        let mut note = note("in the margin");
+        note.set("Rect", vec![100.into(), 690.into(), 300.into(), 720.into()]);
+
+        let plain = document_with(vec![note.clone()], Dictionary::new());
+        // The default page here is 595x842, so 842 - 720 = 122.
+        assert_eq!(
+            scan(&plain, 1).expect("parse").items[0].rect,
+            [100.0, 122.0, 300.0, 152.0]
+        );
+
+        let cropped = document_with(
+            vec![note],
+            dictionary! {
+                "CropBox" => vec![50.into(), 50.into(), 545.into(), 742.into()],
+            },
+        );
+        // Inset by (50, 50) and 692 tall: 50 left of where it was, 742 - 720 = 22
+        // from the top.
+        assert_eq!(
+            scan(&cropped, 1).expect("parse").items[0].rect,
+            [50.0, 22.0, 250.0, 52.0]
+        );
     }
 
     /// A sticky note with a body and an author.

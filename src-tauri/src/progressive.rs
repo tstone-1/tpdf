@@ -591,6 +591,47 @@ impl RawPage<'_> {
         unsafe { self.bindings.FPDF_GetPageHeightF(self.handle) }
     }
 
+    /// The page's lower-left corner in its own coordinate space.
+    ///
+    /// **Zero for most documents and load-bearing for the rest.** PDFium lays a
+    /// page out from its `/CropBox`, so [`width_pt`](Self::width_pt) is the
+    /// *cropped* size --- while `FPDFText_GetCharBox` answers in the page's own
+    /// space, whose origin is the `/MediaBox`'s. When the crop box starts
+    /// somewhere other than (0, 0) the two are different spaces, and combining
+    /// them puts every character, link and comment out by exactly this.
+    ///
+    /// Measured: a fixture with `/CropBox [50 50 545 742]` on `/MediaBox
+    /// [0 0 595 842]` renders 495x692 and lands **0%** of its character boxes on
+    /// ink, against 100% for the same page with no crop box. A crop box that
+    /// merely *shrinks* the page from the origin is fine, which is why the
+    /// origin rather than the size is what this returns.
+    ///
+    /// Falls back to (0, 0) when PDFium will not answer, which is the value that
+    /// changes nothing --- a page whose crop box cannot be read is then treated
+    /// exactly as it was before this existed.
+    pub fn origin_pt(&self) -> (f32, f32) {
+        let (mut left, mut bottom, mut right, mut top) = (0f32, 0f32, 0f32, 0f32);
+        // SAFETY: `self.handle` is non-null for the lifetime of `self`, and the
+        // four out-parameters are live for the call.
+        let ok = unsafe {
+            self.bindings.FPDFPage_GetCropBox(
+                self.handle,
+                &mut left,
+                &mut bottom,
+                &mut right,
+                &mut top,
+            )
+        };
+        // The box is normalised because a producer may write either corner
+        // first, and a non-finite value would poison every subtraction it
+        // reaches --- the same two rules `links.rs` applies to an annotation
+        // rectangle, and for the same reason.
+        if ok == 0 || ![left, bottom, right, top].iter().all(|v| v.is_finite()) {
+            return (0.0, 0.0);
+        }
+        (left.min(right), bottom.min(top))
+    }
+
     /// Quarter-turns clockwise the page is displayed rotated by: 0, 1, 2 or 3.
     ///
     /// `/Rotate` on the page dictionary, which a scanner sets routinely. Note

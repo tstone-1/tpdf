@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 266 entries
+The one thing this file does *not* carry in full is the trap list --- 267 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -870,8 +870,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 266 of them and the full text
-was 93% of this file --- an instruction budget spent on the 265 traps that are not
+titles. Only the titles are here, because there are 267 of them and the full text
+was 93% of this file --- an instruction budget spent on the 266 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -918,6 +918,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A pattern over folded text has no lines, so `^` means the page
 - `FPDFText_GetText` drops characters, so it cannot be indexed alongside boxes
 - A page carries `/Rotate`, and PDFium answers in two coordinate systems at once
+- PDFium lays a page out from its `/CropBox`, and everything else here read `/MediaBox` (the origin discriminates, not the size --- and the one real instance is too small to catch)
 - A line-grouping rule assumes an axis, and the axis is not always vertical
 - Two rotation tables, disagreeing at every turn but zero
 - PDFium's character order is not the page's line order

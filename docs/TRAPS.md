@@ -1931,6 +1931,41 @@ early, which is the failure a differential is least able to see. And **the two w
 the same bound**, or the difference between two limits is reported as a disagreement about
 destinations.
 
+### PDFium lays a page out from its `/CropBox`, and everything else here read `/MediaBox`
+
+A page has two boxes that matter: `/MediaBox` is the sheet, `/CropBox` is the part displayed.
+PDFium renders and measures the **crop** box --- `FPDF_GetPageWidthF` returns its width --- so the
+viewer's coordinate space starts at the crop box's lower-left corner.
+
+Three places disagreed with that, all silently:
+
+- **`links.rs` and `annots.rs`** computed the page from `/MediaBox` and mapped every rectangle
+  into it, so a link or a comment landed offset by the difference between the two corners.
+- **`text.rs`** was worse, because it mixed the two: the *size* came from PDFium (cropped) while
+  `FPDFText_GetCharBox` answers in the page's own space (media-origin). Every character box was
+  out by the crop origin.
+
+Measured, with the control that makes it a measurement: a fixture with `/CropBox [50 50 545 742]`
+on `/MediaBox [0 0 595 842]` renders 495x692 and landed its character boxes on ink **0%** of the
+time; the same page with no crop box landed **100%**.
+
+**The discriminating property is the crop box's origin, not its size.** A `/CropBox
+[0 0 545 742]` --- smaller, same corner --- passes both before and after the fix, because the
+flip against a smaller height is still the right flip. Only an origin away from (0, 0) breaks
+it. A fixture that merely shrinks the page tests nothing.
+
+**It is live, and the real instance is too small to catch.** One of the 43 PDFs on this machine
+carries `/CropBox [0 7.83 595.5 850.08]` on all ten pages. That 7.8-point offset misplaces every
+selection by about two thirds of a line --- and the "boxes land on ink" check still passes on it
+at 100%, because a 7.8-point shift on a glyph that size still overlaps ink. The committed fixture
+insets by 50 points for exactly that reason: **a fixture has to be able to fail.**
+
+Two details worth keeping. §14.11.2 says the crop box is **intersected** with the media box, and
+that is done rather than trusted --- a producer can write one larger than the sheet, and a page
+displayed bigger than its own paper is not a space to map coordinates into. And the shift is
+applied *before* the `/Rotate` turn, because `to_device` works in the displayed page's
+coordinates and the displayed page starts at the crop corner.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a

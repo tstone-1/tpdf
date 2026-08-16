@@ -71,6 +71,25 @@ have the binary.)
 
 - **Not here:** creating or editing a link, and opening one in a browser.
 
+### Pages displayed from a `/CropBox` put text and links in the right place
+
+- **A page has two boxes and tpdf read the wrong one.** `/MediaBox` is the sheet, `/CropBox` is
+  the part displayed — and PDFium lays out, renders and measures the crop box, so the viewer's
+  coordinates start at *that* corner. The link and comment scans read `/MediaBox`; text
+  extraction was worse, mixing PDFium's cropped size with character boxes in the page's own
+  space. Every rectangle and every character was offset by the difference, silently, on a page
+  that looks entirely normal.
+
+- **Measured with a control:** a page cropped to `[50 50 545 742]` landed its character boxes on
+  ink **0%** of the time; the same page uncropped landed 100%. Both are 100% now. What
+  discriminates is the crop box's *origin*, not its size — one that merely shrinks the page from
+  (0, 0) was always handled correctly.
+
+- **It is live.** One of the 43 PDFs on a real machine carries an off-origin crop box on all ten
+  pages, offsetting every selection by about two thirds of a line. Its 7.8 points are small
+  enough that the coarse check still passed on it, which is why the committed fixture insets by
+  50: a fixture has to be able to fail.
+
 ### The differential that found one bug now runs on every document
 
 - **It needed a manifest, so it ran on exactly one fixture.** `links-probe --mode agree`

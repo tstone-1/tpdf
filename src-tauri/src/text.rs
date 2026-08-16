@@ -335,6 +335,12 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     let height_pt = page.height_pt();
     let width_pt = page.width_pt();
     let turns = page.quarter_turns();
+    // The page's own origin, which is (0, 0) for most documents and is not for
+    // one with an inset `/CropBox`. PDFium reports the *cropped* size above and
+    // answers `FPDFText_GetCharBox` in the page's own space, so on such a
+    // document the two are different spaces --- see `RawPage::origin_pt`, where
+    // the measurement is.
+    let (origin_x, origin_y) = page.origin_pt();
 
     let text = RawTextPage::load(page)?;
     let count = text.count();
@@ -380,7 +386,16 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
         }
         match quad {
             Some(page_box) => {
-                boxes.extend_from_slice(&to_device(turns, width_pt, height_pt, page_box));
+                // Into crop space before the turn, because `to_device` works in
+                // the displayed page's coordinates and the displayed page starts
+                // at the crop box's corner.
+                let shifted = [
+                    page_box[0] - origin_x as f64,
+                    page_box[1] - origin_y as f64,
+                    page_box[2] - origin_x as f64,
+                    page_box[3] - origin_y as f64,
+                ];
+                boxes.extend_from_slice(&to_device(turns, width_pt, height_pt, shifted));
             }
             None => boxes.extend_from_slice(&[0.0; 4]),
         }

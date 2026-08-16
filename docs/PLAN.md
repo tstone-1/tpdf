@@ -1626,6 +1626,32 @@ are unverified in a real window; `BUILD.md` says so where the stale table is. Th
 `nav.back` and `nav.forward` reached a commit without being classified in the harness's own
 command audit, which is a check that exists and could not run.
 
+#### The page is the crop box, not the sheet — fixed 2026-08-16
+
+Found by asking a question the corpus could not answer: how many real documents does tpdf get
+*wrong*, rather than fail on. A page has a `/MediaBox` (the sheet) and may have a `/CropBox` (the
+part displayed), and **PDFium lays out, renders and measures the crop box** — so the viewer's
+coordinate space starts at that corner.
+
+Three places disagreed. `links.rs` and `annots.rs` computed the page from `/MediaBox`;
+`text.rs` was worse, mixing PDFium's cropped *size* with `FPDFText_GetCharBox`, which answers in
+the page's own space. Every rectangle and character was offset by the difference.
+
+**The measurement, with its control:** a fixture cropped to `[50 50 545 742]` on `[0 0 595 842]`
+renders 495×692 and landed its character boxes on ink **0%** of the time; the same page uncropped
+landed **100%**. Both are 100% now, and the link rectangle moves from `[100, 122, 300, 152]` to
+`[50, 22, 250, 52]` as it should.
+
+Two things about it are worth carrying. **The origin discriminates, not the size** — a crop box
+that merely shrinks the page from (0, 0) was always right, so a fixture that only shrinks tests
+nothing. And **the real instance is too small to catch**: the one document on this machine with
+an off-origin crop box is offset by 7.8 points, which still passes a check asking whether a box
+lands on ink. `links-cropped.pdf` insets by 50 for that reason.
+
+The gated half is the two `lopdf` scans, each with its own test and control and four mutations.
+The text half is covered by `text-probe` against the committed fixture rather than by
+`cargo test`, because it needs a live PDFium page — stated here rather than left to be assumed.
+
 #### Telling a locked document from a broken one — done 2026-08-16
 
 Small, and it corrects a claim tpdf was making about the reader's file. Both open paths reported
