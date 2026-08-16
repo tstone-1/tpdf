@@ -203,7 +203,7 @@ pub fn scan(bytes: &[u8], page_count: usize) -> Result<Links, String> {
     // offset, which is rarely the page the link sits on --- looking that up by
     // searching the page list per link is quadratic, on precisely the documents
     // that have the most links.
-    let geometry: Vec<(f32, f32, u8)> = pages
+    let geometry: Vec<PageBox> = pages
         .values()
         .take(page_count)
         .map(|page| page_geometry(&document, *page))
@@ -238,7 +238,7 @@ fn read_page(
     page: ObjectId,
     number: u32,
     numbers: &HashMap<ObjectId, u32>,
-    geometry: &[(f32, f32, u8)],
+    geometry: &[PageBox],
     items: &mut Vec<Link>,
     limits: &mut Limits,
 ) {
@@ -256,10 +256,12 @@ fn read_page(
         return;
     };
 
-    let (width, height, turns) = geometry
-        .get(number as usize)
-        .copied()
-        .unwrap_or((612.0, 792.0, 0));
+    let shown = geometry.get(number as usize).copied().unwrap_or(PageBox {
+        width: 612.0,
+        height: 792.0,
+        turns: 0,
+        origin: (0.0, 0.0),
+    });
     let mut on_this_page = 0usize;
 
     for entry in entries {
@@ -312,7 +314,7 @@ fn read_page(
             continue;
         }
 
-        let rect = rect_of(annot, document, width, height, turns);
+        let rect = rect_of(annot, document, shown);
         // A zero-area rectangle is unclickable, so keeping it would put a link
         // in the list that no reader can ever reach and every hit test has to
         // walk past.
@@ -344,7 +346,7 @@ fn target_of(
     annot: &Dictionary,
     document: &Document,
     numbers: &HashMap<ObjectId, u32>,
-    geometry: &[(f32, f32, u8)],
+    geometry: &[PageBox],
     limits: &mut Limits,
 ) -> Target {
     if let Ok(action) = annot.get(b"A") {
@@ -391,7 +393,7 @@ fn destination(
     dest: &Object,
     document: &Document,
     numbers: &HashMap<ObjectId, u32>,
-    geometry: &[(f32, f32, u8)],
+    geometry: &[PageBox],
     limits: &mut Limits,
 ) -> Target {
     match resolve(document, dest) {
@@ -407,7 +409,7 @@ fn named(
     key: &[u8],
     document: &Document,
     numbers: &HashMap<ObjectId, u32>,
-    geometry: &[(f32, f32, u8)],
+    geometry: &[PageBox],
     limits: &mut Limits,
 ) -> Target {
     let Ok(catalog) = document.catalog() else {
@@ -521,7 +523,7 @@ fn follow(
     value: &Object,
     document: &Document,
     numbers: &HashMap<ObjectId, u32>,
-    geometry: &[(f32, f32, u8)],
+    geometry: &[PageBox],
 ) -> Target {
     match resolve(document, value) {
         Object::Array(array) => place(array, document, numbers, geometry),
@@ -546,7 +548,7 @@ fn place(
     array: &[Object],
     document: &Document,
     numbers: &HashMap<ObjectId, u32>,
-    geometry: &[(f32, f32, u8)],
+    geometry: &[PageBox],
 ) -> Target {
     let Some(first) = array.first() else {
         return Target::Broken;
@@ -589,12 +591,7 @@ fn place(
 /// vertical axis is the page's horizontal one, so there is no offset to scroll
 /// to. `outline.rs` reaches the same answer through the same reasoning, and the
 /// honest interpretation of a destination with no coordinate is the page's top.
-fn top_of(
-    array: &[Object],
-    document: &Document,
-    geometry: &[(f32, f32, u8)],
-    page: u32,
-) -> Option<f32> {
+fn top_of(array: &[Object], document: &Document, geometry: &[PageBox], page: u32) -> Option<f32> {
     let fit = array.get(1).and_then(|object| match object {
         Object::Name(name) => Some(name.as_slice()),
         _ => None,
@@ -618,12 +615,14 @@ fn top_of(
     // The *destination* page's height, which is rarely the page the link is on:
     // a document may mix sizes, and flipping an offset against the wrong one
     // lands somewhere plausible and wrong on the right page.
-    let (_, height, turns) = *geometry.get(page as usize)?;
-    if turns != 0 {
+    let shown = *geometry.get(page as usize)?;
+    if shown.turns != 0 {
         return None;
     }
 
-    Some((height - raw).clamp(0.0, height))
+    // Into crop space first: a destination is written in the page's own
+    // coordinates, and the page is displayed from its crop box's corner.
+    Some((shown.height - (raw - shown.origin.1)).clamp(0.0, shown.height))
 }
 
 /// Every outline entry's destination, resolved through `lopdf`, in tree order.
@@ -670,7 +669,7 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
         .take(page_count)
         .map(|(number, id)| (*id, number.saturating_sub(1)))
         .collect();
-    let geometry: Vec<(f32, f32, u8)> = pages
+    let geometry: Vec<PageBox> = pages
         .values()
         .take(page_count)
         .map(|page| page_geometry(&document, *page))
@@ -711,7 +710,7 @@ fn walk_outline(
     document: &Document,
     first: ObjectId,
     numbers: &HashMap<ObjectId, u32>,
-    geometry: &[(f32, f32, u8)],
+    geometry: &[PageBox],
     seen: &mut HashSet<ObjectId>,
     out: &mut Vec<Target>,
     limits: &mut Limits,
@@ -765,30 +764,93 @@ fn refused(kind: &str) -> Target {
     }
 }
 
-/// The displayed page size and its quarter turns.
+/// A page's displayed size, its rotation, and where its own space starts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PageBox {
+    /// Displayed width in points, after `/Rotate`.
+    width: f32,
+    /// Displayed height in points, after `/Rotate`.
+    height: f32,
+    turns: u8,
+    /// The lower-left corner of the box the page is displayed from.
+    ///
+    /// Zero for most documents. Not zero for one whose `/CropBox` is inset, and
+    /// then it is the difference between a rectangle landing on its text and
+    /// landing somewhere else entirely --- see [`page_geometry`].
+    origin: (f32, f32),
+}
+
+/// The displayed page box: `/CropBox` where there is one, else `/MediaBox`.
+///
+/// **Reading `/MediaBox` alone was wrong, and the failure is silent.** PDFium
+/// lays a page out from its crop box, so the viewer's coordinates start at that
+/// box's corner --- while this used the media box, whose corner may be somewhere
+/// else. Every link and comment rectangle was then offset by the difference, on
+/// a page that looks entirely normal.
+///
+/// Measured before the fix: a fixture with `/CropBox [50 50 545 742]` on
+/// `/MediaBox [0 0 595 842]` renders 495x692 and put its character boxes on ink
+/// **0%** of the time, against 100% for the same page uncropped. One of the 43
+/// PDFs on this machine carries an off-origin crop box --- `[0 7.83 595.5
+/// 850.08]` on all ten pages --- so it is live rather than theoretical, and its
+/// 7.8-point offset is small enough that nothing coarse would have caught it.
+///
+/// §14.11.2 says the crop box is intersected with the media box, and that is
+/// done here rather than trusted: a producer may write a crop box larger than
+/// the sheet, and a page displayed bigger than its own paper is not something to
+/// map coordinates into.
 ///
 /// The same computation [`crate::annots`] does. It is not shared between them
-/// because sharing it would mean a public seam through one module into the
-/// other for four lines of arithmetic --- but they must agree, and
+/// because sharing it would mean a public seam through one module into the other
+/// for a dozen lines of arithmetic --- but they must agree, and
 /// `both_scans_agree_about_a_rotated_page` is the test that says they do.
-fn page_geometry(document: &Document, page: ObjectId) -> (f32, f32, u8) {
-    let media = inherited(document, page, b"MediaBox")
-        .and_then(|object| numbers_of(document, &object, 4))
-        .map(|box_| ((box_[2] - box_[0]).abs(), (box_[3] - box_[1]).abs()))
-        .filter(|(width, height)| {
-            width.is_finite() && *width > 0.0 && height.is_finite() && *height > 0.0
-        })
-        .unwrap_or((612.0, 792.0));
+fn page_geometry(document: &Document, page: ObjectId) -> PageBox {
+    let box_of = |key: &[u8]| {
+        inherited(document, page, key)
+            .and_then(|object| numbers_of(document, &object, 4))
+            .filter(|values| values.iter().all(|value| value.is_finite()))
+            .map(|v| {
+                [
+                    v[0].min(v[2]),
+                    v[1].min(v[3]),
+                    v[0].max(v[2]),
+                    v[1].max(v[3]),
+                ]
+            })
+            .filter(|b| b[2] > b[0] && b[3] > b[1])
+    };
+
+    let media = box_of(b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0]);
+    let shown = match box_of(b"CropBox") {
+        Some(crop) => [
+            crop[0].max(media[0]),
+            crop[1].max(media[1]),
+            crop[2].min(media[2]),
+            crop[3].min(media[3]),
+        ],
+        None => media,
+    };
+    // An intersection can be empty if the two boxes do not overlap, which is a
+    // malformed document rather than a page of no size. The media box is the
+    // honest fallback: it is the sheet, and §14.11.2 makes the crop box the
+    // thing being questioned.
+    let shown = if shown[2] > shown[0] && shown[3] > shown[1] {
+        shown
+    } else {
+        media
+    };
 
     let turns = inherited(document, page, b"Rotate")
         .and_then(|object| resolve(document, &object).as_i64().ok())
         .map(|degrees| (((degrees / 90) % 4 + 4) % 4) as u8)
         .unwrap_or(0);
 
-    if turns % 2 == 1 {
-        (media.1, media.0, turns)
-    } else {
-        (media.0, media.1, turns)
+    let (width, height) = (shown[2] - shown[0], shown[3] - shown[1]);
+    PageBox {
+        width: if turns % 2 == 1 { height } else { width },
+        height: if turns % 2 == 1 { width } else { height },
+        turns,
+        origin: (shown[0], shown[1]),
     }
 }
 
@@ -837,13 +899,7 @@ fn numbers_of(document: &Document, object: &Object, count: usize) -> Option<Vec<
 /// [`crate::annots`]'s, and through `text::to_device` for the same one: a page
 /// carrying `/Rotate` is described in its own unrotated space, and a second
 /// implementation of that turn is a second place to get it wrong.
-fn rect_of(
-    annot: &Dictionary,
-    document: &Document,
-    width: f32,
-    height: f32,
-    turns: u8,
-) -> [f32; 4] {
+fn rect_of(annot: &Dictionary, document: &Document, shown: PageBox) -> [f32; 4] {
     let Some(values) = annot
         .get(b"Rect")
         .ok()
@@ -855,23 +911,27 @@ fn rect_of(
         return [0.0, 0.0, 0.0, 0.0];
     }
 
+    // Shifted into crop space before the turn: `to_device` works in the
+    // displayed page's coordinates, and the displayed page starts at the crop
+    // box's corner rather than at the media box's.
+    let (ox, oy) = (shown.origin.0 as f64, shown.origin.1 as f64);
     let placed = crate::text::to_device(
-        turns,
-        width,
-        height,
+        shown.turns,
+        shown.width,
+        shown.height,
         [
-            values[0].min(values[2]) as f64,
-            values[1].min(values[3]) as f64,
-            values[0].max(values[2]) as f64,
-            values[1].max(values[3]) as f64,
+            values[0].min(values[2]) as f64 - ox,
+            values[1].min(values[3]) as f64 - oy,
+            values[0].max(values[2]) as f64 - ox,
+            values[1].max(values[3]) as f64 - oy,
         ],
     );
 
     [
-        placed[0].clamp(0.0, width),
-        placed[1].clamp(0.0, height),
-        placed[2].clamp(0.0, width),
-        placed[3].clamp(0.0, height),
+        placed[0].clamp(0.0, shown.width),
+        placed[1].clamp(0.0, shown.height),
+        placed[2].clamp(0.0, shown.width),
+        placed[3].clamp(0.0, shown.height),
     ]
 }
 
@@ -1925,6 +1985,102 @@ mod tests {
         assert_eq!(
             targets_of(&mut document, 2),
             vec![Target::Broken, Target::None],
+        );
+    }
+
+    /// A page displayed from an inset `/CropBox` places rectangles in *its*
+    /// space, not the media box's.
+    ///
+    /// **PDFium lays a page out from its crop box**, so the viewer's
+    /// coordinates start at that box's corner. Reading `/MediaBox` alone put
+    /// every rectangle out by the difference --- silently, on a page that looks
+    /// entirely normal. Measured before the fix on a fixture shaped like this
+    /// one: character boxes landed on ink 0% of the time against 100% uncropped.
+    ///
+    /// The control is the same page with **no** crop box, because a rule that
+    /// ignored the origin gives the right answer there and the wrong one here,
+    /// and only the pair can tell them apart.
+    #[test]
+    fn a_cropped_page_places_a_rectangle_in_the_crop_box_s_space() {
+        let make = |crop: Option<Vec<Object>>| {
+            let mut document = Document::with_version("1.7");
+            let pages_id = document.new_object_id();
+            let annot =
+                document.add_object(link(vec![100.into(), 690.into(), 300.into(), 720.into()]));
+            let mut page = dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+                "Annots" => vec![Object::Reference(annot)],
+            };
+            if let Some(crop) = crop {
+                page.set("CropBox", crop);
+            }
+            let page_id = document.add_object(page);
+            document.objects.insert(
+                pages_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => "Pages",
+                    "Kids" => vec![page_id.into()],
+                    "Count" => 1,
+                }),
+            );
+            let catalog = document.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            document.trailer.set("Root", catalog);
+            let mut bytes = Vec::new();
+            document.save_to(&mut bytes).expect("save");
+            scan(&bytes, 1).expect("parse").items[0].rect
+        };
+
+        // No crop box: the page is 595x842 from (0, 0), and 842 - 720 = 122.
+        assert_eq!(make(None), [100.0, 122.0, 300.0, 152.0]);
+
+        // Inset by (50, 50) and 495x692 tall. The same rectangle is 50 to the
+        // left of where it was, and 742 - 720 = 22 from the top.
+        let cropped = make(Some(vec![50.into(), 50.into(), 545.into(), 742.into()]));
+        assert_eq!(cropped, [50.0, 22.0, 250.0, 52.0]);
+    }
+
+    /// A `/CropBox` larger than the sheet is intersected with it, per §14.11.2.
+    ///
+    /// A producer can write one, and a page displayed bigger than its own paper
+    /// is not a space to map coordinates into --- every rectangle would be
+    /// scaled against a size the renderer never uses.
+    #[test]
+    fn a_crop_box_larger_than_the_page_is_intersected_with_it() {
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let annot = document.add_object(link(vec![100.into(), 690.into(), 300.into(), 720.into()]));
+        let page_id = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "CropBox" => vec![(-100).into(), (-100).into(), 900.into(), 1200.into()],
+            "Annots" => vec![Object::Reference(annot)],
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("save");
+
+        // Identical to the uncropped answer: the intersection is the media box.
+        assert_eq!(
+            scan(&bytes, 1).expect("parse").items[0].rect,
+            [100.0, 122.0, 300.0, 152.0]
         );
     }
 

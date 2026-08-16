@@ -287,7 +287,23 @@ scan at 1,000 and anything after that is never read. Both are in `docs/TRAPS.md`
 found by the fixture failing to discriminate rather than by review.
 
 `make_links_pdf.py` is the fourth `scripts/ci_fixtures.py` builds on a runner, and
-dependency-free for the same reason. Two things about it carry the same kind of intent as
+dependency-free for the same reason. It writes **three** files, and the third is worth knowing
+about before reading a green `text-probe`: `links-cropped.pdf` has a `/CropBox` inset 50 points
+from its `/MediaBox`, which is the case PDFium lays out differently from the sheet and which the
+scans got wrong until 2026-08-16. Run `text-probe` against it as well as `links-probe` --- the
+text half of that fix is covered by the probe rather than by `cargo test`, because it needs a
+live PDFium page:
+
+```sh
+cargo run --release --manifest-path src-tauri/Cargo.toml --example text-probe -- \
+    testdata/links-cropped.pdf     # character boxes land on ink: 96.4% (0% before the fix)
+cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+    testdata/links-cropped.pdf --mode check    # 6/6, 2 skipped
+```
+
+96.4% rather than 100% is correct and not a near-miss: the fixture's text runs past the crop
+box's bottom edge, so the characters the crop hides have boxes outside the rendered page. A
+fixture whose every glyph sat inside the crop would not exercise that. Two things about it carry the same kind of intent as
 the comment fixture's. Its **outline points at the same destinations its links do**, which is
 what makes `links-probe --mode agree` able to compare tpdf's two destination resolvers at all;
 delete the outline and that mode still runs, still prints a count and can no longer fail.
