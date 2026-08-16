@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 242 entries
+The one thing this file does *not* carry in full is the trap list --- 248 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -474,6 +474,22 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
+**Comments are read through `lopdf`, not through PDFium, and that is a measurement rather
+than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
+anything was written --- but every one of them needs an `FPDF_PAGE`, and `FPDF_LoadPage`
+re-parses each time at up to 44 ms on a complex page. The panel's question is about the whole
+document, so through PDFium it is a page load per page; through the object graph it is one
+parse the file already needs for `encoding.rs`, at 0.1 ms on a small document and 11.9 ms on
+the 337 MB scan. `pdfium-render` also does not expose `/IRT` at all, so a reply arrives there
+as an unrelated second note by another author.
+
+**What PDFium does supply is the marks themselves**, and that is why no drawing was added.
+`progressive.rs` renders with `FPDF_ANNOT`, so a sticky note's icon and a highlight's wash are
+painted inside the tiles --- measured on a fixture carrying no appearance streams at all,
+where PDFium generates them: the note icon fills 637 of the 756 pixels in its own rectangle,
+the highlight 6,690 of 9,436, and a `/Popup` correctly draws nothing. What no reader could
+reach before `annots.rs` was the *text*.
+
 Two crates carry the search, and this sentence said **three** while naming one until
 2026-08-01 --- which is the counting-in-prose failure this file records elsewhere about the trap
 list, arriving in the section where a missing dependency matters most.
@@ -844,8 +860,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 242 of them and the full text
-was 93% of this file --- an instruction budget spent on the 235 traps that are not
+titles. Only the titles are here, because there are 248 of them and the full text
+was 93% of this file --- an instruction budget spent on the 241 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -914,6 +930,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Two broken `/ToUnicode` entries can decode to one valid astral character
 - A change predicted to fix three things fixed two, and the third was never the same problem
 - PDFium normalises ligatures too, so the cost of case folding was smaller than stated
+- A body's newlines live below the table that decodes it
 
 ### The worker boundary, the sandbox and the pool
 - macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
@@ -954,6 +971,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An incremental save is cheap on disk, not in memory --- and its cost is the parse
 - An object a prior revision overwrote is reachable by no parser
 - A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
+- A shortcut can produce the right answer and lose the report
+- A panel that lists a hidden comment must not let the page open it
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1039,6 +1058,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A class used with `instanceof` must not live in a module the tests mock wholesale
 - A command deliberately left out of the window harness still has to be classified (the count reasoning was right and the run was red anyway)
 - A refusal that carries a `NaN` is not equal to itself, and both sides print the same (an assertion that cannot *pass* --- the loud direction, and it reads as a broken harness)
+- Testing a rule is not testing that the rule is used (a mutation that survives may be aimed at one route into the rule rather than at the rule)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1136,6 +1156,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - The test fixtures are generated, not committed
 - A stand-in glyph with a degenerate box measures the wrong rule
 - A fixture's self-check forbade its own finding
+- A square fixture cannot tell a rotation from an identity
+- A bound in the code hides everything after it in the fixture
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

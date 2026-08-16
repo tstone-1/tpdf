@@ -211,6 +211,10 @@ name = "outline-probe"
 path = "examples/outline_probe.rs"
 
 [[example]]
+name = "comments-probe"
+path = "examples/comments_probe.rs"
+
+[[example]]
 name = "search-probe"
 path = "examples/search_probe.rs"
 

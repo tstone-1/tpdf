@@ -309,6 +309,10 @@ fn handle(
             Err(e) => Response::err(e),
         },
         Request::Outline => Response::json(&render::run_outline(document)),
+        Request::Comments => match render::run_comments(document) {
+            Ok(comments) => Response::json(&comments),
+            Err(e) => Response::err(e),
+        },
         Request::Mapping => Response::json(&render::run_mapping(document)),
     }
 }

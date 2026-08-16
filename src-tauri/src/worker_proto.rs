@@ -74,6 +74,12 @@ pub enum Request {
     },
     /// Read the document's outline.
     Outline,
+    /// Read every comment in the document.
+    ///
+    /// Document-level and lazy, like [`Request::Mapping`] and for the same two
+    /// reasons: it costs an `lopdf` parse, and nothing on the startup path wants
+    /// it. A reader who never opens the comments panel never pays for it.
+    Comments,
     /// Report, per page, whether the text means anything or PDFium is guessing.
     ///
     /// Document-level and lazy: it costs a full `lopdf` parse, so it is asked for
@@ -256,6 +262,7 @@ mod tests {
                 carry: None,
             },
             Request::Outline,
+            Request::Comments,
         ] {
             let line = serde_json::to_string(&request).expect("serialise");
             let back: Request = serde_json::from_str(&line).expect("deserialise");

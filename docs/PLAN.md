@@ -1364,7 +1364,8 @@ discovery.
   the palette or in context.
 - **Keyboard-first,** every command bindable, Sumatra-familiar navigation.
 - **No modal dialogs for routine work.**
-- **Sidebar** with thumbnails, outline, annotations and search results as tabs.
+- **Sidebar** with thumbnails, outline, annotations and search results as tabs. All four
+  exist as of 2026-08-16; the annotations tab is read-only --- see *Reading comments* below.
 - Dark and light themes following the system.
 
 **Accessibility is an architectural constraint, not a later pass.** A canvas-rendered,
@@ -1485,6 +1486,46 @@ on both platforms.
 
 **Exit criterion:** tpdf is the daily default for reading. If it is not, it is not
 finished.
+
+#### Reading comments — done 2026-08-16
+
+Annotations were scheduled in Phase 2, alongside creating them, and reading them turns out to
+belong here instead: a reviewed document already opens in tpdf with coloured boxes in it and
+not one word of what anybody wrote, which is a *reading* defect. Nothing in it needs the
+working document, the journal or a save, so it landed against Phase 1's exit criterion rather
+than waiting for Phase 2's.
+
+**Marks were never the missing half.** `progressive.rs` renders with `FPDF_ANNOT`, so PDFium
+already paints a sticky note's icon and a highlight's wash --- generating an appearance stream
+where the file supplies none, measured at 637 of the 756 pixels inside a note's own rectangle
+and 6,690 of 9,436 inside a highlight's. What was missing was the author, the date, the body
+and the reply, and `annots.rs` reads all four out of the object graph.
+
+Three decisions worth carrying forward, because Phase 2 will meet each of them again when it
+starts *writing* annotations:
+
+- **The scan is `lopdf` at document level, not PDFium per page.** PDFium's annotation API
+  needs a loaded page and `FPDF_LoadPage` costs up to 44 ms on a complex one, so listing a
+  document's comments through it is a page load per page. The object graph answers the same
+  question from one parse --- the parse `encoding.rs` already pays for --- and hands over
+  `/IRT`, which `pdfium-render` does not expose at all.
+- **The reply graph is made acyclic in the backend.** A file can make `/IRT` a loop in two
+  objects, and every consumer would otherwise need a visited set. `resolve_replies` cuts the
+  link that closes a loop and counts it, so the panel walks a thread with no guard of its own.
+- **No field the frontend receives can carry a URL.** The kind is an enum of ours rather than
+  the document's `/Subtype`, the date is rebuilt from parsed digits rather than passed through,
+  and `no_comment_field_may_carry_a_url` is the exhaustive-match test that says so --- the same
+  arrangement `outline.rs` has with `Target`, and the reason `docs/THREAT-MODEL.md` T8 still
+  holds now that a document's own prose reaches the DOM in quantity.
+
+`testdata/comments.pdf` is the corpus and `examples/comments-probe` reads it (28/28, plus a
+`--mode clean` control on a document with no annotations). It found nothing in the product ---
+it was written first --- but it found two defects in itself, both recorded in `docs/TRAPS.md`:
+a square rectangle that could not tell a rotation from an identity, and three malformed
+`/Annots` entries written after 1,200 notes, which the per-page bound meant nothing ever read.
+
+**What is deliberately not here:** creating, editing or deleting a comment, and any change to
+the file. That is Phase 2 and needs the working document.
 
 #### Multilingual search — corpus done 2026-08-01
 
@@ -4198,6 +4239,12 @@ recovery, external-modification handling.
 Page operations: reorder by dragging thumbnails, rotate, delete, insert, extract, split,
 merge, crop. Annotations: highlight, underline, strikeout, notes, ink, shapes, text boxes,
 stamps — as real PDF annotation objects.
+
+**Reading them is already done** (Phase 1, *Reading comments*): `annots.rs` extracts every
+markup annotation with its author, date, body and reply, the sidebar lists them and a note
+opens on the page. What Phase 2 adds is the writing half, and it inherits two things from
+that work --- the `Kind` enum, which is the set of subtypes tpdf understands, and the rule
+that a reply is `/IRT` plus `/RT /R` rather than a nesting of its own.
 
 **Exit criterion:** a document can be marked up, saved, reopened in Acrobat and Preview,
 and look right.

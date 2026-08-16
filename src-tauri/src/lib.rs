@@ -8,6 +8,7 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+pub mod annots;
 pub mod diag;
 pub mod docmodel;
 pub mod encoding;
@@ -458,6 +459,27 @@ async fn document_outline(
     let (reply, rx) = reply_channel();
     service.outline(doc, reply);
     await_reply("document_outline", rx).await
+}
+
+/// Reads every comment in a document --- notes, highlights, replies.
+///
+/// Document-level rather than per page, because the answer comes from one
+/// `lopdf` parse of the whole file: asking per page would repeat that parse
+/// once per page to return a slice of the same list. Lazy for the reason
+/// `document_mapping` is --- it is off the startup path, and a reader who never
+/// opens the comments panel never pays for it.
+///
+/// A failure is an error rather than an empty list. "This document has no
+/// comments" and "this document could not be read" are different things to tell
+/// a reader, and the frontend shows them differently. See `annots.rs`.
+#[tauri::command]
+async fn document_comments(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+) -> Result<annots::Comments, String> {
+    let (reply, rx) = reply_channel();
+    service.comments(doc, reply);
+    await_reply("document_comments", rx).await
 }
 
 /// Reports, per page, whether the text means anything or PDFium is guessing.
@@ -1280,6 +1302,7 @@ pub fn run() {
             page_text,
             search_page,
             document_outline,
+            document_comments,
             document_mapping,
             launch_open_event,
             take_launch_paths,

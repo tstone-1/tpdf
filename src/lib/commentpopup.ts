@@ -1,0 +1,230 @@
+/**
+ * The note that opens when a reader clicks a mark on the page.
+ *
+ * The sidebar answers "what did people say about this document"; this answers
+ * "what does *this* mark say", which is the question somebody actually has while
+ * reading. Acrobat puts the same thing behind a hover, and a hover is the wrong
+ * gesture for text you want to read: it closes when you move towards it.
+ *
+ * ## It is anchored to the mark, and follows it
+ *
+ * The popup is positioned from the comment's rectangle in window coordinates, so
+ * it moves with the page under a scroll, a zoom or a rotation --- the caller
+ * repositions it every frame while it is open. A popup that stayed where it was
+ * opened would, one flick later, be pointing at a different paragraph and would
+ * look like it belonged to that one.
+ *
+ * ## It is clamped to the viewport, never off it
+ *
+ * A comment near the right edge of a wide page would otherwise open past the
+ * window. Preferred placement is to the right of the mark and level with its
+ * top; when there is no room it flips to the left, and it is clamped vertically
+ * either way. The clamp is the reason the mark's rectangle is passed in whole
+ * rather than as a point.
+ *
+ * ## Nothing here builds markup from a document string
+ *
+ * `textContent` only, for every field that came out of the file. See
+ * `commentlist.ts` and `docs/THREAT-MODEL.md` T8.
+ */
+
+import { bylineOf, labelFor, type Comment } from "./comments";
+
+/** Width of the popup, in CSS pixels. */
+export const POPUP_WIDTH = 280;
+
+/** Gap between the mark and the popup, in CSS pixels. */
+const GAP = 10;
+
+/** Margin kept between the popup and the window's edges, in CSS pixels. */
+const MARGIN = 8;
+
+/** A rectangle in the host's coordinates, which is what the viewer computes. */
+export interface Anchor {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** The note shown for one comment, with its replies under it. */
+export class CommentPopup {
+  private readonly host: HTMLElement;
+  private readonly element: HTMLElement;
+  private readonly onClose: () => void;
+  private shown: number | null = null;
+
+  constructor(host: HTMLElement, onClose: () => void) {
+    this.host = host;
+    this.onClose = onClose;
+
+    this.element = document.createElement("div");
+    this.element.setAttribute("role", "dialog");
+    this.element.setAttribute("aria-label", "Comment");
+    this.element.tabIndex = -1;
+    this.element.style.cssText =
+      "position:absolute;display:none;z-index:5;box-sizing:border-box;" +
+      `width:${POPUP_WIDTH}px;max-height:60%;overflow-y:auto;` +
+      "padding:0.6rem 0.7rem;border-radius:8px;" +
+      "background:Canvas;color:CanvasText;" +
+      "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
+      "box-shadow:0 6px 24px rgba(0,0,0,0.25);" +
+      "font:13px/1.45 system-ui,-apple-system,sans-serif;";
+    // A press inside must not reach the page underneath, where it would start a
+    // text selection and --- because the press lands outside the mark --- close
+    // the popup the reader is trying to read.
+    this.element.addEventListener("pointerdown", (event) => event.stopPropagation());
+    this.element.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.onClose();
+    });
+
+    host.appendChild(this.element);
+  }
+
+  /** The comment currently shown, or `null`. */
+  get openId(): number | null {
+    return this.shown;
+  }
+
+  /** The popup element. For the check harness. */
+  get node(): HTMLElement {
+    return this.element;
+  }
+
+  /** What the popup says, read back out of the DOM. For the check harness. */
+  get text(): string {
+    return this.element.textContent ?? "";
+  }
+
+  /**
+   * Shows `comment` with `replies` under it, anchored to `at`.
+   *
+   * `focus` moves the keyboard into the popup, which is right when the reader
+   * asked for it from the sidebar --- they are already on the keyboard --- and
+   * wrong when they clicked the mark, where it would take focus off the page and
+   * stop the arrow keys scrolling.
+   */
+  show(comment: Comment, replies: readonly Comment[], at: Anchor, focus: boolean): void {
+    this.shown = comment.id;
+    this.element.replaceChildren(
+      header(comment),
+      ...(comment.subject.trim() ? [subject(comment)] : []),
+      body(comment),
+      ...replies.map((reply) => replyBlock(reply)),
+    );
+    this.element.style.display = "block";
+    this.place(at);
+    if (focus) this.element.focus();
+  }
+
+  /** Hides the popup. Safe to call when it is already hidden. */
+  hide(): void {
+    this.shown = null;
+    this.element.style.display = "none";
+    this.element.replaceChildren();
+  }
+
+  /**
+   * Moves the popup to a new anchor, without rebuilding it.
+   *
+   * Called every frame while it is open, so it does no work beyond two style
+   * writes --- and it reads the host's size each time rather than caching it,
+   * because the window can be resized while a popup is open and a cached size
+   * would put the clamp somewhere the window no longer is.
+   */
+  place(at: Anchor): void {
+    if (this.shown === null) return;
+    const width = this.host.clientWidth;
+    const height = this.host.clientHeight;
+    const own = this.element.offsetHeight || 0;
+
+    // To the right of the mark, or to its left when there is no room. Compared
+    // against the *window*, not against the page: a page narrower than the
+    // window has room to its right even when the mark is at its edge.
+    const rightOf = at.right + GAP;
+    const left =
+      rightOf + POPUP_WIDTH + MARGIN <= width
+        ? rightOf
+        : Math.max(MARGIN, at.left - GAP - POPUP_WIDTH);
+
+    const top = Math.max(
+      MARGIN,
+      Math.min(at.top, Math.max(MARGIN, height - own - MARGIN)),
+    );
+
+    this.element.style.left = `${Math.round(left)}px`;
+    this.element.style.top = `${Math.round(top)}px`;
+  }
+}
+
+/** Who wrote it, when, and what kind of mark it is. */
+function header(comment: Comment): HTMLElement {
+  const row = document.createElement("div");
+  row.style.cssText =
+    "display:flex;gap:0.5rem;align-items:baseline;margin-bottom:0.35rem;";
+
+  const who = document.createElement("strong");
+  who.textContent = comment.author.trim() || "Unknown";
+  who.style.cssText = "flex:1;min-width:0;overflow-wrap:anywhere;";
+
+  const kind = document.createElement("span");
+  kind.textContent = labelFor(comment.kind);
+  kind.style.cssText = "flex:none;opacity:0.6;font-size:0.85em;";
+
+  row.append(who, kind);
+
+  const when = document.createElement("div");
+  when.textContent = comment.date ?? "";
+  when.style.cssText = "opacity:0.6;font-size:0.85em;margin-top:-0.3rem;";
+  if (!comment.date) when.style.display = "none";
+
+  const wrapper = document.createElement("div");
+  wrapper.append(row, when);
+  return wrapper;
+}
+
+/** The `/Subj` line, which Acrobat shows as a title above the body. */
+function subject(comment: Comment): HTMLElement {
+  const element = document.createElement("div");
+  element.textContent = comment.subject;
+  element.style.cssText = "font-weight:600;margin-bottom:0.2rem;overflow-wrap:anywhere;";
+  return element;
+}
+
+/**
+ * The comment's own words.
+ *
+ * `white-space:pre-wrap` because `annots.rs` keeps a body's paragraphs, and a
+ * two-paragraph note rendered as one is a note somebody wrote differently.
+ */
+function body(comment: Comment): HTMLElement {
+  const element = document.createElement("div");
+  const text = comment.body.trim();
+  element.textContent = text || `${labelFor(comment.kind)}, no comment`;
+  element.style.cssText =
+    "white-space:pre-wrap;overflow-wrap:anywhere;" +
+    (text ? "" : "opacity:0.6;font-style:italic;");
+  return element;
+}
+
+/** One reply, under a rule, with its own byline. */
+function replyBlock(reply: Comment): HTMLElement {
+  const element = document.createElement("div");
+  element.style.cssText =
+    "margin-top:0.55rem;padding-top:0.5rem;" +
+    "border-top:1px solid color-mix(in srgb, currentColor 15%, transparent);";
+
+  const who = document.createElement("div");
+  who.textContent = bylineOf(reply);
+  who.style.cssText = "opacity:0.6;font-size:0.85em;margin-bottom:0.15rem;";
+
+  const said = document.createElement("div");
+  said.textContent = reply.body;
+  said.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;";
+
+  element.append(who, said);
+  return element;
+}

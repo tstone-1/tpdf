@@ -6631,3 +6631,141 @@ Two habits follow.
   and compares the names, so it reported `1 red, but NOT the expected one` and named the
   substitute. That cross-check is what converted a passing result into a finding; without it
   the general property test would still be carrying a reputation it had not earned.
+
+### A body's newlines live below the table that decodes it
+
+A PDF text string with no byte-order mark is PDFDocEncoded, and `lopdf` ships that table, which
+is worth using rather than transcribing: a table typed out from the specification is a second
+authority that agrees with itself. Its `PDF_DOC_ENCODING` is built from **glyph names**, and no
+glyph is named for a control character --- so every entry below 0x18 is `None`, and
+`bytes_to_string` skips what it cannot map.
+
+For a bookmark title that is invisible. For a **comment body** it is the content: a
+two-paragraph note decodes to one paragraph, with the words intact and the shape gone. Nothing
+in the round trip looks wrong, because nothing was replaced --- the newline is simply not in the
+output.
+
+`annots.rs` therefore decodes in runs: bytes at 0x18 and above go through `lopdf`, and tab and
+the two newline characters are emitted here. That is the specification's own reading --- Table
+D.2 gives PDFDocEncoding the same HT, LF and CR as ASCII --- so this is restoring the table's
+intent rather than departing from it.
+
+**The sentinel in `pdf_doc_encoded` is load-bearing and looks like a hack.** The table is not
+exported; the way in is `lopdf::decode_text_string`, which sniffs a byte-order mark at the start
+of whatever it is handed. A run begins wherever the previous control character ended, so a body
+reading `a\nþÿ…` hands it a run starting `FE FF` and gets the rest read as UTF-16. An ASCII `A`
+in front makes that impossible, and one character is dropped afterwards.
+
+Two more things about that function are worth knowing before reusing it. Its UTF-16 branch is
+`String::from_utf16`, which fails the **whole string** on one bad code unit --- the trap
+`outline.rs` records --- and its UTF-8 branch does not strip the byte-order mark it just matched,
+so the result begins with U+FEFF. Both are why `annots.rs` keeps its own branches for those two
+encodings and delegates only the third.
+
+### Testing a rule is not testing that the rule is used
+
+`sanitize_body` keeps a comment's paragraphs where `sanitize_title` collapses them, and there is
+a unit test asserting exactly that, comparing the two functions on the same input. It passes
+whether or not any comment is ever routed through it.
+
+The mutation that proves the point sets the routing condition to `false`, so every body is
+flattened as a title. The suite stayed green: the test calls `sanitize_body` **directly**, and
+the code that decides which flattener a body reaches has no test at all. A reader would have got
+one-line comments out of a module whose tests all pass and whose doc comment explains why they
+must not be one line.
+
+The fix is a test that reads a body **out of a document** --- and a second one asserting the
+mirror, that an author *is* flattened, since routing everything through `sanitize_body` would
+otherwise look correct. Two tests for one `if`, which is what a conditional with two arms costs
+when both matter.
+
+**The same mutation run has a second instance of this, from the other direction.** A mutation
+aimed at `decode_text_string`'s call to `pdf_doc_encoded` inside its loop also survived: the loop
+flushes only when it meets a control character, the fixture body has none, and the *other* call
+site --- the flush after the loop --- did all the work. Aiming inside the function caught it
+immediately.
+
+So: **when a mutation survives, ask whether it was aimed at the rule or at one route into the
+rule.** A pure function with several callers is exactly where those two come apart, and the
+answer is not always a new fixture --- here it was one test at a different level, and one
+mutation moved four lines.
+
+### A shortcut can produce the right answer and lose the report
+
+`resolve_replies` breaks `/IRT` cycles so the panel can walk a thread with no visited set. A
+comment replying to itself is the one-element cycle, and the first draft handled it in the
+proposal step: `(*target != index).then_some(*target)`, with a comment saying the walk below
+would catch it too but that naming it here kept the walk's job to chains.
+
+Both halves of that were true and the result was wrong. The link was dropped, `reply_to` came
+back `None`, every assertion about the resulting tree passed --- and `limits.cycles` stayed at
+zero, so the panel told the reader the list was complete. The module's stated rule is that every
+cut is counted, and the shortcut satisfied the first clause while silently failing the second.
+
+The test that found it asserts **both**: the link is gone *and* the cut is reported. The fix was
+to delete the special case and let the walk see it, which is one line shorter and reports
+correctly.
+
+Worth generalising, because the shape recurs wherever a bound and its report are separate
+statements: **an early return that produces the correct value is not equivalent to the general
+path, if the general path also records something.** Check what the shortcut skips, not only what
+it returns.
+
+### A square fixture cannot tell a rotation from an identity
+
+The rotated page in `comments.pdf` first carried a note at `/Rect [20 20 44 44]` --- a
+24-point square 20 points in from the corner. Under `/Rotate 90` the display mapping sends
+`[left, bottom, right, top]` to `[bottom, left, top, right]`, and for that rectangle the answer
+is **the input**. The probe's check passed, the unit test's check passed, and a mapping that had
+been deleted entirely would have passed both.
+
+It is the fixed point of the transform, and it is easy to write by accident: a square annotation
+at a symmetric offset is the most natural thing to put in a fixture. The half-plane assertion
+that ran beside it (`y is near the top of the page`) did discriminate, which is what makes this
+worth writing down rather than merely fixing --- the check was sound and the *fixture* could not
+support a stronger one.
+
+The rectangle is `[20 30 44 90]` now, and the manifest states the full expected result rather
+than a half-plane. A transposition --- x and y swapped --- is what that catches and the previous
+pair did not.
+
+General rule, alongside "whatever a fixture is meant to discriminate, it needs two of": **for a
+geometric transform, choose a fixture that is not a fixed point of it.** Asymmetric in both axes,
+and off-centre.
+
+### A bound in the code hides everything after it in the fixture
+
+`comments.pdf`'s hostile page carries three deliberately malformed `/Annots` entries: a
+reference to an object that does not exist, an integer, and a string. It also carries 1,200
+notes, to trip a per-page bound of 1,000.
+
+The first draft appended the malformed entries **after** the crowd, because the generator's
+`finish()` took them as a parameter and put them at the end. The scan reached the bound at entry
+1,000 and returned, so none of the three was ever read: `unreadable` came back as 1 --- the
+no-subtype annotation, which happened to be written earlier --- rather than 4. The fixture
+looked as though it covered three cases it never delivered, and the count that revealed it was
+in the `read` mode of the probe rather than in any assertion.
+
+**When a fixture's consumer is bounded, the fixture's order is part of the fixture.** Anything
+past the bound is decoration. It is worth asserting the count a bounded-input fixture expects
+--- the manifest now names `unreadable: 4` --- because a silent 1 reads exactly like a scan
+that is working.
+
+### A panel that lists a hidden comment must not let the page open it
+
+`/F` bit 2 marks an annotation hidden, and PDFium does not draw it. Two consumers want opposite
+things from that fact, and writing one rule for both gets one of them wrong.
+
+The **panel** lists it. Somebody wrote it, it is in the file, and a reader who opens the comments
+tab to find out what was said about this document is asking for exactly that. It is drawn with a
+`hidden` flag beside it, because a reader who then goes looking for the mark on the page will not
+find one.
+
+The **page** must not open it. `hitTest` skips it: there is no mark under the pointer, so a hit
+would be a note attributed to a rectangle showing nothing --- and the rectangle is still in the
+file, so without the rule an invisible clickable region sits over the page.
+
+The two rules live in different functions and are tested separately, which is the point worth
+recording: a single `hidden` predicate consulted in one place would have made the panel's row
+disappear or the page's dead zone appear, and either would have looked like the same decision
+being applied consistently.

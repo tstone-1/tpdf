@@ -2,11 +2,11 @@
  * The sidebar: the outline, and a strip of page thumbnails.
  *
  * `docs/PLAN.md` §8 wants four tabs here --- thumbnails, outline, annotations,
- * search results --- and two of them exist. The chrome was built with the first
+ * search results --- and all four now exist. The chrome was built with the first
  * one for exactly this reason: the *second* tab is otherwise the one that has to
  * introduce it, by which point something else is positioned against its absence.
  *
- * ## The two tabs are not equals, and the code says so
+ * ## The tabs are not equals, and the code says so
  *
  * An outline is read once, bounded at 10,000 entries, and costs nothing to
  * produce. A thumbnail is a Pdfium render call --- 1.5 s each on the A0 sheet ---
@@ -52,6 +52,8 @@ import {
   type Outline,
   type Row,
 } from "./outline";
+import { CommentList, type CommentListOptions } from "./commentlist";
+import type { Comments } from "./comments";
 import { Results, type ResultsOptions } from "./results";
 import { Thumbnails, type ThumbnailOptions } from "./thumbnails";
 
@@ -62,13 +64,15 @@ const INDENT = 14;
 const WIDTH = 260;
 
 /** Which panel is showing. */
-export type Tab = "outline" | "pages" | "results";
+export type Tab = "outline" | "pages" | "results" | "comments";
 
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
   onNavigate: (page: number, top: number | null) => void;
   /** What the results tab needs. */
   results: ResultsOptions;
+  /** What the comments tab needs. */
+  comments: CommentListOptions;
   /**
    * What the page strip needs, or absent for no strip at all.
    *
@@ -99,6 +103,7 @@ export class Sidebar {
   private readonly tree: HTMLElement;
   private readonly strip: Thumbnails | null = null;
   private readonly hits: Results;
+  private readonly notes: CommentList;
   private showing: Tab = "outline";
   private visibleNow = true;
 
@@ -180,6 +185,10 @@ export class Sidebar {
     this.host.appendChild(resultsPanel);
     this.hits = new Results(resultsPanel, opts.results);
 
+    const commentsPanel = this.panel("comments", "Comments");
+    this.host.appendChild(commentsPanel);
+    this.notes = new CommentList(commentsPanel, opts.comments);
+
     root.appendChild(this.host);
     this.selectTab("outline");
   }
@@ -243,6 +252,16 @@ export class Sidebar {
   /** The search-results panel. */
   get results(): Results {
     return this.hits;
+  }
+
+  /** The comments panel. */
+  get comments(): CommentList {
+    return this.notes;
+  }
+
+  /** Replaces the comments shown. `null` is a document that could not be read. */
+  setComments(comments: Comments | null): void {
+    this.notes.setComments(comments);
   }
 
   /**

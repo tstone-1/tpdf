@@ -19,6 +19,50 @@ have the binary.)
 
 ## [26.8.3] - Unreleased
 
+### Comments can be read
+
+- **A reviewed document opened as a document with coloured boxes in it.** PDFium already
+  paints the marks --- `FPDF_ANNOT` has been on since the first render, and it generates an
+  appearance stream where a file supplies none, measured at 637 of the 756 pixels inside a
+  sticky note's own rectangle. What no reader could reach was the *text*: the author, the
+  date, the body and the reply.
+
+- **A fourth sidebar tab lists every comment**, threads replies under what they answer, and
+  says so when the scan had to cut something. **Pressing a mark on the page opens its note**,
+  anchored to the mark and following it through a scroll, a zoom and a rotation; Escape or a
+  press elsewhere closes it. Picking a row opens the same note and moves the keyboard into it.
+
+- **The scan is `lopdf` at document level rather than PDFium per page**, which is a
+  measurement rather than a preference: PDFium's annotation API needs a loaded page, and
+  `FPDF_LoadPage` costs up to 44 ms on a complex one, so listing a document's comments that
+  way is a page load per page. It also does not expose `/IRT` at all, so a reply arrives there
+  as an unrelated second note by another author.
+
+- **A comment is the largest body of attacker-chosen prose tpdf has ever shown.** The kind is
+  an enum of ours rather than the document's `/Subtype`, a date is rebuilt from parsed digits
+  rather than passed through, and `no_comment_field_may_carry_a_url` destructures every field
+  exhaustively --- so `docs/THREAT-MODEL.md` T8 still rests on a property of the code rather
+  than on there being little text to show.
+
+- **`testdata/comments.pdf` is the corpus**, five pages built to be awkward: three text-string
+  encodings, a date that is not a date, a 60,000-character body, replies that point in a
+  circle, a rectangle written backwards, one at 1e10, a hidden annotation, a `/Link` and a
+  `/Widget` that are not comments, a page carrying `/Rotate 90`, an `/Annots` array that is an
+  indirect reference, and 1,200 notes on one page. `examples/comments-probe` reads it, 28/28,
+  with a `--mode clean` control on a document that has none.
+
+- **It found two defects in the fixture and none in the product**, which is what a corpus
+  written before the code it checks is for. A square rectangle at a symmetric offset maps to
+  itself under a quarter turn, so it could not tell a correct rotation from a missing one; and
+  three malformed `/Annots` entries written after the 1,200 notes were never reached, because
+  the per-page bound stopped the scan first. Both are in `docs/TRAPS.md`.
+
+- **Ten Rust mutations and eight front-end ones** judge the new tests, and two of them
+  survived the first run for the same reason: they were aimed at a *route into* a rule rather
+  than at the rule. One was fixed by aiming inside the function; the other by writing the test
+  that was actually missing --- that a body reaches the paragraph-keeping flattener at all,
+  which no test had ever asserted.
+
 ### A flake removed from the release gate
 
 - **Not a product change.** `viewer_check.py`'s broken-pattern search check waited on a

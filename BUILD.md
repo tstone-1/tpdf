@@ -98,13 +98,24 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example outline-probe
 cargo run --release --manifest-path src-tauri/Cargo.toml --example outline-probe -- \
     testdata/outline-hostile.pdf --mode check
 
+# The comment scan reads what a reviewer wrote and refuses what it cannot. Run
+# BOTH: the corpus proves the bodies, encodings, dates, replies and bounds, and
+# the `clean` control on a document with no annotations proves the scan is not
+# simply returning nothing for everything -- without which every "the hostile
+# page was cut short" assertion passes on a scan that found nothing anywhere.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-probe -- \
+    testdata/comments.pdf --mode check
+cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-probe -- \
+    testdata/text-base14.pdf --mode clean
+
 # The worker boundary is still transparent: the two backends must agree byte for
-# byte on tiles, geometry, text, search and outlines, and a worker killed out of
+# byte on tiles, geometry, text, search, outlines and comments, and a worker killed out of
 # the OS process table must be replaced by one serving the same document. Run it
 # on vector-heavy as well as a text fixture -- it is the only corpus whose render
 # is slow enough for the withdrawal and drain checks to apply, and on every other
-# one they report [SKIP] with the reason. vector-heavy is the run to read: 42
-# check names, 2 skipped on macOS (measured 2026-07-31; this said 41/1 and
+# one they report [SKIP] with the reason. vector-heavy is the run to read: 43
+# check names, 2 skipped on macOS (42 until 2026-08-16, when comments were added
+# to the comparison; measured 2026-07-31 at 42, and this said 41/1 then and
 # contradicted the "all 42 names" sentence below it -- the prose was right).
 cargo run --release --manifest-path src-tauri/Cargo.toml --example backend-probe -- \
     testdata/vector-heavy.pdf
@@ -113,7 +124,8 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example backend-probe
 The count that matters there is the count of **names**, not the split between passed and
 skipped: the split moves with the corpus and with a thumbnail's timing, and chasing a
 documented split back to its value is how a condition that keeps a check honest gets
-deleted. What holds on every corpus is that all 42 names appear --- diff the name sets
+deleted. What holds on every corpus is that all **43** names appear (42 until 2026-08-16,
+when the comment comparison landed) --- diff the name sets
 across two fixtures rather than comparing their totals, which is what caught a check that
 had stopped existing on one-page documents.
 
@@ -196,6 +208,7 @@ python3 testdata/make_mixed_pdf.py testdata
 python3 testdata/make_tagged_pdf.py testdata
 uv run --with fonttools testdata/make_multilingual_pdf.py testdata
 uv run --with fonttools testdata/make_encodings_pdf.py testdata
+python3 testdata/make_comments_pdf.py testdata
 python3 testdata/make_form_pdf.py
 ```
 
@@ -208,6 +221,16 @@ cannot make it.
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
 300 MB file is near-instant" can be tested at 300 MB.
+
+`make_comments_pdf.py` is the only fixture carrying annotations, and it is also one of the
+three `scripts/ci_fixtures.py` builds on a hosted runner --- it needs nothing but the standard
+library, since the PDF writer it borrows from `make_text_pdf.py` reaches for fonttools only
+inside the function that embeds a font. Two things about it are deliberate and easy to undo by
+accident: its rotated page's rectangle is **not square**, because a square one maps to itself
+under a quarter turn and cannot tell a rotation from an identity; and its three malformed
+`/Annots` entries are written **before** the 1,200 notes, because the per-page bound stops the
+scan at 1,000 and anything after that is never read. Both are in `docs/TRAPS.md`, both were
+found by the fixture failing to discriminate rather than by review.
 
 `make_tagged_pdf.py` is the other side of that coin: the only fixture that carries a
 `/StructTreeRoot`, so it says what its own reading order is. Page 1 puts a margin note beside
@@ -646,6 +669,18 @@ cargo build --release --example backend-probe
 | `text-cid.pdf` | 38/42 | 4 | 0 |
 | `outline-hostile.pdf` | 39/42 | 3 | 0 |
 | `vector-heavy.pdf` | 40/42 | 2 | 0 |
+
+**The name total is 43 as of 2026-08-16** --- *"comments return the same list on both"* was
+added with the comment layer --- and the four rows above are the Windows measurement at 42,
+left as they were taken. macOS re-measured the same four the day the check landed and reports
+each row's passed column one higher against the new total: `39/43`, `39/43`, `40/43`, `41/43`,
+with the skip counts unchanged. Windows has not been re-run.
+
+That check compares what the two backends *return*, not whether either is right: a defect in
+`annots.rs` breaks both identically and it stays green. `comments-probe` is what says the
+answer is correct; this says the worker boundary does not change it. Proved to bite before
+being trusted --- truncating the worker's reply to three comments turns it red, and restoring
+it turns it green, on the same fixture in the same minute.
 
 Re-measured 2026-07-31. **The earlier `41`s were not a missing check**, which is what they
 looked like: this table read `37/41 ... 40/41` against macOS's 42, and a handover went out
@@ -1348,6 +1383,16 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
+> ⚠ **The name total and every row below are stale as of 2026-08-16 and have not been
+> re-measured.** Eight comment checks were added to `viewercheck.ts` that day, so the
+> invariant is **171 names** by construction and each row's skipped column should rise by
+> eight on every corpus but `comments.pdf`, which is the twelfth and has no row here at all.
+> That is arithmetic, and this file records twice what arithmetic in a column of
+> measurements costs --- so treat the numbers as a prediction to check, not as a reading.
+> The run needs an unlocked screen and the session was locked when the work was finished;
+> `viewer_check.py` said so and refused rather than hanging, which is the one good outcome
+> available there. **Re-run all twelve and replace this note with the measurements.**
+
 Run all eleven corpora. Every run reports the same **163 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch. **Ten of the eleven rows below were measured on Windows
@@ -1370,6 +1415,7 @@ document* per machine, for the reason two paragraphs down.
 | `multilingual.pdf` | 130 | 33 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP --- **129 / 34 on macOS**, see below |
 | `encodings.pdf` | 130 | 33 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
 | `mixed.pdf` | 138 | 25 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | *unmeasured* | *unmeasured* | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, a rotated page and a `/Annots` array of 1,200 --- the only corpus where the eight comment checks run rather than skip |
 
 The `text-heavy.pdf` row was `142 / 21` and marked derived until 2026-08-03, when running it
 on the only machine that has the document made it `143 / 20`. The derivation was one check

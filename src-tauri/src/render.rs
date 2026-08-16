@@ -78,6 +78,7 @@ use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
 
+use crate::annots::Comments;
 use crate::encoding::PageMapping;
 use crate::outline::{self, Outline};
 use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
@@ -353,6 +354,10 @@ pub(crate) enum Job {
     Outline {
         doc: u32,
         reply: Reply<Outline>,
+    },
+    Comments {
+        doc: u32,
+        reply: Reply<Comments>,
     },
     Mapping {
         doc: u32,
@@ -656,6 +661,18 @@ impl RenderService {
         }
     }
 
+    /// Reads every comment in a document, invoking `reply` on a service thread.
+    ///
+    /// One job for the whole document rather than one per page, which is the
+    /// same choice `outline` makes and for a stronger reason: the answer comes
+    /// from a single `lopdf` parse, so asking per page would repeat that parse
+    /// once per page to produce a slice of the same list. See `crate::annots`.
+    pub fn comments(&self, doc: u32, reply: Reply<Comments>) {
+        if self.tx.send(Job::Comments { doc, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reports, per page, whether the text means anything, on a service thread.
     ///
     /// Asked for lazily --- see [`crate::encoding`] and `RawDocument::mapping`.
@@ -746,6 +763,7 @@ pub(crate) trait Engine {
         carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
+    fn comments(&self, doc: u32) -> Result<Comments, String>;
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 }
@@ -769,6 +787,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             reply,
         } => reply(engine.search(doc, page, &query, options, carry.as_ref())),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
+        Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
     }
@@ -790,6 +809,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Text { reply, .. } => reply(Err(error.to_string())),
             Job::Search { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
+            Job::Comments { reply, .. } => reply(Err(error.to_string())),
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
         }
@@ -926,6 +946,10 @@ impl Engine for InProcess {
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
         Ok(run_outline(open_slot(&self.docs.borrow(), doc)?))
+    }
+
+    fn comments(&self, doc: u32) -> Result<Comments, String> {
+        run_comments(open_slot(&self.docs.borrow(), doc)?)
     }
 
     /// Drops the document, which is what closes the Pdfium handle.
@@ -1081,6 +1105,15 @@ pub(crate) fn run_search(
 /// Walks a document's outline on the render thread.
 pub(crate) fn run_outline(document: &RawDocument) -> Outline {
     outline::read(document)
+}
+
+/// Reads a document's comments on the render thread.
+///
+/// Cached inside [`RawDocument`], so the `lopdf` parse this costs happens at
+/// most once per open document however often the panel is opened --- the same
+/// arrangement `run_mapping` has, and `annots::scan` is what it wraps.
+pub(crate) fn run_comments(document: &RawDocument) -> Result<Comments, String> {
+    document.comments()
 }
 
 /// Reads the document's font dictionaries on the render thread.

@@ -46,6 +46,7 @@ describe("Sidebar keyboard activation", () => {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
       onNavigate: (page: number) => navigated.push(page),
       results: { onPick: () => {} },
+      comments: { onPick: () => {} },
       pages: {
         doc: 1,
         pageCount: 40,
@@ -95,6 +96,7 @@ describe("Sidebar keyboard activation", () => {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
       onNavigate: () => {},
       results: { onPick: () => {} },
+      comments: { onPick: () => {} },
       pages: {
         doc: 1,
         pageCount: 40,
