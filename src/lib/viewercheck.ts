@@ -55,13 +55,14 @@ import { OVERSCAN, rowHeightFor } from "./thumbnails";
 import { SCROLLBAR_WIDTH, Viewer, type ViewerStatus } from "./viewer";
 
 /**
- * Tabs the sidebar has: outline, pages, results.
+ * Tabs the sidebar has: outline, pages, results, comments.
  *
  * Spelled out here rather than read from the sidebar, which would make the check
  * agree with whatever the sidebar happens to build. It went red on its own when
- * the results tab landed, which is the check working.
+ * the results tab landed and again when the comments tab did, which is the check
+ * working --- twice.
  */
-const SIDEBAR_TABS = 3;
+const SIDEBAR_TABS = 4;
 
 /** Size of the surface the check mounts, in CSS pixels. */
 const WIDTH = 900;
@@ -565,6 +566,29 @@ async function readingChecks(doc: DocumentInfo): Promise<void> {
     return;
   }
 
+  // A manifest of the wrong *shape*, which is not the same as an unreadable
+  // one and used to crash the whole run: `viewer_check.py` binds any
+  // `<fixture>-manifest.json` to this variable, so the suffix alone enrols a
+  // fixture in this check. `comments-corpus.json` was called
+  // `comments-manifest.json` for one commit, and the loop below threw
+  // `{} is not iterable` sixteen checks in --- taking the other 155 with it,
+  // since an exception here ends the run rather than reddening a row. Reported
+  // as a failure rather than a skip: nothing is *inapplicable* here, a fixture
+  // has claimed a name that means something it does not mean.
+  if (!Array.isArray(manifest.pages)) {
+    check(
+      "a page reads in the order its generator laid it out",
+      false,
+      "the manifest bound to TPDF_READING_MANIFEST has no `pages` array -- " +
+        "rename the sidecar so it does not end in `-manifest.json`",
+    );
+    skip(
+      "two pages laid out alike read alike, whatever their order in the file",
+      "the manifest is not a reading manifest",
+    );
+    return;
+  }
+
   const cache = new TextCache(doc.id);
   /** A page's non-empty lines, trimmed, in reading order. */
   const read = async (at: number): Promise<string[]> => {
@@ -884,6 +908,20 @@ async function selectionChecks(
     skip(
       "a drag selects text from where it was dragged",
       `this page has no text at y=${high.length === 0 ? HIGH_Y : LOW_Y}, so there is nothing to order`,
+    );
+    return;
+  }
+  // A selection too short to be located is the same class of problem as an
+  // empty one and was not guarded until 2026-08-16: `indexOf` finds the *first*
+  // occurrence, so a one-character selection resolves to wherever that letter
+  // happens to appear first --- which on `comments.pdf` was a `g` from an early
+  // line, reported as the page reading bottom to top. The verdict was invented
+  // from a position that meant nothing.
+  const shortest = Math.min(high.length, low.length);
+  if (shortest < 3) {
+    skip(
+      "a drag selects text from where it was dragged",
+      `one drag selected ${shortest} character(s), which cannot be located in the page's text`,
     );
     return;
   }
@@ -3530,18 +3568,32 @@ async function commentChecks(
     `open ${openBefore} -> ${viewer.commentOpen}`,
   );
 
-  const row = sidebar.comments.elementFor(mark.id);
-  if (!row) {
+  // The *last* comment with a rectangle, and the viewer is sent back to the
+  // top first: activating a row has to take the reader to the comment, and a
+  // row for something already on screen cannot tell that from a popup that
+  // opened where it stood. On a one-page document the two are the same comment
+  // and the movement half is vacuous, which is why the detail prints both pages.
+  const far = [...comments.items]
+    .reverse()
+    .find(
+      (item) =>
+        !item.hidden && item.rect[2] - item.rect[0] > 2 && item.rect[3] - item.rect[1] > 2,
+    );
+  const row = far ? sidebar.comments.elementFor(far.id) : null;
+  if (!far || !row) {
     skip("activating a row opens that comment's note", "the comment has no row");
     return;
   }
+  viewer.goToStart();
+  await settle(() => viewer.idle);
   row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   await frame();
   await frame();
   check(
     "activating a row opens that comment's note",
-    viewer.commentOpen === mark.id,
-    `open=${viewer.commentOpen} for #${mark.id}`,
+    viewer.commentOpen === far.id && viewer.position.page === far.page,
+    `open=${viewer.commentOpen} for #${far.id}, viewer on page ${viewer.position.page + 1} ` +
+      `of ${doc.page_count}, comment on ${far.page + 1}`,
   );
   // Left closed, so nothing after this runs with a note over the page.
   viewer.closeComment();

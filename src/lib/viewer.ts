@@ -1371,12 +1371,19 @@ export class Viewer {
     const comment = this.commentItems.find((item) => item.id === id);
     if (!comment) return;
 
-    if (!this.scroller.visiblePages().includes(comment.page)) {
+    // Whether the *mark* is on screen, not whether its page is: a page is
+    // "visible" when any part of it is, so a note near the foot of the page a
+    // reader is at the top of would otherwise open with its anchor below the
+    // window --- the popup clamps itself into view and points at nothing.
+    const where = this.anchorFor(comment);
+    const height = this.viewportSize().height;
+    if (where.bottom < 0 || where.top > height) {
       // Placed by its own top edge rather than at the top of the page: a note
       // on page 300 of a manual is somewhere *on* that page, and scrolling to
       // the page alone can leave the mark below the fold.
       this.goToDestination(comment.page, this.topPtOf(comment));
     }
+    // Re-read after the scroll above, which moves it.
     this.popup.show(comment, this.repliesTo(id), this.anchorFor(comment), focus);
     this.opts.onComment?.(id);
     this.wake();

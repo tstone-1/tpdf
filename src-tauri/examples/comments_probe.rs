@@ -11,7 +11,7 @@
 //!
 //! * `--mode read` --- prints every comment, so a human can look at one.
 //!
-//! * `--mode check` --- asserts `testdata/comments-manifest.json`: the bodies,
+//! * `--mode check` --- asserts `testdata/comments-corpus.json`: the bodies,
 //!   the authors in three encodings, the dates, the reply that names its parent,
 //!   the rectangle on a rotated page, the `/Annots` array that is an indirect
 //!   reference, and every bound reported rather than silently applied.
@@ -52,7 +52,7 @@ fn parse_args() -> Result<Args, String> {
     let mut parsed = Args {
         file: PathBuf::from(file),
         mode: Mode::Read,
-        manifest: PathBuf::from("testdata/comments-manifest.json"),
+        manifest: PathBuf::from("testdata/comments-corpus.json"),
         library: PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR),
     };
 
@@ -181,6 +181,13 @@ impl Report {
             println!("[FAIL] {name:<52} {detail}");
         }
     }
+
+    /// A check this fixture cannot exercise. Printed, never omitted --- for the
+    /// reason every probe here states: a check that quietly disappears on some
+    /// inputs cannot be told apart from one that ran.
+    fn skip(&mut self, name: &str, why: &str) {
+        println!("[SKIP] {name:<52} not applicable -- {why}");
+    }
 }
 
 /// The control: a document with no annotations reports none, and cuts nothing.
@@ -212,9 +219,18 @@ fn check(args: &Args, comments: &Comments) -> Result<bool, String> {
         .map_err(|e| format!("could not read {}: {e}", args.manifest.display()))?;
     let manifest: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("manifest is not JSON: {e}"))?;
+    // Keyed by file name, like `outline-manifest.json`: one sidecar describes
+    // both fixtures, so this reads the section for the file it was handed
+    // rather than being told which manifest goes with which document.
+    let name = args
+        .file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("the file has no name")?;
     let pages = manifest
-        .get("pages")
-        .ok_or("the manifest names no pages")?
+        .get(name)
+        .and_then(|entry| entry.get("pages"))
+        .ok_or_else(|| format!("{name} is not in {}", args.manifest.display()))?
         .clone();
 
     let mut report = Report {
@@ -425,15 +441,32 @@ fn check(args: &Args, comments: &Comments) -> Result<bool, String> {
             },
         );
     }
-    report.check(
-        comments.limits.unreadable > 0,
-        "an entry that cannot be read is counted",
-        &format!("{} unreadable", comments.limits.unreadable),
-    );
+    // Against the count the fixture states rather than "more than none": the
+    // three malformed entries sit before a per-page bound that would swallow
+    // them, and a fixture that stopped delivering them would still satisfy a
+    // `> 0` written for the fourth.
+    match expect("2", "unreadable").and_then(serde_json::Value::as_u64) {
+        Some(wanted) => report.check(
+            comments.limits.unreadable as u64 == wanted,
+            "every entry that cannot be read is counted",
+            &format!("wanted {wanted}, got {}", comments.limits.unreadable),
+        ),
+        None => report.skip(
+            "every entry that cannot be read is counted",
+            "this fixture has no malformed entries",
+        ),
+    }
 
-    // ------------------------------------------------------------- page 3
-    let turned = on(3);
-    if let Some(wanted) = expect("3", "rect").and_then(serde_json::Value::as_array) {
+    // -------------------------------------------- the rotated fixture, page 1
+    //
+    // A file of its own --- see `make_comments_pdf.py` --- so on `comments.pdf`
+    // the manifest has no rectangle here and these two do not run. That is the
+    // one place this probe skips silently rather than printing a reason: the
+    // whole check block belongs to a different document, and a `[SKIP]` for it
+    // in every `comments.pdf` run would be noise about a file that was not
+    // being examined.
+    let turned = on(0);
+    if let Some(wanted) = expect("0", "rect").and_then(serde_json::Value::as_array) {
         let wanted: Vec<f32> = wanted
             .iter()
             .filter_map(serde_json::Value::as_f64)
@@ -456,7 +489,7 @@ fn check(args: &Args, comments: &Comments) -> Result<bool, String> {
             &format!("wanted {wanted:?}, got {got:?}"),
         );
     }
-    if let Some(size) = expect("3", "displayed_size").and_then(serde_json::Value::as_array) {
+    if let Some(size) = expect("0", "displayed_size").and_then(serde_json::Value::as_array) {
         let width = size
             .first()
             .and_then(serde_json::Value::as_f64)
@@ -479,10 +512,10 @@ fn check(args: &Args, comments: &Comments) -> Result<bool, String> {
         );
     }
 
-    // ------------------------------------------------------------- page 4
-    if let Some(body) = expect("4", "body").and_then(serde_json::Value::as_str) {
+    // ------------------------------------------------------------- page 3
+    if let Some(body) = expect("3", "body").and_then(serde_json::Value::as_str) {
         report.check(
-            on(4).iter().any(|item| item.body == body),
+            on(3).iter().any(|item| item.body == body),
             "an indirect /Annots array is resolved",
             body,
         );

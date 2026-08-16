@@ -65,7 +65,9 @@ export class CommentPopup {
     this.element.style.cssText =
       "position:absolute;display:none;z-index:5;box-sizing:border-box;" +
       `width:${POPUP_WIDTH}px;max-height:60%;overflow-y:auto;` +
-      "padding:0.6rem 0.7rem;border-radius:8px;" +
+      // The right padding leaves room for the close button, which is positioned
+      // against this element rather than flowing with the text.
+      "padding:0.6rem 1.6rem 0.6rem 0.7rem;border-radius:8px;" +
       "background:Canvas;color:CanvasText;" +
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "box-shadow:0 6px 24px rgba(0,0,0,0.25);" +
@@ -110,6 +112,7 @@ export class CommentPopup {
   show(comment: Comment, replies: readonly Comment[], at: Anchor, focus: boolean): void {
     this.shown = comment.id;
     this.element.replaceChildren(
+      this.closeButton(),
       header(comment),
       ...(comment.subject.trim() ? [subject(comment)] : []),
       body(comment),
@@ -125,6 +128,33 @@ export class CommentPopup {
     this.shown = null;
     this.element.style.display = "none";
     this.element.replaceChildren();
+  }
+
+  /**
+   * The close affordance, for a reader who has no reason to guess at Escape.
+   *
+   * Escape and a press on the page both close the note, and neither is visible.
+   * A mouse-only reader who opens one and wants it gone otherwise has to find
+   * somewhere safe to click --- and the obvious place, back on the mark,
+   * reopens it.
+   */
+  private closeButton(): HTMLElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-label", "Close comment");
+    button.textContent = "\u00d7";
+    button.style.cssText =
+      "position:absolute;top:0.25rem;right:0.35rem;border:0;background:none;" +
+      "color:inherit;opacity:0.55;font:inherit;font-size:1.1em;line-height:1;" +
+      "cursor:default;padding:0.1rem 0.25rem;";
+    button.addEventListener("pointerdown", (event) => {
+      // Stops the popup's own handler from swallowing it, and the page's from
+      // seeing a press it would treat as a click-away *and* a selection start.
+      event.preventDefault();
+      event.stopPropagation();
+      this.onClose();
+    });
+    return button;
   }
 
   /**

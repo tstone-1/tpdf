@@ -32,18 +32,28 @@ One document, five pages, each with a property of its own:
           object that does not exist; an entry that is not a dictionary at all;
           and 1,200 notes, which is past any per-page bound worth having.
 
-  page 3  A page carrying `/Rotate 90`, with one note at a known place. The
-          answer is in *display* space, so this is the page that can tell a
-          correct rotation from a missing one --- and it is the only one that
-          can, which is why it exists.
-
-  page 4  `/Annots` as an indirect reference to an array rather than written
+  page 3  `/Annots` as an indirect reference to an array rather than written
           inline. `AGENTS.md` records that this distinction decides how large an
           annotation edit is; here it decides only whether the scan resolves it,
           and a scan that does not finds no comments on this page.
 
-Writes `comments-manifest.json` next to it, so `examples/comments-probe` reads
-its expectations rather than hardcoding them.
+And a second file, `comments-rotated.pdf`: one page carrying `/Rotate 90` with a
+note at a known place, which is what says the scan reports rectangles in display
+space. It is separate because a rotated page in an upright document makes the
+document mixed-size, and `viewer_check.py`'s rotation checks derive their
+expected zoom from page 1's aspect --- so inside `comments.pdf` it turned two of
+them red against a viewer that was behaving as designed.
+
+Writes `comments-corpus.json` next to them, keyed by file name, so
+`examples/comments-probe` reads its expectations rather than hardcoding them.
+
+**Not `comments-manifest.json`, and the suffix is the reason.** `viewer_check.py`
+binds any `<fixture>-manifest.json` to `TPDF_READING_MANIFEST`, which *enrols*
+the fixture in the reading-order check --- so a sidecar under that name is handed
+to a consumer expecting a list of pages and their lines. It was called that for
+one commit, and the window harness died on `{} is not iterable` sixteen checks
+in, taking the other 155 with it. `mixed.pdf` avoids the same collision by
+writing `mixed-geometry.json`; this is the same dodge.
 
 The output is gitignored. Usage:
     python3 testdata/make_comments_pdf.py [outdir]
@@ -89,14 +99,50 @@ def utf8(value: str) -> bytes:
     return literal(b"\xef\xbb\xbf" + value.encode("utf-8"))
 
 
+#: Lines of text on every page.
+#:
+#: Enough to reach the bottom of the page, which is a requirement rather than a
+#: choice: `viewer_check.py` drags at two fixed heights and asserts the lower one
+#: comes from later in the page's text. Ten lines left the lower drag below the
+#: last of them, where it caught a stray character and the check reported the
+#: page reading bottom to top.
+ROWS = 36
+
+#: Leading, in points. Tight enough that the gap between two lines is smaller
+#: than a line, so a drag at an arbitrary height lands *on* one rather than
+#: between two --- where it catches a stray character, and a one-character
+#: selection cannot be located in the page's text at all.
+LEADING = 18
+
+#: Words a line is built from. Every one is at least four characters, and there
+#: is deliberately no bare digit: `viewer_check.py` double-clicks at a fixed
+#: point and asserts it selected a *word*, and a line reading "... line 0" put a
+#: single character under that point --- which reads as a viewer with no notion
+#: of granularity rather than as a fixture with nothing to select.
+WORDS = [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel",
+]
+
+
 def body_content(rows: int, label: str) -> bytes:
-    """Page content: a few lines of text, so the page is not blank behind the marks."""
+    """Page content: a few lines of words, so the page is not blank behind the marks.
+
+    Long enough lines that a drag across the middle of the page lands on one.
+    """
     lines = []
     for row in range(rows):
-        y = HEIGHT - 80 - row * 24
+        y = HEIGHT - 80 - row * LEADING
+        words = " ".join(WORDS[(row + at) % len(WORDS)] for at in range(6))
         lines.append(
             "BT /F1 13 Tf 72 %d Td (%s) Tj ET"
-            % (y, escape(f"{label} line {row}").decode("latin-1"))
+            % (y, escape(f"{label} line {row:02d}: {words}").decode("latin-1"))
         )
     return "\n".join(lines).encode("latin-1")
 
@@ -111,7 +157,7 @@ class Page:
         self.pages = pages
         self.font = font
         self.rotate = rotate
-        self.content = pdf.stream(b"<< >>", body_content(10, label))
+        self.content = pdf.stream(b"<< >>", body_content(ROWS, label))
         self.entries: list[bytes] = []
 
     def annot(self, body: bytes, number: "int | None" = None) -> int:
@@ -341,28 +387,6 @@ def build(path: str) -> dict:
     }
 
     # ---------------------------------------------------------------- page 3
-    turned = Page(pdf, pages, font, "Rotated", rotate=90)
-    # Near the bottom-left corner in the page's own space. Under /Rotate 90 the
-    # displayed page is HEIGHT wide and WIDTH tall and this lands at the top
-    # left --- so a scan that forgets the rotation puts it at the bottom.
-    # Deliberately **not square**: a 24-by-24 rectangle at (20, 20) maps to
-    # itself under a quarter turn, so it cannot tell a correct rotation from an
-    # identity, which is what the first draft of this fixture used.
-    turned.annot(
-        b"<< /Type /Annot /Subtype /Text /Rect [ 20 30 44 90 ] "
-        b"/Contents " + literal(b"I am at the bottom left of an unrotated page.") + b" "
-        b"/T " + literal(b"Timo") + b" >>"
-    )
-    turned.finish()
-    expected["pages"]["3"] = {
-        "comments": 1,
-        # Display space, y down from the top of the displayed page. A quarter
-        # turn clockwise sends the page's y to the display's x.
-        "rect": [30.0, 20.0, 90.0, 44.0],
-        "displayed_size": [HEIGHT, WIDTH],
-    }
-
-    # ---------------------------------------------------------------- page 4
     indirect = Page(pdf, pages, font, "Indirect")
     indirect.annot(
         b"<< /Type /Annot /Subtype /Text /Rect [ 200 700 224 724 ] "
@@ -370,7 +394,7 @@ def build(path: str) -> dict:
         b"/T " + literal(b"Timo") + b" >>"
     )
     indirect.finish(indirect=True)
-    expected["pages"]["4"] = {
+    expected["pages"]["3"] = {
         "comments": 1,
         "body": "My /Annots array is an indirect object.",
     }
@@ -379,7 +403,6 @@ def build(path: str) -> dict:
         ordinary.number,
         strings.number,
         hostile.number,
-        turned.number,
         indirect.number,
     ]
     pdf.put(
@@ -396,22 +419,78 @@ def build(path: str) -> dict:
     return expected
 
 
+def build_rotated(path: str) -> dict:
+    """Writes the one-page rotated fixture and what a probe should find in it.
+
+    **A file of its own, and the split is not tidiness.** A `/Rotate 90` page in
+    an otherwise upright document makes the document *mixed-size*, and
+    `viewer_check.py`'s rotation checks derive their expected zoom from page 1's
+    aspect ratio --- so with this page inside `comments.pdf` two of them went red
+    against a viewer that was behaving as designed, because the fit had last been
+    computed on a page of a different shape. `make_rotated_pdf.py` splits its own
+    corpus for the same reason. The rotation this page exists to test is a
+    property of the *scan*, which `comments-probe` reads directly and the window
+    harness never looks at.
+    """
+    pdf = Pdf()
+    pages = pdf.reserve()
+    font = pdf.add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    turned = Page(pdf, pages, font, "Rotated", rotate=90)
+    # Near the bottom-left corner in the page's own space. Under /Rotate 90 the
+    # displayed page is HEIGHT wide and WIDTH tall and this lands at the top
+    # left --- so a scan that forgets the rotation puts it at the bottom.
+    # Deliberately **not square**: a 24-by-24 rectangle at (20, 20) maps to
+    # itself under a quarter turn, so it cannot tell a correct rotation from an
+    # identity, which is what the first draft of this fixture used.
+    turned.annot(
+        b"<< /Type /Annot /Subtype /Text /Rect [ 20 30 44 90 ] "
+        b"/Contents " + literal(b"I am at the bottom left of an unrotated page.") + b" "
+        b"/T " + literal(b"Timo") + b" >>"
+    )
+    turned.finish()
+    pdf.put(
+        pages,
+        b"<< /Type /Pages /Kids [ %d 0 R ] /Count 1 >>" % turned.number,
+    )
+    root = pdf.add(b"<< /Type /Catalog /Pages %d 0 R >>" % pages)
+    with open(path, "wb") as handle:
+        handle.write(pdf.serialize(root))
+
+    return {
+        "page_count": 1,
+        "pages": {
+            "0": {
+                "comments": 1,
+                # Display space, y down from the top of the displayed page. A
+                # quarter turn clockwise sends the page's y to the display's x.
+                "rect": [30.0, 20.0, 90.0, 44.0],
+                "displayed_size": [HEIGHT, WIDTH],
+            }
+        },
+    }
+
+
 def main() -> int:
-    """Writes the fixture and its manifest."""
+    """Writes both fixtures and the manifest they share."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("outdir", nargs="?", default="testdata")
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
-    pdf_path = os.path.join(args.outdir, "comments.pdf")
-    expected = build(pdf_path)
+    # Keyed by file name, as `outline-manifest.json` is: one sidecar describing
+    # two fixtures, so a probe reads the section for the file it was handed
+    # rather than being told which manifest goes with which document.
+    expected = {}
+    for name, builder in (("comments.pdf", build), ("comments-rotated.pdf", build_rotated)):
+        path = os.path.join(args.outdir, name)
+        expected[name] = builder(path)
+        print(f"[OK] {path} ({os.path.getsize(path):,} bytes)")
 
-    manifest = os.path.join(args.outdir, "comments-manifest.json")
+    manifest = os.path.join(args.outdir, "comments-corpus.json")
     with open(manifest, "w", encoding="utf-8") as handle:
         json.dump(expected, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
-
-    print(f"[OK] {pdf_path} ({os.path.getsize(pdf_path):,} bytes)")
     print(f"[OK] {manifest}")
     return 0
 

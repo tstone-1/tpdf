@@ -99,12 +99,16 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example outline-probe
     testdata/outline-hostile.pdf --mode check
 
 # The comment scan reads what a reviewer wrote and refuses what it cannot. Run
-# BOTH: the corpus proves the bodies, encodings, dates, replies and bounds, and
-# the `clean` control on a document with no annotations proves the scan is not
-# simply returning nothing for everything -- without which every "the hostile
-# page was cut short" assertion passes on a scan that found nothing anywhere.
+# ALL THREE: the corpus proves the bodies, encodings, dates, replies and bounds
+# (26/26); the rotated one-pager proves rectangles come back in display space
+# (5/5, one skip); and the `clean` control on a document with no annotations
+# proves the scan is not simply returning nothing for everything -- without which
+# every "the hostile page was cut short" assertion passes on a scan that found
+# nothing anywhere.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-probe -- \
     testdata/comments.pdf --mode check
+cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-probe -- \
+    testdata/comments-rotated.pdf --mode check
 cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-probe -- \
     testdata/text-base14.pdf --mode clean
 
@@ -1360,6 +1364,15 @@ Set `TPDF_RAISE=1` to raise the window when there is nowhere visible to put one:
 TPDF_RAISE=1 scripts/viewer_check.py <binary> testdata/text-heavy.pdf
 ```
 
+**An empty transcript file mid-run means nothing, and reading it as a stall is a mistake this
+page invited.** `viewer_check.py` collects the app's output with `communicate()` and prints the
+whole transcript when the process exits, so a redirected run shows **zero bytes** from the
+first second to the last --- on `vector-multi` that is minutes. The "results print as they are
+produced" sentence below is about `viewercheck.ts` writing into the pipe, which is what makes a
+*timeout's* partial transcript useful; it is not a promise that a live run's log grows. The
+liveness signal is CPU time (`ps -o time= -p <pid>`), which is what `diagnose_silence` samples:
+a page that never ran accumulates none, and a slow render accumulates seconds.
+
 The watchdog identifies **any** page that never executed, whatever the reason --- an
 occluded window and a raw unbundled binary produce exactly the same silence. Every spike
 entry point starts by asking Rust for its path, which records a `webview alive` mark; a run
@@ -1383,39 +1396,47 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-> ⚠ **The name total and every row below are stale as of 2026-08-16 and have not been
-> re-measured.** Eight comment checks were added to `viewercheck.ts` that day, so the
-> invariant is **171 names** by construction and each row's skipped column should rise by
-> eight on every corpus but `comments.pdf`, which is the twelfth and has no row here at all.
-> That is arithmetic, and this file records twice what arithmetic in a column of
-> measurements costs --- so treat the numbers as a prediction to check, not as a reading.
-> The run needs an unlocked screen and the session was locked when the work was finished;
-> `viewer_check.py` said so and refused rather than hanging, which is the one good outcome
-> available there. **Re-run all twelve and replace this note with the measurements.**
-
-Run all eleven corpora. Every run reports the same **163 check names**; what differs is how
+Run all twelve corpora. Every run reports the same **171 check names**; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch. **Ten of the eleven rows below were measured on Windows
-on 2026-08-02, and all eleven again on macOS on 2026-08-03**, name sets diffed pairwise and
-byte-identical on both. Nine rows agree exactly across the two platforms. The two that do not
-are the two that cannot: `text-heavy.pdf` is a real document Windows does not have, so its row
-was arithmetic until the macOS run measured it; and `multilingual.pdf` is a *different
-document* per machine, for the reason two paragraphs down.
+bug this arrangement exists to catch.
+
+**Every row below was measured on macOS on 2026-08-16**, in one sweep, after the eight comment
+checks took the total from 163 to 171. Zero failures anywhere. The Windows column is *not*
+carried forward: it was measured at 163 names on 2026-08-02 and nothing has re-run there since,
+so it is absent rather than adjusted --- which is what this page has twice recorded arithmetic
+in a measurement column costing.
+
+**Each row is its 163-name split plus one check running and seven skipping**, which is a
+stronger statement than the totals matching: of the eight, only *"reads the document's
+comments"* runs on a document with no annotations, and the other seven say why they skipped.
+`comments.pdf` is the exception and the point --- it is the only corpus where all eight run.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 142--143 | 20--21 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 147--149 | 14--16 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 148 | 15 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 91 | 72 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 104 | 59 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 139 | 24 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 137 | 26 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 132 | 31 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 130 | 33 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP --- **129 / 34 on macOS**, see below |
-| `encodings.pdf` | 130 | 33 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 138 | 25 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | *unmeasured* | *unmeasured* | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, a rotated page and a `/Annots` array of 1,200 --- the only corpus where the eight comment checks run rather than skip |
+| `text-heavy.pdf` | 143 | 28 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 149 | 22 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 149 | 22 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 92 | 79 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 105 | 66 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 140 | 31 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 138 | 33 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 132 | 39 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 130 | 41 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 131 | 40 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 139 | 32 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 146 | 25 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+
+**Run them with a `pkill -f "tpdf.app/Contents/MacOS/tpdf"` between runs.** A leftover window
+occludes the next one, WebKit suspends an occluded page, and the run then produces nothing and
+uses no CPU --- twice, before that went into the sweep script. `TPDF_RAISE=1` covers the other
+half, a window with nowhere visible to go.
+
+**Every row above is one run, and the notes below say why that is a point estimate rather than
+a bound.** Two of these fixtures have a check that lands on either side of a race, so their
+split moves between runs while the name total does not. The table is not re-ranged here
+because a range needs several runs per fixture and this sweep was one each --- read a
+disagreement of one as the documented variation, and a disagreement in the *name total* as the
+bug this arrangement exists to catch.
 
 The `text-heavy.pdf` row was `142 / 21` and marked derived until 2026-08-03, when running it
 on the only machine that has the document made it `143 / 20`. The derivation was one check

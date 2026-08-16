@@ -62,6 +62,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIXTURES: list[tuple[str, list[str]]] = [
     ("testdata/rotated.pdf", ["testdata/make_rotated_pdf.py", "testdata"]),
     ("testdata/comments.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
+    # Written by the same run as the line above; listed so that a check for
+    # its presence is a check for the file rather than for its sibling.
+    ("testdata/comments-rotated.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
     (
         "testdata/vector-multi.pdf",
         ["testdata/make_vector_pdf.py", "testdata/vector-multi.pdf", "200000", "12"],

@@ -1518,11 +1518,26 @@ starts *writing* annotations:
   arrangement `outline.rs` has with `Target`, and the reason `docs/THREAT-MODEL.md` T8 still
   holds now that a document's own prose reaches the DOM in quantity.
 
-`testdata/comments.pdf` is the corpus and `examples/comments-probe` reads it (28/28, plus a
-`--mode clean` control on a document with no annotations). It found nothing in the product ---
-it was written first --- but it found two defects in itself, both recorded in `docs/TRAPS.md`:
-a square rectangle that could not tell a rotation from an identity, and three malformed
-`/Annots` entries written after 1,200 notes, which the per-page bound meant nothing ever read.
+`testdata/comments.pdf` is the corpus, with `comments-rotated.pdf` beside it, and
+`examples/comments-probe` reads both (26/26 and 5/5, plus a `--mode clean` control on a
+document with no annotations). It found nothing in the product --- it was written first ---
+and five defects in itself and in the harnesses, all recorded in `docs/TRAPS.md`:
+
+- a square rectangle that could not tell a rotation from an identity;
+- three malformed `/Annots` entries written after 1,200 notes, which the per-page bound meant
+  nothing ever read;
+- a sidecar named `comments-manifest.json`, which `viewer_check.py` binds to
+  `TPDF_READING_MANIFEST` by suffix alone --- so a manifest keyed by page number reached a
+  consumer expecting a list of pages, threw, and ended the run sixteen checks in;
+- a `/Rotate 90` page inside an otherwise upright document, which makes it *mixed-size* and
+  turned two rotation checks red against a viewer behaving as designed. It has its own file
+  now, which is what `make_rotated_pdf.py` already does;
+- page text with one-character words and too few lines, which is a statement about the three
+  checks that drag and click at fixed screen positions rather than about the corpus.
+
+The last two cost a bisect each, and the one worth repeating: **disabling the eight new checks
+and re-running reproduced both rotation failures**, which separated "the new checks left bad
+state" from "this fixture meets a documented gap" in a single build.
 
 **What is deliberately not here:** creating, editing or deleting a comment, and any change to
 the file. That is Phase 2 and needs the working document.
