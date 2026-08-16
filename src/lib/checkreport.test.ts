@@ -1,11 +1,14 @@
 /**
  * The transcript format {@link Report} prints, pinned against its readers.
  *
- * Four Python harnesses parse these lines. `scripts/session_check.py` and
+ * Five Python harnesses parse these lines. `scripts/session_check.py` and
  * `scripts/open_check.py` read the summary's arithmetic and look up individual
- * verdicts by name; `scripts/viewer_check.py` counts them; and
+ * verdicts by name; `scripts/viewer_check.py` counts them;
  * `scripts/mutate_viewer.py` decides whether a mutation was *caught* by reading
- * which names went red. None of that is reachable from `npm run test`: they need
+ * which names went red; and `scripts/viewer_sweep.py` compares the whole set of
+ * names across corpora, which is what the `CHECK-NAMES-JSON` roll is for ---
+ * that one is not parsed out of the human column at all, because it cannot be.
+ * None of that is reachable from `npm run test`: they need
  * a built application and, for three of them, an unlocked screen. So a format
  * change is discovered at the end of a rebuild-per-mutation run, as a harness
  * that finds nothing --- which is exactly what a clean tree also looks like.
@@ -260,5 +263,69 @@ describe("the printing chain", () => {
 
     expect(results()).toHaveLength(1);
     expect(exitCode()).toBeNull();
+  });
+});
+
+describe("the machine-readable roll of check names", () => {
+  /** `NAMES_JSON` in `scripts/viewer_sweep.py`. */
+  const NAMES_JSON = /^CHECK-NAMES-JSON (\[.*\])$/;
+
+  /** The roll line's parsed contents, or null if it was never printed. */
+  function roll(): string[] | null {
+    for (const line of lines()) {
+      const found = NAMES_JSON.exec(line);
+      if (found?.[1]) return JSON.parse(found[1]) as string[];
+    }
+    return null;
+  }
+
+  it("lists every name, in order, whatever the outcome", async () => {
+    // The printed column cannot be parsed back --- `padEnd` does not truncate,
+    // so a name past the pad is separated from its detail by a single space,
+    // exactly like the spaces inside it. `viewer_sweep.py` compares the *set*
+    // of names across corpora to catch a check quietly ceasing to exist, and
+    // recovering that set by guessing is how its first version reported two
+    // corpora agreeing about a set that was wrong on both sides.
+    const long = "a check whose name is comfortably past the forty-six column pad";
+    const report = new Report();
+    report.check("passed", true, "detail");
+    report.check(long, false, "detail with spaces in it");
+    report.skip("skipped", "the document has one page");
+    await report.finish();
+
+    expect(roll()).toEqual(["passed", long, "skipped"]);
+  });
+
+  it("agrees with the summary about how many checks there were", async () => {
+    // The property `viewer_sweep.py` asserts on every run, and the reason a
+    // silently truncated parse cannot survive: the roll and the arithmetic are
+    // produced from the same array, so a disagreement is a real defect rather
+    // than a formatting difference.
+    const report = new Report();
+    report.check("one", true, "");
+    report.check("two", false, "");
+    report.skip("three", "no reason");
+    report.skip("four", "no reason");
+    await report.finish();
+
+    const summary = lines().map((line) => SUMMARY.exec(line)).find(Boolean);
+    const ran = Number(summary?.[2]);
+    const skipped = Number(/(\d+) not applicable/.exec(lines().join("\n"))?.[1]);
+    expect(ran + skipped).toBe(roll()?.length);
+  });
+
+  it("is printed before the summary, so the transcript still ends on the verdict", async () => {
+    // The human line is the last thing a person reads off a terminal, and
+    // `viewer_check.py` takes the last "checks passed" match. Putting the roll
+    // after it would work and would bury the verdict.
+    const report = new Report();
+    report.check("only", true, "");
+    await report.finish();
+
+    const all = lines();
+    const rollAt = all.findIndex((line) => NAMES_JSON.test(line));
+    const summaryAt = all.findIndex((line) => SUMMARY.test(line));
+    expect(rollAt).toBeGreaterThanOrEqual(0);
+    expect(summaryAt).toBeGreaterThan(rollAt);
   });
 });

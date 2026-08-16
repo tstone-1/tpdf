@@ -7208,3 +7208,128 @@ runs died that way here before `pkill -f "tpdf.app/Contents/MacOS/tpdf"` between
 the sweep script. `BUILD.md` already prescribes that for `open_check.py`; it applies to every
 harness that opens a window, and the sweep is where it matters most because each run leaves one
 behind for the next.
+
+### A margin above a destination lands on the previous page, and the tolerance that compensates for it can only reach within a page
+
+Jumping to an outline entry leaves `DESTINATION_MARGIN_PT` --- 6 pt --- of air above it, so the
+heading does not read as cut off against the top edge. `REACHED_TOLERANCE_PT` = 8 exists to
+compensate in the *highlight*, and its docstring says exactly what it is for: "without this,
+clicking an outline entry highlights the entry **before** it". The pair is asserted to stay
+ordered, in `outline.test.ts` rather than in a comment.
+
+All of that was correct and none of it reached the case where the destination is the **top of
+the page**. Subtracting 6 pt from an offset of zero scrolls into the *previous page*;
+`position` then reports that page, and `currentId` drops every row whose page is past the
+reader --- `if (row.target.page > page) continue` --- **before** the tolerance is consulted. So
+the tolerance could only ever rescue an entry on the same page as the reader, which is not the
+case it was written for.
+
+It is not an edge case. `/Fit` and `/FitB` name no coordinate at all, which `goToDestination`
+reads as the page's top; `/XYZ x 0 z` is an explicit zero; and on a **rotated view every**
+destination has offset zero by construction, because the destination's axis is not the one
+being scrolled. Any heading within 6 pt of the page top is in the same position.
+
+Caught by `viewer_check.py` on `links.pdf`, and by that fixture alone --- `outline-simple` and
+`outline-hostile`, the two corpora whose whole purpose is outlines, both passed. The
+discriminator is checked rather than inferred: `grep` over `testdata/*.py` finds `/Fit` in
+`make_links_pdf.py` and **nowhere else**, so no other fixture has an outline entry that names
+no coordinate, and every other entry's `y` is far enough down its page that the margin stays
+inside it. The corpora built to exercise outlines could not reach the case, and the corpus
+built to exercise *links* did, because its outline exists to be compared against them.
+
+Its outline is also deliberately **not in page order**, which is what made the wrong answer
+legible: the entry chosen was a visibly different one, `"" -> "3", wanted "1"`, rather than the
+neighbour. That is a fixture being easy to read from, not the thing that caught it --- a
+monotonic outline with a `/Fit` entry would have failed the same check with a less obvious
+number.
+
+The fix is one clamp --- `Math.max(0, offset - DESTINATION_MARGIN_PT)` --- and the reasoning is
+that the margin reveals what is above the heading, so when there is nothing above it the margin
+has nothing to do. Three unit tests, each red under the unclamped form, and a control at offset
+200 that stays green so the tests cannot be satisfied by deleting the margin outright.
+
+### A guard asking how long the document is cannot answer how far the jump went
+
+"A jump discards what it leaves behind" presses End and requires the tiles from the previous
+screen to be gone one frame later. It only means something when the jump left the screen
+behind, so it is guarded --- and the guard read `viewer.maxOffset > HEIGHT`, the document being
+longer than the window.
+
+Those are the same quantity only from a standing start, and the check does not start from one:
+a wheel notch 400 px down runs immediately before it. On `links-rotated.pdf`, `maxOffset` is
+750 against a 700 px window, so the guard passes, End travels **350 px**, the tiles on screen
+stay valid, and the check reports `sharp=100.0%` --- a failure printed against a viewer that
+discarded exactly what it should have.
+
+Every other corpus is long enough that the two quantities agree, which is why a guard testing
+the wrong one had been green for as long as it had existed. **Measure the quantity the
+assertion depends on**, which here is the travel: `viewer.offset - leftFrom`. The skip line now
+prints it, so a fixture that lands near the boundary says so rather than looking like a
+document that was simply short.
+
+### A probe fixture swept as a corpus, against the file that already said not to
+
+`links-rotated.pdf` went into a `viewer_check.py` sweep and produced eight red checks. Three
+were chased before the cause was found, and none of the eight was a defect in the viewer: two
+are the documented mixed-size rotation gap, one is a two-page document retaining every page it
+has, and the rest are a last page that cannot reach the top of the viewport.
+
+`BUILD.md` already said so, in the fixture's own paragraph: the rotated page is *"a **separate
+file** --- `links-rotated.pdf` --- because a document that mixes page sizes reddens two of
+`viewer_check.py`'s rotation checks"*, and names `comments-rotated.pdf` as the same split for
+the same reason. The note was written when the fixture was, and read by nobody at the moment it
+would have helped.
+
+**The list of corpora had no home.** It lived in whatever shell loop somebody typed that day, so
+there was no artifact to be wrong, no diff to review, and nothing that could refuse. That is the
+same defect the repository had already fixed twice --- once for CI fixtures
+(`scripts/ci_fixtures.py`, after a release workflow lost a whole step) and once for the trap
+index (`scripts/check_trap_index.py`, after three entries went missing from a list nobody
+counted).
+
+`scripts/viewer_sweep.py` is the list, and it is a gate. Every `testdata/*.pdf` must be either a
+window corpus with a stated purpose or excluded with a stated reason; a fixture matching neither
+is an error, a corpus named here and absent from disk is an error, and an exclusion pattern
+matching nothing is a warning. All three proved by mutation before the gate was trusted --- and
+the third mutation had to be redone, because renaming an exclusion pattern *orphans* the fixture
+it covered, so the unclassified error fires first and the warning path never runs. A control
+that trips an earlier check has not tested the one it was aimed at.
+
+It also asserts the invariant `BUILD.md` could previously only state in prose: **every corpus
+reports the same check names**, diffed as sets and printed as a difference. A check that stops
+being printed and a check that starts skipping are indistinguishable in a total, and the totals
+are what a person compares.
+
+### The tool written to catch a missing check reported agreement about the wrong set
+
+`scripts/viewer_sweep.py` exists to assert that every corpus prints the **same check names**,
+because a check that quietly stops existing and a check that starts skipping are the same
+number in a total. Its first version recovered those names by parsing the transcript, splitting
+each result line on two-or-more spaces --- the padded column the names are printed in.
+
+`Report` writes `LABEL + name.padEnd(46) + " " + detail`, and `padEnd` does not truncate. A name
+longer than 46 characters is therefore followed by **one** space, indistinguishable from the
+single spaces inside the name itself, and there are plenty: *"the keyboard reaches a link, and
+draws a ring on it"* is 50. The split matched 175 lines of 189, truncated some of what it did
+match, and the truncations collided --- so the run reported
+
+    [OK]   all 2 corpora report the same 137 check names
+
+beside `162 ran, 27 skipped`, which is 189. Two numbers on adjacent lines of the same output,
+disagreeing by 52, and the verdict was `[OK]`.
+
+**The tell was free and nearly missed.** The summary counts and the parsed count are both
+printed; nothing compared them. That comparison is now an assertion --- `len(names) == ran +
+skipped` --- and it is the cheapest check in the file.
+
+The fix is not a better regular expression. **The run knows its own names**, so `Report.finish`
+prints them as `CHECK-NAMES-JSON [...]` and the sweep reads that, refusing outright when the
+line is absent rather than falling back on the guess. A bundle predating the marker is an old
+bundle, and that refusal was proved against a real one before it was trusted: the build on disk
+at the time had not been rebuilt, and the sweep said so and stopped.
+
+Three tests pin the marker in `checkreport.test.ts`, each proved by mutating `finish` --- not
+emitting the roll at all, emitting only the checks that ran, and emitting it after the summary
+--- and the file that holds them already existed for exactly this reason, with a docstring
+warning that the padded column must not be parsed. **The warning was written, the harnesses had
+already been rewritten to obey it, and the new tool did it anyway.**

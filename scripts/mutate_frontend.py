@@ -1168,6 +1168,32 @@ MUTATIONS = [
         '    span.setAttribute("data-role", "link");',
         "announces a link as a link, and only the characters it covers",
     ),
+    Mutation(
+        # `viewer.ts` had no mutation coverage at all until 2026-08-16, and both
+        # defects found that day were in it --- one of them shipped in 26.8.0.
+        # Its tests exist; nothing was checking that they could fail.
+        #
+        # Replay a recorded place as though it were a destination, which is what
+        # `jumpTo` used to do. The margin comes off a second time on every jump,
+        # so a Back/Forward round trip drifts a page each time.
+        "viewer: replay a recorded place through the destination path",
+        "src/lib/viewer.ts",
+        "      const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));\n"
+        "      const offset = this.turns === 0 ? Math.max(0, place.top) : 0;\n"
+        "      this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);",
+        "      this.goToDestination(place.page, place.top);",
+        "leaves air above a destination, and none above a recorded place",
+    ),
+    Mutation(
+        # Take the margin off an offset of zero, which scrolls into the previous
+        # page. Every `/Fit` destination, every heading within 6 pt of a page
+        # top, and every destination at all on a rotated view.
+        "viewer: let a destination's margin cross into the previous page",
+        "src/lib/viewer.ts",
+        "    const air = Math.max(0, offset - DESTINATION_MARGIN_PT);",
+        "    const air = offset - DESTINATION_MARGIN_PT;",
+        "lands on the page a top-of-page destination names, not the one before",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -1189,6 +1215,7 @@ TEST_FILES = [
     "src/lib/commentlist.test.ts",
     "src/lib/commentpopup.test.ts",
     "src/lib/links.test.ts",
+    "src/lib/viewer.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

@@ -1223,7 +1223,23 @@ export class Viewer {
     const offset = this.turns === 0 ? (top ?? 0) : 0;
     // A little air above, for the same reason `goToMatch` leaves a third of a
     // screen: a heading flush against the top edge reads as cut off.
-    this.scrollTo(base + (offset - DESTINATION_MARGIN_PT) * this.zoom);
+    //
+    // **Never past the page's own top**, which is not a rounding nicety. The
+    // margin is meant to reveal what sits above the heading; when the heading
+    // *is* the top of the page there is nothing above it, and 6 pt of the
+    // *previous* page is what gets revealed instead. `position` then reports
+    // that previous page, and `currentId` drops any entry whose page is past
+    // the reader before {@link REACHED_TOLERANCE_PT} is ever consulted --- so
+    // clicking an entry highlights a different entry, which is the bug that
+    // tolerance was added to fix and could only fix within a page.
+    //
+    // Found by `viewer_check.py` on `links.pdf`, whose outline is deliberately
+    // not in page order: jumping to "Chapter two" (`/Fit`, page 5) highlighted
+    // "Named, flat" on page 4. Every `/Fit` and `/FitB` destination has this
+    // shape, and so does every destination on a rotated view, where the offset
+    // is zero by construction.
+    const air = Math.max(0, offset - DESTINATION_MARGIN_PT);
+    this.scrollTo(base + air * this.zoom);
   }
 
   /** Scrolls so page `page` (zero-based) starts at the top of the viewport. */
@@ -1651,7 +1667,22 @@ export class Viewer {
   private jumpTo(place: Place): void {
     this.replaying = true;
     try {
-      this.goToDestination(place.page, place.top);
+      // **Not `goToDestination`, and that is the fix rather than a shortcut.**
+      // That method subtracts `DESTINATION_MARGIN_PT` so a heading is not flush
+      // against the top edge, which is right for a *destination* the document
+      // named and wrong for a position the reader was actually at: Back then
+      // lands slightly above where they were, `position` reports the page above,
+      // and a Back/Forward round trip drifts a page each time.
+      //
+      // Found by `viewer_check.py` on a 775-page document: going to the last
+      // page and back reported 773 rather than 774, and Forward returned 772.
+      // The margin compounds, so the further a reader travels the further off
+      // they land --- which is the shape that reads as "Back is unreliable"
+      // rather than as an off-by-one.
+      const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
+      const offset = this.turns === 0 ? Math.max(0, place.top) : 0;
+      this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
+      this.wake();
     } finally {
       this.replaying = false;
     }

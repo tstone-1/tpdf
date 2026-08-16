@@ -68,6 +68,16 @@ export class Report {
     const failed = this.results.filter((r) => r.outcome === "fail").length;
     const skipped = this.results.filter((r) => r.outcome === "skip").length;
     const ran = this.results.length - skipped;
+    // The names, machine-readable, because the human column cannot be parsed
+    // back. A result line is `LABEL name.padEnd(46) detail`, so a name longer
+    // than 46 characters overflows the column and is separated from its detail
+    // by a single space --- indistinguishable from the single spaces inside the
+    // name. `viewer_sweep.py` compares the *set* of names across corpora, which
+    // is the invariant that catches a check quietly ceasing to exist, and the
+    // first parser written for it silently matched 175 of 189 lines and then
+    // reported the corpora agreeing about a set that was wrong on both sides.
+    // A run's own list costs one line and cannot be misread.
+    this.emit(`CHECK-NAMES-JSON ${JSON.stringify(this.results.map((r) => r.name))}`);
     this.emit(
       `\n${ran - failed}/${ran} checks passed` +
         (skipped ? `, ${skipped} not applicable` : ""),

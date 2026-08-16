@@ -22,6 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DESTINATION_MARGIN_PT } from "./outline";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { TEXT_CACHE_CHARS, type PageText } from "./text";
 import { Viewer, type ViewerOptions, type ViewerStatus } from "./viewer";
@@ -886,6 +887,199 @@ describe("Viewer geometry on a mixed-size document", () => {
     // text layer really does report this page the other way round, so a viewer
     // that stored what it was handed would have stored 1600 x 600.
     expect(viewer.textOn(1)?.width_pt).toBe(1600);
+    viewer.destroy();
+  });
+});
+
+/**
+ * Tests for Back and Forward restoring a place rather than re-deriving one.
+ *
+ * The distinction they turn on is that a *destination* and a *place* are
+ * different things scrolled to differently. `goToDestination` leaves
+ * `DESTINATION_MARGIN_PT` of air above the point it was given, because a
+ * heading flush against the top edge reads as cut off. A recorded place is
+ * where the reader already was, and moving them 6 pt off it is not a
+ * courtesy --- it is a wrong answer that compounds, since the margin is
+ * subtracted again on every replay.
+ *
+ * These exist because the window harness found it and the window harness is
+ * the wrong instrument for a scroll arithmetic bug: it wants an unlocked
+ * screen, a built bundle and about ninety seconds per document, and it
+ * reported the symptom (`"Back": 773 -> 0` on a 775-page file) rather than
+ * the cause. Each assertion below was checked by restoring the defect ---
+ * routing `jumpTo` back through `goToDestination` --- and confirming it goes
+ * red.
+ */
+describe("Viewer history", () => {
+  let dom: FakeDom;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    core.invoke.mockReset();
+    core.invoke.mockImplementation(() => Promise.resolve(null));
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => Promise.reject(new Error("boom")));
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    dom.restore();
+  });
+
+  /** A document long enough that page 2 is reachable well clear of the end. */
+  function build8(): Viewer {
+    return new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 8,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+    });
+  }
+
+  it("leaves air above a destination, and none above a recorded place", () => {
+    // The control first: a destination really is placed `DESTINATION_MARGIN_PT`
+    // above the point it names. Without this the assertion below would hold
+    // just as well for a viewer that had no margin anywhere, and would then be
+    // testing nothing.
+    const viewer = build8();
+    viewer.goToDestination(2, 200);
+    const arrived = viewer.position;
+    expect(arrived.page).toBe(2);
+    expect(arrived.top).toBeCloseTo(200 - DESTINATION_MARGIN_PT, 6);
+
+    // Leave, and come back. The place recorded was `arrived`, margin and all,
+    // so restoring it must reproduce `arrived` exactly --- not `arrived` with
+    // the margin taken off a second time.
+    viewer.goToDestination(0, 0);
+    expect(viewer.goBack()).toBe(true);
+    expect(viewer.position).toEqual(arrived);
+    viewer.destroy();
+  });
+
+  it("does not drift a little further off on every round trip", () => {
+    // The shape that made this read as "Back is unreliable" rather than as an
+    // off-by-one: each replay subtracted the margin again, so the error grew
+    // with the number of jumps rather than staying put. Three round trips is
+    // enough for a 6 pt margin to move a reader off a page top.
+    const viewer = build8();
+    viewer.goToDestination(5, 300);
+    const away = viewer.position;
+    viewer.goToDestination(1, 100);
+    const near = viewer.position;
+
+    for (let round = 0; round < 3; round++) {
+      expect(viewer.goBack()).toBe(true);
+      expect(viewer.position).toEqual(away);
+      expect(viewer.goForward()).toBe(true);
+      expect(viewer.position).toEqual(near);
+    }
+    viewer.destroy();
+  });
+
+  it("restores a place on a rotated view, which records no offset", () => {
+    // A quarter turn scrolls along the page's horizontal axis, so `position`
+    // reports the page and no offset, and a recorded place carries none
+    // either. That is the branch of `jumpTo` the two tests above cannot
+    // reach: they both replay a non-zero `top`.
+    const viewer = build8();
+    viewer.rotateBy(1);
+    viewer.goToDestination(4, 300);
+    const away = viewer.position;
+    expect(away).toEqual({ page: 4, top: 0 });
+
+    viewer.goToDestination(0, 0);
+    expect(viewer.goBack()).toBe(true);
+    expect(viewer.position).toEqual(away);
+    viewer.destroy();
+  });
+});
+
+/**
+ * Tests for where a destination puts the reader, and the page it must not
+ * put them on.
+ *
+ * `DESTINATION_MARGIN_PT` reveals what sits above a heading, so the heading
+ * does not read as cut off against the top edge. The whole of the rule below
+ * is that there is nothing above a heading which *is* the top of the page,
+ * and revealing 6 pt of the page before it is a different page rather than
+ * air. `outline.ts`'s `currentId` then drops the entry --- it skips any row
+ * whose page is past the reader, before `REACHED_TOLERANCE_PT` is consulted
+ * --- so the reader clicks one entry and watches another light up.
+ *
+ * Found by `viewer_check.py` on `links.pdf`, which is the only corpus that
+ * can see it: its outline is deliberately out of page order, so the entry
+ * wrongly chosen is a visibly different one rather than the neighbour.
+ */
+describe("Viewer destinations", () => {
+  let dom: FakeDom;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    core.invoke.mockReset();
+    core.invoke.mockImplementation(() => Promise.resolve(null));
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => Promise.reject(new Error("boom")));
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    dom.restore();
+  });
+
+  function build8(): Viewer {
+    return new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 8,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+    });
+  }
+
+  it("lands on the page a top-of-page destination names, not the one before", () => {
+    // `/Fit` and `/FitB` name no coordinate, which `goToDestination` takes as
+    // the page's top --- so this is not an edge case, it is what a whole
+    // destination family does.
+    const viewer = build8();
+    viewer.goToDestination(5, null);
+    expect(viewer.position).toEqual({ page: 5, top: 0 });
+
+    // And an explicit zero, which is what `/XYZ x 0 z` and a heading at the
+    // very top of its page both produce.
+    viewer.goToDestination(3, 0);
+    expect(viewer.position).toEqual({ page: 3, top: 0 });
+    viewer.destroy();
+  });
+
+  it("still leaves air above a heading that has room for it", () => {
+    // The control. Without it every assertion above would hold just as well
+    // for a viewer that had deleted the margin outright, which would bring
+    // back the cut-off heading the margin exists to prevent --- and
+    // `REACHED_TOLERANCE_PT`, which must strictly exceed it, would then be
+    // guarding nothing.
+    const viewer = build8();
+    viewer.goToDestination(5, 200);
+    expect(viewer.position.page).toBe(5);
+    expect(viewer.position.top).toBeCloseTo(200 - DESTINATION_MARGIN_PT, 6);
+    viewer.destroy();
+  });
+
+  it("clamps the margin rather than dropping it near the top of a page", () => {
+    // The boundary the clamp is written on: an offset smaller than the margin
+    // is the case where subtracting it crosses the page. Landing at the page
+    // top is right; landing 2 pt above it is the defect at its smallest, and
+    // is exactly as wrong as the 6 pt version --- `position` reports the page
+    // before either way.
+    const viewer = build8();
+    viewer.goToDestination(6, 4);
+    expect(viewer.position).toEqual({ page: 6, top: 0 });
     viewer.destroy();
   });
 });
