@@ -44,6 +44,7 @@ export interface LinkLimits {
   over_budget: boolean;
   unreadable: number;
   unresolved_names: number;
+  pages_missed: number;
 }
 
 /** A whole document's links, mirroring `links.rs`'s `Links`. */
@@ -382,6 +383,16 @@ export function noticeFor(limits: LinkLimits): string | null {
       limits.unresolved_names === 1
         ? "one named destination could not be resolved"
         : `${limits.unresolved_names} named destinations could not be resolved`,
+    );
+  }
+  // First in the sentence would be better and is not worth the reordering: this
+  // is the one entry that means "the scan could not look", where every other
+  // means "it looked and cut something". Both belong in the notice.
+  if (limits.pages_missed > 0) {
+    parts.push(
+      limits.pages_missed === 1
+        ? "one page could not be read at all"
+        : `${limits.pages_missed} pages could not be read at all`,
     );
   }
   if (parts.length === 0) return null;

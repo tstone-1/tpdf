@@ -1823,6 +1823,46 @@ introduced `document.createTextNode`, which the double did not have at all. Eigh
 that behaves differently**, and it is worth noticing which kind a double gives you before relying
 on it.
 
+### An empty answer from a whole-document scan cannot say whether it looked
+
+`annots.rs` and `links.rs` both walk `document.get_pages()` from `lopdf` and bound themselves
+against a `page_count` that came from **PDFium**. Every loop is `for page in pages.take(count)`,
+so when `lopdf` reports no pages the loop runs zero times, the list comes back empty, and *not
+one bound has tripped*. The reader is told the document has no comments and no links, which is
+exactly what a document with none looks like.
+
+`encoding.rs` had already drawn this distinction --- "a page `lopdf` cannot account for is
+unknown, not clean" --- and the two younger modules did not, because the shape was copied from
+each other rather than from it. Both now count `page_count - pages.len()` into a `pages_missed`
+limit, before the walk, since the walk's own emptiness is the thing it cannot distinguish.
+
+**No fixture on disk makes it fire, and that is the interesting half.** Swept across every
+`testdata/*.pdf` on 2026-08-16: the two parsers agree about page count on every document PDFium
+will open. So the guard is **defensive rather than demonstrated**, its tests are synthetic, and
+saying so is the difference between a bound with a known instance and one without.
+
+### A cited instance can be half right, and the wrong half is the one doing the work
+
+`encoding.rs` justified taking its page count from PDFium with a specific example, repeated in
+`docs/PLAN.md`: *"`lopdf` reports zero pages for `testdata/incr-encrypted-pw.pdf`, which PDFium
+opens and paginates normally."*
+
+Measured 2026-08-16, both halves separately:
+
+- `lopdf` loads that file and reports **0 pages**. True.
+- PDFium **refuses to open it** --- `RawDocument::open` fails and `links-probe` exits 2 --- because
+  it is AES-256 behind a real user password. False.
+
+So the two parsers never both see that document, and it demonstrates no disagreement at all. The
+sentence was persuasive precisely because its first half is checkable and true; the half nobody
+checked is the one the argument rests on, since a disagreement needs two answers.
+
+The design it justified is unchanged and still right: two independent parsers with no guarantee
+of agreeing is reason enough to take the count from the one whose pagination the reader is
+looking at. What changed is what the codebase claims to *know* --- and the general lesson is that
+**a compound claim is not verified by verifying the memorable part of it.** The way to catch it
+is to state each half as its own proposition and measure each: here that was two commands.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a

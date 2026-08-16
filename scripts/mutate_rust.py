@@ -769,6 +769,51 @@ MUTATIONS = [
         "            Ok(_) => {\n                limits.unreadable += 1;\n                continue;\n            }",
         "annotations_that_are_not_links_are_skipped_without_complaint",
     ),
+    Mutation(
+        # Answer "no links" for a document whose pages could not be read. The
+        # scan returns an empty list either way; only the limit can tell a
+        # document with no links from one nothing could look at.
+        "links: report pages lopdf could not read as nothing missing",
+        "src/links.rs",
+        "    limits.pages_missed = page_count.saturating_sub(pages.len());",
+        "    limits.pages_missed = 0;",
+        "a_page_lopdf_cannot_account_for_is_reported",
+    ),
+    Mutation(
+        # Charge a deficit for every document, which puts a warning on every file
+        # tpdf opens and trains a reader to ignore the one that matters.
+        "links: charge a page deficit even when the parsers agree",
+        "src/links.rs",
+        "    limits.pages_missed = page_count.saturating_sub(pages.len());",
+        "    limits.pages_missed = page_count.saturating_sub(pages.len()) + 1;",
+        "a_document_both_parsers_agree_about_reports_nothing_missing",
+    ),
+    Mutation(
+        # Underflow when lopdf reads further than PDFium paginates, reporting the
+        # largest number the type can hold as a page deficit.
+        "links: subtract page counts without saturating",
+        "src/links.rs",
+        "    limits.pages_missed = page_count.saturating_sub(pages.len());",
+        "    limits.pages_missed = page_count.wrapping_sub(pages.len());",
+        "seeing_more_pages_than_claimed_is_not_a_deficit",
+    ),
+    Mutation(
+        # The same silence in the comment scan, which is where the shape was
+        # copied from --- so the two must be broken separately to prove each.
+        "annots: report pages lopdf could not read as nothing missing",
+        "src/annots.rs",
+        "    limits.pages_missed = page_count.saturating_sub(pages.len());",
+        "    limits.pages_missed = 0;",
+        "a_page_lopdf_cannot_account_for_is_reported",
+    ),
+    Mutation(
+        # And its control, in the other direction.
+        "annots: charge a page deficit even when the parsers agree",
+        "src/annots.rs",
+        "    limits.pages_missed = page_count.saturating_sub(pages.len());",
+        "    limits.pages_missed = page_count.saturating_sub(pages.len()) + 1;",
+        "a_document_both_parsers_agree_about_reports_nothing_missing",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.

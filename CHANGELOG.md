@@ -71,6 +71,25 @@ have the binary.)
 
 - **Not here:** creating or editing a link, and opening one in a browser.
 
+### An empty scan no longer looks like an empty document
+
+- **"This document has no comments" and "nothing could read this document" were the same
+  answer.** Both whole-document scans walk the pages `lopdf` finds and bound themselves against
+  a page count that came from PDFium; when the two disagree the loop runs zero times, the list
+  comes back empty and no bound has tripped. Both now report how many pages they could not
+  account for, and the sidebar says so.
+
+- **No fixture on disk makes it fire**, which is stated rather than left to be found: swept
+  across every fixture, the two parsers agree about page count on every document PDFium will
+  open. The guard is defensive rather than demonstrated and its tests are synthetic, which is
+  what `encoding.rs` already did for the same distinction.
+
+- **A justification in the code was half wrong and is corrected.** `encoding.rs` and
+  `docs/PLAN.md` both said `lopdf` reports zero pages for `incr-encrypted-pw.pdf` "which PDFium
+  paginates normally". The first half is true; PDFium refuses to open that file at all, so the
+  two parsers never both see it and it demonstrated nothing. The design it justified is
+  unchanged.
+
 ### Comments can be read
 
 - **A reviewed document opened as a document with coloured boxes in it.** PDFium already

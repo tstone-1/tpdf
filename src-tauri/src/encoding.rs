@@ -155,17 +155,32 @@ impl PageMapping {
 /// caller never has to reason about a short answer.
 ///
 /// **`page_count` comes from PDFium, and passing it is load-bearing rather than a
-/// convenience.** The two parsers disagree about how many pages a document has
-/// more often than one would like, and the disagreement is always in the
-/// dangerous direction: `lopdf` reports **zero** pages for
-/// `testdata/incr-encrypted-pw.pdf`, which PDFium opens and paginates normally.
-/// An empty vector reads as "no page has a problem", which is the precise lie
-/// this module was written to stop, arriving through the module itself. Every
-/// page `lopdf` could not account for is therefore returned `truncated` --- known
-/// to be unknown --- and `certain()` is false for it.
+/// convenience.** An empty vector reads as "no page has a problem", which is the
+/// precise lie this module was written to stop, arriving through the module
+/// itself. Every page `lopdf` could not account for is therefore returned
+/// `truncated` --- known to be unknown --- and `certain()` is false for it.
 ///
-/// Found by running the scan across all 36 fixtures rather than by unit tests,
-/// every one of which passed on documents `lopdf` and PDFium agree about.
+/// **The example this used to give was half wrong, and the correction is worth
+/// more than the example** (measured 2026-08-16). It read: *"the two parsers
+/// disagree more often than one would like, and the disagreement is always in
+/// the dangerous direction: `lopdf` reports zero pages for
+/// `testdata/incr-encrypted-pw.pdf`, which PDFium opens and paginates
+/// normally."* The first half is true --- `lopdf` loads that file and reports
+/// **0** pages. The second is not: **PDFium refuses to open it at all**
+/// (`RawDocument::open` fails, and `links-probe` exits 2 on it), because it is
+/// AES-256 behind a real user password. So the two parsers never both see that
+/// document, and it demonstrates no disagreement.
+///
+/// Swept across every `testdata/*.pdf` the same day: **the two parsers agree
+/// about page count on every fixture PDFium will open.** `hostile-encrypted.pdf`
+/// --- AES-256 with an *empty* user password, which opens with no prompt --- is
+/// read by `lopdf` as 1 page, exactly as PDFium paginates it.
+///
+/// The design is unchanged and still right: two independent parsers with no
+/// guarantee of agreeing is reason enough to take the count from the one whose
+/// pagination the reader is actually looking at. What changed is that the guard
+/// is **defensive rather than demonstrated**, and saying so is the difference
+/// between a bound with a known instance and one without.
 ///
 /// # Errors
 ///
@@ -521,9 +536,14 @@ mod tests {
 
     /// A page PDFium has and `lopdf` does not is unknown, not clean.
     ///
-    /// The real instance is `incr-encrypted-pw.pdf`, where `lopdf` reports zero
-    /// pages and PDFium paginates normally; this reproduces the shape without
-    /// needing an encrypted fixture. A short answer must not read as a clean one.
+    /// This reproduces the shape without needing an encrypted fixture, which is
+    /// the right way round: a short answer must not read as a clean one whether
+    /// or not a document on disk currently produces one.
+    ///
+    /// It used to cite `incr-encrypted-pw.pdf` as "the real instance", and that
+    /// was half wrong --- `lopdf` does report zero pages for it, and PDFium
+    /// **refuses to open it**, so the two never both see it. See the correction
+    /// on [`scan`].
     #[test]
     fn a_page_lopdf_cannot_account_for_is_unknown() {
         let bytes = document_with_font(composite("Identity-H", "Identity", false));

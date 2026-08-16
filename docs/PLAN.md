@@ -1777,11 +1777,17 @@ Three findings the work produced that this section did not predict:
   count** and barely notices file size. It is still computed off the startup path, because warm
   startup is ~276 ms against a 300 ms target and 6–12 ms is a quarter of the whole margin.
 - **Unknown is not unreadable**, and a mutation folding the two together survived the entire
-  suite until a test existed for it. `lopdf` reports **zero pages** for `incr-encrypted-pw.pdf`,
-  which PDFium paginates normally, so every page comes back truncated — counting those would put
-  a warning on every encrypted document, a false alarm on a file that searches perfectly well.
-  `scan` therefore takes the page count from PDFium and returns exactly that many entries,
-  marking what it could not reach as *known to be unknown*.
+  suite until a test existed for it. `scan` takes the page count from PDFium and returns exactly
+  that many entries, marking what it could not reach as *known to be unknown* — because an empty
+  answer reads as "no page has a problem", which is the lie the module exists to stop.
+
+  ⚠ **The instance this bullet used to cite was half wrong, corrected 2026-08-16.** It said
+  `lopdf` reports zero pages for `incr-encrypted-pw.pdf` "which PDFium paginates normally". The
+  first half holds — `lopdf` loads it and reports 0 pages. The second does not: PDFium **refuses
+  to open it**, since it is AES-256 behind a real user password, so the two parsers never both
+  see that file. A sweep of every fixture the same day found them agreeing about page count on
+  every document PDFium will open, `hostile-encrypted.pdf` (empty password, opens with no
+  prompt) included. The guard is right and is **defensive rather than demonstrated**.
 - **The accessibility layer made the search-side laziness moot**, found by a mutation surviving
   rather than by reading: `syncAccessibleText` asks every frame, so the fetch happens on the
   first frame after open for any document that renders text.

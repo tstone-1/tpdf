@@ -30,6 +30,7 @@ function comments(items: Comment[], over: Partial<Comments> = {}): Comments {
       unknown_kinds: 0,
       unreadable: 0,
       cycles: 0,
+      pages_missed: 0,
     },
     scan_ms: 1,
     ...over,
@@ -171,6 +172,7 @@ describe("CommentList", () => {
           unknown_kinds: 0,
           unreadable: 0,
           cycles: 0,
+          pages_missed: 0,
         },
       }),
     );

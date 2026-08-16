@@ -71,6 +71,7 @@ export interface CommentLimits {
   unknown_kinds: number;
   unreadable: number;
   cycles: number;
+  pages_missed: number;
 }
 
 /** A document's comments, as `document_comments` returns them. */
@@ -330,6 +331,17 @@ export function noticeFor(limits: CommentLimits): string | null {
   if (limits.unknown_kinds > 0) parts.push("marks of a kind tpdf does not read");
   if (limits.unreadable > 0) parts.push("entries that could not be read");
   if (limits.cycles > 0) parts.push("replies that pointed in a circle");
+  // The one entry that means "the scan could not look" rather than "it looked
+  // and cut something". Both belong here: an empty list shown as complete is
+  // the failure this whole notice exists to prevent, and "no comments" is
+  // exactly what a scan that saw no pages produces.
+  if (limits.pages_missed > 0) {
+    parts.push(
+      limits.pages_missed === 1
+        ? "a page that could not be read at all"
+        : `${limits.pages_missed} pages that could not be read at all`,
+    );
+  }
   if (parts.length === 0) return null;
   return `This document has ${joinList(parts)} — what is shown is incomplete.`;
 }

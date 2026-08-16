@@ -175,8 +175,13 @@ fn read(links: &Links) {
 fn limits_line(links: &Links) -> String {
     let limits = &links.limits;
     format!(
-        "limits: crowded_pages={} over_budget={} unreadable={} unresolved_names={}",
-        limits.crowded_pages, limits.over_budget, limits.unreadable, limits.unresolved_names
+        "limits: crowded_pages={} over_budget={} unreadable={} unresolved_names={} \
+         pages_missed={}",
+        limits.crowded_pages,
+        limits.over_budget,
+        limits.unreadable,
+        limits.unresolved_names,
+        limits.pages_missed
     )
 }
 
