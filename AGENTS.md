@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 264 entries
+The one thing this file does *not* carry in full is the trap list --- 266 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -870,8 +870,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 264 of them and the full text
-was 93% of this file --- an instruction budget spent on the 263 traps that are not
+titles. Only the titles are here, because there are 266 of them and the full text
+was 93% of this file --- an instruction budget spent on the 265 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -929,6 +929,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
 - `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every other fit lands at the page top (found by a differential check, in code that had been wrong since it was written)
 - Two resolvers agreeing with themselves is not two resolvers agreeing
+- `FPDFBookmark_GetDest` cannot tell a heading from a damaged link
+- A differential that needs a manifest is a differential over one document
 - A destination's offset belongs to the page it lands on, not the page it left
 - An outline can be infinite, and PDFium says so in its own documentation
 - PDFium cannot create digital signatures

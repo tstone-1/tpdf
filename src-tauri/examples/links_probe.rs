@@ -475,25 +475,32 @@ fn check(args: &Args, links: &Links) -> Result<bool, String> {
 
 /// The two destination resolvers, on one document, compared.
 fn agree(args: &Args, links: &Links, document: &RawDocument) -> Result<bool, String> {
-    let spec = section(args)?;
+    // **Absent is not an error here, and that is the whole point of the mode.**
+    // It said so in its own doc comment while `section` still refused a document
+    // the manifest does not describe --- so every real document came back
+    // "manifest is not JSON" and the differential ran on exactly one file, which
+    // is the state it was written to escape.
+    let spec = section(args).unwrap_or(serde_json::Value::Null);
     let mut report = Report {
         passed: 0,
         failed: 0,
     };
 
-    let shared = match spec
+    // The manifest half is optional now. `shared_targets` pins a handful of
+    // destinations against what the generator wrote --- the stronger check, and
+    // one only `links.pdf` can offer. The walk below needs no manifest at all
+    // and therefore runs on **any** document with an outline.
+    let empty: Vec<serde_json::Value> = Vec::new();
+    let shared: &Vec<serde_json::Value> = spec
         .get("shared_targets")
         .and_then(|value| value.as_array())
-    {
-        Some(shared) if !shared.is_empty() => shared,
-        _ => {
-            report.skip(
-                "the two resolvers agree",
-                "this fixture has no outline aimed at the links' destinations",
-            );
-            return Ok(report.finish());
-        }
-    };
+        .unwrap_or(&empty);
+    if shared.is_empty() {
+        report.skip(
+            "each shared destination matches the manifest",
+            "this document has no manifest stating what its destinations are",
+        );
+    }
 
     let outline = tpdf_lib::outline::read(document);
     // Flattened, because the fixture's entries are one level and a nested one
@@ -548,6 +555,92 @@ fn agree(args: &Args, links: &Links, document: &RawDocument) -> Result<bool, Str
             ),
         );
     }
+
+    // The manifest-free half: resolve the *same outline* through `lopdf` and
+    // compare entry for entry. Nothing has to be stated, so this runs on any
+    // document with an outline --- which is what turns a folder of real files
+    // into a differential instead of one fixture into six assertions.
+    let bytes = std::fs::read(&args.file)
+        .map_err(|e| format!("could not re-read {}: {e}", args.file.display()))?;
+    let mine = tpdf_lib::links::outline_targets(&bytes, document.page_count() as usize)?;
+
+    if entries.is_empty() {
+        report.skip(
+            "both resolvers reach the same number of outline entries",
+            "this document has no outline",
+        );
+        report.skip(
+            "both resolvers walk the outline to the same destinations",
+            "this document has no outline",
+        );
+        return Ok(report.finish());
+    }
+
+    // The count first, and it is not a formality: two lists compared pairwise up
+    // to the shorter one agree perfectly when one walk stopped early, which is
+    // the failure a differential is least able to see.
+    report.check(
+        mine.len() == entries.len(),
+        "both resolvers reach the same number of outline entries",
+        &format!("lopdf {}, PDFium {}", mine.len(), entries.len()),
+    );
+
+    // Two kinds of difference, and only one is a defect.
+    //
+    // A **destination** disagreement --- a different page, or a different offset
+    // down it --- is a bug in one of the two resolvers, and that is what this
+    // instrument is for.
+    //
+    // A **reason** disagreement between `None` and `Broken` is a known and
+    // measured limit of PDFium's API: `FPDFBookmark_GetDest` returns null both
+    // for an entry with no `/Dest` at all and for one whose `/Dest` names a
+    // destination that does not resolve, so `outline.rs` cannot tell a heading
+    // from a damaged link. Measured on a real document (a BS EN standard, one
+    // entry in 421 across 44 files): the entry carries `/Dest` as a name string
+    // that resolves nowhere, so `lopdf`'s "broken" is the accurate answer and
+    // PDFium's "no destination" is not. See the note on `outline::Target`.
+    //
+    // Allowed as a *named pair* rather than tolerated generally, so a resolver
+    // that started answering `None` for a page destination still goes red.
+    let mut differ: Vec<String> = Vec::new();
+    let mut known: Vec<String> = Vec::new();
+    for (at, (theirs, ours)) in entries.iter().zip(mine.iter()).enumerate() {
+        if same(&theirs.1, ours) {
+            continue;
+        }
+        let line = format!(
+            "#{at} {:?} lopdf {} / PDFium {}",
+            theirs.0.chars().take(24).collect::<String>(),
+            describe(ours),
+            describe(&theirs.1),
+        );
+        if matches!(
+            (&theirs.1, ours),
+            (Target::None, Target::Broken) | (Target::Broken, Target::None)
+        ) {
+            known.push(line);
+        } else {
+            differ.push(line);
+        }
+    }
+    report.check(
+        differ.is_empty(),
+        "both resolvers walk the outline to the same destinations",
+        &if differ.is_empty() {
+            format!(
+                "{} entries agree, {} differ only in the reason PDFium cannot tell apart",
+                entries.len().min(mine.len()) - known.len(),
+                known.len()
+            )
+        } else {
+            format!(
+                "{} of {} differ: {}",
+                differ.len(),
+                entries.len(),
+                differ.join("; ")
+            )
+        },
+    );
 
     Ok(report.finish())
 }

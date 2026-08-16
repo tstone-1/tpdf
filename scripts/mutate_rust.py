@@ -821,7 +821,7 @@ MUTATIONS = [
         # damaged, and the reader goes looking for another copy of a good file.
         "progressive: give every open failure the same reason",
         "src/progressive.rs",
-        '        err::PASSWORD => {\n            "This document needs a password, and tpdf cannot ask for one yet.".into()\n        }',
+        '        err::PASSWORD => "This document needs a password, and tpdf cannot ask for one yet.".into(),',
         '        err::PASSWORD => "This file is not a PDF, or it is damaged beyond reading.".into(),',
         "each_reason_says_something_different",
     ),
@@ -833,6 +833,37 @@ MUTATIONS = [
         '        _ => "This document could not be opened, and PDFium did not say why.".into(),',
         '        0 => "No error.".into(),\n        _ => "This document could not be opened, and PDFium did not say why.".into(),',
         "success_is_not_reported_as_a_reason",
+    ),
+    Mutation(
+        # Walk the outline breadth-first: siblings before children. Both lists
+        # still hold every entry, so only an order-sensitive comparison notices
+        # -- and `links-probe --mode agree` compares two lists positionally.
+        "links: walk the outline siblings-first rather than pre-order",
+        "src/links.rs",
+        "        if let Ok(Object::Reference(child)) = dict.get(b\"First\") {\n            walk_outline(\n                document,\n                *child,\n                numbers,\n                geometry,\n                seen,\n                out,\n                limits,\n                depth - 1,\n            );\n        }\n        node = match dict.get(b\"Next\") {",
+        "        node = match dict.get(b\"Next\") {",
+        "the_outline_walk_is_pre_order",
+    ),
+    Mutation(
+        # Drop the visited set. A /Next chain that loops then does not return a
+        # wrong answer -- it does not return, which is why the test asserts a
+        # length rather than a value.
+        "links: follow an outline chain that loops",
+        "src/links.rs",
+        "        if out.len() >= MAX_OUTLINE_ITEMS || !seen.insert(id) {",
+        "        if out.len() >= MAX_OUTLINE_ITEMS {",
+        "a_looping_outline_chain_terminates",
+    ),
+    Mutation(
+        # Answer "no destination" for an entry whose /Dest does not resolve,
+        # which is the PDFium behaviour this oracle exists to be independent of.
+        # An oracle that reproduced the defect would agree perfectly and say
+        # nothing.
+        "links: call an unresolvable outline destination absent rather than broken",
+        "src/links.rs",
+        "    match annot.get(b\"Dest\") {\n        Ok(dest) => destination(dest, document, numbers, geometry, limits),",
+        "    match annot.get(b\"Dest\") {\n        Ok(dest) => match destination(dest, document, numbers, geometry, limits) {\n            Target::Broken => Target::None,\n            other => other,\n        },",
+        "a_destination_that_resolves_nowhere_is_broken_not_absent",
     ),
 ]
 

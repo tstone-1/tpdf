@@ -122,7 +122,8 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-prob
 # can reach. `clean` is the control: without it, every "the hidden link is not
 # listed" assertion passes on a scan that found nothing anywhere.
 #   links.pdf --mode check   27/27
-#   links.pdf --mode agree    7/7   (6 shared destinations, plus its own control)
+#   links.pdf --mode agree    9/9   (6 shared destinations, its control, and the
+#                                    manifest-free outline differential)
 #   links-rotated --mode check 7/7, 2 skipped
 #   text-base14 --mode clean  2/2
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
@@ -133,6 +134,19 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
     testdata/links-rotated.pdf --mode check
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/text-base14.pdf --mode clean
+
+# `--mode agree` needs NO manifest since 2026-08-16, which is the point of it:
+# it resolves the same outline through PDFium and through lopdf and compares the
+# two lists, so any document with an outline is a test. Run it over real files --
+# that is where it earns its keep, and the fixture offers 6 entries against 421:
+#   find ~/Downloads ~/Desktop -name '*.pdf' -type f | while read -r f; do
+#     cargo run -q --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+#       "$f" --mode agree 2>&1 | grep -E 'differ:|entries agree|no outline'
+#   done
+# Measured 2026-08-16 over 44 real documents: 10 agree, 0 differ, 34 have no
+# outline, and 1 entry differs only in the reason PDFium cannot see -- a /Dest
+# naming a destination that resolves nowhere, which PDFium reports as "no
+# destination". That pair is allowed by name; any other difference fails.
 
 # Both whole-document scans now report `pages_missed` -- pages PDFium has that
 # `lopdf` could not account for. Worth knowing before reading a zero: swept over
