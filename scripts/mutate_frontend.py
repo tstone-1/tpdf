@@ -898,6 +898,36 @@ MUTATIONS = [
         "    const from = this.focused;",
         "activates the row the key landed on, not the one it remembered",
     ),
+    Mutation(
+        # Always open to the right of the mark. A note on a comment near the
+        # right edge then opens past the window, where the reader cannot see it
+        # at all --- and every note on every other comment still looks right.
+        "comments: open the note to the right of the mark whatever the room",
+        "src/lib/commentpopup.ts",
+        "      rightOf + POPUP_WIDTH + MARGIN <= width",
+        "      true",
+        "flips to the left of the mark when there is not",
+    ),
+    Mutation(
+        # Take the keyboard on every open. Pressing a mark then moves focus off
+        # the page, and the arrow keys stop scrolling --- which reads as the
+        # viewer having frozen.
+        "comments: take the keyboard whenever a note opens",
+        "src/lib/commentpopup.ts",
+        "    if (focus) this.element.focus();",
+        "    this.element.focus();",
+        "takes the keyboard only when asked",
+    ),
+    Mutation(
+        # Hide the note without emptying it. Nothing on screen changes, and the
+        # check harness reading `commentText` after a close is told what the
+        # last comment said.
+        "comments: hide the note without emptying it",
+        "src/lib/commentpopup.ts",
+        "    this.element.style.display = \"none\";\n    this.element.replaceChildren();",
+        "    this.element.style.display = \"none\";",
+        "forgets the comment when it hides",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -917,6 +947,7 @@ TEST_FILES = [
     "src/lib/searchmapping.test.ts",
     "src/lib/comments.test.ts",
     "src/lib/commentlist.test.ts",
+    "src/lib/commentpopup.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 248 entries
+The one thing this file does *not* carry in full is the trap list --- 252 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -860,8 +860,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 248 of them and the full text
-was 93% of this file --- an instruction budget spent on the 241 traps that are not
+titles. Only the titles are here, because there are 252 of them and the full text
+was 93% of this file --- an instruction budget spent on the 245 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1158,6 +1158,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A fixture's self-check forbade its own finding
 - A square fixture cannot tell a rotation from an identity
 - A bound in the code hides everything after it in the fixture
+- A `-manifest.json` sidecar enrols a fixture in a check it never claimed
+- A rotated page makes a document mixed-size, and two checks assume it is not
+- A new corpus has to satisfy the sample points every existing check hardcodes
+- An empty transcript is what a *running* viewer check looks like
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

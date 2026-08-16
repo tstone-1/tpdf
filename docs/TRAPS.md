@@ -6769,3 +6769,103 @@ The two rules live in different functions and are tested separately, which is th
 recording: a single `hidden` predicate consulted in one place would have made the panel's row
 disappear or the page's dead zone appear, and either would have looked like the same decision
 being applied consistently.
+
+### A `-manifest.json` sidecar enrols a fixture in a check it never claimed
+
+`viewer_check.py` binds any `<fixture>-manifest.json` to `TPDF_READING_MANIFEST`, and
+`readingChecks` then asserts that fixture's pages read in the order the manifest states. The
+suffix *is* the enrolment: nothing else opts in.
+
+`comments-corpus.json` was called `comments-manifest.json` for one commit. It is keyed by page
+number, not a list of pages, so the loop over `manifest.pages` threw `{} is not iterable` --- and
+an exception in a check function ends the whole run. **Sixteen checks in, and the other 155 never
+ran.** The transcript's last line was a `[FAIL] run completed` with a `TypeError` in it, which
+reads as a broken harness rather than as a fixture that claimed a name.
+
+Three things worth keeping from it:
+
+- **`src-tauri/src/lib.rs` predicted this in a doc comment** --- `geometry_manifest` exists as a
+  separate variable *because* the `-manifest.json` suffix enrols a fixture, and it names
+  `mixed.pdf` as the fixture that would have failed a check it was not built for. The prediction
+  was right, was written down, and did not stop the second fixture walking into it. A convention
+  documented at its definition is invisible from the place where a new file gets named.
+- **The fix is two-sided.** The sidecar is `comments-corpus.json` now, and `readingChecks`
+  refuses a manifest with no `pages` array instead of throwing --- as a red check naming the
+  remedy, not a skip, because nothing here is inapplicable: a file has claimed a name meaning
+  something it does not mean.
+- **An exception in one check costs every check after it.** That is the argument for the
+  guard even though the rename alone fixes today's instance: the next wrong-shaped file
+  should cost one row, not the run.
+
+### A rotated page makes a document mixed-size, and two checks assume it is not
+
+`comments.pdf` carried a `/Rotate 90` page so the scan's display-space mapping had something to
+be wrong about. Its four other pages are A4 upright. That is a **mixed-size document** --- a
+rotated page is displayed 842 wide where its neighbours are 595 --- and `viewer_check.py`'s
+rotation checks derive their expected zoom from *page 1's* aspect ratio.
+
+Two of them went red: `the page is laid out sideways` wanted 0.5371 and measured 0.7601
+unchanged, and `four quarter turns come back to where they started` reported the document's
+length changing from 2377 to 3626. The viewer was behaving as designed. The zoom entering the
+check was fit-width **of the rotated page**, because `applyFit` runs on a resize or on newly
+learned geometry and not when the reader moves between pages of different shapes --- the known
+mixed-size gap `thumbnails.ts` and `docs/PLAN.md` §4 both record.
+
+**The bisect is the part to copy.** Disabling the eight new comment checks and re-running
+produced the same two failures, which is what separated "my checks left bad state" from "this
+fixture meets a documented gap" in one build. Guessing between those two would have been a
+coin flip: both stories fit every symptom.
+
+The rotated page lives in `comments-rotated.pdf` now, which is what `make_rotated_pdf.py`
+already does for the same reason. The mapping it tests is a property of the *scan*, which
+`comments-probe` reads directly; the window harness never looks at it.
+
+### A new corpus has to satisfy the sample points every existing check hardcodes
+
+Three of `viewer_check.py`'s checks drag or click at fixed screen positions --- `MID_X`,
+`HIGH_Y`, `LOW_Y` --- because tying a *screen position* to *specific content* is the only way
+they can see a mapping applied backwards. A new fixture is therefore not free to lay its text
+out however it likes, and `comments.pdf` broke two of them by being ordinary:
+
+- Its lines read `Ordinary line 0`, so the double-click at `(MID_X, HIGH_Y)` landed on a
+  **single digit**. `a double-click selects a word rather than a character` reported one
+  character, which is what a viewer with no notion of granularity would produce.
+- It had ten lines with 24-point leading, so `LOW_Y` fell past the last of them and the drag
+  caught a stray `g`. `whole.indexOf("g")` then found the first `g` on the page --- in `golf`,
+  four lines from the top --- and the check reported *the page reads bottom to top*. **The
+  verdict was invented from a position that meant nothing.**
+
+The fixture now uses six-letter words and 36 lines at 18-point leading, which is a statement
+about the harness rather than about the corpus and belongs in the generator's own comments ---
+where it now is.
+
+The harness gained a precondition for the second one: a drag selecting fewer than three
+characters cannot be located and is skipped with that reason. It already had one for *no* text
+at a height, added when `multilingual.pdf` hit the same edge --- so this is the same lesson
+arriving at the same check from one step further in. **A selection short enough to be
+ambiguous is as unusable as an empty one, and `indexOf` will not say so.**
+
+### An empty transcript is what a *running* viewer check looks like
+
+`viewer_check.py` launches the app with its stdout on a pipe and calls `communicate()`, then
+prints the transcript when the process exits. So a redirected run --- which is how these are
+always run --- writes **zero bytes** for its whole duration. On `vector-multi` that is several
+minutes of an empty file.
+
+`BUILD.md` said "results print as they are produced, so a run that stops partway names the last
+check it completed", which is true of `viewercheck.ts` writing into the pipe and is what makes a
+*timeout's* partial transcript useful. Read as a promise about the log file it is false, and it
+cost two wrong diagnoses in one session: a live A0 render was called a hang, and a genuinely
+occluded run was diagnosed correctly for the wrong reason.
+
+**CPU time is the liveness signal.** `ps -o time= -p <pid>` on the app: a page that never
+executed accumulates none at all, and a slow render accumulates seconds while sitting at low
+percentages. That is exactly what the harness's own `diagnose_silence` samples, and it is
+available to a human at any moment without waiting for the run to end.
+
+The related failure it hides is real and separate: **a leftover tpdf window occludes the next
+one**, WebKit suspends an occluded page, and the run then produces nothing and uses no CPU. Two
+runs died that way here before `pkill -f "tpdf.app/Contents/MacOS/tpdf"` between runs went into
+the sweep script. `BUILD.md` already prescribes that for `open_check.py`; it applies to every
+harness that opens a window, and the sweep is where it matters most because each run leaves one
+behind for the next.

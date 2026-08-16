@@ -44,20 +44,31 @@ have the binary.)
   exhaustively --- so `docs/THREAT-MODEL.md` T8 still rests on a property of the code rather
   than on there being little text to show.
 
-- **`testdata/comments.pdf` is the corpus**, five pages built to be awkward: three text-string
+- **`testdata/comments.pdf` is the corpus**, four pages built to be awkward: three text-string
   encodings, a date that is not a date, a 60,000-character body, replies that point in a
   circle, a rectangle written backwards, one at 1e10, a hidden annotation, a `/Link` and a
-  `/Widget` that are not comments, a page carrying `/Rotate 90`, an `/Annots` array that is an
-  indirect reference, and 1,200 notes on one page. `examples/comments-probe` reads it, 28/28,
-  with a `--mode clean` control on a document that has none.
+  `/Widget` that are not comments, an `/Annots` array that is an indirect reference, and 1,200
+  notes on one page --- with `comments-rotated.pdf` beside it for the page carrying
+  `/Rotate 90`. `examples/comments-probe` reads both, 26/26 and 5/5, with a `--mode clean`
+  control on a document that has none.
 
-- **It found two defects in the fixture and none in the product**, which is what a corpus
-  written before the code it checks is for. A square rectangle at a symmetric offset maps to
-  itself under a quarter turn, so it could not tell a correct rotation from a missing one; and
-  three malformed `/Annots` entries written after the 1,200 notes were never reached, because
-  the per-page bound stopped the scan first. Both are in `docs/TRAPS.md`.
+- **It found five defects in the fixture and the harnesses, and none in the product**, which
+  is what a corpus written before the code it checks is for. A square rectangle maps to itself
+  under a quarter turn, so it could not tell a correct rotation from a missing one. Three
+  malformed `/Annots` entries written after the 1,200 notes were never reached. A sidecar named
+  `comments-manifest.json` was bound to `TPDF_READING_MANIFEST` by its suffix alone and ended a
+  window-harness run sixteen checks in. A `/Rotate 90` page inside an upright document makes it
+  mixed-size and turned two rotation checks red against a viewer behaving as designed. And the
+  page text had one-character words where the harness double-clicks. All five are in
+  `docs/TRAPS.md`, and two of them cost a bisect to attribute correctly.
 
-- **Ten Rust mutations and eight front-end ones** judge the new tests, and two of them
+- **Every check ran, on all twelve corpora.** The window harness reports **171 names** on each
+  --- 163 plus the eight added here --- with zero failures, and `comments.pdf` is the corpus
+  where all eight run rather than skip. `BUILD.md` carries the measured table; the split moved
+  by exactly one running and seven skipping on every other fixture, which is what says the new
+  checks skip for a reason rather than vanishing.
+
+- **Ten Rust mutations and eleven front-end ones** judge the new tests, and two of them
   survived the first run for the same reason: they were aimed at a *route into* a rule rather
   than at the rule. One was fixed by aiming inside the function; the other by writing the test
   that was actually missing --- that a body reaches the paragraph-keeping flattener at all,
