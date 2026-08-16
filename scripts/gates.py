@@ -87,6 +87,18 @@ drifting; the titles had not, and were three short on the day this was written.
 It compares the two as **sets**, which is the invariant -- a tally goes stale the
 next time an entry is added, and a set diff needs no number at all.
 
+`corpora` is the same shape aimed at a different list: which `testdata/*.pdf`
+files `viewer_check.py` is run against. That list had no home until 2026-08-16 --
+it lived in whatever shell loop somebody typed -- and on that day it acquired
+`links-rotated.pdf`, a fixture `BUILD.md` already described as a *separate file*
+precisely because it reddens two of that harness's rotation checks. Eight red
+checks, three chased, none of them a defect. `scripts/viewer_sweep.py` holds the
+list now, and this gate runs its `--list` mode: every fixture must be either a
+window corpus with a stated purpose or excluded with a stated reason, a corpus
+named there and absent from disk is an error, and an exclusion matching nothing
+is a warning. Cheap and static, so it runs beside the other prose gates rather
+than needing the window the sweep itself does.
+
 `vitest` covers the front-end logic that has an answer which can be *wrong*
 rather than merely ugly: command ranking and matching, the viewer's lifetime and
 status plumbing, the scroller's geometry, thumbnails, the outline tree, the a11y
@@ -139,6 +151,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "workflows",
             [sys.executable, str(REPO / "scripts" / "check_workflow_parity.py")],
             "ci.yml and release.yml no longer run the same gates job",
+        ),
+        (
+            "corpora",
+            [sys.executable, str(REPO / "scripts" / "viewer_sweep.py"), "--list"],
+            "a testdata fixture is neither a window corpus nor excluded with a reason",
         ),
         (
             "fmt",

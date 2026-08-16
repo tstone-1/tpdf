@@ -71,6 +71,64 @@ have the binary.)
 
 - **Not here:** creating or editing a link, and opening one in a browser.
 
+### Jumping to a heading at the top of a page no longer shows the page before it
+
+- **Every `/Fit` destination landed on the wrong page**, and so did every outline entry within
+  6 points of a page top, and every destination at all on a rotated view. Jumping deliberately
+  leaves a little air above a heading so it does not read as cut off; when the heading *is* the
+  top of the page there is nothing above it, and what the air revealed was the previous page.
+  The sidebar then highlighted whichever entry belonged to *that* page. Shipped in `26.8.0`
+  and fixed here.
+
+- **The tolerance written to prevent exactly this could not reach the case.** It compensates
+  for the margin when the entry and the reader are on the same page, and the entry that gets
+  dropped is dropped for being on a *later* page than the reader — before the tolerance is
+  consulted at all. Correct, asserted, and structurally unable to see the failure it names.
+
+- **Only `links.pdf` could catch it**, and the two corpora built to exercise outlines both
+  passed: it is the only fixture in the tree with a `/Fit` entry, so it is the only one whose
+  outline names a destination without a coordinate. The corpus built for links found it
+  because its outline exists to be compared against the links.
+
+- **Back and Forward replayed a recorded position as though it were a destination**, so the
+  same 6 points came off it again on every jump and a round trip drifted a page each time —
+  further the more the reader travelled, which reads as "Back is unreliable" rather than as an
+  off-by-one. Found on a 775-page document, where Back from the last page reported page 774 of
+  775 and Forward returned to 773. Fixed before either command shipped.
+
+### The window harness owns its list of corpora
+
+- **The list lived in whatever shell loop somebody typed**, so a fixture built for a probe was
+  swept as a corpus and produced eight red checks, none of them a defect — against a paragraph
+  in `BUILD.md` that already said that fixture is separate *because* it reddens two of these
+  checks.
+
+- `scripts/viewer_sweep.py` is the list and is a gate. Every `testdata/*.pdf` is either a
+  window corpus with a stated purpose or excluded with a stated reason; a fixture matching
+  neither is an error rather than an omission, and a corpus named but absent from disk is an
+  error too. It also prints the table `BUILD.md` carries, so the numbers there stop being
+  transcribed by hand.
+
+- **It asserts what the totals could not say:** every corpus reports the same check names,
+  diffed as sets. A check that stops being printed and a check that starts skipping are
+  identical in a count, and the count is what a person compares.
+
+- **Its first version got that wrong in the way it was written to prevent.** It recovered the
+  names by parsing the printed column, which is padded to 46 characters and does not truncate
+  — so every longer name ran into its detail, 14 of 189 lines went unmatched, and the run
+  reported two corpora agreeing about a set that was wrong on both sides. A check run now
+  prints its own names as a `CHECK-NAMES-JSON` line, the sweep reads that and refuses a bundle
+  that does not emit one, and it asserts the roll and the summary agree about how many checks
+  there were — the comparison that would have caught it, between two numbers already printed
+  on adjacent lines.
+
+- **Two checks were asserting a precondition they had never established.** Following a link
+  and activating a thumbnail both require the destination page to be able to reach the top of
+  the viewport, which the last page of a short document never can; both now measure it and
+  skip with the reason printed. The guard on a third asked how long the document was when the
+  question was how far the jump had gone — the same quantity only from a standing start, and
+  the check does not start from one.
+
 ### Pages displayed from a `/CropBox` put text and links in the right place
 
 - **A page has two boxes and tpdf read the wrong one.** `/MediaBox` is the sheet, `/CropBox` is

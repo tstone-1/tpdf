@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 267 entries
+The one thing this file does *not* carry in full is the trap list --- 271 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -601,13 +601,25 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently thirteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
-workflow-parity check, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
-`cargo test --locked`, `cargo build --locked --bins --examples`, a webview-sink check, `npm
-run check`, `npm run test`, `npm run build`, and a third-party-notices check. Two of them are
+Currently fourteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+workflow-parity check, a corpus-classification check, `cargo fmt --check`,
+`cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
+`cargo build --locked --bins --examples`, a webview-sink check, `npm run check`,
+`npm run test`, `npm run build`, and a third-party-notices check. Two of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
+
+**`corpora` exists because the list of window corpora had no home.** It lived in whatever
+shell loop somebody typed, so on 2026-08-16 `links-rotated.pdf` was swept as a corpus and
+produced eight red checks, none of them a defect --- against a `BUILD.md` paragraph that
+already said the fixture is a separate file *because* it reddens two rotation checks.
+`scripts/viewer_sweep.py` is that list now: every `testdata/*.pdf` is either a window corpus
+with a stated purpose or excluded with a stated reason, and a fixture matching neither is an
+error rather than an omission. Same shape as `ci_fixtures.py` and `check_trap_index.py`, both
+of which exist because the same class of list went wrong the same way. It also asserts, when
+run for real, that every corpus reports the **same check names** --- diffed as sets, since a
+check that stopped being printed and a check that started skipping are identical in a total.
 
 **`workflows` exists because the first tag this repository ever pushed went red on both
 runners, and the code was fine.** `release.yml`'s `gates` job was written from `ci.yml` and
@@ -870,8 +882,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 267 of them and the full text
-was 93% of this file --- an instruction budget spent on the 266 traps that are not
+titles. Only the titles are here, because there are 271 of them and the full text
+was 93% of this file --- an instruction budget spent on the 270 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1084,6 +1096,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A command deliberately left out of the window harness still has to be classified (the count reasoning was right and the run was red anyway)
 - A refusal that carries a `NaN` is not equal to itself, and both sides print the same (an assertion that cannot *pass* --- the loud direction, and it reads as a broken harness)
 - Testing a rule is not testing that the rule is used (a mutation that survives may be aimed at one route into the rule rather than at the rule)
+- A margin above a destination lands on the previous page, and the tolerance that compensates for it can only reach within a page (the compensation was correct, asserted, and structurally unable to reach the case it was written for)
+- A guard asking how long the document is cannot answer how far the jump went
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1187,6 +1201,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A rotated page makes a document mixed-size, and two checks assume it is not
 - A new corpus has to satisfy the sample points every existing check hardcodes
 - An empty transcript is what a *running* viewer check looks like
+- A probe fixture swept as a corpus, against the file that already said not to (the list of corpora had no home, so nothing could refuse it)
+- The tool written to catch a missing check reported agreement about the wrong set (its own two numbers disagreed by 52 on adjacent lines, and nothing compared them)
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

@@ -382,6 +382,7 @@ async function run(path: string): Promise<void> {
     `offset ${before.toFixed(0)} -> ${viewer.offset.toFixed(0)}, idle=${viewer.idle}`,
   );
 
+  const leftFrom = viewer.offset;
   key(root, "End");
   check(
     "End reaches the end of the document",
@@ -393,13 +394,21 @@ async function run(path: string): Promise<void> {
   // and returned before the jump had rendered anything. It passed, and its own
   // detail line gave it away by reporting page 1 of 775.
   //
-  // It only means something on a document long enough to jump out of the
-  // window. On a one-page sheet End moves a few hundred pixels and the tiles
-  // already on screen stay valid, which is correct behaviour and not something
-  // to assert against.
+  // It only means something when the jump left the screen behind. On a
+  // one-page sheet End moves a few hundred pixels and the tiles already on
+  // screen stay valid, which is correct behaviour and not something to assert
+  // against.
+  //
+  // **How far this jump travelled, not how long the document is.** Those are
+  // the same number only from a standing start, and the wheel notch above has
+  // already moved 400 px. A document 750 px longer than its window satisfies
+  // "longer than a window" and then travels 350, so the previous screen's
+  // tiles stay valid and the check fails on a viewer that discarded exactly
+  // what it should have. Measured on `links-rotated.pdf`, which is short
+  // enough for the two quantities to come apart.
   await frame();
-  const jumped = viewer.maxOffset > HEIGHT;
-  if (jumped) {
+  const travelled = viewer.offset - leftFrom;
+  if (travelled > HEIGHT) {
     check(
       "a jump discards what it leaves behind",
       !covered(),
@@ -408,7 +417,8 @@ async function run(path: string): Promise<void> {
   } else {
     skip(
       "a jump discards what it leaves behind",
-      `the document is ${viewer.maxOffset.toFixed(0)} px longer than the window`,
+      `End travelled ${travelled.toFixed(0)} px, less than the ${HEIGHT} px window, ` +
+        `so the screen it left is still on screen`,
     );
   }
   await eventually(
@@ -3047,6 +3057,8 @@ async function appCommandChecks(
   });
 
   const last = doc.page_count - 1;
+  /** The page a Back/Forward probe jumped to, recorded by its own `from`. */
+  let wentTo = -1;
   const probes: Probe[] = [
     { id: "file.open", ...shell("openDocument"), read: () => fired.join(",") },
     {
@@ -3198,13 +3210,21 @@ async function appCommandChecks(
       // itself, because the history is empty on arrival and a Back with nothing
       // on the stack is a check that cannot move. `from` does the jump; the
       // command has to undo it.
+      //
+      // **The page reached is recorded rather than predicted.** Asserting
+      // `String(last)` was wrong and the run said so: `goToDestination` leaves a
+      // margin above its target, so landing on the last page reports the page
+      // above it. Predicting the number tested the margin; recording it tests
+      // the round trip, which is what Back is for.
       id: "nav.back",
       from: () => {
         viewer.goToDestination(0, 0);
         viewer.goToDestination(last, 0);
+        wentTo = viewer.position.page;
       },
       read: page,
-      moved: (before, after) => before === String(last) && after === "0",
+      moved: (before, after) =>
+        wentTo > 0 && before === String(wentTo) && after === "0",
       unless: reachablePage,
     },
     {
@@ -3212,10 +3232,15 @@ async function appCommandChecks(
       from: () => {
         viewer.goToDestination(0, 0);
         viewer.goToDestination(last, 0);
+        wentTo = viewer.position.page;
         viewer.goBack();
       },
       read: page,
-      moved: (before, after) => before === "0" && after === String(last),
+      // Exactly where Back left, not merely "somewhere later". A history that
+      // pushed the wrong end still moves the reader forward, and only an exact
+      // comparison can tell that from returning to where they were going.
+      moved: (before, after) =>
+        wentTo > 0 && before === "0" && after === String(wentTo),
       unless: reachablePage,
     },
     {
@@ -3807,20 +3832,71 @@ async function linkChecks(
     return at;
   };
 
+  // Which destination pages can actually become the page being read, measured
+  // by going to each one rather than inferred from a page count.
+  //
+  // The last page of a document shorter than the window can never reach the
+  // top of the viewport, so `position.page` never names it and every "the
+  // link went where it points" assertion fails on a viewer that did exactly
+  // what it was told. `nav.goToPage` and its two siblings already carry a
+  // guard for this and it was never carried across to the links --- which is
+  // the second half of the trap that guard came from: when one check's
+  // precondition is strengthened, its siblings have the same one.
+  //
+  // Probed up front, in one pass over the distinct destination pages, so that
+  // no check below has to move the viewer to find out. A probe run inside the
+  // Enter check would leave the reader on the page Enter is meant to take
+  // them to, and a jump to a page you are already on cannot fail.
+  //
+  // **Both ends of a link, not just the destination.** Back has to return to
+  // the page the link was pressed *on*, so an unobservable origin fails a
+  // check whose subject is the history rather than the page --- measured on
+  // `links-rotated.pdf`, where the only link sits on the last page and the
+  // check reported `back taken to page 1, wanted 2` against a viewer that had
+  // never been able to be on page 2.
+  const reachable = new Map<number, boolean>();
+  const probe = async (page: number): Promise<void> => {
+    if (reachable.has(page)) return;
+    viewer.goToPage(page);
+    await settle(() => viewer.idle);
+    reachable.set(page, viewer.position.page === page);
+  };
+  for (const item of links.items) {
+    await probe(item.page);
+    if (item.target.kind === "page") await probe(item.target.page);
+  }
+  /** Why a page cannot be landed on observably, or `null` if it can. */
+  const unreachable = (page: number): string | null =>
+    reachable.get(page)
+      ? null
+      : `page ${page + 1} of ${doc.page_count} cannot reach the top of the ` +
+        `viewport, so landing on it is not observable`;
+
   // A link that goes to a page the viewer will not already be on, so "it moved"
   // is observable. Its own page is excluded for the same reason.
-  const goes = links.items.find(
+  const candidates = links.items.filter(
     (item) =>
       item.target.kind === "page" &&
       item.target.page !== item.page &&
       item.rect[2] - item.rect[0] > 2 &&
       item.rect[3] - item.rect[1] > 2,
   );
+  const goes = candidates.find(
+    (item) =>
+      item.target.kind === "page" &&
+      reachable.get(item.page) === true &&
+      reachable.get(item.target.page) === true,
+  );
 
   if (!goes || goes.target.kind !== "page") {
-    for (const name of names.slice(0, 3)) {
-      skip(name, "no link points at a different page");
-    }
+    const other = candidates[0];
+    const why =
+      other && other.target.kind === "page"
+        ? (unreachable(other.page) ??
+          unreachable(other.target.page) ??
+          "no link points at a different page")
+        : "no link points at a different page";
+    for (const name of names.slice(0, 3)) skip(name, why);
   } else {
     const from = goes.page;
     await pressCentre(goes);
@@ -3932,6 +4008,8 @@ async function linkChecks(
       names[6] as string,
       onIt ? "the first link is not a page destination" : "the keyboard reached no link",
     );
+  } else if (unreachable(onIt.target.page) !== null) {
+    skip(names[6] as string, unreachable(onIt.target.page) ?? "");
   } else {
     const wanted = onIt.target.page;
     const key = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
@@ -3946,20 +4024,38 @@ async function linkChecks(
 
   // Escape. The control is that something was focused first, or "nothing is
   // focused afterwards" says nothing about the key.
+  //
+  // **Back to the top before stepping**, which is the control's precondition
+  // rather than tidiness. Stepping starts from the viewport and reports
+  // running out rather than wrapping, both deliberate --- so on a document
+  // whose only link sits above where the Enter check left the reader, the step
+  // correctly focuses nothing and the control cannot be established. That is
+  // exactly `links-cropped.pdf`: one link, pointing at its own page, and the
+  // check before this one follows it. The first keyboard check already does
+  // this; the two below had inherited whatever position they were handed.
   viewer.clearLinkFocus();
+  viewer.goToStart();
+  await settle(() => viewer.idle);
   viewer.stepLink(1);
   const focused = viewer.linkFocus;
   root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  check(
-    names[7] as string,
-    focused !== -1 && viewer.linkFocus === -1 && !viewer.linkRingShown,
-    `focus ${focused} -> ${viewer.linkFocus}, ring ${viewer.linkRingShown ? "drawn" : "absent"}`,
-  );
+  if (focused === -1) {
+    skip(names[7] as string, "stepping from the top of the document focused no link");
+  } else {
+    check(
+      names[7] as string,
+      viewer.linkFocus === -1 && !viewer.linkRingShown,
+      `focus ${focused} -> ${viewer.linkFocus}, ` +
+        `ring ${viewer.linkRingShown ? "drawn" : "absent"}`,
+    );
+  }
 
   // The end of the walk. Stepped forward past every link, which must report
   // rather than wrap --- and the assertion is that it *said* so, since a viewer
   // that silently did nothing produces the same final position.
   viewer.clearLinkFocus();
+  viewer.goToStart();
+  await settle(() => viewer.idle);
   const saidBefore = problems.length;
   for (let step = 0; step <= links.items.length; step += 1) viewer.stepLink(1);
   await settle(() => viewer.idle);
@@ -5178,8 +5274,32 @@ async function navigateFromStrip(
   const target =
     candidates.filter((page) => page < doc.page_count - 1).pop() ??
     candidates.pop();
-  const element = target === undefined ? null : strip.elementFor(target);
-  if (target === undefined || !element) {
+  if (target === undefined) {
+    skip(name, `no row other than page ${here + 1} is currently built`);
+    return;
+  }
+
+  // The fallback above hands back exactly the page the filter exists to avoid,
+  // whenever it is the only one there is --- which on a two-page document it
+  // always is. So the preference is checked rather than trusted: go to the
+  // chosen page and see whether the viewer can report being on it. A page that
+  // clamps at `maxScroll` never becomes `position.page`, and the check then
+  // fails on a strip that did its job.
+  viewer.goToPage(target);
+  await settle(() => viewer.idle);
+  const canLand = viewer.position.page === target;
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+  if (!canLand) {
+    skip(
+      name,
+      `page ${target + 1} of ${doc.page_count} cannot reach the top of the viewport`,
+    );
+    return;
+  }
+
+  const element = strip.elementFor(target);
+  if (!element) {
     skip(name, `no row other than page ${here + 1} is currently built`);
     return;
   }

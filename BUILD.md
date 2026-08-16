@@ -1472,56 +1472,66 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all twelve corpora. Every run reports the same check names; what differs is how
-many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
-bug this arrangement exists to catch.
+Run them with **`scripts/viewer_sweep.py <app-exe>`**, which is the list of corpora as well as
+the way to run them:
 
-> ⚠ **The table below is 171 names and is out of date: the link checks added fourteen more on
-> 2026-08-16 --- seven for following links, four for the keyboard and three for what a screen
-> reader is told --- and the harness has not been run since.** It was blocked by a locked screen,
-> which `viewer_check.py` refuses on rather than hanging --- and a stale count here is the
-> smaller half of the problem. The larger half is that **`links.pdf` and `links-rotated.pdf`
-> have never been through this harness at all**, so the per-fixture splits for them are
-> unknown rather than predicted, and the seven new names have never run in a real window on
-> any corpus. Re-run the sweep and rewrite the table from what it prints; do not arithmetic
-> the totals, which this page has twice recorded as costing more than it saves.
->
-> **One thing the unrun harness has already cost, so the risk is not hypothetical.** Its
-> command audit asserts that every registered command is classified, and `nav.back` and
-> `nav.forward` were added without classifying either --- caught by reading rather than by the
-> check whose whole job that is. All four navigation commands are classified now, as driven
-> probes; the entry in `docs/TRAPS.md` is about the shape rather than this instance.
+```bash
+scripts/viewer_sweep.py --list          # the 14 corpora, and every fixture excluded, with reasons
+scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf
+```
 
-**Every row below was measured on macOS on 2026-08-16**, in one sweep, after the eight comment
-checks took the total from 163 to 171. Zero failures anywhere. The Windows column is *not*
-carried forward: it was measured at 163 names on 2026-08-02 and nothing has re-run there since,
-so it is absent rather than adjusted --- which is what this page has twice recorded arithmetic
-in a measurement column costing.
+Every run reports the same check names; what differs is how many are `[SKIP]` with a reason,
+and a name that goes missing rather than skipping is the bug this arrangement exists to catch.
+**The script asserts that**, as a set difference across the corpora, rather than leaving it to
+whoever compares two totals --- a check that stopped being printed and a check that started
+skipping are the same number. It also prints the table below, so those numbers are measured
+rather than transcribed.
 
-**Each row is its 163-name split plus one check running and seven skipping**, which is a
-stronger statement than the totals matching: of the eight, only *"reads the document's
-comments"* runs on a document with no annotations, and the other seven say why they skipped.
-`comments.pdf` is the exception and the point --- it is the only corpus where all eight run.
+> **The list is a gate (`corpora`) because it went wrong the moment it had no home.** On
+> 2026-08-16 it lived in a hand-typed shell loop and `links-rotated.pdf` went into a sweep,
+> producing eight red checks and three chased diagnoses, none of them a defect --- against the
+> paragraph on this page that already says that fixture is separate *because* it reddens two of
+> these rotation checks. Every `testdata/*.pdf` is now either a window corpus with a stated
+> purpose or excluded with a stated reason, and a fixture matching neither fails the gate.
+
+**Every row below was measured on macOS on 2026-08-16**, in one sweep, and printed by the
+script rather than transcribed. Zero failures anywhere, and **all fourteen corpora report the
+same 189 check names** --- diffed as sets by the sweep, not inferred from the totals agreeing.
+The link work took the total from 171 to 189: seven for following links, four for the keyboard,
+three for what a screen reader is told, and four command probes.
+
+The Windows column is *not* carried forward: it was measured at 163 names on 2026-08-02 and
+nothing has re-run there since, so it is absent rather than adjusted --- which is what this
+page has twice recorded arithmetic in a measurement column costing.
+
+**Two rows are new**, and both earned their place the day they were added. `links.pdf` caught a
+destination landing on the page before the one it named --- the only corpus that could, being
+the only fixture in the tree with a `/Fit` entry. `links-cropped.pdf` caught two checks whose
+control could not be established on a document with a single link, because the check before
+them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 143 | 28 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 149 | 22 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 149 | 22 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 92 | 79 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 105 | 66 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 140 | 31 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 138 | 33 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 132 | 39 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 130 | 41 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 131 | 40 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 139 | 32 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 146 | 25 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `text-heavy.pdf` | 147 | 42 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 153 | 36 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 153 | 36 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 94 | 95 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 109 | 80 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 144 | 45 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 142 | 47 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 134 | 55 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 134 | 55 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 135 | 54 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 143 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 155 | 34 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 162 | 27 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 131 | 58 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
-**Run them with a `pkill -f "tpdf.app/Contents/MacOS/tpdf"` between runs.** A leftover window
-occludes the next one, WebKit suspends an occluded page, and the run then produces nothing and
-uses no CPU --- twice, before that went into the sweep script. `TPDF_RAISE=1` covers the other
-half, a window with nowhere visible to go.
+**A `pkill -f "tpdf.app/Contents/MacOS/tpdf"` goes between runs**, and
+`scripts/viewer_sweep.py` does it. A leftover window occludes the next one, WebKit suspends an
+occluded page, and the run then produces nothing and uses no CPU --- twice, before that went
+into the sweep script. `TPDF_RAISE=1` covers the other half, a window with nowhere visible to
+go, and the script sets it.
 
 **Every row above is one run, and the notes below say why that is a point estimate rather than
 a bound.** Two of these fixtures have a check that lands on either side of a race, so their
