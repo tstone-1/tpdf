@@ -1088,6 +1088,86 @@ MUTATIONS = [
         "    return ordered[index + direction] ?? null;",
         "falls back to the viewport when the focused link is gone",
     ),
+    Mutation(
+        # Take a character into a link when their boxes overlap rather than when
+        # the character's centre is inside. Annotation rectangles are drawn
+        # generously around their text, so this makes a link claim the word on
+        # either side of it and a screen reader announce a link with a stray word
+        # at each end.
+        "links: claim a character whose box merely overlaps the link",
+        "src/lib/links.ts",
+        "    if (x >= l && x <= r && y >= t && y <= b) return link;",
+        "    if (right >= l && left <= r && bottom >= t && top <= b) return link;",
+        "takes a character by its centre, not by its box overlapping",
+    ),
+    Mutation(
+        # Merge adjacent runs whose links point at the same place. Two
+        # cross-references to one chapter are two links, and merging them
+        # announces them as one.
+        "links: merge adjacent runs that point at the same page",
+        "src/lib/links.ts",
+        "      if (last && last.link === found) {",
+        "      if (\n        last &&\n        (last.link === found ||\n          (last.link !== null &&\n            found !== null &&\n            JSON.stringify(last.link.target) === JSON.stringify(found.target)))\n      ) {",
+        "keeps two links apart even where they point at the same page",
+    ),
+    Mutation(
+        # Index a link into the band of its top edge only. A link taller than one
+        # band is then invisible to any character below its first 12 points.
+        "links: index a link into one band rather than every band it covers",
+        "src/lib/links.ts",
+        "    const last = Math.floor(bottom / BAND_PT);",
+        "    const last = first;",
+        "finds a link on a band boundary",
+    ),
+    Mutation(
+        # Read past the end of the boxes array without noticing. `undefined`
+        # compares false against every bound, so this marks the tail of an
+        # over-long range as ordinary text --- or as a link, depending on which
+        # comparison is written first.
+        "links: read a character box past the end of the array",
+        "src/lib/links.ts",
+        "  if (\n    left === undefined ||\n    top === undefined ||\n    right === undefined ||\n    bottom === undefined\n  ) {\n    return null;\n  }\n  const x = (left + right) / 2;\n  const y = (top + bottom) / 2;",
+        "  const x = ((left ?? 0) + (right ?? 0)) / 2;\n  const y = ((top ?? 0) + (bottom ?? 0)) / 2;",
+        "handles a range that runs past the boxes it has",
+    ),
+    Mutation(
+        # Index a link with no height, which then covers a band and claims every
+        # character whose centre falls on that exact line.
+        "links: index a link whose rectangle has no height",
+        "src/lib/links.ts",
+        "    if (!(bottom > top)) continue;",
+        "    if (false) continue;",
+        "ignores a link whose rectangle has no height",
+    ),
+    Mutation(
+        # Announce a refused link as an ordinary one. The reader is told it is a
+        # link, presses it, and nothing happens --- misled by us rather than by
+        # the file.
+        "a11y: announce a refused link as an ordinary one",
+        "src/lib/a11y.ts",
+        '      span.setAttribute("aria-disabled", "true");',
+        '      span.dataset.page = "0";',
+        "says a refused link is unavailable rather than leaving it inert",
+    ),
+    Mutation(
+        # Mark up only the pages built after the links arrive. They land on their
+        # own chain after first paint, so this leaves the first page of every
+        # document announced as prose --- the one page every reader sees.
+        "a11y: do not rebuild the pages already built when links arrive",
+        "src/lib/a11y.ts",
+        "      const from = this.built.get(page);\n      if (!from) continue;",
+        "      const from = this.built.get(page);\n      if (!from || true) continue;",
+        "rebuilds a page that was already built when the links arrive",
+    ),
+    Mutation(
+        # Emit the link's text without the role, which is the whole announcement:
+        # the words are read either way, and nothing says they are a link.
+        "a11y: emit a link's text without saying it is a link",
+        "src/lib/a11y.ts",
+        '    span.setAttribute("role", "link");',
+        '    span.setAttribute("data-role", "link");',
+        "announces a link as a link, and only the characters it covers",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below

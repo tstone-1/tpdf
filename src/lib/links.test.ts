@@ -5,6 +5,7 @@ import {
   LINK_SLACK_PT,
   MAX_HISTORY,
   linkAt,
+  linkRunsIn,
   noticeFor,
   onPage,
   orderedLinks,
@@ -234,6 +235,116 @@ describe("stepLink", () => {
     ]);
     expect(stepLink(across, null, { page: 1, top: 400 }, 1)?.id).toBe(1);
     expect(stepLink(across, null, { page: 1, top: 400 }, -1)?.id).toBe(0);
+  });
+});
+
+describe("linkRunsIn", () => {
+  // Five characters on one line: "GO ON", with boxes 10 points wide.
+  const boxes = [
+    10, 100, 20, 112, 20, 100, 30, 112, 30, 100, 36, 112, 36, 100, 46, 112, 46,
+    100, 56, 112,
+  ];
+  const whole = [{ from: 0, to: 5 }];
+  const over = (rect: [number, number, number, number], id = 0) =>
+    link({ id, rect });
+
+  /** The runs as `[link id or null, character count]`, which is what a test reads. */
+  const shape = (runs: ReturnType<typeof linkRunsIn>) =>
+    runs.map((run) => [
+      run.link?.id ?? null,
+      run.ranges.reduce((sum, range) => sum + (range.to - range.from), 0),
+    ]);
+
+  it("splits a line into the link's characters and the rest", () => {
+    const runs = linkRunsIn(whole, boxes, [over([8, 98, 32, 114])]);
+    expect(shape(runs)).toEqual([
+      [0, 2],
+      [null, 3],
+    ]);
+  });
+
+  it("marks nothing when no link covers the line", () => {
+    expect(shape(linkRunsIn(whole, boxes, []))).toEqual([[null, 5]]);
+    // A link on the same page but elsewhere on it, which is the control that
+    // says the rectangle is consulted rather than merely its presence.
+    expect(shape(linkRunsIn(whole, boxes, [over([200, 300, 260, 320])]))).toEqual([
+      [null, 5],
+    ]);
+  });
+
+  it("takes a character by its centre, not by its box overlapping", () => {
+    // The rectangle reaches 22, so it covers all of the first character and two
+    // points of the second. By overlap the second belongs to the link; by centre
+    // it does not --- and annotation rectangles are drawn generously around
+    // their text, so overlap makes a link claim the word next door.
+    const runs = linkRunsIn(whole, boxes, [over([8, 98, 22, 114])]);
+    expect(shape(runs)).toEqual([
+      [0, 1],
+      [null, 4],
+    ]);
+  });
+
+  it("keeps two links apart even where they point at the same page", () => {
+    // Adjacent runs are merged when they are the *same link*, not when they have
+    // the same destination: two cross-references to one chapter are two links,
+    // and merging them would announce them as a single one.
+    const runs = linkRunsIn(whole, boxes, [
+      over([8, 98, 22, 114], 0),
+      over([22, 98, 32, 114], 1),
+    ]);
+    expect(shape(runs)).toEqual([
+      [0, 1],
+      [1, 1],
+      [null, 3],
+    ]);
+  });
+
+  it("finds a link on a band boundary", () => {
+    // The lookup buckets by 12-point bands and a link spans every band it
+    // touches. A character whose centre sits in a band the link only partly
+    // covers must still find it --- which a single-band index would miss.
+    const tall = over([8, 60, 32, 200]);
+    expect(shape(linkRunsIn(whole, boxes, [tall]))).toEqual([
+      [0, 2],
+      [null, 3],
+    ]);
+  });
+
+  it("handles a range that runs past the boxes it has", () => {
+    // A range longer than the page's characters is what a bounded extraction
+    // produces, and reading past the array yields `undefined` for each edge.
+    //
+    // **The link has to reach the origin for this to discriminate**, and the
+    // first version of this test did not: coercing the missing edges to 0 puts
+    // the phantom character at (0, 0), which an ordinary link does not contain,
+    // so the mutation and the fix gave the same answer and it survived. With a
+    // rectangle whose corner is the origin, the coercion marks four characters
+    // that do not exist as being inside it.
+    const runs = linkRunsIn([{ from: 0, to: 9 }], boxes, [over([0, 0, 32, 114])]);
+    expect(shape(runs)).toEqual([
+      [0, 2],
+      [null, 7],
+    ]);
+  });
+
+  it("ignores a link whose rectangle has no height", () => {
+    // A degenerate rectangle contains exactly the points on its own line, so the
+    // character this uses is centred *on* it --- boxes 94 to 106, centre 100.
+    // Against a character centred anywhere else the guard changes nothing and
+    // the test cannot fail.
+    //
+    // `links.rs` drops a zero-area rectangle at scan time, so nothing from the
+    // backend arrives like this; the guard is what makes that a property of this
+    // function rather than of its caller.
+    const onTheLine = [10, 94, 20, 106];
+    expect(
+      shape(linkRunsIn([{ from: 0, to: 1 }], onTheLine, [over([8, 100, 32, 100])])),
+    ).toEqual([[null, 1]]);
+    // The control: the same character and a rectangle with height is a hit, so
+    // the assertion above is about the degeneracy rather than about the position.
+    expect(
+      shape(linkRunsIn([{ from: 0, to: 1 }], onTheLine, [over([8, 98, 32, 114])])),
+    ).toEqual([[0, 1]]);
   });
 });
 

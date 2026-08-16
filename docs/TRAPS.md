@@ -1761,6 +1761,19 @@ two links, different heights, a real overlap --- and the discrimination was not.
 that finds it is a mutation aimed at the rule, which is why a surviving mutation is a statement
 about the *fixture* at least as often as about the assertion.
 
+**Two more of exactly this shape, the same day, on the character-to-link intersection.** A guard
+rejecting a character box read past the end of the array was mutated to coerce the missing edges
+to zero --- which puts the phantom character at the origin, where the fixture's link was not, so
+both versions answered "not a link" and the mutation survived. It bites only against a rectangle
+whose corner *is* the origin. And a guard skipping a link whose rectangle has no height survived
+because a degenerate rectangle contains exactly the points on its own line, and no character in
+the fixture was centred on it; the discriminating input is a character whose centre lands
+*exactly* there.
+
+Both are the same lesson from the other end: **when a guard rejects a degenerate case, the input
+that tests it is the degenerate one**, and a fixture built from plausible values will not contain
+it. Neither was a missing assertion --- the assertions were right and could not fail.
+
 ### A check that cannot run is not a check, and a locked screen is enough to stop one
 
 `viewercheck.ts` carries an audit asserting that the set of registered commands and the set of
@@ -1780,6 +1793,35 @@ checks did not run**, in the artifact rather than only in a report --- `BUILD.md
 here. And a check whose subject is *the completeness of a list* is the one to be most suspicious
 of while it is unrun, because its failure mode is silence: the list is simply short, and nothing
 about the shorter list looks wrong.
+
+### Reading a decision back out of the DOM makes the test double part of the logic
+
+`a11y.ts` builds a page element out of text nodes and `role="link"` spans, and returns whether it
+put anything in it --- so a caller can drop an element that would be empty, which a screen reader
+passes over in silence. The obvious way to answer that is
+`(element.textContent ?? "").trim().length > 0`.
+
+In the browser it is correct: `textContent` on an element aggregates its descendants'. In
+`testdom.ts` it deliberately does not --- the double stores assignments verbatim and computes no
+aggregate, which is recorded here as its own trap. So the emptiness test answers "empty" for
+every element under test while working perfectly in the application, and every one of those
+elements is dropped. **A check that disagrees with its subject only under test is worse than one
+that is simply wrong**, because the code is right and the tests say otherwise, which sends you
+looking in the wrong file.
+
+The fix is not to make the double smarter. It is to **track what was written rather than read it
+back**: the function already knows every piece of text it appended, so accumulating them costs a
+string and removes the dependency on DOM semantics entirely.
+
+The general rule: a function that *builds* DOM should decide from what it built, not from what
+the DOM now says. Reading back is a second implementation of your own bookkeeping, evaluated by
+somebody else's engine --- and under test, by a stand-in for it.
+
+Related, and it failed loudly rather than silently, which is the good case: the same change
+introduced `document.createTextNode`, which the double did not have at all. Eight tests died with
+`is not a function` and named the line. **An absent method is a better failure than a present one
+that behaves differently**, and it is worth noticing which kind a double gives you before relying
+on it.
 
 ### PDFium cannot create digital signatures
 

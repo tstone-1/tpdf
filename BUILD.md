@@ -1433,9 +1433,9 @@ Run all twelve corpora. Every run reports the same check names; what differs is 
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch.
 
-> ⚠ **The table below is 171 names and is out of date: the link checks added eleven more on
-> 2026-08-16 --- seven for following links and four for the keyboard --- and the harness has
-> not been run since.** It was blocked by a locked screen,
+> ⚠ **The table below is 171 names and is out of date: the link checks added fourteen more on
+> 2026-08-16 --- seven for following links, four for the keyboard and three for what a screen
+> reader is told --- and the harness has not been run since.** It was blocked by a locked screen,
 > which `viewer_check.py` refuses on rather than hanging --- and a stale count here is the
 > smaller half of the problem. The larger half is that **`links.pdf` and `links-rotated.pdf`
 > have never been through this harness at all**, so the per-fixture splits for them are

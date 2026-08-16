@@ -1566,26 +1566,62 @@ Starting point: the focused link if there is one, otherwise the first link after
 viewport* — a reader who has scrolled to page 400 and presses the key means the link they can
 see, not the first in the file.
 
-**What is still not here:** creating, editing or deleting a link; opening a web link in a
-browser (§10); and **a screen reader being told a link is a link**. The accessibility tree
-(`a11y.ts`) carries the page's text and does not mark which of it is a cross-reference, so
-VoiceOver announces a table of contents as ordinary prose. That is the remaining half, it
-wants character-range intersection against the link rectangles rather than another hit test,
-and the `sinks` gate already decides its shape: no `<a>` element may be created, so it would
-be a `role="link"` span carrying no URL.
+##### And a screen reader is told a link is a link
 
-**Evidence.** 23 unit tests in `links.rs` and 42 in `links.test.ts`; 11 Rust mutations and 17
-frontend ones, each caught by the test named for it (68 and 126 across the two harnesses);
+The half a sighted reader never sees, and the hardest to notice missing: the words are
+announced either way, so a table of contents read as prose is indistinguishable from one read
+correctly unless somebody is listening.
+
+`a11y.ts` now splits each reading line into runs of "inside this link" and "ordinary text", and
+hands the first over as a `role="link"` element. Three things about it:
+
+**The intersection needs no rotation, and that is why it is cheap.** `text.rs` turns character
+boxes through `to_device` before they leave Rust and `links.rs` turns annotation rectangles
+through the same function, so both are already in the page's displayed space — a `/Rotate 90`
+page needs no special case, and adding one would be a second implementation of a turn.
+
+**A character belongs to a link when its box's centre is inside the rectangle**, not when the
+boxes overlap. Annotation rectangles are drawn generously around their text and routinely touch
+the words next door; overlap makes a link announce itself with a stray word at each end.
+
+**It is a `<span role="link">` and never an `<a>`, and the security constraint chose that.**
+`scripts/check_webview_sinks.py` refuses the creation of any URL-bearing element anywhere in the
+frontend, which is what lets `docs/THREAT-MODEL.md` T8 claim sufficiency from a grep. A span
+carrying a role is announced as a link by every screen reader and can hold no URL at all, so the
+gate and the accessible outcome want the same element. A refused link gets `aria-disabled`
+rather than being left silently inert — a reader told it is a link and then given nothing has
+been misled by us rather than by the file.
+
+The cost is a rebuild: links arrive on their own chain after first paint, so the pages already
+built are rebuilt when they land. That throws away the never-recycled page elements the layer
+exists to protect, and it is still right — announcing a table of contents as prose for as long
+as the reader stays on that page is the defect. It happens once per document.
+
+Links are **not** in the tab order. Tab through a page carrying the per-page maximum of 4,000 of
+them would be a trap, which is the same reason the page article is focusable only
+programmatically; `⌥⌘L` is the traversal.
+
+**What is still not here:** creating, editing or deleting a link, and opening a web link in a
+browser (§10).
+
+**Evidence.** 23 unit tests in `links.rs`, 49 in `links.test.ts` and 13 in `a11y.test.ts`;
+11 Rust mutations and 25 frontend ones, each caught by the test named for it (68 and 134 across
+the two harnesses);
 `links-probe` 27/27 on `links.pdf --mode check`, 7/7 on `--mode agree`, 7/7 with 2 skips on
 `links-rotated.pdf`, and 2/2 on the `clean` control; 13/13 gates.
 
-One of those mutations survived first and the fixture was why — a footnote marker placed
-*below* the sentence's top, where the banding rule and the constant it is meant to beat give
-the same answer. A superscript sits above the baseline; moving it there made the two disagree.
-It has an entry in `docs/TRAPS.md`.
+**Three of those mutations survived first and the fixture was why every time**, which is the
+pattern worth carrying rather than the instances. A footnote marker placed *below* the
+sentence's top, where the banding rule and the constant it is meant to beat give the same
+answer. A guard against reading past the character boxes, mutated to coerce the missing edges to
+zero — which puts the phantom character at the origin, where the fixture's link was not. And a
+guard skipping a zero-height rectangle, which contains exactly the points on its own line, with
+no character in the fixture centred on it. Every assertion was right and none could fail; the
+inputs were plausible and outside the region where the rules differ. All three are in
+`docs/TRAPS.md` under one entry.
 
 **The window harness has not run against any of this** — the screen was locked, which
-`viewer_check.py` refuses on rather than hanging. Eleven new check names and two new corpora
+`viewer_check.py` refuses on rather than hanging. Fourteen new check names and two new corpora
 are unverified in a real window; `BUILD.md` says so where the stale table is. That is also how
 `nav.back` and `nav.forward` reached a commit without being classified in the harness's own
 command audit, which is a check that exists and could not run.

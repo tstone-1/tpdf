@@ -692,6 +692,17 @@ a rectangle, a page, and a `Target` whose only string is the five-literal `actio
 later is a compile error rather than a leak, and there is no `textContent` argument to make
 because there is nothing to display.
 
+**The accessibility tree marks them up, and the gate decided the element.** A cross-reference
+is announced as a link through a `<span role="link">` — never an `<a>`, because the `sinks` gate
+refuses the creation of any URL-bearing element anywhere in the frontend, which is exactly what
+lets the argument above claim sufficiency from a grep. A span carrying a role is announced as a
+link by every screen reader and can hold no URL, so the constraint and the accessible outcome
+want the same element rather than trading against each other. The only attribute the document
+influences is `aria-disabled`, and it is set from `Target`'s variant rather than from anything
+the file wrote; the destination is carried as a page *number*. `a11y.test.ts` asserts on the
+built DOM that no `a` or `iframe` exists there, and `viewer_check.py` asserts the same in a real
+webview — the gate's claim from the other end.
+
 That is also why **a refused link does not show where it pointed**. The obvious courtesy — "this
 opens https://…, follow it?" — would put an attacker-chosen string into a prompt whose whole
 purpose is to be trusted, which is a better phishing surface than no message at all. The reader

@@ -27,6 +27,7 @@
 
 import { onPage as placedOnPage, turnedFor as placedTurnedFor } from "./comments";
 import { isNavigable, reasonFor, type Target } from "./outline";
+import type { IndexRange } from "./text";
 
 /** One clickable rectangle, mirroring `links.rs`'s `Link`. */
 export interface Link {
@@ -217,6 +218,124 @@ function isAfter(link: Link, at: Place): boolean {
 function isBefore(link: Link, at: Place): boolean {
   if (link.page !== at.page) return link.page < at.page;
   return link.rect[1] < at.top;
+}
+
+/**
+ * Height of a band in the index that makes character-to-link lookup cheap.
+ *
+ * Points, and roughly a line of body text. The index exists because the obvious
+ * loop is characters times links: a page carrying the per-page maximum of 4,000
+ * links and 3,000 characters is 12 million rectangle tests, which is a visible
+ * hitch when that page scrolls into view. Bucketing by vertical band makes it
+ * characters plus links, and the band size only decides how many candidates a
+ * lookup considers --- never the answer, which is why it can be a round number
+ * chosen by eye rather than a measured one.
+ */
+const BAND_PT = 12;
+
+/** A stretch of characters that belong to one link, or to none. */
+export interface LinkRun {
+  /** Character index ranges, in the order they were given. */
+  ranges: IndexRange[];
+  /** The link these characters are inside, or `null` for ordinary text. */
+  link: Link | null;
+}
+
+/**
+ * Splits character ranges into runs of "inside this link" and "ordinary text".
+ *
+ * This is what lets a screen reader be told that a run of words is a
+ * cross-reference. `a11y.ts` builds the page's text from reading-order ranges;
+ * this says which of those characters a link covers, so the text can be handed
+ * over as a `role="link"` element rather than as prose.
+ *
+ * **Both sides are already in the page's displayed space**, which is the reason
+ * no rotation appears here: `text.rs` turns character boxes through `to_device`
+ * before they leave Rust, and `links.rs` turns annotation rectangles through the
+ * same function. A page carrying `/Rotate 90` therefore needs no special case,
+ * and adding one would be the second implementation of a turn this repository
+ * has a trap about.
+ *
+ * **A character belongs to a link when its box's centre is inside the
+ * rectangle**, not when the boxes overlap. Overlap makes a link claim the
+ * characters on either side of it --- annotation rectangles are drawn generously
+ * around their text and routinely touch the words next door --- and the failure
+ * that produces is a screen reader announcing a link whose name has a stray word
+ * at each end.
+ */
+export function linkRunsIn(
+  ranges: readonly IndexRange[],
+  boxes: readonly number[],
+  links: readonly Link[],
+): LinkRun[] {
+  const index = bandIndex(links);
+  const runs: LinkRun[] = [];
+
+  for (const range of ranges) {
+    for (let at = Math.max(0, range.from); at < range.to; at += 1) {
+      const found = linkOfCharacter(index, boxes, at);
+      const last = runs.at(-1);
+      // Extended rather than appended when the link is the same *object*: two
+      // adjacent characters inside one link are one run, and two inside
+      // different links that happen to point at the same page are not.
+      if (last && last.link === found) {
+        const tail = last.ranges.at(-1);
+        if (tail && tail.to === at) tail.to = at + 1;
+        else last.ranges.push({ from: at, to: at + 1 });
+      } else {
+        runs.push({ ranges: [{ from: at, to: at + 1 }], link: found });
+      }
+    }
+  }
+  return runs;
+}
+
+/** Links bucketed by the vertical bands their rectangles cover. */
+function bandIndex(links: readonly Link[]): Map<number, Link[]> {
+  const index = new Map<number, Link[]>();
+  for (const link of links) {
+    const [, top, , bottom] = link.rect;
+    if (!(bottom > top)) continue;
+    const first = Math.floor(top / BAND_PT);
+    const last = Math.floor(bottom / BAND_PT);
+    for (let band = first; band <= last; band += 1) {
+      const bucket = index.get(band);
+      if (bucket) bucket.push(link);
+      else index.set(band, [link]);
+    }
+  }
+  return index;
+}
+
+/** The link containing character `at`, or `null`. */
+function linkOfCharacter(
+  index: Map<number, Link[]>,
+  boxes: readonly number[],
+  at: number,
+): Link | null {
+  const base = at * 4;
+  const left = boxes[base];
+  const top = boxes[base + 1];
+  const right = boxes[base + 2];
+  const bottom = boxes[base + 3];
+  if (
+    left === undefined ||
+    top === undefined ||
+    right === undefined ||
+    bottom === undefined
+  ) {
+    return null;
+  }
+  const x = (left + right) / 2;
+  const y = (top + bottom) / 2;
+
+  const candidates = index.get(Math.floor(y / BAND_PT));
+  if (!candidates) return null;
+  for (const link of candidates) {
+    const [l, t, r, b] = link.rect;
+    if (x >= l && x <= r && y >= t && y <= b) return link;
+  }
+  return null;
 }
 
 /**

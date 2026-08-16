@@ -124,3 +124,174 @@ describe("AccessibleText and a page whose text means nothing", () => {
     expect(said).not.toContain("cannot be read");
   });
 });
+
+describe("AccessibleText and links", () => {
+  /**
+   * A page of one line: "GO" inside a link, then " ON" outside it.
+   *
+   * Boxes are `[left, top, right, bottom]` per character in the page's displayed
+   * space, which is the same space a link's rectangle is in --- so the two can be
+   * compared with no rotation, and this fixture is the smallest thing that says
+   * a link claims some characters and not others.
+   */
+  function page() {
+    return {
+      codes: [71, 79, 32, 79, 78],
+      boxes: [
+        10, 100, 20, 112, // G, centre (15, 106) -- inside
+        20, 100, 30, 112, // O, centre (25, 106) -- inside
+        30, 100, 36, 112, // space, centre (33, 106) -- outside
+        36, 100, 46, 112, // O
+        46, 100, 56, 112, // N
+      ],
+      width_pt: 612,
+      height_pt: 792,
+      turns: 0,
+    };
+  }
+
+  /** A link over the first two characters only. */
+  function link(over: Record<string, unknown> = {}) {
+    return {
+      id: 0,
+      page: 0,
+      rect: [8, 98, 32, 114],
+      target: { kind: "page", page: 4, top_pt: 200 },
+      ...over,
+    };
+  }
+
+  /** Builds the tree and returns the root, with the fake DOM still installed. */
+  function build(links: unknown[]): {
+    dom: ReturnType<typeof installFakeDom>;
+    spans: { textContent: string; attributes: Map<string, string>; dataset: Record<string, string> }[];
+    text: string;
+  } {
+    const dom = installFakeDom();
+    const layer = new AccessibleText(dom.root as never, 1);
+    layer.sync([0], () => page() as never);
+    layer.setLinks(links as never);
+
+    const spans: {
+      textContent: string;
+      attributes: Map<string, string>;
+      dataset: Record<string, string>;
+    }[] = [];
+    let text = "";
+    const walk = (element: {
+      tagName: string;
+      textContent: string;
+      children: unknown[];
+      attributes: Map<string, string>;
+      dataset: Record<string, string>;
+    }): void => {
+      if (element.attributes.get("role") === "link") spans.push(element);
+      if (element.children.length === 0) text += element.textContent;
+      for (const child of element.children) walk(child as never);
+    };
+    walk(dom.root as never);
+    return { dom, spans, text };
+  }
+
+  it("announces a link as a link, and only the characters it covers", () => {
+    const { dom, spans, text } = build([link()]);
+    try {
+      expect(spans).toHaveLength(1);
+      expect(spans[0]?.textContent).toBe("GO");
+      // The whole line is still there. A marked-up run that swallowed the rest
+      // of the line would pass an assertion about the span alone.
+      expect(text).toBe("GO ON");
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("marks nothing on a page with no links", () => {
+    // The control. Without it, a rule that marked every character would pass the
+    // test above --- the span's text would still be "GO" if the split happened
+    // to land there.
+    const { dom, spans, text } = build([]);
+    try {
+      expect(spans).toHaveLength(0);
+      expect(text).toBe("GO ON");
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("carries the destination page as a number of ours", () => {
+    const { dom, spans } = build([link()]);
+    try {
+      expect(spans[0]?.dataset.page).toBe("4");
+      expect(spans[0]?.attributes.get("aria-disabled")).toBeUndefined();
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("says a refused link is unavailable rather than leaving it inert", () => {
+    const { dom, spans } = build([link({ target: { kind: "refused", action: "uri" } })]);
+    try {
+      expect(spans).toHaveLength(1);
+      expect(spans[0]?.attributes.get("aria-disabled")).toBe("true");
+      // And no destination, which is what says the two cases are distinguishable
+      // from the DOM rather than only from the target we were handed.
+      expect(spans[0]?.dataset.page).toBeUndefined();
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("never creates an element that could carry a URL", () => {
+    // `docs/THREAT-MODEL.md` T8 and the `sinks` gate both turn on this: a span
+    // with a role is announced as a link and can hold no URL, and an `<a>` here
+    // would be the one element that could. Asserted on the DOM rather than by
+    // reading the source, so it is a statement about what was built.
+    const { dom, spans } = build([link()]);
+    try {
+      expect(spans[0]).toBeDefined();
+      const tags: string[] = [];
+      const walk = (element: { tagName: string; children: unknown[] }): void => {
+        tags.push(element.tagName.toLowerCase());
+        for (const child of element.children) walk(child as never);
+      };
+      walk(dom.root as never);
+      expect(tags).not.toContain("a");
+      expect(tags).not.toContain("iframe");
+      expect(tags).toContain("span");
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("rebuilds a page that was already built when the links arrive", () => {
+    // The links land on their own chain, after first paint, so the page a reader
+    // is on has already been built without them. A layer that only marked pages
+    // built afterwards would announce the first page of every document as prose.
+    const dom = installFakeDom();
+    try {
+      const layer = new AccessibleText(dom.root as never, 1);
+      layer.sync([0], () => page() as never);
+      const before: string[] = [];
+      const collect = (into: string[]) => {
+        const walk = (element: {
+          children: unknown[];
+          attributes: Map<string, string>;
+        }): void => {
+          if (element.attributes.get("role") === "link") into.push("link");
+          for (const child of element.children) walk(child as never);
+        };
+        walk(dom.root as never);
+      };
+      collect(before);
+      expect(before).toHaveLength(0);
+
+      layer.setLinks([link()] as never);
+      const after: string[] = [];
+      collect(after);
+      expect(after).toHaveLength(1);
+    } finally {
+      dom.restore();
+    }
+  });
+});

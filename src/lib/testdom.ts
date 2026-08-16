@@ -179,6 +179,19 @@ export function installFakeDom(width = 900, height = 700): FakeDom {
 
   const document = {
     createElement: (tag: string) => new FakeElement(tag),
+    /**
+     * A text node, modelled as an element with no tag and its text set.
+     *
+     * Not a separate class: every consumer here walks `children` and reads
+     * `textContent`, and a second node type would need its own handling in each
+     * of them. The empty `tagName` is what distinguishes it, and it is what
+     * `a11y.test.ts` reads to tell a marked-up link from the prose around it.
+     */
+    createTextNode: (data: string) => {
+      const node = new FakeElement("");
+      node.textContent = data;
+      return node;
+    },
     documentElement: new FakeElement("html"),
   };
 
