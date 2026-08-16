@@ -53,8 +53,18 @@ have the binary.)
   it read as a slightly loose viewer; the corpus had no `/FitH` entry either, so the gap in
   the code matched a gap in the fixtures exactly. Fixed with `FPDFDest_GetView`.
 
-- **Not here:** creating or editing a link, opening one in a browser, and reaching a link from
-  the keyboard --- which stays a gap and is named as one.
+- **Next link / Previous link** (`⌥⌘L`, `⇧⌥⌘L`, and in the palette), Enter to follow the one
+  the keyboard is on, Escape to step off, and a ring drawn over it that follows a scroll, a
+  zoom and a rotation. Until this a keyboard reader could move by page, heading and search hit
+  and could not follow a cross-reference at all. The order is computed before the view's
+  rotation, so "next" means next in the document rather than next down the screen; it starts
+  from the viewport rather than the top of the file; and it reports running out rather than
+  wrapping.
+
+- **Not here:** creating or editing a link, opening one in a browser, and telling a screen
+  reader that a link is a link --- the accessibility tree carries the page's text without
+  marking which of it is a cross-reference, so a table of contents is announced as prose. Named
+  as the remaining half rather than left implicit.
 
 ### Comments can be read
 

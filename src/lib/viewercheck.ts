@@ -3024,6 +3024,15 @@ async function appCommandChecks(
       ? null
       : `page 2 is the last of ${doc.page_count} and cannot reach the top`;
   const withText = () => (hasText ? null : "page 1 has no extractable text");
+  // Most of the corpus has no links at all, and one fixture has exactly one ---
+  // so "step to the previous link" needs a second one to have anywhere to go,
+  // and saying so is what keeps a skip from looking like a pass.
+  const withLinks = () =>
+    viewer.linkCount > 0 ? null : "the document has no links";
+  const twoLinks = () =>
+    viewer.linkCount > 1
+      ? null
+      : `the document has ${viewer.linkCount} link, so there is no earlier one`;
 
   const zoom = () => viewer.currentZoom.toFixed(3);
   const page = () => String(viewer.position.page);
@@ -3181,6 +3190,55 @@ async function appCommandChecks(
         doc.page_count > 2
           ? null
           : `page 2 is the last of ${doc.page_count} and cannot reach the top`,
+    },
+    {
+      // Back and Forward are driven as a pair from a jump this probe makes
+      // itself, because the history is empty on arrival and a Back with nothing
+      // on the stack is a check that cannot move. `from` does the jump; the
+      // command has to undo it.
+      id: "nav.back",
+      from: () => {
+        viewer.goToDestination(0, 0);
+        viewer.goToDestination(last, 0);
+      },
+      read: page,
+      moved: (before, after) => before === String(last) && after === "0",
+      unless: reachablePage,
+    },
+    {
+      id: "nav.forward",
+      from: () => {
+        viewer.goToDestination(0, 0);
+        viewer.goToDestination(last, 0);
+        viewer.goBack();
+      },
+      read: page,
+      moved: (before, after) => before === "0" && after === String(last),
+      unless: reachablePage,
+    },
+    {
+      // The keyboard's position on the page, which is what these move --- not
+      // the scroll: a link already on screen is stepped onto without the view
+      // going anywhere, so asserting the page would fail for a working command.
+      id: "nav.nextLink",
+      from: () => viewer.clearLinkFocus(),
+      read: () => String(viewer.linkFocus),
+      moved: (before, after) => before === "-1" && after !== "-1",
+      unless: withLinks,
+    },
+    {
+      id: "nav.previousLink",
+      // Stepped forward twice first, so there is an earlier link to reach ---
+      // from the first link of the document Previous correctly does nothing,
+      // and a probe set up that way would report a working command as broken.
+      from: () => {
+        viewer.clearLinkFocus();
+        viewer.stepLink(1);
+        viewer.stepLink(1);
+      },
+      read: () => String(viewer.linkFocus),
+      moved: (before, after) => before !== "-1" && after !== before && after !== "-1",
+      unless: twoLinks,
     },
     {
       id: "edit.selectAll",
@@ -3636,6 +3694,10 @@ async function linkChecks(
     "going forward returns to the destination",
     "a refused link says so and moves nobody",
     "the pointer changes over a link",
+    "the keyboard reaches a link, and draws a ring on it",
+    "Enter follows the link the keyboard is on",
+    "Escape takes the keyboard off the link",
+    "walking off the end says so rather than wrapping",
   ];
 
   let links: Links;
@@ -3779,6 +3841,70 @@ async function linkChecks(
       `over a link ${JSON.stringify(over)}, off it ${JSON.stringify(off)}`,
     );
   }
+
+  // --- the keyboard, which is the only way to reach a link without a pointer.
+  viewer.clearLinkFocus();
+  viewer.goToStart();
+  await settle(() => viewer.idle);
+
+  const before = viewer.linkFocus;
+  const stepped = viewer.stepLink(1);
+  await settle(() => viewer.idle);
+  check(
+    names[5] as string,
+    stepped && before === -1 && viewer.linkFocus !== -1 && viewer.linkRingShown,
+    `focus ${before} -> ${viewer.linkFocus}, ring ${viewer.linkRingShown ? "drawn" : "absent"}`,
+  );
+
+  // Enter, on whichever link the keyboard reached. Asserted against the link's
+  // own destination rather than "the page changed": a link that points at its
+  // own page is legal, and a check reading only the page would call that a
+  // failure.
+  const onIt = links.items.find((item) => item.id === viewer.linkFocus);
+  if (!onIt || onIt.target.kind !== "page") {
+    skip(
+      names[6] as string,
+      onIt ? "the first link is not a page destination" : "the keyboard reached no link",
+    );
+  } else {
+    const wanted = onIt.target.page;
+    const key = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+    root.dispatchEvent(key);
+    await settle(() => viewer.idle);
+    check(
+      names[6] as string,
+      viewer.position.page === wanted,
+      `Enter on #${onIt.id} landed on page ${viewer.position.page + 1}, wanted ${wanted + 1}`,
+    );
+  }
+
+  // Escape. The control is that something was focused first, or "nothing is
+  // focused afterwards" says nothing about the key.
+  viewer.clearLinkFocus();
+  viewer.stepLink(1);
+  const focused = viewer.linkFocus;
+  root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  check(
+    names[7] as string,
+    focused !== -1 && viewer.linkFocus === -1 && !viewer.linkRingShown,
+    `focus ${focused} -> ${viewer.linkFocus}, ring ${viewer.linkRingShown ? "drawn" : "absent"}`,
+  );
+
+  // The end of the walk. Stepped forward past every link, which must report
+  // rather than wrap --- and the assertion is that it *said* so, since a viewer
+  // that silently did nothing produces the same final position.
+  viewer.clearLinkFocus();
+  const saidBefore = problems.length;
+  for (let step = 0; step <= links.items.length; step += 1) viewer.stepLink(1);
+  await settle(() => viewer.idle);
+  const last = viewer.linkFocus;
+  check(
+    names[8] as string,
+    last !== -1 && problems.length > saidBefore,
+    `stopped on #${last} after ${links.items.length + 1} steps, ` +
+      `${problems.length - saidBefore} message(s): ${JSON.stringify(problems.at(-1) ?? "")}`,
+  );
+  viewer.clearLinkFocus();
 }
 
 /**

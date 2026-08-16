@@ -1543,17 +1543,52 @@ loose viewer rather than a bug — and `outline-simple.pdf` has `/XYZ` and `/Fit
 no `/FitH` one, so the gap in the code matched a gap in the corpus exactly. Fixed with
 `FPDFDest_GetView`, whose parameter indices are not the array's.
 
-**What is deliberately not here:** creating, editing or deleting a link; opening a web link
-in a browser (§10); and reaching a link from the keyboard, which stays a gap — a reader
-navigating by keyboard alone can move by page, heading and search hit, and cannot follow a
-cross-reference at all. Worth doing, and it wants the accessibility tree rather than another
-hit test.
+##### The keyboard, added the same day the gap was named
 
-**Evidence.** 23 unit tests in `links.rs` and 27 in `links.test.ts`; 11 Rust mutations, each
-caught by the test named for it (68 in the harness overall); `links-probe` 27/27 on
-`links.pdf --mode check`, 7/7 on `--mode agree`, 7/7 with 2 skips on `links-rotated.pdf`,
-and 2/2 on the `clean` control; 13/13 gates. The window harness has **not** run against this
-— see the note in `BUILD.md`.
+The first version of this shipped with a stated gap: a reader navigating by keyboard alone
+could move by page, heading and search hit, and could not follow a cross-reference at all —
+which on a document whose table of contents *is* its navigation is most of the document.
+
+**Next link** and **Previous link** (`⌥⌘L`, `⇧⌥⌘L`, and in the palette) walk them, Enter
+follows the one the keyboard is on, and Escape steps off. A ring is drawn over it, positioned
+every frame like the comment popup so it follows a scroll, a zoom and a rotation — a ring left
+where it was drawn would, one flick later, be outlining a different paragraph, which is worse
+than no ring because it says the keyboard is somewhere it is not.
+
+Three things about the order are decisions rather than details. It is computed on the
+rectangles **before** the view's rotation, so "next" means next in the document rather than
+next down the screen — the alternative reverses at two of the four turns. It bands two links
+onto one line by proportional vertical overlap, so a footnote marker belongs to the sentence it
+sits in. And it **does not wrap**: on 775 pages, arriving back at page 1 is a surprise, so
+running out is reported instead.
+
+Starting point: the focused link if there is one, otherwise the first link after *the
+viewport* — a reader who has scrolled to page 400 and presses the key means the link they can
+see, not the first in the file.
+
+**What is still not here:** creating, editing or deleting a link; opening a web link in a
+browser (§10); and **a screen reader being told a link is a link**. The accessibility tree
+(`a11y.ts`) carries the page's text and does not mark which of it is a cross-reference, so
+VoiceOver announces a table of contents as ordinary prose. That is the remaining half, it
+wants character-range intersection against the link rectangles rather than another hit test,
+and the `sinks` gate already decides its shape: no `<a>` element may be created, so it would
+be a `role="link"` span carrying no URL.
+
+**Evidence.** 23 unit tests in `links.rs` and 42 in `links.test.ts`; 11 Rust mutations and 17
+frontend ones, each caught by the test named for it (68 and 126 across the two harnesses);
+`links-probe` 27/27 on `links.pdf --mode check`, 7/7 on `--mode agree`, 7/7 with 2 skips on
+`links-rotated.pdf`, and 2/2 on the `clean` control; 13/13 gates.
+
+One of those mutations survived first and the fixture was why — a footnote marker placed
+*below* the sentence's top, where the banding rule and the constant it is meant to beat give
+the same answer. A superscript sits above the baseline; moving it there made the two disagree.
+It has an entry in `docs/TRAPS.md`.
+
+**The window harness has not run against any of this** — the screen was locked, which
+`viewer_check.py` refuses on rather than hanging. Eleven new check names and two new corpora
+are unverified in a real window; `BUILD.md` says so where the stale table is. That is also how
+`nav.back` and `nav.forward` reached a commit without being classified in the harness's own
+command audit, which is a check that exists and could not run.
 
 #### Reading comments — done 2026-08-16
 

@@ -1739,6 +1739,48 @@ The flag that does it is set and cleared around one call in a `try`/`finally`, a
 that pins it is the *forward* one: a history that recorded the wrong end still changes the
 page and still looks right from a single assertion about Back.
 
+### A fixture where the right rule and the wrong rule agree cannot tell them apart
+
+The link ordering bands two rectangles onto one line when they overlap vertically by more than
+half the shorter one's height, and the alternative worth ruling out is an absolute overlap ---
+a constant tuned for body text, which separates a footnote marker from the sentence it sits in.
+
+The first fixture for it was a 8-point marker at `[300, 102, 306, 110]` beside a 20-point
+sentence at `[100, 100, 280, 120]`, and the mutation `band lines by absolute overlap` survived
+it. Both rules give `[sentence, marker]`: the proportional one bands them and orders them
+across the page, the absolute one splits them and orders them by top --- and the marker's top
+is *below* the sentence's, so the split happens to produce the same sequence.
+
+The fix is one number, and it is the number that makes the fixture realistic: a superscript
+sits **above** the baseline, so its top is above the sentence's. At `[300, 96, 306, 106]` the
+two rules disagree, because now the split orders the marker first.
+
+The general form, and it is not "use a bigger fixture": **an input can exercise the code under
+test and still be outside the region where the rules differ.** Every ingredient was present ---
+two links, different heights, a real overlap --- and the discrimination was not. The only thing
+that finds it is a mutation aimed at the rule, which is why a surviving mutation is a statement
+about the *fixture* at least as often as about the assertion.
+
+### A check that cannot run is not a check, and a locked screen is enough to stop one
+
+`viewercheck.ts` carries an audit asserting that the set of registered commands and the set of
+*classified* commands are equal, so a command added without deciding how it is covered turns it
+red. It is a good check and it did nothing: `nav.back` and `nav.forward` were added on
+2026-08-16 and left unclassified, and the run that would have said so never happened, because
+the screen was locked and `viewer_check.py` refuses rather than hanging.
+
+Nothing was broken by it --- the omission was found later the same day and the four commands
+were classified as driven probes --- but the shape is worth stating, because the check's whole
+purpose is to catch an omission at the moment it is made. **A gate that runs on a schedule
+somebody controls is a gate with a queue**, and anything that lands while the queue is stopped
+is unprotected for exactly as long as the stoppage lasts.
+
+Two things follow. When a harness is blocked, the commit that lands anyway should say **which
+checks did not run**, in the artifact rather than only in a report --- `BUILD.md` carries that
+here. And a check whose subject is *the completeness of a list* is the one to be most suspicious
+of while it is unrun, because its failure mode is silence: the list is simply short, and nothing
+about the shorter list looks wrong.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a
