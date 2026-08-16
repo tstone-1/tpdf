@@ -71,6 +71,22 @@ have the binary.)
 
 - **Not here:** creating or editing a link, and opening one in a browser.
 
+### The differential that found one bug now runs on every document
+
+- **It needed a manifest, so it ran on exactly one fixture.** `links-probe --mode agree`
+  compares tpdf's two destination resolvers and had already found a real defect, but it asserted
+  both sides against a file stating what the destinations should be — and only `links.pdf` has
+  one. It now also resolves the *same outline* both ways and compares the two lists, which needs
+  nothing stated, so any document with an outline is a test. Six assertions on one fixture became
+  421 outline entries across 44 real files.
+
+- **That turned a suspicion into a measurement.** PDFium's `FPDFBookmark_GetDest` returns null
+  both for an entry with no `/Dest` and for one whose `/Dest` resolves nowhere, so the outline
+  cannot tell a heading from a damaged link. Exactly one entry in 421 shows it. Not fixed —
+  distinguishing them costs a second parse for one word on a row that is unreachable either way
+  — but it is written down where the answer is produced, and the check allows that one pair by
+  name and fails on any other difference.
+
 ### A locked document is told apart from a broken one
 
 - **"Could not parse this as a PDF" was a wrong diagnosis, not a vague one.** Both open paths

@@ -1890,6 +1890,47 @@ it hides in the same way. Every message being identical means no test comparing 
 can go red, which is why the check here enumerates every documented code and asserts that the
 four PDFium distinguishes produce four *different* sentences.
 
+### `FPDFBookmark_GetDest` cannot tell a heading from a damaged link
+
+It returns null for an entry that carries no `/Dest` **and** for one whose `/Dest` names a
+destination that does not resolve. `outline.rs` therefore answers `Target::None` --- "a heading
+that is only a heading" --- for a document that plainly does name a destination, and the reader
+is told "no destination" about something the file states.
+
+Measured rather than suspected, and that took an instrument: `links-probe --mode agree` resolves
+the same outline through `lopdf` and compares entry for entry. Across **44 real documents and
+421 outline entries**, exactly one disagreed --- an entry in a BS EN standard whose `/Dest` is a
+name string that resolves nowhere, which `lopdf` correctly calls `Broken`.
+
+Not fixed, and the trade is written down rather than left implicit: distinguishing them means
+consulting the object graph, which is the second parse `outline.rs` exists to avoid, for one word
+of explanation on a row that is non-navigable either way. What *is* fixed is the check: the
+probe allows that one pair by name and fails on any other difference, so a resolver that started
+answering `None` for a page destination still goes red.
+
+### A differential that needs a manifest is a differential over one document
+
+`links-probe --mode agree` compares tpdf's two destination resolvers, and it found a real defect
+--- but only on `links.pdf`, because it asserted both sides against a manifest stating what the
+destinations should be, and only that fixture has one.
+
+The stronger version needs no manifest at all: resolve the **same outline** both ways and compare
+the two lists. Nothing has to be stated, so any document with an outline becomes a test. That
+took 6 assertions on one fixture to 421 entries across 44 real files, and it is what turned the
+`FPDFBookmark_GetDest` limitation above from a suspicion into a measurement.
+
+**The mode's own doc comment claimed it needed no manifest while the code still demanded one.**
+`section()` returned `Err` for a document the manifest does not describe, so every real file came
+back *"manifest is not JSON"* and the differential ran on exactly one document --- the state it
+had just been rewritten to escape. Absent is not an error there; it means "no stated
+expectations, run the half that needs none".
+
+Two details make the comparison an instrument rather than a ceremony. **Compare the counts
+first**: two lists compared pairwise up to the shorter one agree perfectly when one walk stopped
+early, which is the failure a differential is least able to see. And **the two walks must cut at
+the same bound**, or the difference between two limits is reported as a disagreement about
+destinations.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a

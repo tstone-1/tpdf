@@ -125,6 +125,24 @@ pub enum Target {
     /// An action tpdf declines to follow. `action` names which kind.
     Refused { action: String },
     /// No destination and no action at all --- a heading that is only a heading.
+    ///
+    /// **It also covers a case it should not, and PDFium's API is why.**
+    /// `FPDFBookmark_GetDest` returns null both for an entry carrying no
+    /// `/Dest` and for one whose `/Dest` names a destination that does not
+    /// resolve, so this variant cannot tell a heading from a damaged link. The
+    /// reader is told "no destination" for something the file does name.
+    ///
+    /// Measured rather than suspected: `links-probe --mode agree` resolves the
+    /// same outline through `lopdf` and found **one** entry in 421 across 44
+    /// real documents where the two disagree --- a `/Dest` written as a name
+    /// string that resolves nowhere, which `lopdf` correctly calls
+    /// [`Target::Broken`]. The probe allows exactly that pair and fails on any
+    /// other difference.
+    ///
+    /// Not fixed here, and the trade is stated so the next reader can weigh it
+    /// again: distinguishing them means consulting the object graph, which is a
+    /// second parse this module exists to avoid, for one word of explanation on
+    /// a row that is non-navigable either way.
     None,
 }
 

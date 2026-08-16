@@ -90,6 +90,13 @@ const MAX_TREE_DEPTH: usize = 32;
 /// be the document's to schedule.
 const MAX_TREE_NODES: usize = 4_096;
 
+/// Most outline entries [`outline_targets`] will resolve.
+///
+/// Matches `outline.rs`'s own item budget, so the two walks cut at the same
+/// place --- a differential whose sides stop at different points reports the
+/// difference between two bounds as a disagreement about destinations.
+const MAX_OUTLINE_ITEMS: usize = 10_000;
+
 /// One clickable rectangle, and where it goes.
 ///
 /// No field here can hold a string from the file --- see the module note on T8.
@@ -617,6 +624,134 @@ fn top_of(
     }
 
     Some((height - raw).clamp(0.0, height))
+}
+
+/// Every outline entry's destination, resolved through `lopdf`, in tree order.
+///
+/// **This is an oracle, not a feature.** Nothing in the application calls it:
+/// the outline a reader sees comes from `outline.rs` through PDFium, and this
+/// exists so that `links-probe --mode agree` can put a second, independent
+/// answer beside it.
+///
+/// The differential it enables already found one defect --- PDFium's
+/// `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every `/FitH`
+/// outline entry had been landing at the top of its page since `outline.rs` was
+/// written --- but only on the one fixture whose manifest states what its
+/// destinations should be. With both sides resolved from the file itself there
+/// is nothing to state, so **any document with an outline becomes a test**: 421
+/// entries across the PDFs on one machine, where the fixture offers six.
+///
+/// Order is pre-order --- an entry, then its children --- because that is what
+/// `outline::read` produces when flattened, and a comparison of two lists in
+/// different orders is a comparison of nothing.
+///
+/// The bounds match `outline.rs`'s and exist for the reason its own note gives:
+/// PDFium's documentation says the caller must handle circular bookmark
+/// references, and a `/Next` chain that loops is a hostile document's cheapest
+/// trick. Here the visited set is what terminates it; the count is the backstop
+/// for a producer that hands back a fresh object for a node already seen.
+///
+/// # Errors
+///
+/// The bytes not parsing as a PDF, or a stream exceeding [`MAX_DECODE`].
+pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, String> {
+    let document = Document::load_mem_with_options(
+        bytes,
+        LoadOptions {
+            max_decompressed_size: Some(MAX_DECODE),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("could not parse the document: {e}"))?;
+
+    let pages = document.get_pages();
+    let numbers: HashMap<ObjectId, u32> = pages
+        .iter()
+        .take(page_count)
+        .map(|(number, id)| (*id, number.saturating_sub(1)))
+        .collect();
+    let geometry: Vec<(f32, f32, u8)> = pages
+        .values()
+        .take(page_count)
+        .map(|page| page_geometry(&document, *page))
+        .collect();
+
+    let Ok(catalog) = document.catalog() else {
+        return Ok(Vec::new());
+    };
+    let Ok(Object::Reference(root)) = catalog.get(b"Outlines") else {
+        return Ok(Vec::new());
+    };
+    let Ok(root_dict) = document.get_dictionary(*root) else {
+        return Ok(Vec::new());
+    };
+    let Ok(Object::Reference(first)) = root_dict.get(b"First") else {
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::new();
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    let mut limits = Limits::default();
+    walk_outline(
+        &document,
+        *first,
+        &numbers,
+        &geometry,
+        &mut seen,
+        &mut out,
+        &mut limits,
+        MAX_TREE_DEPTH,
+    );
+    Ok(out)
+}
+
+/// Walks a sibling chain and everything under it, pre-order.
+#[allow(clippy::too_many_arguments)]
+fn walk_outline(
+    document: &Document,
+    first: ObjectId,
+    numbers: &HashMap<ObjectId, u32>,
+    geometry: &[(f32, f32, u8)],
+    seen: &mut HashSet<ObjectId>,
+    out: &mut Vec<Target>,
+    limits: &mut Limits,
+    depth: usize,
+) {
+    if depth == 0 {
+        return;
+    }
+    let mut node = Some(first);
+    while let Some(id) = node {
+        if out.len() >= MAX_OUTLINE_ITEMS || !seen.insert(id) {
+            return;
+        }
+        let Ok(dict) = document.get_dictionary(id) else {
+            return;
+        };
+
+        // The same precedence the link path uses, and for the same reason:
+        // §12.3.3 says `/Dest` shall not be present when `/A` is, and taking the
+        // action is what refuses a `/GoToR` instead of resolving its `/D`
+        // against this document.
+        out.push(target_of(dict, document, numbers, geometry, limits));
+
+        if let Ok(Object::Reference(child)) = dict.get(b"First") {
+            walk_outline(
+                document,
+                *child,
+                numbers,
+                geometry,
+                seen,
+                out,
+                limits,
+                depth - 1,
+            );
+        }
+        node = match dict.get(b"Next") {
+            Ok(Object::Reference(next)) => Some(*next),
+            _ => None,
+        };
+    }
 }
 
 /// Builds a refusal, spelling out which action kind was declined.
@@ -1564,6 +1699,233 @@ mod tests {
         document.save_to(&mut bytes).expect("save");
         let links = scan(&bytes, 2).expect("parse");
         assert_eq!(links.limits.pages_missed, 0);
+    }
+
+    /// Builds an outline of `entries`, each `(dest-or-none, children)`.
+    ///
+    /// Returns the catalog id so a caller can attach named destinations.
+    fn with_outline(document: &mut Document, entries: Vec<(Option<Object>, Vec<Option<Object>>)>) {
+        let root = document.new_object_id();
+        let mut tops: Vec<ObjectId> = Vec::new();
+
+        for (dest, kids) in entries {
+            let id = document.new_object_id();
+            let mut node = dictionary! { "Parent" => root };
+            if let Some(dest) = dest {
+                node.set("Dest", dest);
+            }
+            if !kids.is_empty() {
+                let ids: Vec<ObjectId> = kids.iter().map(|_| document.new_object_id()).collect();
+                for (at, kid) in kids.into_iter().enumerate() {
+                    let mut child = dictionary! { "Parent" => id };
+                    if let Some(dest) = kid {
+                        child.set("Dest", dest);
+                    }
+                    if let Some(next) = ids.get(at + 1) {
+                        child.set("Next", *next);
+                    }
+                    document.objects.insert(ids[at], Object::Dictionary(child));
+                }
+                node.set("First", ids[0]);
+                node.set("Last", *ids.last().expect("kids"));
+            }
+            document.objects.insert(id, Object::Dictionary(node));
+            tops.push(id);
+        }
+        for (at, id) in tops.iter().enumerate() {
+            if let Some(next) = tops.get(at + 1) {
+                document
+                    .get_object_mut(*id)
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set("Next", *next);
+            }
+        }
+        document.objects.insert(
+            root,
+            Object::Dictionary(dictionary! {
+                "Type" => "Outlines",
+                "First" => tops[0],
+                "Last" => *tops.last().expect("tops"),
+            }),
+        );
+        let catalog_id = document
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_object_mut(catalog_id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Outlines", root);
+    }
+
+    fn targets_of(document: &mut Document, pages: usize) -> Vec<Target> {
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("save");
+        outline_targets(&bytes, pages).expect("parse")
+    }
+
+    /// Pre-order: an entry, then its children, then the next sibling.
+    ///
+    /// The order is the whole of the comparison `links-probe --mode agree`
+    /// makes --- `outline::read` flattens pre-order, and two lists in different
+    /// orders compare nothing. A fixture of one level could not tell the two
+    /// apart, so this one nests.
+    #[test]
+    fn the_outline_walk_is_pre_order() {
+        let (mut document, ids) = build(4, &[]);
+        let to = |page: usize| {
+            Some(Object::Array(vec![
+                Object::Reference(ids[page]),
+                "Fit".into(),
+            ]))
+        };
+        with_outline(
+            &mut document,
+            vec![(to(0), vec![to(1), to(2)]), (to(3), vec![])],
+        );
+
+        let pages: Vec<u32> = targets_of(&mut document, 4)
+            .into_iter()
+            .map(|target| match target {
+                Target::Page { page, .. } => page,
+                other => panic!("every entry here has a destination: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            pages,
+            vec![0, 1, 2, 3],
+            "parent, its children, then the sibling"
+        );
+    }
+
+    /// A `/Next` chain that loops terminates, and does not repeat the loop.
+    ///
+    /// PDFium's own documentation says a caller must handle circular bookmark
+    /// references, so this is an input we are told to expect. Without the
+    /// visited set it does not return a wrong answer --- it does not return.
+    #[test]
+    fn a_looping_outline_chain_terminates() {
+        let (mut document, ids) = build(2, &[]);
+        let to = |page: usize| {
+            Some(Object::Array(vec![
+                Object::Reference(ids[page]),
+                "Fit".into(),
+            ]))
+        };
+        with_outline(&mut document, vec![(to(0), vec![]), (to(1), vec![])]);
+
+        // Point the second entry's `/Next` back at the first.
+        let root = document
+            .catalog()
+            .unwrap()
+            .get(b"Outlines")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let first = document
+            .get_dictionary(root)
+            .unwrap()
+            .get(b"First")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let last = document
+            .get_dictionary(root)
+            .unwrap()
+            .get(b"Last")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_object_mut(last)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Next", first);
+
+        let targets = targets_of(&mut document, 2);
+        assert_eq!(targets.len(), 2, "each entry once, and the loop broken");
+    }
+
+    /// A document with no outline is an empty list, not an error.
+    #[test]
+    fn a_document_with_no_outline_has_no_targets() {
+        let (mut document, _) = build(1, &[(0, vec![link(rect())])]);
+        assert!(targets_of(&mut document, 1).is_empty());
+    }
+
+    /// The walk resolves through the same rules the links do.
+    ///
+    /// Which is the point of sharing `target_of`: an oracle that resolved
+    /// destinations by its own rules would be comparing `outline.rs` against a
+    /// third implementation rather than against this one.
+    #[test]
+    fn the_outline_walk_refuses_what_a_link_would() {
+        let (mut document, ids) = build(2, &[]);
+        with_outline(&mut document, vec![(None, vec![])]);
+        let root = document
+            .catalog()
+            .unwrap()
+            .get(b"Outlines")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let first = document
+            .get_dictionary(root)
+            .unwrap()
+            .get(b"First")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_object_mut(first)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set(
+                "A",
+                dictionary! {
+                    "S" => "GoToR",
+                    "F" => Object::string_literal("other.pdf"),
+                    "D" => vec![Object::Reference(ids[1]), "Fit".into()],
+                },
+            );
+
+        assert_eq!(
+            targets_of(&mut document, 2),
+            vec![Target::Refused {
+                action: "remote".into()
+            }],
+        );
+    }
+
+    /// An entry naming a destination that does not resolve is broken, not absent.
+    ///
+    /// This is the case a real document produced and PDFium cannot see: a
+    /// `/Dest` written as a name string that resolves nowhere. The control is
+    /// the entry beside it with no `/Dest` at all, which *is* absent --- without
+    /// it the assertion could not tell the two apart, which is exactly the
+    /// confusion being pinned.
+    #[test]
+    fn a_destination_that_resolves_nowhere_is_broken_not_absent() {
+        let (mut document, _) = build(2, &[]);
+        with_outline(
+            &mut document,
+            vec![
+                (Some(Object::string_literal("nowhere")), vec![]),
+                (None, vec![]),
+            ],
+        );
+        assert_eq!(
+            targets_of(&mut document, 2),
+            vec![Target::Broken, Target::None],
+        );
     }
 
     /// No field of a [`Link`] may carry a string the document chose.
