@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 252 entries
+The one thing this file does *not* carry in full is the trap list --- 258 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -474,14 +474,24 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
-**Comments are read through `lopdf`, not through PDFium, and that is a measurement rather
-than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
+**Comments and links are both read through `lopdf`, not through PDFium, and that is a
+measurement rather than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
 anything was written --- but every one of them needs an `FPDF_PAGE`, and `FPDF_LoadPage`
 re-parses each time at up to 44 ms on a complex page. The panel's question is about the whole
 document, so through PDFium it is a page load per page; through the object graph it is one
 parse the file already needs for `encoding.rs`, at 0.1 ms on a small document and 11.9 ms on
 the 337 MB scan. `pdfium-render` also does not expose `/IRT` at all, so a reply arrives there
 as an unrelated second note by another author.
+
+**Links take the same route, and it costs a second destination resolver** ---
+`outline.rs` asks PDFium because a bookmark is a PDFium object, `links.rs` reads the
+destination array itself. That is the drift trap this file's index names, and sharing
+`Target` fixes the vocabulary while saying nothing about whether the two reach the same
+page. So `links.pdf` gives its outline entries the same destinations as its links and
+`links-probe --mode agree` compares them --- both against the manifest rather than against
+each other, since two resolvers wrong in the same way agree perfectly. **It found a defect on
+its first run**: `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every `/FitH`
+outline entry had been landing at the top of its page since `outline.rs` was written.
 
 **What PDFium does supply is the marks themselves**, and that is why no drawing was added.
 `progressive.rs` renders with `FPDF_ANNOT`, so a sticky note's icon and a highlight's wash are
@@ -860,8 +870,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 252 of them and the full text
-was 93% of this file --- an instruction budget spent on the 245 traps that are not
+titles. Only the titles are here, because there are 258 of them and the full text
+was 93% of this file --- an instruction budget spent on the 257 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -916,6 +926,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An absolute epsilon refuses a page whose every glyph is that thin (the fix for the entry above, which moved the failure to another corpus rather than removing it)
 - A paragraph is one mark and several text objects, and the gap between them belongs to neither
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
+- `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every other fit lands at the page top (found by a differential check, in code that had been wrong since it was written)
+- Two resolvers agreeing with themselves is not two resolvers agreeing
+- A destination's offset belongs to the page it lands on, not the page it left
 - An outline can be infinite, and PDFium says so in its own documentation
 - PDFium cannot create digital signatures
 
@@ -973,6 +986,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
 - A shortcut can produce the right answer and lose the report
 - A panel that lists a hidden comment must not let the page open it
+- `/F` is a bit field, and the flag every real link sets is not the one you are testing
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1030,6 +1044,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A control can be contaminated by the phase that ran before it
 - A check that derives its inputs from the thing it is testing cannot fail
 - A closure and a direct read of the same variable disagreed, and it is unexplained
+- A hit-test slack that rescues a small target hands the click to its neighbour
+- Recording a jump at the call sites is a rule; recording it inside the primitive is a mechanism
 - A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 - A synchroniser is not a fix, and the entry above called the arrows fixed anyway (it is the entry above that was wrong, six days later)
 - A page fitted to the element's own width is measured under the scrollbar

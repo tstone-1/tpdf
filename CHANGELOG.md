@@ -19,6 +19,43 @@ have the binary.)
 
 ## [26.8.3] - Unreleased
 
+### Links go where they point, and Back brings you home
+
+- **Clicking a cross-reference did nothing.** Measured before writing any of it: 16 of the 39
+  PDFs in a real Downloads folder carry link annotations, one of them 7,694 of them with 6,617
+  pointing inside itself, and the EU packaging regulation 284. In documents like those the
+  links *are* the navigation.
+
+- **Pressing a link goes where it points**, with the pointer changing over one so a reader can
+  tell there is something to press --- a PDF's link rectangles are usually invisible. Both
+  named-destination mechanisms resolve (the PDF 1.1 `/Dests` dictionary and the 1.2 `/Names`
+  tree; a reader that knows one silently fails on every link in the half of the corpus using
+  the other), and each fit takes its vertical coordinate from its own position in the
+  destination array.
+
+- **Back and Forward**, `⌘[` and `⌘]`, and in the palette. They record *positions*, so an
+  outline row and a search result are on the same stack --- which is what anyone who has used
+  a browser expects --- and the recording happens inside the one primitive all four jumps go
+  through rather than at each of them.
+
+- **A web link is refused and says so, and deliberately does not show where it pointed.** Same
+  policy `/URI`, `/Launch` and `/GoToR` have always had in the outline, through the same type,
+  so one class of action does not get two answers depending on where the reader met it. A URL
+  is a string a stranger wrote, and a prompt built from one is a phishing surface; whether
+  tpdf should ever open external links is now an open question in `docs/PLAN.md` §10 rather
+  than an unstated omission.
+
+- **The check written to compare tpdf's two destination resolvers found a defect in the older
+  one on its first run.** `FPDFDest_GetLocationInPage` is implemented over PDFium's
+  `CPDF_Dest::GetXYZ` and answers only for `/XYZ`, so every `/FitH` outline entry had been
+  resolving to "no coordinate" and landing the reader at the top of the page rather than at
+  the heading --- since `outline.rs` was written. It scrolls to the right *page*, which is why
+  it read as a slightly loose viewer; the corpus had no `/FitH` entry either, so the gap in
+  the code matched a gap in the fixtures exactly. Fixed with `FPDFDest_GetView`.
+
+- **Not here:** creating or editing a link, opening one in a browser, and reaching a link from
+  the keyboard --- which stays a gap and is named as one.
+
 ### Comments can be read
 
 - **A reviewed document opened as a document with coloured boxes in it.** PDFium already

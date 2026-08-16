@@ -215,6 +215,10 @@ name = "comments-probe"
 path = "examples/comments_probe.rs"
 
 [[example]]
+name = "links-probe"
+path = "examples/links_probe.rs"
+
+[[example]]
 name = "search-probe"
 path = "examples/search_probe.rs"
 

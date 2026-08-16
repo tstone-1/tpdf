@@ -1487,6 +1487,74 @@ on both platforms.
 **Exit criterion:** tpdf is the daily default for reading. If it is not, it is not
 finished.
 
+#### Following links — done 2026-08-16
+
+Clicking a cross-reference did nothing. Measured before writing any of it, because the
+question is how much of the corpus this affects rather than whether the feature is nice:
+**16 of the 39 PDFs in `~/Downloads` carry link annotations** — one of them 7,694 of them
+with 6,617 pointing inside itself, and the EU packaging regulation 284. In documents like
+those the links *are* the navigation, and tpdf swallowed every click on one.
+
+That is a reading defect, so it lands here rather than in Phase 2 beside creating
+annotations, on the same reasoning that moved *Reading comments* up.
+
+**`links.rs` reads the object graph, not PDFium.** Same trade `annots.rs` made and for the
+same measurement: `FPDFLink_*` all need an `FPDF_PAGE`, `FPDF_LoadPage` re-parses at up to
+44 ms a page (§4), and the question is about the whole document. One `lopdf` parse answers
+it — 3.3 ms on the fixture — and links live in the `/Annots` array the comment scan already
+walks.
+
+**Two things are resolved that PDFium would have hidden.** A named destination can live in
+either of two places — the PDF 1.1 `/Dests` dictionary or the 1.2 `/Names` tree — and both
+are still written; a reader that knows one silently fails to follow every link in the half
+of the corpus using the other. And `/FitH`, `/FitBH` and `/FitR` each carry their vertical
+coordinate at a different position in the destination array, which is where the interesting
+finding came from.
+
+**The refusal policy is `outline.rs`'s, not a second one.** A link produces
+`outline::Target`, so `/URI`, `/Launch`, `/GoToR` and `/GoToE` are refused by the same type
+whose exhaustive-match test says no variant can carry a URL, and the reader sees the same
+wording whether they met the refusal in the outline or on the page. A refused link
+deliberately does **not** display where it pointed — see §10, which is where that decision
+is put to a reader rather than buried.
+
+**A jump you cannot undo is a trap, so Back and Forward came with it.** `⌘[` and `⌘]`, in
+the palette as *Back* and *Forward*. It records *positions*, so an outline row and a search
+result are on the same stack — which is what anyone who has used a browser expects — and
+the recording happens inside `goToDestination` rather than at the four places that call it,
+because the fifth caller is the one that forgets.
+
+##### The check that found a defect in code written three weeks earlier
+
+tpdf now has **two** destination resolvers, which is the drift trap this repository has an
+entry about. Sharing the `Target` type fixes the vocabulary and says nothing about whether
+the two arrive at the same page; neither module's own tests can, since each is consistent
+with itself.
+
+So `links.pdf` gives its outline entries the same destinations as its links, and
+`links-probe --mode agree` puts the answers side by side — both against the manifest rather
+than against each other, since two resolvers wrong in the same way agree perfectly.
+
+**It went red on its first run.** `FPDFDest_GetLocationInPage` is implemented over
+`CPDF_Dest::GetXYZ` and answers only for `/XYZ`, so every `/FitH` outline entry had been
+resolving to "no coordinate" and landing the reader at the top of the page since
+`outline.rs` was written. It scrolls to the right *page*, which is why it read as a slightly
+loose viewer rather than a bug — and `outline-simple.pdf` has `/XYZ` and `/Fit` entries and
+no `/FitH` one, so the gap in the code matched a gap in the corpus exactly. Fixed with
+`FPDFDest_GetView`, whose parameter indices are not the array's.
+
+**What is deliberately not here:** creating, editing or deleting a link; opening a web link
+in a browser (§10); and reaching a link from the keyboard, which stays a gap — a reader
+navigating by keyboard alone can move by page, heading and search hit, and cannot follow a
+cross-reference at all. Worth doing, and it wants the accessibility tree rather than another
+hit test.
+
+**Evidence.** 23 unit tests in `links.rs` and 27 in `links.test.ts`; 11 Rust mutations, each
+caught by the test named for it (68 in the harness overall); `links-probe` 27/27 on
+`links.pdf --mode check`, 7/7 on `--mode agree`, 7/7 with 2 skips on `links-rotated.pdf`,
+and 2/2 on the `clean` control; 13/13 gates. The window harness has **not** run against this
+— see the note in `BUILD.md`.
+
 #### Reading comments — done 2026-08-16
 
 Annotations were scheduled in Phase 2, alongside creating them, and reading them turns out to
@@ -4407,3 +4475,29 @@ that it presented several genuinely unresolved questions as settled architecture
    permitted, but it would add roughly 30 MB of language data to an 8.0 MB installer and a
    second C++ image parser, so the in-box engines are the candidates unless a language they
    lack forces it.
+
+11. **Should tpdf ever open a web link, and how would it have to show one?** Opened
+    2026-08-16 with *Following links*, which currently refuses `/URI` outright — the same
+    policy `outline.rs` has always had, chosen so that one class of action does not get two
+    answers depending on where the reader met it.
+
+    The cost is not hypothetical. The EU packaging regulation in this machine's Downloads
+    folder carries 2,608 `/URI` links, and today every one of them is dead. Preview and
+    Acrobat both open them, usually behind a confirmation showing the URL, and a reader
+    doing real work will notice tpdf does not.
+
+    What makes it a decision rather than a to-do is that the safe-looking version is the
+    dangerous one. The URL is a string a stranger wrote, and putting it in a confirmation
+    dialog is the phishing surface: *"Open https://your-bank.example.com∕verify?"* is a
+    convincing prompt built entirely from attacker-chosen bytes, with a division-slash
+    homoglyph doing the work. It also breaks the property `docs/THREAT-MODEL.md` T8 rests
+    on — that nothing attacker-controlled reaches the frontend in a position where it could
+    become a navigation — so it is a change to the trust boundary, not a feature flag.
+
+    The shape a decision would need: whether to open external links at all; if so, whether
+    the reader sees the URL and in what rendering (punycode shown as punycode, homoglyphs
+    flagged, path truncated, no markup); whether the confirmation is per-link or per-domain
+    per-document; and whether the URL is handed to the OS opener or to a browser named in
+    settings. None of that is guessable from here — it is a product decision with a security
+    dimension, and the current refusal is the conservative default that keeps the option
+    open rather than a verdict on it.

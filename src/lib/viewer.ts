@@ -33,6 +33,15 @@ import { AccessibleText } from "./a11y";
 import { matches } from "./keys";
 import { CommentPopup } from "./commentpopup";
 import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
+import {
+  History,
+  linkAt,
+  onPage as linksOnPage,
+  refusalFor,
+  turnedFor as linksTurnedFor,
+  type Link,
+  type Place,
+} from "./links";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
@@ -224,6 +233,13 @@ export interface ViewerOptions {
    * read. Optional, because the check harness builds a viewer with no sidebar.
    */
   onComment?: (id: number | null) => void;
+  /**
+   * Called after a jump that Back can undo, so a caller can re-enable a button.
+   *
+   * Separate from `onPosition`, which fires every frame: this fires only when
+   * the *history* changed, which is what a Back and Forward affordance reads.
+   */
+  onNavigate?: () => void;
 }
 
 /**
@@ -408,6 +424,22 @@ export class Viewer {
    */
   /** Every comment in the document, in page order. Empty until it arrives. */
   private commentItems: readonly Comment[] = [];
+  private linkItems: readonly Link[] = [];
+  /**
+   * The links of one page, already turned into the view's space.
+   *
+   * Memoised because a hover hit-tests on every pointer move, and `turnedFor`
+   * allocates: on a page carrying the per-page maximum that is 4,000 objects
+   * per mouse movement. Keyed by both things that invalidate it --- which page,
+   * and how the view is turned --- rather than cleared from the two places that
+   * change them, which is a rule someone has to keep following.
+   */
+  private turnedLinks: { page: number; turns: number; items: Link[] } | null = null;
+  /** Whether the pointer is currently over a link, so the cursor is set once. */
+  private overLink = false;
+  private readonly history = new History();
+  /** True while the history is driving a jump, so it is not re-recorded. */
+  private replaying = false;
   /** The note shown on the page, built once and reused. */
   private readonly popup: CommentPopup;
 
@@ -534,6 +566,9 @@ export class Viewer {
     root.addEventListener("wheel", this.onWheel, { passive: false });
     root.addEventListener("keydown", this.onKeyDown);
     root.addEventListener("pointerdown", this.onSelectStart);
+    // Always on, unlike the drag's own `pointermove`: a reader has to be told a
+    // run of text is a link *before* pressing it, and the press is too late.
+    root.addEventListener("pointermove", this.onHover);
     this.track.addEventListener("pointerdown", this.onTrackPointerDown);
 
     this.observer = new ResizeObserver(() => this.onResize());
@@ -557,6 +592,7 @@ export class Viewer {
     this.root.removeEventListener("wheel", this.onWheel);
     this.root.removeEventListener("keydown", this.onKeyDown);
     this.root.removeEventListener("pointerdown", this.onSelectStart);
+    this.root.removeEventListener("pointermove", this.onHover);
     // A drag adds these two and its own `pointerup` takes them away again ---
     // which a document closed mid-drag never reaches. Removing a listener that
     // was never added is a no-op, so this needs no flag to consult; what it
@@ -1131,8 +1167,19 @@ export class Viewer {
    * `top` is points from the page's top, or `null` for a destination like
    * `/Fit` that names no coordinate --- which means the page, so the page's top
    * is the honest interpretation of it.
+   *
+   * **It records where the reader was**, so Back can undo it. Here rather than
+   * at the four places that call it --- a link, an outline row, a search result,
+   * a comment --- because "remember to record the jump" is a rule someone has
+   * to keep following, and the fifth caller is the one that forgets. The only
+   * jump not recorded is the history's own, which would otherwise push the
+   * place it is leaving straight back onto the stack it just popped from.
+   *
+   * A destination that lands where the reader already is records nothing: see
+   * {@link History.push}.
    */
   goToDestination(page: number, top: number | null): void {
+    if (!this.replaying) this.history.push(this.position);
     const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
     const base = this.scroller.pageTopOf(clamped);
     // A rotated view has no vertical offset within a page to scroll to: at a
@@ -1345,6 +1392,99 @@ export class Viewer {
     }
   }
 
+  /**
+   * Replaces the links the page knows about.
+   *
+   * Like {@link setComments} this adds no drawing: a link's underline or box is
+   * whatever the producer put in the page, and PDFium already paints it. What
+   * this adds is the ability to follow one, and the pointer that says you can.
+   */
+  setLinks(items: readonly Link[]): void {
+    this.linkItems = items;
+    this.turnedLinks = null;
+    // The history belongs to the document, not to the session: keeping it would
+    // let Back scroll a new document to a page number the old one had.
+    this.history.clear();
+  }
+
+  /**
+   * The cursor the surface is currently showing. For the check harness.
+   *
+   * Read back off the element rather than off {@link overLink}, which is this
+   * class's own belief: a check that asked the viewer what it thinks it did
+   * could not see the style write failing.
+   */
+  get cursorName(): string {
+    return this.surfaceHost.style.cursor || "default";
+  }
+
+  /** How many links the page knows about. For the check harness. */
+  get linkCount(): number {
+    return this.linkItems.length;
+  }
+
+  /** Whether Back and Forward would do anything. For the check harness. */
+  get historyDepths(): { back: number; forward: number } {
+    return this.history.depths;
+  }
+
+  /**
+   * Follows a link: records where the reader was, then jumps.
+   *
+   * A refusal is reported through `onError` rather than ignored, because a
+   * rectangle that swallows a click without a word is indistinguishable from a
+   * broken viewer --- the same reasoning `outline.ts` gives for saying why a
+   * heading does nothing.
+   */
+  followLink(id: number): void {
+    const link = this.linkItems.find((item) => item.id === id);
+    if (!link) return;
+
+    if (link.target.kind !== "page") {
+      const said = refusalFor(link.target);
+      if (said) this.opts.onError?.(said);
+      return;
+    }
+
+    // Recorded by `goToDestination`, not here: one mechanism, so a link and an
+    // outline row cannot come to disagree about what Back means.
+    this.goToDestination(link.target.page, link.target.top_pt);
+    this.opts.onNavigate?.();
+  }
+
+  /** Goes back to where the reader was before the last jump. */
+  goBack(): boolean {
+    const to = this.history.back(this.position);
+    if (!to) return false;
+    this.jumpTo(to);
+    return true;
+  }
+
+  /** Goes forward again, after a {@link goBack}. */
+  goForward(): boolean {
+    const to = this.history.forward(this.position);
+    if (!to) return false;
+    this.jumpTo(to);
+    return true;
+  }
+
+  /**
+   * Scrolls to a recorded place, without recording anything itself.
+   *
+   * The flag is what stops {@link goToDestination} pushing the place being left
+   * onto the stack it was just popped from --- which would make Back a toggle
+   * between two positions and Forward unreachable.
+   */
+  private jumpTo(place: Place): void {
+    this.replaying = true;
+    try {
+      this.goToDestination(place.page, place.top);
+    } finally {
+      this.replaying = false;
+    }
+    this.opts.onNavigate?.();
+  }
+
   /** The comment whose note is open, or -1. For the check harness. */
   get commentOpen(): number {
     return this.popup.openId ?? -1;
@@ -1465,6 +1605,59 @@ export class Viewer {
   }
 
   /**
+   * The link under a pointer event, or `null`.
+   *
+   * Same coordinate work as {@link commentUnder}, and separate from it on
+   * purpose: a comment wins a shared point, because a note somebody wrote is a
+   * stronger claim on a click than a rectangle a producer generated, and the
+   * two do overlap --- a highlight over a cross-reference is ordinary.
+   */
+  private linkUnder(event: PointerEvent): Link | null {
+    if (this.linkItems.length === 0) return null;
+    const bounds = this.root.getBoundingClientRect();
+    const docY = event.clientY - bounds.top + this.scrollTop;
+    const page = this.scroller.pageAt(docY);
+    const origin = this.scroller.pageOrigin(page);
+    const x = (event.clientX - bounds.left - origin.left) / this.zoom;
+    const y = (docY - origin.top) / this.zoom;
+    return linkAt(this.linksOn(page), page, x, y);
+  }
+
+  /** One page's links in the view's space, memoised across pointer moves. */
+  private linksOn(page: number): Link[] {
+    const cached = this.turnedLinks;
+    if (cached && cached.page === page && cached.turns === this.turns) {
+      return cached.items;
+    }
+    const size = this.scroller.pageSize(page);
+    const items = linksTurnedFor(
+      linksOnPage(this.linkItems, page),
+      this.turns,
+      size.width_pt,
+      size.height_pt,
+    );
+    this.turnedLinks = { page, turns: this.turns, items };
+    return items;
+  }
+
+  /**
+   * Shows a pointer over a link, and puts it back afterwards.
+   *
+   * The only thing that tells a reader a run of text is clickable --- a PDF's
+   * link rectangles are usually invisible, and every producer draws them
+   * differently or not at all. Guarded on a change rather than written every
+   * move: assigning `style.cursor` on each pointer event is a style write per
+   * event on a surface that is trying to hold 60 frames.
+   */
+  private readonly onHover = (event: PointerEvent): void => {
+    if (this.linkItems.length === 0) return;
+    const over = this.linkUnder(event) !== null;
+    if (over === this.overLink) return;
+    this.overLink = over;
+    this.surfaceHost.style.cursor = over ? "pointer" : "";
+  };
+
+  /**
    * Keeps an open note against the mark it belongs to.
    *
    * Runs every frame while one is open, which is what makes it follow a scroll,
@@ -1555,6 +1748,18 @@ export class Viewer {
       this.showComment(mark.id, false);
       return;
     }
+    // Then a link, which loses a shared point to a comment above and wins it
+    // against a selection here: a press on a cross-reference is a request to go
+    // there, and starting a selection instead is what makes a link in a PDF
+    // feel like it does not work.
+    const target = this.linkUnder(event);
+    if (target) {
+      event.preventDefault();
+      if (this.popup.openId !== null) this.closeComment();
+      this.followLink(target.id);
+      return;
+    }
+
     // A press anywhere else closes an open note, which is what every popup in
     // every application does and is the only gesture a reader will try.
     if (this.popup.openId !== null) this.closeComment();

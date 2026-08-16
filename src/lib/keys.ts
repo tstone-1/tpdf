@@ -103,6 +103,11 @@ export const BINDINGS = {
   "nav.firstPage": { keys: ["Home"] },
   "nav.lastPage": { keys: ["End"] },
   "nav.goToPage": { keys: ["g", "G", "©"], accel: true, alt: true },
+  // Browser spelling, because that is where a reader has met Back and Forward
+  // before. Deliberately not ⌘← / ⌘→, which macOS gives to line-start and
+  // line-end in every text field and which the find bar is a text field.
+  "nav.back": { keys: ["[", "\u201c"], accel: true },
+  "nav.forward": { keys: ["]", "\u2018"], accel: true },
   "edit.selectAll": { keys: ["a"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },
   "edit.clearSelection": { keys: ["Escape"], shown: "Esc" },

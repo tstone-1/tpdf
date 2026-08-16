@@ -37,6 +37,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::annots::Comments;
+use crate::links::Links;
 use crate::outline::Outline;
 use crate::progressive::CancelToken;
 use crate::queue::{Claim, SharedQueue};
@@ -1459,6 +1460,10 @@ impl Engine for Workers {
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {
         self.ask(doc, &Request::Comments)
+    }
+
+    fn links(&self, doc: u32) -> Result<Links, String> {
+        self.ask(doc, &Request::Links)
     }
 
     fn mapping(&self, doc: u32) -> Result<Vec<crate::encoding::PageMapping>, String> {

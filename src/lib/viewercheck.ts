@@ -38,6 +38,7 @@ import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
 import type { Comment, Comments } from "./comments";
+import type { Link, Links } from "./links";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { MAX_RESULT_ROWS } from "./results";
@@ -301,6 +302,8 @@ async function run(path: string): Promise<void> {
   // panel was enough for the outline, and is not for the page strip: the strip
   // builds the rows its panel can show, so in a box of no height it would build
   // one row and every assertion about windowing would pass on nothing.
+  // Every message the viewer reported through `onError`, in order.
+  const problems: string[] = [];
   const panel = document.createElement("div");
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
@@ -336,6 +339,10 @@ async function run(path: string): Promise<void> {
       sidebar.setTurns(next.turns);
     },
     onPosition: (at, top) => sidebar.setPosition(at, top),
+    // Recorded rather than shown. `App.svelte` puts this on the header; here it
+    // is what makes "a refused link said so" an assertion instead of an
+    // observation about a press that may simply have missed.
+    onError: (message) => problems.push(message),
   });
 
   // The constructor sizes itself against a root the layout has not reached, so
@@ -485,6 +492,7 @@ async function run(path: string): Promise<void> {
   // does apply the turn --- and running here is cheaper than a second mapping
   // nobody else needs.
   await commentChecks(root, viewer, sidebar, doc);
+  await linkChecks(root, viewer, doc, problems);
   await thumbnailChecks(root, viewer, sidebar, doc, page);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await invertChecks(viewer, doc, page, seen);
@@ -3597,6 +3605,180 @@ async function commentChecks(
   );
   // Left closed, so nothing after this runs with a note over the page.
   viewer.closeComment();
+}
+
+/**
+ * Links: following one, being refused one, and getting back.
+ *
+ * The load-bearing assertion is **where the viewer ended up**, not that a click
+ * was accepted: a link that scrolls nowhere and a link that scrolls to the wrong
+ * page both look like a press the viewer took. So the target page is read out of
+ * the link's own resolved destination and compared against `position.page`, and
+ * the viewer is sent somewhere else first --- a jump to a page it is already on
+ * cannot fail.
+ *
+ * The refusal has its own control, and it is the one worth stating. A refused
+ * link must *not* move the reader, and "did not move" is exactly what a press
+ * that missed the rectangle also produces. So the check asserts two things at
+ * once: the position is unchanged **and** the refusal was reported. Without the
+ * second half it would pass for a press that landed on blank paper.
+ */
+async function linkChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  doc: DocumentInfo,
+  /** Everything the viewer has reported through `onError`, in order. */
+  problems: readonly string[],
+): Promise<void> {
+  const names = [
+    "pressing a link goes where it points",
+    "going back returns to where the link was pressed",
+    "going forward returns to the destination",
+    "a refused link says so and moves nobody",
+    "the pointer changes over a link",
+  ];
+
+  let links: Links;
+  try {
+    links = await invoke<Links>("document_links", { doc: doc.id });
+  } catch (e) {
+    check("reads the document's links", false, String(e));
+    for (const name of names) skip(name, "the links could not be read");
+    return;
+  }
+  check(
+    "reads the document's links",
+    Array.isArray(links.items),
+    `${links.items.length} links in ${links.scan_ms.toFixed(2)} ms`,
+  );
+
+  viewer.setLinks(links.items);
+  check(
+    "the viewer takes the links",
+    viewer.linkCount === links.items.length,
+    `${viewer.linkCount} held for ${links.items.length} read`,
+  );
+
+  if (links.items.length === 0) {
+    for (const name of names) skip(name, "the document has no links");
+    return;
+  }
+
+  /** Presses the centre of a link's rectangle, having scrolled to its page. */
+  const pressCentre = async (link: Link): Promise<{ x: number; y: number }> => {
+    viewer.goToPage(link.page);
+    await settle(() => viewer.idle);
+    const at = viewer.screenPoint(
+      link.page,
+      (link.rect[0] + link.rect[2]) / 2,
+      (link.rect[1] + link.rect[3]) / 2,
+    );
+    pointer(root, "pointerdown", at.x, at.y);
+    pointer(root, "pointerup", at.x, at.y);
+    await settle(() => viewer.idle);
+    return at;
+  };
+
+  // A link that goes to a page the viewer will not already be on, so "it moved"
+  // is observable. Its own page is excluded for the same reason.
+  const goes = links.items.find(
+    (item) =>
+      item.target.kind === "page" &&
+      item.target.page !== item.page &&
+      item.rect[2] - item.rect[0] > 2 &&
+      item.rect[3] - item.rect[1] > 2,
+  );
+
+  if (!goes || goes.target.kind !== "page") {
+    for (const name of names.slice(0, 3)) {
+      skip(name, "no link points at a different page");
+    }
+  } else {
+    const from = goes.page;
+    await pressCentre(goes);
+    const landed = viewer.position.page;
+    check(
+      names[0] as string,
+      landed === goes.target.page,
+      `pressed on page ${from + 1}, landed on ${landed + 1}, wanted ${goes.target.page + 1}`,
+    );
+
+    // Back, then forward. Asserted as *positions*, because a history that
+    // recorded the wrong end would still change the page and still look right
+    // from a single assertion.
+    const before = viewer.historyDepths;
+    const went = viewer.goBack();
+    await settle(() => viewer.idle);
+    check(
+      names[1] as string,
+      went && viewer.position.page === from,
+      `back ${went ? "taken" : "refused"} to page ${viewer.position.page + 1}, wanted ${from + 1}` +
+        ` (stack was ${before.back})`,
+    );
+
+    const forward = viewer.goForward();
+    await settle(() => viewer.idle);
+    check(
+      names[2] as string,
+      forward && viewer.position.page === goes.target.page,
+      `forward ${forward ? "taken" : "refused"} to page ${viewer.position.page + 1}, ` +
+        `wanted ${goes.target.page + 1}`,
+    );
+  }
+
+  // A refused link. `problems` is the harness's own record of what `onError`
+  // reported, which is what makes "did not move" mean something.
+  const refused = links.items.find(
+    (item) =>
+      item.target.kind === "refused" &&
+      item.rect[2] - item.rect[0] > 2 &&
+      item.rect[3] - item.rect[1] > 2,
+  );
+  if (!refused) {
+    skip(names[3] as string, "no link is refused");
+  } else {
+    const saidBefore = problems.length;
+    await pressCentre(refused);
+    const stayed = viewer.position.page === refused.page;
+    const said = problems.length > saidBefore;
+    check(
+      names[3] as string,
+      stayed && said,
+      `on page ${viewer.position.page + 1} of ${doc.page_count}, ` +
+        `${problems.length - saidBefore} message(s): ${JSON.stringify(problems.at(-1) ?? "")}`,
+    );
+  }
+
+  // The pointer. It is the only thing that tells a reader a run of text can be
+  // pressed, so an invisible link with no cursor is a feature nobody finds.
+  // Asserted against the cursor *off* a link as well, or a surface that always
+  // says "pointer" would pass.
+  const any = links.items.find(
+    (item) => item.rect[2] - item.rect[0] > 2 && item.rect[3] - item.rect[1] > 2,
+  );
+  if (!any) {
+    skip(names[4] as string, "no link has a rectangle on the page");
+  } else {
+    viewer.goToPage(any.page);
+    await settle(() => viewer.idle);
+    const at = viewer.screenPoint(
+      any.page,
+      (any.rect[0] + any.rect[2]) / 2,
+      (any.rect[1] + any.rect[3]) / 2,
+    );
+    pointer(root, "pointermove", at.x, at.y);
+    await frame();
+    const over = viewer.cursorName;
+    // The far corner, which no rectangle in the corpus reaches.
+    pointer(root, "pointermove", WIDTH - 20, HEIGHT - 20);
+    await frame();
+    const off = viewer.cursorName;
+    check(
+      names[4] as string,
+      over === "pointer" && off !== "pointer",
+      `over a link ${JSON.stringify(over)}, off it ${JSON.stringify(off)}`,
+    );
+  }
 }
 
 /**

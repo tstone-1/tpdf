@@ -112,6 +112,28 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-prob
 cargo run --release --manifest-path src-tauri/Cargo.toml --example comments-probe -- \
     testdata/text-base14.pdf --mode clean
 
+# Links: the rectangles a reader clicks. Run ALL FOUR, and `agree` is the one to
+# read. It compares the two destination resolvers tpdf has -- `outline.rs` through
+# PDFium, `links.rs` through lopdf -- on a fixture whose outline points at the same
+# places its links do. That mode found a defect on its first run
+# (`FPDFDest_GetLocationInPage` answers only for /XYZ, so every /FitH outline
+# entry had been landing at the top of its page since outline.rs was written) and
+# it is the only check here that can fail for a reason neither module's own tests
+# can reach. `clean` is the control: without it, every "the hidden link is not
+# listed" assertion passes on a scan that found nothing anywhere.
+#   links.pdf --mode check   27/27
+#   links.pdf --mode agree    7/7   (6 shared destinations, plus its own control)
+#   links-rotated --mode check 7/7, 2 skipped
+#   text-base14 --mode clean  2/2
+cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+    testdata/links.pdf --mode check
+cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+    testdata/links.pdf --mode agree
+cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+    testdata/links-rotated.pdf --mode check
+cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+    testdata/text-base14.pdf --mode clean
+
 # The worker boundary is still transparent: the two backends must agree byte for
 # byte on tiles, geometry, text, search, outlines and comments, and a worker killed out of
 # the OS process table must be replaced by one serving the same document. Run it
@@ -213,6 +235,7 @@ python3 testdata/make_tagged_pdf.py testdata
 uv run --with fonttools testdata/make_multilingual_pdf.py testdata
 uv run --with fonttools testdata/make_encodings_pdf.py testdata
 python3 testdata/make_comments_pdf.py testdata
+python3 testdata/make_links_pdf.py testdata
 python3 testdata/make_form_pdf.py
 ```
 
@@ -235,6 +258,16 @@ under a quarter turn and cannot tell a rotation from an identity; and its three 
 `/Annots` entries are written **before** the 1,200 notes, because the per-page bound stops the
 scan at 1,000 and anything after that is never read. Both are in `docs/TRAPS.md`, both were
 found by the fixture failing to discriminate rather than by review.
+
+`make_links_pdf.py` is the fourth `scripts/ci_fixtures.py` builds on a runner, and
+dependency-free for the same reason. Two things about it carry the same kind of intent as
+the comment fixture's. Its **outline points at the same destinations its links do**, which is
+what makes `links-probe --mode agree` able to compare tpdf's two destination resolvers at all;
+delete the outline and that mode still runs, still prints a count and can no longer fail.
+And the rotated page is a **separate file** --- `links-rotated.pdf` --- because a document
+that mixes page sizes reddens two of `viewer_check.py`'s rotation checks, which derive what
+they expect from page 1's aspect ratio. That is the same split, for the same reason, that
+`comments-rotated.pdf` exists.
 
 `make_tagged_pdf.py` is the other side of that coin: the only fixture that carries a
 `/StructTreeRoot`, so it says what its own reading order is. Page 1 puts a margin note beside
@@ -1396,9 +1429,18 @@ whatever the boxes claim. For **search**, a match's index range must cover the c
 searched for, re-extracted independently; every other search assertion passes just as well
 when the indices are off by one.
 
-Run all twelve corpora. Every run reports the same **171 check names**; what differs is how
+Run all twelve corpora. Every run reports the same check names; what differs is how
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch.
+
+> ⚠ **The table below is 171 names and is out of date: the link checks added seven more on
+> 2026-08-16 and the harness has not been run since.** It was blocked by a locked screen,
+> which `viewer_check.py` refuses on rather than hanging --- and a stale count here is the
+> smaller half of the problem. The larger half is that **`links.pdf` and `links-rotated.pdf`
+> have never been through this harness at all**, so the per-fixture splits for them are
+> unknown rather than predicted, and the seven new names have never run in a real window on
+> any corpus. Re-run the sweep and rewrite the table from what it prints; do not arithmetic
+> the totals, which this page has twice recorded as costing more than it saves.
 
 **Every row below was measured on macOS on 2026-08-16**, in one sweep, after the eight comment
 checks took the total from 163 to 171. Zero failures anywhere. The Windows column is *not*

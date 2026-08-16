@@ -54,7 +54,15 @@ CRATE = ROOT / "src-tauri"
 #: read as a mutation being caught. libtest takes several filters and ORs them,
 #: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
 #: which is worth knowing because it looks like the feature being unsupported.
-FILTERS = ["search::", "structure::", "text::", "encoding::", "docmodel::", "annots::"]
+FILTERS = [
+    "search::",
+    "structure::",
+    "text::",
+    "encoding::",
+    "docmodel::",
+    "annots::",
+    "links::",
+]
 
 
 @dataclass(frozen=True)
@@ -651,6 +659,115 @@ MUTATIONS = [
         "            .filter(|&at| at <= upto)",
         "            .filter(|&at| at <= upto.max(usize::MAX))",
         "a_rebuild_never_starts_from_a_snapshot_ahead_of_its_target",
+    ),
+    # --- links.rs ----------------------------------------------------------
+    Mutation(
+        # Read `/Dest` before `/A`, which is the ordering `outline.rs` had to
+        # learn the hard way: a `/GoToR` carries a `/D` that resolves perfectly
+        # against *this* document, so the link jumps to a plausible page of
+        # another file's numbering instead of being refused.
+        "links: take /Dest before the action that overrides it",
+        "src/links.rs",
+        '    if let Ok(action) = annot.get(b"A") {',
+        '    if let Ok(dest) = annot.get(b"Dest") {\n        return destination(dest, document, numbers, geometry, limits);\n    }\n    if let Ok(action) = annot.get(b"A") {',
+        "an_action_beats_a_dest_sitting_beside_it",
+    ),
+    Mutation(
+        # Follow an action tpdf does not know instead of declining it. The arm
+        # still refuses the four named ones, so every other refusal assertion
+        # stays green --- which is why the unknown case needs its own test.
+        "links: follow an unknown action's destination",
+        "src/links.rs",
+        '            _ => refused("unsupported"),',
+        "            _ => match action.get(b\"D\") {\n                Ok(dest) => destination(dest, document, numbers, geometry, limits),\n                Err(_) => Target::Broken,\n            },",
+        "an_unknown_action_is_refused_rather_than_followed",
+    ),
+    Mutation(
+        # Read every fit's top from `/XYZ`'s position. `/FitH top` then reads the
+        # element after the top, which on a real destination is absent --- so the
+        # link lands at the page's top and looks like it works.
+        "links: read every fit's top from XYZ's position",
+        "src/links.rs",
+        '        b"XYZ" => 3,\n        b"FitH" | b"FitBH" => 2,\n        b"FitR" => 5,',
+        '        b"XYZ" | b"FitH" | b"FitBH" | b"FitR" => 3,',
+        "each_fit_takes_its_top_from_its_own_position",
+    ),
+    Mutation(
+        # Flip the destination offset against the page the *link* is on rather
+        # than the page it lands on. Invisible on any document of uniform pages,
+        # which is every fixture here but the one written for it.
+        "links: flip the offset against the wrong page",
+        "src/links.rs",
+        "    let (_, height, turns) = *geometry.get(page as usize)?;",
+        "    let (_, height, turns) = *geometry.first()?;",
+        "the_offset_is_flipped_against_the_page_it_lands_on",
+    ),
+    Mutation(
+        # Treat `/F` as a boolean rather than testing bit 2. Every real link sets
+        # `/F 4` (Print), so this drops all of them --- which is why the control
+        # in that test is a printing link rather than an unflagged one.
+        "links: treat any /F as hidden",
+        "src/links.rs",
+        "            .is_some_and(|flags| flags & 0b10 != 0);",
+        "            .is_some_and(|flags| flags != 0);",
+        "a_hidden_link_is_not_clickable_and_a_printing_one_is",
+    ),
+    Mutation(
+        # Give up on a name tree by reporting the name missing rather than the
+        # bound firing. The link is `Broken` either way, so only the limit can
+        # tell a hostile tree from an honest typo.
+        "links: report an exhausted name tree as a missing name",
+        "src/links.rs",
+        "        Found::Exhausted => {\n            limits.unresolved_names += 1;\n            Target::Broken\n        }",
+        "        Found::Exhausted => Target::Broken,",
+        "a_cyclic_name_tree_is_given_up_on_and_counted",
+    ),
+    Mutation(
+        # Charge a limit for an ordinary missing name too, which makes every
+        # broken link in a healthy document look like a truncated scan. The
+        # control for the mutation above, failing in the other direction.
+        "links: charge a limit for a name that is simply absent",
+        "src/links.rs",
+        "        Found::Missing => Target::Broken,",
+        "        Found::Missing => {\n            limits.unresolved_names += 1;\n            Target::Broken\n        }",
+        "a_missing_name_is_broken_without_charging_a_limit",
+    ),
+    Mutation(
+        # Look names up only in the name tree, dropping the PDF 1.1 dictionary.
+        # A reader that knows one mechanism silently fails to follow every link
+        # in whichever half of the corpus uses the other.
+        "links: forget the PDF 1.1 /Dests dictionary",
+        "src/links.rs",
+        '    if let Ok(dests) = catalog.get(b"Dests") {',
+        '    if let (false, Ok(dests)) = (true, catalog.get(b"Dests")) {',
+        "a_named_destination_resolves_through_the_flat_dictionary",
+    ),
+    Mutation(
+        # Trust `/Rect`'s corner order, which §12.5.2 says a consumer shall
+        # normalise. Invisible on every rectangle written the usual way round.
+        "links: trust /Rect's corner order",
+        "src/links.rs",
+        "            values[0].min(values[2]) as f64,\n            values[1].min(values[3]) as f64,\n            values[0].max(values[2]) as f64,\n            values[1].max(values[3]) as f64,",
+        "            values[0] as f64,\n            values[1] as f64,\n            values[2] as f64,\n            values[3] as f64,",
+        "a_rectangle_written_backwards_is_normalised",
+    ),
+    Mutation(
+        # List zero-area links, which puts a target in the list no reader can
+        # reach and every hit test walks past.
+        "links: list a rectangle with no area",
+        "src/links.rs",
+        "        if rect[2] - rect[0] <= 0.0 || rect[3] - rect[1] <= 0.0 {\n            continue;\n        }",
+        "        if false {\n            continue;\n        }",
+        "a_zero_area_rectangle_is_left_out",
+    ),
+    Mutation(
+        # Count a comment sharing the `/Annots` array as an unreadable entry,
+        # which makes every reviewed document report a truncated link scan.
+        "links: count a non-link annotation as unreadable",
+        "src/links.rs",
+        "            Ok(_) => continue,",
+        "            Ok(_) => {\n                limits.unreadable += 1;\n                continue;\n            }",
+        "annotations_that_are_not_links_are_skipped_without_complaint",
     ),
 ]
 

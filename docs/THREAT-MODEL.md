@@ -684,6 +684,21 @@ The popup's body uses `white-space: pre-wrap` to keep a comment's paragraphs. Th
 not a parse: the newlines are in the character data, and no markup is involved in rendering
 them.
 
+**Links, the same day, went the other way — and it is worth saying why the direction differs.**
+A link annotation carries a URL, which is the one kind of attacker-controlled string this whole
+section exists to keep away from the DOM. So `links.rs`'s `Link` has **no string field at all**:
+a rectangle, a page, and a `Target` whose only string is the five-literal `action` chosen in
+`outline.rs`. `no_link_field_may_carry_a_url` destructures it exhaustively, so a field added
+later is a compile error rather than a leak, and there is no `textContent` argument to make
+because there is nothing to display.
+
+That is also why **a refused link does not show where it pointed**. The obvious courtesy — "this
+opens https://…, follow it?" — would put an attacker-chosen string into a prompt whose whole
+purpose is to be trusted, which is a better phishing surface than no message at all. The reader
+is told what *kind* of action was declined and nothing else. Whether tpdf should ever open a web
+link, and what displaying one safely would require, is `docs/PLAN.md` §10 question 11 — a change
+to this boundary rather than a feature, which is why it is a question and not a backlog item.
+
 **CSP is real and is not the scaffold default**, which this document also had wrong.
 `tauri.conf.json` sets `default-src 'self'` with `img-src`/`connect-src` widened only to the
 tile protocol and the IPC origin, and no `'unsafe-inline'` anywhere. Tauri's scaffold ships

@@ -1,0 +1,381 @@
+{
+  "links.pdf": {
+    "pages": 8,
+    "expected": [
+      {
+        "page": 0,
+        "rect": [
+          60,
+          634,
+          360,
+          647
+        ],
+        "target": {
+          "kind": "page",
+          "page": 3,
+          "top_pt": 300
+        },
+        "note": "GoTo action, XYZ with a y"
+      },
+      {
+        "page": 0,
+        "rect": [
+          60,
+          598,
+          360,
+          611
+        ],
+        "target": {
+          "kind": "page",
+          "page": 5,
+          "top_pt": null
+        },
+        "note": "Dest array, /Fit names no coordinate"
+      },
+      {
+        "page": 0,
+        "rect": [
+          60,
+          562,
+          360,
+          575
+        ],
+        "target": {
+          "kind": "page",
+          "page": 6,
+          "top_pt": 250
+        },
+        "note": "FitH, top one element earlier than XYZ"
+      },
+      {
+        "page": 0,
+        "rect": [
+          60,
+          526,
+          360,
+          539
+        ],
+        "target": {
+          "kind": "page",
+          "page": 2,
+          "top_pt": null
+        },
+        "note": "XYZ with nulls names no coordinate"
+      },
+      {
+        "page": 1,
+        "rect": [
+          60,
+          634,
+          360,
+          647
+        ],
+        "target": {
+          "kind": "page",
+          "page": 4,
+          "top_pt": 200
+        },
+        "note": "named through the PDF 1.1 /Dests dictionary"
+      },
+      {
+        "page": 1,
+        "rect": [
+          60,
+          598,
+          360,
+          611
+        ],
+        "target": {
+          "kind": "page",
+          "page": 7,
+          "top_pt": 150
+        },
+        "note": "named through the /Names name tree"
+      },
+      {
+        "page": 1,
+        "rect": [
+          60,
+          562,
+          360,
+          575
+        ],
+        "target": {
+          "kind": "page",
+          "page": 6,
+          "top_pt": null
+        },
+        "note": "named through a two-level name tree"
+      },
+      {
+        "page": 1,
+        "rect": [
+          60,
+          526,
+          360,
+          539
+        ],
+        "target": {
+          "kind": "broken"
+        },
+        "note": "a name the tree does not define"
+      },
+      {
+        "page": 2,
+        "rect": [
+          60,
+          634,
+          360,
+          647
+        ],
+        "target": {
+          "kind": "refused",
+          "action": "uri"
+        },
+        "note": "a web link"
+      },
+      {
+        "page": 2,
+        "rect": [
+          60,
+          598,
+          360,
+          611
+        ],
+        "target": {
+          "kind": "refused",
+          "action": "launch"
+        },
+        "note": "launches a program"
+      },
+      {
+        "page": 2,
+        "rect": [
+          60,
+          562,
+          360,
+          575
+        ],
+        "target": {
+          "kind": "refused",
+          "action": "remote"
+        },
+        "note": "another file, with a destination that would resolve here"
+      },
+      {
+        "page": 2,
+        "rect": [
+          60,
+          526,
+          360,
+          539
+        ],
+        "target": {
+          "kind": "refused",
+          "action": "unsupported"
+        },
+        "note": "an action tpdf has never heard of"
+      },
+      {
+        "page": 2,
+        "rect": [
+          60,
+          490,
+          360,
+          503
+        ],
+        "target": {
+          "kind": "refused",
+          "action": "embedded"
+        },
+        "note": "a destination inside an embedded file"
+      },
+      {
+        "page": 3,
+        "rect": [
+          60,
+          634,
+          360,
+          647
+        ],
+        "target": {
+          "kind": "page",
+          "page": 7,
+          "top_pt": null
+        },
+        "note": "action and Dest together: the action wins"
+      },
+      {
+        "page": 3,
+        "rect": [
+          60,
+          598,
+          360,
+          611
+        ],
+        "target": {
+          "kind": "broken"
+        },
+        "note": "a destination naming the page tree rather than a page"
+      },
+      {
+        "page": 3,
+        "rect": [
+          60,
+          562,
+          360,
+          575
+        ],
+        "target": {
+          "kind": "broken"
+        },
+        "note": "a GoTo action carrying no destination"
+      },
+      {
+        "page": 3,
+        "rect": [
+          60,
+          526,
+          360,
+          539
+        ],
+        "target": {
+          "kind": "none"
+        },
+        "note": "a rectangle with no action at all"
+      },
+      {
+        "page": 3,
+        "rect": [
+          360,
+          503,
+          60,
+          490
+        ],
+        "target": {
+          "kind": "page",
+          "page": 2,
+          "top_pt": null
+        },
+        "note": "corners written backwards"
+      },
+      {
+        "page": 6,
+        "rect": [
+          60,
+          634,
+          360,
+          647
+        ],
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": 200
+        },
+        "note": "back to the first page"
+      },
+      {
+        "page": 7,
+        "rect": [
+          60,
+          634,
+          360,
+          647
+        ],
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": 350
+        },
+        "note": "FitR takes its top from the fifth element"
+      }
+    ],
+    "crowd_page": 5,
+    "crowd": 40,
+    "total": 60,
+    "limits": {
+      "crowded_pages": 0,
+      "over_budget": false,
+      "unreadable": 3,
+      "unresolved_names": 0
+    },
+    "shared_targets": [
+      {
+        "title": "Chapter one",
+        "target": {
+          "kind": "page",
+          "page": 3,
+          "top_pt": 300
+        }
+      },
+      {
+        "title": "Chapter two",
+        "target": {
+          "kind": "page",
+          "page": 5,
+          "top_pt": null
+        }
+      },
+      {
+        "title": "Chapter three",
+        "target": {
+          "kind": "page",
+          "page": 6,
+          "top_pt": 250
+        }
+      },
+      {
+        "title": "Named, flat",
+        "target": {
+          "kind": "page",
+          "page": 4,
+          "top_pt": 200
+        }
+      },
+      {
+        "title": "Named, tree",
+        "target": {
+          "kind": "page",
+          "page": 7,
+          "top_pt": 150
+        }
+      },
+      {
+        "title": "A web link",
+        "target": {
+          "kind": "refused",
+          "action": "uri"
+        }
+      }
+    ]
+  },
+  "links-rotated.pdf": {
+    "pages": 2,
+    "expected": [
+      {
+        "page": 0,
+        "target": {
+          "kind": "page",
+          "page": 1,
+          "top_pt": 300
+        },
+        "note": "from a rotated page to an upright one"
+      },
+      {
+        "page": 1,
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": null
+        },
+        "note": "to a rotated page: no vertical axis to name"
+      }
+    ],
+    "limits": {
+      "crowded_pages": 0,
+      "over_budget": false,
+      "unreadable": 0,
+      "unresolved_names": 0
+    }
+  }
+}

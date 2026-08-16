@@ -15,6 +15,7 @@
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Comments } from "./lib/comments";
+  import { noticeFor as linkNotice, type Links } from "./lib/links";
   import type { Outline } from "./lib/outline";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import {
@@ -868,6 +869,34 @@
         })
         .catch(() => {
           if (openDoc === wanted) sidebar?.setComments(null);
+        });
+
+      // The links, on the same terms again --- a third chain rather than a link
+      // in either above, so one failing does not take the others with it.
+      //
+      // Where this differs from the comments: nobody opens a panel before
+      // clicking a cross-reference, so waiting for demand would mean the first
+      // click on any document goes nowhere. It waits for first paint for the
+      // same reason they do, and for nothing else.
+      void firstPaint()
+        .then(() => {
+          if (openDoc !== wanted) return null;
+          return invoke<Links>("document_links", { doc: wanted });
+        })
+        .then((result) => {
+          if (!result || openDoc !== wanted) return;
+          viewer?.setLinks(result.items);
+          // A cut list is worth saying out loud, for the reason every bound in
+          // this application reports itself: a document whose cross-references
+          // half work is worse to use than one whose links are all dead, and
+          // silence makes the two indistinguishable.
+          const said = linkNotice(result.limits);
+          if (said) error = said;
+        })
+        .catch(() => {
+          // Deliberately quiet. A document with no readable links is the common
+          // case --- most PDFs have none --- and there is nothing the reader
+          // would do about it, so this is not the `onError` contract.
         });
     } catch (e) {
       if (replaced) {

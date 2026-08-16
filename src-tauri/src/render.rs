@@ -80,6 +80,7 @@ use pdfium_render::prelude::*;
 
 use crate::annots::Comments;
 use crate::encoding::PageMapping;
+use crate::links::Links;
 use crate::outline::{self, Outline};
 use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
 use crate::queue::{Claim, SharedQueue};
@@ -354,6 +355,10 @@ pub(crate) enum Job {
     Outline {
         doc: u32,
         reply: Reply<Outline>,
+    },
+    Links {
+        doc: u32,
+        reply: Reply<Links>,
     },
     Comments {
         doc: u32,
@@ -673,6 +678,17 @@ impl RenderService {
         }
     }
 
+    /// Reads every link in a document, invoking `reply` on a service thread.
+    ///
+    /// One job for the whole document, for the same reason `comments` is: both
+    /// come out of one `lopdf` parse, so a per-page request would repeat that
+    /// parse once per page to return a slice of the same list.
+    pub fn links(&self, doc: u32, reply: Reply<Links>) {
+        if self.tx.send(Job::Links { doc, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reports, per page, whether the text means anything, on a service thread.
     ///
     /// Asked for lazily --- see [`crate::encoding`] and `RawDocument::mapping`.
@@ -764,6 +780,8 @@ pub(crate) trait Engine {
     ) -> Result<PageMatches, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
+
+    fn links(&self, doc: u32) -> Result<Links, String>;
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 }
@@ -788,6 +806,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         } => reply(engine.search(doc, page, &query, options, carry.as_ref())),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
+        Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
     }
@@ -810,6 +829,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Search { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
             Job::Comments { reply, .. } => reply(Err(error.to_string())),
+            Job::Links { reply, .. } => reply(Err(error.to_string())),
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
         }
@@ -950,6 +970,10 @@ impl Engine for InProcess {
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {
         run_comments(open_slot(&self.docs.borrow(), doc)?)
+    }
+
+    fn links(&self, doc: u32) -> Result<Links, String> {
+        run_links(open_slot(&self.docs.borrow(), doc)?)
     }
 
     /// Drops the document, which is what closes the Pdfium handle.
@@ -1114,6 +1138,16 @@ pub(crate) fn run_outline(document: &RawDocument) -> Outline {
 /// arrangement `run_mapping` has, and `annots::scan` is what it wraps.
 pub(crate) fn run_comments(document: &RawDocument) -> Result<Comments, String> {
     document.comments()
+}
+
+/// Reads a document's links on the render thread.
+///
+/// Cached inside [`RawDocument`] like the comments are, so the `lopdf` parse
+/// happens once per open document however often it is asked for --- which
+/// matters more here, because a re-open after a rotation would otherwise repeat
+/// it on a document that has not changed.
+pub(crate) fn run_links(document: &RawDocument) -> Result<Links, String> {
+    document.links()
 }
 
 /// Reads the document's font dictionaries on the render thread.

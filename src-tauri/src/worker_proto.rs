@@ -80,6 +80,13 @@ pub enum Request {
     /// reasons: it costs an `lopdf` parse, and nothing on the startup path wants
     /// it. A reader who never opens the comments panel never pays for it.
     Comments,
+    /// Read every link in the document.
+    ///
+    /// Document-level, like [`Request::Comments`], and asked for once just after
+    /// first paint rather than lazily: a reader clicking a cross-reference has
+    /// not opened a panel first, so waiting for demand would mean the first
+    /// click on any document does nothing.
+    Links,
     /// Report, per page, whether the text means anything or PDFium is guessing.
     ///
     /// Document-level and lazy: it costs a full `lopdf` parse, so it is asked for
@@ -263,6 +270,7 @@ mod tests {
             },
             Request::Outline,
             Request::Comments,
+            Request::Links,
         ] {
             let line = serde_json::to_string(&request).expect("serialise");
             let back: Request = serde_json::from_str(&line).expect("deserialise");
