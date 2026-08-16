@@ -338,6 +338,30 @@ def main() -> int:
             for name in sorted(seen):
                 print(f"       {names.count(name)}x: {name}")
 
+    # A name that is a prefix of another cannot be aimed at. `mutate_viewer.py`
+    # decides whether a mutation was caught with `line.startswith(expect)` over
+    # the failing check names, and refuses an expectation matching more than
+    # one --- correctly, and only when somebody writes that mutation. So the
+    # constraint is on the *names*, and it has been broken once already:
+    # `search_probe.rs` had `query astral-alone` alongside `query astral-alone:
+    # indices address the hit`, and no mutation could target the first.
+    #
+    # Checked here because this is where the whole set is known. `docs/TRAPS.md`
+    # states the rule under "a check name that is a prefix of another cannot be
+    # aimed at"; it was enforced by nothing until now.
+    shadowed = []
+    for result in results:
+        names = sorted(set(result["names"]))
+        for name in names:
+            longer = [other for other in names if other != name and other.startswith(name)]
+            if longer:
+                shadowed.append((result["stem"], name, longer))
+    for stem, name, longer in shadowed:
+        print(f"[FAIL] {stem}: {name!r} is a prefix of {len(longer)} other check name(s)")
+        for other in longer:
+            print(f"       {other!r}")
+        print("       No mutation can be aimed at the shorter one. Give it a suffix.")
+
     baseline = sorted(set(results[0]["names"])) if results else []
     drifted = []
     for result in results[1:]:
@@ -354,12 +378,14 @@ def main() -> int:
 
     if not drifted and not duplicated and results:
         print(f"[OK]   all {len(results)} corpora report the same {len(baseline)} check names")
+    if not shadowed and results:
+        print(f"[OK]   no check name is a prefix of another, so each can be aimed at")
     if failed:
         print(f"[FAIL] {len(failed)} corpus/corpora had failing checks")
     else:
         print(f"[OK]   no failing checks on any of {len(results)} corpora")
 
-    return 1 if (failed or drifted or duplicated) else 0
+    return 1 if (failed or drifted or duplicated or shadowed) else 0
 
 
 if __name__ == "__main__":

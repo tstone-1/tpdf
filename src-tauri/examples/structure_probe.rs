@@ -35,6 +35,13 @@ use tpdf_lib::progressive::{self, RawDocument};
 use tpdf_lib::structure::{self, PageStructure};
 use tpdf_lib::text;
 
+/// The check-name roll and the prefix rule, shared with `search_probe`.
+///
+/// `#[path]` rather than a crate module: example scaffolding, which must not
+/// ship in the binary.
+#[path = "../src/probes/checkroll.rs"]
+mod checkroll;
+
 struct Args {
     library: PathBuf,
     file: PathBuf,
@@ -98,10 +105,14 @@ struct Report {
     passed: usize,
     failed: usize,
     skipped: usize,
+    /// Every name printed, so the set can be read without parsing the padded
+    /// column. See `checkroll` for why that column cannot be parsed back.
+    names: Vec<String>,
 }
 
 impl Report {
     fn check(&mut self, ok: bool, name: &str, detail: &str) {
+        self.names.push(name.to_string());
         if ok {
             self.passed += 1;
             println!("[OK]   {name:<52} {detail}");
@@ -113,6 +124,7 @@ impl Report {
 
     /// A check this fixture cannot exercise. Printed, never omitted.
     fn skip(&mut self, name: &str, why: &str) {
+        self.names.push(name.to_string());
         self.skipped += 1;
         println!("[SKIP] {name:<52} not applicable -- {why}");
     }
@@ -157,6 +169,7 @@ fn run(args: &Args) -> Result<bool, String> {
         passed: 0,
         failed: 0,
         skipped: 0,
+        names: Vec::new(),
     };
 
     let document = RawDocument::open(bindings, &args.file)?;
@@ -202,13 +215,14 @@ fn run(args: &Args) -> Result<bool, String> {
         ),
     }
 
+    let named = checkroll::finish(&report.names);
     println!(
         "\n{}/{} checks passed, {} not applicable",
         report.passed,
         report.passed + report.failed,
         report.skipped
     );
-    Ok(report.failed == 0)
+    Ok(report.failed == 0 && named)
 }
 
 /// Every assertion about one page.

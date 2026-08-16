@@ -7404,3 +7404,39 @@ every assertion about refusal.
 Worth reaching for whenever a rule is entangled with a call that cannot be made under test:
 `docs/TRAPS.md` already carries *"an unreachable guard is worth keeping if the type can carry it
 instead"*, and this is the same move made with a function instead of a type.
+
+### A rule about names, enforced by the one harness that discovers it last
+
+`mutate_viewer.py` decides a mutation was caught with `line.startswith(expect)` over the checks
+that went red, and refuses an expectation matching more than one. So **a check name that is a
+prefix of another cannot be aimed at** --- a rule this file already records, from the day
+`search_probe.rs` broke it with `query astral-alone` sitting beside `query astral-alone: indices
+address the hit`.
+
+The refusal is correct and arrives at the worst moment: when somebody writes a mutation for that
+check, which may be months after the name was added, and which reads as a problem with the
+mutation. Nothing checked the *names*. The rule was written down and enforced by nothing, which
+is the failure mode this repository has now recorded from four directions.
+
+Three families are matched this way. All three were measured and all three are clean --- 189
+viewer check names, 75 and 30 from `search-probe`, 11 from `structure-probe`, no name a prefix
+of any other --- and the check now runs on every sweep and every probe run rather than on
+somebody's initiative.
+
+**The first measurement of it was wrong in the way this file keeps recording.** The probes print
+`LABEL name:<52 detail` and `:<52` pads without truncating, so a longer name runs into its detail
+with one space between. Splitting on runs of spaces silently dropped **15 of 75** names from one
+probe and **15 of 30** from another, and reported a clean result over the remainder. The verdict
+happened to be right; the population was 80% and 50% of the real one. Both probes emit a
+`CHECK-NAMES-JSON` roll now, for the same reason `checkreport.ts` does.
+
+**And the first control aimed at the new check was aimed at nothing.** Shortening a name to
+`page 1: the order` makes it a prefix of no other name, so the mutation survived and proved
+only that the plant was wrong --- *"a mutation that survives may be a variant, not a gap"*.
+Re-aimed so one name became a genuine prefix of another, it goes red on both pages, names the
+name each one shadows, and exits 1.
+
+**One duplication left deliberately.** Seven probes carry their own `Report` struct, by
+convention rather than accident, and the roll now lives in `src/probes/checkroll.rs` reached by
+`#[path]` from the two that need it. Extending it to the other five is worth doing when one of
+them next needs its names read; doing it now would be five edits for no current question.

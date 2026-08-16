@@ -56,6 +56,13 @@ use tpdf_lib::progressive::{self, RawDocument};
 use tpdf_lib::search::{self, Options};
 use tpdf_lib::text::{self, PageText};
 
+/// The check-name roll and the prefix rule, shared with `structure_probe`.
+///
+/// `#[path]` rather than a crate module: this is example scaffolding and must
+/// not ship in the binary, which is what `src/probes/` is for.
+#[path = "../src/probes/checkroll.rs"]
+mod checkroll;
+
 struct Args {
     library: PathBuf,
     file: PathBuf,
@@ -113,10 +120,22 @@ struct Report {
     passed: usize,
     failed: usize,
     skipped: usize,
+    /// Every name printed, in order, so the set can be read without parsing.
+    ///
+    /// The printed column pads to 52 and does not truncate, so a longer name
+    /// runs into its detail with one space between --- indistinguishable from
+    /// the spaces inside the name. 30 of this probe's 75 lines are past that
+    /// pad. `scripts/mutate_viewer.py` does not care, because it tests
+    /// `startswith` against the whole remainder; anything asking *what the
+    /// names are* does, and the rule that no name may be a prefix of another
+    /// (see `docs/TRAPS.md`) is exactly such a question. Same marker and same
+    /// reason as `src/lib/checkreport.ts`.
+    names: Vec<String>,
 }
 
 impl Report {
     fn check(&mut self, ok: bool, name: &str, detail: &str) {
+        self.names.push(name.to_string());
         if ok {
             self.passed += 1;
             println!("[OK]   {name:<52} {detail}");
@@ -128,6 +147,7 @@ impl Report {
 
     /// A check this fixture cannot exercise. Printed, never omitted.
     fn skip(&mut self, name: &str, why: &str) {
+        self.names.push(name.to_string());
         self.skipped += 1;
         println!("[SKIP] {name:<52} not applicable -- {why}");
     }
@@ -211,6 +231,7 @@ fn run(args: &Args) -> Result<bool, String> {
         passed: 0,
         failed: 0,
         skipped: 0,
+        names: Vec::new(),
     };
 
     // Extract every page once. The queries below are keyed by page number, and
@@ -359,11 +380,12 @@ fn run(args: &Args) -> Result<bool, String> {
     // Worded exactly as every other probe here words it, because
     // `scripts/mutate_viewer.py` requires a summary line before it will believe a
     // run happened at all --- a crash and a clean sweep both produce no failures.
+    let named = checkroll::finish(&report.names);
     println!(
         "\n{}/{} checks passed, {} not applicable",
         report.passed,
         report.passed + report.failed,
         report.skipped
     );
-    Ok(report.failed == 0)
+    Ok(report.failed == 0 && named)
 }

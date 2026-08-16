@@ -129,6 +129,23 @@ have the binary.)
   question was how far the jump had gone — the same quantity only from a standing start, and
   the check does not start from one.
 
+### A check name that cannot be aimed at is now caught when it is added
+
+- **The rule was written down and enforced by nothing.** A mutation is credited to the check it
+  names by prefix, so a name that is a prefix of another can never be the sole target of one —
+  and the harness only says so when somebody writes that mutation, possibly months later. It
+  had been broken once already.
+
+- All three families that are matched this way were measured and all three are clean: 189
+  viewer check names, 75 and 30 from the search probe, 11 from the structure probe. The check
+  runs on every sweep and every probe run now, and it names the shadowed name and what shadows
+  it rather than reporting a count.
+
+- **The first measurement of it covered 80% and 50% of the names.** Probe output pads to 52
+  characters and does not truncate, so longer names run into their detail and a split on runs
+  of spaces drops them silently — 15 of 75 in one probe, 15 of 30 in another. Both probes emit
+  their names as a `CHECK-NAMES-JSON` line now, the same fix as the viewer harness.
+
 ### The crop-box work is now covered where it was only claimed
 
 - **The probe that covers the text half exited 1 on the fixture it was prescribed for.**
