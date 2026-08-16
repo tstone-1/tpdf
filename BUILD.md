@@ -134,6 +134,19 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/text-base14.pdf --mode clean
 
+# Both whole-document scans now report `pages_missed` -- pages PDFium has that
+# `lopdf` could not account for. Worth knowing before reading a zero: swept over
+# every fixture on 2026-08-16 it is 0 everywhere, so the two parsers agree about
+# page count on every document PDFium will open, and the guard is defensive
+# rather than demonstrated. `incr-encrypted-pw.pdf` is the file usually cited as
+# the counter-example and it is not one: PDFium refuses to open it, so nothing
+# downstream ever sees it. To re-run the sweep:
+#   for f in testdata/*.pdf; do
+#     printf '%s: ' "$(basename "$f")"
+#     cargo run -q --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+#       "$f" --mode read 2>&1 | tail -1
+#   done
+
 # The worker boundary is still transparent: the two backends must agree byte for
 # byte on tiles, geometry, text, search, outlines and comments, and a worker killed out of
 # the OS process table must be replaced by one serving the same document. Run it

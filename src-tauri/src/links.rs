@@ -117,6 +117,22 @@ pub struct Limits {
     pub unreadable: usize,
     /// Named destinations the name tree could not resolve within its bounds.
     pub unresolved_names: usize,
+    /// Pages PDFium has that `lopdf` could not account for.
+    ///
+    /// **The case this exists for is encryption**, and it is the quietest
+    /// failure either scan has. A document encrypted with an empty user
+    /// password opens with no prompt in any reader --- PDFium paginates it
+    /// normally and the pages render --- while `lopdf` may parse the file and
+    /// report **zero pages**. Every loop here then runs zero times and returns
+    /// an empty list with no bound tripped, so a reader is told the document has
+    /// no links when what happened is that nothing could look.
+    ///
+    /// `encoding.rs` already draws this distinction per page ("a page `lopdf`
+    /// cannot account for is unknown, not clean"). This is the same distinction
+    /// for a whole-document scan, and its absence is a truncated answer
+    /// displayed as a complete one --- the failure every bound in this file is
+    /// arranged to avoid.
+    pub pages_missed: usize,
 }
 
 impl Limits {
@@ -126,6 +142,7 @@ impl Limits {
             || self.over_budget
             || self.unreadable > 0
             || self.unresolved_names > 0
+            || self.pages_missed > 0
     }
 }
 
@@ -165,6 +182,9 @@ pub fn scan(bytes: &[u8], page_count: usize) -> Result<Links, String> {
     // searching the page list per link would be quadratic on exactly the
     // documents that have the most links.
     let pages = document.get_pages();
+    // What PDFium can see and this cannot. Counted before anything is walked,
+    // because the walk's own emptiness is exactly what it cannot distinguish.
+    limits.pages_missed = page_count.saturating_sub(pages.len());
     let numbers: HashMap<ObjectId, u32> = pages
         .iter()
         .take(page_count)
@@ -1483,6 +1503,67 @@ mod tests {
             links.items[0].rect, comments.items[0].rect,
             "one rectangle in the file must be one rectangle on screen"
         );
+    }
+
+    /// A document PDFium pages and `lopdf` cannot is reported, not answered "none".
+    ///
+    /// **No fixture on disk produces this, and that is stated rather than left
+    /// to be discovered.** The scan was run across every `testdata/*.pdf` on
+    /// 2026-08-16 and `pages_missed` was 0 on all of them: the two parsers agree
+    /// about page count everywhere in this corpus. The one document where they
+    /// famously do not --- `incr-encrypted-pw.pdf`, where `lopdf` loads the file
+    /// and reports zero pages --- is a document **PDFium refuses to open at
+    /// all**, so it never reaches this scan and there is no disagreement to
+    /// observe. See the correction in `encoding.rs`.
+    ///
+    /// So the shape is reproduced synthetically, which is what `encoding.rs`
+    /// does for the same distinction and for the same reason. A guard against
+    /// two independent parsers disagreeing does not need one of them to have
+    /// disagreed yet.
+    #[test]
+    fn a_page_lopdf_cannot_account_for_is_reported() {
+        let (mut document, _) = build(2, &[(0, vec![link(rect())])]);
+        // Five, as PDFium would say for a document whose page tree it repaired.
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("the fixture must save");
+        let links = scan(&bytes, 5).expect("the fixture must parse");
+
+        assert_eq!(links.limits.pages_missed, 3, "5 claimed, 2 readable");
+        assert!(
+            links.limits.any(),
+            "a scan that could not see three pages must not look complete"
+        );
+        // And the links it *could* read are still returned: this is a notice,
+        // not a refusal, and dropping the readable half would be worse than the
+        // silence it replaces.
+        assert_eq!(links.items.len(), 1);
+    }
+
+    /// The control: agreement charges nothing.
+    ///
+    /// Without it, a scan that reported every document as short would pass the
+    /// test above and put a warning on every file tpdf opens --- which trains a
+    /// reader to ignore the one that matters.
+    #[test]
+    fn a_document_both_parsers_agree_about_reports_nothing_missing() {
+        let (mut document, _) = build(2, &[(0, vec![link(rect())])]);
+        let links = scan_of(&mut document, 2);
+        assert_eq!(links.limits.pages_missed, 0);
+        assert!(!links.limits.any());
+    }
+
+    /// More pages than PDFium claims is not a deficit.
+    ///
+    /// `saturating_sub` rather than a signed difference: a document `lopdf` reads
+    /// further into than PDFium paginates is odd and is not a *short* answer, and
+    /// an underflow here would report the largest number the type can hold.
+    #[test]
+    fn seeing_more_pages_than_claimed_is_not_a_deficit() {
+        let (mut document, _) = build(4, &[(0, vec![link(rect())])]);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("save");
+        let links = scan(&bytes, 2).expect("parse");
+        assert_eq!(links.limits.pages_missed, 0);
     }
 
     /// No field of a [`Link`] may carry a string the document chose.

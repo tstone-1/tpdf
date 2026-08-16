@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 261 entries
+The one thing this file does *not* carry in full is the trap list --- 263 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -870,8 +870,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 261 of them and the full text
-was 93% of this file --- an instruction budget spent on the 260 traps that are not
+titles. Only the titles are here, because there are 263 of them and the full text
+was 93% of this file --- an instruction budget spent on the 262 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -985,6 +985,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An object a prior revision overwrote is reachable by no parser
 - A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
 - A shortcut can produce the right answer and lose the report
+- An empty answer from a whole-document scan cannot say whether it looked
+- A cited instance can be half right, and the wrong half is the one doing the work
 - A panel that lists a hidden comment must not let the page open it
 - `/F` is a bit field, and the flag every real link sets is not the one you are testing
 

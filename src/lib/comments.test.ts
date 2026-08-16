@@ -37,6 +37,7 @@ const NOTHING_CUT: CommentLimits = {
   unknown_kinds: 0,
   unreadable: 0,
   cycles: 0,
+  pages_missed: 0,
 };
 
 describe("rowsOf", () => {

@@ -233,6 +233,14 @@ pub struct Limits {
     pub unreadable: usize,
     /// Reply links dropped because following them would have looped.
     pub cycles: usize,
+    /// Pages PDFium has that `lopdf` could not account for.
+    ///
+    /// See [`crate::links::Limits::pages_missed`] for the case: a document
+    /// encrypted with an empty user password opens with no prompt and renders
+    /// normally, while `lopdf` may report zero pages --- so every loop here runs
+    /// zero times and a reader is told the document has no comments when what
+    /// happened is that nothing could look.
+    pub pages_missed: usize,
 }
 
 impl Limits {
@@ -244,6 +252,7 @@ impl Limits {
             || self.unknown_kinds > 0
             || self.unreadable > 0
             || self.cycles > 0
+            || self.pages_missed > 0
     }
 }
 
@@ -281,7 +290,12 @@ pub fn scan(bytes: &[u8], page_count: usize) -> Result<Comments, String> {
     let mut ids: HashMap<ObjectId, u32> = HashMap::new();
     let mut parents: Vec<Option<ObjectId>> = Vec::new();
 
-    for (index, page) in document.get_pages().values().take(page_count).enumerate() {
+    let pages = document.get_pages();
+    // What PDFium can see and this cannot, counted before the walk --- whose own
+    // emptiness is exactly what it cannot distinguish. See `Limits`.
+    limits.pages_missed = page_count.saturating_sub(pages.len());
+
+    for (index, page) in pages.values().take(page_count).enumerate() {
         if items.len() >= MAX_TOTAL {
             limits.over_budget = true;
             break;
@@ -899,6 +913,32 @@ mod tests {
     fn scan_annots(annots: Vec<Dictionary>) -> Comments {
         let bytes = document_with(annots, Dictionary::new());
         scan(&bytes, 1).expect("the fixture must parse")
+    }
+
+    /// A page PDFium has and `lopdf` cannot read is reported, not answered "none".
+    ///
+    /// The same distinction `crate::links` draws and `encoding.rs` drew first:
+    /// an empty list means "this document has no comments", and a scan that
+    /// could not see the pages must not say that. No fixture on disk produces
+    /// it --- swept on 2026-08-16 --- so the shape is synthetic, which is what
+    /// `encoding.rs` does for the same reason.
+    #[test]
+    fn a_page_lopdf_cannot_account_for_is_reported() {
+        let bytes = document_with(vec![note("visible")], Dictionary::new());
+        let comments = scan(&bytes, 4).expect("the fixture must parse");
+        assert_eq!(comments.limits.pages_missed, 3, "4 claimed, 1 readable");
+        assert!(comments.limits.any());
+        // The comment it could read is still returned: a notice, not a refusal.
+        assert_eq!(comments.items.len(), 1);
+    }
+
+    /// The control: agreement charges nothing, or every document carries a
+    /// warning and a reader learns to ignore the one that matters.
+    #[test]
+    fn a_document_both_parsers_agree_about_reports_nothing_missing() {
+        let comments = scan_annots(vec![note("visible")]);
+        assert_eq!(comments.limits.pages_missed, 0);
+        assert!(!comments.limits.any());
     }
 
     /// A sticky note with a body and an author.

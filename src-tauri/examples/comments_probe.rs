@@ -155,13 +155,14 @@ fn limits_line(comments: &Comments) -> String {
     let limits = &comments.limits;
     format!(
         "limits: crowded_pages={} over_budget={} bodies_clipped={} unknown_kinds={} \
-         unreadable={} cycles={}",
+         unreadable={} cycles={} pages_missed={}",
         limits.crowded_pages,
         limits.over_budget,
         limits.bodies_clipped,
         limits.unknown_kinds,
         limits.unreadable,
-        limits.cycles
+        limits.cycles,
+        limits.pages_missed
     )
 }
 

@@ -33,6 +33,7 @@ function limits(over: Partial<LinkLimits> = {}): LinkLimits {
     over_budget: false,
     unreadable: 0,
     unresolved_names: 0,
+    pages_missed: 0,
     ...over,
   };
 }
@@ -384,6 +385,13 @@ describe("noticeFor", () => {
     expect(noticeFor(limits({ unresolved_names: 2 }))).toContain(
       "2 named destinations",
     );
+    // The one that means "the scan could not look" rather than "it cut
+    // something", which is the difference between an incomplete list and a list
+    // of nothing presented as complete.
+    expect(noticeFor(limits({ pages_missed: 1 }))).toContain(
+      "one page could not be read at all",
+    );
+    expect(noticeFor(limits({ pages_missed: 5 }))).toContain("5 pages");
   });
 
   it("joins several into one sentence", () => {
