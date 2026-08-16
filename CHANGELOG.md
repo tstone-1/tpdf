@@ -129,6 +129,33 @@ have the binary.)
   question was how far the jump had gone — the same quantity only from a standing start, and
   the check does not start from one.
 
+### The crop-box work is now covered where it was only claimed
+
+- **The probe that covers the text half exited 1 on the fixture it was prescribed for.**
+  `text.rs`'s crop-box fix needs a live PDFium page, so `BUILD.md` points at `text-probe`
+  rather than at `cargo test` — and both link fixtures are 36 rows of even text, which cannot
+  detect a y-flip. Two of the probe's four controls landed on ink at 68–87% and were reported
+  as failures, so the documented command was red for having chosen the wrong document. They
+  are skips now, excluded from the exit code, with a note saying what a green run on such a
+  page still proves: placement, not orientation. `text-base14.pdf` reports `[OK]` on all four
+  unchanged, which is the control over the change.
+
+- **And it does cover the fix, measured rather than assumed.** Removing the origin shift takes
+  `links-cropped.pdf` from 96.4% to 74.8% — red against the 95% threshold — while the fixture
+  with no crop box stays at 100%. Narrower than it sounds: a 50 pt inset moves each box by less
+  than a line's height, so it is the threshold that catches it rather than a collapse to zero.
+
+- **`annots.rs` had one crop-box test where `links.rs` had three**, for a rule the two modules
+  implement separately on purpose. Its intersection clamp — the one that stops an oversized
+  `/CropBox` scaling every comment rectangle against a page the renderer never uses — was
+  reachable by no test at all. Added, with the two mutations its twin already had.
+
+- **Two guards in `origin_pt` could not be tested at all**, being inline with an FFI call that
+  needs a document and a loaded PDFium: normalising a crop box written corner-first, and
+  refusing a non-finite one. They now live in a free function over four floats, with three
+  tests and three mutations — including an ordinary box asserted inside the non-finite test,
+  since an unconditional refusal would satisfy every assertion about refusing.
+
 ### Pages displayed from a `/CropBox` put text and links in the right place
 
 - **A page has two boxes and tpdf read the wrong one.** `/MediaBox` is the sheet, `/CropBox` is

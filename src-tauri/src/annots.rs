@@ -1022,6 +1022,38 @@ mod tests {
         );
     }
 
+    /// A `/CropBox` larger than the sheet is intersected with it, per §14.11.2.
+    ///
+    /// The mirror of `links::a_crop_box_larger_than_the_page_is_intersected_with_it`,
+    /// and it was missing for a day while its twin had it. That asymmetry is the
+    /// whole reason both exist: the two modules compute their geometry from
+    /// separate code, so `links.rs` having three crop-box tests said nothing
+    /// about `annots.rs`, which had one --- and the clamp here was reachable by
+    /// **no test at all**, in the module where a comment's rectangle is placed.
+    /// Established by reading the test list rather than by watching a mutation
+    /// survive, which is the weaker of the two and worth saying so.
+    ///
+    /// The control is the assertion itself: an unclamped crop box would scale
+    /// this rectangle against a 1000x1300 page the renderer never uses, so the
+    /// answer being *identical* to the uncropped one is what proves the
+    /// intersection happened.
+    #[test]
+    fn a_crop_box_larger_than_the_page_is_intersected_with_it() {
+        let mut note = note("past the paper");
+        note.set("Rect", vec![100.into(), 690.into(), 300.into(), 720.into()]);
+
+        let document = document_with(
+            vec![note],
+            dictionary! {
+                "CropBox" => vec![(-100).into(), (-100).into(), 900.into(), 1200.into()],
+            },
+        );
+        assert_eq!(
+            scan(&document, 1).expect("parse").items[0].rect,
+            [100.0, 122.0, 300.0, 152.0]
+        );
+    }
+
     /// A sticky note with a body and an author.
     fn note(body: &str) -> Dictionary {
         dictionary! {
