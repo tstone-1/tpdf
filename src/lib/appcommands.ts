@@ -370,6 +370,28 @@ export function registerAppCommands(
       },
     },
     {
+      // The only way to reach a link without a pointer. Until this existed a
+      // reader on the keyboard could move by page, heading and search hit and
+      // could not follow a cross-reference at all -- which on a document whose
+      // table of contents is its navigation is most of the document.
+      id: "nav.nextLink",
+      title: "Next link",
+      keys: label("nav.nextLink"),
+      enabled: withDocument,
+      run: () => {
+        actions.viewer()?.stepLink(1);
+      },
+    },
+    {
+      id: "nav.previousLink",
+      title: "Previous link",
+      keys: label("nav.previousLink"),
+      enabled: withDocument,
+      run: () => {
+        actions.viewer()?.stepLink(-1);
+      },
+    },
+    {
       id: "nav.firstPage",
       title: "Go to start",
       keys: label("nav.firstPage"),

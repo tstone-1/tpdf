@@ -1433,14 +1433,21 @@ Run all twelve corpora. Every run reports the same check names; what differs is 
 many are `[SKIP]` with a reason, and a name that goes missing rather than skipping is the
 bug this arrangement exists to catch.
 
-> ⚠ **The table below is 171 names and is out of date: the link checks added seven more on
-> 2026-08-16 and the harness has not been run since.** It was blocked by a locked screen,
+> ⚠ **The table below is 171 names and is out of date: the link checks added eleven more on
+> 2026-08-16 --- seven for following links and four for the keyboard --- and the harness has
+> not been run since.** It was blocked by a locked screen,
 > which `viewer_check.py` refuses on rather than hanging --- and a stale count here is the
 > smaller half of the problem. The larger half is that **`links.pdf` and `links-rotated.pdf`
 > have never been through this harness at all**, so the per-fixture splits for them are
 > unknown rather than predicted, and the seven new names have never run in a real window on
 > any corpus. Re-run the sweep and rewrite the table from what it prints; do not arithmetic
 > the totals, which this page has twice recorded as costing more than it saves.
+>
+> **One thing the unrun harness has already cost, so the risk is not hypothetical.** Its
+> command audit asserts that every registered command is classified, and `nav.back` and
+> `nav.forward` were added without classifying either --- caught by reading rather than by the
+> check whose whole job that is. All four navigation commands are classified now, as driven
+> probes; the entry in `docs/TRAPS.md` is about the shape rather than this instance.
 
 **Every row below was measured on macOS on 2026-08-16**, in one sweep, after the eight comment
 checks took the total from 163 to 171. Zero failures anywhere. The Windows column is *not*

@@ -37,7 +37,9 @@ import {
   History,
   linkAt,
   onPage as linksOnPage,
+  orderedLinks,
   refusalFor,
+  stepLink,
   turnedFor as linksTurnedFor,
   type Link,
   type Place,
@@ -440,6 +442,18 @@ export class Viewer {
   private readonly history = new History();
   /** True while the history is driving a jump, so it is not re-recorded. */
   private replaying = false;
+  /**
+   * Every link in the order a reader meets them, computed once per document.
+   *
+   * Kept beside `linkItems` rather than sorted on demand: a keyboard reader
+   * presses "next link" repeatedly, and re-sorting a document's worth of links
+   * on each press is work proportional to how fast they are reading.
+   */
+  private linkWalk: readonly Link[] = [];
+  /** The link the keyboard is on, or `null`. */
+  private focusedLink: Link | null = null;
+  /** The ring drawn over the focused link. */
+  private readonly ring: HTMLElement;
   /** The note shown on the page, built once and reused. */
   private readonly popup: CommentPopup;
 
@@ -563,6 +577,22 @@ export class Viewer {
     // to either.
     this.popup = new CommentPopup(root, () => this.closeComment());
 
+    // The keyboard's position on the page, drawn as an outline over the focused
+    // link. Hosted by the root rather than the tile surface for the same reason
+    // the popup is: the surface is `aria-hidden`.
+    //
+    // A drawn element rather than a rectangle on the overlay canvas, because the
+    // canvas is repainted by the render loop and this has to survive a frame in
+    // which nothing rendered --- and because `outline-offset` and the focus
+    // colour are then the platform's rather than ours to guess.
+    this.ring = document.createElement("div");
+    this.ring.setAttribute("aria-hidden", "true");
+    this.ring.style.cssText =
+      "position:absolute;display:none;pointer-events:none;z-index:4;" +
+      "border-radius:2px;outline:2px solid Highlight;outline-offset:2px;" +
+      "background:color-mix(in srgb, Highlight 12%, transparent);";
+    root.appendChild(this.ring);
+
     root.addEventListener("wheel", this.onWheel, { passive: false });
     root.addEventListener("keydown", this.onKeyDown);
     root.addEventListener("pointerdown", this.onSelectStart);
@@ -585,6 +615,7 @@ export class Viewer {
     // surface that is about to be replaced, and the next document's first frame
     // would otherwise paint under somebody else's comment.
     this.popup.hide();
+    this.clearLinkFocus();
     clearTimeout(this.retryTimer);
     this.a11y.destroy();
     this.searcher.cancel();
@@ -710,6 +741,7 @@ export class Viewer {
     this.prefetchText();
     this.syncAccessibleText();
     this.syncComment();
+    if (this.focusedLink) this.placeRing();
     this.paintOverlay();
     this.paintThumb();
     this.report(stats);
@@ -1296,12 +1328,23 @@ export class Viewer {
       this.prevMatch();
     } else if (matches("find.next", event)) {
       this.nextMatch();
+    } else if (event.key === "Enter" && this.focusedLink) {
+      // Only with a link focused, so Enter is not swallowed on every other
+      // document --- an unhandled key falls through to the window, and taking
+      // it here unconditionally would be a viewer that eats a keystroke it does
+      // nothing with.
+      this.followFocusedLink();
+    } else if (matches("nav.nextLink", event)) {
+      this.stepLink(1);
+    } else if (matches("nav.previousLink", event)) {
+      this.stepLink(-1);
     } else if (matches("edit.clearSelection", event)) {
-      // Escape, and an open note is the innermost thing it can dismiss. A
-      // reader with both a selection and a note open presses it twice, which is
-      // the order every application uses --- and closing both at once would
-      // lose a selection the reader was not asking about.
+      // Escape, and the innermost thing it can dismiss goes first. A reader
+      // with a note open, a link focused and a selection presses it three
+      // times, which is the order every application uses --- dismissing them
+      // together would lose two things they were not asking about.
       if (this.popup.openId !== null) this.closeComment();
+      else if (this.focusedLink) this.clearLinkFocus();
       else this.clearSelection();
     } else if (matches("nav.nextPage", event)) {
       this.nextPage();
@@ -1401,7 +1444,9 @@ export class Viewer {
    */
   setLinks(items: readonly Link[]): void {
     this.linkItems = items;
+    this.linkWalk = orderedLinks(items);
     this.turnedLinks = null;
+    this.clearLinkFocus();
     // The history belongs to the document, not to the session: keeping it would
     // let Back scroll a new document to a page number the old one had.
     this.history.clear();
@@ -1426,6 +1471,119 @@ export class Viewer {
   /** Whether Back and Forward would do anything. For the check harness. */
   get historyDepths(): { back: number; forward: number } {
     return this.history.depths;
+  }
+
+  /** The link the keyboard is on, or -1. For the check harness. */
+  get linkFocus(): number {
+    return this.focusedLink?.id ?? -1;
+  }
+
+  /**
+   * Whether the focus ring is drawn. For the check harness.
+   *
+   * Read off the element rather than off {@link focusedLink}, which is this
+   * class's own belief: a check that asked the viewer what it thinks it drew
+   * could not see the ring failing to appear.
+   */
+  get linkRingShown(): boolean {
+    return this.ring.style.display === "block";
+  }
+
+  /**
+   * Moves the keyboard to the next link, or the previous one.
+   *
+   * The only way to reach a link without a pointer, and until this existed a
+   * reader on the keyboard could move by page, heading and search hit and could
+   * not follow a cross-reference at all --- on a document whose table of
+   * contents is its navigation, that is most of the document.
+   *
+   * It scrolls the link into view rather than assuming it is on screen, and it
+   * reports running out rather than wrapping: arriving back at page 1 of a
+   * 775-page document is a surprise, and silence reads as a broken key.
+   */
+  stepLink(direction: 1 | -1): boolean {
+    if (this.linkWalk.length === 0) {
+      this.opts.onError?.("This document has no links.");
+      return false;
+    }
+    const next = stepLink(this.linkWalk, this.focusedLink, this.position, direction);
+    if (!next) {
+      this.opts.onError?.(
+        direction === 1 ? "No further links." : "No earlier links.",
+      );
+      return false;
+    }
+
+    this.focusedLink = next;
+    // Scrolled to only when it is not already on screen, so walking a page of
+    // links does not jerk the view on every press. Same test `showComment`
+    // makes, and for the same reason: a page being visible is not the link
+    // being visible.
+    const where = this.linkAnchor(next);
+    const height = this.viewportSize().height;
+    if (where.bottom < 0 || where.top > height) {
+      this.goToDestination(next.page, Math.max(0, this.linkTopPt(next)));
+    }
+    this.placeRing();
+    this.wake();
+    return true;
+  }
+
+  /** Follows the focused link, if there is one. */
+  followFocusedLink(): boolean {
+    if (!this.focusedLink) return false;
+    this.followLink(this.focusedLink.id);
+    return true;
+  }
+
+  /** Takes the keyboard off any link. */
+  clearLinkFocus(): void {
+    if (!this.focusedLink) return;
+    this.focusedLink = null;
+    this.ring.style.display = "none";
+  }
+
+  /** Points from the displayed page's top to the focused link's top edge. */
+  private linkTopPt(link: Link): number {
+    const size = this.scroller.pageSize(link.page);
+    const quad = viewRect(link.rect, this.turns, size.width_pt, size.height_pt);
+    return quad.top;
+  }
+
+  /** Where a link's rectangle is on screen, in the root's coordinates. */
+  private linkAnchor(link: Link): {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } {
+    const size = this.scroller.pageSize(link.page);
+    const quad = viewRect(link.rect, this.turns, size.width_pt, size.height_pt);
+    const origin = this.scroller.pageOrigin(link.page);
+    return {
+      left: origin.left + quad.left * this.zoom,
+      top: origin.top + quad.top * this.zoom - this.scrollTop,
+      right: origin.left + quad.right * this.zoom,
+      bottom: origin.top + quad.bottom * this.zoom - this.scrollTop,
+    };
+  }
+
+  /**
+   * Puts the ring over the focused link.
+   *
+   * Called every frame while one is focused, like the popup's `place`, so it
+   * follows a scroll, a zoom and a rotation. A ring left where it was drawn
+   * would, one flick later, be outlining a different paragraph --- which is
+   * worse than no ring, because it says the keyboard is somewhere it is not.
+   */
+  private placeRing(): void {
+    if (!this.focusedLink) return;
+    const where = this.linkAnchor(this.focusedLink);
+    this.ring.style.display = "block";
+    this.ring.style.left = `${Math.round(where.left)}px`;
+    this.ring.style.top = `${Math.round(where.top)}px`;
+    this.ring.style.width = `${Math.max(1, Math.round(where.right - where.left))}px`;
+    this.ring.style.height = `${Math.max(1, Math.round(where.bottom - where.top))}px`;
   }
 
   /**
@@ -1756,9 +1914,15 @@ export class Viewer {
     if (target) {
       event.preventDefault();
       if (this.popup.openId !== null) this.closeComment();
+      // The keyboard follows the pointer onto the link, so a reader who clicks
+      // one and then presses "next link" continues from there rather than from
+      // wherever the keyboard was left.
+      this.focusedLink = target;
+      this.placeRing();
       this.followLink(target.id);
       return;
     }
+    this.clearLinkFocus();
 
     // A press anywhere else closes an open note, which is what every popup in
     // every application does and is the only gesture a reader will try.

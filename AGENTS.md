@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 258 entries
+The one thing this file does *not* carry in full is the trap list --- 260 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -870,8 +870,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 258 of them and the full text
-was 93% of this file --- an instruction budget spent on the 257 traps that are not
+titles. Only the titles are here, because there are 260 of them and the full text
+was 93% of this file --- an instruction budget spent on the 259 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1051,12 +1051,14 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A page fitted to the element's own width is measured under the scrollbar
 - A synthetic heading that does not reach the second column tests nothing
 - Whatever a fixture is meant to discriminate, it needs two of
+- A fixture where the right rule and the wrong rule agree cannot tell them apart (every ingredient present, the discrimination absent --- a surviving mutation indicts the fixture as often as the assertion)
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion
 - An outcome two mechanisms can produce cannot test either one
 - A length bound cannot be tested by the verdict it produces
 - A check nested inside a lookup for the thing under test disappears with it
 - A check whose failure mode is a wait cannot fail
 - A test whose failure is a hang reports a pass and a timeout in one breath
+- A check that cannot run is not a check, and a locked screen is enough to stop one
 - An unreachable guard is worth keeping if the type can carry it instead
 - A label rendered only from real ids cannot be tested on a combination none of them uses
 - A post-destroy guard that returns early leaks what it declined to take

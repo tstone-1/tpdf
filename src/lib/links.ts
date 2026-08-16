@@ -115,6 +115,111 @@ export function turnedFor(
 }
 
 /**
+ * How much two rectangles must overlap vertically to count as one line.
+ *
+ * A fraction of the shorter one's height rather than an absolute distance,
+ * because a footnote marker and the sentence it sits in differ in height by more
+ * than any constant that also works on a heading.
+ */
+export const SAME_LINE_OVERLAP = 0.5;
+
+/**
+ * Every link in the order a reader meets them: page, then line, then across.
+ *
+ * **Ordered on the rectangles as `links.rs` returns them**, which is the page's
+ * own display space *before* the view's rotation. That is deliberate and it is
+ * the difference between "next link" meaning the next one in the document and
+ * the next one down the screen: a reader who has turned the view a quarter still
+ * expects the cross-references to come in the order the document has them, and
+ * ordering the turned rectangles would reverse them at two of the four turns.
+ *
+ * **The line banding is this file's, not `reading.ts`'s, and that is a real
+ * choice rather than an oversight.** That module groups *glyph* boxes and takes
+ * a `PageText` to do it; reusing it would mean synthesising a fake page of text
+ * whose characters are annotation rectangles, which is a worse coupling than a
+ * dozen lines of overlap arithmetic. What is shared is the definition of a line
+ * --- vertical overlap of more than half the shorter box --- and the tests here
+ * pin exactly that, so a divergence is visible rather than silent.
+ */
+export function orderedLinks(items: readonly Link[]): Link[] {
+  return [...items].sort((a, b) => {
+    if (a.page !== b.page) return a.page - b.page;
+    if (!sameLine(a, b)) return a.rect[1] - b.rect[1];
+    // Same line: across the page. Ties broken by id so the order is total ---
+    // two links with identical rectangles are pathological and must still come
+    // out in a stable order, or "the next one" is not a function.
+    if (a.rect[0] !== b.rect[0]) return a.rect[0] - b.rect[0];
+    return a.id - b.id;
+  });
+}
+
+/** Whether two links sit on one line of the page. */
+function sameLine(a: Link, b: Link): boolean {
+  const top = Math.max(a.rect[1], b.rect[1]);
+  const bottom = Math.min(a.rect[3], b.rect[3]);
+  const overlap = bottom - top;
+  if (overlap <= 0) return false;
+  const shorter = Math.min(a.rect[3] - a.rect[1], b.rect[3] - b.rect[1]);
+  return shorter > 0 && overlap >= shorter * SAME_LINE_OVERLAP;
+}
+
+/**
+ * The next link in `direction`, from a focused one or from where the reader is.
+ *
+ * Two starting points because they answer different questions and a reader uses
+ * both without thinking about it. With a link already focused, "next" means the
+ * one after *it* --- so repeated presses walk the page. With none, it means the
+ * first one after *the viewport*, so pressing it once after scrolling starts
+ * where the reader is looking rather than back at the top of the document.
+ *
+ * **It does not wrap.** On a 775-page document arriving back at page 1 is a
+ * surprise rather than a convenience, and this repository has a trap recording
+ * that a wrap is correct when there is nothing ahead, which makes the check
+ * unable to fire. `null` at either end is the caller's cue to say so.
+ */
+export function stepLink(
+  ordered: readonly Link[],
+  from: Link | null,
+  at: Place,
+  direction: 1 | -1,
+): Link | null {
+  if (ordered.length === 0) return null;
+
+  if (from) {
+    const index = ordered.findIndex((item) => item.id === from.id);
+    if (index >= 0) return ordered[index + direction] ?? null;
+    // A focused link that is not in the list --- a new document, or a scan that
+    // replaced it. Falling through to the position is right: the id is stale,
+    // and the reader's viewport is not.
+  }
+
+  if (direction === 1) {
+    return ordered.find((item) => isAfter(item, at)) ?? null;
+  }
+  // The last one strictly before the viewport. `findLast` rather than a reverse
+  // scan for the first `!isAfter`, which is not the same predicate: a link
+  // *level* with the viewport top is neither ahead nor behind, and treating it
+  // as behind makes Previous land on the link Next just came from.
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const item = ordered[index];
+    if (item && isBefore(item, at)) return item;
+  }
+  return null;
+}
+
+/** Whether a link starts after a place in the document. */
+function isAfter(link: Link, at: Place): boolean {
+  if (link.page !== at.page) return link.page > at.page;
+  return link.rect[1] > at.top;
+}
+
+/** Whether a link starts before a place in the document. */
+function isBefore(link: Link, at: Place): boolean {
+  if (link.page !== at.page) return link.page < at.page;
+  return link.rect[1] < at.top;
+}
+
+/**
  * What a reader is told when a link does not take them anywhere.
  *
  * `null` for one that does, which is what the caller branches on. The words come

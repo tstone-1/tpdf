@@ -107,6 +107,17 @@ export const BINDINGS = {
   // before. Deliberately not ⌘← / ⌘→, which macOS gives to line-start and
   // line-end in every text field and which the find bar is a text field.
   "nav.back": { keys: ["[", "\u201c"], accel: true },
+  // ⌥⌘L and ⇧⌥⌘L. The macOS alternates are what the key *produces* with Option
+  // held --- ¬ and Ò on a US layout --- which is why they are listed rather than
+  // inferred: `matches` compares `event.key`, and Option has already rewritten
+  // it by the time the handler sees it.
+  "nav.nextLink": { keys: ["l", "\u00ac"], accel: true, alt: true },
+  "nav.previousLink": {
+    keys: ["L", "\u00d2"],
+    accel: true,
+    alt: true,
+    shift: true,
+  },
   "nav.forward": { keys: ["]", "\u2018"], accel: true },
   "edit.selectAll": { keys: ["a"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },

@@ -7,7 +7,9 @@ import {
   linkAt,
   noticeFor,
   onPage,
+  orderedLinks,
   refusalFor,
+  stepLink,
   samePlace,
   turnedFor,
   type Link,
@@ -106,6 +108,132 @@ describe("onPage and turnedFor", () => {
     // The destination is not geometry and must survive the turn untouched --- a
     // spread that dropped it would leave every rotated link pointing nowhere.
     expect(turned?.target).toEqual({ kind: "page", page: 3, top_pt: 200 });
+  });
+});
+
+describe("orderedLinks", () => {
+  it("orders by page first", () => {
+    const items = [
+      link({ id: 0, page: 3, rect: [100, 100, 200, 120] }),
+      link({ id: 1, page: 1, rect: [100, 700, 200, 720] }),
+    ];
+    expect(orderedLinks(items).map((item) => item.id)).toEqual([1, 0]);
+  });
+
+  it("orders down the page within one page", () => {
+    const items = [
+      link({ id: 0, rect: [100, 500, 200, 520] }),
+      link({ id: 1, rect: [100, 100, 200, 120] }),
+    ];
+    expect(orderedLinks(items).map((item) => item.id)).toEqual([1, 0]);
+  });
+
+  it("orders across the page for two links on one line", () => {
+    // The case a top-then-left sort gets wrong when the right-hand link's box
+    // starts a point higher, which is ordinary: it would come first.
+    const items = [
+      link({ id: 0, rect: [300, 99, 400, 119] }),
+      link({ id: 1, rect: [100, 100, 200, 120] }),
+    ];
+    expect(orderedLinks(items).map((item) => item.id)).toEqual([1, 0]);
+  });
+
+  it("treats boxes that barely overlap as different lines", () => {
+    // Overlap of 2 points against a height of 20 is 10%, under the half the
+    // rule wants --- so this is two lines and the higher one comes first.
+    const items = [
+      link({ id: 0, rect: [300, 118, 400, 138] }),
+      link({ id: 1, rect: [100, 100, 200, 120] }),
+    ];
+    expect(orderedLinks(items).map((item) => item.id)).toEqual([1, 0]);
+  });
+
+  it("keeps a footnote marker on the line it sits in", () => {
+    // A superscript is shorter than the sentence around it *and sits higher*,
+    // and the second half is what makes this discriminate. The marker's top is
+    // above the sentence's, so a rule that separates them onto two lines orders
+    // the marker first --- while the proportional rule bands them and orders
+    // them across the page, sentence first.
+    //
+    // The first version of this fixture put the marker's top *below* the
+    // sentence's, where both rules give the same answer and the mutation
+    // `band lines by absolute overlap` survived. Overlap here is 6 points on a
+    // 10-point marker: 60% of the shorter box, and under any constant tuned for
+    // 20-point body text.
+    const marker = link({ id: 0, rect: [300, 96, 306, 106] });
+    const sentence = link({ id: 1, rect: [100, 100, 280, 120] });
+    expect(orderedLinks([marker, sentence]).map((item) => item.id)).toEqual([1, 0]);
+  });
+
+  it("is a total order even for identical rectangles", () => {
+    // Pathological and it still has to be a function: "the next one" cannot
+    // depend on which of two equal links the sort happened to see first.
+    const items = [link({ id: 5 }), link({ id: 2 })];
+    expect(orderedLinks(items).map((item) => item.id)).toEqual([2, 5]);
+  });
+
+  it("does not modify the array it is given", () => {
+    const items = [link({ id: 0, rect: [100, 500, 200, 520] }), link({ id: 1 })];
+    orderedLinks(items);
+    expect(items.map((item) => item.id)).toEqual([0, 1]);
+  });
+});
+
+describe("stepLink", () => {
+  const page0 = [
+    link({ id: 0, rect: [100, 100, 200, 120] }),
+    link({ id: 1, rect: [100, 300, 200, 320] }),
+    link({ id: 2, rect: [100, 500, 200, 520] }),
+  ];
+  const ordered = orderedLinks(page0);
+  const at = (top: number) => ({ page: 0, top });
+
+  it("walks forward from a focused link", () => {
+    expect(stepLink(ordered, page0[0] ?? null, at(0), 1)?.id).toBe(1);
+    expect(stepLink(ordered, page0[1] ?? null, at(0), 1)?.id).toBe(2);
+  });
+
+  it("walks backward from a focused link", () => {
+    expect(stepLink(ordered, page0[2] ?? null, at(0), -1)?.id).toBe(1);
+  });
+
+  it("stops at each end rather than wrapping", () => {
+    expect(stepLink(ordered, page0[2] ?? null, at(0), 1)).toBeNull();
+    expect(stepLink(ordered, page0[0] ?? null, at(0), -1)).toBeNull();
+  });
+
+  it("starts from the viewport when nothing is focused", () => {
+    // Not from the top of the document: a reader who has scrolled to page 400
+    // and presses "next link" means the next one they can see.
+    expect(stepLink(ordered, null, at(250), 1)?.id).toBe(1);
+    expect(stepLink(ordered, null, at(0), 1)?.id).toBe(0);
+  });
+
+  it("goes back to the link before the viewport, not the one level with it", () => {
+    // The control that says the two predicates differ. At exactly 300 the
+    // middle link is neither ahead nor behind; treating it as behind would make
+    // Previous land on the link Next just arrived at.
+    expect(stepLink(ordered, null, at(300), -1)?.id).toBe(0);
+    expect(stepLink(ordered, null, at(301), -1)?.id).toBe(1);
+  });
+
+  it("falls back to the viewport when the focused link is gone", () => {
+    const stale = link({ id: 99, rect: [100, 100, 200, 120] });
+    expect(stepLink(ordered, stale, at(250), 1)?.id).toBe(1);
+  });
+
+  it("answers nothing for a document with no links", () => {
+    expect(stepLink([], null, at(0), 1)).toBeNull();
+    expect(stepLink([], null, at(0), -1)).toBeNull();
+  });
+
+  it("crosses pages in both directions", () => {
+    const across = orderedLinks([
+      link({ id: 0, page: 0, rect: [100, 700, 200, 720] }),
+      link({ id: 1, page: 2, rect: [100, 100, 200, 120] }),
+    ]);
+    expect(stepLink(across, null, { page: 1, top: 400 }, 1)?.id).toBe(1);
+    expect(stepLink(across, null, { page: 1, top: 400 }, -1)?.id).toBe(0);
   });
 });
 

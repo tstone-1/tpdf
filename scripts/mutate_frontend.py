@@ -1013,6 +1013,81 @@ MUTATIONS = [
         "  if (false) parts.push(\"unreachable\");",
         "names each bound separately",
     ),
+    Mutation(
+        # Order links by top-then-left with no line banding. Two links on one
+        # line come out in the wrong order whenever the right-hand one's box
+        # starts a point higher, which on real text is most of the time.
+        "links: order links by top-then-left with no line banding",
+        "src/lib/links.ts",
+        "    if (!sameLine(a, b)) return a.rect[1] - b.rect[1];",
+        "    if (a.rect[1] !== b.rect[1]) return a.rect[1] - b.rect[1];",
+        "orders across the page for two links on one line",
+    ),
+    Mutation(
+        # Band by an absolute overlap rather than a fraction of the shorter box.
+        # A footnote marker is 8 points tall against a 20-point sentence, so a
+        # constant tuned for body text separates them onto two lines.
+        "links: band lines by absolute overlap rather than by proportion",
+        "src/lib/links.ts",
+        "  return shorter > 0 && overlap >= shorter * SAME_LINE_OVERLAP;",
+        "  return shorter > 0 && overlap >= 10;",
+        "keeps a footnote marker on the line it sits in",
+    ),
+    Mutation(
+        # Leave the order partial where two rectangles are identical, so which
+        # link is "next" depends on the sort's stability rather than on a rule.
+        "links: leave the link order partial for identical rectangles",
+        "src/lib/links.ts",
+        "    if (a.rect[0] !== b.rect[0]) return a.rect[0] - b.rect[0];\n    return a.id - b.id;",
+        "    return a.rect[0] - b.rect[0];",
+        "is a total order even for identical rectangles",
+    ),
+    Mutation(
+        # Sort in place, which reorders the caller's array. The viewer holds the
+        # scan's order for hit-testing and the walk order separately.
+        "links: sort the caller's array in place",
+        "src/lib/links.ts",
+        "  return [...items].sort((a, b) => {",
+        "  return (items as Link[]).sort((a, b) => {",
+        "does not modify the array it is given",
+    ),
+    Mutation(
+        # Wrap at the end of the document instead of stopping. On 775 pages
+        # arriving back at page 1 is a surprise, and the reader has no way to
+        # tell it from having walked the whole document.
+        "links: wrap the link walk at the end",
+        "src/lib/links.ts",
+        "    if (index >= 0) return ordered[index + direction] ?? null;",
+        "    if (index >= 0)\n      return (\n        ordered[index + direction] ??\n        (direction === 1 ? ordered[0] : ordered[ordered.length - 1]) ??\n        null\n      );",
+        "stops at each end rather than wrapping",
+    ),
+    Mutation(
+        # Start the walk at the top of the document rather than at the viewport.
+        # A reader on page 400 pressing "next link" is sent back to page 1.
+        "links: start the link walk at the document rather than the viewport",
+        "src/lib/links.ts",
+        "    return ordered.find((item) => isAfter(item, at)) ?? null;",
+        "    return ordered[0] ?? null;",
+        "starts from the viewport when nothing is focused",
+    ),
+    Mutation(
+        # Treat a link level with the viewport as behind it, so Previous lands
+        # on the link Next just arrived at and the pair becomes a toggle.
+        "links: treat a link level with the viewport as behind it",
+        "src/lib/links.ts",
+        "  return link.rect[1] < at.top;",
+        "  return link.rect[1] <= at.top;",
+        "goes back to the link before the viewport, not the one level with it",
+    ),
+    Mutation(
+        # Give up when the focused link is not in the list, instead of falling
+        # back to the viewport. After a reload the key then does nothing at all.
+        "links: give up when the focused link is stale",
+        "src/lib/links.ts",
+        "    if (index >= 0) return ordered[index + direction] ?? null;",
+        "    return ordered[index + direction] ?? null;",
+        "falls back to the viewport when the focused link is gone",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
