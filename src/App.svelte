@@ -14,6 +14,7 @@
   import { Palette } from "./lib/palette";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
+  import type { Comments } from "./lib/comments";
   import type { Outline } from "./lib/outline";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import {
@@ -707,6 +708,13 @@
           // after each one means clicking back into the panel to try the next.
           onPick: (index) => viewer?.showMatch(index),
         },
+        comments: {
+          // Focus moves into the note, which is the opposite of the results
+          // list above and for the reason that distinguishes them: a hit is
+          // something to look at on the page, and a comment is something to
+          // *read* in the note that opens --- so the keyboard belongs there.
+          onPick: (id) => viewer?.showComment(id),
+        },
         pages: {
           doc: doc.id,
           pageCount: doc.page_count,
@@ -731,6 +739,11 @@
         doc: doc.id,
         pageCount: doc.page_count,
         pages,
+        // The panel's selection follows the page, so a note opened by clicking
+        // a mark highlights its row --- and the two can never disagree about
+        // which comment is being read, which is the whole reason this is a
+        // callback rather than each side tracking its own idea of it.
+        onComment: (id) => sidebar?.comments.select(id),
         onStatus: (next) => {
           status = next;
           // Here rather than in a `$derived`, because this is the only moment
@@ -831,6 +844,30 @@
         })
         .catch(() => {
           if (openDoc === wanted) sidebar?.setOutline(null);
+        });
+
+      // The comments, on the same terms and for a different reason. They cost
+      // an `lopdf` parse of the whole file --- 0.1 ms small, 11.9 ms on the
+      // 337 MB scan --- rather than render-thread time, so what this waits for
+      // is not the render queue but the first paint: warm startup has ~25 ms of
+      // margin against its 300 ms target, and this is off that path entirely.
+      // A separate chain rather than a link in the one above, so a document
+      // whose outline cannot be read still gets its comments and the reverse.
+      void firstPaint()
+        .then(() => {
+          if (openDoc !== wanted) return null;
+          return invoke<Comments>("document_comments", { doc: wanted });
+        })
+        .then((result) => {
+          if (!result || openDoc !== wanted) return;
+          sidebar?.setComments(result);
+          // The viewer needs them too, and for the other half of the feature:
+          // the panel lists them, and this is what makes the mark on the page
+          // openable.
+          viewer?.setComments(result.items);
+        })
+        .catch(() => {
+          if (openDoc === wanted) sidebar?.setComments(null);
         });
     } catch (e) {
       if (replaced) {

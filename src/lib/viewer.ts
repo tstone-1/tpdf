@@ -31,6 +31,8 @@
 
 import { AccessibleText } from "./a11y";
 import { matches } from "./keys";
+import { CommentPopup } from "./commentpopup";
+import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
@@ -214,6 +216,14 @@ export interface ViewerOptions {
    * it ever wants to, without having to guess which kind a message is.
    */
   onGone?: (message: string) => void;
+  /**
+   * Called when the comment shown on the page changes, or `null` when it closes.
+   *
+   * The sidebar's selection follows it, so clicking a note on the page
+   * highlights its row and the two never disagree about which comment is being
+   * read. Optional, because the check harness builds a viewer with no sidebar.
+   */
+  onComment?: (id: number | null) => void;
 }
 
 /**
@@ -396,6 +406,11 @@ export class Viewer {
    * --- so a closed document keeps driving the sidebar and the header of the one
    * that replaced it.
    */
+  /** Every comment in the document, in page order. Empty until it arrives. */
+  private commentItems: readonly Comment[] = [];
+  /** The note shown on the page, built once and reused. */
+  private readonly popup: CommentPopup;
+
   private readonly life = new Lifetime();
   /**
    * Wake scheduled for a request whose backoff has not elapsed.
@@ -507,6 +522,15 @@ export class Viewer {
 
     this.sizeOverlay();
 
+    // Built once and reused: it is one element, it is hidden when nothing is
+    // shown, and rebuilding it per comment would lose the reader's scroll
+    // position inside a long note every time the page moved.
+    // Hosted by the root rather than by the tile surface: the surface is
+    // `aria-hidden`, and a dialog inside it would be unreachable by a screen
+    // reader --- which is the one reader who cannot see the mark it is anchored
+    // to either.
+    this.popup = new CommentPopup(root, () => this.closeComment());
+
     root.addEventListener("wheel", this.onWheel, { passive: false });
     root.addEventListener("keydown", this.onKeyDown);
     root.addEventListener("pointerdown", this.onSelectStart);
@@ -522,6 +546,10 @@ export class Viewer {
     // First, so anything that lands during the teardown below finds it set.
     this.life.end();
     this.stop();
+    // Before the listeners go: an open note is a `position:absolute` box over a
+    // surface that is about to be replaced, and the next document's first frame
+    // would otherwise paint under somebody else's comment.
+    this.popup.hide();
     clearTimeout(this.retryTimer);
     this.a11y.destroy();
     this.searcher.cancel();
@@ -645,6 +673,7 @@ export class Viewer {
     const stats = this.scroller.frame(this.scrollTop, now);
     this.prefetchText();
     this.syncAccessibleText();
+    this.syncComment();
     this.paintOverlay();
     this.paintThumb();
     this.report(stats);
@@ -1221,7 +1250,12 @@ export class Viewer {
     } else if (matches("find.next", event)) {
       this.nextMatch();
     } else if (matches("edit.clearSelection", event)) {
-      this.clearSelection();
+      // Escape, and an open note is the innermost thing it can dismiss. A
+      // reader with both a selection and a note open presses it twice, which is
+      // the order every application uses --- and closing both at once would
+      // lose a selection the reader was not asking about.
+      if (this.popup.openId !== null) this.closeComment();
+      else this.clearSelection();
     } else if (matches("nav.nextPage", event)) {
       this.nextPage();
     } else if (matches("nav.previousPage", event)) {
@@ -1292,6 +1326,156 @@ export class Viewer {
     };
   }
 
+  // --- Comments ------------------------------------------------------------
+
+  /**
+   * Replaces the comments the page knows about.
+   *
+   * The marks themselves are painted by PDFium inside the tiles, so this adds
+   * no drawing at all --- what it adds is the ability to press one, and the note
+   * that opens when a reader does.
+   */
+  setComments(items: readonly Comment[]): void {
+    this.commentItems = items;
+    if (this.popup.openId !== null && !items.some((item) => item.id === this.popup.openId)) {
+      // The open note is not in the new list --- a different document, or a
+      // reload. Closing it is the only honest option: leaving it up would
+      // attribute somebody's words to a page that does not have them.
+      this.closeComment();
+    }
+  }
+
+  /** The comment whose note is open, or -1. For the check harness. */
+  get commentOpen(): number {
+    return this.popup.openId ?? -1;
+  }
+
+  /** What the open note says. For the check harness. */
+  get commentText(): string {
+    return this.popup.text;
+  }
+
+  /** The note element, so the check harness can look at it. */
+  get commentPopup(): HTMLElement {
+    return this.popup.node;
+  }
+
+  /**
+   * Scrolls to a comment and opens its note.
+   *
+   * `focus` moves the keyboard into the note, which is what a reader arriving
+   * from the sidebar wants and what a reader clicking the mark does not --- see
+   * {@link CommentPopup.show}.
+   */
+  showComment(id: number, focus = true): void {
+    const comment = this.commentItems.find((item) => item.id === id);
+    if (!comment) return;
+
+    if (!this.scroller.visiblePages().includes(comment.page)) {
+      // Placed by its own top edge rather than at the top of the page: a note
+      // on page 300 of a manual is somewhere *on* that page, and scrolling to
+      // the page alone can leave the mark below the fold.
+      this.goToDestination(comment.page, this.topPtOf(comment));
+    }
+    this.popup.show(comment, this.repliesTo(id), this.anchorFor(comment), focus);
+    this.opts.onComment?.(id);
+    this.wake();
+  }
+
+  /** Closes the note, if one is open. */
+  closeComment(): void {
+    if (this.popup.openId === null) return;
+    this.popup.hide();
+    this.opts.onComment?.(null);
+    // The keyboard goes back to the page rather than nowhere: a `display:none`
+    // element keeps focus in Chromium until something else takes it, and the
+    // arrow keys would then scroll nothing.
+    this.root.focus();
+  }
+
+  /** The replies to one comment, in document order. */
+  private repliesTo(id: number): Comment[] {
+    return this.commentItems.filter((item) => item.reply_to === id);
+  }
+
+  /**
+   * A comment's distance from the top of its page, in points, under the view.
+   *
+   * `goToDestination` takes the destination convention --- points from the
+   * page's top --- and the rectangle is already in that space, so the only work
+   * is the view's own rotation.
+   */
+  private topPtOf(comment: Comment): number {
+    const size = this.scroller.pageSize(comment.page);
+    const quad = viewRect(comment.rect, this.turns, size.width_pt, size.height_pt);
+    return Math.max(0, quad.top);
+  }
+
+  /** Where a comment's rectangle is on screen, in the root's coordinates. */
+  private anchorFor(comment: Comment): {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } {
+    const size = this.scroller.pageSize(comment.page);
+    const quad = viewRect(comment.rect, this.turns, size.width_pt, size.height_pt);
+    const origin = this.scroller.pageOrigin(comment.page);
+    return {
+      left: origin.left + quad.left * this.zoom,
+      top: origin.top + quad.top * this.zoom - this.scrollTop,
+      right: origin.left + quad.right * this.zoom,
+      bottom: origin.top + quad.bottom * this.zoom - this.scrollTop,
+    };
+  }
+
+  /**
+   * The comment under a pointer event, or `null`.
+   *
+   * Works from the page and point {@link pointFrom} produces --- except that it
+   * must answer on a page whose *text* has not arrived, which `pointFrom`
+   * refuses to do. A comment is not text and does not wait for any: a note on a
+   * scanned page has to be clickable, and a page with no text layer at all would
+   * otherwise never answer.
+   */
+  private commentUnder(event: PointerEvent): Comment | null {
+    if (this.commentItems.length === 0) return null;
+    const bounds = this.root.getBoundingClientRect();
+    const docY = event.clientY - bounds.top + this.scrollTop;
+    const page = this.scroller.pageAt(docY);
+    const origin = this.scroller.pageOrigin(page);
+    const x = (event.clientX - bounds.left - origin.left) / this.zoom;
+    const y = (docY - origin.top) / this.zoom;
+
+    const size = this.scroller.pageSize(page);
+    const here = turnedFor(
+      onPage(this.commentItems, page),
+      this.turns,
+      size.width_pt,
+      size.height_pt,
+    );
+    return hitTest(here, page, x, y);
+  }
+
+  /**
+   * Keeps an open note against the mark it belongs to.
+   *
+   * Runs every frame while one is open, which is what makes it follow a scroll,
+   * a zoom and a rotation. A note whose page has scrolled out of sight is
+   * closed rather than pinned to the edge: at that point it is a floating box of
+   * text with nothing to attribute it to.
+   */
+  private syncComment(): void {
+    const id = this.popup.openId;
+    if (id === null) return;
+    const comment = this.commentItems.find((item) => item.id === id);
+    if (!comment || !this.scroller.visiblePages().includes(comment.page)) {
+      this.closeComment();
+      return;
+    }
+    this.popup.place(this.anchorFor(comment));
+  }
+
   /** A page's text as the view shows it, or `null` if it has not arrived. */
   textOn(page: number): PageText | null {
     return this.text.peek(page);
@@ -1354,6 +1538,19 @@ export class Viewer {
     // The scrollbar is inside the root and has its own drag.
     if (this.track.contains(event.target as Node)) return;
     this.root.focus();
+
+    // A press on a mark opens its note and starts no selection. Before the
+    // click counter, deliberately: a double-click on a note is two requests to
+    // open the same note, not a request to select the word underneath it.
+    const mark = this.commentUnder(event);
+    if (mark) {
+      event.preventDefault();
+      this.showComment(mark.id, false);
+      return;
+    }
+    // A press anywhere else closes an open note, which is what every popup in
+    // every application does and is the only gesture a reader will try.
+    if (this.popup.openId !== null) this.closeComment();
 
     // Document coordinates, not viewport ones: a scroll, zoom or page jump
     // between two clicks moves the text out from under a still pointer, and

@@ -818,6 +818,86 @@ MUTATIONS = [
         "      tag: null,",
         "carries each tagged run's type",
     ),
+    Mutation(
+        # Take the first mark the point is inside rather than the smallest. A
+        # note icon dropped inside a square is inside both, and which one opens
+        # then depends on the order the producer wrote them in.
+        "comments: open whichever mark the file listed first",
+        "src/lib/comments.ts",
+        "    if (area <= bestArea) {",
+        "    if (best === null) {",
+        "prefers the smaller of two marks the point is inside",
+    ),
+    Mutation(
+        # Hit-test a hidden comment. `/F` bit 2 means the page does not show it,
+        # so this opens a note for a mark that is not there --- and the panel
+        # still lists it, which is why the two cannot be the same rule.
+        "comments: let a hidden comment be pressed",
+        "src/lib/comments.ts",
+        "    if (item.page !== page || item.hidden) continue;",
+        "    if (item.page !== page) continue;",
+        "ignores a hidden comment",
+    ),
+    Mutation(
+        # Treat a rectangle of no area as a hit, which puts an invisible target
+        # in the page's top-left corner --- exactly where `annots.rs` reports a
+        # `/Rect` it could not read.
+        "comments: accept a rectangle with no area",
+        "src/lib/comments.ts",
+        "    if (width <= 0 || height <= 0) continue;",
+        "    if (false) continue;",
+        "ignores a rectangle with no area",
+    ),
+    Mutation(
+        # Indent a reply by its chain depth. A reply to a reply then sits two
+        # levels in, which a 260-pixel panel does not have room for --- and the
+        # row order is unchanged, so a check on the list contents cannot see it.
+        "comments: indent a reply by how deep its chain runs",
+        "src/lib/comments.ts",
+        "      emit(reply, 1, budget - 1);",
+        "      emit(reply, depth + 1, budget - 1);",
+        "indents a reply to a reply once, not twice",
+    ),
+    Mutation(
+        # Turn the caller's own array rather than a copy. The viewer holds that
+        # array permanently and calls this on every pointer press, so the marks
+        # walk off the page one press at a time.
+        "comments: turn the rectangles in place",
+        "src/lib/comments.ts",
+        "  return items.map((item) => {\n    const quad = viewRect(item.rect, turns, width, height);",
+        "  return items.map((item) => {\n    const quad = viewRect(item.rect, turns, width, height);\n    item.rect = [quad.left, quad.top, quad.right, quad.bottom];",
+        "copies the list rather than turning it in place",
+    ),
+    Mutation(
+        # Say something whatever the limits were. A notice that is always there
+        # is a notice nobody reads, and this one exists to say the list in front
+        # of the reader is incomplete.
+        "comments: say the list is incomplete even when nothing was cut",
+        "src/lib/comments.ts",
+        "  if (parts.length === 0) return null;",
+        '  if (parts.length === 0) parts.push("nothing worth mentioning");',
+        "says nothing when nothing was cut",
+    ),
+    Mutation(
+        # Point every reply's row at its parent, including one whose parent is
+        # not in the list. `aria-describedby` naming an absent element tells a
+        # screen reader to read nothing, which is worse than the indent alone.
+        "comments: name a parent row that is not there",
+        "src/lib/commentlist.ts",
+        "    if (comment.reply_to !== null && this.elements.has(comment.reply_to)) {",
+        "    if (comment.reply_to !== null) {",
+        "names the row a reply answers, and only when that row is there",
+    ),
+    Mutation(
+        # Read the roving tabindex's own mirror rather than the row the key
+        # landed on. The outline paid for this one: a window without system
+        # focus moves `activeElement` without delivering `focusin`.
+        "comments: activate the row the panel last remembered",
+        "src/lib/commentlist.ts",
+        "    const from = idOf(event.target) ?? this.focused;",
+        "    const from = this.focused;",
+        "activates the row the key landed on, not the one it remembered",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -835,6 +915,8 @@ TEST_FILES = [
     "src/lib/reading.test.ts",
     "src/lib/a11y.test.ts",
     "src/lib/searchmapping.test.ts",
+    "src/lib/comments.test.ts",
+    "src/lib/commentlist.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

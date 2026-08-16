@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
 
+use crate::annots::{self, Comments};
 use crate::encoding::{self, PageMapping};
 
 /// `pdfium-render`'s `bindgen` module is private; only the handle *types* are
@@ -182,6 +183,15 @@ pub struct RawDocument {
     /// first asked for --- after first paint, by a search that found nothing or by
     /// the accessibility layer --- and cached for the document's lifetime.
     mapping: OnceCell<Vec<PageMapping>>,
+    /// Every comment in the document, read at most once.
+    ///
+    /// Lazy for the same reason [`RawDocument::mapping`] is, and cached for the
+    /// same one: it costs a second `lopdf` parse of the whole file, nothing on
+    /// the startup path asks for it, and a reader who opens the comments panel
+    /// twice should pay for it once. The `Result` is cached too --- a document
+    /// that could not be read does not become readable on the second attempt,
+    /// and re-parsing to rediscover that is the same work for the same answer.
+    comments: OnceCell<Result<Comments, String>>,
 }
 
 /// PDFium's form-fill environment, retained for exactly the document lifetime.
@@ -267,6 +277,7 @@ impl RawDocument {
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             source: Source::Path(path.to_path_buf()),
             mapping: OnceCell::new(),
+            comments: OnceCell::new(),
         })
     }
 
@@ -298,6 +309,7 @@ impl RawDocument {
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             source: Source::Bytes(bytes),
             mapping: OnceCell::new(),
+            comments: OnceCell::new(),
         })
     }
 
@@ -348,15 +360,42 @@ impl RawDocument {
                     count
                 ]
             };
-            let bytes = match &self.source {
-                Source::Bytes(bytes) => std::borrow::Cow::Borrowed(*bytes),
-                Source::Path(path) => match std::fs::read(path) {
-                    Ok(bytes) => std::borrow::Cow::Owned(bytes),
-                    Err(_) => return unknown(),
-                },
+            let Some(bytes) = self.source_bytes() else {
+                return unknown();
             };
             encoding::scan(&bytes, count).unwrap_or_else(|_| unknown())
         })
+    }
+
+    /// Every comment in the document, read at most once.
+    ///
+    /// A failure is kept as a failure rather than answered with an empty list:
+    /// "this document has no comments" and "this document could not be read"
+    /// are different things to tell a reader, and only one of them is
+    /// reassuring. See `crate::annots`.
+    pub fn comments(&self) -> Result<Comments, String> {
+        self.comments
+            .get_or_init(|| {
+                let bytes = self
+                    .source_bytes()
+                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+                annots::scan(&bytes, self.page_count() as usize)
+            })
+            .clone()
+    }
+
+    /// The document's bytes, however it was opened.
+    ///
+    /// A worker holds the mapping and can borrow it; a probe opened a path and
+    /// has to read it back, because PDFium keeps no copy anything here can
+    /// reach. `None` is a file that has gone or become unreadable since it was
+    /// opened --- which is a real state, not a defect: see `docs/PLAN.md` §5 on
+    /// external modification.
+    fn source_bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>> {
+        match &self.source {
+            Source::Bytes(bytes) => Some(std::borrow::Cow::Borrowed(*bytes)),
+            Source::Path(path) => std::fs::read(path).ok().map(std::borrow::Cow::Owned),
+        }
     }
 
     /// Returns one page by zero-based index, loading it if it is not cached.

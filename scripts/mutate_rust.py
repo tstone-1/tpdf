@@ -12,8 +12,8 @@ each change what is accepted --- and every one of its assertions is over a
 fixture the module itself never wrote, which is what makes mutation the only
 thing that can say whether they bite.
 
-`text.rs`, `structure.rs` and `encoding.rs` are covered too, and `FILTERS` below
-is the list of record. `encoding.rs` is the one to be careful about, because its
+`text.rs`, `structure.rs`, `encoding.rs`, `docmodel.rs` and `annots.rs` are
+covered too, and `FILTERS` below is the list of record. `encoding.rs` is the one to be careful about, because its
 tests are the *only* thing that can catch its central mutation: `encodings.pdf`
 has `/Encoding` and `/Ordering` covarying on every page, so a rule keyed on the
 wrong one of the two passes every fixture on disk. A harness without those
@@ -54,7 +54,7 @@ CRATE = ROOT / "src-tauri"
 #: read as a mutation being caught. libtest takes several filters and ORs them,
 #: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
 #: which is worth knowing because it looks like the feature being unsupported.
-FILTERS = ["search::", "structure::", "text::", "encoding::", "docmodel::"]
+FILTERS = ["search::", "structure::", "text::", "encoding::", "docmodel::", "annots::"]
 
 
 @dataclass(frozen=True)
@@ -527,6 +527,113 @@ MUTATIONS = [
         "        self.journal.truncate(self.cursor);",
         "        self.journal.truncate(self.journal.len());",
         "applying_after_an_undo_discards_the_redo_tail",
+    ),
+    Mutation(
+        # Decode a PDF text string as Latin-1, which is what every "it is nearly
+        # ASCII" implementation does and what this one deliberately does not.
+        # The two agree on the accented range and disagree over 0x80--0x9F,
+        # where PDFDocEncoding has punctuation.
+        # Aimed inside `pdf_doc_encoded` rather than at one of its two call
+        # sites: the first draft mutated the flush inside the loop, which a body
+        # with no control characters never reaches, and it survived. That is the
+        # trap about a mutation aimed at code no fixture reaches, met here.
+        "annots: decode a text string as Latin-1 rather than PDFDocEncoding",
+        "src/annots.rs",
+        "        Ok(text) => text.chars().skip(1).collect(),",
+        "        Ok(_) => run.iter().map(|&byte| byte as char).collect(),",
+        "pdfdocencoding_is_not_latin1",
+    ),
+    Mutation(
+        # Flatten a comment's body the way a title is flattened. Every visible
+        # character survives; only the paragraphs are lost, which is why a
+        # fixture asserting the words would pass.
+        # Judged by `a_documents_body_keeps_its_paragraphs`, which reads a body
+        # out of a document. The obvious candidate --- the test that calls
+        # `sanitize_body` directly --- cannot see this at all, because what is
+        # broken here is which flattener a body is *routed* to.
+        "annots: collapse a body's newlines, as a one-line title would",
+        "src/annots.rs",
+        "    if keep_paragraphs {\n        sanitize_body(&decoded, limit)\n    } else {",
+        "    if false {\n        sanitize_body(&decoded, limit)\n    } else {",
+        "a_documents_body_keeps_its_paragraphs",
+    ),
+    Mutation(
+        # The mirror: route every field through the body flattener, so an author
+        # carrying a newline reaches a one-line byline with the newline in it.
+        "annots: keep an author's newlines, as a body would",
+        "src/annots.rs",
+        "        crate::outline::sanitize_title(&decoded, limit)",
+        "        sanitize_body(&decoded, limit)",
+        "an_author_is_flattened_to_one_line",
+    ),
+    Mutation(
+        # Drop a body's paragraph breaks in the flattener itself, which is the
+        # rule rather than the routing. Judged by the pure test, and the two
+        # together are what say both halves work.
+        "annots: drop a body's paragraph breaks",
+        "src/annots.rs",
+        "            pending_breaks = (pending_breaks + 1).min(2);\n            pending_space = false;\n            continue;\n        }\n        if ch.is_whitespace()",
+        "            pending_breaks = 0;\n            pending_space = true;\n            continue;\n        }\n        if ch.is_whitespace()",
+        "a_body_keeps_its_newlines_where_a_title_would_not",
+    ),
+    Mutation(
+        # Take `/Rect` as written. A producer may write either corner first, and
+        # the specification says a consumer shall normalise it --- so this is
+        # invisible on every fixture whose rectangles happen to be written the
+        # usual way round.
+        "annots: trust /Rect's corner order",
+        "src/annots.rs",
+        "    let left = values[0].min(values[2]);\n    let right = values[0].max(values[2]);",
+        "    let left = values[0];\n    let right = values[2];",
+        "a_rectangle_written_backwards_is_normalised",
+    ),
+    Mutation(
+        # Ignore the page's own rotation. Every rectangle is still on its page,
+        # still the right size and still in the right order --- only in the
+        # wrong place, which no count can see.
+        "annots: place a rectangle without the page's /Rotate",
+        "src/annots.rs",
+        "    let placed = crate::text::to_device(\n        turns,",
+        "    let placed = crate::text::to_device(\n        0,",
+        "a_rotated_page_places_a_rectangle_in_display_space",
+    ),
+    Mutation(
+        # Clamp nothing. A rectangle at 1e10 then reaches the viewer, which
+        # places a marker somewhere it can never scroll to.
+        "annots: leave a rectangle wherever the file put it",
+        "src/annots.rs",
+        "        placed[0].clamp(0.0, width),",
+        "        placed[0],",
+        "a_rectangle_off_the_page_is_clamped_to_it",
+    ),
+    Mutation(
+        # Report a `/Link` or a `/Widget` as a kind nobody knows, which puts a
+        # permanent "some comments were dropped" notice on every document that
+        # has a hyperlink in it.
+        "annots: count a link and a form field as unreadable kinds",
+        "src/annots.rs",
+        "            if !Kind::is_not_a_comment(subtype) {",
+        "            if true {",
+        "a_link_and_a_widget_are_not_comments_and_are_not_counted_as_unknown",
+    ),
+    Mutation(
+        # Accept a reply link without checking that walking up from it
+        # terminates. The panel then walks a cycle with no visited set of its
+        # own, which is a hang rather than a wrong row.
+        "annots: accept a reply link that closes a loop",
+        "src/annots.rs",
+        "        if looped {\n            limits.cycles += 1;",
+        "        if false {\n            limits.cycles += 1;",
+        "a_reply_cycle_is_broken_and_counted",
+    ),
+    Mutation(
+        # Accept any string of digits as a date. Month 13 and hour 99 then reach
+        # the panel, which shows them.
+        "annots: accept a date outside the calendar",
+        "src/annots.rs",
+        "    if !(1000..=9999).contains(&year) || !(1..=12).contains(&month) || !(1..=31).contains(&day) {",
+        "    if false {",
+        "a_string_that_is_not_a_date_produces_no_date",
     ),
     Mutation(
         # Rebuild from the newest snapshot rather than the newest one at or below

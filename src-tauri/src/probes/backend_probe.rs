@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
+use tpdf_lib::annots::Comments;
 use tpdf_lib::outline::Outline;
 use tpdf_lib::render::{
     Backend, DocumentInfo, PageSize, RenderService, Tile, TileFormat, TileOutcome, TileRequest,
@@ -424,6 +425,19 @@ pub fn main() {
         "an outline returns the same tree on both",
         same_outline(&worker_outline, &native_outline),
         describe_outline(&native_outline),
+    );
+
+    // Comments cross the boundary too, and they are the one answer that does
+    // not come from PDFium at all --- `annots.rs` reads the object graph, and a
+    // worker reads it through the mapping it was handed while the in-process
+    // backend reads it back off the path. Two different routes to the same
+    // bytes, which is exactly the kind of difference this probe exists to find.
+    let worker_comments = wait(|reply| workers.comments(worker_doc.id, reply));
+    let native_comments = wait(|reply| in_process.comments(native_doc.id, reply));
+    report.check(
+        "comments return the same list on both",
+        same_comments(&worker_comments, &native_comments),
+        describe_comments(&native_comments),
     );
 
     // ------------------------------------------------------------ withdrawing
@@ -2107,6 +2121,29 @@ fn same_outline(a: &Result<Outline, String>, b: &Result<Outline, String>) -> boo
                 && serde_json::to_string(&a.items).ok() == serde_json::to_string(&b.items).ok()
         }
         _ => false,
+    }
+}
+
+/// Whether both backends produced the same comments.
+///
+/// Compared through serde like the outline above, and for the same reason: it
+/// is the exact bytes the frontend receives. `scan_ms` is deliberately left out
+/// of the comparison --- it is a duration, and two runs of the same scan are
+/// never equal.
+fn same_comments(a: &Result<Comments, String>, b: &Result<Comments, String>) -> bool {
+    match (a, b) {
+        (Ok(a), Ok(b)) => {
+            a.limits == b.limits
+                && serde_json::to_string(&a.items).ok() == serde_json::to_string(&b.items).ok()
+        }
+        _ => false,
+    }
+}
+
+fn describe_comments(result: &Result<Comments, String>) -> String {
+    match result {
+        Ok(c) => format!("{} comments, limits {:?}", c.items.len(), c.limits),
+        Err(e) => e.clone(),
     }
 }
 

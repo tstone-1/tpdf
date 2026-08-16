@@ -37,6 +37,7 @@ import { frame, Report, settle as settleFor } from "./checkreport";
 import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
+import type { Comment, Comments } from "./comments";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
 import { MAX_RESULT_ROWS } from "./results";
@@ -305,6 +306,7 @@ async function run(path: string): Promise<void> {
   const sidebar = new Sidebar(panel, {
     onNavigate: (target, top) => viewer.goToDestination(target, top),
     results: { onPick: (index) => viewer.showMatch(index) },
+    comments: { onPick: (id) => viewer.showComment(id) },
     pages: {
       doc: doc.id,
       pageCount: doc.page_count,
@@ -475,6 +477,13 @@ async function run(path: string): Promise<void> {
   await appCommandChecks(viewer, doc);
   await accessibilityChecks(root, viewer, doc, seen);
   await outlineChecks(viewer, sidebar, doc);
+  // Before `rotationChecks`, which leaves the view turned: `screenPoint` maps a
+  // page-space point without the view's own rotation, so a press aimed through
+  // it lands somewhere else once the reader has turned the page. That is a
+  // property of the harness rather than of the viewer --- `Viewer.anchorFor`
+  // does apply the turn --- and running here is cheaper than a second mapping
+  // nobody else needs.
+  await commentChecks(root, viewer, sidebar, doc);
   await thumbnailChecks(root, viewer, sidebar, doc, page);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await invertChecks(viewer, doc, page, seen);
@@ -3368,6 +3377,174 @@ async function appCommandChecks(
       `${viewer.selectedText.length} characters selected, ` +
       `${viewer.searchMatches.length} matches held`,
   );
+}
+
+/**
+ * The comments: the panel that lists them, and the note that opens on the page.
+ *
+ * Most of the corpus has no annotations at all, so nearly everything here is
+ * conditional --- and every condition is a `skip` with its reason rather than a
+ * missing row, for the reason this whole file is arranged around.
+ *
+ * Two assertions carry the weight and each carries its own control:
+ *
+ * - **Pressing a mark opens its note**, asserted after checking that no note was
+ *   open beforehand. Without that, a check that opened one for its own
+ *   convenience would pass on a press that did nothing.
+ * - **The note says what the file says**, compared against the body the backend
+ *   returned rather than against "some text is showing". A popup rendering an
+ *   empty string is a popup, and the check that only asks whether one is open
+ *   cannot tell the two apart.
+ *
+ * The press lands on the *centre* of a comment's rectangle. That is not a
+ * convenience either: `hitTest` allows a few points of slack around the edge, so
+ * a press aimed at a corner would pass whether or not the rectangle is where the
+ * scan says it is.
+ */
+async function commentChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  sidebar: Sidebar,
+  doc: DocumentInfo,
+): Promise<void> {
+  const names = [
+    "the sidebar lists every comment",
+    "a reply is drawn under the comment it answers",
+    "pressing a mark on the page opens its note",
+    "the note shows what the comment says",
+    "a reply appears in the note with its own author",
+    "pressing away from a mark closes the note",
+    "activating a row opens that comment's note",
+  ];
+
+  let comments: Comments;
+  try {
+    comments = await invoke<Comments>("document_comments", { doc: doc.id });
+  } catch (e) {
+    check("reads the document's comments", false, String(e));
+    for (const name of names) skip(name, "the comments could not be read");
+    return;
+  }
+  check(
+    "reads the document's comments",
+    Array.isArray(comments.items),
+    `${comments.items.length} comments in ${comments.scan_ms.toFixed(2)} ms`,
+  );
+
+  sidebar.setComments(comments);
+  viewer.setComments(comments.items);
+
+  if (comments.items.length === 0) {
+    for (const name of names) skip(name, "the document has no comments");
+    return;
+  }
+
+  check(
+    "the sidebar lists every comment",
+    sidebar.comments.rowCount === comments.items.length,
+    `${sidebar.comments.rowCount} rows for ${comments.items.length} comments`,
+  );
+
+  const reply = comments.items.find(
+    (item) => item.reply_to !== null && comments.items.some((other) => other.id === item.reply_to),
+  );
+  if (!reply) {
+    skip("a reply is drawn under the comment it answers", "no comment is a reply");
+  } else {
+    const row = sidebar.comments.elementFor(reply.id);
+    const describes = row?.getAttribute("aria-describedby") ?? "";
+    check(
+      "a reply is drawn under the comment it answers",
+      describes === `tpdf-comment-${reply.reply_to}`,
+      `describedby=${describes || "(none)"} for a reply to #${reply.reply_to}`,
+    );
+  }
+
+  // A mark with a real rectangle that the document shows. A hidden one is
+  // deliberately not clickable, and one with no area was never placed.
+  const mark = comments.items.find(
+    (item) =>
+      !item.hidden && item.rect[2] - item.rect[0] > 2 && item.rect[3] - item.rect[1] > 2,
+  );
+  if (!mark) {
+    for (const name of names.slice(2)) {
+      skip(name, "no comment has a rectangle on the page");
+    }
+    return;
+  }
+
+  viewer.goToPage(mark.page);
+  await frame();
+  await frame();
+  await frame();
+  const centre = viewer.screenPoint(
+    mark.page,
+    (mark.rect[0] + mark.rect[2]) / 2,
+    (mark.rect[1] + mark.rect[3]) / 2,
+  );
+  // The control: nothing may be open before the press, or "a note is open"
+  // afterwards says nothing about the press.
+  const wasOpen = viewer.commentOpen;
+  pointer(root, "pointerdown", centre.x, centre.y);
+  pointer(root, "pointerup", centre.x, centre.y);
+  check(
+    "pressing a mark on the page opens its note",
+    wasOpen === -1 && viewer.commentOpen === mark.id,
+    `open=${viewer.commentOpen} for #${mark.id} at (${centre.x.toFixed(0)}, ${centre.y.toFixed(0)}), ` +
+      `before=${wasOpen}`,
+  );
+
+  const said = viewer.commentText;
+  const wanted = mark.body.trim() || mark.author.trim();
+  check(
+    "the note shows what the comment says",
+    wanted.length > 0 ? said.includes(wanted) : said.length > 0,
+    `note says ${JSON.stringify(said.slice(0, 60))}, wanted ${JSON.stringify(wanted.slice(0, 60))}`,
+  );
+
+  const answered = comments.items.filter((item) => item.reply_to === mark.id);
+  if (answered.length === 0) {
+    skip(
+      "a reply appears in the note with its own author",
+      "nothing replies to the comment under the pointer",
+    );
+  } else {
+    const first = answered[0] as Comment;
+    check(
+      "a reply appears in the note with its own author",
+      said.includes(first.body.trim()) &&
+        (first.author.trim() === "" || said.includes(first.author.trim())),
+      `note carries ${answered.length} repl${answered.length === 1 ? "y" : "ies"}`,
+    );
+  }
+
+  // Away from every mark on this page: the far corner of the viewport, which no
+  // rectangle in the corpus reaches. Asserted as a *change*, so a note that had
+  // already closed itself does not read as this press closing it.
+  const openBefore = viewer.commentOpen;
+  pointer(root, "pointerdown", WIDTH - 20, HEIGHT - 20);
+  pointer(root, "pointerup", WIDTH - 20, HEIGHT - 20);
+  check(
+    "pressing away from a mark closes the note",
+    openBefore !== -1 && viewer.commentOpen === -1,
+    `open ${openBefore} -> ${viewer.commentOpen}`,
+  );
+
+  const row = sidebar.comments.elementFor(mark.id);
+  if (!row) {
+    skip("activating a row opens that comment's note", "the comment has no row");
+    return;
+  }
+  row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  await frame();
+  await frame();
+  check(
+    "activating a row opens that comment's note",
+    viewer.commentOpen === mark.id,
+    `open=${viewer.commentOpen} for #${mark.id}`,
+  );
+  // Left closed, so nothing after this runs with a note over the page.
+  viewer.closeComment();
 }
 
 /**

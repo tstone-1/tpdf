@@ -34,8 +34,10 @@ discovered:
     and needs pyhanko.
 
 Tests wanting those still skip on a runner and are covered locally, per
-`BUILD.md`. The two below are the dependency-free ones and cost about half a
-second.
+`BUILD.md`. The three below are the dependency-free ones and cost about half a
+second. `make_comments_pdf.py` imports `make_text_pdf.py` for its PDF writer and
+is still dependency-free: that module reaches for fonttools inside the function
+that embeds a font, which nothing here calls.
 
 Usage: scripts/ci_fixtures.py [--check]
 
@@ -59,6 +61,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: shell is involved. The interpreter is this one, so a venv is honoured.
 FIXTURES: list[tuple[str, list[str]]] = [
     ("testdata/rotated.pdf", ["testdata/make_rotated_pdf.py", "testdata"]),
+    ("testdata/comments.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
     (
         "testdata/vector-multi.pdf",
         ["testdata/make_vector_pdf.py", "testdata/vector-multi.pdf", "200000", "12"],

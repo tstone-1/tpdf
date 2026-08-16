@@ -665,6 +665,25 @@ into `Target::Refused { action }`, whose string is one of five literals chosen i
 variant is `error[E0004]` rather than a test failure. What is *not* enforced is the link
 between the two halves — see residual risk 7.
 
+**Comments raised the stakes on all of this on 2026-08-16 without changing the argument.** A
+document's annotations are the largest body of attacker-chosen prose tpdf has ever put on
+screen — bodies, authors, subjects, several paragraphs each — and they reach the DOM through
+`commentlist.ts` and `commentpopup.ts`. Every one of those assignments is `textContent`, so
+the sufficiency argument above covers them unchanged: with no markup-parsing sink in the
+frontend there is nothing for the text to be parsed as.
+
+Three things were done rather than assumed, because "more of the same text" is exactly when a
+mitigation quietly stops being sufficient. `annots.rs` gives `Comment` the same treatment
+`Target` has and `no_comment_field_may_carry_a_url` destructures it exhaustively, so a new
+field is a compile error here too. `Kind` is an enum of ours, not the document's `/Subtype`
+string, so the one value that would otherwise flow from the file into a class name or a label
+cannot. And a date is *rebuilt* from parsed digits rather than passed through — a `/M` entry
+is a string like any other, and `<script>alert(1)` is a legal one.
+
+The popup's body uses `white-space: pre-wrap` to keep a comment's paragraphs. That is a style,
+not a parse: the newlines are in the character data, and no markup is involved in rendering
+them.
+
 **CSP is real and is not the scaffold default**, which this document also had wrong.
 `tauri.conf.json` sets `default-src 'self'` with `img-src`/`connect-src` widened only to the
 tile protocol and the IPC origin, and no `'unsafe-inline'` anywhere. Tauri's scaffold ships

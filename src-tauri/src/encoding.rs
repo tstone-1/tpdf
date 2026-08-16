@@ -327,7 +327,7 @@ fn guesses(document: &Document, font: &Dictionary) -> Option<bool> {
 }
 
 /// Follows a reference once, or returns the object itself.
-fn resolve<'a>(document: &'a Document, object: &'a Object) -> &'a Object {
+pub(crate) fn resolve<'a>(document: &'a Document, object: &'a Object) -> &'a Object {
     match object {
         Object::Reference(id) => document.get_object(*id).unwrap_or(object),
         other => other,
@@ -335,7 +335,10 @@ fn resolve<'a>(document: &'a Document, object: &'a Object) -> &'a Object {
 }
 
 /// Resolves an object to a dictionary, following one reference.
-fn resolve_dict<'a>(document: &'a Document, object: &'a Object) -> Result<&'a Dictionary, ()> {
+pub(crate) fn resolve_dict<'a>(
+    document: &'a Document,
+    object: &'a Object,
+) -> Result<&'a Dictionary, ()> {
     resolve(document, object).as_dict().map_err(|_| ())
 }
 
