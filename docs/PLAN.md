@@ -1626,6 +1626,24 @@ are unverified in a real window; `BUILD.md` says so where the stale table is. Th
 `nav.back` and `nav.forward` reached a commit without being classified in the harness's own
 command audit, which is a check that exists and could not run.
 
+#### Telling a locked document from a broken one — done 2026-08-16
+
+Small, and it corrects a claim tpdf was making about the reader's file. Both open paths reported
+"could not open" or "could not parse N bytes as a PDF" whatever had failed — so a document that
+is well formed and merely password-protected was announced as damaged. That is a wrong diagnosis
+rather than a vague one, and 3 of the 39 PDFs in a real Downloads folder carry `/Encrypt`.
+
+`FPDF_GetLastError` distinguishes file, format, **password** and unsupported security, and the
+mapping is four sentences chosen in our code — nothing from the document reaches an error path.
+Two details are in `docs/TRAPS.md`: PDFium keeps one error per thread so it is read at the call
+site rather than fetched by the mapping, and `FPDF_ERR_SUCCESS` is reachable, where the obvious
+arm produces a message reading as though the open worked.
+
+**What this does not do is ask for the password.** The message says so plainly rather than
+implying the file is broken. Prompting needs an in-app form — `tauri-plugin-dialog` has no text
+input — and then a retry path that carries the password to the worker without storing it, which
+is a feature rather than a message. Named here so the gap is stated rather than discovered.
+
 #### Reading comments — done 2026-08-16
 
 Annotations were scheduled in Phase 2, alongside creating them, and reading them turns out to

@@ -62,6 +62,7 @@ FILTERS = [
     "docmodel::",
     "annots::",
     "links::",
+    "progressive::",
 ]
 
 
@@ -813,6 +814,25 @@ MUTATIONS = [
         "    limits.pages_missed = page_count.saturating_sub(pages.len());",
         "    limits.pages_missed = page_count.saturating_sub(pages.len()) + 1;",
         "a_document_both_parsers_agree_about_reports_nothing_missing",
+    ),
+    Mutation(
+        # One sentence for every failure, which is what stood here before: a
+        # document that is well formed and merely locked is then announced as
+        # damaged, and the reader goes looking for another copy of a good file.
+        "progressive: give every open failure the same reason",
+        "src/progressive.rs",
+        '        err::PASSWORD => {\n            "This document needs a password, and tpdf cannot ask for one yet.".into()\n        }',
+        '        err::PASSWORD => "This file is not a PDF, or it is damaged beyond reading.".into(),',
+        "each_reason_says_something_different",
+    ),
+    Mutation(
+        # Report success as the reason. Reachable --- PDFium can return a null
+        # handle with no error set --- and it reads as though the open worked.
+        "progressive: report no-error as the reason a document did not open",
+        "src/progressive.rs",
+        '        _ => "This document could not be opened, and PDFium did not say why.".into(),',
+        '        0 => "No error.".into(),\n        _ => "This document could not be opened, and PDFium did not say why.".into(),',
+        "success_is_not_reported_as_a_reason",
     ),
 ]
 

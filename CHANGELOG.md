@@ -71,6 +71,20 @@ have the binary.)
 
 - **Not here:** creating or editing a link, and opening one in a browser.
 
+### A locked document is told apart from a broken one
+
+- **"Could not parse this as a PDF" was a wrong diagnosis, not a vague one.** Both open paths
+  said the same thing whatever had happened, so a document that is entirely well formed and
+  merely password-protected was announced as damaged --- and a reader who is told that goes
+  looking for another copy of a file that was fine. 3 of the 39 PDFs in a real Downloads folder
+  carry `/Encrypt`, so it is not a corner.
+
+- PDFium keeps the reason and it costs one call. A file that needs a password now says so, an
+  unsupported security scheme says that, and a file that genuinely is not a PDF says that ---
+  four sentences chosen in our code, so no error path can carry a string the document wrote.
+  tpdf still cannot *ask* for a password; the message says so rather than implying the file is
+  broken.
+
 ### An empty scan no longer looks like an empty document
 
 - **"This document has no comments" and "nothing could read this document" were the same

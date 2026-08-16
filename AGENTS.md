@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 263 entries
+The one thing this file does *not* carry in full is the trap list --- 264 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -870,8 +870,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 263 of them and the full text
-was 93% of this file --- an instruction budget spent on the 262 traps that are not
+titles. Only the titles are here, because there are 264 of them and the full text
+was 93% of this file --- an instruction budget spent on the 263 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -910,6 +910,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `FPDF_LoadPage` re-parses every time, and on a complex page that is 44 ms
 - PDFium's render rotation composes with `/Rotate`, and wants the turned size
 - PDFium accepting a file is not evidence the file is well formed
+- An error message that names no cause is not vague, it is a wrong diagnosis
 
 ### PDFium: text, coordinates and outlines
 - A byte scan cannot verify a document with a Type0 font

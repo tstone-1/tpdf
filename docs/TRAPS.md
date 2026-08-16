@@ -1863,6 +1863,33 @@ looking at. What changed is what the codebase claims to *know* --- and the gener
 **a compound claim is not verified by verifying the memorable part of it.** The way to catch it
 is to state each half as its own proposition and measure each: here that was two commands.
 
+### An error message that names no cause is not vague, it is a wrong diagnosis
+
+Both of `RawDocument`'s open paths reported the same thing whatever had happened: *"could not
+open <path>"* and *"could not parse N bytes as a PDF"*. The second is the interesting one,
+because it is not a refusal to guess --- it is a **claim**, and for a password-protected document
+it is false. The file parses perfectly; it is locked. A reader told their document is not a PDF
+goes looking for another copy of a file that was fine.
+
+Measured before the fix: 3 of the 39 PDFs in a real Downloads folder carry `/Encrypt`, so this is
+not a corner. PDFium keeps the reason and it costs one call --- `FPDF_GetLastError`, which
+distinguishes file, format, **password** and unsupported security.
+
+Two details worth carrying:
+
+- **It is one error per thread and the next call overwrites it**, so it is only meaningful
+  immediately after the failure it describes. The code is read at the call site and passed into
+  the mapping, rather than the mapping fetching it, so no future caller can ask it late.
+- **`FPDF_ERR_SUCCESS` is reachable here.** PDFium can hand back a null handle with no error set,
+  and the tempting arm --- `0 => "no error"` --- produces a message that reads as though the open
+  worked. Unknown codes and zero both collapse into "PDFium did not say why", and the test that
+  pins it asserts the message does *not* contain "no error".
+
+The general shape: an error path that cannot fail is as bad as an assertion that cannot fail, and
+it hides in the same way. Every message being identical means no test comparing one to another
+can go red, which is why the check here enumerates every documented code and asserts that the
+four PDFium distinguishes produce four *different* sentences.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a
