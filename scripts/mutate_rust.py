@@ -904,6 +904,62 @@ MUTATIONS = [
         "    let crop = None::<[f32; 4]>.map(|crop: [f32; 4]| {",
         "a_cropped_page_places_a_comment_in_the_crop_box_s_space",
     ),
+    Mutation(
+        # `links.rs` carried three crop-box mutations and `annots.rs` one, for
+        # code the two modules compute independently. The origin half of the
+        # comment scan was reachable by no mutation, and the intersection half
+        # by no *test* -- see the mirror added to annots.rs the same day.
+        "annots: use the crop box's size but not its origin",
+        "src/annots.rs",
+        "        (width, height, turns, shown[0], shown[1])",
+        "        (width, height, turns, 0.0, 0.0)",
+        "a_cropped_page_places_a_comment_in_the_crop_box_s_space",
+    ),
+    Mutation(
+        # Trust a crop box larger than the sheet. The twin of the links mutation
+        # of the same name, against separate code with its own arithmetic.
+        "annots: trust a crop box larger than the media box",
+        "src/annots.rs",
+        "    let crop = box_of(b\"CropBox\").map(|crop| {\n"
+        "        [\n"
+        "            crop[0].max(media[0]),\n"
+        "            crop[1].max(media[1]),\n"
+        "            crop[2].min(media[2]),\n"
+        "            crop[3].min(media[3]),\n"
+        "        ]\n"
+        "    });",
+        "    let crop = box_of(b\"CropBox\");",
+        "a_crop_box_larger_than_the_page_is_intersected_with_it",
+    ),
+    Mutation(
+        # `corner_of` was inline in `origin_pt` until 2026-08-16, where it needed
+        # a live PDFium page and no unit test could reach it -- so both of its
+        # rules were guarded by nothing, in the function every character, link
+        # and comment position is measured from.
+        "progressive: take a crop box's corners in the order they were written",
+        "src/progressive.rs",
+        "    (box_pt[0].min(box_pt[2]), box_pt[1].min(box_pt[3]))",
+        "    (box_pt[0], box_pt[1])",
+        "a_crop_box_written_backwards_still_yields_its_lower_left",
+    ),
+    Mutation(
+        # One NaN here is a whole page of NaN boxes, and a NaN comparison fails
+        # silently rather than loudly -- so it reads as an empty text layer.
+        "progressive: let a non-finite crop box through",
+        "src/progressive.rs",
+        "    if !ok || !box_pt.iter().all(|value| value.is_finite()) {",
+        "    if !ok {",
+        "a_crop_box_with_a_non_finite_corner_is_refused",
+    ),
+    Mutation(
+        # Trust the out-parameters of a call PDFium refused, which leaves them
+        # holding whatever they held.
+        "progressive: trust a crop box PDFium would not answer for",
+        "src/progressive.rs",
+        "    if !ok || !box_pt.iter().all(|value| value.is_finite()) {",
+        "    if false || !box_pt.iter().all(|value| value.is_finite()) {",
+        "a_crop_box_pdfium_would_not_answer_for_is_the_origin",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.

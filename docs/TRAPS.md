@@ -7333,3 +7333,74 @@ emitting the roll at all, emitting only the checks that ran, and emitting it aft
 --- and the file that holds them already existed for exactly this reason, with a docstring
 warning that the padded column must not be parsed. **The warning was written, the harnesses had
 already been rewritten to obey it, and the new tool did it anyway.**
+
+### A control that cannot discriminate is not a failure, and calling it one made a documented command red
+
+`text-probe` asserts that character boxes land on ink, and guards it with four controls: the
+un-flipped convention and the three `/Rotate` turns the page is not displayed at. Each must stay
+under 50%, because a control that also lands on ink has not caught anything.
+
+On `links.pdf` and `links-cropped.pdf` two of the four reach **68--87%**, against 0--5% on the
+four fixtures written for this probe. Nothing is wrong with the mapping: `make_links_pdf.py`
+writes 36 rows of even text, and **a dense page of uniform lines cannot detect a y-flip** ---
+which is a trap this repository had already recorded, arriving from the other side. The probe
+even detected it and printed the explanation in full: *"this page cannot tell them apart ... or
+this check is proving nothing."*
+
+And then reported it as `[FAIL]` and returned it in the verdict, so the run exited 1. `BUILD.md`
+prescribed exactly that command against exactly that fixture and quoted only its passing line,
+so the documented way to verify the crop-box fix was a red run whose redness was about the
+choice of document.
+
+**The distinction the verdict was missing is between a check that failed and a check that could
+not fire.** They are reported as `[SKIP]` now, excluded from the exit code, and followed by a
+`[NOTE]` saying how many controls could not discriminate and what therefore remains proved ---
+placement, not orientation. The skip is driven by the measured rate, not by the fixture's name:
+`text-base14.pdf` still reports `[OK]` on all four, which is the control over the change itself.
+
+**What made this worth doing rather than documenting around**: the probe *is* the coverage for
+`text.rs`'s half of the crop-box fix, which needs a live PDFium page and so has no unit test.
+Proved by mutation rather than assumed --- removing the origin shift takes `links-cropped.pdf`
+from 96.4% to 74.8%, red against the 95% threshold, while `text-base14.pdf` stays at 100%. Note
+how narrow that is: a 50 pt inset moves each box by less than a line's height, so most still
+overlap some ink and it is the threshold rather than a collapse to zero that catches it.
+
+### Three crop-box mutations in one module and one in its twin, for code written twice
+
+`links.rs` and `annots.rs` compute page geometry independently --- deliberately, since a shared
+helper would make one mutation blind both suites. The crop-box work gave `links.rs` three tests
+and three mutations, and `annots.rs` **one of each**. The asymmetry was in
+`scripts/mutate_rust.py`'s own `--list` output the whole time, sorted together, two lines apart.
+
+What that cost: `annots.rs`'s intersection clamp --- the `max`/`min` against the media box that
+stops an oversized `/CropBox` scaling every rectangle against a page the renderer never uses ---
+was reachable by **no test at all**, in the module that places a comment's rectangle. Its origin
+half was covered by a test but by no mutation, so nothing had shown that test could fail.
+
+The lesson is not "write more tests". It is that **twin modules need their coverage compared as
+a pair**, because each suite is individually plausible: one test for a crop box looks like
+coverage until you notice the other module has three for the same rule. `--list` grouped by
+module is the cheapest place to see it, and it had been printing the evidence for as long as the
+asymmetry existed.
+
+### A guard written inline with an FFI call is reachable by nothing
+
+`RawPage::origin_pt` calls `FPDFPage_GetCropBox` and then applies two rules to what comes back:
+normalise the box, because a producer may write either corner first, and refuse a non-finite
+value, because one `NaN` here becomes a whole page of `NaN` boxes --- and a `NaN` comparison
+fails silently rather than loudly, so it reads as an empty text layer rather than as a bug.
+
+Both rules are ordinary arithmetic and neither could be tested, because reaching them needed a
+live page, which needs a document and a loaded PDFium. The guards sat in the one function every
+character, link and comment position is measured from, and nothing in the repository could make
+either of them go red.
+
+**The fix is a seam, not a harness.** The decision moved into `corner_of(ok, box_pt)`, a free
+function over four floats, and `origin_pt` became the FFI call plus one line. Three tests, three
+mutations, each proved to fire --- including the control that matters most, an *ordinary* box in
+the non-finite test, since a guard written as an unconditional `return (0.0, 0.0)` satisfies
+every assertion about refusal.
+
+Worth reaching for whenever a rule is entangled with a call that cannot be made under test:
+`docs/TRAPS.md` already carries *"an unreachable guard is worth keeping if the type can carry it
+instead"*, and this is the same move made with a function instead of a type.

@@ -296,10 +296,27 @@ live PDFium page:
 
 ```sh
 cargo run --release --manifest-path src-tauri/Cargo.toml --example text-probe -- \
-    testdata/links-cropped.pdf     # character boxes land on ink: 96.4% (0% before the fix)
+    testdata/links-cropped.pdf     # character boxes land on ink: 96.4%
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/links-cropped.pdf --mode check    # 6/6, 2 skipped
 ```
+
+**That `text-probe` run reports two of its four controls as `[SKIP]`, and it should.** Both
+link fixtures are 36 rows of even text, and a dense page of uniform lines cannot detect a
+y-flip --- the un-flipped convention reaches 87% and the `/Rotate 180` control 77%, against
+0--5% on the fixtures written for this probe. So what a green run proves on these two is
+**placement, not orientation**, and the probe now says exactly that in a `[NOTE]` line rather
+than reporting an undiscriminating control as a failure. Until 2026-08-16 it failed them and
+exited 1, so this documented command was red and this page quoted only its passing line.
+
+**The 96.4% is worth reading against its own control rather than against 100.** Removing the
+origin shift in `text.rs` takes it to **74.8%** --- a `[FAIL]`, since the threshold is 95% ---
+while `text-base14.pdf`, which has no crop box, stays at 100%. That is the measurement proving
+this probe covers the text half of the crop-box fix at all, and it is closer to the threshold
+than it looks: a 50 pt inset moves each box by less than a line's height, so on dense text most
+still overlap some ink. The `0% before the fix` figure this page used to carry came from a
+different and larger error --- the scan then mixed PDFium's *cropped* size with page-space
+boxes. A fixture with a bigger inset would give the probe more margin.
 
 96.4% rather than 100% is correct and not a near-miss: the fixture's text runs past the crop
 box's bottom edge, so the characters the crop hides have boxes outside the rendered page. A

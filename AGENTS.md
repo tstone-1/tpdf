@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 271 entries
+The one thing this file does *not* carry in full is the trap list --- 274 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -882,8 +882,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 271 of them and the full text
-was 93% of this file --- an instruction budget spent on the 270 traps that are not
+titles. Only the titles are here, because there are 274 of them and the full text
+was 93% of this file --- an instruction budget spent on the 273 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1202,7 +1202,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A new corpus has to satisfy the sample points every existing check hardcodes
 - An empty transcript is what a *running* viewer check looks like
 - A probe fixture swept as a corpus, against the file that already said not to (the list of corpora had no home, so nothing could refuse it)
+- Three crop-box mutations in one module and one in its twin, for code written twice (the asymmetry was in the harness's own --list output the whole time)
 - The tool written to catch a missing check reported agreement about the wrong set (its own two numbers disagreed by 52 on adjacent lines, and nothing compared them)
+- A control that cannot discriminate is not a failure, and calling it one made a documented command red
+- A guard written inline with an FFI call is reachable by nothing (the fix is a seam, not a harness)
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

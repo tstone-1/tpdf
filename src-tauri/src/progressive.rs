@@ -578,6 +578,30 @@ pub struct RawPage<'doc> {
     _document: std::marker::PhantomData<&'doc RawDocument>,
 }
 
+/// The lower-left corner of a crop box PDFium answered with, or (0, 0).
+///
+/// **Separated from the call so that something can test it.**
+/// [`RawPage::origin_pt`] needs a live page, which needs a document and a
+/// loaded PDFium --- so both rules below were reachable by no unit test, and a
+/// mutation deleting either survived in the function every character, link and
+/// comment position is measured from.
+///
+/// Two rules, and they are the same pair `links.rs` applies to an annotation
+/// rectangle, for the same reasons. The box is **normalised**, because a
+/// producer may write either corner first. A **non-finite** value falls back to
+/// the origin, because it would otherwise poison every subtraction it reaches
+/// and turn a page of text into a page of `NaN` boxes.
+///
+/// `ok` false is PDFium declining to answer, and (0, 0) is the value that
+/// changes nothing: a page whose crop box cannot be read is treated exactly as
+/// it was before any of this existed.
+fn corner_of(ok: bool, box_pt: [f32; 4]) -> (f32, f32) {
+    if !ok || !box_pt.iter().all(|value| value.is_finite()) {
+        return (0.0, 0.0);
+    }
+    (box_pt[0].min(box_pt[2]), box_pt[1].min(box_pt[3]))
+}
+
 impl RawPage<'_> {
     /// Page width in PDF points.
     pub fn width_pt(&self) -> f32 {
@@ -622,14 +646,7 @@ impl RawPage<'_> {
                 &mut top,
             )
         };
-        // The box is normalised because a producer may write either corner
-        // first, and a non-finite value would poison every subtraction it
-        // reaches --- the same two rules `links.rs` applies to an annotation
-        // rectangle, and for the same reason.
-        if ok == 0 || ![left, bottom, right, top].iter().all(|v| v.is_finite()) {
-            return (0.0, 0.0);
-        }
-        (left.min(right), bottom.min(top))
+        corner_of(ok != 0, [left, bottom, right, top])
     }
 
     /// Quarter-turns clockwise the page is displayed rotated by: 0, 1, 2 or 3.
@@ -1132,6 +1149,53 @@ pub fn render_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A crop box written corner-first is normalised before its corner is taken.
+    ///
+    /// A producer may write either corner first and both are legal, so the
+    /// lower-left is whichever numbers are smaller rather than whichever come
+    /// first. Without this a backwards box hands back the *upper right*, and
+    /// every character on the page is shifted by the page's own size.
+    #[test]
+    fn a_crop_box_written_backwards_still_yields_its_lower_left() {
+        assert_eq!(corner_of(true, [545.0, 742.0, 50.0, 50.0]), (50.0, 50.0));
+        // The control: written the ordinary way round, the same box gives the
+        // same answer. Without it this would pass for an implementation that
+        // always returned the *smaller* pair by accident of the input order.
+        assert_eq!(corner_of(true, [50.0, 50.0, 545.0, 742.0]), (50.0, 50.0));
+    }
+
+    /// A non-finite coordinate falls back to the origin rather than spreading.
+    ///
+    /// Every character, link and comment rectangle is measured *from* this, so
+    /// one `NaN` here is a whole page of `NaN` boxes --- and a `NaN` box fails
+    /// every comparison silently rather than loudly, which is the shape that
+    /// reads as "the text layer is empty".
+    #[test]
+    fn a_crop_box_with_a_non_finite_corner_is_refused() {
+        assert_eq!(corner_of(true, [f32::NAN, 50.0, 545.0, 742.0]), (0.0, 0.0));
+        assert_eq!(
+            corner_of(true, [50.0, f32::INFINITY, 545.0, 742.0]),
+            (0.0, 0.0)
+        );
+        assert_eq!(
+            corner_of(true, [50.0, 50.0, f32::NEG_INFINITY, 742.0]),
+            (0.0, 0.0)
+        );
+        // The control, and it is the one that matters: an ordinary box is *not*
+        // refused. A guard written as `return (0.0, 0.0)` unconditionally would
+        // satisfy all three assertions above.
+        assert_eq!(corner_of(true, [50.0, 50.0, 545.0, 742.0]), (50.0, 50.0));
+    }
+
+    /// PDFium declining to answer is (0, 0), the value that changes nothing.
+    ///
+    /// The out-parameters are left holding whatever they held, so trusting a
+    /// refused call reads uninitialised intent rather than a crop box.
+    #[test]
+    fn a_crop_box_pdfium_would_not_answer_for_is_the_origin() {
+        assert_eq!(corner_of(false, [50.0, 50.0, 545.0, 742.0]), (0.0, 0.0));
+    }
 
     /// Every code PDFium documents, and what a reader is told for it.
     ///
