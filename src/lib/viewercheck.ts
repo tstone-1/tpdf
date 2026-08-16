@@ -2019,6 +2019,8 @@ async function accessibilityChecks(
     );
   }
 
+  await linkAnnouncementChecks(viewer);
+
   await structureChecks(doc, viewer.accessibleText.elementFor(0));
 
   // Hidden visually, present in the tree. `display:none` and
@@ -3663,6 +3665,70 @@ async function commentChecks(
   );
   // Left closed, so nothing after this runs with a note over the page.
   viewer.closeComment();
+}
+
+/**
+ * Whether a screen reader is told that a cross-reference is a link.
+ *
+ * The half of the link work a sighted reader never sees, and the half that is
+ * hardest to notice missing: the words are announced either way, so a table of
+ * contents read as prose is indistinguishable from one read correctly unless
+ * somebody is listening.
+ *
+ * Asserted against the **rendered tree** rather than against the links the
+ * backend returned, and the two controls are what make it mean something: a
+ * marked-up run must carry the role, and the page's ordinary text must not ---
+ * a layer that put the role on every element would announce a page of links.
+ */
+async function linkAnnouncementChecks(viewer: Viewer): Promise<void> {
+  const names = [
+    "a link in the page is announced as a link",
+    "the text around it is not",
+    "no element that could carry a URL is created",
+  ];
+
+  // Whichever page the links live on, since most of the corpus has none at all.
+  const first = viewer.firstLinkPage;
+  if (first === -1) {
+    for (const name of names) skip(name, "the document has no links");
+    return;
+  }
+  viewer.goToPage(first);
+  await settle(() => viewer.idle);
+
+  const page = viewer.accessibleText.elementFor(first);
+  if (!page) {
+    for (const name of names) skip(name, `page ${first + 1} is not in the tree yet`);
+    return;
+  }
+
+  const marked = [...page.querySelectorAll('[role="link"]')];
+  check(
+    names[0] as string,
+    marked.length > 0,
+    `${marked.length} announced on page ${first + 1}, ` +
+      `first ${JSON.stringify((marked[0]?.textContent ?? "").slice(0, 40))}`,
+  );
+
+  // The control. Everything the page says, minus what the roles cover, has to
+  // be non-empty --- otherwise the role is on the page element itself and the
+  // check above passes for a layer that marks everything.
+  const all = (page.textContent ?? "").trim();
+  const inside = marked.map((node) => node.textContent ?? "").join("");
+  check(
+    names[1] as string,
+    all.length > inside.length && inside.length > 0,
+    `${all.length} characters on the page, ${inside.length} inside links`,
+  );
+
+  // T8, asserted on what was built rather than by reading the source. The gate
+  // forbids creating these; this is the same claim from the other end.
+  const urlBearing = page.querySelectorAll("a, iframe, img, embed, object").length;
+  check(
+    names[2] as string,
+    urlBearing === 0,
+    `${urlBearing} URL-bearing element(s) in the page's accessible text`,
+  );
 }
 
 /**

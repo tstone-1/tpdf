@@ -49,6 +49,7 @@
  * claim is made about it.
  */
 
+import { linkRunsIn, onPage as linksOnPage, type Link } from "./links";
 import { readingBlocks, textOfRanges, type ReadingBlock } from "./reading";
 import { type PageText } from "./text";
 
@@ -104,7 +105,22 @@ export class AccessibleText {
   private readonly host: HTMLElement;
   private readonly announcer: HTMLElement;
   private readonly pages = new Map<number, HTMLElement>();
+  /**
+   * What each built page was built from, so it can be built again.
+   *
+   * Kept only for the pages that are present --- dropped in `sync` alongside the
+   * element --- so this is bounded by the viewport rather than by the document.
+   */
+  private readonly built = new Map<number, { content: PageText; unreadable: boolean }>();
   private readonly pageCount: number;
+  /**
+   * The document's links, so a cross-reference is announced as one.
+   *
+   * Held rather than passed to {@link sync} because they arrive on their own
+   * chain, after first paint: a page built before they land is rebuilt when they
+   * do, which is what {@link setLinks} does.
+   */
+  private links: readonly Link[] = [];
   private announced = "";
 
   constructor(root: HTMLElement, pageCount: number) {
@@ -159,15 +175,46 @@ export class AccessibleText {
       if (wanted.has(page)) continue;
       element.remove();
       this.pages.delete(page);
+      this.built.delete(page);
     }
 
     for (const page of [...wanted].sort((a, b) => a - b)) {
       if (this.pages.has(page)) continue;
       const content = text(page);
       if (!content) continue;
-      const element = this.build(page, content, unreadable(page));
+      const cannotRead = unreadable(page);
+      const element = this.build(page, content, cannotRead);
       this.pages.set(page, element);
+      this.built.set(page, { content, unreadable: cannotRead });
       this.insert(page, element);
+    }
+  }
+
+  /**
+   * Replaces the links the tree marks up, rebuilding the pages already built.
+   *
+   * The rebuild is the point and it is not free: a page element is *never*
+   * recycled while it stays visible, precisely so a reading cursor inside it
+   * survives scrolling, and this throws that away for the pages on screen. It is
+   * still right --- announcing a table of contents as prose for as long as the
+   * reader stays on that page is the defect being fixed --- and it happens once
+   * per document, just after first paint, rather than on any path a reader is
+   * moving through.
+   */
+  setLinks(items: readonly Link[]): void {
+    this.links = items;
+    for (const [page, element] of [...this.pages]) {
+      const from = this.built.get(page);
+      if (!from) continue;
+      // Removed and re-inserted through `insert` rather than swapped in place,
+      // so a rebuilt page lands by the same rule a new one does. Two ways to put
+      // a page into the tree is two orderings to keep agreeing, and the order
+      // *is* the reading order for anyone using this.
+      element.remove();
+      this.pages.delete(page);
+      const rebuilt = this.build(page, from.content, from.unreadable);
+      this.pages.set(page, rebuilt);
+      this.insert(page, rebuilt);
     }
   }
 
@@ -223,8 +270,9 @@ export class AccessibleText {
     // in the order it is read, which on a two-column page is not the order the
     // producer emitted it in. `linesOf` groups by index adjacency, so on such a
     // page it reads one line from each column in turn --- which is what it did.
+    const here = linksOnPage(this.links, page);
     for (const block of readingBlocks(content)) {
-      for (const element of this.elementsFor(content, block)) {
+      for (const element of this.elementsFor(content, block, here)) {
         article.appendChild(element);
       }
     }
@@ -257,28 +305,35 @@ export class AccessibleText {
    * dropped for a tagged block is that the block is a paragraph rather than a
    * page.
    */
-  private elementsFor(content: PageText, block: ReadingBlock): HTMLElement[] {
-    const texts = block.lines.map((line) => textOfRanges(content, line.ranges).trim());
+  private elementsFor(
+    content: PageText,
+    block: ReadingBlock,
+    links: readonly Link[],
+  ): HTMLElement[] {
     if (block.tag === null) {
-      return texts
-        .filter((text) => text.length > 0)
-        .map((text) => {
-          const paragraph = document.createElement("p");
-          paragraph.textContent = text;
-          return paragraph;
-        });
+      const out: HTMLElement[] = [];
+      for (const line of block.lines) {
+        const paragraph = document.createElement("p");
+        if (!fill(paragraph, content, line.ranges, links)) continue;
+        out.push(paragraph);
+      }
+      return out;
     }
-    // Joined with a space rather than a newline: these are the lines of one
-    // paragraph, and a line break inside a paragraph is a rendering decision the
-    // producer made about the page, not part of what it says.
-    const joined = texts.filter((text) => text.length > 0).join(" ");
-    if (!joined) return [];
     // The tag comes from the document; the element name does not. `elementFor`
     // is total and answers "p" or "h1".."h6" for every input, so no URL-bearing
     // element can come out of here whatever the file asked for.
     // webview-sink-ok: `elementFor` is a total whitelist of "p" and "h1".."h6"
     const element = document.createElement(elementFor(block.tag));
-    element.textContent = joined;
+    // Joined with a space rather than a newline: these are the lines of one
+    // paragraph, and a line break inside a paragraph is a rendering decision the
+    // producer made about the page, not part of what it says. The join is done
+    // by passing every line's ranges as one list with a separator between them,
+    // rather than by concatenating strings --- a link that runs over a line break
+    // is then one element instead of two, which is what it is.
+    const ranges = block.lines.flatMap((line, at) =>
+      at === 0 ? line.ranges : [SEPARATOR, ...line.ranges],
+    );
+    if (!fill(element, content, ranges, links)) return [];
     // The document's own word for it, on every block including the ones that
     // become a paragraph. It is not announced --- it is here so that a
     // `/Figure`, a `/TD` or a type nobody has seen before is *visible* to a check
@@ -287,4 +342,103 @@ export class AccessibleText {
     element.dataset.tag = block.tag;
     return [element];
   }
+}
+
+/**
+ * A marker range meaning "a space goes here", used to join a block's lines.
+ *
+ * An empty range is inert everywhere else --- `textOfRanges` emits nothing for
+ * it and `linkRunsIn` iterates none of it --- so it survives the run splitting
+ * without being a character that could fall inside a link.
+ */
+const SEPARATOR = { from: -1, to: -1 };
+
+/**
+ * Fills `element` with the text of `ranges`, marking the parts that are links.
+ *
+ * Returns whether anything was put in it, so a caller can drop an element that
+ * would be empty --- a screen reader passes an empty element over in silence,
+ * which is indistinguishable from the layer being broken.
+ *
+ * **A link becomes a `<span role="link">`, never an `<a>`.** That is not a
+ * stylistic choice: `scripts/check_webview_sinks.py` refuses the creation of any
+ * URL-bearing element anywhere in the frontend, which is what lets
+ * `docs/THREAT-MODEL.md` T8 claim sufficiency from a grep. A span carrying a role
+ * is announced as a link by every screen reader and can hold no URL at all, so
+ * the security constraint and the accessible outcome want the same element.
+ */
+function fill(
+  element: HTMLElement,
+  content: PageText,
+  ranges: readonly { from: number; to: number }[],
+  links: readonly Link[],
+): boolean {
+  const runs = linkRunsIn(
+    ranges.filter((range) => range !== SEPARATOR),
+    content.boxes,
+    links,
+  );
+  // Where the separators fall, so the join survives the run splitting: a run is
+  // a stretch of character indices, and the space between two lines is not one.
+  const breaks = new Set<number>();
+  let seen = 0;
+  for (const range of ranges) {
+    if (range === SEPARATOR) breaks.add(seen);
+    else seen += 1;
+  }
+
+  let text = "";
+  /**
+   * Everything written into the element, tracked here rather than read back
+   * from `element.textContent` afterwards.
+   *
+   * Reading it back would be asking the DOM to aggregate its children's text,
+   * which the real one does and the test double deliberately does not --- so the
+   * emptiness test would have answered "empty" for every element under test
+   * while working in the application. A check that disagrees with its subject
+   * only under test is the worst of the two failures.
+   */
+  let all = "";
+  /** Flushes the plain text accumulated so far. */
+  const flush = (): void => {
+    if (!text) return;
+    element.appendChild(document.createTextNode(text));
+    all += text;
+    text = "";
+  };
+
+  let rangeAt = 0;
+  for (const run of runs) {
+    let piece = "";
+    for (const range of run.ranges) {
+      if (breaks.has(rangeAt)) piece += " ";
+      piece += textOfRanges(content, [range]);
+      rangeAt += 1;
+    }
+    if (!piece) continue;
+    if (!run.link) {
+      text += piece;
+      continue;
+    }
+    flush();
+    const span = document.createElement("span");
+    span.setAttribute("role", "link");
+    span.textContent = piece;
+    // The destination as a number of ours, not a string of the document's ---
+    // there is nothing here a file could have chosen. Present only for a link
+    // that goes somewhere, so its absence is what says one does not.
+    if (run.link.target.kind === "page") {
+      span.dataset.page = String(run.link.target.page);
+    } else {
+      // Announced as unavailable rather than silently inert. A link tpdf
+      // declines to follow is still a link the document drew, and a reader told
+      // it is a link and then given nothing has been misled by us rather than by
+      // the file.
+      span.setAttribute("aria-disabled", "true");
+    }
+    element.appendChild(span);
+    all += piece;
+  }
+  flush();
+  return all.trim().length > 0;
 }

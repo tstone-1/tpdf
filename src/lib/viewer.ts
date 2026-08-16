@@ -1450,6 +1450,10 @@ export class Viewer {
     // The history belongs to the document, not to the session: keeping it would
     // let Back scroll a new document to a page number the old one had.
     this.history.clear();
+    // The accessibility tree too, and this is the half a sighted reader never
+    // sees: without it a table of contents is announced as ordinary prose, with
+    // nothing for a screen reader to tell one from the other.
+    this.a11y.setLinks(items);
   }
 
   /**
@@ -1466,6 +1470,17 @@ export class Viewer {
   /** How many links the page knows about. For the check harness. */
   get linkCount(): number {
     return this.linkItems.length;
+  }
+
+  /**
+   * The first page carrying a link, or -1. For the check harness.
+   *
+   * From the walk order rather than from the scan order, so it is the page a
+   * reader reaches first rather than the one whose annotation the file happened
+   * to write first.
+   */
+  get firstLinkPage(): number {
+    return this.linkWalk[0]?.page ?? -1;
   }
 
   /** Whether Back and Forward would do anything. For the check harness. */

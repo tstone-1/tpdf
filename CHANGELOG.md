@@ -61,10 +61,15 @@ have the binary.)
   from the viewport rather than the top of the file; and it reports running out rather than
   wrapping.
 
-- **Not here:** creating or editing a link, opening one in a browser, and telling a screen
-  reader that a link is a link --- the accessibility tree carries the page's text without
-  marking which of it is a cross-reference, so a table of contents is announced as prose. Named
-  as the remaining half rather than left implicit.
+- **A screen reader is told a link is a link.** The half a sighted reader never sees, and the
+  hardest to notice missing: the words are announced either way, so a table of contents read as
+  prose is indistinguishable from one read correctly unless somebody is listening. Each reading
+  line is split into the characters a link covers and the ones it does not, and the first is
+  handed over as a `role="link"` element --- never an `<a>`, because the gate that forbids
+  creating any URL-bearing element is what keeps document text from becoming a navigation. A
+  link tpdf declines to follow is announced as unavailable rather than left silently inert.
+
+- **Not here:** creating or editing a link, and opening one in a browser.
 
 ### Comments can be read
 
