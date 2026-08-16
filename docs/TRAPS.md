@@ -1627,6 +1627,118 @@ Whatever any bound cuts is counted and reported rather than dropped. An outline 
 it were complete when it is not is the same failure as a leak scanner reporting clean on a
 carrier it could not decode.
 
+### `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every other fit lands at the page top
+
+PDFium implements it over `CPDF_Dest::GetXYZ`, which returns false for any fit that is not
+`/XYZ`. So `/FitH top` --- which names a vertical coordinate as plainly as `/XYZ` does ---
+came back from it with `has_y == 0`, and `outline.rs` correctly concluded "no coordinate"
+and scrolled to the top of the page. The reader lands on the right page, near enough to the
+right place that it reads as a slightly loose viewer rather than as a bug.
+
+Nothing caught it for two reasons that are worth separating. The **API** looked total: its
+name says location-in-page and its out-parameters are `has_x`/`has_y`/`has_zoom`, which
+reads as "whichever of these the destination named". And the **corpus** had no `/FitH`
+entry --- `outline-simple.pdf` carries `/XYZ` and `/Fit`, so the gap in the code matched a
+gap in the fixtures exactly.
+
+The fix is `FPDFDest_GetView`, which reports the fit type and its parameters. Note its
+indices are **not** the destination array's: it returns the elements *after* the fit name,
+so `/FitR left bottom right top` has its top at parameter 3 and array element 5. Two
+tables saying the same thing in different coordinates is its own hazard, and both now say
+which they are in.
+
+**What found it was a differential check, and nothing else could have.** See the entry
+below.
+
+### Two resolvers agreeing with themselves is not two resolvers agreeing
+
+tpdf resolves PDF destinations twice: `outline.rs` asks PDFium, because a bookmark is a
+PDFium object, and `links.rs` reads the object graph with `lopdf`, because asking PDFium
+would cost `FPDF_LoadPage` per page for a whole-document answer. Two implementations of one
+rule is the drift trap this file already records --- and the usual mitigations do nothing
+about it. Sharing the `Target` type keeps the *vocabulary* identical. Sharing the refusal
+wording keeps the *words* identical. Neither says the two arrive at the same page.
+
+Each module's own tests are structurally unable to notice: they assert their module against
+its own expectations, and a module that is consistently wrong passes perfectly. The corpus
+cannot notice either, because each fixture is read by one resolver.
+
+`links.pdf` gives its outline entries the same destinations as its links, and
+`links-probe --mode agree` puts the two answers side by side. **It found a defect on its
+first run** --- the `/FitH` one above, which had been in `outline.rs` since it was written.
+
+Two details make it an instrument rather than a ceremony. Both answers are compared against
+the **manifest**, not against each other: two resolvers wrong in the same way agree
+perfectly, and only the fixture's generator knows what it wrote. And it asserts the outline
+came back with at least as many entries as it means to compare, because a comparison that
+cannot find its entries reports agreement by having nothing to disagree with.
+
+### A destination's offset belongs to the page it lands on, not the page it left
+
+`/XYZ x y z` measures `y` upwards from the bottom of the **destination** page, and a viewer
+scrolls in points down from its top --- so the flip is `height - y`, with `height` being
+that page's. Reaching for the height already in hand, which is the page the link is *on*,
+is the natural mistake and is invisible on every document of uniform page size. That is
+every fixture in this repository except the one written to catch it, and very nearly every
+real document too.
+
+The general shape: when a conversion needs a property of a *remote* object, having a
+perfectly good local copy of that property is what makes the wrong version compile, run and
+look right. `links.rs` builds the geometry of every page once and indexes it by page
+number, so the destination page's height is as easy to reach as the current one's; the
+mutation `links: flip the offset against the wrong page` is what says the difference is
+still observable.
+
+### `/F` is a bit field, and the flag every real link sets is not the one you are testing
+
+Annotation flags: bit 1 Invisible, **bit 2 Hidden**, bit 3 Print, bit 4 NoZoom. A hidden
+annotation is not shown, so a link carrying it has nothing under the pointer to click ---
+and testing `/F != 0` instead of `/F & 2` drops every link in any document, because
+essentially every real link sets `/F 4` so that it survives printing.
+
+It fails loudly, which is the good case, but only if the test has a control. A fixture
+whose links carry no `/F` at all passes both readings; the assertion that discriminates is
+a link with `/F 4` beside one with `/F 2`, asserting the first survives and the second does
+not.
+
+Worth noting where this differs from a comment. `annots.rs` *keeps* a hidden comment and
+carries the flag, because the panel still lists it --- a reader asked for that list
+explicitly. A link has no panel, so a hidden one dropped at scan time is the whole of it;
+keeping it would leave an unclickable rectangle every hit test walks past.
+
+### A hit-test slack that rescues a small target hands the click to its neighbour
+
+`annots.rs`'s comments get three points of slack around their rectangle, because a sticky
+note is a 24-point icon a reader aims at and an exact test makes small marks feel broken.
+Copying that number to links is wrong, and the reason is not that links are bigger.
+
+A link is a run of text, and the thing next to a link is usually **another link** --- a
+wrapped sentence produces two rectangles a point or two apart. Slack there does not make a
+small target reachable; it makes the gap between two targets belong to both, and the tie is
+broken by whichever the loop saw last. A cross-reference that jumps to the wrong section is
+worse than one that needs a second click, so links get one point.
+
+The check that says so asserts a press in the gap between two adjacent rectangles resolves
+to the nearer one --- not that a press inside a rectangle hits it, which passes at any
+slack at all.
+
+### Recording a jump at the call sites is a rule; recording it inside the primitive is a mechanism
+
+Back has to undo a link, an outline row, a search result and a comment that scrolled. Four
+call sites, so the first draft called `markJump()` at each --- which is a rule someone has
+to keep following, and this file already records what those are worth. The fifth caller is
+the one that forgets, and the symptom is a Back button that works until it does not, which
+is worse than no Back at all because the reader has already trusted it.
+
+Recording inside `goToDestination` --- the one primitive all four go through --- makes it a
+property of the operation. It needs exactly one escape: the history's own replay, or
+stepping back would push the place being left onto the stack it was just popped from,
+making Back a toggle between two positions and Forward unreachable.
+
+The flag that does it is set and cleared around one call in a `try`/`finally`, and the test
+that pins it is the *forward* one: a history that recorded the wrong end still changes the
+page and still looks right from a single assertion about Back.
+
 ### PDFium cannot create digital signatures
 
 `fpdf_signature.h` is an **inspection** API --- it reads existing signatures. Applying a

@@ -37,7 +37,8 @@ Tests wanting those still skip on a runner and are covered locally, per
 `BUILD.md`. The three below are the dependency-free ones and cost about half a
 second. `make_comments_pdf.py` imports `make_text_pdf.py` for its PDF writer and
 is still dependency-free: that module reaches for fonttools inside the function
-that embeds a font, which nothing here calls.
+that embeds a font, which nothing here calls. `make_links_pdf.py` imports it
+for the same writer and is dependency-free for the same reason.
 
 Usage: scripts/ci_fixtures.py [--check]
 
@@ -65,6 +66,10 @@ FIXTURES: list[tuple[str, list[str]]] = [
     # Written by the same run as the line above; listed so that a check for
     # its presence is a check for the file rather than for its sibling.
     ("testdata/comments-rotated.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
+    ("testdata/links.pdf", ["testdata/make_links_pdf.py", "testdata"]),
+    # Written by the same run as the line above; listed so a check for its
+    # presence is a check for the file rather than for its sibling.
+    ("testdata/links-rotated.pdf", ["testdata/make_links_pdf.py", "testdata"]),
     (
         "testdata/vector-multi.pdf",
         ["testdata/make_vector_pdf.py", "testdata/vector-multi.pdf", "200000", "12"],

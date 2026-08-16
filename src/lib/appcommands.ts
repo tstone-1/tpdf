@@ -347,6 +347,29 @@ export function registerAppCommands(
       run: () => actions.viewer()?.previousPage(),
     },
     {
+      // Back exists because following a cross-reference without one is a trap:
+      // it moves a reader into the middle of something and leaves them to
+      // remember the page number they came from. It records positions rather
+      // than links, so a jump from the outline or a search result is on the
+      // same stack --- which is what a reader who has used a browser expects.
+      id: "nav.back",
+      title: "Back",
+      keys: label("nav.back"),
+      enabled: withDocument,
+      run: () => {
+        actions.viewer()?.goBack();
+      },
+    },
+    {
+      id: "nav.forward",
+      title: "Forward",
+      keys: label("nav.forward"),
+      enabled: withDocument,
+      run: () => {
+        actions.viewer()?.goForward();
+      },
+    },
+    {
       id: "nav.firstPage",
       title: "Go to start",
       keys: label("nav.firstPage"),

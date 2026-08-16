@@ -313,6 +313,10 @@ fn handle(
             Ok(comments) => Response::json(&comments),
             Err(e) => Response::err(e),
         },
+        Request::Links => match render::run_links(document) {
+            Ok(links) => Response::json(&links),
+            Err(e) => Response::err(e),
+        },
         Request::Mapping => Response::json(&render::run_mapping(document)),
     }
 }

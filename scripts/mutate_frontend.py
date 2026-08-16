@@ -928,6 +928,91 @@ MUTATIONS = [
         "    this.element.style.display = \"none\";",
         "forgets the comment when it hides",
     ),
+    # --- links.ts -----------------------------------------------------------
+    Mutation(
+        # Take the largest of two overlapping links rather than the smallest. A
+        # producer that wraps a paragraph in one link and a phrase inside it in
+        # another is ordinary, and the phrase is what the reader aimed at.
+        "links: take the largest overlapping link rather than the smallest",
+        "src/lib/links.ts",
+        "    if (area <= bestArea) {",
+        "    if (area >= bestArea) {",
+        "takes the smallest of two overlapping links",
+    ),
+    Mutation(
+        # Give links the comments' three points of slack. Neighbouring links are
+        # a point or two apart on a wrapped sentence, so the gap between two
+        # then belongs to both and the second one listed wins.
+        "links: use the comment slack, so neighbours overlap",
+        "src/lib/links.ts",
+        "export const LINK_SLACK_PT = 1;",
+        "export const LINK_SLACK_PT = 3;",
+        "keeps neighbouring links apart, which is why the slack is small",
+    ),
+    Mutation(
+        # Hit-test a zero-area rectangle, which puts an invisible target where
+        # the file wrote nothing usable.
+        "links: hit-test a rectangle with no area",
+        "src/lib/links.ts",
+        "    if (width <= 0 || height <= 0) continue;",
+        "    if (false) continue;",
+        "ignores a rectangle with no area",
+    ),
+    Mutation(
+        # Push the popped place onto the forward stack instead of where the
+        # reader is now. Back still moves, so a check that only asserted Back
+        # would stay green --- and Forward becomes a toggle back to the origin.
+        "links: forward returns to the origin rather than the destination",
+        "src/lib/links.ts",
+        "    const to = this.past.pop();\n    if (!to) return null;\n    this.future.push(now);\n    return to;",
+        "    const to = this.past.pop();\n    if (!to) return null;\n    this.future.push(to);\n    return to;",
+        "goes forward to where going back left",
+    ),
+    Mutation(
+        # Keep the forward branch when a new jump is made, so Forward offers a
+        # place the reader abandoned and never chose.
+        "links: keep the forward branch across a new jump",
+        "src/lib/links.ts",
+        "    this.past.push(from);\n    if (this.past.length > MAX_HISTORY) this.past.shift();\n    this.future.length = 0;",
+        "    this.past.push(from);\n    if (this.past.length > MAX_HISTORY) this.past.shift();",
+        "drops the forward branch on a new jump",
+    ),
+    Mutation(
+        # Record a jump that lands where the reader already is, so pressing one
+        # cross-reference twice needs Back twice.
+        "links: record a jump that goes nowhere",
+        "src/lib/links.ts",
+        "    if (top && samePlace(top, from)) {",
+        "    if (false && top && samePlace(top, from)) {",
+        "does not record a jump that lands where the reader already was",
+    ),
+    Mutation(
+        # Drop the newest entry rather than the oldest when the stack is full,
+        # which silently stops recording at the point navigation got interesting.
+        "links: drop the newest history entry rather than the oldest",
+        "src/lib/links.ts",
+        "    if (this.past.length > MAX_HISTORY) this.past.shift();",
+        "    if (this.past.length > MAX_HISTORY) this.past.pop();",
+        "drops the oldest entry rather than refusing a new one",
+    ),
+    Mutation(
+        # Say nothing about a refused link. A rectangle that swallows a click
+        # without a word is indistinguishable from a broken viewer.
+        "links: refuse a link silently",
+        "src/lib/links.ts",
+        "  if (isNavigable(target)) return null;\n  const reason = reasonFor(target);\n  return reason ? `This link ${reason}.` : null;",
+        "  return null;",
+        "uses the outline's words for a refused action",
+    ),
+    Mutation(
+        # Report a cut list as complete, which is the failure every bound in this
+        # application is arranged to avoid.
+        "links: report a truncated scan as complete",
+        "src/lib/links.ts",
+        '  if (limits.over_budget) parts.push("too many links to list them all");',
+        "  if (false) parts.push(\"unreachable\");",
+        "names each bound separately",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -948,6 +1033,7 @@ TEST_FILES = [
     "src/lib/comments.test.ts",
     "src/lib/commentlist.test.ts",
     "src/lib/commentpopup.test.ts",
+    "src/lib/links.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

@@ -99,6 +99,19 @@ mod action {
     pub const EMBEDDEDGOTO: c_ulong = 5;
 }
 
+/// `PDFDEST_VIEW_*` fit types from `fpdf_doc.h`.
+///
+/// Only the three that name a vertical coordinate are here. The others are
+/// reachable and are deliberately absent: naming them would invite a match arm
+/// that returns a number for a fit that carries none.
+mod view {
+    use std::os::raw::c_ulong;
+
+    pub const FITH: c_ulong = 3;
+    pub const FITR: c_ulong = 5;
+    pub const FITBH: c_ulong = 7;
+}
+
 /// Where an outline entry points, or why it points nowhere.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -405,7 +418,20 @@ impl Walk<'_> {
             )
         };
         if ok == 0 || has_y == 0 {
-            return None;
+            // **`FPDFDest_GetLocationInPage` only answers for `/XYZ`.** PDFium
+            // implements it over `CPDF_Dest::GetXYZ`, which returns false for
+            // every other fit --- so a `/FitH top` destination, which names a
+            // vertical coordinate as plainly as `/XYZ` does, came back here with
+            // nothing and landed the reader at the top of the page instead of at
+            // the heading. It scrolls to the right *page*, which is why nothing
+            // caught it: `outline-simple.pdf` has `/XYZ` and `/Fit` entries and
+            // no `/FitH` one, so the gap was not in the corpus either.
+            //
+            // Found by `links-probe --mode agree`, which is the whole reason
+            // that mode exists: `links.rs` reads the destination array itself
+            // and disagreed. Neither module's own tests could have found it ---
+            // each was consistent with itself.
+            return self.top_from_view(dest, page);
         }
 
         let (width, height) = self.size_of(page)?;
@@ -425,6 +451,60 @@ impl Walk<'_> {
         // Clamped because the coordinates are read from the file: a destination
         // at y = -1e9 would otherwise scroll to a place the document does not
         // have.
+        Some(placed[1].clamp(0.0, height))
+    }
+
+    /// The vertical coordinate of a fit that is not `/XYZ`.
+    ///
+    /// `FPDFDest_GetView` reports the fit type and the destination array's
+    /// elements *after* the fit name, so the index of the top here is two less
+    /// than its index in the array --- which is why this table looks different
+    /// from the one in `links.rs` while saying the same thing. §12.3.2.2:
+    /// `/FitH top` and `/FitBH top` name one number, `/FitR left bottom right
+    /// top` names four and the top is the last, and `/Fit`, `/FitB`, `/FitV` and
+    /// `/FitBV` name no vertical coordinate at all.
+    ///
+    /// A quarter turn returns `None` for the same reason the `/XYZ` path does:
+    /// the display's vertical axis is the page's horizontal one, and these fits
+    /// name no x to place it with.
+    fn top_from_view(&mut self, dest: FPDF_DEST, page: u32) -> Option<f32> {
+        let mut count: c_ulong = 0;
+        // Four, which is what the header specifies as the most a view can carry.
+        let mut params = [0f32; 4];
+
+        // SAFETY: `dest` is live, and the buffer is the four floats the API
+        // documents as the minimum. `count` is written before the params are
+        // read below.
+        let view = unsafe {
+            self.bindings
+                .FPDFDest_GetView(dest, &mut count, params.as_mut_ptr())
+        };
+
+        let index = match view {
+            view::FITH | view::FITBH => 0usize,
+            view::FITR => 3,
+            // `/XYZ` never reaches here --- the caller handled it --- and the
+            // remaining fits name no vertical coordinate.
+            _ => return None,
+        };
+        if index >= count as usize {
+            // A fit whose parameters the file did not write. Broken rather than
+            // zero: a missing coordinate read as 0 is the bottom of the page,
+            // which is a place the destination emphatically did not name.
+            return None;
+        }
+        let raw = params[index];
+        if !raw.is_finite() {
+            return None;
+        }
+
+        let (width, height) = self.size_of(page)?;
+        let turns = self.turns_of(page);
+        if turns % 2 == 1 {
+            return None;
+        }
+        let placed =
+            crate::text::to_device(turns, width, height, [0.0, raw as f64, 0.0, raw as f64]);
         Some(placed[1].clamp(0.0, height))
     }
 

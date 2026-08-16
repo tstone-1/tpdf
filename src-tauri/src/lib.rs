@@ -14,6 +14,7 @@ pub mod docmodel;
 pub mod encoding;
 pub mod invert;
 pub mod launch;
+pub mod links;
 pub mod ocr;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
@@ -480,6 +481,26 @@ async fn document_comments(
     let (reply, rx) = reply_channel();
     service.comments(doc, reply);
     await_reply("document_comments", rx).await
+}
+
+/// Reads every link in a document --- the rectangles a reader clicks.
+///
+/// Document-level for the same reason `document_comments` is, and asked for
+/// once just after first paint rather than on demand: nothing opens a panel
+/// before clicking a cross-reference, so a lazy version would mean the first
+/// click on any document goes nowhere.
+///
+/// A failure is an error rather than an empty list. A document whose links
+/// could not be read is one whose cross-references silently do nothing, which
+/// is worth telling a reader rather than leaving them to click.
+#[tauri::command]
+async fn document_links(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+) -> Result<links::Links, String> {
+    let (reply, rx) = reply_channel();
+    service.links(doc, reply);
+    await_reply("document_links", rx).await
 }
 
 /// Reports, per page, whether the text means anything or PDFium is guessing.
@@ -1303,6 +1324,7 @@ pub fn run() {
             search_page,
             document_outline,
             document_comments,
+            document_links,
             document_mapping,
             launch_open_event,
             take_launch_paths,

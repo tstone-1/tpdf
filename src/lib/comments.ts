@@ -81,6 +81,27 @@ export interface Comments {
 }
 
 /** One row of the panel: a comment, and whether it is a reply. */
+/**
+ * The least a thing needs to be placed on a page and hit-tested.
+ *
+ * {@link hitTest}, {@link onPage} and {@link turnedFor} are generic over this
+ * rather than over {@link Comment}, so `links.ts` reuses them instead of holding
+ * a second copy of the same geometry. A second copy is the trap this repository
+ * records as *"Two copies of a distinction drift, and a mutation of one
+ * survives"* --- and here it would be a rectangle that a comment and a link
+ * sharing one `/Rect` in the file could be drawn at two different places from.
+ *
+ * `hidden` is optional because only comments have it: `annots.rs` keeps a hidden
+ * comment so the panel can still list it, while `links.rs` drops a hidden link
+ * at scan time --- there is no panel to list it in, so an unclickable rectangle
+ * would be all that survived.
+ */
+export interface Placed {
+  page: number;
+  rect: readonly [number, number, number, number];
+  hidden?: boolean;
+}
+
 export interface CommentRow {
   comment: Comment;
   /** 0 for a comment nobody replied to, 1 for a reply. */
@@ -197,14 +218,14 @@ export function rowsOf(items: readonly Comment[]): CommentRow[] {
  * there is no mark under the pointer to have been clicked. It is still listed in
  * the panel, where the reader asked for it explicitly.
  */
-export function hitTest(
-  items: readonly Comment[],
+export function hitTest<T extends Placed>(
+  items: readonly T[],
   page: number,
   x: number,
   y: number,
   slack = HIT_SLACK_PT,
-): Comment | null {
-  let best: Comment | null = null;
+): T | null {
+  let best: T | null = null;
   let bestArea = Infinity;
 
   for (const item of items) {
@@ -233,8 +254,8 @@ export function hitTest(
   return best;
 }
 
-/** The comments on one page, in document order. */
-export function onPage(items: readonly Comment[], page: number): Comment[] {
+/** The items on one page, in document order. */
+export function onPage<T extends Placed>(items: readonly T[], page: number): T[] {
   return items.filter((item) => item.page === page);
 }
 
@@ -247,16 +268,19 @@ export function onPage(items: readonly Comment[], page: number): Comment[] {
  * that move independently --- the view rotation and a page whose real size has
  * just arrived to replace an estimate.
  */
-export function turnedFor(
-  items: readonly Comment[],
+export function turnedFor<T extends Placed>(
+  items: readonly T[],
   turns: number,
   width: number,
   height: number,
-): Comment[] {
+): T[] {
   if (((turns % 4) + 4) % 4 === 0) return [...items];
   return items.map((item) => {
     const quad = viewRect(item.rect, turns, width, height);
-    return { ...item, rect: [quad.left, quad.top, quad.right, quad.bottom] as [number, number, number, number] };
+    return {
+      ...item,
+      rect: [quad.left, quad.top, quad.right, quad.bottom] as [number, number, number, number],
+    };
   });
 }
 

@@ -43,6 +43,7 @@ use pdfium_render::prelude::*;
 
 use crate::annots::{self, Comments};
 use crate::encoding::{self, PageMapping};
+use crate::links::{self, Links};
 
 /// `pdfium-render`'s `bindgen` module is private; only the handle *types* are
 /// `pub use`d out of it, so these values are restated rather than imported.
@@ -192,6 +193,13 @@ pub struct RawDocument {
     /// that could not be read does not become readable on the second attempt,
     /// and re-parsing to rediscover that is the same work for the same answer.
     comments: OnceCell<Result<Comments, String>>,
+    /// Every link in the document, read at most once.
+    ///
+    /// Lazy and cached for the same reasons as [`RawDocument::comments`], with
+    /// one difference in when it is asked for: the viewer wants links as soon as
+    /// a page is on screen rather than when a panel opens, so this is warmed
+    /// just after first paint instead of on demand.
+    links: OnceCell<Result<Links, String>>,
 }
 
 /// PDFium's form-fill environment, retained for exactly the document lifetime.
@@ -278,6 +286,7 @@ impl RawDocument {
             source: Source::Path(path.to_path_buf()),
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
+            links: OnceCell::new(),
         })
     }
 
@@ -310,6 +319,7 @@ impl RawDocument {
             source: Source::Bytes(bytes),
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
+            links: OnceCell::new(),
         })
     }
 
@@ -380,6 +390,22 @@ impl RawDocument {
                     .source_bytes()
                     .ok_or_else(|| "the document's bytes could not be read".to_string())?;
                 annots::scan(&bytes, self.page_count() as usize)
+            })
+            .clone()
+    }
+
+    /// Every link in the document, read at most once.
+    ///
+    /// A failure is kept as a failure, for the reason above: a document whose
+    /// links could not be read is a document whose cross-references silently do
+    /// nothing, and the reader is better told than left clicking.
+    pub fn links(&self) -> Result<Links, String> {
+        self.links
+            .get_or_init(|| {
+                let bytes = self
+                    .source_bytes()
+                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+                links::scan(&bytes, self.page_count() as usize)
             })
             .clone()
     }
