@@ -506,6 +506,30 @@ MUTATIONS = [
         "viewer-mixed",
     ),
     Mutation(
+        # No press ever travels far enough, so the strip is a list of pictures
+        # that cannot be rearranged. Aimed at the window rather than at the unit
+        # suite on purpose: the frontend tests drive a fake DOM, and what this
+        # asks is whether a real WKWebView delivers the moves at all.
+        "page drag: put the drag threshold past any distance a pointer travels",
+        "src/lib/thumbnails.ts",
+        "const DRAG_THRESHOLD = 6;",
+        "const DRAG_THRESHOLD = 100000;",
+        "dragging a thumbnail asks for the slot it was dropped on",
+        "viewer-mixed",
+    ),
+    Mutation(
+        # The other direction, and the one a reader meets first: every click on
+        # a thumbnail becomes a drag, so looking at a page rearranges the
+        # document. This is what the control check is for, and without it the
+        # mutation above is satisfied by a strip that reorders on any press.
+        "page drag: treat a press that never moved as a drag",
+        "src/lib/thumbnails.ts",
+        "      if (Math.abs(event.clientY - press.startY) < DRAG_THRESHOLD) return;",
+        "      if (false) return;",
+        "a press that does not travel asks for nothing",
+        "viewer-mixed",
+    ),
+    Mutation(
         # The third symptom, and the one whose reader can least easily tell
         # something is wrong: the guessed characters read aloud as though they
         # were the page.

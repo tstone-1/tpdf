@@ -145,6 +145,95 @@ MUTATIONS = [
         "throws its thumbnails away when the order changes and the count does not",
     ),
     Mutation(
+        # The off-by-one the whole helper exists for. Reading the gap against
+        # the order the page is still in, and handing that straight to the
+        # model, leaves every drag towards the back of the document one slot
+        # short --- and a drag one slot down does nothing at all.
+        "thumbnails: drop a page where the gap says rather than where it lands",
+        "src/lib/thumbnails.ts",
+        "  return gap > from ? gap - 1 : gap;",
+        "  return gap;",
+        "takes one off a gap below the page, because the page has left it",
+    ),
+    Mutation(
+        # The gap boundary moves from the middle of a row to its top edge, so
+        # the page lands one slot from where the indicator was drawn --- which
+        # is the failure a reader reads as the strip ignoring them.
+        "thumbnails: take the gap from the row's top edge rather than its middle",
+        "src/lib/thumbnails.ts",
+        "  const gap = Math.round(contentY / rowHeight);",
+        "  const gap = Math.floor(contentY / rowHeight);",
+        "names the gap below the row the pointer is in the bottom half of",
+    ),
+    Mutation(
+        # Every press becomes a drag, so a plain click on a thumbnail reorders
+        # the document whenever the pointer moved by a pixel.
+        "thumbnails: treat every press as a drag, however still the pointer",
+        "src/lib/thumbnails.ts",
+        "      if (Math.abs(event.clientY - press.startY) < DRAG_THRESHOLD) return;",
+        "      if (false) return;",
+        "does not reorder anything when the pointer barely moves",
+    ),
+    Mutation(
+        # A second pointer aims the first one's drag. The guard is one clause
+        # and reads like defensiveness; it is what keeps a trackpad's second
+        # finger from choosing where the page lands.
+        "thumbnails: let any pointer aim a drag another one started",
+        "src/lib/thumbnails.ts",
+        "    if (!press || event.pointerId !== press.pointerId) return;",
+        "    if (!press) return;",
+        "ignores a pointer that is not the one being dragged",
+    ),
+    Mutation(
+        # `setPages` is what a drop's own edit comes back through, so completing
+        # the drag there applies the reader's move a second time.
+        "thumbnails: complete the drag when the document is rebuilt under it",
+        "src/lib/thumbnails.ts",
+        "    // Every row is about to be rebuilt, so a drag still in flight is aimed at",
+        "    this.endDrag(true);\n    // Every row is about to be rebuilt, so a drag still in flight is aimed at",
+        "runs no edit when the document is rebuilt under a live drag",
+    ),
+    Mutation(
+        # The capture is never released, so the strip goes on receiving every
+        # pointer event on the page for the rest of the session.
+        "thumbnails: keep the pointer it captured after the drag ends",
+        "src/lib/thumbnails.ts",
+        "      if (this.host.hasPointerCapture(press.pointerId)) {",
+        "      if (false) {",
+        "releases the pointer it captured",
+    ),
+    Mutation(
+        # The loop runs for the life of the drag on a strip that cannot move,
+        # which is a frame callback per frame doing nothing.
+        "thumbnails: keep the edge loop running when the strip cannot scroll",
+        "src/lib/thumbnails.ts",
+        "      if (this.host.scrollTop !== was) this.edgeFrame = requestAnimationFrame(step);",
+        "      this.edgeFrame = requestAnimationFrame(step);",
+        "stops the edge loop when the strip can scroll no further",
+    ),
+    Mutation(
+        # The strip follows the page being read, and pressing a row navigates ---
+        # so without this guard the content slides out from under a pointer that
+        # has not moved, at the exact instant a drag begins. Four of the fourteen
+        # window corpora caught it; the ten that did not had strips short enough
+        # for the scroll to clamp.
+        "thumbnails: follow the page being read even under a live press",
+        "src/lib/thumbnails.ts",
+        "    if (this.press) return;\n    const row = this.rows.get(page);",
+        "    const row = this.rows.get(page);",
+        "does not follow the page being read while a pointer is down on a row",
+    ),
+    Mutation(
+        # Scrolling per event rather than per frame, so the speed follows the
+        # pointer's report rate --- and a reader holding still at the edge stops
+        # moving, which is the case the loop exists for.
+        "thumbnails: scroll only while the pointer keeps moving",
+        "src/lib/thumbnails.ts",
+        "    this.edgeFrame = requestAnimationFrame(step);\n  }",
+        "    step();\n  }",
+        "scrolls the strip while the pointer rests against the bottom edge",
+    ),
+    Mutation(
         # Send a move that moves nothing. The model applies it, so the reader
         # gains an undo that visibly does nothing --- and a drag that ends where
         # it began becomes a journal entry.

@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.8.3] - Unreleased
 
+### Drag a thumbnail to move a page
+
+- **Drag a page in the strip** to put it somewhere else. A line shows where it will land,
+  the strip scrolls when the pointer rests against either edge, and Escape abandons the
+  drag. It runs the same edit the two palette commands run, so **Undo** puts it back.
+
+- **A press is not a drag until it has travelled 6 px.** Clicking a thumbnail still goes to
+  that page and changes nothing else --- without a threshold an unsteady click rearranges
+  the document, which is the failure a reader meets first.
+
+- **A drag that ends where it began does nothing**, including one released on either side
+  of the page's own row. That is not a special case in the drag; it falls out of how a drop
+  position is turned into a destination.
+
 ### Move a page
 
 - **Move page up** and **Move page down**, in the command palette. They move the page the
@@ -27,8 +41,7 @@ have the binary.)
 
 - **No keyboard shortcut**, for a different reason than Delete page has none: there is no
   chord left that reads as "move a *page*" rather than "move the *view*", and rearranging
-  a document is work a reader does in the page strip. Dragging thumbnails is not built
-  yet; these two commands are the operation it will call.
+  a document is work a reader does in the page strip.
 
 - **Off either end does nothing** rather than wrapping. A page that reappeared at the
   other end of the document would look, to the reader holding the key down, exactly like

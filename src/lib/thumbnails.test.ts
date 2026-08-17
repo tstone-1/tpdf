@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import {
+  insertionGap,
+  landingSlot,
   nextWanted,
   rowHeightFor,
   stripWindow,
@@ -131,6 +133,66 @@ describe("nextWanted", () => {
 
   it("names nothing for an empty window", () => {
     expect(nextWanted(window(0, -1), 0, rendered())).toBeNull();
+  });
+});
+
+describe("insertionGap", () => {
+  // 100 px rows, 10 pages: gaps 0..10, and gap g is the line at y = 100g.
+  it("names the gap above the row the pointer is in the top half of", () => {
+    expect(insertionGap(240, 100, 10)).toBe(2);
+  });
+
+  it("names the gap below the row the pointer is in the bottom half of", () => {
+    expect(insertionGap(260, 100, 10)).toBe(3);
+  });
+
+  it("has one more gap than there are rows", () => {
+    // The whole reason this answers a gap rather than a row: dropping after the
+    // last page has to be sayable, and a row index cannot say it.
+    expect(insertionGap(1000, 100, 10)).toBe(10);
+  });
+
+  it("does not run off either end", () => {
+    expect(insertionGap(-500, 100, 10)).toBe(0);
+    expect(insertionGap(99999, 100, 10)).toBe(10);
+  });
+
+  it("gives the first gap rather than dividing by a zero row height", () => {
+    // Same guard as `stripWindow`, and for the same reason: a strip whose panel
+    // has not been laid out yet has no row height, and NaN would propagate into
+    // a slot index and out to the model.
+    expect(insertionGap(300, 0, 10)).toBe(0);
+  });
+});
+
+describe("landingSlot", () => {
+  it("leaves a gap above the page where it is", () => {
+    // Nothing above slot 5 moves when the page at 5 leaves, so the gap and the
+    // landing are the same number.
+    expect(landingSlot(5, 2)).toBe(2);
+  });
+
+  it("takes one off a gap below the page, because the page has left it", () => {
+    // Gap 8 is read against an order that still contains the page at 5.
+    // Removing it first pulls everything below up by one, so the page lands at
+    // 7 -- and a version without this reads as "a drag towards the back always
+    // stops one short", which is the shape the frontend mutation reproduces.
+    expect(landingSlot(5, 8)).toBe(7);
+  });
+
+  it("calls both gaps either side of the page itself a no-op", () => {
+    // The property that makes a drag that goes nowhere do nothing. Gap 5 is
+    // already where the page is; gap 6 is the other side of the same page, and
+    // it has to come back as 5 rather than as 6 -- otherwise releasing the
+    // pointer a pixel below where it was pressed moves the page one slot down.
+    expect(landingSlot(5, 5)).toBe(5);
+    expect(landingSlot(5, 6)).toBe(5);
+  });
+
+  it("moves a page to the very front and to the very back", () => {
+    expect(landingSlot(3, 0)).toBe(0);
+    // Ten pages, so gap 10 is past the last one and the landing is slot 9.
+    expect(landingSlot(3, 10)).toBe(9);
   });
 });
 
@@ -539,6 +601,277 @@ describe("Thumbnails keyboard activation", () => {
     list.dispatch("keydown", { key: "Enter", target: list });
 
     expect(navigated).toEqual([0]);
+    pages.destroy();
+  });
+});
+
+/**
+ * Dragging a row to reorder the document.
+ *
+ * The arithmetic is tested above as two pure functions, because that is where
+ * the off-by-one lives. What is tested here is everything the pure functions
+ * cannot see: that a press is not a drag until it has travelled, that a drop
+ * calls the handler once with the slots the pointer actually described, and
+ * that the three ways a drag ends without a drop really do end it.
+ */
+describe("Thumbnails dragging", () => {
+  let dom: FakeDom;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => new Promise(() => {}));
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  /** The strip's own scrolling panel, which is where the pointer lands. */
+  function panelOf(): FakeDom["root"] {
+    return dom.root.children[dom.root.children.length - 1]!;
+  }
+
+  /**
+   * A strip whose rows exist, with the row height forced to a round number.
+   *
+   * `rowHeightFor` derives it from the page geometry, so a test that assumed
+   * 100 would be asserting against whatever that arithmetic currently gives.
+   * A 600x800 page at 116 px wide is 155 px of picture plus the label and the
+   * padding, and the drags below are written in multiples of that rather than
+   * of a number this file chose.
+   */
+  function stripForDrag(moves: [number, number][]): {
+    pages: Thumbnails;
+    panel: FakeDom["root"];
+    rowHeight: number;
+  } {
+    const pages = makeStrip(dom, {
+      onReorder: (from: number, to: number) => moves.push([from, to]),
+    });
+    const panel = panelOf();
+    panel.clientHeight = 700;
+    panel.dispatch("scroll", {});
+    return { pages, panel, rowHeight: rowHeightFor({ width_pt: 600, height_pt: 800 }) };
+  }
+
+  /** Presses a row, at the top of its own box. */
+  function press(pages: Thumbnails, page: number, y: number): void {
+    const row = pages.elementFor(page) as unknown as FakeDom["root"];
+    row.dispatch("pointerdown", { pointerId: 1, clientY: y, preventDefault: () => {} });
+  }
+
+  it("does not reorder anything when the pointer barely moves", () => {
+    // The control the whole threshold exists for: every click on a thumbnail is
+    // a press followed by a release, and a strip that treated that as a drag
+    // would reorder the document every time a reader looked at a page.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 2, 2 * rowHeight);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 2 * rowHeight + 3 });
+    expect(pages.dragging).toBe(false);
+    panel.dispatch("pointerup", { pointerId: 1, clientY: 2 * rowHeight + 3 });
+
+    expect(moves).toEqual([]);
+    expect(pages.dropCount).toBe(0);
+    pages.destroy();
+  });
+
+  it("moves a page to the slot the pointer was over when it was released", () => {
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 3, 3 * rowHeight);
+    // Up to the very top of the strip: gap 0, which is also landing 0.
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 2 });
+    expect(pages.dragging).toBe(true);
+    panel.dispatch("pointerup", { pointerId: 1, clientY: 2 });
+
+    expect(moves).toEqual([[3, 0]]);
+    expect(pages.dropCount).toBe(1);
+    pages.destroy();
+  });
+
+  it("takes the gap from where the pointer was, not from where it ended up", () => {
+    // A drop is allowed to happen outside the panel -- the pointer is captured,
+    // so a release anywhere is delivered here. The gap the indicator last showed
+    // is what the reader agreed to, so it is what the drop uses; recomputing it
+    // from the release coordinates would move the page somewhere nothing ever
+    // pointed at.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 0, 0);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 2 * rowHeight });
+    panel.dispatch("pointerup", { pointerId: 1, clientY: -9999 });
+
+    expect(moves).toEqual([[0, 1]]);
+    pages.destroy();
+  });
+
+  it("ignores a pointer that is not the one being dragged", () => {
+    // A second finger on a touchpad, or a second pointer on a trackpad-and-mouse
+    // machine. Without the id check its movement aims the drag.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 3, 3 * rowHeight);
+    panel.dispatch("pointermove", { pointerId: 9, clientY: 0 });
+    expect(pages.dragging).toBe(false);
+    panel.dispatch("pointerup", { pointerId: 9, clientY: 0 });
+
+    expect(moves).toEqual([]);
+    // And the drag the other pointer started is still live, which is what says
+    // the guard ignored the stray pointer rather than swallowing the drag.
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 0 });
+    expect(pages.dragging).toBe(true);
+    pages.destroy();
+  });
+
+  it("abandons the drag on Escape rather than dropping it", () => {
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 3, 3 * rowHeight);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 0 });
+    expect(pages.dragging).toBe(true);
+
+    const list = (pages.elementFor(0) as unknown as FakeDom["root"]).parent!.parent!;
+    list.dispatch("keydown", { key: "Escape", preventDefault: () => {} });
+    expect(pages.dragging).toBe(false);
+    // The release still arrives -- the pointer is a real pointer and the reader
+    // still lets go of it -- and it must not become the drop Escape refused.
+    panel.dispatch("pointerup", { pointerId: 1, clientY: 0 });
+
+    expect(moves).toEqual([]);
+    pages.destroy();
+  });
+
+  it("abandons the drag when a pointercancel arrives", () => {
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 3, 3 * rowHeight);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 0 });
+    panel.dispatch("pointercancel", { pointerId: 1, clientY: 0 });
+
+    expect(pages.dragging).toBe(false);
+    expect(moves).toEqual([]);
+    pages.destroy();
+  });
+
+  it("releases the pointer it captured", () => {
+    // Not cosmetic: a captured pointer sends every subsequent move and release
+    // to this element, so a capture that is never released leaves the strip
+    // swallowing pointer events for the rest of the session.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 3, 3 * rowHeight);
+    expect(panel.captured.has(1)).toBe(true);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 0 });
+    panel.dispatch("pointerup", { pointerId: 1, clientY: 0 });
+
+    expect(panel.captured.has(1)).toBe(false);
+    pages.destroy();
+  });
+
+  it("runs no edit when the document is rebuilt under a live drag", () => {
+    // `setPages` is what the drop's own edit comes back through, so completing
+    // a drag there would apply the reader's move twice. It is also what a
+    // deletion from anywhere else calls, and then the slots the drag was aimed
+    // at have stopped meaning what they meant.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 3, 3 * rowHeight);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 0 });
+    expect(pages.dragging).toBe(true);
+
+    pages.setPages(40);
+    expect(pages.dragging).toBe(false);
+    panel.dispatch("pointerup", { pointerId: 1, clientY: 0 });
+
+    expect(moves).toEqual([]);
+    pages.destroy();
+  });
+
+  it("does not drag at all when nothing is listening", () => {
+    // The strip is also driven by harnesses and by documents nobody can edit.
+    // Without a handler there is no capture to take, and taking one anyway
+    // would swallow pointer events for a gesture that can never do anything.
+    const pages = makeStrip(dom);
+    const panel = panelOf();
+    panel.clientHeight = 700;
+    panel.dispatch("scroll", {});
+    const row = pages.elementFor(2) as unknown as FakeDom["root"];
+    row.dispatch("pointerdown", { pointerId: 1, clientY: 0, preventDefault: () => {} });
+
+    expect(panel.captured.size).toBe(0);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 900 });
+    expect(pages.dragging).toBe(false);
+    pages.destroy();
+  });
+
+  it("does not follow the page being read while a pointer is down on a row", () => {
+    // Pressing a row navigates, and navigating comes back as "show the page
+    // being read". Acting on that mid-press slides the content out from under a
+    // pointer that has not moved, so the drop lands on a gap nobody pointed at.
+    // The corpus sweep caught this on four of fourteen documents; the ten that
+    // passed had strips short enough for the scroll to clamp, which is a fixture
+    // hiding a defect rather than a defect that only sometimes happens.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    // The strip only follows the page when it is the tab on show, which is what
+    // `setCurrentPage` guards on -- so without this the control below asserts
+    // against a strip that was never going to scroll for a second reason.
+    pages.setActive(true);
+    // A control: with no pointer down, the strip does follow the page. Without
+    // this, "does not scroll" is satisfied by a strip that never scrolls.
+    pages.setCurrentPage(20);
+    const followed = panel.scrollTop;
+    expect(followed).toBeGreaterThan(0);
+
+    // A row that is still built after that scroll -- rows 0 and 1 left the
+    // window with it, and a press on an element that is no longer in the
+    // document is not the gesture under test.
+    press(pages, 20, 20 * rowHeight);
+    pages.setCurrentPage(0);
+    expect(panel.scrollTop).toBe(followed);
+    pages.destroy();
+  });
+
+  it("scrolls the strip while the pointer rests against the bottom edge", () => {
+    // The reason this is a frame loop and not a step per move: a reader who has
+    // already reached the edge stops moving the pointer, and without the loop
+    // the strip stops with them.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 1, rowHeight);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 690 });
+    // Nothing yet: the move schedules the loop rather than scrolling, so that
+    // the speed is per frame rather than per event -- a trackpad that reports
+    // at 120 Hz and a mouse that reports at 60 must not scroll at two speeds.
+    expect(panel.scrollTop).toBe(0);
+    dom.runFrames();
+    const first = panel.scrollTop;
+    expect(first).toBeGreaterThan(0);
+
+    // No further pointer movement at all, which is the whole point.
+    dom.runFrames();
+    expect(panel.scrollTop).toBeGreaterThan(first);
+    pages.destroy();
+  });
+
+  it("stops the edge loop when the strip can scroll no further", () => {
+    // Otherwise it reschedules itself for the life of the drag, which on a
+    // document already at its end is a frame callback per frame doing nothing.
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    press(pages, 1, rowHeight);
+    panel.dispatch("pointermove", { pointerId: 1, clientY: 2 });
+    // At the top already, so the first frame cannot move it.
+    expect(panel.scrollTop).toBe(0);
+    dom.reset();
+    dom.runFrames();
+
+    expect(dom.scheduledFrames()).toBe(0);
     pages.destroy();
   });
 });

@@ -1513,7 +1513,7 @@ rather than transcribed.
 
 **Every row below was measured on macOS on 2026-08-17**, and printed by the script rather than
 transcribed --- the table is the sweep's own output, pasted. Zero failures
-anywhere, and **all fourteen corpora report the same 229 check names** --- diffed as sets by
+anywhere, and **all fourteen corpora report the same 231 check names** --- diffed as sets by
 the sweep, not inferred from the totals agreeing.
 
 The link work took the total from 171 to 189, turning a page in the document took it to 204,
@@ -1543,16 +1543,22 @@ check's own precondition has just established are further apart than that. The s
 reddened a *deletion* check the whole time, which reads absolute boxes rather than shapes ---
 so the coverage existed and the check named for it was the one that could not fail.
 
-> **The table above is the sweep taken just before that repair, and was not re-run for it.**
-> Said plainly rather than left to the dateline, because this page's whole argument is that a
-> measurement is of the tree it was taken from. What changed afterwards is one added
-> conjunction inside an existing check and that check's name --- neither of which can move a
-> ran or skipped count, since the skip condition is untouched and a rename applies to all
-> fourteen corpora at once. The name total *was* re-measured after the change: the mutation
-> run's own baseline reports **229 viewer-mixed check names**. The rows are therefore current
-> for everything except the wording of one name, and a full re-sweep costs 721 s of which
-> `vector-multi` is 338 --- which is the trade being made, stated so the next reader can
-> disagree with it.
+> **The table above is one sweep of the tree as committed**, re-run after the last change to
+> any check rather than carried over from before it. That is not free --- a sweep is 721 s, of
+> which `vector-multi` alone is 338 --- and it is worth it here for a reason this increment
+> demonstrated: the run before it went red on four of the fourteen corpora, against ten that
+> passed for no better reason than having strips too short to scroll. A table pasted from a
+> sweep of a different tree would have been a claim about neither.
+
+**Dragging one took it to 231**, and the two names are the narrowest pair that were worth
+paying a window for. The slot arithmetic is two pure functions with unit tests, the gesture's
+state machine has nine mutations against a fake DOM, and the edit a drop runs is already
+covered by the three backend names below. What none of those can answer is whether a real
+WKWebView captures the pointer, keeps delivering moves after it has left the row, and lays out
+geometry the gap arithmetic can read --- so the strip's handler here *records* rather than
+edits, and the document is never touched. The control is the half that found something: its
+first version could not fail either way it was read, and the mutation aimed at it survived
+until both clauses were replaced. See the trap of that name.
 
 Putting the order back must restore the document exactly, which
 is the check a viewer that reordered its own view but not its model passes and a viewer that
@@ -1583,20 +1589,20 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 186 | 43 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 192 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 192 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 102 | 127 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 142 | 87 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 179 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 181 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 158 | 71 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 173 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 174 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 183 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 194 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 201 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 139 | 90 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 186 | 45 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 194 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 194 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 102 | 129 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 141 | 90 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 181 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 183 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 158 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 175 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 176 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 185 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 196 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 203 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 139 | 92 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
 **`tagged.pdf` runs three of these thirteen and skips ten**, which is the split worth knowing:
 the ten that drive the viewer need a middle page to delete and it has two, while the three that

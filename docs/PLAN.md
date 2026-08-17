@@ -4787,6 +4787,53 @@ mutation aimed at a check that skips reports SURVIVED.
 reader-follows-their-page check has a landing slot that can reach the top of the viewport.
 The last page of a short document cannot, which this file has paid for once.
 
+#### Dragging a thumbnail to move a page --- done 2026-08-17
+
+The gesture the two palette commands were built to call, and the last of Phase 2's page
+operations that a reader reaches with a pointer rather than a menu.
+
+**Two pure functions carry the whole decision**, in the file's existing idiom
+(`stripWindow`, `nextWanted`). `insertionGap` turns a pointer position into one of the
+`pageCount + 1` places a page can be dropped --- a gap rather than a row, because a row
+index cannot say *after the last one*. `landingSlot` turns that gap into the destination
+`Edits.move` takes, and is off by one in exactly half the cases: the gap is read against
+the order the page is still in, and the answer indexes the order it will be in once the
+page has left. That falls out as the property that a drag going nowhere is a no-op ---
+both gaps either side of the page itself come back as the page's own slot.
+
+**A press is not a drag until it has travelled**, and the press still navigates
+immediately. That ordering is deliberate: the reader is looking at the page they are about
+to move, a plain click stays exactly as responsive as it was, and a drag that also
+navigates is coherent because the viewer follows a page by identity and ends up on it
+wherever it lands.
+
+**The edge scroll is a frame loop rather than a step per event.** The case that needs it is
+a pointer held still against the bottom of the panel --- a strip is three or four rows tall,
+so without it a drag could only reach what is already on screen, which is a smaller move
+than the palette commands make. Per frame rather than per event also means a 120 Hz
+trackpad and a 60 Hz mouse scroll at one speed.
+
+**The strip does not scroll while a pointer is down on a row.** Pressing a row navigates, and
+the strip follows the page being read, so without this the content slides out from under a
+drag at the instant it begins. The guard starts at the press rather than at the drag, because
+the navigation happens on `pointerdown` --- before the pointer has travelled far enough for the
+press to be a drag.
+
+**A drag is abandoned, never completed, by `setPages`.** That is the path a drop's *own*
+edit returns through, so finishing the drag there would apply the reader's move twice; it
+is also what a deletion from anywhere else calls, after which the slots the drag was aimed
+at mean something different. Escape abandons it too, because once the pointer is captured
+the release *is* the drop and there would otherwise be no way out.
+
+**What the window check covers, and what it deliberately does not.** The arithmetic is unit
+tested, the gesture's state machine has nine mutations against a fake DOM, and the edit a
+drop runs is covered by `moveCommandChecks` and `edits.test.ts`. None of those can say
+whether WKWebView captures the pointer, keeps delivering moves after it has left the row,
+and lays out geometry the gap arithmetic can read --- so that is all the window is asked,
+with a handler that records rather than edits. Two names, and the control is the one that
+found something: its first version could not fail, for two unrelated reasons. Both are in
+`docs/TRAPS.md`.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
