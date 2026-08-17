@@ -7,11 +7,16 @@
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
-  import { handleWindowKey, registerAppCommands, type AppActions } from "./lib/appcommands";
+  import {
+    handleWindowKey,
+    registerAppCommands,
+    relabelCommands,
+    type AppActions,
+  } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
   import { Edits, type EditState } from "./lib/edits";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
-  import { label } from "./lib/keys";
+  import { label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
@@ -767,6 +772,22 @@
       // takes an argument opens the palette rather than running anything, so
       // installing the menu first would put a live item in the bar with nowhere
       // for its value to be typed.
+      // Before the menu, and before anything reads a shortcut label. The
+      // platform is asked what this keyboard prints on the keys a binding can
+      // name by position --- `keylayout.rs` has why it has to be asked at all ---
+      // and the labels are re-rendered from the answer. A failure here is quiet:
+      // the labels stay as the characters their bindings declare, which is what
+      // the palette showed before any of this existed.
+      try {
+        setPrintedKeys(
+          await invoke<Record<string, string>>("keyboard_positions"),
+        );
+        relabelCommands(commands);
+      } catch {
+        // Deliberately silent. Nothing is broken -- a shortcut still works and
+        // is still advertised, under the spelling a US keyboard would use.
+      }
+
       await installMenu();
 
       // The launch check, and its position here is the whole of what keeps every

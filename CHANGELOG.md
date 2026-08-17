@@ -54,9 +54,9 @@ have the binary.)
   are in the Go menu, which is now their route; choosing a different chord for
   them is a decision rather than a fix.
 
-- The palette still writes these as ⌘\ and ⌘[ while the menu shows the key your
-  keyboard actually prints. Making the two agree needs something only the
-  operating system can answer.
+- **The palette names the key you can see**, not the one a US keyboard would
+  have. It asks macOS what your keyboard prints and labels the shortcut with
+  that, so the palette and the menu say the same thing — ⌘# here.
 
 - Windows is unchanged. A menu bar there sits inside the window, and the
   palette stays that platform's route.

@@ -84,6 +84,9 @@ FILTERS = [
     # answer there --- the code under it does not exist on that platform --- and
     # it is worth knowing before the refusal reads as a broken harness.
     "menu::",
+    # Added 2026-08-17 with the keyboard-layout lookup, macOS-only for the
+    # same reason `menu::` is: Carbon does not exist on Windows.
+    "keylayout::",
 ]
 
 
@@ -99,6 +102,16 @@ class Mutation:
 
 
 MUTATIONS = [
+    Mutation(
+        # Ask the layout for an action it does not define. A status other than
+        # zero is the only thing standing between a garbage buffer and a label,
+        # and the buffer is uninitialised on that path.
+        "keylayout: ask the layout for an action it does not define",
+        "src/keylayout.rs",
+        "const ACTION_DISPLAY: u16 = 3;",
+        "const ACTION_DISPLAY: u16 = 300;",
+        "every_position_answers_with_a_single_visible_glyph",
+    ),
     Mutation(
         # Rename the tag the frontend writes. Nothing in either language reads
         # the other's spelling, so this fails at runtime as a menu bar that does

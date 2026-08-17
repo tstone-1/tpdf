@@ -14,6 +14,8 @@ pub mod docmodel;
 pub mod edits;
 pub mod encoding;
 pub mod invert;
+#[cfg(target_os = "macos")]
+pub mod keylayout;
 pub mod launch;
 pub mod links;
 #[cfg(target_os = "macos")]
@@ -580,6 +582,44 @@ async fn extract_pages(
     })
     .await
     .map_err(|e| format!("the extract did not run: {e}"))?
+}
+
+/// What this keyboard prints on the keys a shortcut can name by position.
+///
+/// Keyed by `KeyboardEvent.code`. Empty on every platform but macOS, and empty
+/// there too when the active input source carries no Unicode layout --- the
+/// caller falls back to the character its binding declares, which is the label
+/// the palette showed before this existed.
+///
+/// **On the main thread**, because HIToolbox aborts the process when the Text
+/// Input Sources API is entered from two threads at once and says outright that
+/// a UI application must call it from the main one. Same hop as `menu.rs`, for a
+/// stricter reason: there it is AppKit's requirement, here it is a deliberate
+/// `abort()` with a message naming the rule.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn keyboard_positions(
+    app: tauri::AppHandle,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let (tx, mut rx) = tauri::async_runtime::channel(1);
+    app.run_on_main_thread(move || {
+        let _ = tx.blocking_send(keylayout::positions());
+    })
+    .map_err(|e| format!("could not reach the main thread to read the keyboard: {e}"))?;
+    rx.recv()
+        .await
+        .ok_or_else(|| "the keyboard layout reader did not answer".to_string())
+}
+
+/// The non-macOS answer: no layout lookup, so every label stays its character.
+///
+/// An empty map rather than a refusal, for the same reason [`set_menu`] answers
+/// `None`: there is nothing wrong on Windows, and the palette's own rendering is
+/// what that platform has always shown.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn keyboard_positions() -> Result<std::collections::HashMap<String, String>, String> {
+    Ok(std::collections::HashMap::new())
 }
 
 /// Installs the native menu bar from the layout the frontend holds.
@@ -1594,6 +1634,7 @@ pub fn run() {
             edit_state,
             save_copy,
             extract_pages,
+            keyboard_positions,
             set_menu,
             set_menu_enabled,
             close_document,

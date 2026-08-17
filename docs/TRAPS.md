@@ -8411,3 +8411,72 @@ cheap enough that there is no reason to find out the other way.
 The general shape, for the next platform affordance that looks passive: **anything the OS
 registers on your behalf is authority you have taken, not information you have displayed.**
 Ask what it now intercepts before asking whether it reads correctly.
+
+### A framework can abort your whole test binary, and 470 passing tests report nothing
+
+Reading what the keyboard prints on a key means calling `TISCopyCurrentKeyboardLayoutInputSource`.
+Three tests were written over it, each passed when run alone, and the three together produced:
+
+```
+process didn't exit successfully: ... (signal: 6, SIGABRT: process abort signal)
+```
+
+No test names, no failure, no assertion — and 470 unrelated tests in the same binary died with
+it having reported nothing at all. The crash report says exactly what happened, which is the
+only reason this took minutes rather than an afternoon:
+
+> ABORT -> Text Input Sources or Text Services Manager API is being called in two threads
+> concurrently. If you are a UI application, you must call TIS/TSM API on the main thread. If
+> you are a non-UI application ... you must not call TIS/TSM API from multiple threads
+> concurrently.
+
+**This is a deliberate refusal, not a race that happened to corrupt something.** HIToolbox
+checks, and kills the process. So the usual instinct — narrow it down, add logging, look for
+the data race — is wasted: there is nothing subtle to find, and the message is in
+`~/Library/Logs/DiagnosticReports/`, not on stderr, which is why the terminal shows only the
+signal.
+
+Two things follow, and the second is the one that generalises.
+
+**`cargo test` is a multi-threaded caller by default.** One test over such an API is fine
+forever; the second one is what kills it. That is a hazard shaped like a landmine — the cost
+arrives when someone adds coverage, which is exactly when they will read the failure as being
+about their new test. Both halves of the rule are enforced here: a module-level `Mutex`
+serialises every call (the non-UI half), and the Tauri command hops to the main thread (the UI
+half). Neither alone is enough, and they are enforced in different places, so a comment saying
+so lives at both.
+
+**A SIGABRT is not a red test.** Every check this repository has for "prove the test can fail"
+assumes failure looks like a failed assertion. It does not here: the harness gets a dead
+process and no results, which is indistinguishable from a build that never ran — and is the
+same shape as *a mutation caught by an access violation produces no test results at all*, met
+from the other direction. When a module wraps a framework that can abort, the first question
+is not "does this test fail when the code is wrong" but "does this test *report* when the code
+is wrong".
+
+Worth checking before wrapping any HIToolbox, Carbon or Text Services API, none of which is
+thread-safe and several of which say so only by aborting.
+
+### A mutation that survived, a comment that claimed a behaviour, and no test to add
+
+`kUCKeyTranslateNoDeadKeysBit` was set with a confident reason beside it: `Equal` is the
+acute-accent dead key on a German layout, so translating with dead keys enabled would swallow
+the call and return nothing for that position. A mutation flipping the bit to 0 **survived**,
+and the instinct — strengthen the test until it dies — would have been wrong twice over.
+
+Measured instead, by flipping it and printing the map: **byte-identical, all eleven positions
+present.** The reasoning was true of `kUCKeyActionDown` and false of `kUCKeyActionDisplay`,
+which is the action this asks for. Obvious in hindsight — a key *cap* has no dead-key state,
+which is the whole difference between what a key shows and what it types.
+
+So the constant is inert for this call. It stays, because it is the documented-correct argument
+for a lookup that wants a legend rather than an insertion and costs nothing, and the mutation is
+deleted rather than the test strengthened. The general rule this repository already states —
+*a mutation that survives may be a variant, not a gap* — has a sharper form here: **when the
+survivor is a constant, measure what the constant does before concluding anything about the
+tests.** A test written to kill this one would have been a test asserting a behaviour that does
+not exist.
+
+The comment is the durable part. It now records the wrong reason, the measurement, and the fact
+that there is no test to add — because the next person to run mutation coverage will find the
+same survivor and, without it, will re-derive the same wrong explanation.
