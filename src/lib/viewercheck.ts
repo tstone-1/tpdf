@@ -52,7 +52,7 @@ import {
 import { TextCache, type PageText } from "./text";
 import { Sidebar } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
-import { OVERSCAN, rowHeightFor } from "./thumbnails";
+import { OVERSCAN, rowHeightFor, type Thumbnails } from "./thumbnails";
 import { SCROLLBAR_WIDTH, Viewer, type ViewerStatus } from "./viewer";
 
 /**
@@ -304,6 +304,8 @@ async function run(path: string): Promise<void> {
   // one row and every assertion about windowing would pass on nothing.
   // Every message the viewer reported through `onError`, in order.
   const problems: string[] = [];
+  /** Every reorder the page strip asked for, in order. */
+  const drags: [number, number][] = [];
   const panel = document.createElement("div");
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
@@ -317,6 +319,15 @@ async function run(path: string): Promise<void> {
       page,
       tier1: { placeholderFor: (at) => viewer.placeholderFor(at) },
       onNavigate: (at) => viewer.goToPage(at),
+      // Recorded rather than applied, and that is the deliberate half of this
+      // wiring. `App.svelte` runs an edit here; running one from the harness
+      // would be a *second* implementation of that handler, and the two seams
+      // it would exercise -- `Edits.move`'s arithmetic and the `page_move`
+      // round trip -- already have checks of their own that do not need a
+      // pointer. What no unit test can reach is whether the gesture works in a
+      // real webview at all, so that is what this leaves for the window: real
+      // pointer capture, real row geometry, real event delivery.
+      onReorder: (from, to) => drags.push([from, to]),
     },
   });
 
@@ -503,7 +514,7 @@ async function run(path: string): Promise<void> {
   // nobody else needs.
   await commentChecks(root, viewer, sidebar, doc);
   await linkChecks(root, viewer, doc, problems);
-  await thumbnailChecks(root, viewer, sidebar, doc, page);
+  await thumbnailChecks(root, viewer, sidebar, doc, page, drags);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await pageRotationChecks(root, viewer, doc, seen);
   await pageDeletionChecks(root, viewer, doc, seen);
@@ -4472,6 +4483,7 @@ async function thumbnailChecks(
   sidebar: Sidebar,
   doc: DocumentInfo,
   page: PageSize,
+  drags: [number, number][],
 ): Promise<void> {
   const strip = sidebar.thumbnails;
   if (!strip) {
@@ -4560,8 +4572,158 @@ async function thumbnailChecks(
   );
 
   await navigateFromStrip(viewer, strip, doc);
+  await dragFromStrip(strip, doc, drags);
   await yieldChecks(root, viewer, sidebar, doc.page_count, strip);
 }
+
+/**
+ * Dragging a thumbnail, in a real webview.
+ *
+ * Deliberately the narrowest thing worth putting here. The slot arithmetic is
+ * two pure functions with unit tests; the gesture's state machine has nine
+ * mutations behind it against a fake DOM; the edit a drop runs is covered by
+ * `moveCommandChecks` and by `edits.test.ts`. None of those can answer the one
+ * question a window can: does a press on a row in WKWebView capture the
+ * pointer, keep receiving moves after the pointer has left the row, and land on
+ * a gap computed from geometry the browser actually laid out?
+ *
+ * So the strip's handler here only *records*, and the document is never
+ * touched --- which also means this phase leaves nothing for the later ones to
+ * trip over.
+ *
+ * Two names, and the second is the control. "A drag moves the page" is
+ * satisfied by a strip that reorders on every click, and that is the defect a
+ * reader meets first: it would rearrange their document every time they looked
+ * at a page.
+ */
+async function dragFromStrip(
+  strip: Thumbnails,
+  doc: DocumentInfo,
+  drags: [number, number][],
+): Promise<void> {
+  const moved = "dragging a thumbnail asks for the slot it was dropped on";
+  const still = "a press that does not travel asks for nothing";
+
+  // A row past the first two, so that dragging it to the top is a move rather
+  // than a no-op, and so that the landing is unambiguous.
+  if (doc.page_count < 3 || strip.mounted.find((slot: number) => slot >= 2) === undefined) {
+    const why =
+      doc.page_count < 3
+        ? `the document has ${doc.page_count} page(s)`
+        : `rows ${strip.mounted.join(",")} are built; none past slot 1`;
+    skip(moved, why);
+    skip(still, why);
+    return;
+  }
+
+  /**
+   * The row to drag, the row to drop it above, and where to press each.
+   *
+   * **Measured immediately before each gesture, never carried across one.**
+   * Pressing a row navigates, and navigating scrolls the strip to the page it
+   * moved to --- 400 px on `outline-simple`, two whole rows. A first version
+   * read these once at the top and reused them after the control press, so the
+   * real drag pressed 500 px below where its row had moved to and released
+   * against a row element the windowing had already replaced. It reported a
+   * drop on a gap two off, which reads as broken arithmetic in the strip; the
+   * arithmetic was right and the check was aiming at a layout that no longer
+   * existed. Re-reading costs nothing and the staleness is unbounded.
+   */
+  const aim = (): {
+    row: HTMLElement;
+    top: HTMLElement;
+    x: number;
+    from: number;
+    to: number;
+    landing: number;
+  } | null => {
+    const source = strip.mounted.find((slot: number) => slot >= 2);
+    const landing = strip.mounted[0] ?? 0;
+    const row = source === undefined ? null : strip.elementFor(source);
+    const top = strip.elementFor(landing);
+    if (!row || !top || source === undefined) return null;
+    const box = row.getBoundingClientRect();
+    return {
+      row,
+      top,
+      x: box.left + box.width / 2,
+      from: box.top + box.height / 2,
+      to: top.getBoundingClientRect().top + 1,
+      landing,
+    };
+  };
+
+  const first = aim();
+  if (!first) {
+    const why = `rows ${strip.mounted.join(",")} are built; none usable`;
+    skip(moved, why);
+    skip(still, why);
+    return;
+  }
+
+  // A click: pressed, moved by less than the threshold, released. Dispatched on
+  // the row, because that is where the strip listens for the press; the moves
+  // and the release bubble to the panel, which is where it listens for those.
+  drags.length = 0;
+  pointer(first.row, "pointerdown", first.x, first.from);
+  pointer(first.row, "pointermove", first.x, first.from + 2);
+  // **Before the release, and the first version of this check was after it.**
+  // Both of that version's clauses were incapable of failing, which the
+  // mutation that removes the threshold proved by surviving. `dragging` is
+  // false once the pointer is up whatever happened in between, so reading it
+  // there asks whether a drag is *still* running rather than whether one ever
+  // started. And the other clause can never fire either: the press is at the
+  // row's centre, so the gap either side of it is the page's own slot, and
+  // `landingSlot` calls both of those a no-op by design --- so a press that
+  // wrongly became a drag asks for no reorder anyway. The one position that
+  // reads as the natural place to press is the one position where the defect
+  // has no effect.
+  const started = strip.dragging;
+  pointer(first.row, "pointerup", first.x, first.from + 2);
+  await frame();
+  check(
+    still,
+    !started && drags.length === 0,
+    `dragging=${started} after a 2 px press, ${drags.length} reorder(s) asked for`,
+  );
+
+  // The strip has very likely moved by now --- that press navigated. Everything
+  // below is measured against where things are, not where they were.
+  const second = aim();
+  if (!second) {
+    skip(moved, `rows ${strip.mounted.join(",")} are built; none usable`);
+    return;
+  }
+
+  const source = strip.mounted.find((slot: number) => slot >= 2) ?? 2;
+  drags.length = 0;
+  pointer(second.row, "pointerdown", second.x, second.from);
+  for (let step = 1; step <= 4; step++) {
+    pointer(
+      second.row,
+      "pointermove",
+      second.x,
+      second.from + ((second.to - second.from) * step) / 4,
+    );
+  }
+  const recognised = strip.dragging;
+  pointer(second.row, "pointerup", second.x, second.to);
+  await frame();
+  check(
+    moved,
+    recognised &&
+      drags.length === 1 &&
+      drags[0]?.[0] === source &&
+      drags[0]?.[1] === second.landing,
+    `dragged slot ${source} to slot ${second.landing}: recognised=${recognised}, ` +
+      `asked ${drags.map((d) => `${d[0]}->${d[1]}`).join(",") || "nothing"}; ` +
+      `released over gap ${strip.releasedOver}, rows ${strip.rowPitch.toFixed(0)}px ` +
+      `at y ${second.from.toFixed(0)} -> ${second.to.toFixed(0)}, ` +
+      `panel ${strip.panelAt.scrollTop.toFixed(0)}@${strip.panelAt.top.toFixed(0)}, ` +
+      `mounted ${strip.mounted.join(",")}`,
+  );
+}
+
 
 /**
  * Rotating the view.

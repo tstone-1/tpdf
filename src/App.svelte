@@ -941,6 +941,13 @@
             viewer?.goToPage(at);
             viewer?.focus();
           },
+          // The same call `movePage` makes, and deliberately so: a drag and the
+          // two palette commands are one operation reached two ways, and the
+          // slot arithmetic that turns a drop into a destination is the strip's
+          // because the strip is what knows where the pointer was.
+          onReorder: (from, to) => {
+            void applyEdit((e) => e.move(from, to));
+          },
         },
       });
       sidebar.setVisible(sidebarShown);

@@ -86,6 +86,29 @@ export const OVERSCAN = 3;
  */
 const MAX_KEPT = 240;
 
+/**
+ * How far a pointer must travel before a press becomes a drag, in CSS pixels.
+ *
+ * A press on a row already navigates to that page, and it must keep doing so
+ * --- so the threshold is what separates "the reader clicked a thumbnail" from
+ * "the reader is rearranging the document". Too small and an unsteady click
+ * reorders the document; too large and a short drag does nothing, which reads
+ * as the strip being broken rather than as the reader having missed.
+ */
+const DRAG_THRESHOLD = 6;
+
+/**
+ * How near the panel's edge the pointer must be for the strip to scroll under
+ * it, in CSS pixels, and how far it scrolls per frame.
+ *
+ * The strip is virtual and a row is roughly 200 px tall, so a sidebar shows
+ * three or four of them. Without this, a drag could only reach the rows already
+ * on screen --- which is a smaller move than the two palette commands already
+ * make, and would not be worth having.
+ */
+const EDGE_ZONE = 48;
+const EDGE_SPEED = 14;
+
 /** What the strip reads out of the viewer's tier-1 cache. */
 export interface Tier1Access {
   /** A page's placeholder bitmap, or `null` if it has not been rendered. */
@@ -117,6 +140,59 @@ export interface ThumbnailOptions {
   tier1: Tier1Access;
   /** Called when a row is activated, with a zero-based page index. */
   onNavigate: (page: number) => void;
+  /**
+   * Called when a row is dragged to a new place, with two slot indices.
+   *
+   * `to` is where the page ends up in the order the drop produces, which is
+   * what `Edits.move` takes --- not the gap the pointer was over. The two
+   * differ for every drag towards the back of the document, and
+   * {@link landingSlot} is the one place that conversion is done.
+   *
+   * Optional, because the strip is also driven by harnesses and by a document
+   * nobody can edit, and a strip with no handler simply does not drag.
+   */
+  onReorder?: (from: number, to: number) => void;
+}
+
+/**
+ * The gap between rows a pointer at `contentY` is nearest to.
+ *
+ * A gap rather than a row, and they are not the same thing: there are
+ * `pageCount + 1` places a page can be dropped into and `pageCount` rows, so a
+ * function answering "which row is under the pointer" would have no way to say
+ * *after the last one*. Gap `g` means "before the page currently in slot `g`".
+ *
+ * `contentY` is measured from the top of the whole strip rather than from the
+ * top of the panel, so it is unaffected by scrolling --- which is what lets a
+ * drag that scrolls the strip under it stay pointed at the same gap.
+ */
+export function insertionGap(
+  contentY: number,
+  rowHeight: number,
+  pageCount: number,
+): number {
+  if (rowHeight <= 0) return 0;
+  const gap = Math.round(contentY / rowHeight);
+  return Math.max(0, Math.min(gap, pageCount));
+}
+
+/**
+ * Where a page dragged from slot `from` ends up if it is dropped into `gap`.
+ *
+ * **The one piece of arithmetic in this file, and it is off by one in exactly
+ * half the cases.** The gap is read against the order the page is *still* in;
+ * the answer is an index into the order it will be in once the page has left.
+ * Dropping into a gap above the page changes nothing about the slots above it,
+ * so the two agree. Dropping into a gap below it removes one slot from
+ * everything in between, so the landing is one lower than the gap.
+ *
+ * The two gaps either side of the page itself both mean "leave it alone", and
+ * both come back as `from` --- gap `from` because it is already there, and gap
+ * `from + 1` because it becomes `from` here. That is the property that makes a
+ * drag that goes nowhere a no-op rather than a refusal from the model.
+ */
+export function landingSlot(from: number, gap: number): number {
+  return gap > from ? gap - 1 : gap;
 }
 
 /** The rows a strip shows at a given scroll offset, plus the overscan. */
@@ -298,6 +374,43 @@ export class Thumbnails {
   /** Thumbnails taken from the viewer's tier 1 rather than rendered again. */
   private borrowed = 0;
 
+  /**
+   * The press that may become a drag, and the drag it became.
+   *
+   * One object for both, with `dragging` saying which, rather than two fields
+   * that can disagree. `gap` is kept because the drop reads it: the pointer can
+   * be released outside the panel entirely, and a drop that recomputed the gap
+   * from wherever the pointer finally was would move the page somewhere the
+   * indicator never showed.
+   */
+  private press: {
+    from: number;
+    pointerId: number;
+    startY: number;
+    dragging: boolean;
+    gap: number;
+    /** Where the pointer is now, in client coordinates, for the edge scroll. */
+    clientY: number;
+  } | null = null;
+
+  /** The line drawn where the page would land, mounted only while dragging. */
+  private indicator: HTMLElement | null = null;
+
+  /** The edge-scroll frame, so a drop cancels one already queued. */
+  private edgeFrame = 0;
+
+  /** Drops completed, for the check harness. */
+  private dropped = 0;
+
+  /**
+   * The gap the last drag was released over, for the check harness.
+   *
+   * Kept past the end of the drag because a drop that decides to do nothing is
+   * exactly the case worth diagnosing, and by then the press is gone. `-1`
+   * means no drag has ended yet.
+   */
+  private lastGap = -1;
+
   constructor(root: HTMLElement, opts: ThumbnailOptions) {
     this.opts = opts;
     this.rowHeight = rowHeightFor(opts.page);
@@ -328,6 +441,14 @@ export class Thumbnails {
     this.host.appendChild(this.list);
     root.appendChild(this.host);
 
+    // On the host rather than on each row, because a drag routinely leaves the
+    // row it started on --- and because a row can be unmounted mid-drag by the
+    // windowing, which would take its listeners with it. `setPointerCapture`
+    // on the host makes that explicit rather than incidental.
+    this.host.addEventListener("pointermove", this.onPointerMove);
+    this.host.addEventListener("pointerup", this.onPointerUp);
+    this.host.addEventListener("pointercancel", this.onPointerCancel);
+
     // The window depends on the panel's height, which is zero until the layout
     // has reached it and changes again whenever the window does.
     this.observer = new ResizeObserver(() => this.layout());
@@ -339,6 +460,10 @@ export class Thumbnails {
     // First, for the reason `scroller.ts` gives: a render landing mid-teardown
     // must find a strip that is dead, not one that is partly dismantled.
     this.life.end();
+    // Abandoned rather than dropped: a strip being torn down must not run one
+    // last edit on its way out, and the frame the edge scroll has queued would
+    // otherwise reach a host that has been removed from the document.
+    this.endDrag(false);
     this.observer.disconnect();
     // Before the withdrawal, and load-bearing: `pump` refuses to issue anything
     // while this is false, and a strip torn down with it still true keeps
@@ -373,6 +498,41 @@ export class Thumbnails {
   /** Thumbnails that came from the viewer's tier-1 cache for free. */
   get borrowCount(): number {
     return this.borrowed;
+  }
+
+  /** Drags that ended in a move. For the check harness. */
+  get dropCount(): number {
+    return this.dropped;
+  }
+
+  /** The gap the last drag was released over, or -1. For the check harness. */
+  get releasedOver(): number {
+    return this.lastGap;
+  }
+
+  /** The height of one row, in CSS pixels. For the check harness. */
+  get rowPitch(): number {
+    return this.rowHeight;
+  }
+
+  /** The panel's scroll offset and its position on screen. For the harness. */
+  get panelAt(): { scrollTop: number; top: number } {
+    return {
+      scrollTop: this.host.scrollTop,
+      top: this.host.getBoundingClientRect().top,
+    };
+  }
+
+  /**
+   * Whether a row is being dragged right now. For the check harness.
+   *
+   * A press that has not passed the threshold is deliberately *not* a drag
+   * here: the distinction is the whole of what the threshold buys, and an
+   * observable that blurred it could not tell a click from a rearrangement any
+   * better than the code it is watching.
+   */
+  get dragging(): boolean {
+    return this.press?.dragging ?? false;
   }
 
   /** Rows currently mounted, in page order. For the check harness. */
@@ -499,6 +659,11 @@ export class Thumbnails {
   setPages(pageCount: number): void {
     this.opts.pageCount = pageCount;
     this.generation++;
+    // Every row is about to be rebuilt, so a drag still in flight is aimed at
+    // slots that are about to mean something else. Abandoned rather than
+    // dropped, because the commonest caller *is* the edit a drop just made:
+    // completing it here would apply the reader's move a second time.
+    this.endDrag(false);
     this.withdraw("discard");
 
     for (const bitmap of this.bitmaps.values()) bitmap.close();
@@ -536,6 +701,17 @@ export class Thumbnails {
 
   /** Scrolls a page's row into view, without disturbing the keyboard. */
   private scrollTo(page: number): void {
+    // **Never while a pointer is down on a row.** Pressing a row navigates, and
+    // navigating comes back here as "show the page being read" --- so without
+    // this the strip scrolls to the pressed row at the instant a drag begins,
+    // sliding the content out from under a pointer that has not moved. The
+    // reader then drops on a gap they never pointed at, and the whole document
+    // is rearranged wrongly by a gesture that looked right.
+    //
+    // Found by the corpus sweep, not by reasoning: four of the fourteen came
+    // back with a drop that asked for nothing, and the four that passed did so
+    // because their strips were short enough for the scroll to clamp.
+    if (this.press) return;
     const row = this.rows.get(page);
     if (row) row.scrollIntoView({ block: "nearest" });
     else this.host.scrollTop = page * this.rowHeight - this.host.clientHeight / 2;
@@ -753,6 +929,29 @@ export class Thumbnails {
     row.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       this.focus(page);
+      // Still on the press, and deliberately not deferred to the release now
+      // that a press can become a drag. Navigating first means the reader is
+      // looking at the page they are about to move, and it keeps a plain click
+      // exactly as responsive as it was --- a drag that also navigates is
+      // coherent, because the viewer follows a page by identity and ends up on
+      // it wherever it lands.
+      //
+      // **Recorded before the navigation, not after**, which is load-bearing
+      // rather than tidy: navigating makes the strip scroll to the page it
+      // moved to, and {@link scrollTo} refuses to do that while a press is
+      // live. Set afterwards, the scroll happens first and the content the
+      // reader is about to aim at has already slid under the pointer.
+      if (this.opts.onReorder) {
+        this.host.setPointerCapture(event.pointerId);
+        this.press = {
+          from: page,
+          pointerId: event.pointerId,
+          startY: event.clientY,
+          dragging: false,
+          gap: page,
+          clientY: event.clientY,
+        };
+      }
       this.opts.onNavigate(page);
     });
 
@@ -772,6 +971,127 @@ export class Thumbnails {
     // than a queue in arrival order.
     this.bitmaps.delete(page);
     this.bitmaps.set(page, bitmap);
+  }
+
+  /**
+   * Turns a pointer position into the gap it is over, and shows it.
+   *
+   * The conversion adds `scrollTop` back, so the answer is in the strip's own
+   * coordinates rather than the panel's --- which is what makes it survive the
+   * edge scroll moving the content under a stationary pointer.
+   */
+  private aimAt(clientY: number): void {
+    if (!this.press) return;
+    const top = this.host.getBoundingClientRect().top;
+    const contentY = clientY - top + this.host.scrollTop;
+    this.press.gap = insertionGap(contentY, this.rowHeight, this.opts.pageCount);
+    this.showIndicator(this.press.gap);
+  }
+
+  /** Draws the line where the page would land, creating it on first use. */
+  private showIndicator(gap: number): void {
+    if (!this.indicator) {
+      const line = document.createElement("div");
+      line.setAttribute("aria-hidden", "true");
+      line.style.cssText =
+        "position:absolute;left:6px;right:6px;height:2px;border-radius:1px;" +
+        "background:currentColor;pointer-events:none;";
+      this.spacer.appendChild(line);
+      this.indicator = line;
+    }
+    this.indicator.style.top = `${Math.max(0, gap * this.rowHeight - 1)}px`;
+  }
+
+  /**
+   * Ends the drag, whether it dropped or was abandoned.
+   *
+   * Takes the whole press away before calling out, because `onReorder` runs an
+   * edit that comes back through `setPages` and rebuilds every row --- and a
+   * strip that still believed a drag was live would then be pointing at rows
+   * that no longer exist.
+   */
+  private endDrag(drop: boolean): void {
+    const press = this.press;
+    this.press = null;
+    if (this.edgeFrame) {
+      cancelAnimationFrame(this.edgeFrame);
+      this.edgeFrame = 0;
+    }
+    this.indicator?.remove();
+    this.indicator = null;
+    if (press) {
+      const row = this.rows.get(press.from);
+      if (row) row.style.opacity = "";
+      if (this.host.hasPointerCapture(press.pointerId)) {
+        this.host.releasePointerCapture(press.pointerId);
+      }
+    }
+    if (!drop || !press?.dragging) return;
+    this.lastGap = press.gap;
+    const to = landingSlot(press.from, press.gap);
+    if (to === press.from) return;
+    this.dropped++;
+    this.opts.onReorder?.(press.from, to);
+  }
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    const press = this.press;
+    if (!press || event.pointerId !== press.pointerId) return;
+    press.clientY = event.clientY;
+    if (!press.dragging) {
+      if (Math.abs(event.clientY - press.startY) < DRAG_THRESHOLD) return;
+      press.dragging = true;
+      const row = this.rows.get(press.from);
+      // Dimmed rather than moved. A row that followed the pointer would have to
+      // be taken out of the absolutely-positioned layout that the windowing
+      // owns, and the indicator is what actually says where the page is going.
+      if (row) row.style.opacity = "0.4";
+    }
+    this.aimAt(event.clientY);
+    this.edgeScroll();
+  };
+
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    if (this.press && event.pointerId === this.press.pointerId) this.endDrag(true);
+  };
+
+  private readonly onPointerCancel = (event: PointerEvent): void => {
+    if (this.press && event.pointerId === this.press.pointerId) this.endDrag(false);
+  };
+
+  /**
+   * Scrolls the strip while the pointer rests near an edge.
+   *
+   * A frame loop rather than a step per `pointermove`, because the case that
+   * needs it most is a pointer held still at the bottom of the panel: with no
+   * loop, a reader who has already reached the edge has to keep jiggling the
+   * pointer for the strip to keep moving.
+   */
+  private edgeScroll(): void {
+    if (this.edgeFrame || !this.press?.dragging) return;
+    const step = (): void => {
+      this.edgeFrame = 0;
+      const press = this.press;
+      if (!press?.dragging) return;
+      const box = this.host.getBoundingClientRect();
+      const above = press.clientY - box.top;
+      const below = box.top + box.height - press.clientY;
+      const by =
+        above < EDGE_ZONE ? -EDGE_SPEED : below < EDGE_ZONE ? EDGE_SPEED : 0;
+      if (by === 0) return;
+      const was = this.host.scrollTop;
+      this.host.scrollTop = Math.max(
+        0,
+        Math.min(was + by, this.rowHeight * this.opts.pageCount - box.height),
+      );
+      // The gap is recomputed even when the scroll did not move, because the
+      // pointer may have travelled since the last frame; and the loop stops
+      // when it did not move, because a strip already at its end would
+      // otherwise reschedule for the whole life of the drag.
+      this.aimAt(press.clientY);
+      if (this.host.scrollTop !== was) this.edgeFrame = requestAnimationFrame(step);
+    };
+    this.edgeFrame = requestAnimationFrame(step);
   }
 
   private markCurrent(): void {
@@ -816,6 +1136,15 @@ export class Thumbnails {
       case "ArrowUp":
       case "ArrowLeft":
         this.move(-1);
+        break;
+      case "Escape":
+        // Abandons a drag rather than dropping it. There is no other way out
+        // once the pointer has been captured: releasing it *is* the drop, so
+        // without this a reader who started a drag by accident has to complete
+        // one. Falls through to the default when nothing is being dragged, so
+        // Escape keeps whatever meaning the surrounding UI gives it.
+        if (!this.press) return;
+        this.endDrag(false);
         break;
       case "Home":
         this.move(-this.opts.pageCount);

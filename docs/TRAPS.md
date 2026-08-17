@@ -8039,3 +8039,94 @@ And **the coverage existed the whole time**: the same mutation reddened a deleti
 reads absolute boxes. A mutation that reports SURVIVED while some *other* check goes red is
 naming the check that cannot fail, not a gap in the suite --- read which check went red before
 concluding anything is missing.
+
+### The natural place to press is the one place the defect has no effect
+
+`page drag: treat a press that never moved as a drag` SURVIVED, against a check written to be
+exactly its control --- *"a press that does not travel asks for nothing"*. Both of that check's
+clauses were incapable of failing, for two unrelated reasons, and each is worth having.
+
+The first is a state read after the state was cleared. `strip.dragging` was read after the
+`pointerup`, and the release is what ends the drag: it is false at that moment whether or not a
+drag ever started. The question the name asks is *did this become a drag*, and the code was
+asking *is this still a drag*, which has one answer. Read it before the release and the
+mutation fails immediately.
+
+The second is the interesting one. The press was at the row's **centre**, because that is where
+one presses a thumbnail. The gap nearest a row's centre is the gap on one side of that row, and
+`landingSlot` deliberately calls both gaps either side of a page a no-op --- otherwise releasing
+the pointer a pixel from where it was pressed would move the page. So a press that wrongly
+became a drag asks for **no reorder at all**, and the "no reorder was asked for" clause is
+satisfied by the defect it was written to catch. No press position fixes this: any movement
+small enough to be a click keeps the pointer inside one of those two gaps, which is precisely
+what makes the threshold's absence invisible in that observable.
+
+So the general shape: **when a guard exists to stop a small input having an effect, the
+small-input case is where the effect is absent by other means too.** The observable that
+discriminates is not the outcome, it is whether the machinery ran --- which is why the check now
+asserts on `dragging` at the moment the drag would exist, and keeps the outcome clause only as
+the separate statement that a drop did not fire.
+
+### A feature reached only through an optional callback is invisible to a harness that omits it
+
+The page strip does not take a pointer capture, and does not drag, unless `onReorder` is
+supplied --- deliberately, because a strip driven by a harness or showing a document nobody can
+edit should not swallow pointer events for a gesture that can never do anything.
+
+The consequence is that the window harness, which builds its own `Sidebar` mirroring
+`App.svelte`, had no way to observe the gesture *at all* until it supplied a handler. Not a
+failing check: a check that would have found `strip.dragging` false forever and reported the
+drag as broken, against code that was fine.
+
+What the harness supplies is a **recorder**, not the application's handler, and that is the part
+worth being explicit about rather than apologetic. Running the real edit there would be a second
+implementation of `App.svelte`'s one-line handler, and the two seams it would exercise --- the
+slot arithmetic and the `page_move` round trip --- already have checks that need no pointer.
+What a window can answer and nothing else can is whether WKWebView captures the pointer, keeps
+delivering moves after it has left the row, and lays out geometry the gap arithmetic can read.
+Scoping the window check to exactly that leaves it fast, leaves it stable, and leaves the
+recorder's dishonesty confined to a seam that is one line long and covered by reading it.
+
+### Pressing a row navigates, and navigating scrolls the list out from under the drag
+
+Two separate things, and the entry is worth reading for the second one because the first is
+what it looked like from the outside for two rebuilds.
+
+**The hazard.** Pressing a page thumbnail navigates to that page, and the strip follows the
+page being read --- so a press can make the strip scroll itself at the instant a drag begins,
+with the pointer stationary. The content moves and the pointer does not, and the drop lands on
+a gap the reader never pointed at. The guard has to start at the **press**, not at the drag,
+and that is the part with no natural place to put it: the navigation happens on `pointerdown`,
+before the pointer has travelled far enough for the press to be a drag, so refusing "while
+dragging" is too late by one event. The press is recorded first and the navigation second, and
+the scroll refuses while a press exists at all. Writing those two lines the other way round is
+the whole bug, and neither order looks wrong on its own.
+
+**What the corpus sweep actually found was not that.** Four of fourteen documents reported a
+drop that asked for nothing, and the guard above --- reasoned out, written, unit tested and
+mutation proved --- changed the result by exactly zero. The defect was in the check: it
+measured the row's position, the drop target's position and the drop target *element* once at
+the top of the phase, then ran a control press, and reused all three for the real drag. The
+control press navigates. On `outline-simple` the strip scrolled 400 px between them, so the
+real drag pressed 500 px below where its row had moved to and released against a row element
+the windowing had since replaced --- a detached element, whose `getBoundingClientRect()` is all
+zeros and therefore looks like a perfectly ordinary coordinate.
+
+The arithmetic reconciles to the digit once the numbers are in front of you:
+`contentY = 1 - 34 + 400 = 367`, and `round(367 / 200) = 2`, which is the gap the failure
+reported. **Getting those numbers took one enriched detail line.** The check had said only
+*"asked nothing"*, and two rebuilds went into theories that the panel's scroll offset and the
+two rectangles would each have refuted in seconds. A failing check should print its inputs, not
+only its verdict --- most of all when its inputs are geometry nothing else can see.
+
+Three things to carry:
+
+- **A coordinate measured before an action that can scroll is not a coordinate.** Re-read it at
+  the moment you act. The staleness is unbounded, and re-reading costs nothing.
+- **An element handle held across a virtualised list's re-layout is a handle to a dead node**,
+  and a dead node measures as the origin rather than as an error.
+- **A fix that is correct and a fix that is the cause are different claims.** The guard stays,
+  because the hazard is real and now has a test and a mutation. But it was written down as the
+  explanation for a failing sweep before the sweep had been asked whether it agreed, and the
+  next run said no.
+

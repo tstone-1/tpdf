@@ -48,10 +48,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Delete a page**, from the command palette. Undo puts it back where it was, with its own
   rotation. It has no keyboard shortcut on purpose: it is the one command that removes
   something you can see.
-- **Move a page**, one slot at a time, also from the palette. A moved page takes its size,
-  its crop and its rotation with it even where the file states none of them on the page
-  itself --- a PDF lets a page inherit those from the group it sits in, and that is where
-  moving one silently changes it.
+- **Move a page** by dragging its thumbnail in the page strip, or one slot at a time from
+  the palette. A moved page takes its size, its crop and its rotation with it even where the
+  file states none of them on the page itself --- a PDF lets a page inherit those from the
+  group it sits in, and that is where moving one silently changes it.
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the
   file on disk.
@@ -65,8 +65,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 ## Not built yet
 
-- The rest of the page operations: insert, extract, split, merge, crop --- and
-  rearranging by dragging thumbnails, where today a page moves one slot at a time
+- The rest of the page operations: insert, extract, split, merge, crop
 - Annotations: highlight, ink, notes, shapes, stamps --- real PDF annotation objects
 - **True redaction** with an automatic post-save verification pass
 - Forms and visual signatures

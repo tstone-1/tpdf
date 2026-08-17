@@ -115,8 +115,25 @@ export class FakeElement {
     this.focused = true;
   }
 
-  setPointerCapture(): void {}
-  releasePointerCapture(): void {}
+  /**
+   * Pointers this element has captured.
+   *
+   * Tracked rather than stubbed away, so that `hasPointerCapture` can answer
+   * truthfully: a double that always says `false` would let a release that
+   * never happens look exactly like one that did, and releasing a capture is
+   * how a strip stops swallowing every pointer event on the page.
+   */
+  readonly captured = new Set<number>();
+
+  setPointerCapture(pointerId = 0): void {
+    this.captured.add(pointerId);
+  }
+  releasePointerCapture(pointerId = 0): void {
+    this.captured.delete(pointerId);
+  }
+  hasPointerCapture(pointerId = 0): boolean {
+    return this.captured.has(pointerId);
+  }
   scrollIntoView(): void {}
 
   getBoundingClientRect(): { left: number; top: number; width: number; height: number } {
