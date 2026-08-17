@@ -2435,15 +2435,18 @@ starts at 0 and increments within the month.
     publishing it is step 11 rather than a clause here: see that step for what describing
     it in this sentence cost.
 
-    **Expect two drafts under one tag, and check before publishing.** `26.8.3-rc2` and
-    `26.8.3-rc3` each produced two, with the artifacts split so that neither was complete ---
-    one draft holding no macOS updater bundle, the other no Windows installers at all.
-    `v26.8.2` produced one complete release of 8 assets from this same workflow six days
-    earlier, and the only change to `release.yml` between them is the wording of
-    `releaseBody`. Two plausible causes were recorded and both were falsified: a single-job
-    re-run (`rc3` had none and split identically) and a race between the legs (`max-parallel:
-    1` is set, and `rc3`'s two uploads were eleven minutes apart). **The cause is open.**
-    Until it is found, step 11's asset count is the guard, and it is not optional.
+    **One `draft` job creates the release, and the build legs upload into it by id.** That
+    is new on 2026-08-17, and it replaced a failure worth knowing about: `26.8.3-rc2` and
+    `-rc3` each produced **two drafts under one tag** with the artifacts split, one holding no
+    macOS updater bundle and the other no Windows installers. `tauri-action` used to resolve
+    the release itself, which for a draft means paging `listReleases` for the tag --- its own
+    source says *"you can't get an existing draft by tag"* --- and that lookup silently came
+    back empty. `v26.8.2` logged `Found draft release ...` and was whole; neither leg of rc2 or
+    rc3 logged it. **Why the lookup failed is still open**; `releaseId` means nothing looks
+    anything up, so it no longer decides whether a release is whole.
+
+    Step 11's asset count stays anyway, and not as ceremony: it is the only check that can
+    tell a whole release from half of one, and it would have caught this before publishing.
 
 11. **Publish the draft, and check it from outside the account.** A green `Release` run
     produces four artifacts and shows them to nobody --- GitHub hides a draft from everyone
