@@ -19,6 +19,23 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### Right-click a page
+
+- **Right-clicking a page thumbnail offers what you can do to that page** —
+  rotate it, move it, delete it. Until now it offered *Reload*, which is the
+  web view's own menu and would have thrown away your view of the document.
+
+- **Right-clicking the document offers what you can do with a selection** —
+  copy it, search inside it, clear it.
+
+- The menu is built from the same command list as the palette and the menu
+  bar, so the three cannot disagree, and each entry shows its shortcut.
+  Anything that cannot run right now is left out rather than greyed, and a
+  menu with nothing in it simply does not open.
+
+- **The web view's own menu is gone everywhere else.** Its only entry reloaded
+  the application.
+
 ### A menu bar on macOS
 
 - **Every command tpdf has is now in the menu bar**, under File, Edit, Page,

@@ -152,6 +152,19 @@ export interface ThumbnailOptions {
    * nobody can edit, and a strip with no handler simply does not drag.
    */
   onReorder?: (from: number, to: number) => void;
+  /**
+   * Called when a row is right-clicked, with its slot and where the pointer was.
+   *
+   * The strip suppresses the web view's own menu whenever this is present, and
+   * only then --- a handler that is absent leaves the platform's behaviour
+   * exactly as it was, which is what the harnesses that drive this class
+   * without one need.
+   *
+   * Optional for the same reason {@link onReorder} is: the strip is also driven
+   * by a document nobody can edit, where a menu of page operations would be a
+   * list of things that cannot happen.
+   */
+  onContextMenu?: (slot: number, at: { x: number; y: number }) => void;
 }
 
 /**
@@ -433,6 +446,22 @@ export class Thumbnails {
       const page = (event.target as HTMLElement | null)?.dataset?.page;
       if (page !== undefined) this.focus(Number(page));
     });
+
+    // On the list rather than on each row, so a right-click in the gaps between
+    // rows is caught too --- and `preventDefault` regardless of whether a row
+    // was hit, because the web view's own menu is not something to fall back
+    // to: its one entry reloads the frontend and throws away the reader's view
+    // of the document.
+    if (opts.onContextMenu) {
+      const offer = opts.onContextMenu;
+      this.list.addEventListener("contextmenu", (event: MouseEvent) => {
+        event.preventDefault();
+        const page = (event.target as HTMLElement | null)?.closest?.("[data-page]");
+        const slot = (page as HTMLElement | null)?.dataset?.page;
+        if (slot === undefined) return;
+        offer(Number(slot), { x: event.clientX, y: event.clientY });
+      });
+    }
 
     this.spacer = document.createElement("div");
     this.spacer.style.cssText = `height:${this.rowHeight * opts.pageCount}px;`;

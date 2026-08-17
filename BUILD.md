@@ -569,9 +569,9 @@ table further down says which of them skip on which document:
 | fixture | ran | skipped | failed |
 |---|---|---|---|
 | `outline-simple.pdf` | 81--82 | 4--5 | 0 |
-| `outline-hostile.pdf` | 81 | 5 | 0 |
-| `rotated-90.pdf` | 75 | 11 | 0 |
-| `vector-heavy.pdf` | 52 | 34 | 0 |
+| `outline-hostile.pdf` | 197 | 37 | 0 |
+| `rotated-90.pdf` | 184 | 50 | 0 |
+| `vector-heavy.pdf` | 104 | 130 | 0 |
 
 Re-run 2026-07-30 with pre-spawning live, since that changes the app's own behaviour --- every
 open now consumes a warmed process and starts another. All four green, no `[WARN]`, 44 modules
@@ -1513,7 +1513,7 @@ rather than transcribed.
 
 **Every row below was measured on macOS on 2026-08-17**, and printed by the script rather than
 transcribed --- the table is the sweep's own output, pasted. Zero failures
-anywhere, and **all fourteen corpora report the same 232 check names** --- diffed as sets by
+anywhere, and **all fourteen corpora report the same 234 check names** --- diffed as sets by
 the sweep, not inferred from the totals agreeing.
 
 The link work took the total from 171 to 189, turning a page in the document took it to 204,
@@ -1544,8 +1544,8 @@ reddened a *deletion* check the whole time, which reads absolute boxes rather th
 so the coverage existed and the check named for it was the one that could not fail.
 
 > **The table above is one sweep of the tree as committed**, re-run after the last change to
-> any check rather than carried over from before it. That is not free --- this one was **641 s**,
-> of which `vector-multi` alone is 325 and `vector-heavy` 144, so two of the fourteen are
+> any check rather than carried over from before it. That is not free --- this one was **728 s**,
+> of which `vector-multi` alone is 349 and `vector-heavy` 205, so two of the fourteen are
 > three quarters of the run; `scripts/viewer_sweep.py` prints that breakdown at the end so the
 > question does not have to be answered by hand again --- and it is worth it here for a reason this increment
 > demonstrated: the run before it went red on four of the fourteen corpora, against ten that
@@ -1569,6 +1569,15 @@ which can say whether a typed value survives the palette's own input and arrives
 the action is handed, which is the only thing the window is asked. The argument is `1-2`
 rather than `1` on purpose: a single slot reads the same whether the parser produced one page
 or dropped one, and every window corpus has at least two pages.
+
+**The right-click menu took it to 234**, and both names are about the same gesture because the
+report that asked for them was: right-clicking a page offered the web view's own menu, whose
+one entry reloads the frontend. So one name asserts that menu is *suppressed* --- read off
+`defaultPrevented` on a real `contextmenu` event rather than inferred from a screenshot --- and
+the other that the slot under the pointer is the one reported. The menu's own behaviour is 18
+unit tests over the real class in a fake DOM; what only a window can say is whether a
+right-click on a row arrives at all. Three ways of posting a secondary click from *outside* the
+process were tried first and every one of them failed silently; `docs/TRAPS.md` has them.
 
 Putting the order back must restore the document exactly, which
 is the check a viewer that reordered its own view but not its model passes and a viewer that
@@ -1599,20 +1608,20 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 187 | 45 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 195 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 195 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 102 | 130 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 142 | 90 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 182 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 184 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 159 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 176 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 177 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 186 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 197 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 204 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 139 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 189 | 45 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 197 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 197 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 104 | 130 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 144 | 90 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 184 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 186 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 161 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 178 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 179 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 188 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 199 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 206 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 141 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
 **`tagged.pdf` runs three of these thirteen and skips ten**, which is the split worth knowing:
 the ten that drive the viewer need a middle page to delete and it has two, while the three that
