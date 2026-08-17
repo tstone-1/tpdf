@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 309 entries
+The one thing this file does *not* carry in full is the trap list --- 310 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 309 of them and the full text
-was 93% of this file --- an instruction budget spent on the 308 traps that are not
+titles. Only the titles are here, because there are 310 of them and the full text
+was 93% of this file --- an instruction budget spent on the 309 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1183,6 +1183,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A feature reached only through an optional callback is invisible to a harness that omits it (the harness supplies a recorder, and why that is the right scope rather than a shortcut)
 - Pressing a row navigates, and navigating scrolls the list out from under the drag (the guard was right, and was not what the sweep found --- the check's own coordinates were stale, and a detached element measures as the origin)
 - A break recorded as a position in a list the callee does not own (a shipped defect no fixture could reach; the SURVIVED verdict was the finding, and the control had to be renamed rather than kept)
+- A caller that validates first cannot reach the guard beneath it (the test passed, and so did the mutation that deleted the guard)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing

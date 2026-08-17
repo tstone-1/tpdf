@@ -265,6 +265,67 @@ impl Edits {
             pages: snapshot(model).pages,
         })
     }
+
+    /// A plan naming only the pages at `slots`, for extracting a subset.
+    ///
+    /// **This changes nothing.** Extract writes a second file out of the pages a
+    /// reader picked; the working document, the journal and undo are untouched,
+    /// which is why it is a plan rather than a command. That also settles what
+    /// undo does after an extract --- whatever it was going to do before one.
+    ///
+    /// The slots index the *current* order, so a reader who moved a page and
+    /// then extracted "pages 1 to 3" gets the three pages they can see. Taking
+    /// positions rather than ids is right here for the same reason
+    /// [`Command::Move`](crate::docmodel::Command::Move) takes an id and is not:
+    /// this is a selection a reader typed in the vocabulary they typed it in,
+    /// resolved in the same lock that reads the order, so there is no window in
+    /// which it can go stale.
+    ///
+    /// The baseline is carried over unchanged, because it describes the *file*
+    /// and not the selection. Handing `write_copy` a baseline of three for a
+    /// three-page extract from a ten-page document would be a lie of exactly the
+    /// shape its external-modification check exists to catch.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the selection is empty; or a slot is
+    /// past the end of the current order. An empty selection is refused here
+    /// rather than left to `write_copy` --- it refuses an empty plan too, but a
+    /// message about a plan is not a message about what the reader typed.
+    pub fn plan_subset(&self, doc: u32, slots: &[u32]) -> Result<Plan, String> {
+        let docs = self.docs.lock().expect("edits lock");
+        let model = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let all = snapshot(model).pages;
+
+        if slots.is_empty() {
+            return Err("no pages were named".into());
+        }
+        let mut pages = Vec::with_capacity(slots.len());
+        // Walked in the order given rather than sorted here, and the duplicate
+        // check is a `contains` over what has been taken. The frontend already
+        // sorts and deduplicates, and doing it again would make this agree with
+        // its caller by construction --- so instead a slot that arrives twice,
+        // or out of order, is a defect this can still report.
+        let mut taken: Vec<u32> = Vec::with_capacity(slots.len());
+        for &slot in slots {
+            let page = all
+                .get(slot as usize)
+                .ok_or_else(|| format!("this document has {} pages", all.len()))?;
+            if taken.contains(&slot) {
+                return Err(format!("page {} was named twice", slot + 1));
+            }
+            taken.push(slot);
+            pages.push(*page);
+        }
+        if taken.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err("the pages are not in document order".into());
+        }
+
+        Ok(Plan {
+            baseline: model.baseline(),
+            pages,
+        })
+    }
 }
 
 /// The working document as something that writes a file needs it.
@@ -353,6 +414,107 @@ mod tests {
         let edits = Edits::default();
         edits.open(7, 3);
         edits
+    }
+
+    #[test]
+    fn a_subset_plan_names_the_pages_asked_for_and_keeps_the_file_s_baseline() {
+        let edits = opened();
+        let plan = edits.plan_subset(7, &[0, 2]).expect("subset");
+        assert_eq!(
+            plan.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        // The baseline describes the FILE, not the selection. A plan of two
+        // pages with a baseline of two would tell `write_copy` that the source
+        // has two pages, which is the external-modification lie its check
+        // exists to catch.
+        assert_eq!(plan.baseline, 3);
+    }
+
+    #[test]
+    fn a_subset_plan_carries_the_turns_the_reader_applied() {
+        // Extract writes what the reader is looking at, so a page turned in the
+        // working document comes out turned. Nothing else in this file would
+        // notice if the subset dropped the turns: every other assertion here is
+        // about which pages, not how they sit.
+        let edits = opened();
+        let middle = edits.state(7).expect("open").pages[1].id;
+        edits.rotate(7, middle, 1).expect("rotate");
+        let plan = edits.plan_subset(7, &[1]).expect("subset");
+        assert_eq!(plan.pages.len(), 1);
+        assert_eq!(plan.pages[0].turns, 1);
+    }
+
+    #[test]
+    fn a_subset_plan_reads_the_current_order_rather_than_the_file_s() {
+        // A reader who moved a page and then extracted "the first two" means
+        // the two they can see. This is what makes slots the right vocabulary
+        // here, and it fails loudly if the subset ever indexes the baseline.
+        let edits = opened();
+        let last = edits.state(7).expect("open").pages[2].id;
+        edits.move_page(7, last, None).expect("move to the front");
+        let plan = edits.plan_subset(7, &[0]).expect("subset");
+        assert_eq!(plan.pages[0].source, 2, "the moved page is now slot 0");
+    }
+
+    #[test]
+    fn extracting_changes_nothing_about_the_document() {
+        // The property that makes this a plan rather than a command: no journal
+        // entry, nothing to undo, and not dirty.
+        let edits = opened();
+        let before = edits.state(7).expect("open");
+        edits.plan_subset(7, &[0, 1]).expect("subset");
+        let after = edits.state(7).expect("open");
+        assert_eq!(before, after);
+        assert!(!after.dirty);
+        assert!(!after.can_undo);
+    }
+
+    #[test]
+    fn an_empty_selection_is_refused_here_rather_than_by_the_writer() {
+        let edits = opened();
+        assert!(edits.plan_subset(7, &[]).is_err());
+    }
+
+    #[test]
+    fn a_slot_past_the_end_is_refused_and_the_message_says_how_many_there_are() {
+        let edits = opened();
+        let why = edits.plan_subset(7, &[3]).expect_err("out of range");
+        assert!(why.contains('3'), "names the count: {why}");
+    }
+
+    #[test]
+    fn a_slot_named_twice_is_refused_rather_than_written_twice() {
+        // The frontend deduplicates, so this can only arrive from a defect --
+        // and a page written twice produces a valid PDF that nobody asked for,
+        // which nothing downstream could report.
+        let edits = opened();
+        assert!(edits.plan_subset(7, &[0, 0]).is_err());
+    }
+
+    #[test]
+    fn slots_out_of_order_are_refused_rather_than_silently_reordering() {
+        // Extract produces a subset. Reordering is what Move is for, and one
+        // operation quietly doing both would make `5,1` mean something no
+        // reader could predict.
+        let edits = opened();
+        assert!(edits.plan_subset(7, &[2, 0]).is_err());
+    }
+
+    #[test]
+    fn a_subset_of_every_page_in_order_is_the_document_itself() {
+        // The identity check is what lets the print path hand a file over byte
+        // for byte, so a full-document extract must still be recognised as one.
+        let edits = opened();
+        let plan = edits.plan_subset(7, &[0, 1, 2]).expect("subset");
+        assert!(plan.is_identity());
+    }
+
+    #[test]
+    fn a_subset_that_drops_a_page_is_not_the_document() {
+        let edits = opened();
+        let plan = edits.plan_subset(7, &[0, 1]).expect("subset");
+        assert!(!plan.is_identity(), "two of three pages is not the file");
     }
 
     #[test]

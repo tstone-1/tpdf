@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- two of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- three of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -80,10 +80,10 @@ Four principals, each trusting only what is below it in the table.
 **That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
 since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
 `core:default`, `dialog:allow-open`, `dialog:allow-save` and `updater:default`, and the two
-dialog permissions open panels and write nothing. But it can issue `save_copy` and
-`print_document`, and both write a file at the process's authority with a path the caller
-chose. So the accurate statement is that the webview cannot touch the filesystem *itself* and
-can ask for two specific writes; the flat version reads as the stronger claim, and a reader
+dialog permissions open panels and write nothing. But it can issue `save_copy`,
+`extract_pages` and `print_document`, and all three write a file at the process's authority
+with a path the caller chose. So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for three specific writes; the flat version reads as the stronger claim, and a reader
 who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why
 neither path checks its argument against the document actually open.
 
@@ -556,6 +556,15 @@ too, so the same caller can read any PDF the reader can read. Neither end is che
 the document the render service actually opened, which it could be. It is not, because
 `print_document` has had exactly the same shape since 2026-07-28 and tightening one of the
 two would leave a consistent surface looking inconsistent; if this is closed, close both.
+
+**`extract_pages` is the same verb with a selection, added 2026-08-17**, and it is recorded
+here rather than given a section because it adds no authority: same write path, same
+caller-supplied source and destination, same absence of a check against the open document.
+The only thing it adds is a `slots` argument, which `plan_subset` refuses when it is empty,
+out of range, repeated or descending --- so the worst a bad selection produces is a refusal,
+not a wider write. **The count of commands that write a file is three now**, not two: the
+boundary table's §3 row says "two", and it is corrected in the same commit; a number in a
+summary row is exactly the thing that stops agreeing with the section beneath it.
 
 **What bounds that is the same thing that bounds `spike_exit`, and no more.** The CSP is
 `default-src 'self'` with no `'unsafe-inline'`, so the only script that runs is the one that

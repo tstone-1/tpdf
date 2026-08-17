@@ -2883,6 +2883,7 @@ async function appCommandChecks(
     canUndo: () => canUndo,
     canRedo: () => canRedo,
     saveCopy: () => fired.push("saveCopy"),
+    extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
 
   // Where the viewer was on arrival, so it can be put back. Every phase after
@@ -3068,6 +3069,15 @@ async function appCommandChecks(
       ? null
       : `page 2 is the last of ${doc.page_count} and cannot reach the top`;
   const withText = () => (hasText ? null : "page 1 has no extractable text");
+  // `1-2` needs a page 2 to name. Two of the fourteen corpora are single-page
+  // documents, and the probe's first version asserted in a comment that none
+  // was --- an unchecked claim, which the sweep answered by going red on
+  // `vector-heavy` and `links-cropped`. Skipped rather than narrowed to `1`:
+  // a single slot reads the same whether the parser produced one page or
+  // dropped one, so a weaker check under the same name would be worse than an
+  // honest skip.
+  const twoPages = () =>
+    doc.page_count > 1 ? null : `a range needs two pages and this has ${doc.page_count}`;
   // Most of the corpus has no links at all, and one fixture has exactly one ---
   // so "step to the previous link" needs a second one to have anywhere to go,
   // and saying so is what keeps a skip from looking like a pass.
@@ -3356,6 +3366,23 @@ async function appCommandChecks(
       id: "file.saveCopy",
       ...shell("saveCopy"),
       read: () => fired.join(","),
+    },
+    {
+      // Driven with a real argument, because the value is where this command's
+      // work is: `1-2` has to survive the palette's own input, reach
+      // `parsePageRange` against this document's page count, and arrive as the
+      // two slots the action is handed. A probe with no argument would check
+      // that the command is registered and nothing else.
+      //
+      // `1-2` rather than `1`, so the joined form is `0+1` --- a single slot
+      // would read the same whether the parser produced one page or dropped
+      // one. That costs a skip on the two single-page corpora, which is the
+      // trade `twoPages` states.
+      id: "file.extractPages",
+      argument: "1-2",
+      ...shell("extractPages:0+1"),
+      read: () => fired.join(","),
+      unless: twoPages,
     },
     {
       // Both journal commands are withheld unless there is something to act on,

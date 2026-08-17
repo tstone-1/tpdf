@@ -8329,3 +8329,32 @@ cheaper to notice than to debug: two of those three were *designed* to differ fr
 Same family as every other entry here where the instrument, not the subject, was broken ---
 and it is worth stating in shell terms because `set -euo pipefail` was on, which makes the
 script look like the last place a status could be lost.
+
+### A caller that validates first cannot reach the guard beneath it
+
+`file.extractPages` parses its argument twice: the palette's `problem` callback rejects text
+that is not a page range, and the command's own `run` checks again before handing slots to
+the action. The second check is the one that decides whether a defect writes a file, so it
+got a test --- driven, reasonably enough, the way every other command in that suite is:
+
+```ts
+registry.run("file.extractPages", "nonsense");
+expect(fired).toEqual([]);
+```
+
+It passed, and the mutation that **deletes the guard entirely** passed with it. `CommandRegistry.run`
+consults `argument.problem` before calling `argument.run`, so the guard under test was never
+executed in either direction. The test asserted the registry's refusal and read it as the
+command's.
+
+**Reach the guard from where its bad input would actually come.** The value here is
+`command.argument.run("nonsense")` --- a caller that skipped validation, which is precisely
+the case a second check exists for. With that, the mutation goes red.
+
+The general shape is worth more than the instance: **when two layers check the same thing,
+a test entering at the outer layer cannot see the inner one**, and it does not fail to see
+it — it passes, which is indistinguishable from the inner check working. It is the
+belt-and-braces arrangement that makes this invisible: the braces are what you are testing,
+and the belt is what you put on first. Related to *a test whose precondition is already
+satisfied never runs*, and different in where the satisfaction comes from — there the fixture
+supplies it, here the caller does.

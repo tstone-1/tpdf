@@ -547,6 +547,39 @@ async fn save_copy(
     .map_err(|e| format!("the save did not run: {e}"))?
 }
 
+/// Writes a subset of the working document's pages to a new file.
+///
+/// Everything [`save_copy`] does, over a selection rather than the whole
+/// document, and it shares that command's whole write path --- so the three
+/// refusals `save.rs` states (encrypted source, a page count that disagrees with
+/// the baseline, writing over the source) apply here unchanged and are not
+/// restated.
+///
+/// `slots` are positions in the **current** order, deduplicated and ascending;
+/// `edits::Edits::plan_subset` refuses anything else rather than normalising it,
+/// so a defect on the way here is a message and not a file with pages in an
+/// order nobody asked for.
+///
+/// On the blocking pool for the same reason as [`save_copy`], which is the
+/// reason it does not simply call it: the plan has to be read out of the model
+/// before the move onto the pool, and the only difference between the two
+/// commands is which plan.
+#[tauri::command]
+async fn extract_pages(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    source: String,
+    path: String,
+    slots: Vec<u32>,
+) -> Result<(), String> {
+    let plan = edits.plan_subset(doc, &slots)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        save::write_copy(Path::new(&source), &plan, Path::new(&path))
+    })
+    .await
+    .map_err(|e| format!("the extract did not run: {e}"))?
+}
+
 /// Extracts one page's characters and their positions.
 ///
 /// Selection, search and the accessibility tree all read this, and they read
@@ -1479,6 +1512,7 @@ pub fn run() {
             edit_redo,
             edit_state,
             save_copy,
+            extract_pages,
             close_document,
             page_text,
             search_page,

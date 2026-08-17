@@ -12,6 +12,7 @@
   import { Edits, type EditState } from "./lib/edits";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label } from "./lib/keys";
+  import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
@@ -163,6 +164,7 @@
     canUndo: () => edits?.state.can_undo ?? false,
     canRedo: () => edits?.state.can_redo ?? false,
     saveCopy: () => void saveCopy(),
+    extractPages: (slots) => void extractPages(slots),
   };
 
   /**
@@ -308,6 +310,35 @@
       // document, a file that changed under the open one and a write over the
       // source, and each of those is something the reader has to act on.
       await edits.saveCopy(openPathName, chosen);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /**
+   * Writes the pages a reader named to a second file.
+   *
+   * `saveCopy` with a selection, and deliberately the same shape: the same
+   * dialog, the same silence on success, the same single `error` on failure.
+   * A reader who has used one has used the other.
+   *
+   * The suggested name says which pages, because the one thing a reader cannot
+   * tell from a file called "report copy.pdf" is which three pages of the
+   * report are in it. Ranges are collapsed back for the name --- `1-3` rather
+   * than `1,2,3` --- since that is what they typed and a name is not a place
+   * to expand a selection.
+   */
+  async function extractPages(slots: number[]): Promise<void> {
+    if (!edits || !openPathName || slots.length === 0) return;
+    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+    try {
+      const chosen = await saveDialog({
+        title: "Extract pages",
+        defaultPath: `${suggested} ${namePages(slots)}.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!chosen) return;
+      await edits.extractPages(openPathName, chosen, slots);
     } catch (e) {
       error = String(e);
     }
