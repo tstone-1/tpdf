@@ -1,9 +1,15 @@
 # tpdf — Architecture and Roadmap
 
-Status: **Phase 0 closed; Phase 1 in progress.** The viewer runs --- sandboxed worker
-pool, virtual scroller, selection, find, outline, page strip, session restore and
-printing --- on **macOS arm64 and Windows x64**. Editing, annotations, forms and
-redaction are not started.
+Status: **Phase 0 closed; Phase 1 in progress; Phase 2 begun.** The viewer runs ---
+sandboxed worker pool, virtual scroller, selection, find, outline, page strip, session
+restore and printing --- on **macOS arm64 and Windows x64**. The first edit that changes a
+document landed 2026-08-16: a page can be turned, undone and written out as a copy.
+Annotations, forms and redaction are not started, and no document is written in place.
+
+Phase 1 stays "in progress" on purpose. Its exit criterion is *tpdf is the daily default
+for reading*, which is a judgement about use rather than a list of shipped features, so it
+does not close by anything a commit can do. Phase 2 starting before Phase 1 closes is
+therefore expected, not an overlap to tidy up.
 
 Windows reached capability parity on 2026-07-30, including a **distributable** (MSI and NSIS) and
 the document handover a second launch performs. Two differences remain and both are real rather
@@ -4452,6 +4458,135 @@ that a reply is `/IRT` plus `/RT /R` rather than a nesting of its own.
 
 **Exit criterion:** a document can be marked up, saved, reopened in Acrobat and Preview,
 and look right.
+
+#### Turning a page, and writing it out --- done 2026-08-16
+
+The first thing that changes a document, and the first user of the model built four days
+earlier. `docmodel.rs` had 26 tests and no caller: a working document, a journal, undo by
+replay and snapshots every 32 commands, wired to nothing. This is the wiring, and a page's
+turn now runs model -> layout -> tiles -> text layer -> file.
+
+**Rotation alone, and the reason is the invalidation rather than the model.** `Delete` and
+`Move` are already in `Command` and already tested, and neither is wired. A page turn
+changes one page's shape and nothing's identity; a deletion changes the page *count*, and
+every consumer that addresses a page by its position --- `page_text`, `search_page`, the
+outline's destinations, the link and comment scans, the tile request, the session's
+remembered place --- is then addressing a different page than it was. That is a
+document-wide invalidation with eight consumers and it deserves its own increment rather
+than riding along with the first one. `edits.rs` says so in its own header, because the
+equality it depends on is invisible in the code.
+
+**The two vocabularies meet at the command boundary, and only there.** The frontend
+addresses pages by position, because that is what a reader points at and what every array
+it holds is indexed by. The model addresses them by identity, for the reason §5 gives. So
+a state reply carries both and a command carries the id --- and that is not ceremony over
+what is currently an identity mapping: it is what makes a stale frontend safe, since a
+rotate aimed at a page that a command in flight has deleted comes back as
+`PageDeleted` rather than turning whatever moved into that slot.
+
+What was *not* added is a slot-to-source translation in the render path. It would be the
+identity function today, and no test could tell a correct one from a broken one --- the
+trap index has that under *"a property that holds by construction cannot test the thing it
+resembles"*.
+
+**One number, added in one place.** A page drawn under a reader's view rotation *and* an
+edit is turned by the sum, and four things need to agree about it: the layout, the tile
+request, the placeholder request and the text layer. `Scroller.effectiveTurns` is the only
+place the two are added, which is the same argument `displayedSize` was extracted for ---
+three copies of a quarter-turn swap had already grown, and they do not fail in ways that
+look like the same bug.
+
+The text layer is the half that is easy to leave out and hard to read afterwards. Its boxes
+are turned by the view so that selection lands where the pointer is; a page turned by an
+edit and *not* turned in the cache produces tiles at one angle and a caret at another,
+which does not look like a bug in the text layer --- it looks like selection being slightly
+wrong on one page of a document.
+
+**A half turn is where a size-driven invalidation fails.** The scroller already invalidates
+a page whose box changed, which is right for a size correction and wrong here: 180 degrees
+leaves the box exactly as it was and the pixels upside down. `setPageTurns` invalidates
+before it consults the geometry at all.
+
+##### Saving, and three refusals that are not defensive
+
+`save.rs` takes **one turn per page, in order**, and that signature is the specification: a
+plan that drops or moves a page cannot be spelled. Deleting and reordering will need a
+different one, which is the point --- a general plan parameter would need a guard for the
+shapes the code cannot honour, and the type carries the same statement with nothing to
+test.
+
+- **An encrypted document is refused.** `lopdf` drops encryption on save silently, so the
+  copy opens with every restriction gone and nothing says so. 3 of the 39 PDFs in a real
+  Downloads folder carry `/Encrypt` --- the same measurement `progressive::open_failure`
+  was written from.
+- **A page count that disagrees with the plan is refused**, which is the external
+  modification §5 describes arriving in the one place it can currently be detected.
+- **Writing over the source is refused.** The journal replays against the file on disk;
+  replacing it leaves every command describing a document that is gone. Compared by
+  canonical path, so two spellings of one file are one file.
+
+The write goes to a sibling temporary file and is renamed, so an interrupted save leaves
+either the old file or the new one. A partially written PDF is the worst of the three: it
+opens, and it is missing pages.
+
+**A page nobody turned is not written to at all**, and the reason first written here was
+wrong. It said that setting `/Rotate 0` on a page that *inherits* a rotation would change
+it --- a true sentence about PDF, and not what this code would do, since the value composed
+for an untouched page is `effective_rotation + 0`, which is the inherited one. Writing it
+changes nothing in the ordinary case.
+
+The real reason is the bound. `effective_rotation` walks the `/Parent` chain 64 hops and
+answers **0** when it gives up or meets a cycle, so writing its answer onto every page
+silently flattens the rotation of any page whose chain is longer --- pages nobody asked to
+change. The skip also keeps an unedited page byte-identical, which is what "save a copy"
+should mean.
+
+Caught by a hand-built fixture whose two pages inherit 90 from their parent; every fixture
+in the corpus states its own rotation and none of them can see this. **The first version of
+that test could not fail either**: it asserted the page's *effective* rotation, which is 90
+whether the page states it or inherits it, so the mutation that writes to every page moved
+no number it read. It asserts the absence of the `/Rotate` key now, with the turned page
+asserted to carry one as the control --- "no key" being equally satisfied by a save that
+writes nothing.
+
+##### What the checks are built around
+
+Telling a page turn apart from a view rotation, and nothing else is difficult. Every
+statement about the page that was turned --- it is the right shape, its tiles were
+discarded, its text runs sideways --- is equally true of a defect that turned the whole
+view. So the assertions that carry the weight are the negative ones: a page nobody touched
+keeps its **proportions**, its text stays upright, and `viewer.rotation` does not move.
+Written with only the positive half, a `setPageTurns` implemented as `rotateBy` would pass
+every one --- which is why that is one of the four mutations aimed at this phase.
+
+**Proportions rather than pixels, and the first sweep is what taught that.** The check
+compared the neighbour's rendered box before and after, within a pixel. On `text-heavy` it
+went 640x828 to 495x640 and reported a defect that is not there: fit-width sizes the layout
+to the widest page, so turning page 1 to landscape makes it the widest and every other page
+is legitimately rescaled --- by 22% here, at an identical ratio to three decimals. The ratio
+is what discriminates, because a page that really was turned reports the reciprocal and no
+rescale can produce that. The check had been written and watched pass on a single corpus;
+the run across all fourteen is what found the one whose fit moves.
+
+The window harness gets nine names for it, skipping together with a stated reason on a
+one-page document and on a page too near square for a quarter turn to be visible in its
+shape --- which is the honest answer rather than three assertions that hold whatever the
+code does.
+
+**What no check covers, said rather than implied.** The join is in `App.svelte`: a command
+reaches `rotatePage`, which asks the backend and hands the answer to the viewer. The window
+harness runs *instead of* the shell, so it sees the command reach the action and it sees the
+viewer respond to a turn, and nothing exercises the wire between them --- the same gap every
+shell action has, and the same one `opencheck.ts` states for the file dialog. The save
+dialog is in that gap too: `save.rs` is unit-tested against real documents and
+`Edits.saveCopy` is asserted to send the right payload, and the panel that produces the path
+is driven by nobody.
+
+The save path is verified by the platform's own PDF parser, which is what the print path
+already does and for the same reason: `lopdf` wrote the file, so `lopdf` reading it back
+would be a writer agreeing with its own reader. `rotated.pdf` is the fixture that makes
+*which* page was turned observable, since its four pages carry 0/90/180/270 and are
+otherwise identical; the run says which of the two cases each fixture was.
 
 ### Phase 3 — Redaction
 

@@ -240,6 +240,15 @@ export class TextCache {
   private readonly turned = new Map<number, PageText>();
   private turns = 0;
 
+  /**
+   * Quarter-turns an edit has applied to a page, for the pages that have one.
+   *
+   * A map rather than an array because it is empty for every document nobody
+   * has edited, which is almost all of them, and because it is keyed by the same
+   * page number the two caches above are.
+   */
+  private readonly extra = new Map<number, number>();
+
   constructor(doc: number) {
     this.doc = doc;
   }
@@ -257,6 +266,28 @@ export class TextCache {
     if (next === this.turns) return;
     this.turns = next;
     this.turned.clear();
+  }
+
+  /**
+   * Records that an edit turned one page.
+   *
+   * Composed with the view's rotation in {@link view}, so the caret, the
+   * highlight runs and the accessibility lines land on a page-turned page for
+   * the same reason they land on a view-turned one --- there is one turn in
+   * force and it is the sum. Without this the tiles would be turned and the text
+   * over them would not, which does not look like a bug in the text layer: it
+   * looks like selection being slightly wrong on one page.
+   *
+   * Drops **this page's** turned view rather than all of them, which is the
+   * difference from {@link setTurns}: a view rotation invalidates every page and
+   * an edit invalidates one.
+   */
+  setPageTurns(page: number, turns: number): void {
+    const next = ((turns % 4) + 4) % 4;
+    if ((this.extra.get(page) ?? 0) === next) return;
+    if (next === 0) this.extra.delete(page);
+    else this.extra.set(page, next);
+    this.turned.delete(page);
   }
 
   /** Pages held. For the check harness and the tests. */
@@ -328,11 +359,12 @@ export class TextCache {
   /** The cached view of a page, turning and memoising it on first use. */
   private view(page: number, text: PageText | undefined): PageText | null {
     if (!text) return null;
-    if (this.turns === 0) return text;
+    const turns = this.turns + (this.extra.get(page) ?? 0);
+    if (turns % 4 === 0) return text;
 
     const already = this.turned.get(page);
     if (already) return already;
-    const turned = turnedView(text, this.turns);
+    const turned = turnedView(text, turns);
     this.turned.set(page, turned);
     return turned;
   }

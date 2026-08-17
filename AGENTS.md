@@ -7,10 +7,17 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 275 entries
+The one thing this file does *not* carry in full is the trap list --- 287 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
+
+That number is written in **three** places here, and this is the one that goes stale: the
+two under "Known traps" were moved when the entries landed and this was not, so the file
+said 275 and 282 at once. The authority is `grep -c '^### ' docs/TRAPS.md`, the *titles*
+have a gate behind them (`traps` in `scripts/gates.py`, which diffs the two sets), and no
+count in prose has one --- which is the whole reason the gate compares sets rather than
+totals.
 
 ## What tpdf is
 
@@ -517,8 +524,11 @@ packages and looks for the copyleft families by name; the only hits are MPL-2.0 
 Servo's CSS crates via Tauri) and a triple-licensed `r-efi` whose `MIT OR Apache-2.0` arm
 applies, so the option of making this repository public is intact.
 
-Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open dialog,
-which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT); on Windows only,
+Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
+file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) --- the
+capability list in `src-tauri/capabilities/default.json` names `dialog:allow-open` and, since
+2026-08-16, `dialog:allow-save`; that second one opens a panel and writes nothing, and what
+actually writes is `save_copy`, whose authority `docs/THREAT-MODEL.md` §T6.1 states; on Windows only,
 `tauri-plugin-single-instance` (Apache-2.0 OR MIT), which is what gives that platform the
 document handover macOS gets from `RunEvent::Opened`; and `tauri-plugin-updater` (MIT OR
 Apache-2.0), which is the largest single addition the tree has taken --- **48 crates,
@@ -583,6 +593,20 @@ Each release is a `Release vYY.M.MICRO: ...` commit. Unreleased work sits under
 `## [YY.M.MICRO] - Unreleased` in `CHANGELOG.md`; the date replaces `Unreleased` only at
 release time.
 
+**That heading form is measured safe here, and it is not safe everywhere** --- checked
+2026-08-16, because the cross-repo notes flag tpdf as a repo where it had been assumed and
+never verified. It is dangerous wherever the release tooling selects a CHANGELOG section by
+matching the version heading: a prefix match accepts `## [1.1.2] - Unreleased` exactly as it
+accepts a dated one, so a forgotten rename publishes a release whose notes say *Unreleased*
+with nothing going red. `xlsxturbo` is such a repo and uses a bare `## [Unreleased]` for that
+reason.
+
+`release.yml` here reads **nothing** from `CHANGELOG.md`. Its `releaseBody` is a literal
+block in the workflow, so no tag can pick up a heading of any shape. The cost of that is the
+opposite failure and it is real: the body cannot go stale by tooling, only by nobody reading
+it, and it shipped a **"Nothing here edits a document"** paragraph that this release makes
+false. Re-read it on every release; the file says so at the point it matters.
+
 ---
 
 ## Quality gates
@@ -601,14 +625,29 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently fourteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
-workflow-parity check, a corpus-classification check, `cargo fmt --check`,
+Currently fifteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+workflow-parity check, a mutation-anchor check, a corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 `cargo build --locked --bins --examples`, a webview-sink check, `npm run check`,
 `npm run test`, `npm run build`, and a third-party-notices check. Two of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
+
+**`anchors` exists because two different failures are invisible in `git status`, and both
+happened on 2026-08-16.** It asserts that every mutation's search string occurs exactly once in
+the file it names, across all three tables --- 289 of them.
+
+Zero means one of two things and the gate deliberately does not guess which, because they need
+different fixes. Either **a killed harness left its edit in the tree**: the harnesses mutate
+files a feature branch is usually already modifying, so the leftover shows nothing new in `git
+status` and nothing eye-catching in a large diff --- `viewer.ts` sat holding `this.rotateBy(turns)`
+in place of a page turn, and the next run's red baseline read as a defect in the feature. Or
+**the anchor has drifted**, and the mutation is aimed at code that is gone. The harness does
+refuse that when it reaches it, which is correct and far too late: it is one run of a harness
+that takes twenty minutes, and `mutate_viewer.py` carried an anchor deleted by commit `9e9be98`
+for weeks without anything saying so. An ordinary `*id` -> `id` cleanup in `save.rs` did the
+same thing to a passing mutation within the hour.
 
 **`corpora` exists because the list of window corpora had no home.** It lived in whatever
 shell loop somebody typed, so on 2026-08-16 `links-rotated.pdf` was swept as a corpus and
@@ -882,8 +921,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 275 of them and the full text
-was 93% of this file --- an instruction budget spent on the 274 traps that are not
+titles. Only the titles are here, because there are 287 of them and the full text
+was 93% of this file --- an instruction budget spent on the 286 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -989,6 +1028,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A pool that replaces a dead worker with the same bytes faults again, forever
 - A diagnosis placed after a liveness check inherits that check's race
 - A valid in-place rewrite is served silently, and a length check cannot see it
+- Writing a page's rotation "for completeness" flattens what a bounded walk could not read (the entry's own first mechanism was wrong, and the test could not fail)
+- Two page numbers can be one page object, and the second turn composes on the first (the two call sites need *different* fixes; the print one had been wrong since printing landed)
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
@@ -1027,6 +1068,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
 - `Instant` on Apple Silicon ticks at 41.67 ns, so "elapsed == 0" is reachable
 - `evict_page` can dangle a live `RawPage`, and the borrow checker allows it
+- A mechanical insert before a declaration can land between an attribute and its item
 
 ### Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -1067,6 +1109,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 - A synchroniser is not a fix, and the entry above called the arrows fixed anyway (it is the entry above that was wrong, six days later)
 - A page fitted to the element's own width is measured under the scrollbar
+- Fit-width rescales every page when one of them becomes the widest (the check's observable moved for an innocent reason; it was written and watched pass on one corpus)
 - A synthetic heading that does not reach the second column tests nothing
 - Whatever a fixture is meant to discriminate, it needs two of
 - A fixture where the right rule and the wrong rule agree cannot tell them apart (every ingredient present, the discrimination absent --- a surviving mutation indicts the fixture as often as the assertion)
@@ -1098,6 +1141,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Testing a rule is not testing that the rule is used (a mutation that survives may be aimed at one route into the rule rather than at the rule)
 - A margin above a destination lands on the previous page, and the tolerance that compensates for it can only reach within a page (the compensation was correct, asserted, and structurally unable to reach the case it was written for)
 - A guard asking how long the document is cannot answer how far the jump went
+- A size-driven invalidation cannot see a half turn
+- Every statement about a turned page is also true of a rotated view (the assertions that can fail are the negative ones)
+- An exclusion keyed on a prefix grows on its own
+- `instanceof` against a constructor the runner does not have throws, it does not answer no (measured; the guess was wrong in the reassuring direction)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1105,7 +1152,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Restoring a mutated file by *moving* a backup over it tests the mutated binary (the title names the wrong mechanism --- see the entry below it)
 - A harness that prints only at the end cannot say where it stopped
 - A harness that prints as it goes writes nothing until it exits, under a redirect
-- A mutation harness that dies leaves the mutation in the tree
+- A `pgrep -f` wait loop is defeated by the command that checks on it (observing the job is what kept it blocked)
+- A mutation harness that dies leaves the mutation in the tree (a `finally` does not survive `pkill`, and on a feature branch the leftover is invisible in `git status`)
+- A mutation aimed at deleted code is refused far too late to matter
 - A verification chained after a failed edit reports success for work that is not there
 - A restored file with its original timestamp leaves the build serving the mutation
 - Three mechanisms, no checks: measure what a commit's tests can actually see
@@ -1124,6 +1173,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A precondition that names the cause still lets the symptom print
 - A text-mode restore is not a byte restore, and the locale codec cannot even read the file
 - A gate's static reason turned a crash into a wrong diagnosis, twice over
+- A sweep that names one cause for a symptom several produce sends you to rebuild what is current
 - A decoder told to replace what it cannot read does, and the result ships
 - A harness that synthesises input must reset the input's own state machine
 - The last page cannot reach the top of the viewport
@@ -1207,6 +1257,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - The tool written to catch a missing check reported agreement about the wrong set (its own two numbers disagreed by 52 on adjacent lines, and nothing compared them)
 - A control that cannot discriminate is not a failure, and calling it one made a documented command red
 - A guard written inline with an FFI call is reachable by nothing (the fix is a seam, not a harness)
+- A request still in flight is not re-issued, so a mid-flight invalidation looks broken
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

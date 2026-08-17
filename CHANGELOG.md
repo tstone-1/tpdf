@@ -19,6 +19,96 @@ have the binary.)
 
 ## [26.8.3] - Unreleased
 
+### Turn a page in the document, undo it, and save a copy
+
+- **tpdf can now change a document.** Rotating the *view* has always been possible and
+  writes nothing; this turns a page in the file, which is what fixes a scan whose pages
+  came in sideways. **Rotate page clockwise** and **Rotate page anticlockwise**, `⇧⌘R` and
+  `⇧⌘L`, sitting beside the view rotations on `⌘R` and `⌘L` --- the same gesture on a
+  different subject, and the titles carry the distinction the shortcut cannot.
+
+- **Undo and Redo**, `⌘Z` and `⇧⌘Z`. Both are withheld while there is nothing to act on,
+  in the palette *and* on the keyboard, because those are separate routes and a guard that
+  only hid the row would leave the chord reaching an empty journal. `⌘Z` deliberately
+  yields to whatever text field a reader is typing in: it is *the* text-undo chord, and
+  taking it from the find bar would mean correcting a typo silently undid a page rotation.
+
+- **Save a copy...**, `⇧⌘S`, writes the working document to a new file. A copy, never the
+  open one --- and the refusal is real rather than a convention: saving in place would leave
+  every journalled command replaying against a baseline that is gone, which is the rebase
+  `docs/PLAN.md` §5 describes and has yet to be built.
+
+- **An encrypted document is refused rather than quietly decrypted.** `lopdf` drops
+  encryption on save without a word, so a copy of a restricted document would come out with
+  every restriction gone and no reader any the wiser. 3 of the 39 PDFs in a real Downloads
+  folder carry `/Encrypt`, so this is a case a reader meets.
+
+- **A file that changed on disk since it was opened is refused too**, by page count. The
+  turns a reader applied name pages that may no longer be there, and writing them onto
+  whatever is in those positions is the kind of plausible wrong answer that is only found
+  much later.
+
+- **The write is atomic** --- a sibling temporary file renamed into place --- so an
+  interrupted save leaves either the old file or the new one, never a PDF that opens and is
+  missing pages.
+
+- **The document model built on 2026-08-12 is now wired to the viewer**, which is what all
+  of the above rests on. `docmodel.rs` had 26 tests and no user; a page's turn now goes
+  model -> layout -> tiles -> text layer, and every consumer is handed the *sum* of the
+  view's rotation and the page's own rather than deriving its own copy of it.
+
+- **The checks for it are built around one difficulty: telling a page turn apart from a
+  view rotation.** Every statement about the page that was turned --- its shape, its
+  discarded tiles, its sideways text --- is equally true of a defect that rotated the whole
+  view, so the assertions that carry the weight are the negative ones: a page nobody touched
+  keeps its shape, its text stays upright, and `viewer.rotation` does not move. Proved by
+  mutation in both directions.
+
+- **The page a save writes and the page on screen come from one answer**, not two. The save
+  plan is read from the same `EditState` the viewer draws from, so a saved copy and a
+  rendered page cannot disagree about what the reader was looking at.
+
+- **Two of the save tests could not fail, and the mutation run said so.** One asserted the
+  *effective* rotation of a page nobody turned --- which is 90 whether the page states it or
+  inherits it, so writing a value onto every page changed no number it read. The other was
+  named for atomicity, cited the trap about planting the intermediate in its own docstring,
+  and asserted only that the destination ended up correct, which a write straight through it
+  also achieves. They now assert the absence of the `/Rotate` key, each with a control, and
+  the rename through a hard-linked witness that a write-through would disturb.
+
+- **One exclusion in the command sweep was corrected on the way.** `appcommands.test.ts`
+  skipped every command whose id began with `edit.`, which was right while all of them
+  reached the viewer and silently stopped covering the page operations the day they landed
+  under the same prefix. The three selection commands are now named in full.
+
+### Fixed: a page listed twice in the page tree was turned twice, and could be deleted
+
+- **Two print defects and one save defect, all from one cause**, found by reading the loop
+  and then reading `lopdf`'s page walk. That walk keeps no visited set, so a `/Kids` array
+  naming one page object twice makes two page numbers resolve to the same object --- and
+  any code that says "for each page, do this to its object" then does it twice, because the
+  second visit sees what the first did.
+
+- **Printing a rotated view of such a document turned the shared page 180 instead of 90.**
+  Live since printing landed.
+
+- **Printing a page range could delete the page you asked for**, which is the damaging one:
+  the set of pages to remove was built from the dropped page numbers without asking whether
+  a kept number named the same object, so "print page 1 only" removed the object page 1
+  *is* and produced a blank sheet. Its `/Count` arithmetic was wrong from the other side,
+  decrementing once per object where the page tree counts page numbers.
+
+- **Saving refuses only a genuine conflict.** A per-page plan can ask one shared object for
+  two different turns, and no output satisfies that --- page 3 cannot be at 90 and page 7 at
+  180 when they are one page. Turns that agree are applied once. A blanket refusal was the
+  obvious move and would have rejected the case that dominates: a document nobody edited,
+  where every turn is zero and there is nothing to reconcile.
+
+- **The tests assert the precondition, not only the outcome.** A future `lopdf` that
+  deduplicates its page walk would make all three guards unreachable while their outcome
+  assertions kept passing, so each fixture check asserts that two page numbers really do
+  resolve to one object and says that this is where such a change shows up.
+
 ### Links go where they point, and Back brings you home
 
 - **Clicking a cross-reference did nothing.** Measured before writing any of it: 16 of the 39

@@ -4,11 +4,13 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
-**Status: Phase 0 closed, Phase 1 in progress. First release: `26.8.0`.** The feasibility
-spikes are done and every load-bearing assumption has a measured verdict; on top of that
-evidence there is a viewer you can read a PDF in, on macOS arm64 and on Windows. **Nothing
-in it edits a document yet** — it is a reader, and the list further down says what is not
-built. Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
+**Status: Phase 0 closed, Phase 1 in progress, Phase 2 begun. First release: `26.8.0`.**
+The feasibility spikes are done and every load-bearing assumption has a measured verdict;
+on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
+Windows. **It has just begun to edit**: a page can be turned in the document, undone, and
+written out as a copy. Everything else on the list further down is not built, and the open
+file is never modified in place.
+Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
 macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
 SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture and roadmap, [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for the security
@@ -39,10 +41,18 @@ repository is macOS arm64 unless it says otherwise: the two platforms differ eno
 carrying a number across is a guess rather than an estimate, and where both have been
 measured the Windows render constants come out 1.5–1.8x worse.
 
+## What it edits today
+
+- **Turn a page in the document**, not only in the view --- with undo and redo, and a
+  history that survives any number of turns because it is replayed rather than reversed.
+- **Save a copy.** The open file is never written in place. The copy is written to a
+  temporary sibling and renamed, so an interrupted save leaves the original rather than
+  half of a new file. An encrypted source is refused outright rather than silently saved
+  without its encryption.
+
 ## Not built yet
 
-- Page operations: reorder, rotate, delete, insert, extract, split, merge, crop --- in the
-  document, not only in the view
+- The rest of the page operations: reorder, delete, insert, extract, split, merge, crop
 - Annotations: highlight, ink, notes, shapes, stamps --- real PDF annotation objects
 - **True redaction** with an automatic post-save verification pass
 - Forms and visual signatures

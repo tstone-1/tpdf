@@ -1513,9 +1513,15 @@ rather than transcribed.
 
 **Every row below was measured on macOS on 2026-08-16**, in one sweep, and printed by the
 script rather than transcribed. Zero failures anywhere, and **all fourteen corpora report the
-same 189 check names** --- diffed as sets by the sweep, not inferred from the totals agreeing.
-The link work took the total from 171 to 189: seven for following links, four for the keyboard,
-three for what a screen reader is told, and four command probes.
+same 204 check names** --- diffed as sets by the sweep, not inferred from the totals agreeing.
+The link work took the total from 171 to 189, and turning a page in the document took it to 204:
+ten for the page turn itself and five command probes. The tenth is the half turn, and it exists
+because a mutation deleting the invalidation that runs *before* the geometry survived all nine
+others --- a quarter turn changes the page box, so `applySizes` invalidates it either way, and
+only 180 degrees leaves the box identical. Of those nine the three carrying the
+weight are negative --- a page nobody turned keeps its proportions and its upright text, and
+`viewer.rotation` does not move --- because every positive statement about a turned page is
+equally true of a view that rotated everything.
 
 The Windows column is *not* carried forward: it was measured at 163 names on 2026-08-02 and
 nothing has re-run there since, so it is absent rather than adjusted --- which is what this
@@ -1529,20 +1535,20 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 147 | 42 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 153 | 36 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 153 | 36 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 94 | 95 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 109 | 80 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 144 | 45 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 142 | 47 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 134 | 55 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 134 | 55 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 135 | 54 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 143 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 155 | 34 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 162 | 27 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 131 | 58 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 162 | 42 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 168 | 36 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 168 | 36 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 99 | 105 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 122 | 82 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 159 | 45 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 157 | 47 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 149 | 55 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 149 | 55 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 150 | 54 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 158 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 170 | 34 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 177 | 27 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 136 | 68 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
 **A `pkill -f "tpdf.app/Contents/MacOS/tpdf"` goes between runs**, and
 `scripts/viewer_sweep.py` does it. A leftover window occludes the next one, WebKit suspends an
@@ -2074,8 +2080,8 @@ starts at 0 and increments within the month.
    says the tests can fail:
 
    ```
-   scripts/mutate_rust.py          # search/text/structure/encoding.rs, `cargo test --lib`
-   scripts/mutate_frontend.py      # ten modules under src/lib, `vitest`
+   scripts/mutate_rust.py          # ten modules under src-tauri/src, `cargo test --lib`
+   scripts/mutate_frontend.py      # fourteen modules under src/lib, `vitest`
    scripts/mutate_viewer.py        # every runner below, in one pass
 
    # Or one runner at a time. The three probe runners need no webview, no bundle
@@ -2094,7 +2100,16 @@ starts at 0 and increments within the month.
    module names above are the invariant; the counts are a property of the table and are
    printed by `--list` in the shape `<name> -> expects: <test>`.
 
-   `mutate_rust.py` filters on **two** module prefixes, and libtest takes several and ORs them
+   **Which modules each covers is `FILTERS` and the mutation table, not this page either.**
+   The line above said `search/text/structure/encoding.rs` while the harness covered ten
+   modules, which is the same defect as the counts below it and in the half the page calls
+   the invariant. Read them out of the scripts:
+
+   ```
+   python3 -c "import re,pathlib; print(re.search(r'FILTERS = \[(.*?)\]', pathlib.Path('scripts/mutate_rust.py').read_text(), re.S).group(1))"
+   ```
+
+   `mutate_rust.py` filters on those module prefixes, and libtest takes several and ORs them
    --- but only after `--`. `cargo test --lib a:: b::` is cargo's own argument error, which
    reads like the feature being unsupported.
 

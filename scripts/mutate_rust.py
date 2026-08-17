@@ -12,8 +12,9 @@ each change what is accepted --- and every one of its assertions is over a
 fixture the module itself never wrote, which is what makes mutation the only
 thing that can say whether they bite.
 
-`text.rs`, `structure.rs`, `encoding.rs`, `docmodel.rs` and `annots.rs` are
-covered too, and `FILTERS` below is the list of record. `encoding.rs` is the one to be careful about, because its
+`text.rs`, `structure.rs`, `encoding.rs`, `docmodel.rs`, `annots.rs`, `links.rs`,
+`progressive.rs`, `edits.rs` and `save.rs` are covered too, and `FILTERS` below is
+the list of record. `encoding.rs` is the one to be careful about, because its
 tests are the *only* thing that can catch its central mutation: `encodings.pdf`
 has `/Encoding` and `/Ordering` covarying on every page, so a rule keyed on the
 wrong one of the two passes every fixture on disk. A harness without those
@@ -63,6 +64,14 @@ FILTERS = [
     "annots::",
     "links::",
     "progressive::",
+    "edits::",
+    "save::",
+    # Added 2026-08-16 with the shared-page fix. `print.rs` had been mutated by
+    # nothing, so its module was never in this list --- and the three mutations
+    # written for that fix named tests the harness could not see, because this
+    # list is what `--list` is filtered by. It refused to start and said which
+    # three, which is that guard doing its job rather than a bug in it.
+    "print::",
 ]
 
 
@@ -78,6 +87,170 @@ class Mutation:
 
 
 MUTATIONS = [
+    Mutation(
+        # The composition. Setting the turn rather than adding it produces a
+        # document whose every turned page ends at the same angle, which is
+        # correct on the whole corpus except the one fixture that carries four
+        # different rotations.
+        "save: set the rotation instead of composing onto the page's own",
+        "src/save.rs",
+        "        let composed = (effective_rotation(&doc, id) + extra * 90).rem_euclid(360);",
+        "        let composed = (extra * 90).rem_euclid(360);",
+        "a_turn_composes_with_the_rotation_the_page_already_had",
+    ),
+    Mutation(
+        # Turn a shared page once per page number. The `print.rs` half of the same
+        # root cause, and the one that has been live since printing landed.
+        "print: turn a shared page once per page number rather than once per object",
+        "src/print.rs",
+        "            .filter(|id| seen.insert(*id))",
+        "            .filter(|id| { seen.insert(*id); true })",
+        "a_page_named_twice_is_turned_once",
+    ),
+    Mutation(
+        # Delete a page object that a KEPT page number also names. The damaging
+        # member of the family: printing "page 1" produces a blank sheet.
+        "print: drop a page object that a kept page number also names",
+        "src/print.rs",
+        "        .filter(|id| !kept.contains(id))",
+        "        .filter(|id| kept.contains(id) || !kept.contains(id))",
+        "a_page_a_kept_number_also_names_is_not_dropped",
+    ),
+    Mutation(
+        # Decrement `/Count` once per doomed OBJECT rather than once per page
+        # NUMBER, leaving a tree that claims a page it does not have.
+        "print: charge a shared page's deletion to /Count once, not once per number",
+        "src/print.rs",
+        "    for number in numbers {",
+        "    for number in numbers.iter().take(1) {",
+        "a_shared_page_costs_the_tree_one_count_per_number_it_answered_to",
+    ),
+    Mutation(
+        # One turn per page NUMBER rather than per page OBJECT. Restores exactly
+        # the loop that was there before `agreed_turns`, so a shared page's second
+        # visit reads the 90 the first wrote and leaves 180.
+        "save: turn a shared page once per page number rather than once per object",
+        "src/save.rs",
+        "    for (id, extra) in agreed_turns(&pages, turns)? {",
+        "    for (id, extra) in pages.iter().copied().zip(turns.iter().map(|t| t % 4)) {",
+        "a_page_reached_twice_is_turned_once",
+    ),
+    Mutation(
+        # Accept a plan that asks one shared page for two different turns, and
+        # silently apply whichever came first.
+        "save: accept two different turns for one shared page",
+        "src/save.rs",
+        "            Some(&(first, first_at)) if first != extra => {",
+        "            Some(&(first, first_at)) if first != extra && false => {",
+        "a_page_reached_twice_cannot_be_turned_two_ways",
+    ),
+    Mutation(
+        # The over-refusal direction: refuse a shared page even when nothing
+        # conflicts, which would deny saving an unedited document whose page tree
+        # happens to be malformed.
+        "save: refuse a shared page even when its turns agree",
+        "src/save.rs",
+        "            Some(&(first, first_at)) if first != extra => {",
+        "            Some(&(first, first_at)) if first == extra || first != extra => {",
+        "a_page_reached_twice_is_saved_normally_when_nothing_conflicts",
+    ),
+    Mutation(
+        # Write a rotation onto a page nobody turned. Invisible on every fixture
+        # whose pages state their own rotation; on one that inherits it, the value
+        # written is whatever `effective_rotation` answered, which is 0 whenever
+        # its 64-hop walk gives up. It survived until the test stopped asserting
+        # the effective rotation --- which is 90 either way --- and started
+        # asserting that the untouched page states no `/Rotate` of its own.
+        "save: write a rotation onto every page, turned or not",
+        "src/save.rs",
+        "        if extra == 0 {",
+        "        if false {",
+        "a_page_that_was_not_turned_keeps_an_inherited_rotation",
+    ),
+    Mutation(
+        # Save an encrypted document anyway. `lopdf` drops the encryption
+        # silently, so the result opens with every restriction gone and nothing
+        # anywhere says so.
+        "save: let an encrypted document through",
+        "src/save.rs",
+        "    if doc.trailer.has(b\"Encrypt\") {",
+        "    if false {",
+        "an_encrypted_document_is_refused_rather_than_quietly_decrypted",
+    ),
+    Mutation(
+        # Accept a plan that does not describe the file on disk. The turns then
+        # land on whichever pages happen to be in those positions.
+        "save: accept a plan of the wrong length",
+        "src/save.rs",
+        "    if pages.len() != turns.len() {",
+        "    if false {",
+        "a_plan_that_does_not_match_the_file_on_disk_is_refused",
+    ),
+    Mutation(
+        # Overwrite the open document. The journal then replays against a
+        # baseline that no longer exists.
+        "save: allow writing over the source",
+        "src/save.rs",
+        "    if same_file(source, out) {",
+        "    if false {",
+        "saving_over_the_open_document_is_refused",
+    ),
+    Mutation(
+        # Compare the paths as strings. Two spellings of one file then read as
+        # two files, and the guard above passes while the file is overwritten.
+        "save: two spellings of one path are two files",
+        "src/save.rs",
+        "        (Ok(a), Ok(b)) => a == b,",
+        "        (Ok(_), Ok(_)) => false,",
+        "saving_over_the_open_document_is_refused",
+    ),
+    Mutation(
+        # Copy the bytes into place instead of renaming. An interrupted save then
+        # leaves a truncated PDF where the reader's file was.
+        "save: write straight to the destination rather than renaming into it",
+        "src/save.rs",
+        "    let partial = out.with_extension(PARTIAL);",
+        "    let partial = out.to_path_buf();",
+        "the_destination_is_replaced_whole_rather_than_written_through",
+    ),
+    Mutation(
+        # A command that names a page by its position rather than its identity.
+        # Identical on an unedited document, and wrong the moment a page moves.
+        "edits: rotate the page in the slot rather than the page that was named",
+        "src/edits.rs",
+        "                page: PageId::from_raw(page),",
+        "                page: PageId::from_raw(page + 1),",
+        "a_turn_lands_on_the_page_it_named_and_nowhere_else",
+    ),
+    Mutation(
+        # Report a document as unedited whenever it looks like the file on disk.
+        # A rotate-and-rotate-back then reads as clean, and the reader is not
+        # told there is an unsaved journal.
+        "edits: read dirty off the working document instead of the journal",
+        "src/edits.rs",
+        "    let (applied, _) = model.depth();",
+        "    let (applied, _) = (0usize, 0usize);",
+        "a_turn_lands_on_the_page_it_named_and_nowhere_else",
+    ),
+    Mutation(
+        # Keep the previous document's journal under a reused handle. The render
+        # service reuses document numbers, so this is a real sequence.
+        "edits: keep the model already under a reopened handle",
+        "src/edits.rs",
+        "            .insert(doc, Doc::open(pages));",
+        "            .entry(doc).or_insert_with(|| Doc::open(pages));",
+        "reopening_under_a_reused_handle_does_not_inherit_the_previous_journal",
+    ),
+    Mutation(
+        # Collapse the two refusals. An id that never existed and an id that was
+        # deleted are different diagnoses, and the tombstone exists to keep them
+        # apart.
+        "edits: report every unknown page as deleted",
+        "src/edits.rs",
+        "        Refusal::NoSuchPage(_) => \"no such page\".into(),",
+        "        Refusal::NoSuchPage(_) => \"that page has been deleted\".into(),",
+        "an_id_no_document_ever_had_is_refused_by_name",
+    ),
     Mutation(
         # Back to lowercasing, which is what stood here until 2026-08-01 and is the
         # whole subject of the change: `ß` is already lowercase, so it survives the

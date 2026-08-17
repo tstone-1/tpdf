@@ -2,13 +2,14 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
-  import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { runAutobenchIfRequested } from "./lib/autobench";
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
   import { handleWindowKey, registerAppCommands, type AppActions } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
+  import { changedSlots, Edits, type EditState } from "./lib/edits";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label } from "./lib/keys";
   import { Palette } from "./lib/palette";
@@ -38,6 +39,22 @@
   let title = $state("");
   let error = $state<string | null>(null);
   let opening = $state(false);
+  /**
+   * The open document's page edits, or null when there is none.
+   *
+   * Holds the model's last answer; the model itself is in Rust. Replaced
+   * wholesale on every open, so a document cannot inherit the previous one's
+   * journal --- the backend does the same thing under the same handle, and the
+   * two have to agree about which document a command is for.
+   */
+  let edits: Edits | null = null;
+  /**
+   * Whether the document differs from the file on disk.
+   *
+   * `$state` because the header shows it, unlike the rest of the edit state,
+   * which is only read when a command runs.
+   */
+  let dirty = $state(false);
   let status = $state<ViewerStatus | null>(null);
   /**
    * The degraded-state words currently on screen, or `null` for none.
@@ -123,7 +140,91 @@
     applyUpdate: () => void updates.install(),
     updateAvailable: () => updates.state.kind === "available",
     updateReady: () => updates.state.kind === "ready",
+    rotatePage: (delta) => void rotatePage(delta),
+    undoEdit: () => void applyEdit((e) => e.undo()),
+    redoEdit: () => void applyEdit((e) => e.redo()),
+    canUndo: () => edits?.state.can_undo ?? false,
+    canRedo: () => edits?.state.can_redo ?? false,
+    saveCopy: () => void saveCopy(),
   };
+
+  /**
+   * Turns the page the reader is on, in the document rather than in the view.
+   *
+   * The *page* comes from the viewer and the *turn* comes from the model: the
+   * reader points at a page and asks for a quarter more, and what that page's
+   * rotation becomes is the journal's arithmetic, replayed on undo. Nothing here
+   * adds one to anything.
+   */
+  async function rotatePage(delta: number): Promise<void> {
+    const at = viewer?.position.page;
+    if (at === undefined) return;
+    await applyEdit((e) => e.rotate(at, delta));
+  }
+
+  /**
+   * Runs one edit and moves the viewer to the state it produced.
+   *
+   * Every route in goes through here, which is the same reasoning that put the
+   * history recording inside `goToDestination` rather than at its four callers:
+   * the fifth caller is the one that forgets. What it must not become is a place
+   * where the *next* state is computed --- it is handed one, and its whole job
+   * is to redraw the slots that differ.
+   */
+  async function applyEdit(
+    run: (edits: Edits) => Promise<EditState>,
+  ): Promise<void> {
+    const model = edits;
+    if (!model || !viewer) return;
+    // Captured before the await: the model replaces its own cache when the reply
+    // lands, so reading it afterwards would compare the answer with itself and
+    // find nothing to redraw.
+    const before = model.state;
+    try {
+      const after = await run(model);
+      for (const slot of changedSlots(before, after)) {
+        viewer?.setPageTurns(slot, after.pages[slot]?.turns ?? 0);
+      }
+      dirty = after.dirty;
+    } catch (e) {
+      // Shown rather than logged. A refusal here is about the document --- a page
+      // that is gone, a handle that is not open --- and a rotate command that
+      // silently does nothing reads as a broken application.
+      error = String(e);
+    }
+  }
+
+  /**
+   * Asks for a name and writes the working document to it.
+   *
+   * A copy, never the open file. `save.rs` refuses the source path outright, so
+   * a reader who types the open document's own name is told rather than left
+   * with a file whose baseline no longer matches the journal replaying against
+   * it --- see `docs/PLAN.md` §5 on saving in place.
+   */
+  async function saveCopy(): Promise<void> {
+    if (!edits || !openPathName) return;
+    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+    try {
+      const chosen = await saveDialog({
+        title: "Save a copy",
+        defaultPath: `${suggested} copy.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      // Cancelled. Deliberately not an error and deliberately not a message:
+      // the reader closed the panel, which is an answer.
+      if (!chosen) return;
+      // Success is silent, which is deliberate and is the same answer Preview
+      // gives: the panel closing and the file appearing where the reader put it
+      // is the acknowledgement, and a banner over the page they are reading is
+      // not. A failure is not silent --- `save.rs` refuses an encrypted
+      // document, a file that changed under the open one and a write over the
+      // source, and each of those is something the reader has to act on.
+      await edits.saveCopy(openPathName, chosen);
+    } catch (e) {
+      error = String(e);
+    }
+  }
 
   /**
    * The updater, and the one place this application uses the network.
@@ -736,6 +837,25 @@
       });
       sidebar.setVisible(sidebarShown);
 
+      // Before the viewer, so that a rotate arriving on the first frame has a
+      // model to ask. `refresh` is not awaited: it reads a `HashMap` in the
+      // backend, and holding the first page behind it would put an IPC round
+      // trip on the startup path for an answer that is "nothing is edited".
+      edits = new Edits(doc.id);
+      dirty = false;
+      void edits.refresh().then(
+        (state) => {
+          dirty = state.dirty;
+        },
+        (e) => {
+          // Not raised to the reader. Nothing is wrong with their document ---
+          // the edit commands will refuse until this succeeds, which is the
+          // right failure, and an error banner over a page that opened fine is
+          // not.
+          console.warn(`could not read the edit state: ${e}`);
+        },
+      );
+
       viewer = new Viewer(surface, {
         doc: doc.id,
         pageCount: doc.page_count,
@@ -945,6 +1065,21 @@
     <button onclick={pickAndOpen} disabled={opening}>Open</button>
     <span class="title">{title}</span>
     <!--
+      Left of the spacer, where the degraded label already establishes that an
+      element appearing and disappearing costs nothing: the slack absorbs it, and
+      the find controls to the right of the spacer do not move. Unlike that one
+      it changes at most once per reader action rather than while nobody is
+      touching anything, so it needs no episode gate.
+
+      It says "Edited", not "Unsaved". The distinction is real and the shorter
+      word is the wrong one: `Save a copy` writes another file and leaves this
+      document exactly as edited as it was, so a marker that cleared on a save
+      would be claiming the open file had been written.
+    -->
+    {#if dirty}
+      <span class="edited">Edited</span>
+    {/if}
+    <!--
       Beside the document's name, and deliberately not among the find controls
       where it used to sit. The header is one flex row, so an element that comes
       and goes on the right displaces everything to its left: a fast scroll made
@@ -1142,6 +1277,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .edited {
+    flex: none;
+    opacity: 0.65;
   }
   .stat {
     flex: none;

@@ -40,7 +40,7 @@ use crate::sweep;
 ///
 /// A print job parses attacker-controlled input like everything else here, and
 /// spike 0.4 measured a 2,879-byte input inflating to 1 GiB.
-const MAX_DECODE: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_DECODE: usize = 64 * 1024 * 1024;
 
 /// Which pages to print.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,7 +116,19 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
 
     let turns = job.turns % 4;
     if turns != 0 {
-        let ids: Vec<_> = doc.get_pages().values().copied().collect();
+        // Distinct objects, not page numbers. A `/Kids` array may name one page
+        // twice and `lopdf`'s page walk keeps no visited set, so composing once
+        // per number turns a shared page twice --- the second visit reads what
+        // the first wrote. Every page takes the same turn here, so there is
+        // nothing to reconcile, only a second application to avoid; that is why
+        // this deduplicates where `save::agreed_turns` has to refuse. See the trap.
+        let mut seen: HashSet<ObjectId> = HashSet::new();
+        let ids: Vec<_> = doc
+            .get_pages()
+            .values()
+            .copied()
+            .filter(|id| seen.insert(*id))
+            .collect();
         for id in ids {
             let composed = (effective_rotation(&doc, id) + i64::from(turns) * 90).rem_euclid(360);
             doc.get_object_mut(id)
@@ -156,9 +168,21 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
 /// blank pages.
 fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
     let pages = doc.get_pages();
+    // A page object can answer to more than one page number: `/Kids` may list it
+    // twice, and `lopdf`'s page walk keeps no visited set. An object that a KEPT
+    // number also names must survive --- otherwise printing "page 1" of such a
+    // document deletes the object page 1 *is*, and prints a blank sheet. This is
+    // the damaging member of the family in the trap: the other two turn a page
+    // twice, this one removes the page that was asked for.
+    let kept: HashSet<ObjectId> = pages
+        .iter()
+        .filter(|(number, _)| !numbers.contains(number))
+        .map(|(_, id)| *id)
+        .collect();
     let doomed: HashSet<ObjectId> = numbers
         .iter()
         .filter_map(|number| pages.get(number).copied())
+        .filter(|id| !kept.contains(id))
         .collect();
     if doomed.is_empty() {
         return Ok(());
@@ -167,9 +191,20 @@ fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
     // Every ancestor of every doomed page, collected before anything moves, so
     // that a `/Count` is decremented once per page beneath it. A page tree is
     // usually two levels deep and may be many.
+    //
+    // Walked per page NUMBER rather than per object, because `/Count` counts
+    // entries in the tree: two numbers naming one doomed object remove two of
+    // them. Iterating the object set decremented once per object, which is right
+    // only while objects and page numbers are the same thing.
     let mut decrements = Vec::new();
-    for id in &doomed {
-        let mut at = parent_of(doc, *id);
+    for number in numbers {
+        let Some(id) = pages.get(number).copied() else {
+            continue;
+        };
+        if !doomed.contains(&id) {
+            continue;
+        }
+        let mut at = parent_of(doc, id);
         // Same `/Parent`-cycle bound as `effective_rotation`, same reason: this
         // runs on input we did not write.
         for _ in 0..64 {
@@ -313,7 +348,7 @@ fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<u32>, String> {
 /// is really at zero. Composing against the literal value instead would be
 /// correct on every document that states it and wrong on every document that
 /// does not --- which is the half nobody has a fixture for.
-fn effective_rotation(doc: &Document, page: lopdf::ObjectId) -> i64 {
+pub(crate) fn effective_rotation(doc: &Document, page: lopdf::ObjectId) -> i64 {
     let mut at = page;
     // Bounded: a `/Parent` cycle in a malformed file would otherwise spin here,
     // and this runs on input we did not write.
@@ -690,6 +725,186 @@ mod tests {
         for id in printed.get_pages().values() {
             assert_eq!(effective_rotation(&printed, *id), 180);
         }
+    }
+
+    /// Three page numbers over two objects: `/Kids` names the first page twice.
+    ///
+    /// `fixture` above gives every page an object of its own, which is what a
+    /// generator does. A `/Kids` array can name one page twice, and `lopdf`'s page
+    /// walk keeps no visited set, so `get_pages` then maps numbers 1 and 2 onto one
+    /// object. Nothing else in the tree is shaped this way.
+    ///
+    /// **Three rather than two, and that is what makes it useful.** With only the
+    /// shared page there is no selection that drops both of its numbers and keeps
+    /// something --- an empty selection is refused before `drop_pages` is reached
+    /// --- so the `/Count` arithmetic would have been unreachable. Page 3 is the
+    /// page that lets it be asked for.
+    ///
+    /// Returns the root `/Pages` id, so a check can read its `/Count`.
+    fn shared_fixture(path: &Path) -> ObjectId {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+        let page_of = |doc: &mut Document, label: &str| {
+            let content = format!("BT /F1 24 Tf 72 700 Td ({label}) Tj ET");
+            let contents_id = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+            doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => contents_id,
+            })
+        };
+        let shared = page_of(&mut doc, "page 1");
+        let only = page_of(&mut doc, "page 3");
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => 3i64,
+                "Kids" => vec![
+                    Object::Reference(shared),
+                    Object::Reference(shared),
+                    Object::Reference(only),
+                ],
+                "Resources" => resources_id,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(path).expect("fixture");
+        pages_id
+    }
+
+    /// Asserted rather than assumed, for the reason `save.rs` gives at length: a
+    /// future `lopdf` that deduplicates its page walk would leave both guards
+    /// below reachable by nothing while their outcomes kept passing.
+    #[test]
+    fn the_shared_fixture_really_does_present_one_object_under_two_numbers() {
+        let dir = TempDir::new("shared-pre");
+        let path = dir.file("in.pdf");
+        let _ = shared_fixture(&path);
+
+        let doc = Document::load(&path).expect("load");
+        let ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+        assert_eq!(ids.len(), 3, "three page numbers");
+        assert_eq!(
+            ids[0], ids[1],
+            "and the first two resolve to ONE object --- if this fails, lopdf now \
+             deduplicates and the guards below are dead code"
+        );
+        assert_ne!(
+            ids[1], ids[2],
+            "the control: the third is a different object, so the assertion above \
+             is about a shared page rather than about every id being equal"
+        );
+    }
+
+    #[test]
+    fn a_page_named_twice_is_turned_once() {
+        let dir = TempDir::new("shared-turn");
+        let path = dir.file("in.pdf");
+        let _ = shared_fixture(&path);
+
+        let out = build(
+            &path,
+            &Job {
+                pages: Pages::All,
+                turns: 1,
+            },
+        )
+        .expect("build");
+        let printed = reload(&out);
+        for id in printed.get_pages().values() {
+            assert_eq!(
+                effective_rotation(&printed, *id),
+                90,
+                "one quarter-turn. Composing once per page number reads back the \
+                 90 it just wrote and leaves 180 --- on paper, sideways"
+            );
+        }
+    }
+
+    /// The damaging member of the family: not a page turned twice, but a page
+    /// deleted that the reader asked to print.
+    #[test]
+    fn a_page_a_kept_number_also_names_is_not_dropped() {
+        let dir = TempDir::new("shared-drop");
+        let path = dir.file("in.pdf");
+        let _ = shared_fixture(&path);
+
+        // Print page 1 only. Page 2 is the same object, so building `doomed` from
+        // the dropped numbers alone deletes the page that was asked for and prints
+        // a blank sheet.
+        let out = build(
+            &path,
+            &Job {
+                pages: Pages::Only(vec![1]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+        let printed = reload(&out);
+        let labels = page_labels(&printed);
+        assert!(
+            labels.iter().any(|label| label.contains("page 1")),
+            "the page asked for is still there and still draws its text: {labels:?}"
+        );
+        assert!(
+            !labels.iter().any(|label| label.contains("page 3")),
+            "the control: the page that only a dropped number names really was \
+             dropped, so the assertion above is not satisfied by a build that \
+             deletes nothing: {labels:?}"
+        );
+    }
+
+    /// `/Count` counts entries in the tree, and two numbers naming one doomed
+    /// object remove two of them.
+    ///
+    /// Reachable only because the fixture has a third page: dropping both numbers
+    /// of the shared page needs something left to keep, and an empty selection is
+    /// refused long before `drop_pages`.
+    #[test]
+    fn a_shared_page_costs_the_tree_one_count_per_number_it_answered_to() {
+        let dir = TempDir::new("shared-count");
+        let path = dir.file("in.pdf");
+        let pages_id = shared_fixture(&path);
+
+        let before = reload(&std::fs::read(&path).expect("read"));
+        assert_eq!(
+            declared_count(&before, pages_id),
+            3,
+            "the control: the tree starts out claiming three pages"
+        );
+
+        // Keep page 3 only, so both of the shared page's numbers go.
+        let out = build(
+            &path,
+            &Job {
+                pages: Pages::Only(vec![3]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+        let printed = reload(&out);
+        assert_eq!(
+            page_labels(&printed).len(),
+            1,
+            "one page is left in the tree"
+        );
+        assert_eq!(
+            declared_count(&printed, pages_id),
+            1,
+            "and `/Count` says so. Decrementing once per doomed OBJECT leaves 2 \
+             here --- a tree that claims a page it does not have"
+        );
     }
 
     #[test]

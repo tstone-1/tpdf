@@ -2551,6 +2551,23 @@ Put the restore in a `finally` around the whole run, not at the end of the happy
 harness that can leave the tree in a state its own output does not describe is worse than no
 harness, and this is the second way this project has found to do it.
 
+**Third way, 2026-08-16: the operator kills it.** A `finally` does not survive `pkill`, and
+killing a harness that is visibly stuck is the obvious thing to do. Two runs were killed that
+way and each left an edit behind --- one of them `viewer.ts` holding `this.rotateBy(turns)` in
+place of the two lines a page turn needs.
+
+**On a feature branch that leftover is invisible, which is the part worth knowing.** The
+harnesses mutate exactly the files a branch is already modifying, so `git status` shows what it
+showed before, and two swapped lines do not draw the eye in a large diff. It surfaced as the
+*next* run's baseline going red, which reads as a defect in the feature rather than in the
+tree --- and the failing checks were the ones the feature had just added, so the reading was
+plausible.
+
+The gate is `anchors` (`scripts/check_mutation_anchors.py`, in `scripts/gates.py`): every
+mutation's search string must occur exactly once in the file it names. It caught this, and in
+the same pass caught two mutations aimed at code that no longer exists --- see the entry
+below.
+
 ### An unreachable guard is worth keeping if the type can carry it instead
 
 `PreWorker::adopt` consumed the worker's readiness line before sending it a document, so that
@@ -7440,3 +7457,261 @@ name each one shadows, and exits 1.
 convention rather than accident, and the roll now lives in `src/probes/checkroll.rs` reached by
 `#[path]` from the two that need it. Extending it to the other five is worth doing when one of
 them next needs its names read; doing it now would be five edits for no current question.
+
+### A mechanical insert before a declaration can land between an attribute and its item
+
+`#[cfg(windows)]` and the `pub mod sandbox_win;` under it are one thing. A `sed` that
+inserted a new `pub mod save;` *before* the module declaration put it between the two, so the
+attribute now gated `save` --- which exists on every platform --- and `sandbox_win`, which is
+Win32 only, became unconditional. On macOS the result compiles until something reaches into
+either one, and the diagnosis then points at the wrong module entirely.
+
+Nothing about this is specific to `cfg`. A doc comment, a `#[derive]`, a `#[test]`, an
+`#[allow]` and a decorator all bind to the next item, and an insert "before the declaration"
+is an insert *into* whatever is attached to it. The general form: **a mechanical edit anchored
+on a line is anchored on a line, and a declaration in Rust is rarely one line.**
+
+Caught by reading the result rather than by the compiler, which is the part worth noticing ---
+the tree still built. Read the four lines around a mechanical insert, or anchor the edit on
+something that cannot have an attribute in front of it.
+
+### A size-driven invalidation cannot see a half turn
+
+`Scroller.applySizes` invalidates a page whose box dimensions changed and merely re-places one
+that only slid. That is exactly right for a size correction: a page whose box did not move
+still holds the right pixels.
+
+It is exactly wrong for a rotation. A half turn leaves the box identical --- same width, same
+height, same position --- and the picture inside it upside down. So `setPageTurns` invalidates
+the page **before** the geometry is consulted at all, and the quarter turns, where the box does
+change, are the cases that would have hidden this: three of the four turns work under the
+size-driven rule and the fourth is silently wrong.
+
+The test needs its tiles to have **landed** first, which is its whole precondition. A request
+still in flight is not re-issued while it is outstanding, so a version that turned the page
+mid-flight sees no new request and reads as a defect in the invalidation rather than in the
+fixture --- see the entry below.
+
+### A request still in flight is not re-issued, so a mid-flight invalidation looks broken
+
+`Scroller.request` returns early for a tile id already in `inFlight`, and invalidating a page
+does not remove those entries: the reply arrives, is discarded for a stale epoch, and *then*
+the next frame asks again. Correct, and it means a test that invalidates while requests are
+outstanding observes no new request at all.
+
+The first draft of the half-turn test above did exactly that --- `fetchTile` returned a promise
+that never resolved, which is the right fixture for testing withdrawal and the wrong one for
+testing invalidation --- and its failure (`expected 0 to be greater than 0`) reads as a page
+that was not invalidated. Resolve the tiles, run a frame, and assert some landed before
+touching the thing under test.
+
+### Every statement about a turned page is also true of a rotated view
+
+Rotating one page of the document and rotating the whole view produce the same evidence about
+the page in front of the reader: it is the turned shape, its tiles were discarded, its text
+runs sideways, its fit was recomputed. A `setPageTurns` implemented as `rotateBy` passes every
+one of those assertions.
+
+What separates them is what did **not** happen. A page nobody touched keeps its shape and its
+text stays upright, and `viewer.rotation` does not move. Those three are the checks with a
+failing case; the rest are decoration on their own.
+
+The corollary for fixtures: this needs a document with **at least two pages**, and a first page
+that is not square. On a one-page document every assertion here holds whatever the code does,
+and on a square page a quarter turn is invisible in the shape --- both are skips with a stated
+reason rather than checks that cannot fail.
+
+### An exclusion keyed on a prefix grows on its own
+
+`appcommands.test.ts` sweeps every registered command and asserts each reaches an action,
+excluding the ones that reach the viewer instead --- by prefix: `view.`, `nav.`, `edit.`.
+
+That was right on the day it was written, when every `edit.` command was about the selection.
+The page operations landed under the same prefix a fortnight later, reaching the *shell*, and
+four commands left the sweep without anyone deciding they should. The list did not change; what
+it covered did.
+
+An exclusion list should name what it excludes. The three selection commands are now written
+out in full, so the next `edit.` command is swept by default and leaving it out is an edit
+somebody has to make. Same shape as the allowlist rules elsewhere in this file: an entry that
+can match something nobody has written yet is a blanket permission wearing an allowlist's
+clothes.
+
+### `instanceof` against a constructor the runner does not have throws, it does not answer no
+
+The window-key handler has to know whether a keystroke went to a text field, and the
+conventional spelling is `target instanceof HTMLElement`. The guess about what that does under
+vitest was wrong in the reassuring direction, so it was measured:
+
+    typeof globalThis.HTMLElement          -> undefined
+    ({tagName: "INPUT"}) instanceof HTMLElement
+      -> TypeError: Right-hand side of 'instanceof' is not an object
+
+It does not quietly report "not a text field" --- it takes the handler down. The practical
+consequence is not a wrong answer, it is that the guard could only be tested by standing up a
+DOM, which no other test in this file needs. Duck-typing the target (`tagName`,
+`isContentEditable`) costs three field reads, answers identically in the webview, and is
+exercised by the same plain-object events every other window-key test uses.
+
+Worth recording mostly for the method: the first version of this paragraph asserted the silent
+answer, in a code comment, without running anything. Two lines in a scratch test settled it.
+
+### Writing a page's rotation "for completeness" flattens what a bounded walk could not read
+
+`/Rotate` is inheritable: a page with no `/Rotate` of its own takes its parent's. So a save
+that writes every page's rotation, turned or not, does not leave the untouched pages alone ---
+it replaces inheritance with a stated value, and the stated value is whatever the walk
+returned. `effective_rotation` is bounded at 64 `/Parent` hops and answers **0** when it gives
+up or meets a cycle, so on a document with a deeper chain that write silently *flattens* the
+rotation of pages nobody asked to change. `save.rs` therefore skips a page whose turn is zero.
+
+**The first version of this entry got the mechanism wrong, and the wrong version is the one
+that sounds right.** It said writing `/Rotate 0` overrides an inherited rotation --- true as a
+sentence about PDF, and not what this code would do: for an untouched page the composed value
+is `effective_rotation + 0`, which is the inherited value, so writing it changes nothing at
+all in the ordinary case. The guard is worth having for the bounded-walk case above and for
+keeping an unedited page byte-identical, not for the reason first written down.
+
+**And the test could not fail, for a reason the entry itself explains.** It asserted
+`effective_rotation` on the untouched page, which answers 90 whether the page states it or
+inherits it --- so the mutation that writes to every page left every number unchanged and
+survived. The assertion that works is the **absence of the `/Rotate` key**, with the turned
+page asserted to *have* one as the control, or "no key" is also satisfied by a save that
+writes nothing. Every fixture in the corpus states its rotation on the page, so none of them
+can see any of this; the fixture is a hand-built two-page document whose `/Pages` node carries
+`/Rotate 90`.
+
+### Two page numbers can be one page object, and the second turn composes on the first
+
+`lopdf`'s page walk keeps **no visited set**. `PageTreeIter` (`document.rs`) descends `/Kids`
+and yields every `/Type /Page` reference it meets; it bounds depth at 256 and total steps at
+the object count, and it never asks whether it has returned this object before. `get_pages()`
+is `page_iter().enumerate()`, so a `/Kids` array that names one page twice produces **two page
+numbers mapping to one `ObjectId`**.
+
+Any code that says *"for each page, do X to its object"* is then wrong on such a document,
+because the second visit sees what the first visit did. Nothing crashes and nothing is
+refused --- a file is produced, and it is wrong.
+
+**Three sites, and two of them predate the feature that exposed the shape.**
+
+- `print.rs`'s rotation loop composes onto `effective_rotation`, so the second visit reads the
+  value the first wrote: one quarter-turn asked for on each of two pages comes out as 180 on
+  both. Wrong since printing landed.
+- `print.rs`'s `drop_pages` is the damaging one. `doomed` is built from the *dropped* page
+  numbers with no regard for whether a kept number names the same object, so printing "page 1
+  only" of such a document deletes the object page 1 is, and prints nothing. Its `/Count`
+  arithmetic has the same cause from the other side: it decrements once per doomed *object*
+  where the tree counts *page numbers*.
+- `save.rs` inherited the rotation shape from the first of those.
+
+**The fixes are not the same, and making them uniform is the mistake to avoid.** Print's
+rotation applies one turn to *every* page, so two numbers reaching one object cannot disagree
+--- deduplicating is exactly right, and the object turns once. `drop_pages` must instead
+*subtract* the kept pages' objects from `doomed`, because the question there is not "how many
+times" but "may this be deleted at all". Save takes one turn *per page*, so they can disagree,
+and then no output satisfies the request: page 3 cannot be at 90 and page 7 at 180 when they
+are the same object. It groups by object, refuses only a genuine conflict, and otherwise
+applies the agreed turn once. A blanket refusal was the obvious move and is wrong for the case
+that dominates --- a document nobody edited, where every turn is zero and nothing conflicts.
+
+**The test asserts the precondition, not only the outcome.** A guard against something a
+future `lopdf` might deduplicate is a guard reachable by nothing, and the outcome assertion
+would keep passing while it became decoration. So the fixture test asserts that `get_pages()
+` really does return the same id under two page numbers, and says in its own message that this
+is where a change in that library shows up. Found by reading the loop and then reading
+`lopdf`'s iterator, not by a failing test --- no fixture in the corpus is malformed this way,
+which is exactly why it survived review twice.
+
+### Fit-width rescales every page when one of them becomes the widest
+
+A check written to prove that turning page 1 does not turn page 2 compared page 2's rendered
+box before and after, with a one-pixel tolerance. On `text-heavy` it went 640x828 to 495x640
+and the check called it a defect. It is not one: fit-width sizes the layout to the widest page
+in the document, so turning page 1 to landscape makes *it* the widest and every other page is
+legitimately rescaled --- here by 22%, with the aspect ratio identical to three decimals.
+
+**The observable was wrong, not the code.** What separates "page 2 was turned" from "everything
+was rescaled" is the **ratio**: a turned page reports the reciprocal, and no rescale can produce
+that. Comparing proportions still catches the defect the check exists for --- a `setPageTurns`
+that called `rotateBy` --- while being blind to a size change that is correct behaviour.
+
+**It was written and watched pass on one corpus.** The first sweep across all fourteen found
+the one where a legitimate fit change moves the quantity being asserted. A check whose
+observable is disturbed by something other than its subject is a false positive waiting for the
+right document, and the corpus that has it is not usually the one you develop against.
+
+### A sweep that names one cause for a symptom several produce sends you to rebuild what is current
+
+`viewer_sweep.py` refuses a run that printed no `CHECK-NAMES-JSON` roll, which is right ---
+recovering the names by guesswork is how its first version reported agreement about a set that
+was wrong. What it also did was state the reason: *"The bundle predates it --- rebuild with
+`npm run tauri build`."* No hedge, no evidence.
+
+The first time it fired, the bundle was five minutes old. The run had died before reaching the
+roll for an unrelated reason, and a freshly built app was rebuilt again on the strength of a
+sentence. A stale bundle, a crash, an expired `--timeout`, and a window that never became
+visible all produce exactly this silence, and the tool has the evidence to tell them apart: the
+exit code, how many bytes came back, whether a summary line appeared, and the last lines of the
+run. It reports those now and lists the candidates rather than asserting one.
+
+Same family as the gate whose static reason turned a crash into a wrong diagnosis. The rule
+that generalises: a refusal may say what it *observed* with certainty and what it *concludes*
+only with a hedge --- and when one symptom has several causes, naming a single one is not
+helpfulness, it is a wrong answer delivered confidently.
+
+### A mutation aimed at deleted code is refused far too late to matter
+
+`mutate_viewer.py` refuses a mutation whose search string is not in the file, prints which one,
+and stops. That is right, and it is not a safeguard: the refusal arrives inside a run of the
+harness itself, and if nobody completes one the table can hold a dead mutation indefinitely
+while looking complete. `--list` prints it exactly as it prints a live one.
+
+Two were found on 2026-08-16 and the pair is the argument. One had been dead for **weeks**:
+commit `9e9be98` removed the `a11y.ts` line it named when links began to be announced as links,
+and nothing said so, because the harness that would have said so had not finished a run in that
+time --- it was hanging, so one defect was concealing the other. The second took **an hour**: an
+ordinary `*id` -> `id` cleanup in `save.rs`, made while fixing something else, silently unaimed a
+mutation that had passed earlier the same session. Neither is exotic, and normal refactoring
+produces the second kind continuously.
+
+So the check belongs where it costs nothing and runs every time, not inside the hour-long thing
+it is about. `anchors` is that gate. It reports the count and refuses to guess *why* an anchor
+is missing: a drifted anchor and a leftover mutation look identical to it and need opposite
+fixes, and a check that picked one would be confidently wrong half the time.
+
+**Proving it needed the trap it is named for.** The first control aimed at the drifted-anchor
+direction perturbed a string that is not in the table, so `str.replace` changed nothing, the
+gate correctly reported a clean tree, and that read as the gate failing to fire. Assert the
+plant landed --- compare the text, not just call `replace` --- before reading any mutation's
+result.
+
+### A `pgrep -f` wait loop is defeated by the command that checks on it
+
+A script that waits for another job with
+
+    while pgrep -f 'mutate_rust.py' >/dev/null; do sleep 10; done
+
+matches **any** process whose command line contains that string --- including the shell running
+the command you typed to see whether the job had finished. So on 2026-08-16 the harness it was
+waiting for exited at 22:00, and the waiter was still waiting an hour and twenty minutes later,
+held open by the diagnostics. *Observing it is what kept it blocked*, which is why the state
+looked consistent every single time it was checked.
+
+`pgrep -f` searches the full argv of everything on the machine, so a pattern this specific
+feels safe and is the opposite: the more distinctive the string, the more certain it is to
+appear in the very command written to look for it. Two escapes, and the second is better ---
+match on something the observer cannot contain (a PID recorded when the job started, or `pgrep
+-f "[m]utate_rust"`), or **do not wait on a process at all**: have the job write a sentinel and
+wait for that.
+
+**The same run had a second reason to look dead, and either alone was enough.** Its steps were
+piped through `tail` inside a script whose stdout was a file, so nothing reached the log until
+the pipeline closed --- and a script that has printed nothing is indistinguishable from one
+that has done nothing. Both halves are already recorded here separately, in the entries about
+running a long command through `tail` and about a harness that prints only at the end. They
+were written into one script anyway.
+
+The general shape, which is what makes it worth a fourth entry: **an instrument that shares a
+namespace with its subject can hold the subject in the state it is measuring.** Prefer a
+positive signal the job emits (`WIN2-DONE`) over an inference from the process table.
