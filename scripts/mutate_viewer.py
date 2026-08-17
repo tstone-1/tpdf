@@ -141,26 +141,6 @@ MUTATIONS = [
         runner="viewer-tagged",
     ),
     Mutation(
-        # The check that reads the tree's text has to see every element, not the
-        # ones it was written before. A selector naming `p` reads a tagged page
-        # short by its headings --- and presents that as the page's text being
-        # wrong rather than the selector.
-        # Re-aimed 2026-08-16. Its anchor was `joined = texts.filter(...).join(" ")`,
-        # a line commit 9e9be98 removed when links were announced as links, and
-        # nothing noticed for as long as this harness was not completing a run.
-        # The separator now goes in per range, so this is the same edit at the
-        # line that took over the job.
-        "a11y: hand a paragraph's lines over as separate paragraphs",
-        "src/lib/a11y.ts",
-        '      if (breaks.has(rangeAt)) piece += " ";',
-        "      if (false) piece += \" \";",
-        # Aimed at the TEXT rather than the order: dropping the separator merges
-        # two lines into one word and changes no block's position, so the
-        # order check it named cannot see it.
-        "the text read out is the page's own text",
-        runner="viewer-tagged",
-    ),
-    Mutation(
         "structure: show the geometry's order to a screen reader",
         "src/lib/reading.ts",
         "  const tagged = usableRuns(text);",

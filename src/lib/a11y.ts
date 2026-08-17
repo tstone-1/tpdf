@@ -409,13 +409,34 @@ function fill(
     content.boxes,
     links,
   );
-  // Where the separators fall, so the join survives the run splitting: a run is
-  // a stretch of character indices, and the space between two lines is not one.
-  const breaks = new Set<number>();
-  let seen = 0;
-  for (const range of ranges) {
-    if (range === SEPARATOR) breaks.add(seen);
-    else seen += 1;
+  /**
+   * The character indices a line starts at, for every line but the first.
+   *
+   * **By character index, not by position in `ranges`**, and the difference is
+   * the whole of a defect that shipped from 2026-08-01 to 2026-08-17. This set
+   * was `seen`, a count of non-separator entries in the input list --- which
+   * would be right if the run splitter handed back the same list. It does not:
+   * `linkRunsIn` walks character by character and *coalesces* adjacent indices,
+   * so a paragraph whose two lines are contiguous in the character stream ---
+   * which is the ordinary case --- comes back as one run holding one range. The
+   * loop below then never reached position 1, the space was never written, and
+   * a screen reader read the last word of one line joined to the first of the
+   * next.
+   *
+   * A character index survives the coalescing because it names a place in the
+   * page's own stream rather than a place in a list this function does not own.
+   *
+   * No fixture caught it: the separator exists only for a *tagged* block,
+   * `tagged.pdf` is the only corpus carrying a `/StructTreeRoot`, and none of
+   * its blocks wraps. The mutation aimed at the old line survived a full viewer
+   * run, which is what surfaced it --- see `a11y.test.ts`, which now tests this
+   * directly, and the trap about a branch no fixture reaches.
+   */
+  const breakAt = new Set<number>();
+  for (let at = 0; at < ranges.length; at += 1) {
+    if (ranges[at] !== SEPARATOR) continue;
+    const next = ranges.slice(at + 1).find((range) => range !== SEPARATOR);
+    if (next) breakAt.add(next.from);
   }
 
   let text = "";
@@ -438,15 +459,28 @@ function fill(
     text = "";
   };
 
-  let rangeAt = 0;
+  /** Whether anything has been written into this element yet. */
+  let wrote = false;
   for (const run of runs) {
     let piece = "";
     for (const range of run.ranges) {
-      if (breaks.has(rangeAt)) piece += " ";
-      piece += textOfRanges(content, [range]);
-      rangeAt += 1;
+      // Split wherever a line began, since one range can now span several
+      // lines. The scan is over the range's own indices rather than over
+      // `breakAt`, so the pieces come out in order without sorting anything.
+      let from = range.from;
+      for (let at = range.from; at < range.to; at += 1) {
+        if (!breakAt.has(at)) continue;
+        if (at > from) piece += textOfRanges(content, [{ from, to: at }]);
+        // Never leading: a separator before anything has been written would put
+        // a space at the start of the paragraph, which a screen reader
+        // announces as a pause the document did not ask for.
+        if (wrote || piece) piece += " ";
+        from = at;
+      }
+      piece += textOfRanges(content, [{ from, to: range.to }]);
     }
     if (!piece) continue;
+    wrote = true;
     if (!run.link) {
       text += piece;
       continue;
