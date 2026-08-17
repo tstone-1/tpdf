@@ -8,14 +8,14 @@
  * genuinely owns: that a command names a page by the *identity* the model gave
  * it, and that a reply is adopted whole rather than merged.
  *
- * {@link changedSlots} is the exception and gets the most attention, because it
- * is real logic: it decides which pages the viewer redraws, and a defect there
- * is a page left painted the way it used to be.
+ * The third is {@link Edits.map}, which is the translation the viewer lays the
+ * document out through --- `pages.ts` has its own tests, and what is asserted
+ * here is that the state a reply carried is what the map is built from.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { changedSlots, Edits, NOTHING_OPEN, type EditState } from "./edits";
+import { Edits, NOTHING_OPEN, type EditState } from "./edits";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
@@ -33,58 +33,6 @@ function state(count: number, turns: Record<number, number> = {}): EditState {
     dirty: Object.keys(turns).length > 0,
   };
 }
-
-describe("changedSlots", () => {
-  it("reports nothing when the two states agree", () => {
-    expect(changedSlots(state(4), state(4))).toEqual([]);
-  });
-
-  it("reports the slot whose turn moved, and only that one", () => {
-    expect(changedSlots(state(4), state(4, { 2: 1 }))).toEqual([2]);
-  });
-
-  it("reports every slot that moved", () => {
-    expect(changedSlots(state(4), state(4, { 0: 3, 3: 2 }))).toEqual([0, 3]);
-  });
-
-  it("reports a turn that went back to upright", () => {
-    // The direction a comparison against zero would miss: undoing a rotation
-    // leaves `turns` at 0, which is what an unedited page reports, so a diff
-    // that looked for "is it turned" rather than "did it change" would leave the
-    // page painted sideways.
-    expect(changedSlots(state(4, { 1: 1 }), state(4))).toEqual([1]);
-  });
-
-  it("reports a slot whose page changed identity even at the same turn", () => {
-    const before = state(3);
-    const after = state(3);
-    const page = after.pages[1];
-    if (!page) throw new Error("fixture");
-    page.id = 99;
-    expect(changedSlots(before, after)).toEqual([1]);
-  });
-
-  it("reports a slot whose source changed", () => {
-    const before = state(3);
-    const after = state(3);
-    const page = after.pages[2];
-    if (!page) throw new Error("fixture");
-    page.source = 0;
-    expect(changedSlots(before, after)).toEqual([2]);
-  });
-
-  it("reports every slot in the longer state when the page count moved", () => {
-    // Not a shortcut. When a page appears or disappears, every slot from the
-    // change onwards holds a different page, and comparing turns slot by slot
-    // would report "nothing moved" for a document whose pages had all shifted.
-    expect(changedSlots(state(3), state(4))).toEqual([0, 1, 2, 3]);
-    expect(changedSlots(state(4), state(3))).toEqual([0, 1, 2, 3]);
-  });
-
-  it("reports nothing for two empty states", () => {
-    expect(changedSlots(NOTHING_OPEN, NOTHING_OPEN)).toEqual([]);
-  });
-});
 
 describe("Edits", () => {
   beforeEach(() => {
@@ -132,6 +80,69 @@ describe("Edits", () => {
     await edits.rotate(1, 2);
     expect(edits.turnsOf(1)).toBe(2);
     expect(edits.dirty).toBe(true);
+  });
+
+  it("deletes by identity, not by position", async () => {
+    const opened = state(3);
+    const page = opened.pages[1];
+    if (!page) throw new Error("fixture");
+    page.id = 77;
+    core.invoke.mockResolvedValueOnce(opened);
+    const edits = new Edits(2);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce({
+      ...state(2),
+      pages: [opened.pages[0], opened.pages[2]],
+    });
+    await edits.delete(1);
+
+    expect(core.invoke).toHaveBeenLastCalledWith("page_delete", {
+      doc: 2,
+      page: 77,
+    });
+  });
+
+  it("does not send a delete for a slot the model has never mentioned", async () => {
+    const edits = new Edits(3);
+    await edits.delete(0);
+    expect(core.invoke).not.toHaveBeenCalled();
+  });
+
+  it("does not decide for itself whether the last page may go", async () => {
+    // The rule is the model's. A copy of it here would be a second rule, able to
+    // disagree with the first about a document a command in flight has already
+    // changed --- so the command goes, and the refusal comes back.
+    core.invoke.mockResolvedValueOnce(state(1));
+    const edits = new Edits(4);
+    await edits.refresh();
+
+    core.invoke.mockRejectedValueOnce("a document must keep at least one page");
+    await expect(edits.delete(0)).rejects.toBe(
+      "a document must keep at least one page",
+    );
+    expect(core.invoke).toHaveBeenLastCalledWith("page_delete", {
+      doc: 4,
+      page: 1,
+    });
+  });
+
+  it("builds the map from the pages the last reply carried", async () => {
+    const opened = state(3);
+    core.invoke.mockResolvedValueOnce(opened);
+    const edits = new Edits(6);
+    await edits.refresh();
+    expect(edits.map.sources()).toEqual([0, 1, 2]);
+
+    // Page 2 deleted: the reply is the whole order, and the map is a reading of
+    // it rather than an edit applied to the previous one.
+    core.invoke.mockResolvedValueOnce({
+      ...opened,
+      pages: [opened.pages[0], opened.pages[2]],
+    });
+    await edits.delete(1);
+    expect(edits.map.sources()).toEqual([0, 2]);
+    expect(edits.map.slotOf(1)).toBeUndefined();
   });
 
   it("reports no turn for a slot the model does not have", () => {

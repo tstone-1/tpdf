@@ -16,29 +16,13 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-/**
- * One page of the working document.
- *
- * Mirrors `edits::PageView`. Field names are the Rust identifiers --- there is no
- * `rename_all` on that struct, for the reason `ipc.ts` gives at length.
- */
-export interface PageView {
-  /**
-   * The model's identity for this page, sent back verbatim in a command.
-   *
-   * A `u64` in Rust and a JavaScript number here, which is exact for every id
-   * the model can currently issue --- they are allocated from 1 upwards, one per
-   * baseline page. **An allocator that ever issues an id past 2^53 breaks this
-   * silently**, rotating whichever page the rounded value happens to name, so
-   * that is a constraint on the allocator `docmodel.rs` says has yet to be
-   * written rather than a property of this line.
-   */
-  id: number;
-  /** Which baseline page supplies the content. Equal to the slot today. */
-  source: number;
-  /** Quarter turns clockwise on top of the page's own `/Rotate`, 0 to 3. */
-  turns: number;
-}
+import { PageMap, unedited, type PageView } from "./pages";
+
+// Re-exported because this is the module a reader of the edit state comes to
+// first, and the declaration lives in `pages.ts` so that the modules which only
+// need the shape --- the scroller, the thumbnails --- do not have to import this
+// one, which cannot be loaded outside a webview.
+export type { PageView };
 
 /** Mirrors `edits::EditState`. */
 export interface EditState {
@@ -66,10 +50,31 @@ export const NOTHING_OPEN: EditState = {
  */
 export class Edits {
   private readonly doc: number;
-  private current: EditState = NOTHING_OPEN;
+  private current: EditState;
+  /** The translation the last answer implies, rebuilt with it. */
+  private pageMap: PageMap;
 
-  constructor(doc: number) {
+  /**
+   * `pages` seeds the cache with a document nobody has edited.
+   *
+   * The one thing in this file that is not the model's answer, and it is the
+   * assumption `refresh` immediately confirms: a freshly opened document *is*
+   * unedited, and it is the same assumption the viewer's constructor makes about
+   * the order it lays out before the first reply. Without it every reader of the
+   * map --- the links, the comments, the page strip --- would have to have an
+   * answer for "no pages yet", and would translate a real document into nothing
+   * for the length of one round trip.
+   *
+   * The day a session carries edits, this stops being true for one frame and
+   * `refresh` corrects it. That is why it is a seed rather than a rule.
+   */
+  constructor(doc: number, pages = 0) {
     this.doc = doc;
+    this.current =
+      pages > 0
+        ? { ...NOTHING_OPEN, pages: [...unedited(pages).pages] }
+        : NOTHING_OPEN;
+    this.pageMap = new PageMap(this.current.pages);
   }
 
   /** The last answer from the model. */
@@ -80,6 +85,22 @@ export class Edits {
   /** Whether the document differs from the file on disk. */
   get dirty(): boolean {
     return this.current.dirty;
+  }
+
+  /**
+   * The last answer as a translation between slots and pages of the file.
+   *
+   * Rebuilt when a reply lands rather than kept in step, which is the same
+   * posture as the cache it is built from: there is one answer, and this is a
+   * reading of it.
+   *
+   * **Built once per reply and not once per call**, which is not a micro-
+   * optimisation: the page strip asks `sourceOf` for every row it renders while
+   * a reader drags the scrollbar, and a getter that constructed a `PageMap`
+   * each time would build a 775-entry index per thumbnail on the long corpus.
+   */
+  get map(): PageMap {
+    return this.pageMap;
   }
 
   /** Quarter-turns an edit has applied to the page in slot `page`. */
@@ -114,6 +135,23 @@ export class Edits {
     );
   }
 
+  /**
+   * Removes the page in slot `page` from the working document.
+   *
+   * Takes a slot and sends the id, as {@link rotate} does and for the same
+   * reason. What it does *not* do is decide whether the page may go: a document
+   * must keep at least one page, and that rule is the model's --- checking it
+   * here as well would be a second copy of it, able to disagree with the first
+   * about a document whose pages a command in flight has already changed.
+   */
+  async delete(page: number): Promise<EditState> {
+    const id = this.current.pages[page]?.id;
+    if (id === undefined) return this.current;
+    return this.adopt(
+      await invoke<EditState>("page_delete", { doc: this.doc, page: id }),
+    );
+  }
+
   /** Steps the journal back one command. */
   async undo(): Promise<EditState> {
     return this.adopt(await invoke<EditState>("edit_undo", { doc: this.doc }));
@@ -136,41 +174,10 @@ export class Edits {
     await invoke<void>("save_copy", { doc: this.doc, source, path });
   }
 
-  /** Records an answer and returns it. */
+  /** Records an answer, and the translation it implies, and returns it. */
   private adopt(state: EditState): EditState {
     this.current = state;
+    this.pageMap = new PageMap(state.pages);
     return state;
   }
-}
-
-/**
- * Which slots differ between two states, so a caller redraws only those.
- *
- * Returned as slots rather than ids because the viewer lays pages out by
- * position: this is the one place the two vocabularies meet on the way *back*,
- * as `Edits.rotate` is on the way out.
- *
- * A state with a different number of pages reports **every** slot in the longer
- * of the two, which is not a shortcut --- when pages appear or disappear, every
- * slot from the first change onwards holds a different page, and a comparison of
- * turns would report "nothing moved" for a document whose pages had all shifted
- * by one.
- */
-export function changedSlots(before: EditState, after: EditState): number[] {
-  const slots: number[] = [];
-  if (before.pages.length !== after.pages.length) {
-    for (let at = 0; at < Math.max(before.pages.length, after.pages.length); at++) {
-      slots.push(at);
-    }
-    return slots;
-  }
-  for (let at = 0; at < after.pages.length; at++) {
-    const was = before.pages[at];
-    const now = after.pages[at];
-    if (!was || !now) continue;
-    if (was.id !== now.id || was.turns !== now.turns || was.source !== now.source) {
-      slots.push(at);
-    }
-  }
-  return slots;
 }

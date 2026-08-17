@@ -62,6 +62,14 @@ class Mutation:
 #: are both recoverable, and only *under*-splitting loses information --- which is
 #: the mutation immediately below the two, and which is caught.
 #:
+#: A third, added 2026-08-17 and removed the same day: bumping every page's tile
+#: *epoch* in `Scroller.setPages` as well as carrying it. It survived the whole
+#: suite, and the reason is that `setPages` calls `clearTiles`, which bumps the
+#: generation --- one mechanism already drops every outstanding reply, so the
+#: per-page bump changed no behaviour any test could see. The bump is gone and
+#: the epoch is only carried; what replaced the mutation aims at `clearTiles`
+#: itself, which is the mechanism that does the work.
+#:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
@@ -71,27 +79,120 @@ MUTATIONS = [
         # reason ids cross the boundary at all.
         "edits: name a page by its slot rather than by its id",
         "src/lib/edits.ts",
-        "    const id = this.current.pages[page]?.id;",
-        "    const id = page;",
+        "    const id = this.current.pages[page]?.id;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_rotate\"",
+        "    const id = page;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_rotate\"",
         "sends the page's identity, not its position",
     ),
     Mutation(
-        # Report a slot as unchanged when its turn went back to upright. The
-        # reader undoes a rotation and the page stays sideways on screen.
-        "edits: compare against upright rather than against what was there",
+        # The same defect on the command that removes a page, where it is worse:
+        # a rotation aimed at the wrong page can be undone by looking at it, and
+        # a deletion aimed at the wrong page cannot.
+        "edits: delete a page by its slot rather than by its id",
         "src/lib/edits.ts",
-        "    if (was.id !== now.id || was.turns !== now.turns || was.source !== now.source) {",
-        "    if (was.id !== now.id || now.turns !== 0 || was.source !== now.source) {",
-        "reports a turn that went back to upright",
+        "    const id = this.current.pages[page]?.id;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_delete\"",
+        "    const id = page;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_delete\"",
+        "deletes by identity, not by position",
     ),
     Mutation(
-        # Compare slot by slot even when the page count moved. Every page has
-        # shifted, and a comparison of turns reports that nothing did.
-        "edits: diff by slot even when pages appeared or disappeared",
-        "src/lib/edits.ts",
-        "  if (before.pages.length !== after.pages.length) {",
-        "  if (false) {",
-        "reports every slot in the longer state when the page count moved",
+        # Answer a deleted page with a slot instead of nothing. Everything the
+        # backend sends about a page --- a link, a comment, a destination --- then
+        # lands on whichever page moved into the gap.
+        "pages: answer a page that is gone with a slot rather than with nothing",
+        "src/lib/pages.ts",
+        "    return this.bySource.get(source);",
+        "    return this.bySource.get(source) ?? source;",
+        "says a deleted page is nowhere rather than answering with a slot",
+    ),
+    Mutation(
+        # The fallback the class exists to refuse: right for every unedited
+        # document, and asks for the wrong page in exactly the case it is for.
+        "pages: fall back to the slot when it draws no page",
+        "src/lib/pages.ts",
+        "    return this.views[slot]?.source;",
+        "    return this.views[slot]?.source ?? slot;",
+        "says a slot past the end is nowhere rather than falling back to itself",
+    ),
+    Mutation(
+        # Compare two orders by which page of the file is in each slot rather
+        # than by identity. A page restored by an undo is then "the same page",
+        # and the viewer takes the cheap path that only re-reads the turns.
+        "pages: compare two orders by source rather than by identity",
+        "src/lib/pages.ts",
+        "    return this.views.every((page, slot) => page.id === other.views[slot]?.id);",
+        "    return this.views.every((page, slot) => page.source === other.views[slot]?.source);",
+        "is false when the same sources arrive under different identities",
+    ),
+    Mutation(
+        # Hand `findIndex`'s -1 back as though it were a slot. The viewer's
+        # `?? Math.min(...)` does not fire on it, so the reader is put at "slot
+        # minus one" --- and the page that was deleted reads as a page that
+        # moved somewhere impossible rather than as a page that is gone.
+        #
+        # Deliberately not the mutation this looked like it wanted, which was to
+        # follow a page by its `source` instead of its `id`. Ids are allocated
+        # one per baseline page, so on every document that exists today
+        # `source == id - 1` and the two are the same function --- a variant
+        # rather than a gap, which `docs/TRAPS.md` says to check for before
+        # strengthening anything. It becomes distinguishable when a page can be
+        # duplicated, and `docmodel.rs` says what has to be proved first.
+        "pages: report a page that has gone as the slot before the first",
+        "src/lib/pages.ts",
+        "    return found === -1 ? undefined : found;",
+        "    return found;",
+        "says nothing for a page that is no longer there",
+    ),
+    Mutation(
+        # Draw a link whose own page has been deleted. It is hit-tested against
+        # whichever page moved into that slot, so a cross-reference appears in
+        # the middle of a page that never had one.
+        "pages: keep a link whose page has been deleted",
+        "src/lib/pages.ts",
+        "    const slot = pages.slotOf(link.page);\n    if (slot === undefined) continue;",
+        "    const slot = pages.slotOf(link.page) ?? link.page;",
+        "leaves out a link on a page that is gone",
+    ),
+    Mutation(
+        # Leave a destination pointing at a page that is not in the document.
+        # `goToDestination` then scrolls to whatever is in that slot.
+        "pages: leave a destination pointing at a page that has gone",
+        "src/lib/pages.ts",
+        "  if (slot === undefined) return { kind: \"broken\" };",
+        "  if (slot === undefined) return target;",
+        "keeps a link whose destination is gone, and calls it broken",
+    ),
+    Mutation(
+        # List a comment on a page nobody can see. It opens against the page that
+        # moved into the slot, attributing somebody's note to a page they never
+        # wrote on.
+        "pages: keep a comment on a page that has been deleted",
+        "src/lib/pages.ts",
+        "    const slot = pages.slotOf(comment.page);\n    if (slot === undefined) continue;",
+        "    const slot = pages.slotOf(comment.page) ?? comment.page;",
+        "moves a comment to the slot its page is in and drops the rest",
+    ),
+    Mutation(
+        # Carry each page's state by slot rather than by identity. Every page
+        # below the gap then inherits the size and the tile epoch of the page
+        # that used to be there --- invisible on a document whose pages are all
+        # the same size, which is most of them, so this is asserted here rather
+        # than left to a window check on a corpus that might not show it.
+        "scroller: carry a page's learned size by its slot rather than by its page",
+        "src/lib/scroller.ts",
+        "      const was = at.get(page.id);",
+        "      const was = this.order.indexOf(page);",
+        "carries a learned size to wherever the page moved to",
+    ),
+    Mutation(
+        # Keep what was painted across a change of order. Every tile is placed by
+        # the slot it was requested for, so after a deletion the surviving pixels
+        # are in the wrong places rather than merely stale --- and a reply still
+        # in flight is adopted, because the generation bump that would have
+        # dropped it went with the call.
+        "scroller: keep the tiles when the page order changes",
+        "src/lib/scroller.ts",
+        "    this.clearTiles();\n    this.dropPlaceholders();\n    this.estimate = this.meanKnownSize();",
+        "    this.dropPlaceholders();\n    this.estimate = this.meanKnownSize();",
+        "drops a tile that was rendering when the order changed",
     ),
     Mutation(
         # Turn the view instead of the page. Every statement about the page that
@@ -1349,6 +1450,12 @@ TEST_FILES = [
     "src/lib/edits.test.ts",
     "src/lib/scroller.test.ts",
     "src/lib/appcommands.test.ts",
+    # Added 2026-08-17 with `pages.ts`. This list is what the harness runs and
+    # what its name cross-check reads, so a suite missing from it makes every
+    # mutation naming one of its tests unprovable --- the check said so for
+    # seven of them rather than reporting them survived, which is that guard
+    # doing its job.
+    "src/lib/pages.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
@@ -1403,12 +1510,24 @@ def all_test_names() -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", action="store_true")
+    # Same flag, same meaning as `mutate_viewer.py`'s. Added when the page
+    # deletion work put twenty new mutations into a table of a hundred: the
+    # whole table is what runs before a push, and re-proving ninety-odd
+    # mutations that could not have moved is an hour of somebody waiting.
+    # The control run and the name cross-check below still run in full.
+    parser.add_argument(
+        "--only", default="", help="run mutations whose name contains this"
+    )
     args = parser.parse_args()
+    chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
 
     if args.list:
-        for mutation in MUTATIONS:
+        for mutation in chosen:
             print(f"{mutation.name}  ->  expects: {mutation.expect}")
         return 0
+    if not chosen:
+        print(f"[FAIL] no mutation matches {args.only!r}")
+        return 1
 
     print("--- control: the suite must be green before anything is broken", flush=True)
     names, counted, out = run_tests()
@@ -1427,7 +1546,7 @@ def main() -> int:
     # is the most misleading verdict a mutation pass can print. Derived from the
     # control run's own list rather than from a hand-kept table.
     known = all_test_names()
-    unknown = [m for m in MUTATIONS if not any(m.expect in name for name in known)]
+    unknown = [m for m in chosen if not any(m.expect in name for name in known)]
     if unknown:
         for mutation in unknown:
             print(
@@ -1439,7 +1558,7 @@ def main() -> int:
 
     problems = 0
     with tempfile.TemporaryDirectory(prefix="tpdf-mutate-") as scratch:
-        for mutation in MUTATIONS:
+        for mutation in chosen:
             target = ROOT / mutation.path
             # Copied aside and written *back*, never moved: a move replaces
             # the file the tooling may already be watching, and docs/TRAPS.md
@@ -1511,9 +1630,9 @@ def main() -> int:
 
     print()
     print(
-        f"[OK] all {len(MUTATIONS)} mutations caught by the test named for them"
+        f"[OK] all {len(chosen)} mutations caught by the test named for them"
         if problems == 0
-        else f"[FAIL] {problems} of {len(MUTATIONS)} mutations were not caught as described"
+        else f"[FAIL] {problems} of {len(chosen)} mutations were not caught as described"
     )
     return 0 if problems == 0 else 1
 

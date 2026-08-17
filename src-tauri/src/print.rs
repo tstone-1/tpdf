@@ -29,11 +29,12 @@
 //! worse than none --- the same reason a bounded outline walk reports what it cut
 //! rather than presenting a partial tree as whole.
 
-use std::collections::HashSet;
 use std::path::Path;
 
-use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
+use lopdf::{Document, LoadOptions};
 
+use crate::edits::Plan;
+use crate::pagetree::{agreed_turns, apply_turns, drop_outline, drop_pages};
 use crate::sweep;
 
 /// Cap on a single decompressed stream, matching the sanitizing rewrite.
@@ -42,10 +43,23 @@ use crate::sweep;
 /// spike 0.4 measured a 2,879-byte input inflating to 1 GiB.
 pub(crate) const MAX_DECODE: usize = 64 * 1024 * 1024;
 
+/// One page of a print job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PagePlan {
+    /// Which page of the file, one-based, as `lopdf` numbers them.
+    pub number: u32,
+    /// Quarter-turns clockwise an **edit** has applied to it, 0 to 3.
+    ///
+    /// Composed with the job's view rotation rather than replacing it: a reader
+    /// who turned page 3 in the document and is looking at the whole thing
+    /// sideways asked for both.
+    pub turns: u8,
+}
+
 /// Which pages to print.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pages {
-    /// Every page, in document order.
+    /// Every page, in document order, exactly as the file has them.
     All,
     /// Exactly these, one-based --- and printed in **document order**, not in
     /// the order they are listed here.
@@ -57,7 +71,7 @@ pub enum Pages {
     /// discovered because nothing downstream would report it: [`expect_pages`]
     /// compares how many pages came out, never which, so a reordering that the
     /// caller expected and did not get is invisible until it is on paper.
-    Only(Vec<u32>),
+    Only(Vec<PagePlan>),
 }
 
 /// What to print, and how it should be oriented.
@@ -70,10 +84,62 @@ pub struct Job {
 
 impl Job {
     /// Whether this job is the document exactly as it already is on disk.
+    ///
+    /// [`Pages::All`] rather than "a selection naming every page": a plan that
+    /// lists all of them with no turns describes the same document, and this
+    /// question decides whether the file is handed over **byte for byte**. A
+    /// rewrite that changes nothing is the risk `lopdf` dropping encryption is
+    /// about, so the caller says which it means rather than this inferring it
+    /// from a list it would have to parse the document to check.
     #[must_use]
     pub fn is_passthrough(&self) -> bool {
         self.pages == Pages::All && self.turns % 4 == 0
     }
+}
+
+/// What a print job should contain: the reader's range, or the working document.
+///
+/// Two routes in, and they are exclusive on purpose. `pages` is an explicit
+/// range --- what a print panel's "pages 2 to 4" will be, and what the window
+/// harness uses to exercise the refusals --- and it says nothing about edits.
+/// `plan` is the working document as the model holds it, and then which pages,
+/// in what order, and how each is turned all come from there.
+///
+/// **A document nobody has edited is [`Pages::All`]**, which is what hands the
+/// file to the printer byte for byte. Spelling the same document out as a
+/// selection would rewrite it to produce itself --- and `lopdf` drops encryption
+/// on the way through, so that is not a rewrite worth risking for a job that was
+/// always going to be the file.
+///
+/// Pure, and takes the plan rather than the model that holds it: what decides the
+/// shape of a job is worth being able to test without a document open.
+#[must_use]
+pub fn select(plan: Option<&Plan>, pages: Option<Vec<u32>>) -> Pages {
+    if let Some(wanted) = pages {
+        return Pages::Only(
+            wanted
+                .into_iter()
+                .map(|number| PagePlan { number, turns: 0 })
+                .collect(),
+        );
+    }
+    let Some(plan) = plan else {
+        return Pages::All;
+    };
+    if plan.is_identity() {
+        return Pages::All;
+    }
+    Pages::Only(
+        plan.pages
+            .iter()
+            .map(|page| PagePlan {
+                // One-based, as `lopdf` numbers pages; `source` is the zero-based
+                // baseline page the model works in.
+                number: page.source + 1,
+                turns: page.turns,
+            })
+            .collect(),
+    )
 }
 
 /// Produces the bytes to hand to the print system.
@@ -98,45 +164,45 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
     )
     .map_err(|e| format!("could not parse {source:?}: {e}"))?;
 
-    let present: Vec<u32> = doc.get_pages().keys().copied().collect();
+    let table = doc.get_pages();
+    let present: Vec<u32> = table.keys().copied().collect();
     let wanted = resolve(&job.pages, &present)?;
 
+    // Resolved to object ids **before** anything is dropped, and that ordering is
+    // load-bearing: `get_pages` numbers the pages it finds from 1, so deleting
+    // page 2 of four renumbers the old page 4 to 3. Reading the table afterwards
+    // therefore looks up a number that now names a different page --- or, as here,
+    // no page at all, so the turn was silently dropped. Object ids do not move.
+    // Caught by `a_third_parser_checks_a_job_built_from_a_document_we_did_not_write`,
+    // which keeps the first and last pages of `rotated.pdf`: the last came back at
+    // its own rotation rather than a quarter past it.
+    let view = i16::from(job.turns % 4);
+    let plan: Vec<_> = wanted
+        .iter()
+        .filter_map(|page| {
+            let id = table.get(&page.number).copied()?;
+            Some((id, ((i16::from(page.turns) + view).rem_euclid(4)) as u8))
+        })
+        .collect();
+
     if wanted.len() != present.len() {
+        let kept: Vec<u32> = wanted.iter().map(|page| page.number).collect();
         let dropped: Vec<u32> = present
             .iter()
             .copied()
-            .filter(|number| !wanted.contains(number))
+            .filter(|number| !kept.contains(number))
             .collect();
         drop_pages(&mut doc, &dropped)?;
         // Destinations into pages that are no longer here.
-        doc.catalog_mut()
-            .map_err(|e| format!("no document catalog: {e}"))?
-            .remove(b"Outlines");
+        drop_outline(&mut doc)?;
     }
 
-    let turns = job.turns % 4;
-    if turns != 0 {
-        // Distinct objects, not page numbers. A `/Kids` array may name one page
-        // twice and `lopdf`'s page walk keeps no visited set, so composing once
-        // per number turns a shared page twice --- the second visit reads what
-        // the first wrote. Every page takes the same turn here, so there is
-        // nothing to reconcile, only a second application to avoid; that is why
-        // this deduplicates where `save::agreed_turns` has to refuse. See the trap.
-        let mut seen: HashSet<ObjectId> = HashSet::new();
-        let ids: Vec<_> = doc
-            .get_pages()
-            .values()
-            .copied()
-            .filter(|id| seen.insert(*id))
-            .collect();
-        for id in ids {
-            let composed = (effective_rotation(&doc, id) + i64::from(turns) * 90).rem_euclid(360);
-            doc.get_object_mut(id)
-                .and_then(Object::as_dict_mut)
-                .map_err(|e| format!("page {id:?} is not a dictionary: {e}"))?
-                .set("Rotate", composed);
-        }
-    }
+    // Per page rather than per document, because an edit turns one page and the
+    // view turns all of them --- and the two add. Applied per *object*, since a
+    // `/Kids` array may name one twice; `pagetree::agreed_turns` refuses a plan
+    // asking one object for two different angles rather than applying whichever
+    // it met first.
+    apply_turns(&mut doc, &agreed_turns(&plan)?)?;
 
     sweep::collect(&mut doc)?;
 
@@ -144,160 +210,6 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
     doc.save_to(&mut out)
         .map_err(|e| format!("could not serialise the print job: {e}"))?;
     Ok(out)
-}
-
-/// Removes pages, and every reference to them, in a single pass.
-///
-/// `lopdf::delete_pages` does exactly this and does not scale: it calls
-/// `delete_object` per page, and `delete_object` calls `traverse_objects` ---
-/// the quadratic walk AGENTS.md already records for `prune_objects`, here run
-/// once *per deleted page*. Measured release-profile on the 775-page corpus,
-/// keeping two pages: **620 ms** against **1.2 ms** here, and the two produce
-/// byte-identical output on every fixture and corpus
-/// (`control_page_deletion_matches_lopdf_byte_for_byte`).
-///
-/// Same shape as the mark-and-sweep, and the same conclusion --- use `lopdf`
-/// for the object model, write the graph walks ourselves.
-///
-/// # Errors
-///
-/// An object nesting deeper than [`sweep::MAX_NESTING`]. Refused rather than
-/// walked as far as it goes, for the same reason the sweep refuses: a pass that
-/// stopped early would leave a reference to a deleted page in the file, and a
-/// page tree naming an object that is gone is a document that opens and prints
-/// blank pages.
-fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
-    let pages = doc.get_pages();
-    // A page object can answer to more than one page number: `/Kids` may list it
-    // twice, and `lopdf`'s page walk keeps no visited set. An object that a KEPT
-    // number also names must survive --- otherwise printing "page 1" of such a
-    // document deletes the object page 1 *is*, and prints a blank sheet. This is
-    // the damaging member of the family in the trap: the other two turn a page
-    // twice, this one removes the page that was asked for.
-    let kept: HashSet<ObjectId> = pages
-        .iter()
-        .filter(|(number, _)| !numbers.contains(number))
-        .map(|(_, id)| *id)
-        .collect();
-    let doomed: HashSet<ObjectId> = numbers
-        .iter()
-        .filter_map(|number| pages.get(number).copied())
-        .filter(|id| !kept.contains(id))
-        .collect();
-    if doomed.is_empty() {
-        return Ok(());
-    }
-
-    // Every ancestor of every doomed page, collected before anything moves, so
-    // that a `/Count` is decremented once per page beneath it. A page tree is
-    // usually two levels deep and may be many.
-    //
-    // Walked per page NUMBER rather than per object, because `/Count` counts
-    // entries in the tree: two numbers naming one doomed object remove two of
-    // them. Iterating the object set decremented once per object, which is right
-    // only while objects and page numbers are the same thing.
-    let mut decrements = Vec::new();
-    for number in numbers {
-        let Some(id) = pages.get(number).copied() else {
-            continue;
-        };
-        if !doomed.contains(&id) {
-            continue;
-        }
-        let mut at = parent_of(doc, id);
-        // Same `/Parent`-cycle bound as `effective_rotation`, same reason: this
-        // runs on input we did not write.
-        for _ in 0..64 {
-            let Some(parent) = at else { break };
-            decrements.push(parent);
-            at = parent_of(doc, parent);
-        }
-    }
-    for parent in decrements {
-        if let Ok(tree) = doc.get_object_mut(parent).and_then(Object::as_dict_mut) {
-            if let Ok(count) = tree.get(b"Count").and_then(Object::as_i64) {
-                tree.set("Count", count - 1);
-            }
-        }
-    }
-
-    // One pass over the whole graph, dropping array entries and dictionary keys
-    // that name a doomed page --- the `/Kids` entry that removes it from the
-    // tree, and anything else pointing at it. The trailer is not in `objects`
-    // and has to be walked in its own right.
-    forget_in_dictionary(&mut doc.trailer, &doomed, 0)?;
-    for object in doc.objects.values_mut() {
-        forget_in_object(object, &doomed, 0)?;
-    }
-    for id in &doomed {
-        doc.objects.remove(id);
-    }
-    Ok(())
-}
-
-/// The `/Parent` of an object, if it names one.
-fn parent_of(doc: &Document, id: ObjectId) -> Option<ObjectId> {
-    doc.get_object(id)
-        .and_then(Object::as_dict)
-        .and_then(|dict| dict.get(b"Parent"))
-        .and_then(Object::as_reference)
-        .ok()
-}
-
-/// Drops references to any doomed object, recursively.
-///
-/// Depth-bounded by [`sweep::MAX_NESTING`], for the reason recorded there: this
-/// runs on a document we did not write, in the app process, and the recursion is
-/// otherwise unbounded.
-fn forget_in_object(
-    object: &mut Object,
-    doomed: &HashSet<ObjectId>,
-    depth: usize,
-) -> Result<(), String> {
-    if depth > sweep::MAX_NESTING {
-        return Err(format!(
-            "an object nests deeper than {} levels",
-            sweep::MAX_NESTING
-        ));
-    }
-    match object {
-        Object::Array(items) => {
-            items.retain(|item| !matches!(item, Object::Reference(id) if doomed.contains(id)));
-            for item in items.iter_mut() {
-                forget_in_object(item, doomed, depth + 1)?;
-            }
-        }
-        Object::Dictionary(dictionary) => forget_in_dictionary(dictionary, doomed, depth + 1)?,
-        Object::Stream(stream) => forget_in_dictionary(&mut stream.dict, doomed, depth + 1)?,
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Drops keys whose value names a doomed object, then recurses.
-fn forget_in_dictionary(
-    dictionary: &mut Dictionary,
-    doomed: &HashSet<ObjectId>,
-    depth: usize,
-) -> Result<(), String> {
-    if depth > sweep::MAX_NESTING {
-        return Err(format!(
-            "an object nests deeper than {} levels",
-            sweep::MAX_NESTING
-        ));
-    }
-    let dead: Vec<Vec<u8>> = dictionary
-        .iter()
-        .filter(|(_, value)| matches!(value, Object::Reference(id) if doomed.contains(id)))
-        .map(|(key, _)| key.clone())
-        .collect();
-    for key in dead {
-        dictionary.remove(&key);
-    }
-    for (_, value) in dictionary.iter_mut() {
-        forget_in_object(value, doomed, depth + 1)?;
-    }
-    Ok(())
 }
 
 /// Checks a built job against what was asked for, before it reaches paper.
@@ -321,18 +233,22 @@ pub fn expect_pages(found: usize, expected: Option<usize>) -> Result<(), String>
     }
 }
 
-/// The page numbers to keep, validated against what the document has.
-fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<u32>, String> {
+/// The pages to keep, validated against what the document has.
+fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<PagePlan>, String> {
     match pages {
-        Pages::All => Ok(present.to_vec()),
+        Pages::All => Ok(present
+            .iter()
+            .map(|&number| PagePlan { number, turns: 0 })
+            .collect()),
         Pages::Only(wanted) => {
             if wanted.is_empty() {
                 return Err("no pages selected".into());
             }
-            for number in wanted {
-                if !present.contains(number) {
+            for page in wanted {
+                if !present.contains(&page.number) {
                     return Err(format!(
-                        "page {number} is not in this document, which has {}",
+                        "page {} is not in this document, which has {}",
+                        page.number,
                         present.len()
                     ));
                 }
@@ -342,37 +258,111 @@ fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<u32>, String> {
     }
 }
 
-/// A page's `/Rotate` including anything it inherits.
-///
-/// Absent means "ask the parent", and only a page with no ancestor carrying one
-/// is really at zero. Composing against the literal value instead would be
-/// correct on every document that states it and wrong on every document that
-/// does not --- which is the half nobody has a fixture for.
-pub(crate) fn effective_rotation(doc: &Document, page: lopdf::ObjectId) -> i64 {
-    let mut at = page;
-    // Bounded: a `/Parent` cycle in a malformed file would otherwise spin here,
-    // and this runs on input we did not write.
-    for _ in 0..64 {
-        let Ok(dictionary) = doc.get_object(at).and_then(Object::as_dict) else {
-            break;
-        };
-        if let Ok(value) = dictionary.get(b"Rotate").and_then(Object::as_i64) {
-            return value;
-        }
-        match dictionary.get(b"Parent").and_then(Object::as_reference) {
-            Ok(parent) => at = parent,
-            Err(_) => break,
-        }
-    }
-    0
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{build, drop_pages, effective_rotation, Job, Pages};
+    use super::{build, select, Job, PagePlan, Pages};
+    use crate::pagetree::{drop_pages, effective_rotation};
+
+    /// A selection of pages, none of them turned by an edit.
+    ///
+    /// Every check below that names a page range predates per-page turns and
+    /// says nothing about them, so the zero is what keeps them asking their own
+    /// question. The ones that *are* about a turn build their own plan.
+    fn only(numbers: &[u32]) -> Pages {
+        Pages::Only(
+            numbers
+                .iter()
+                .map(|&number| PagePlan { number, turns: 0 })
+                .collect(),
+        )
+    }
     use lopdf::{dictionary, Document, Object, ObjectId, Stream};
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
+
+    /// A four-page document with a model, and its handle.
+    fn modelled() -> crate::edits::Edits {
+        let edits = crate::edits::Edits::default();
+        edits.open(1, 4);
+        edits
+    }
+
+    #[test]
+    fn an_unedited_document_prints_as_the_file_itself() {
+        let edits = modelled();
+        assert_eq!(
+            select(Some(&edits.plan(1).expect("plan")), None),
+            Pages::All,
+            "spelling it out as a selection of every page would rewrite the file to \
+             produce the file --- and lopdf drops encryption on the way through"
+        );
+    }
+
+    #[test]
+    fn an_edited_document_prints_the_pages_the_model_kept() {
+        let edits = modelled();
+        let pages = edits.state(1).expect("state").pages;
+        edits.delete(1, pages[1].id).expect("delete");
+        edits.rotate(1, pages[3].id, 1).expect("rotate");
+
+        assert_eq!(
+            select(Some(&edits.plan(1).expect("plan")), None),
+            Pages::Only(vec![
+                PagePlan {
+                    number: 1,
+                    turns: 0
+                },
+                PagePlan {
+                    number: 3,
+                    turns: 0
+                },
+                PagePlan {
+                    number: 4,
+                    turns: 1
+                },
+            ]),
+            "one-based page numbers of the file, the deleted one absent, and the \
+             turn on the page it was applied to"
+        );
+    }
+
+    #[test]
+    fn an_explicit_range_is_what_it_says_and_owes_nothing_to_the_model() {
+        let edits = modelled();
+        let pages = edits.state(1).expect("state").pages;
+        edits.rotate(1, pages[0].id, 2).expect("rotate");
+
+        assert_eq!(
+            select(Some(&edits.plan(1).expect("plan")), Some(vec![2, 3])),
+            Pages::Only(vec![
+                PagePlan {
+                    number: 2,
+                    turns: 0
+                },
+                PagePlan {
+                    number: 3,
+                    turns: 0
+                },
+            ]),
+            "a range is an instruction about which pages, and carries no edits --- \
+             the window harness sends one and has no model at all"
+        );
+    }
+
+    #[test]
+    fn a_document_with_no_model_prints_the_whole_file() {
+        assert_eq!(select(None, None), Pages::All);
+    }
+
+    #[test]
+    fn a_handle_that_names_no_document_is_an_error_before_this_is_reached() {
+        // The half that moved out of this function when it stopped taking the
+        // model: `print_document` reads the plan and propagates the failure, so a
+        // stale handle is an error rather than a silent fallback to the whole
+        // file --- which would print the pages the reader deleted.
+        let edits = crate::edits::Edits::default();
+        assert!(edits.plan(9).is_err());
+    }
 
     /// The operating system's own PDF parser, whichever platform this is.
     ///
@@ -622,7 +612,7 @@ mod tests {
         let out = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![2, 4]),
+                pages: only(&[2, 4]),
                 turns: 0,
             },
         )
@@ -648,7 +638,7 @@ mod tests {
         let out = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![3]),
+                pages: only(&[3]),
                 turns: 0,
             },
         )
@@ -832,6 +822,103 @@ mod tests {
         }
     }
 
+    /// A print job carries the reader's *edits*, not only their view.
+    ///
+    /// Until deleting a page landed, a job was the file plus one rotation applied
+    /// to every page --- so a reader who turned page 3 in the document and pressed
+    /// print got page 3 the way it was on disk, silently. Each page now takes its
+    /// own turn, and the view's on top of it.
+    ///
+    /// The fixture inherits `/Rotate 90` from the page tree and states none of its
+    /// own, which is what makes the composition visible: a build that *set* each
+    /// page's turn rather than adding it produces 90 and 180 here where the answer
+    /// is 180 and 270.
+    #[test]
+    fn each_page_takes_its_own_edit_and_the_view_rotation_on_top() {
+        let dir = TempDir::new("per-page");
+        let path = dir.file("in.pdf");
+        fixture(&path, 3, 90);
+
+        let out = build(
+            &path,
+            &Job {
+                pages: Pages::Only(vec![
+                    PagePlan {
+                        number: 1,
+                        turns: 0,
+                    },
+                    PagePlan {
+                        number: 2,
+                        turns: 1,
+                    },
+                    PagePlan {
+                        number: 3,
+                        turns: 2,
+                    },
+                ]),
+                // The reader is also looking at the whole document sideways.
+                turns: 1,
+            },
+        )
+        .expect("build");
+
+        let printed = reload(&out);
+        let rotations: Vec<i64> = printed
+            .get_pages()
+            .values()
+            .map(|id| effective_rotation(&printed, *id).rem_euclid(360))
+            .collect();
+        assert_eq!(
+            rotations,
+            vec![180, 270, 0],
+            "inherited 90, plus each page's own edit, plus the view's quarter"
+        );
+    }
+
+    /// The same job with no view rotation, so the edit is the only thing moving.
+    ///
+    /// The control for the check above: with both in force, a build that ignored
+    /// the plan and applied the view to everything would produce 180/180/180 --- a
+    /// wrong answer that differs from the right one on two pages, but a build that
+    /// ignored the *view* and applied only the plan produces this row instead, and
+    /// the two failures are not distinguishable from one comparison.
+    #[test]
+    fn a_page_the_reader_turned_prints_turned_with_no_view_rotation_at_all() {
+        let dir = TempDir::new("per-page-only");
+        let path = dir.file("in.pdf");
+        fixture(&path, 3, 90);
+
+        let out = build(
+            &path,
+            &Job {
+                pages: Pages::Only(vec![
+                    PagePlan {
+                        number: 1,
+                        turns: 0,
+                    },
+                    PagePlan {
+                        number: 2,
+                        turns: 1,
+                    },
+                    PagePlan {
+                        number: 3,
+                        turns: 2,
+                    },
+                ]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+
+        let printed = reload(&out);
+        let rotations: Vec<i64> = printed
+            .get_pages()
+            .values()
+            .map(|id| effective_rotation(&printed, *id).rem_euclid(360))
+            .collect();
+        assert_eq!(rotations, vec![90, 180, 270]);
+    }
+
     /// The damaging member of the family: not a page turned twice, but a page
     /// deleted that the reader asked to print.
     #[test]
@@ -846,7 +933,7 @@ mod tests {
         let out = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![1]),
+                pages: only(&[1]),
                 turns: 0,
             },
         )
@@ -888,7 +975,7 @@ mod tests {
         let out = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![3]),
+                pages: only(&[3]),
                 turns: 0,
             },
         )
@@ -934,7 +1021,7 @@ mod tests {
         let error = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![2, 9]),
+                pages: only(&[2, 9]),
                 turns: 0,
             },
         )
@@ -951,7 +1038,7 @@ mod tests {
         assert!(build(
             &path,
             &Job {
-                pages: Pages::Only(vec![]),
+                pages: only(&[]),
                 turns: 0,
             },
         )
@@ -981,7 +1068,7 @@ mod tests {
         let out = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![1]),
+                pages: only(&[1]),
                 turns: 0,
             },
         )
@@ -1024,7 +1111,7 @@ mod tests {
         let out = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![1]),
+                pages: only(&[1]),
                 turns: 0,
             },
         )
@@ -1067,7 +1154,7 @@ mod tests {
         let out = build(
             &path,
             &Job {
-                pages: Pages::Only(vec![2, 4]),
+                pages: only(&[2, 4]),
                 turns: 0,
             },
         )
@@ -1233,7 +1320,7 @@ mod tests {
             let out = build(
                 &path,
                 &Job {
-                    pages: Pages::Only(keep.to_vec()),
+                    pages: only(&keep),
                     turns: 1,
                 },
             )

@@ -562,6 +562,36 @@ unreachable object or removes a prior incremental revision, so a copy of a docum
 forward whatever the original carried. That is correct for "save a copy" and would be wrong
 for a redaction, and the two must not be confused when the redaction path is built on it.
 
+#### T6.2 — Deleting a page, added 2026-08-17
+
+**Nothing new crosses the boundary.** `page_delete` takes a document handle and a page
+identity and mutates a `HashMap` in the app process; it opens no file, writes none, and
+reaches no worker. Its authority is the same as `page_rotate`'s, which is to say the ability
+to make the reader's *unsaved* document differ from the file on disk --- reversible with
+undo, and never written until the reader names a file. The commands that write are still
+`save_copy` and `print_document`, and their authority is unchanged and stated above.
+
+**One thing did change on the write side, and it is worth stating precisely rather than as a
+narrowing.** `print_document` takes the open document's handle now, and the *edits* in a job
+--- which pages the reader kept and how each is turned --- are read from the model rather
+than accepted from the frontend. The explicit page range is unchanged and still comes from
+the caller; it is what a print panel's "pages 2 to 4" will be, and it carries no edits. So a
+caller can still name any readable path and any range of its pages --- the §T6.1 shape,
+unchanged --- and cannot invent an edit the model does not hold.
+
+**What a deletion does to the parsing surface.** A page dropped from a saved copy is dropped
+by the same page-tree pass the print path has used since 2026-07-28 (`pagetree::drop_pages`),
+which walks the object graph under `sweep::MAX_NESTING` and refuses rather than stopping
+early --- a partial pass would leave a page tree naming an object that is gone, which is a
+document that opens and prints blank pages. Two refusals are correctness properties in the
+§T6.1 sense: a page two page numbers share cannot be half-deleted, and a plan whose pages
+have been reordered is refused rather than written in the order the file happens to have.
+
+**The outline is dropped whole from a copy that lost pages**, and that is a *smaller* claim
+than repairing it would be: what survives a repair is only as sound as the resolver that did
+it, and what survives this is nothing. Stated in the changelog as a real loss rather than
+hidden as a detail.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -1065,6 +1095,15 @@ which is what makes it evidence rather than a milestone.
     collects an unreachable object or drops a prior incremental revision, so whatever the
     source carried, the copy carries. That is right for "save a copy" and wrong for a
     redaction, and the redaction path must not be built on it by assuming otherwise.
+15. **A copy that lost a page keeps the deleted page's content in every place that is not
+    the page tree** (§T6.2), added 2026-08-17. `pagetree::drop_pages` removes the page
+    object and every reference to it, and the mark-and-sweep that would collect what those
+    references *held* --- the content stream, the fonts, an embedded image --- runs on the
+    print path and not on the save path. So a reader who deletes a page and sends the copy
+    on has removed it from the document and not from the file. That is the same distinction
+    as risk 14 and is listed separately because deleting is the first operation where a
+    reader could plausibly believe otherwise: `docs/PLAN.md` §6 is where "removed" comes to
+    mean removed, and it is not built.
 
 ## 8. How to re-verify any of this
 

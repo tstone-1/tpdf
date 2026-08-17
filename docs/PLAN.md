@@ -2,9 +2,10 @@
 
 Status: **Phase 0 closed; Phase 1 in progress; Phase 2 begun.** The viewer runs ---
 sandboxed worker pool, virtual scroller, selection, find, outline, page strip, session
-restore and printing --- on **macOS arm64 and Windows x64**. The first edit that changes a
-document landed 2026-08-16: a page can be turned, undone and written out as a copy.
-Annotations, forms and redaction are not started, and no document is written in place.
+restore and printing --- on **macOS arm64 and Windows x64**. The first edits that change a
+document landed 2026-08-16 and 2026-08-17: a page can be turned or deleted, undone, printed
+and written out as a copy. Annotations, forms and redaction are not started, and no document
+is written in place.
 
 Phase 1 stays "in progress" on purpose. Its exit criterion is *tpdf is the daily default
 for reading*, which is a judgement about use rather than a list of shipped features, so it
@@ -4587,6 +4588,124 @@ already does and for the same reason: `lopdf` wrote the file, so `lopdf` reading
 would be a writer agreeing with its own reader. `rotated.pdf` is the fixture that makes
 *which* page was turned observable, since its four pages carry 0/90/180/270 and are
 otherwise identical; the run says which of the two cases each fixture was.
+
+#### Deleting a page, and the translation it forces --- done 2026-08-17
+
+The second edit that changes a document, and the one that makes the viewer's *slots* and the
+file's *pages* different numbers for the first time. Rotation could be wired without that ---
+a turn changes one page's shape and nothing's identity --- which is exactly why the previous
+increment stopped there and said so.
+
+**The translation is one module and it is the frontend's.** `src/lib/pages.ts` holds a
+`PageMap` built from the `pages` of a state reply: slot to source for everything going out (a
+tile request, `page_text`, `search_page`), source to slot for everything coming back (a link's
+rectangle, a comment's page, an outline destination). It was not added earlier for the reason
+`docs/TRAPS.md` gives about a property that holds by construction: while every slot was its own
+source, no test could tell a correct translation from a broken one.
+
+It is the frontend's rather than the backend's because the frontend must hold the order anyway
+in order to lay the document out. A second translation in Rust would be a second reader of the
+same rule, able to disagree with the first about which page is where; what crosses the boundary
+is one answer.
+
+**The consumers, and what each does with the news.** The interesting work was not the
+translation but everything already keyed by a slot --- `docs/TRAPS.md` has the general shape
+under *"state keyed by a slot belongs to whatever moves into that slot"*. Three answers:
+
+- **Carried with the page, by identity**: the scroller's learned page sizes, each page's own
+  turn, and the tile epochs. `Scroller.setPages` re-indexes them through a map from page id to
+  old slot, so a page's size travels to wherever it went. The epochs are carried and **not**
+  bumped, which is a correction: bumping them as well was written first, and the mutation
+  removing it survived the whole suite. `clearTiles` bumps the generation in the same call,
+  and that already drops every outstanding reply --- so the per-page bump was a second
+  mechanism for one outcome, which is a shape `docs/TRAPS.md` names. What the carry is for is
+  the value, which must not go backwards when a page moves.
+- **Thrown away**: the tiles, the tier-1 placeholders, the page strip's thumbnails, the
+  accessibility tree's built pages, a running search's matches, the selection, the focused
+  link, an open note. Each is placed by the slot it was made for, so after a deletion they are
+  in the wrong places rather than merely stale.
+- **Left alone and translated at the boundary**: the text cache, which is keyed by the page of
+  the file because that is what a page's text belongs to.
+
+**A link into a deleted page becomes `broken`**, which already means "points at a page this
+document does not have" and is precisely what the reader has made true. No new variant, and
+nothing in `outline.rs` has to learn a state it cannot produce. The outline tree is kept whole
+rather than pruned: an entry whose page has gone is still a heading with its subsections under
+it.
+
+##### The file half: saving and printing
+
+`save.rs` takes an `edits::Plan` --- the pages that were kept, in order, each with its turn,
+plus the baseline the edits were made against. The baseline is what lets the external-
+modification check survive a deletion: comparing the plan's *length* against the file would
+call every deletion a changed file.
+
+The page-tree surgery moved to `pagetree.rs`, shared by the two things that write a document.
+`drop_pages` was print's and `agreed_turns` was save's, and this increment needed both in both
+--- a second copy of either is the failure this repository has already recorded from other
+directions.
+
+**Printing carries the edits now, and did not before.** That was live from the day page
+rotation landed: a reader who turned page 3 and pressed print got page 3 as it is on disk.
+`print::Job` takes one entry per page rather than one rotation for the document, and
+`print::select` turns the model's plan into one --- read from the model rather than sent by
+the frontend, so a stale frontend cannot print a page the reader deleted. It is a pure
+function of the plan and the reader's range, which is what lets it be tested without a
+document open; it lived in `lib.rs` for an hour, where the mutation harness could not see its
+tests, and the harness said so rather than reporting the mutation as survived. A document nobody has edited still prints as
+`Pages::All`, which hands the file over byte for byte; spelling it out as a selection of every
+page would rewrite the document to produce itself, and `lopdf` drops encryption on the way
+through.
+
+**Three refusals, and each is a request no output satisfies rather than a defensive guard:**
+
+- A **plan out of document order**. `write_copy` deletes what is not wanted and leaves the
+  survivors where they were, so a reordering is unspellable rather than approximated. Nothing
+  in the application can produce one --- `Command::Move` is written, tested and wired to
+  nothing --- and the guard is here because the failure the day it *is* wired is a file whose
+  pages are silently in the old order.
+- A **page two page numbers share, half-deleted**. Removing it means removing one entry from a
+  `/Kids` array rather than one object, which the mechanism cannot express. Refused by name,
+  with a control proving that removing *both* numbers is still accepted.
+- The **outline of a document that lost pages**, dropped whole. Its destinations name pages
+  that are gone, and the pass that removes references leaves a destination array with no page
+  in it --- malformed rather than dead. A real loss, stated in `CHANGELOG.md` rather than
+  hidden, and repairing it is `links.rs`'s resolver on the write side.
+
+**What a saved copy still carries, and it is worth being exact.** A deleted page's *content*
+--- its stream, and anything only it referenced --- stays in the file as an unreachable
+object. `save.rs` deliberately does not run the mark-and-sweep the print path does, because
+"a saved copy is a serialisation, not a sanitation" is the position `docs/THREAT-MODEL.md`
+§T6.1 takes and this increment does not change it. Deleting is the first operation where a
+reader could plausibly believe otherwise, so it is residual risk 15 there rather than a
+footnote here, and §6 is where "removed" comes to mean removed.
+
+##### What the checks are built around, and what none of them covers
+
+**Identity, because a count cannot see it.** A document one page shorter is equally the result
+of dropping the wrong page, or the last one, or renumbering without moving anything. The window
+harness asserts that the slot below the gap now holds the page that was under it, compared by
+its text --- and where a corpus's pages read alike it says so and skips, rather than passing on
+a comparison that cannot fail.
+
+**A defect found by the fixture the check needed.** Resolving the print plan against the
+document *after* the unwanted pages were dropped looked up page numbers that the drop had
+renumbered, so a job keeping the first and last pages left the last one at its original angle.
+Caught by an existing check, and only because its fixture keeps pages 1 and 4 of a document
+whose four pages carry four different rotations.
+
+**The `page_delete` round trip is covered; the join is not.** Ten of the thirteen new window
+checks drive `Viewer.setPages` directly --- that is the seam that lets a check watch a real
+layout rearrange itself, and it says nothing about the command a reader runs. Three more ask
+the backend for real, from inside the running app: the command is registered, it names a page
+by the identity a state reply gave it, a second deletion of that id is refused as *deleted*
+rather than as unknown, and undo puts the page back. The model is left as it was found, and
+that is asserted rather than assumed.
+
+What none of it covers is `App.svelte`, which carries the answer from one to the other: one
+function, `applyPageOrder`, and the four lines around it. The harness runs *instead of* the
+shell --- the same gap every shell action has, and the same one `opencheck.ts` states for the
+file dialog.
 
 ### Phase 3 — Redaction
 

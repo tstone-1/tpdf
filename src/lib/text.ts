@@ -218,6 +218,13 @@ export const TEXT_CACHE_FLOOR = 8;
  * are the last things that could be dropped. The newest page is never evicted
  * while any other remains, because the scan starts at the old end and a page
  * just inserted is at the young one.
+ *
+ * **Every `page` below is a page of the *file*, not a slot on screen.** The two
+ * were the same number until a page could be deleted, and the distinction is the
+ * subject of `pages.ts`. It belongs this way round: a page's text is a property
+ * of the document, so a deletion above it must not make it be fetched again ---
+ * and `viewer.ts` translates at the four call sites rather than this class
+ * holding a copy of the order.
  */
 export class TextCache {
   private readonly doc: number;

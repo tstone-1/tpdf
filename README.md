@@ -7,9 +7,9 @@ SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for 
 **Status: Phase 0 closed, Phase 1 in progress, Phase 2 begun. First release: `26.8.0`.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
-Windows. **It has just begun to edit**: a page can be turned in the document, undone, and
-written out as a copy. Everything else on the list further down is not built, and the open
-file is never modified in place.
+Windows. **It has just begun to edit**: a page can be turned or deleted, undone, printed
+and written out as a copy. Everything else on the list further down is not built, and the
+open file is never modified in place.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
 macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
 SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the
@@ -45,14 +45,21 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 - **Turn a page in the document**, not only in the view --- with undo and redo, and a
   history that survives any number of turns because it is replayed rather than reversed.
+- **Delete a page**, from the command palette. Undo puts it back where it was, with its own
+  rotation. It has no keyboard shortcut on purpose: it is the one command that removes
+  something you can see.
+- **Print what you edited.** A print job carries the pages that are left and the way each
+  one is turned, read from the document model rather than from the file on disk.
 - **Save a copy.** The open file is never written in place. The copy is written to a
   temporary sibling and renamed, so an interrupted save leaves the original rather than
   half of a new file. An encrypted source is refused outright rather than silently saved
-  without its encryption.
+  without its encryption. Deleting a page drops the document's bookmarks, because their
+  destinations name pages that are no longer in the file --- repairing them one by one is
+  its own piece of work.
 
 ## Not built yet
 
-- The rest of the page operations: reorder, delete, insert, extract, split, merge, crop
+- The rest of the page operations: reorder, insert, extract, split, merge, crop
 - Annotations: highlight, ink, notes, shapes, stamps --- real PDF annotation objects
 - **True redaction** with an automatic post-save verification pass
 - Forms and visual signatures

@@ -46,6 +46,7 @@ import {
 } from "./links";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
+import { PageMap, unedited, type PageView } from "./pages";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import {
   PLAIN_SEARCH,
@@ -479,6 +480,14 @@ export class Viewer {
    */
   private tail = 0;
 
+  /**
+   * Which page of the file is in which slot, and everything derived from it.
+   *
+   * The one copy of the translation on this side. Replaced whole by
+   * {@link setPages} when the model answers, never edited --- see `pages.ts`.
+   */
+  private pages: PageMap;
+
   private lastStatus = "";
   private readonly observer: ResizeObserver;
   private dragOffset: number | null = null;
@@ -495,10 +504,18 @@ export class Viewer {
     root.tabIndex = 0;
     root.style.outline = "none";
 
+    // A document nobody has edited, which is what every document is at the
+    // instant it opens. Replaced by the model's own answer as soon as
+    // `edit_state` returns --- `App.svelte` deliberately does not hold the first
+    // page behind that round trip, so the viewer needs an order before it.
+    this.pages = unedited(opts.pageCount);
     this.text = new TextCache(opts.doc);
     this.a11y = new AccessibleText(root, opts.pageCount);
-    this.searcher = new Search(opts.doc, opts.pageCount, () =>
-      this.onSearchProgress(),
+    this.searcher = new Search(
+      opts.doc,
+      opts.pageCount,
+      () => this.onSearchProgress(),
+      (slot) => this.pages.sourceOf(slot),
     );
 
     this.surfaceHost = document.createElement("div");
@@ -1166,7 +1183,11 @@ export class Viewer {
         ? (this.scrollTop - this.scroller.pageTopOf(anchor)) / before
         : 0;
 
-    this.text.setPageTurns(page, turns);
+    // The text cache is keyed by the page of the file; the scroller by the slot.
+    // Both are told the same number of turns, which is what stops the tiles and
+    // the caret disagreeing about which way a page is facing.
+    const source = this.pages.sourceOf(page);
+    if (source !== undefined) this.text.setPageTurns(source, turns);
     this.scroller.setPageTurns(page, turns);
     this.applyFit();
 
@@ -1184,6 +1205,91 @@ export class Viewer {
   /** Quarter-turns an edit has applied to a page, 0 to 3. For the checks. */
   pageExtraTurns(page: number): number {
     return this.scroller.pageExtraTurns(page);
+  }
+
+  /**
+   * The working document's pages, in slot order. For the check harness.
+   *
+   * A copy, so that a caller building the next order out of this one --- which is
+   * what a check does --- cannot edit the map in place and leave the viewer
+   * believing it has already applied it.
+   */
+  get pageOrder(): PageView[] {
+    return [...this.pages.pages];
+  }
+
+  /**
+   * Takes the working document's pages, whatever changed about them.
+   *
+   * The single entry point for an edit reaching the viewer: `App.svelte` calls
+   * the backend and hands the whole answer here, exactly as {@link setPageTurns}
+   * is handed a turn rather than a delta. Nothing here computes what the next
+   * order should be.
+   *
+   * **Two paths, and the branch is the order rather than the turns.** A document
+   * whose pages are the same pages in the same slots has at most had some of them
+   * turned, and a turn is a change the layout absorbs in place while keeping the
+   * reader where they were --- that is {@link setPageTurns}, which is left to do
+   * it. A document whose *order* moved has invalidated everything keyed by a
+   * slot: the tiles, the placeholders, the links, the hits, the selection. That
+   * is the second path, and it is deliberately blunt.
+   *
+   * Returns whether the *order* moved, which is what tells the caller that
+   * everything else it holds about pages --- the links, the comments, the
+   * outline, the page strip --- has to be translated again. Answered here rather
+   * than compared again by the caller, so there is one definition of "the pages
+   * moved" and not two: a comparison of page *counts* is the same answer today
+   * and stops being one the moment a page can be reordered.
+   */
+  setPages(views: readonly PageView[]): boolean {
+    const before = this.pages;
+    const after = new PageMap(views);
+    this.pages = after;
+
+    if (before.sameOrder(after)) {
+      // Every slot, not the ones that differ: `setPageTurns` returns early for a
+      // page whose turn has not moved, so the comparison it would take to avoid
+      // the call is the comparison it already does.
+      for (let slot = 0; slot < after.length; slot++) {
+        this.setPageTurns(slot, after.turnsOf(slot));
+      }
+      return false;
+    }
+
+    // Where the reader is, by identity rather than by slot --- the whole point
+    // of this path is that slots have moved. A reader standing on the page that
+    // was just deleted has nowhere to be put back to, so they stay at the slot
+    // number they were on, which now holds the page that followed it. That is
+    // what a reader who deletes the page they are looking at expects to see.
+    const wasAt = this.currentPage();
+
+    this.opts.pageCount = after.length;
+    this.scroller.setPages([...views]);
+    this.a11y.setPageCount(after.length);
+    this.searcher.setPageCount(after.length);
+
+    // Keyed by a slot, and every slot after the change holds a different page.
+    // A selection left alone would highlight a run of characters on a page
+    // nobody selected; the ring and the open note would point at pages that have
+    // moved out from under them.
+    this.clearSelection();
+    this.clearLinkFocus();
+    this.closeComment();
+    this.turnedLinks = null;
+
+    // The slot the page the reader was on has moved to, or --- if that is the
+    // page they just deleted --- the slot number they were on, which now holds
+    // whatever followed it.
+    const landing =
+      after.slotFrom(before, wasAt) ??
+      Math.min(wasAt, Math.max(0, after.length - 1));
+    this.applyFit();
+    this.scrollTop = Math.max(
+      0,
+      Math.min(this.scroller.pageTopOf(landing), this.scroller.maxScroll),
+    );
+    this.wake();
+    return true;
   }
 
   /** What the zoom is following, if anything. */
@@ -1936,8 +2042,9 @@ export class Viewer {
   }
 
   /** A page's text as the view shows it, or `null` if it has not arrived. */
-  textOn(page: number): PageText | null {
-    return this.text.peek(page);
+  textOn(slot: number): PageText | null {
+    const source = this.pages.sourceOf(slot);
+    return source === undefined ? null : this.text.peek(source);
   }
 
   /** Where a pointer event falls, in one page's own point space. */
@@ -2562,8 +2669,11 @@ export class Viewer {
     this.searcher.ensureMapping();
     this.a11y.sync(
       this.scroller.visiblePages(),
-      (page) => this.text.peek(page),
-      (page) => this.searcher.unreadablePage(page),
+      (slot) => this.textOn(slot),
+      (slot) => {
+        const source = this.pages.sourceOf(slot);
+        return source !== undefined && this.searcher.unreadablePage(source);
+      },
     );
     this.a11y.announce(this.currentPage());
   }
@@ -2573,11 +2683,19 @@ export class Viewer {
     return this.a11y;
   }
 
-  /** Asks for a page's text once, waking the loop when it lands. */
-  private requestText(page: number): void {
-    if (this.textAsked.has(page)) return;
-    this.textAsked.add(page);
-    void this.text.load(page).then(() => this.wake());
+  /**
+   * Asks for a page's text once, waking the loop when it lands.
+   *
+   * Keyed by the page of the *file*, like the cache itself: a page's text is a
+   * property of the document rather than of where it currently sits, so a
+   * deletion above it must not make it be fetched again.
+   */
+  private requestText(slot: number): void {
+    const source = this.pages.sourceOf(slot);
+    if (source === undefined) return;
+    if (this.textAsked.has(source)) return;
+    this.textAsked.add(source);
+    void this.text.load(source).then(() => this.wake());
   }
 
   /**

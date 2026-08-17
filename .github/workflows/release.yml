@@ -385,11 +385,11 @@ jobs:
             with no filesystem or network authority — with search, selection, an
             outline, thumbnails, session restore and printing.
 
-            **What it edits.** Pages can be turned, with undo and redo, and the
-            result written out with *Save a copy*. The open file is never
-            modified in place.
+            **What it edits.** Pages can be turned and deleted, with undo and
+            redo, and the result printed or written out with *Save a copy*. The
+            open file is never modified in place.
 
-            **What it is not, yet.** Annotations, inserting and deleting pages,
+            **What it is not, yet.** Annotations, reordering and inserting pages,
             true redaction, forms and text editing are not built. See the roadmap
             in `docs/PLAN.md`.
 

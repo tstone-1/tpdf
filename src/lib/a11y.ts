@@ -112,7 +112,15 @@ export class AccessibleText {
    * element --- so this is bounded by the viewport rather than by the document.
    */
   private readonly built = new Map<number, { content: PageText; unreadable: boolean }>();
-  private readonly pageCount: number;
+  /**
+   * How many pages the reader sees.
+   *
+   * Announced as "Page 3 of 40" and written into every page's `aria-setsize`,
+   * so it is not `readonly`: deleting a page changes it while the document is
+   * open, and a screen reader told the old total would be counting pages that
+   * are not there.
+   */
+  private pageCount: number;
   /**
    * The document's links, so a cross-reference is announced as one.
    *
@@ -188,6 +196,23 @@ export class AccessibleText {
       this.built.set(page, { content, unreadable: cannotRead });
       this.insert(page, element);
     }
+  }
+
+  /**
+   * Takes a new page count, dropping every page that is present.
+   *
+   * The count is baked into each page's `aria-setsize` and into the
+   * announcement, so a stale one is read aloud. The elements go rather than
+   * being patched: `sync` rebuilds a page it does not hold, and after a deletion
+   * the page in a given slot is a different page.
+   */
+  setPageCount(pageCount: number): void {
+    if (pageCount === this.pageCount) return;
+    this.pageCount = pageCount;
+    for (const element of this.pages.values()) element.remove();
+    this.pages.clear();
+    this.built.clear();
+    this.announced = "";
   }
 
   /**

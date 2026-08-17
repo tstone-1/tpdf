@@ -79,6 +79,7 @@ import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 // module wholesale, and a class reached through it would be `undefined`
 // inside them --- turning this `instanceof` into a TypeError thrown from a
 // failure handler, which surfaces as a frame loop that never settles.
+import { unedited, type PageView } from "./pages";
 import { DocumentGone } from "./tilestatus";
 
 export type Layout = "tiles" | "viewport";
@@ -92,6 +93,21 @@ export type { PageSize };
 export interface ScrollerOptions {
   doc: number;
   pageCount: number;
+  /**
+   * The working document's pages, in slot order.
+   *
+   * What makes slot `i` something other than page `i` of the file: a deleted
+   * page leaves the order, and every slot after it draws a page whose number in
+   * the file is one higher than its position here. The tile requests below are
+   * the reason this class needs it at all --- their `page` is a page of the
+   * *file*, and asking for the slot would ask for the wrong picture.
+   *
+   * Optional, defaulting to a document nobody has edited, because the benchmark
+   * harnesses open a file and drive a viewport and never touch a page. That
+   * default is the identity mapping, and it is the truth for those callers
+   * rather than a fallback.
+   */
+  order?: PageView[];
   /**
    * Geometry of the pages whose size is known, index-aligned from page 1.
    *
@@ -482,7 +498,7 @@ export class Scroller {
    * Seeded from `opts.pages`, which on a lazy open is page 1 alone. Written by
    * {@link notePageSize} as the viewer learns real sizes.
    */
-  private readonly sizes: (PageSize | null)[];
+  private sizes: (PageSize | null)[];
   /**
    * What an unknown page is laid out at: the mean of the sizes that are known.
    *
@@ -504,7 +520,7 @@ export class Scroller {
    * that has moved on --- the per-page analogue of {@link generation}, and
    * per-page precisely because a size correction is per-page. See the header.
    */
-  private readonly epochs: number[];
+  private epochs: number[];
 
   /**
    * Quarter-turns clockwise a page is turned by **on top of the view**, 0 to 3.
@@ -519,16 +535,27 @@ export class Scroller {
    * constructed once per document and this changes while the reader is looking
    * at it.
    */
-  private readonly pageTurns: number[];
+  private pageTurns: number[];
+
+  /**
+   * Which page of the file each slot draws, and under which identity.
+   *
+   * Held rather than derived because both directions are needed: the source, on
+   * every tile request, and the identity, when the order changes --- a page's
+   * learned size and its tile epoch have to travel with the *page*, and the only
+   * thing that says where a page went is its id.
+   */
+  private order: PageView[];
 
   constructor(host: HTMLElement, opts: ScrollerOptions) {
     this.host = host;
     this.opts = opts;
 
+    this.order = opts.order ?? [...unedited(opts.pageCount).pages];
     this.sizes = new Array<PageSize | null>(Math.max(0, opts.pageCount)).fill(
       null,
     );
-    this.pageTurns = new Array<number>(Math.max(0, opts.pageCount)).fill(0);
+    this.pageTurns = this.order.map((page) => page.turns % 4);
     for (let page = 0; page < this.sizes.length; page++) {
       this.sizes[page] = opts.pages[page] ?? null;
     }
@@ -640,6 +667,72 @@ export class Scroller {
     // were just discarded.
     if (!moved) this.relayout();
     return moved;
+  }
+
+  /**
+   * Takes a new page order, carrying each page's state to wherever it went.
+   *
+   * What a deleted page costs, and why this is not simply a rebuild: a slot's
+   * learned size, its tile epoch and its own turn all belong to the *page*, not
+   * to the position, so they are re-indexed by identity. A page nobody could
+   * find in the new order --- the one that was deleted --- takes its entries
+   * with it.
+   *
+   * **Everything rendered is dropped**, both tiers, exactly as {@link setTurns}
+   * does. That is not laziness about which tiles survive: a tile is placed by
+   * the slot it was requested for, and after a deletion every slot below the gap
+   * holds a different page, so the surviving pixels are in the wrong places
+   * rather than merely stale. Re-keying them by identity is possible and is not
+   * worth it for an operation a reader performs once in a while --- and it is
+   * what the epochs already guarantee cannot be got wrong by accident.
+   *
+   * Returns whether the layout moved, which is the caller's cue to re-anchor the
+   * reader, on the same contract as {@link notePageSize} and
+   * {@link setPageTurns}.
+   */
+  setPages(next: PageView[]): boolean {
+    const before = this.order;
+    const at = new Map(before.map((page, slot) => [page.id, slot]));
+
+    this.order = [...next];
+    this.opts.pageCount = next.length;
+    // Read out of the *old* arrays by the slot the page used to be in. Written
+    // in one pass into fresh arrays rather than spliced in place, because a
+    // deletion in the middle moves every entry after it and an in-place shuffle
+    // would read entries it had already written.
+    const sizes: (PageSize | null)[] = [];
+    const turns: number[] = [];
+    const epochs: number[] = [];
+    for (const page of next) {
+      const was = at.get(page.id);
+      sizes.push(was === undefined ? null : (this.sizes[was] ?? null));
+      turns.push(page.turns % 4);
+      // Carried, and deliberately **not** bumped. A reply for a tile requested
+      // under the old order can still arrive, and the mechanism that drops it is
+      // the generation bump inside `clearTiles` below --- which covers every
+      // outstanding request at once. Bumping here as well was written first and
+      // a mutation removing it survived the whole suite, which is what says it
+      // was a second mechanism for one outcome rather than a guard.
+      //
+      // What the carry is for is the *value*: a page's epoch must not go
+      // backwards when it moves, or a per-page invalidation after the move can
+      // collide with a request issued before it.
+      epochs.push(was === undefined ? 0 : (this.epochs[was] ?? 0));
+    }
+    this.sizes = sizes;
+    this.pageTurns = turns;
+    this.epochs = epochs;
+
+    // Before the geometry moves, for the reason `setZoom` and `setTurns` clear
+    // first: `clearTiles` withdraws by asking the window which tiles it still
+    // wants, and that has to be the window they were requested for.
+    this.clearTiles();
+    this.dropPlaceholders();
+    this.estimate = this.meanKnownSize();
+    const beforeTotal = this.totalHeight;
+    this.computeGeometry();
+    this.relayout();
+    return this.totalHeight !== beforeTotal || before.length !== next.length;
   }
 
   /** The mean of the page sizes that are known, which is never none. */
@@ -1405,6 +1498,18 @@ export class Scroller {
     }
   }
 
+  /**
+   * Which page of the file a slot draws.
+   *
+   * `undefined` for a slot that is not in the document, and nothing asks for a
+   * tile in that case. Deliberately not falling back to the slot number: that
+   * fallback is right for every unedited document and asks for the wrong page in
+   * exactly the case the order exists for.
+   */
+  private sourceOf(slot: number): number | undefined {
+    return this.order[slot]?.source;
+  }
+
   private send(key: TileKey): void {
     // The document's bytes are gone; there is nothing any tile request can do
     // but be refused.
@@ -1416,6 +1521,11 @@ export class Scroller {
     // a refusal. Gating a "single choke point" that is not the only choke point
     // looks exactly like gating the real thing.
     if (this.gone) return;
+    // A slot with no page behind it. Reachable while a state reply is in flight,
+    // and the honest answer is to render nothing rather than to guess a page
+    // number --- the next frame lays out the order that has arrived by then.
+    const source = this.sourceOf(key.page);
+    if (source === undefined) return;
     const id = keyOf(key);
     const rect = this.tileRect(key.page, key.col, key.row);
     const generation = this.generation;
@@ -1436,7 +1546,7 @@ export class Scroller {
     void fetchTile({
       rid,
       doc: this.opts.doc,
-      page: key.page,
+      page: source,
       scale: this.opts.zoom * this.opts.dpr,
       turns: this.requestTurns(key.page),
       invert: this.opts.invert,
@@ -1556,6 +1666,8 @@ export class Scroller {
    */
   private requestPlaceholder(page: number, now: number): void {
     if (this.gone) return;
+    const source = this.sourceOf(page);
+    if (source === undefined) return;
     const id = `p${page}`;
     if (this.placeholders.has(page) || this.inFlight.has(id)) return;
     if (this.backoff.blocked(id, now)) return;
@@ -1583,7 +1695,7 @@ export class Scroller {
     void fetchTile({
       rid,
       doc: this.opts.doc,
-      page,
+      page: source,
       scale,
       turns: this.requestTurns(page),
       invert: this.opts.invert,

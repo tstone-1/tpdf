@@ -20,6 +20,7 @@ pub mod ocr;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
 pub mod outline;
+pub mod pagetree;
 pub mod print;
 #[cfg(target_os = "macos")]
 pub mod print_macos;
@@ -451,6 +452,22 @@ async fn page_rotate(
     edits.rotate(doc, page, turns)
 }
 
+/// Removes one page from the working document, without touching the file.
+///
+/// Named by identity like [`page_rotate`], and here that is not a nicety: the
+/// reply this id came from may already be one state behind, and a position would
+/// then delete whichever page had moved into that slot. An id cannot mean the
+/// wrong page --- it either names a live one, a deleted one, or nothing, and the
+/// model tells the three apart.
+#[tauri::command]
+async fn page_delete(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    page: u64,
+) -> Result<edits::EditState, String> {
+    edits.delete(doc, page)
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 async fn edit_undo(
@@ -505,7 +522,7 @@ async fn save_copy(
     // a mutex that is not held across an await anywhere in this file, and taking
     // a `State` handle into a `spawn_blocking` closure would need it to outlive
     // the command.
-    let plan: Vec<u8> = edits.plan(doc)?.iter().map(|page| page.turns).collect();
+    let plan = edits.plan(doc)?;
     tauri::async_runtime::spawn_blocking(move || {
         save::write_copy(Path::new(&source), &plan, Path::new(&path))
     })
@@ -760,13 +777,20 @@ async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Result
 #[tauri::command]
 async fn print_document(
     app: tauri::AppHandle,
+    edits: tauri::State<'_, edits::Edits>,
     path: String,
+    doc: Option<u32>,
     pages: Option<Vec<u32>>,
     turns: u8,
 ) -> Result<(), String> {
     let source = PathBuf::from(&path);
+    // Read here rather than inside the chooser, so that what decides the shape of
+    // the job is a pure function of the plan and the range --- and lives in the
+    // module that owns `Pages`, where its tests are under the same filter as the
+    // rest of them.
+    let plan = doc.map(|doc| edits.plan(doc)).transpose()?;
     let job = print::Job {
-        pages: pages.map_or(print::Pages::All, print::Pages::Only),
+        pages: print::select(plan.as_ref(), pages),
         turns,
     };
     let expected = match &job.pages {
@@ -1432,6 +1456,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_document,
             page_rotate,
+            page_delete,
             edit_undo,
             edit_redo,
             edit_state,

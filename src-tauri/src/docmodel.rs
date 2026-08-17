@@ -390,6 +390,17 @@ impl Doc {
         &self.now
     }
 
+    /// How many pages the file this was opened from had.
+    ///
+    /// Not [`Working::len`], and the difference is the whole of what a save has
+    /// to check: the working document is what the reader kept, and this is what
+    /// the file had. A plan of three pages against a baseline of five is a
+    /// deletion; a *baseline* that disagrees with the file on disk is the file
+    /// having changed underneath the reader.
+    pub fn baseline(&self) -> u32 {
+        self.baseline
+    }
+
     /// Whether there is anything to undo.
     pub fn can_undo(&self) -> bool {
         self.cursor > 0
