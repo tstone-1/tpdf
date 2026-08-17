@@ -132,19 +132,160 @@ jobs:
       - name: Quality gates
         run: python -u scripts/gates.py
 
+  # Creates the one draft release both build legs upload into, and hands them
+  # its id.
+  #
+  # WHY THIS JOB EXISTS. `tauri-action` resolves the release itself when given a
+  # `tagName`, and its own source says why that is fragile: *"you can't get an
+  # existing draft by tag, so we must find one in the list of all releases"*. It
+  # therefore pages `listReleases` looking for a matching `tag_name`. That lookup
+  # succeeded for `26.8.2` -- its Windows leg logged `Found draft release with tag
+  # v26.8.2 on the release list` -- and failed for both `26.8.3-rc2` and `-rc3`,
+  # where neither leg logged `Found` and each created its own draft. The result
+  # was **two drafts under one tag with the artifacts split**: one holding no
+  # macOS updater bundle, the other no Windows installers, and each carrying a
+  # `latest.json` naming a single platform. Publishing either ships a release
+  # that installs and cannot update.
+  #
+  # Two plausible causes were written down and both were falsified -- a
+  # single-job re-run (`rc3` had none and split identically) and a race between
+  # the legs (`max-parallel: 1` was already set, and `rc3`'s two uploads were
+  # eleven minutes apart). The workflow diff against `v26.8.2` is the release
+  # body's wording and nothing else. **The cause is still open**, and this job is
+  # written so that it does not matter: with `releaseId` set, `tauri-action`
+  # takes the branch `if (tagName && !releaseId)` and never looks anything up.
+  #
+  # The merge that makes one release out of two legs is unaffected, and that was
+  # checked in the action's source rather than assumed: before writing
+  # `latest.json` it lists the release's assets, and when one is already there it
+  # seeds `platforms` from it. So the second leg extends the first's manifest,
+  # which is exactly how `26.8.2` ended with one 4,172-byte file naming both.
+  draft:
+    name: Draft release
+    needs: gates
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+    steps:
+      - name: Create the draft release, or adopt the one already there
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # GraphQL, not `gh api repos/.../releases`. That REST endpoint is what
+          # the action's own lookup rests on and it is the thing under suspicion
+          # here; it also answers HTTP 200 with `[]` under some tokens, so an
+          # empty list from it is not evidence of an empty repository. GraphQL
+          # returned the drafts every time this was checked by hand.
+          find_drafts() {
+            gh api graphql -f query='
+              query($owner:String!, $name:String!) {
+                repository(owner:$owner, name:$name) {
+                  releases(first: 30, orderBy: {field: CREATED_AT, direction: DESC}) {
+                    nodes { databaseId tagName isDraft }
+                  }
+                }
+              }' -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" \
+              --jq ".data.repository.releases.nodes[] | select(.tagName == \"$TAG\") | select(.isDraft) | .databaseId"
+          }
+
+          FOUND=$(find_drafts)
+          COUNT=$(printf '%s' "$FOUND" | grep -c . || true)
+
+          # Refused rather than resolved. More than one draft for this tag is the
+          # exact state this job exists to prevent, and picking one of them is how
+          # half a release gets published -- both look identical in `gh release
+          # list`, down to the `createdAt`, which for a release is the tagged
+          # commit's timestamp and not when the draft was made.
+          if [ "$COUNT" -gt 1 ]; then
+            echo "::error::$COUNT drafts already exist for $TAG; delete them and re-tag"
+            printf '%s\n' "$FOUND"
+            exit 1
+          fi
+
+          if [ "$COUNT" -eq 1 ]; then
+            # A re-run of this job, which must adopt rather than add.
+            ID="$FOUND"
+            echo "adopted the existing draft $ID for $TAG"
+          else
+            # The body is a literal here rather than read from CHANGELOG.md, so
+            # that no tag can pick up a heading of the wrong shape -- BUILD.md's
+            # versioning section has why. The cost is that it is only ever as
+            # current as the last person who read it, which is why the release
+            # checklist says to re-read it at the point it matters.
+            cat > release-notes.md <<'NOTES'
+          **What this is.** A PDF reader that has begun to edit: fast,
+          sandboxed — every document is parsed and rendered in worker processes
+          with no filesystem or network authority — with search, selection, an
+          outline, thumbnails, session restore and printing.
+
+          **What it edits.** Pages can be turned, deleted and moved — drag a
+          thumbnail in the page strip, or use the command palette — with undo
+          and redo, and the result printed or written out with *Save a copy*.
+          The open file is never modified in place.
+
+          **What it is not, yet.** Annotations, inserting and extracting pages,
+          true redaction, forms and text editing are not built. See the roadmap
+          in `docs/PLAN.md`.
+
+          **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
+          the `-setup.exe` if you prefer an installer that asks fewer
+          questions — they install the same four files.
+
+          **Updating.** From this release on, tpdf checks for a newer version
+          once per launch and offers it in the toolbar; nothing is downloaded
+          or installed until you click. Every update is signed, and a copy
+          already installed accepts only payloads signed with the key baked
+          into it. The `.app.tar.gz`, `.sig` and `latest.json` files are how
+          that works — you do not need to download them by hand.
+
+          **macOS** — signed with a Developer ID identity and notarized by
+          Apple. Open it normally; no Gatekeeper bypass needed. Apple Silicon only.
+
+          **Windows** — unsigned. SmartScreen warns on first launch: choose
+          *More info* → *Run anyway*.
+          NOTES
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "tpdf $TAG" --notes-file release-notes.md
+            ID=$(find_drafts)
+            # `gh release create` prints a URL, not an id, and for a draft that
+            # URL carries an `untagged-<hash>` slug rather than the tag. So the
+            # id is read back rather than parsed out, and a read-back that finds
+            # nothing must fail here: an empty `releaseId` reaching the build
+            # legs would silently restore the behaviour this job removes.
+            if [ -z "$ID" ]; then
+              echo "::error::created a draft for $TAG and could not read its id back"
+              exit 1
+            fi
+            echo "created draft $ID for $TAG"
+          fi
+
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
   release:
     name: ${{ matrix.label }}
-    needs: gates
+    needs: [gates, draft]
     strategy:
       fail-fast: false
-      # SERIAL. Both legs create or update the same GitHub Release through
-      # tauri-action, and two jobs racing on that is a general hazard, not a
-      # theoretical one -- screenpick hit the updater-manifest variant of it,
-      # where the second upload silently dropped the first platform's entry and
-      # nothing failed to say so. tpdf ships no updater today, so that exact
-      # failure cannot occur here; the release-creation race still can.
+      # SERIAL. Both legs upload to one GitHub Release, and the second reads the
+      # first's `latest.json` off it to extend the manifest -- so if they
+      # overlapped, the second could read a manifest the first had not finished
+      # writing and drop its platform, with nothing failing to say so. screenpick
+      # hit exactly that.
       #
-      # If an updater is ever added, this is not optional any more.
+      # This comment said "tpdf ships no updater today, so that exact failure
+      # cannot occur here" until 2026-08-17. The updater landed in 26.8.2, five
+      # days before that was noticed, and the sentence had been carrying its own
+      # expiry condition in the next line: *"If an updater is ever added, this is
+      # not optional any more."* It is not optional any more.
+      #
+      # It is also not sufficient, and that is the other half worth stating: this
+      # was already set when 26.8.3-rc2 and -rc3 each produced two drafts eleven
+      # minutes apart. Serialising the legs never addressed release *creation*,
+      # which is what the `draft` job took away from them.
       max-parallel: 1
       matrix:
         include:
@@ -356,62 +497,35 @@ jobs:
           # with `shlex.split`, not guessed. Either mistake would surface only on
           # a tag push, which is the most expensive place to find one.
           args: --config ${{ github.workspace }}/src-tauri/tauri.updater.conf.json
-          tagName: ${{ github.ref_name }}
+          # The draft is created once, by the `draft` job, and both legs upload
+          # into it by id. `tagName` is deliberately absent: the action's create
+          # path is guarded by `if (tagName && !releaseId)`, so passing both
+          # would still take the `releaseId` branch, but leaving a `tagName` here
+          # would read as though this job still resolves a release. It does not.
+          # See the `draft` job for the two drafts this replaced.
+          releaseId: ${{ needs.draft.outputs.id }}
           # Writes `latest.json` beside the payloads and uploads it. That file is
           # what an installed tpdf reads, through
           # `releases/latest/download/latest.json` -- a URL that resolves only to
-          # a *published* release, which is what lets `releaseDraft: true` below
-          # stay as it is. A draft is invisible to it, so publishing the release
-          # by hand remains the act that offers the update to anybody.
-          includeUpdaterJson: true
-          releaseName: "tpdf ${{ github.ref_name }}"
-          # The scope paragraph is deliberate, and it has to be re-read on every
-          # release rather than inherited. tpdf is named and described as a
-          # viewer *and editor*, and a release that oversells itself is corrected
-          # by the first person who tries to annotate something -- the README
-          # says what is missing a scroll below the fold, which is not where
-          # someone downloading a binary reads.
+          # a *published* release. The `draft` job creates this one as a draft, so
+          # the file is invisible until somebody publishes it by hand, and that
+          # act remains the one that offers the update to anybody.
           #
-          # It went wrong in the *other* direction first, which is the direction
-          # worth expecting: this said "nothing here edits a document" and stayed
-          # true for exactly as long as that was so. The body is a literal here
-          # and nothing reads the CHANGELOG, so a feature landing does not move
-          # it and no gate can -- the paragraph is only ever as current as the
-          # last person who looked. Page rotation landed in 26.8.3 and this
-          # paragraph would have shipped denying it.
-          releaseBody: |
-            **What this is.** A PDF reader that has begun to edit: fast,
-            sandboxed — every document is parsed and rendered in worker processes
-            with no filesystem or network authority — with search, selection, an
-            outline, thumbnails, session restore and printing.
-
-            **What it edits.** Pages can be turned, deleted and moved — drag a
-            thumbnail in the page strip, or use the command palette — with undo
-            and redo, and the result printed or written out with *Save a copy*.
-            The open file is never modified in place.
-
-            **What it is not, yet.** Annotations, inserting and extracting pages,
-            true redaction, forms and text editing are not built. See the roadmap
-            in `docs/PLAN.md`.
-
-            **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
-            the `-setup.exe` if you prefer an installer that asks fewer
-            questions — they install the same four files.
-
-            **Updating.** From this release on, tpdf checks for a newer version
-            once per launch and offers it in the toolbar; nothing is downloaded
-            or installed until you click. Every update is signed, and a copy
-            already installed accepts only payloads signed with the key baked
-            into it. The `.app.tar.gz`, `.sig` and `latest.json` files are how
-            that works — you do not need to download them by hand.
-
-            **macOS** — signed with a Developer ID identity and notarized by
-            Apple. Open it normally; no Gatekeeper bypass needed. Apple Silicon only.
-
-            **Windows** — unsigned. SmartScreen warns on first launch: choose
-            *More info* → *Run anyway*.
-          releaseDraft: true
-          prerelease: false
+          # Both legs write this file and both upload it here. That is not a
+          # conflict: before writing, the action lists the release's assets and
+          # seeds `platforms` from a `latest.json` already there, so the second
+          # leg extends the first's manifest rather than replacing it. Checked in
+          # the action's source, and visible in `26.8.2`, whose single 4,172-byte
+          # manifest names both platforms. It only holds while both legs upload to
+          # ONE release, which is what the `draft` job now guarantees.
+          includeUpdaterJson: true
+          # `releaseName`, `releaseBody`, `releaseDraft` and `prerelease` used to
+          # live here and are gone rather than merely inert. The action ignores
+          # them once `releaseId` is set, so keeping them would leave the release
+          # body written out in two places -- and a document with two accounts of
+          # one fact is worse than one with none, because whichever a reader
+          # reaches first wins. The body is in the `draft` job now, which is the
+          # only thing that creates a release.
 
       # Tauri notarizes and staples the .app, then builds the DMG and only
       # SIGNS it. The DMG is left unnotarized and `spctl -a -t open` rejects it

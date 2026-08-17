@@ -8258,12 +8258,34 @@ timestamps: `max-parallel: 1` is already set and has been, `rc3`'s macOS leg upl
 14:27:49 and its Windows leg at 14:38:20 --- eleven minutes apart, strictly serial, and the
 second still did not find the first's draft.
 
-**What is established, and no more.** `v26.8.2` produced one complete release of 8 assets
-from this same workflow six days earlier, with a `latest.json` of 4,172 bytes carrying both
-platforms; `rc2` and `rc3` each produced two incomplete drafts whose `latest.json` files are
-2,721 and 3,336 bytes, one platform each. The only change to `release.yml` between them is
-the wording of `releaseBody`. That is not a mechanism, and nothing here should be read as
-one.
+**The logs then named the failing step, which is as far as reading gets you.** `tauri-action`
+resolves the release itself, and its own source says why that is fragile: *"you can't get an
+existing draft by tag, so we must find one in the list of all releases"* --- so it pages
+`listReleases` for a matching `tag_name` and creates one when it finds none. `26.8.2`'s
+Windows leg logged **`Found draft release with tag v26.8.2 on the release list`**; neither leg
+of `rc2` or `rc3` logged `Found`. So the lookup ran and came back empty while a matching draft
+existed.
+
+**Why the lookup came back empty is still open**, and the workflow diff against `v26.8.2` is
+the release body's wording and nothing else. Worth suspecting rather than believing: the same
+REST endpoint answers **HTTP 200 with `[]`** under the token in this machine's login keychain
+while `gh release list` shows five releases, so it is an endpoint that reports "nothing" where
+another instrument reports five --- but nothing establishes that the runner's token behaves
+that way.
+
+**So the fix removes the lookup instead of repairing it.** A `draft` job creates the release
+once and hands both build legs its id; `releaseId` makes the action take the branch
+`if (tagName && !releaseId)` and never resolve anything. The manifest merge that made
+`26.8.2` whole is unaffected and that was read out of the action's source rather than assumed:
+before writing `latest.json` it lists the release's assets and seeds `platforms` from one
+already there, so the second leg extends the first's file. It only ever held because both legs
+uploaded to **one** release, which is now guaranteed rather than hoped for.
+
+**`max-parallel: 1` was already set, and its comment had expired.** It read *"tpdf ships no
+updater today, so that exact failure cannot occur here"* --- the updater landed in `26.8.2`,
+five days before anyone noticed --- with the condition for its own expiry stated in the very
+next line: *"If an updater is ever added, this is not optional any more."* A comment that
+carries its own expiry date is only as good as the person who re-reads it.
 
 **The reason this is dangerous rather than merely untidy is that the checklist said "publish
 the draft".** With one draft that sentence is unambiguous and for three releases it was true.
@@ -8281,3 +8303,25 @@ with `[]`** under the token in the login keychain, while `gh release list` shows
 rather than by failing. An empty list from an authenticated call is not evidence of an empty
 repository. `gh api graphql` reaches them, ids and assets included, and is what the table
 above was read from.
+
+### `$?` read in the same word as a command substitution is the substitution's status
+
+Three refusal branches of the new `draft` job were measured and all three reported **exit 0**,
+which would have meant a job that prints `::error::` and stays green, handing an empty
+`releaseId` to the build legs --- the exact failure the job exists to prevent, reintroduced by
+its own guard. The guard was fine. The measurement was:
+
+```sh
+echo "case=[$(echo "$CASE" | tr '\n' ',')] exit=$? output=[$(cat out.txt)]"
+```
+
+Expansions inside one word are evaluated left to right, so the `$( … | tr … )` **runs before
+`$?` is expanded** and `$?` reports `tr`. Capturing the status into a variable on the line
+immediately after the command gives 0, 1, 1 --- the branches were always right.
+
+**The tell was that all three agreed.** A control set where the passing case and both failing
+cases return the same value is measuring something other than what it names, and that is
+cheaper to notice than to debug: two of those three were *designed* to differ from the first.
+Same family as every other entry here where the instrument, not the subject, was broken ---
+and it is worth stating in shell terms because `set -euo pipefail` was on, which makes the
+script look like the last place a status could be lost.
