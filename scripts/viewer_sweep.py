@@ -149,19 +149,25 @@ NAMES_JSON = re.compile(r"^CHECK-NAMES-JSON (\[.*\])$", re.MULTILINE)
 SUMMARY = re.compile(r"(\d+)/(\d+) checks passed(?:, (\d+) not applicable)?")
 
 
-def classify() -> tuple[list[str], list[str]]:
-    """Every fixture on disk, split into corpora and excluded, or raises."""
+def classify() -> tuple[list[str], list[str], list[str]]:
+    """Every fixture on disk, split into corpora and excluded, plus the corpora
+    that have no fixture here.
+
+    Those are two different questions and merging them cost the first tag of
+    26.8.3 both gate legs. *Is every file present accounted for* is an invariant
+    of the repository and holds anywhere. *Is every corpus present* is a
+    precondition of running a sweep, and it is deliberately false on a hosted
+    runner: `scripts/ci_fixtures.py` generates seven fixtures and states why the
+    rest are not generatable there --- fonttools and a per-image system font,
+    qpdf, a 550 MB write. Refusing on the second question inside the first made
+    the gate red on every machine that was not sweeping, which is every machine
+    but this one, and the gate had never run on one because a development
+    checkout has the whole set. So the missing list is returned rather than
+    raised, and the run path refuses on it.
+    """
     on_disk = sorted(p.stem for p in TESTDATA.glob("*.pdf"))
     corpora = [stem for stem, _ in WINDOW_CORPORA]
-
     missing = [stem for stem in corpora if stem not in on_disk]
-    if missing:
-        raise SystemExit(
-            f"[FAIL] {len(missing)} corpus fixture(s) are not in testdata/: "
-            + ", ".join(missing)
-            + "\n       Generate them first; a sweep that silently skips a corpus "
-            "reports a clean run over less than it claims."
-        )
 
     excluded: list[str] = []
     unclassified: list[str] = []
@@ -185,11 +191,16 @@ def classify() -> tuple[list[str], list[str]]:
 
     # An exclusion naming nothing is how an exclusion list rots into a blanket
     # permission --- the same rule the webview-sink gate applies to its markers.
-    for pattern, _ in NOT_WINDOW:
-        if not any(fnmatch.fnmatch(stem, pattern) for stem in on_disk):
-            print(f"[WARN] no fixture matches the exclusion {pattern!r}")
+    # Only asked where the fixtures are all present: on a runner that generates
+    # seven of them most patterns match nothing for a reason that is not rot,
+    # and a warning that fires on every CI run is one nobody reads on the run
+    # where it means something.
+    if not missing:
+        for pattern, _ in NOT_WINDOW:
+            if not any(fnmatch.fnmatch(stem, pattern) for stem in on_disk):
+                print(f"[WARN] no fixture matches the exclusion {pattern!r}")
 
-    return corpora, excluded
+    return corpora, excluded, missing
 
 
 def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
@@ -290,7 +301,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=900)
     args = parser.parse_args()
 
-    corpora, excluded = classify()
+    corpora, excluded, missing = classify()
 
     if args.list:
         print(f"=== {len(corpora)} window corpora")
@@ -304,6 +315,15 @@ def main() -> int:
                 if fnmatch.fnmatch(stem, pattern)
             )
             print(f"  {stem:<24} {why}")
+        if missing:
+            # Stated, not refused. A machine without the whole set cannot sweep
+            # and is not trying to; what it can still answer is whether every
+            # fixture it does have is accounted for, which is what this gate is.
+            print(
+                f"\n[INFO] {len(missing)} corpus fixture(s) are not on this "
+                "machine, so a sweep here would cover less than it claims: "
+                + ", ".join(missing)
+            )
         return 0
 
     if not args.app:
@@ -319,6 +339,20 @@ def main() -> int:
         if unknown:
             raise SystemExit(f"[FAIL] not window corpora: {', '.join(unknown)}")
         wanted = asked
+
+    # The refusal that used to live in classify(), aimed at the fixtures this
+    # run will actually open rather than at all fourteen. A full sweep is
+    # unchanged by that, since `wanted` is then every corpus; `--only` on a
+    # machine holding those two now works instead of being refused for the
+    # twelve it was not going to touch.
+    absent = [stem for stem in wanted if stem in missing]
+    if absent:
+        raise SystemExit(
+            f"[FAIL] {len(absent)} corpus fixture(s) are not in testdata/: "
+            + ", ".join(absent)
+            + "\n       Generate them first; a sweep that silently skips a corpus "
+            "reports a clean run over less than it claims."
+        )
 
     results = []
     for stem in wanted:

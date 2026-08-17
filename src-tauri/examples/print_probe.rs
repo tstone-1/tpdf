@@ -54,7 +54,7 @@ fn main() {
 mod imp {
     use std::path::{Path, PathBuf};
 
-    use tpdf_lib::print::{self, Job, Pages};
+    use tpdf_lib::print::{self, Job, PagePlan, Pages};
     use tpdf_lib::print_win;
     use windows::core::HSTRING;
     use windows::Win32::Graphics::Gdi::{CreateDCW, DeleteDC, HDC};
@@ -161,8 +161,17 @@ mod imp {
             }
         );
         println!();
+        // `turns: 0` per page, so what reaches the paper is the job's single
+        // quarter turn and nothing else --- the probe is about the subset path
+        // and the view rotation, and a per-page turn here would compose with
+        // that one and make the orientation checks below untestable.
         let job = Job {
-            pages: Pages::Only(wanted),
+            pages: Pages::Only(
+                wanted
+                    .iter()
+                    .map(|&number| PagePlan { number, turns: 0 })
+                    .collect(),
+            ),
             turns: 1,
         };
         let bytes = print::build(source, &job).map_err(|e| format!("building the job: {e}"))?;

@@ -2137,6 +2137,37 @@ starts at 0 and increments within the month.
 3. `cargo check --manifest-path src-tauri/Cargo.toml` to refresh `Cargo.lock`.
 4. In `CHANGELOG.md`, replace `Unreleased` with the release date.
 5. `scripts/gates.py` --- all gates pass.
+
+   **On a Mac, also `scripts/check_windows.py`, and it is not optional before a tag.** A
+   green gate list on this platform says nothing about any `#[cfg(windows)]` line, because
+   the compiler never parses one: `print_win.rs`, `examples/print_probe.rs`,
+   `examples/win_sandbox_probe.rs` and the Windows halves of `worker*.rs` are all outside
+   what 15/15 covers. Cutting `26.8.3` proved the gap rather than predicted it --- the
+   page-move work changed `print::Pages::Only` from `Vec<u32>` to `Vec<PagePlan>` and missed
+   the one Windows-only caller, and sixteen commits went by at 15/15 before a rehearsal tag
+   turned both runner legs red. That leg reported *four* failures, since clippy, test and
+   bins all stop at the same `error[E0308]`.
+
+   It is `cargo check --target x86_64-pc-windows-msvc --all-targets` with the environment
+   that command needs, and it does not link, so no MSVC linker is involved. About **8 s**
+   warm against a CI round trip of six minutes. One-time setup, which the script names in
+   full if anything is missing rather than failing four times in a row:
+
+   ```
+   brew install xwin llvm
+   xwin --accept-license --arch x86_64 --variant desktop splat --output ~/.xwin
+   scripts/fetch_pdfium.py --platform win-x64 --dest /tmp/pdfium-win
+   cp /tmp/pdfium-win/bin/pdfium.dll vendor/pdfium/bin/pdfium.dll
+   ```
+
+   The DLL is the one that reads as something else: Tauri resolves `bundle.resources` for
+   the *target* platform, so without it the build script dies on `resource path ... doesn't
+   exist`, which looks like a broken checkout. `vendor/` is gitignored and nothing on macOS
+   loads it. The splat is 629 MB, which is why this is not a gate.
+
+   **What it does not say**: only that the Windows tree type-checks. A wrong *value* passes
+   --- proved, by changing a `PagePlan`'s turns and watching it stay green. Linking, loading
+   and behaviour are still the runner's to find.
 6. **Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list --- §3's boundary table, §5's sandbox policy and
    §6's macOS column especially. Every present-tense sentence there claims something is
