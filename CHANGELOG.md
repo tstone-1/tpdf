@@ -40,10 +40,23 @@ have the binary.)
   are typing — a menu shortcut is claimed before the page ever sees the key, so
   listing those would have taken them away from the text you were editing.
 
-- **Known, and not new:** on a German keyboard ⌘\, ⌘[ and ⌘] have never worked,
-  because `\` and `[` need Option and Shift there. The palette still advertises
-  them. They are not in the menu either, rather than being listed under the
-  wrong key.
+### ⌘\ works on a German keyboard, for the first time
+
+- **Fixed.** Toggling the sidebar — and with it the page strip, and with it
+  deleting and reordering pages — was bound to ⌘\, and `\` needs ⌥⇧7 on a
+  German keyboard, so the shortcut has never once worked on that layout. It is
+  now also the key in the same *position*, which is `#` there, and the menu
+  says so.
+
+- **Back and Forward stay broken on that layout, deliberately.** The key in
+  ⌘]'s position is `+` on a German keyboard, and ⌘+ already zooms in. Giving
+  Forward that position would make one keypress mean two things. Both commands
+  are in the Go menu, which is now their route; choosing a different chord for
+  them is a decision rather than a fix.
+
+- The palette still writes these as ⌘\ and ⌘[ while the menu shows the key your
+  keyboard actually prints. Making the two agree needs something only the
+  operating system can answer.
 
 - Windows is unchanged. A menu bar there sits inside the window, and the
   palette stays that platform's route.

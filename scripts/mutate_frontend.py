@@ -74,6 +74,50 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Drop the position path. `\\` is Option-Shift-7 on a German keyboard, so
+        # the character path arrives with modifiers the binding refuses -- which
+        # is why Cmd-backslash had never once worked there, measured on the
+        # running application before this existed.
+        "keys: match a binding by its character only",
+        "src/lib/keys.ts",
+        "  if (binding.code !== undefined && event.code === binding.code) return true;",
+        "",
+        "matches the physical key when the character is unreachable",
+    ),
+    Mutation(
+        # Hoist the position check above the modifier checks. A position is not
+        # a licence to ignore the rest of the chord: Shift-Cmd on the same key
+        # would then be this binding too, and the both-directions Shift bug this
+        # table already carries an entry for would be back on one binding.
+        "keys: let the physical key win before the modifiers are read",
+        "src/lib/keys.ts",
+        "  const accel = event.metaKey || event.ctrlKey;\n  if (accel !== (binding.accel ?? false)) return false;",
+        "  if (binding.code !== undefined && event.code === binding.code) return true;\n  const accel = event.metaKey || event.ctrlKey;\n  if (accel !== (binding.accel ?? false)) return false;",
+        "keeps the modifier checks on the position path",
+    ),
+    Mutation(
+        # Claim the character rather than the position in the menu. The two
+        # disagree on any layout that is not the one the table was written on,
+        # and the menu is where that disagreement becomes a wrong shortcut shown
+        # to a reader.
+        "keys: build the accelerator from the character even when a position is named",
+        "src/lib/keys.ts",
+        "  const key = binding.code ?? plainKey(binding.keys[0] ?? \"\");",
+        "  const key = plainKey(binding.keys[0] ?? \"\");",
+        "withholds a punctuation chord, because position is not character",
+    ),
+    Mutation(
+        # The symmetric edit that looks obviously right and is not: Back and
+        # Forward are as untypable on a German keyboard as Cmd-backslash was, so
+        # naming their positions is the natural next step -- and BracketRight is
+        # the `+` key there, which zoom-in already claims.
+        "keys: give Forward the physical key a German keyboard prints + on",
+        "src/lib/keys.ts",
+        '  "nav.forward": { keys: ["]", "\\u2018"], accel: true },',
+        '  "nav.forward": { keys: ["]", "\\u2018"], code: "BracketRight", accel: true },',
+        "names no physical key that a German keyboard gives to another command",
+    ),
+    Mutation(
         # The one that matters most on this platform. A menu accelerator is
         # claimed by AppKit before the web view sees the key, so letting an
         # unmodified binding through puts bare `n` -- next page -- in the menu

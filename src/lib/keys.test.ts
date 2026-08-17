@@ -19,10 +19,11 @@ import {
  */
 function event(
   key: string,
-  { accel = false, ctrl = false, shift = false, alt = false } = {},
+  { accel = false, ctrl = false, shift = false, alt = false, code = "" } = {},
 ): KeyboardEvent {
   return {
     key,
+    code,
     metaKey: accel,
     ctrlKey: ctrl,
     shiftKey: shift,
@@ -31,6 +32,24 @@ function event(
 }
 
 const ids = Object.keys(BINDINGS) as BoundCommand[];
+
+/**
+ * What the German layout prints on the keys a binding might name by position.
+ *
+ * Here because a `code` is a *position* and the whole hazard is that the
+ * character above it moves. This is the layout the application is developed on
+ * and the one whose behaviour was measured, so it is the one worth encoding:
+ * without it, adding `code: "BracketRight"` to `nav.forward` looks harmless and
+ * silently collides with ⌘+.
+ */
+const GERMAN: Record<string, string> = {
+  Backslash: "#",
+  BracketLeft: "ü",
+  BracketRight: "+",
+  Equal: "´",
+  Minus: "ß",
+  Slash: "-",
+};
 
 describe("label", () => {
   it("renders the modifiers the binding actually declares", () => {
@@ -191,6 +210,92 @@ describe("the binding table", () => {
       expect(BINDINGS[id].keys.length, id).toBeGreaterThan(0);
     }
   });
+
+  it("names no physical key that a German keyboard gives to another command", () => {
+    // The check that stops the obvious next edit. `nav.back` and `nav.forward`
+    // are as untypable on this layout as ⌘\ was, so adding `code` to them is the
+    // natural symmetry -- and `BracketRight` is the `+` key here, which
+    // `view.zoomIn` already claims. Both would match one press of ⌘+, and which
+    // one fired would be whichever branch a handler tested first.
+    //
+    // So Back and Forward keep no position, and the pair stays untypable on a
+    // German keyboard rather than half-fixed. The menu is their route now, and
+    // moving them to a layout-safe chord is a decision about which chord, not a
+    // bug fix.
+    const positions = new Map<string, BoundCommand>();
+    for (const id of ids) {
+      const code = (BINDINGS[id] as Binding).code;
+      if (code !== undefined) positions.set(code, id);
+    }
+    // The control. An empty map satisfies the loop below however wrong the
+    // bindings are, and this file has already shipped one sweep that could not
+    // fail for exactly that reason.
+    expect(positions.size).toBeGreaterThan(0);
+
+    for (const [code, id] of positions) {
+      const prints = GERMAN[code];
+      expect(prints, `${code} is not in the German table`).toBeDefined();
+      const binding: Binding = BINDINGS[id];
+      const clash = ids.filter((other) => {
+        if (other === id) return false;
+        const b: Binding = BINDINGS[other];
+        return (
+          b.keys.includes(prints as string) &&
+          (b.accel ?? false) === (binding.accel ?? false) &&
+          (b.shift ?? false) === (binding.shift ?? false) &&
+          (b.alt ?? false) === (binding.alt ?? false)
+        );
+      });
+      expect(clash, `${id} names ${code}, which prints ${prints} here`).toEqual([]);
+    }
+  });
+});
+
+describe("matching by position as well as character", () => {
+  it("matches the physical key when the character is unreachable", () => {
+    // A German keyboard, where the `\` character needs ⌥⇧7 and the key in the
+    // US backslash position prints `#`. The character path cannot fire -- the
+    // modifiers are wrong for it -- so this is the position path alone.
+    expect(
+      matches("view.toggleSidebar", event("#", { accel: true, code: "Backslash" })),
+    ).toBe(true);
+  });
+
+  it("still matches the character when the layout can produce it", () => {
+    // A US keyboard. Both paths agree here, which is why the defect was
+    // invisible for as long as it was.
+    expect(
+      matches("view.toggleSidebar", event("\\", { accel: true, code: "Backslash" })),
+    ).toBe(true);
+  });
+
+  it("does not match a position no binding named", () => {
+    // The control for the two above: the position path must be a property of
+    // this one binding, not something `matches` does for every event carrying a
+    // code. Without it, `code` being ignored entirely would leave the US case
+    // green and look like a working feature.
+    expect(
+      matches("view.rotateClockwise", event("#", { accel: true, code: "Backslash" })),
+    ).toBe(false);
+    expect(matches("nav.back", event("ü", { accel: true, code: "BracketLeft" }))).toBe(
+      false,
+    );
+  });
+
+  it("keeps the modifier checks on the position path", () => {
+    // A position is not a licence to ignore the rest of the chord. ⇧⌘ on the
+    // same key is not this binding, and nothing about matching by code should
+    // change that.
+    expect(
+      matches(
+        "view.toggleSidebar",
+        event("#", { accel: true, shift: true, code: "Backslash" }),
+      ),
+    ).toBe(false);
+    expect(matches("view.toggleSidebar", event("#", { code: "Backslash" }))).toBe(
+      false,
+    );
+  });
 });
 
 describe("accelerator", () => {
@@ -229,6 +334,11 @@ describe("accelerator", () => {
     // the running application's own menu bar.
     expect(accelerator({ keys: ["\\"], accel: true })).toBeNull();
     expect(accelerator({ keys: ["["], accel: true })).toBeNull();
+    // ...unless the binding names its physical key, which is the whole escape
+    // hatch: a position is layout-independent where a character is not.
+    expect(accelerator({ keys: ["\\"], code: "Backslash", accel: true })).toBe(
+      "CmdOrCtrl+Backslash",
+    );
     expect(accelerator({ keys: ["+", "="], accel: true })).toBeNull();
     expect(accelerator({ keys: ["-"], accel: true })).toBeNull();
   });
@@ -262,7 +372,6 @@ describe("accelerator", () => {
     expect(refused.sort()).toEqual([
       "nav.back",
       "nav.forward",
-      "view.toggleSidebar",
       "view.zoomIn",
       "view.zoomOut",
     ]);

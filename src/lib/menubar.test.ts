@@ -132,10 +132,14 @@ describe("accelerators the menu may claim", () => {
     // `BracketLeft` is `ö`, so an earlier version of this menu advertised ⌘#
     // and ⌘Ö beside commands whose palette entry reads ⌘\ and ⌘[ --- and ⌘\
     // itself did nothing, which it had never done on this keyboard.
-    expect(acceleratorFor("view.toggleSidebar")).toBeNull();
     expect(acceleratorFor("nav.back")).toBeNull();
     expect(acceleratorFor("view.zoomOut")).toBeNull();
     expect(acceleratorFor("view.zoomIn")).toBeNull();
+    // ...and the exception, which is what `Binding.code` is for: a binding that
+    // names its physical key can be claimed as that key, and the menu then
+    // shows whatever the layout prints on it -- ⌘# here, ⌘\\ on a US keyboard,
+    // and correct on both because the handler matches the same position.
+    expect(acceleratorFor("view.toggleSidebar")).toBe("CmdOrCtrl+Backslash");
   });
 
   it("carries Shift and Option", () => {
