@@ -74,6 +74,119 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # The one that matters most on this platform. A menu accelerator is
+        # claimed by AppKit before the web view sees the key, so letting an
+        # unmodified binding through puts bare `n` -- next page -- in the menu
+        # bar, where it is taken out of the find field and every text input the
+        # application ever grows. Nothing about the menu would look wrong.
+        "keys: let a binding with no accelerator key into the menu",
+        "src/lib/keys.ts",
+        "  if (!binding.accel) return null;",
+        "",
+        "refuses a binding that holds no accelerator key",
+    ),
+    Mutation(
+        # The second refusal, and it is a different fact: these five hold the
+        # modifier and are still claimed by a text field. `handleWindowKey`
+        # guards undo with `inTextField` for exactly this reason, and a menu
+        # accelerator would undo that guard from outside the page.
+        "menubar: claim the chords a text field needs",
+        "src/lib/menubar.ts",
+        "  if (id in NO_ACCELERATOR) return null;",
+        "",
+        "withholds a chord a text field claims",
+    ),
+    Mutation(
+        # Let a punctuation key into the menu. An accelerator names a physical
+        # key and `matches` reads the character it produced, so on the German
+        # layout this advertises Cmd-# beside a command whose palette entry says
+        # Cmd-backslash -- measured on the running application before this rule
+        # existed, along with Cmd-O-umlaut for Back.
+        "keys: claim a punctuation key whose character depends on the layout",
+        "src/lib/keys.ts",
+        "/^[A-Z0-9]$/",
+        "/^[A-Z0-9\\\\]$/",
+        "refuses a punctuation key, whose position is not its character",
+    ),
+    Mutation(
+        # Guess at a key the table does not know. The parser accepts what it can
+        # read and silently claims whatever chord it read, so this takes a
+        # shortcut nobody chose rather than showing none.
+        "keys: guess at a key the accelerator table cannot spell",
+        "src/lib/keys.ts",
+        "  const upper = key.toUpperCase();\n  return /^[A-Z0-9]$/.test(upper) ? upper : null;",
+        "  const upper = key.toUpperCase();\n  return upper;",
+        "refuses a key it cannot spell rather than guessing",
+    ),
+    Mutation(
+        # Every item enabled. The menu then offers commands the palette
+        # withholds -- Undo on an empty journal, Install update with no update
+        # -- and choosing one does nothing, which reads as a broken menu.
+        "menubar: build every item enabled",
+        "src/lib/menubar.ts",
+        "          enabled: command.enabled?.() ?? true,",
+        "          enabled: true,",
+        "reads enablement from the command rather than assuming it",
+    ),
+    Mutation(
+        # Run a command whose guard is closed. The stale-menu case is real: the
+        # enablement push is a round trip, so between an edit and its answer the
+        # bar is one step behind, and this is what makes that a grey item rather
+        # than a wrong action.
+        "menubar: run a menu item whose command is withheld",
+        "src/lib/menubar.ts",
+        "  if (!(command.enabled?.() ?? true)) return false;",
+        "",
+        # Named at the *argument* case, not at the obvious one. This mutation
+        # SURVIVED a test that ran a withheld plain command and expected false:
+        # `registry.run` checks `enabled` as well, so both mechanisms produce
+        # the same answer and neither is tested. An argument command never
+        # reaches `run` -- it opens the palette -- so the guard is the only
+        # thing standing there, and that is the branch a mutation can see.
+        "refuses a withheld command that would have opened the palette",
+    ),
+    Mutation(
+        # Run an argument command straight through the registry. `run` refuses
+        # it for want of a value, so the item silently does nothing -- the exact
+        # failure that looks like a menu bug and is not.
+        "menubar: run a command that needs a value without asking for one",
+        "src/lib/menubar.ts",
+        "  if (command.argument) {\n    if (!palette) return false;\n    palette.askFor(id);\n    return true;\n  }",
+        "",
+        "opens the palette for a command that takes a value",
+    ),
+    Mutation(
+        # Drop the separators. Purely cosmetic and worth pinning anyway: the
+        # groups are what make a fifteen-item View menu readable, and nothing
+        # else in the suite looks at the shape of a section.
+        "menubar: drop every separator",
+        "src/lib/menubar.ts",
+        '      if (entry === SEPARATOR) return [{ kind: "separator" }];',
+        "      if (entry === SEPARATOR) return [];",
+        "keeps separators where the layout puts them",
+    ),
+    Mutation(
+        # An empty enablement push. Every item then keeps whatever state it was
+        # built with, forever -- so the menu is correct exactly until the first
+        # edit and stale after it.
+        "menubar: send an empty enablement update",
+        "src/lib/menubar.ts",
+        "      if (command) state[command.id] = command.enabled?.() ?? true;",
+        "",
+        "answers for every command in the layout and nothing else",
+    ),
+    Mutation(
+        # A command missing from the layout, which is the state the whole
+        # application was in: reachable from the palette, absent from the menu,
+        # and nothing saying so. Deleting the page strip's own delete is the
+        # case that started this.
+        "menubar: leave a command out of the menu",
+        "src/lib/menubar.ts",
+        '      "edit.deletePage",\n',
+        "",
+        "gives every registered command a menu or a written reason",
+    ),
+    Mutation(
         # Lexicographic sort, which is what `Array.prototype.sort` does without
         # a comparator. Page 10 lands before page 2, `write_copy` writes a valid
         # PDF in an order nobody asked for, and no downstream check could see
@@ -1692,6 +1805,10 @@ TEST_FILES = [
     # forgotten, the refusal is what said so -- which is the argument for
     # keeping it loud rather than making it infer the files from the mutations.
     "src/lib/pageranges.test.ts",
+    # Added 2026-08-17 with the menu bar. Added *before* the mutations rather
+    # than after the guard fired for a fifth time, which is the whole of what
+    # four previous entries here are about.
+    "src/lib/menubar.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

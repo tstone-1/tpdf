@@ -19,6 +19,35 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### A menu bar on macOS
+
+- **Every command tpdf has is now in the menu bar**, under File, Edit, Page,
+  View, Go and Find. Until now the menu held only what macOS puts there itself,
+  so unless you already knew ⌘K or ⌘\ there was no way to find the page strip —
+  and therefore no way to find deleting or reordering a page.
+
+- **The menu is built from the same list the palette uses**, so the two cannot
+  disagree about what a command is called, what it does, or when it is
+  available. A command greyed out in the menu is one the palette would not
+  offer either.
+
+- **Choosing something that needs a value opens the palette** ready for it.
+  "Extract pages…" asks for `1-3,5` rather than doing nothing, because a menu
+  has nowhere to type.
+
+- **Some items deliberately show no shortcut.** ⌘Z, ⌘C and ⌘A keep meaning what
+  they mean inside the find field, and `n` and `p` keep turning pages while you
+  are typing — a menu shortcut is claimed before the page ever sees the key, so
+  listing those would have taken them away from the text you were editing.
+
+- **Known, and not new:** on a German keyboard ⌘\, ⌘[ and ⌘] have never worked,
+  because `\` and `[` need Option and Shift there. The palette still advertises
+  them. They are not in the menu either, rather than being listed under the
+  wrong key.
+
+- Windows is unchanged. A menu bar there sits inside the window, and the
+  palette stays that platform's route.
+
 ### Extract pages to a new file
 
 - **Extract pages...**, in the command palette. Type `1-3,5` --- the form every

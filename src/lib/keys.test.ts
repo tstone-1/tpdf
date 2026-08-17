@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { BINDINGS, label, matches, render, type BoundCommand } from "./keys";
+import {
+  accelerator,
+  BINDINGS,
+  label,
+  matches,
+  render,
+  type Binding,
+  type BoundCommand,
+} from "./keys";
 
 /**
  * The minimal shape {@link matches} reads.
@@ -182,5 +190,81 @@ describe("the binding table", () => {
     for (const id of ids) {
       expect(BINDINGS[id].keys.length, id).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("accelerator", () => {
+  // Taking a binding rather than an id, for the reason `render` does: these are
+  // the shapes the menu has to survive, and several of them are combinations no
+  // command currently uses --- which is exactly where a rendering rule breaks
+  // without anything going red.
+
+  it("refuses a binding that holds no accelerator key", () => {
+    // The rule that keeps `n` and Home out of the menu bar. A menu accelerator
+    // is claimed before the web view sees the key, so a bare letter there is
+    // taken out of every text field the application has.
+    expect(accelerator({ keys: ["n"] })).toBeNull();
+    expect(accelerator({ keys: ["Home"] })).toBeNull();
+    // ...and the control: the same key *with* ⌘ is rendered, so the null above
+    // is about the modifier rather than about the key.
+    expect(accelerator({ keys: ["n"], accel: true })).toBe("CmdOrCtrl+N");
+  });
+
+  it("orders the modifiers the way the glyphs read", () => {
+    expect(
+      accelerator({ keys: ["l"], accel: true, alt: true, shift: true }),
+    ).toBe("Alt+Shift+CmdOrCtrl+L");
+  });
+
+  it("upper-cases a letter and leaves a digit alone", () => {
+    expect(accelerator({ keys: ["o"], accel: true })).toBe("CmdOrCtrl+O");
+    expect(accelerator({ keys: ["0"], accel: true })).toBe("CmdOrCtrl+0");
+  });
+
+  it("refuses a punctuation key, whose position is not its character", () => {
+    // Measured on the German layout this was developed against: an accelerator
+    // names a physical key, `matches` reads the character it produced, and for
+    // `\` those are different keys. Building the menu from the character table
+    // advertised ⌘# for a command whose palette entry says ⌘\ -- read out of
+    // the running application's own menu bar.
+    expect(accelerator({ keys: ["\\"], accel: true })).toBeNull();
+    expect(accelerator({ keys: ["["], accel: true })).toBeNull();
+    expect(accelerator({ keys: ["+", "="], accel: true })).toBeNull();
+    expect(accelerator({ keys: ["-"], accel: true })).toBeNull();
+  });
+
+  it("refuses a key it cannot spell rather than guessing", () => {
+    // No binding uses these, which is the point: the parser accepts an
+    // accelerator it can read and silently claims whatever chord it read, so a
+    // guess here would take a chord nobody chose. Reached only through this
+    // test today, and worth keeping for the same reason `render`'s ordering is.
+    expect(accelerator({ keys: ["ç"], accel: true })).toBeNull();
+    expect(accelerator({ keys: ["F7"], accel: true })).toBeNull();
+    expect(accelerator({ keys: [""], accel: true })).toBeNull();
+  });
+
+  it("renders most real bindings, and names the ones it will not", () => {
+    // The sweep. Its control is the count on both sides: a rule that returned
+    // null for everything would satisfy an each-one loop, and one that returned
+    // a string for everything would satisfy a some-are-null loop.
+    //
+    // Through the widened type, as the collision test above does: the literal
+    // type of an entry with no `accel` has no such property at all, so reading
+    // it off the indexed access is a type error rather than a false.
+    const withAccel = ids.filter((id) => (BINDINGS[id] as Binding).accel === true);
+    const refused = withAccel.filter(
+      (id) => accelerator(BINDINGS[id] as Binding) === null,
+    );
+    expect(withAccel.length).toBeGreaterThan(20);
+    // Exactly the punctuation chords, named rather than counted: this is the
+    // list a reader has to check against the menu when a shortcut is missing
+    // from it, and a count would not say which.
+    expect(refused.sort()).toEqual([
+      "nav.back",
+      "nav.forward",
+      "view.toggleSidebar",
+      "view.zoomIn",
+      "view.zoomOut",
+    ]);
   });
 });

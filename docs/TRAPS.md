@@ -8358,3 +8358,56 @@ belt-and-braces arrangement that makes this invisible: the braces are what you a
 and the belt is what you put on first. Related to *a test whose precondition is already
 satisfied never runs*, and different in where the satisfaction comes from — there the fixture
 supplies it, here the caller does.
+
+**The complement, hit the next day, and the fix is a different one.** `runMenuCommand` checks
+`enabled` before dispatching, and `CommandRegistry.run` checks it again. The test asked for a
+withheld plain command and expected `false`; deleting the *outer* guard left it green, because
+the inner one answers identically. Same two layers, the other direction — and here entering at
+the outer layer is right, so the fix is not to move the entry point but to **aim at the branch
+the inner check does not reach**. A command that takes an argument never goes through
+`registry.run` at all: it opens the palette. So the discriminating case is a withheld
+*argument* command, where the outer guard is the only thing standing between a closed
+command and an input on screen asking for its value.
+
+Read the two together as one rule with two remedies: when a guard is duplicated, find the
+input path on which it is **not** duplicated, and test there. If there is no such path, the
+guard is genuinely dead and the honest move is to delete it or let the type carry it — which
+is what *an unreachable guard is worth keeping if the type can carry it instead* is about.
+
+### A menu item is a global key claim, not a label
+
+The native menu bar was built by generating it from the command registry, so that a menu
+entry and a palette entry could not describe different things. The accelerator beside each
+item was the obvious next derivation: `keys.ts` already holds every binding as data and
+renders the palette's `⇧⌘R` from it, so rendering `Shift+CmdOrCtrl+R` from the same record
+is a third reader of one table and cannot drift.
+
+That reasoning is right and it very nearly shipped a serious regression, because it treats
+the accelerator as **display**. It is not. On macOS the menu bar receives a key event before
+the web view does, so registering an accelerator *moves the shortcut out of whatever has
+focus*. Two families of binding cannot survive that:
+
+- **Anything with no ⌘ at all.** `nav.nextPage` is bare `n` and `nav.firstPage` is `Home`.
+  As menu accelerators they would take those keys out of the find field — and out of every
+  text input the application ever grows — while the menu itself looked perfectly correct.
+- **Chords a text field claims anyway.** ⌘Z, ⇧⌘Z, ⌘C, ⌘A. The application's own handler
+  already carries an explicit `inTextField` guard on undo, written precisely so that a
+  reader correcting a typo in the find field does not silently undo a page rotation. A menu
+  accelerator fires before the page, cannot see focus, and therefore **undoes that guard
+  from outside**, which no test of the guard could notice.
+
+So the rule is: the menu may claim a chord only where the application already claims it
+unconditionally. Both refusals are enforced in code — `keys.ts` returns null for a binding
+without the accelerator key, `menubar.ts` names the four exceptions with a reason each — and
+both are proved by mutation, because "the menu shows no shortcut" and "the menu stole a
+shortcut" look identical from inside the page. There is no third option, either: a menu item
+cannot display a shortcut it does not claim.
+
+The related half is a **collision**. Two items on one accelerator is not a build error;
+AppKit takes the first and the second is simply dead, which reads as one command not working
+rather than as a menu that is wrong. That is one assertion over the built spec, and it is
+cheap enough that there is no reason to find out the other way.
+
+The general shape, for the next platform affordance that looks passive: **anything the OS
+registers on your behalf is authority you have taken, not information you have displayed.**
+Ask what it now intercepts before asking whether it reads correctly.

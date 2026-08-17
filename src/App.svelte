@@ -12,6 +12,7 @@
   import { Edits, type EditState } from "./lib/edits";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label } from "./lib/keys";
+  import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
   import { basename } from "./lib/paths";
@@ -241,6 +242,9 @@
         sidebar?.thumbnails?.setPages(after.pages.length);
       }
       dirty = after.dirty;
+      // Undo and Redo are the two menu items whose enablement moves on every
+      // edit, which is why this is here rather than only at the ends of an open.
+      refreshMenu();
     } catch (e) {
       // Shown rather than logged. A refusal here is about the document --- a page
       // that is gone, a handle that is not open --- and a rotate command that
@@ -367,6 +371,9 @@
     },
     (s) => {
       updateState = s;
+      // "Install update and restart" is withheld until there is one and
+      // withdrawn once it is applied, so its menu item moves with this.
+      refreshMenu();
       // Relaunching is the shell's job rather than the state machine's: it ends
       // the process, which is not something a module with unit tests should be
       // able to do. Deferred to the reader's next launch instead of forced ---
@@ -377,6 +384,64 @@
 
   const commands = new CommandRegistry();
   registerAppCommands(commands, appActions);
+
+  /**
+   * Whether a native menu bar exists to keep up to date.
+   *
+   * False on every platform but macOS, and false before the install has
+   * answered. Read rather than a platform test of our own: the answer comes
+   * from the side that actually builds the menu, so there is one statement of
+   * where a menu bar belongs rather than two that can disagree.
+   */
+  let menuInstalled = false;
+
+  /**
+   * Builds the menu once the commands are registered.
+   *
+   * Called after the spike entry points have returned --- every one of them
+   * exits the process --- so no check or benchmark run ever installs a menu.
+   */
+  async function installMenu(): Promise<void> {
+    try {
+      // The event name comes back with the answer rather than being written
+      // here as well as in Rust --- see `set_menu`. A menu that is built,
+      // enabled and inert is what a drifted constant would look like.
+      const event = await invoke<string | null>("set_menu", {
+        sections: buildMenu(commands),
+      });
+      if (!event) return;
+      menuInstalled = true;
+      await listen<string>(event, (chosen) => {
+        runMenuCommand(commands, palette, chosen.payload);
+      });
+    } catch (e) {
+      // Shown, not swallowed. A menu that failed to build is invisible by
+      // definition: the bar simply keeps the platform's default, which is
+      // exactly what it looked like before any of this existed.
+      error = String(e);
+    }
+  }
+
+  /**
+   * Pushes each command's `enabled` guard into its menu item.
+   *
+   * Called from the three places where an answer can change --- an edit, an
+   * update-state transition, and the end of an open --- rather than from an
+   * effect, because the guards read `viewer` and `edits`, which are plain
+   * variables rather than runes and so are not tracked. A missed call leaves a
+   * menu item live that the palette would withhold; choosing it is refused by
+   * `runMenuCommand`, so the cost is a stale grey rather than a wrong action.
+   */
+  function refreshMenu(): void {
+    if (!menuInstalled) return;
+    void invoke("set_menu_enabled", { state: menuEnablement(commands) }).catch(
+      () => {
+        // Quiet, unlike the install. This runs after every edit, and a menu
+        // whose greying is one step behind is not worth putting a red line in
+        // front of a reader for.
+      },
+    );
+  }
 
   function toggleInvert() {
     if (!viewer) return;
@@ -697,6 +762,12 @@
       // After the spike entry points, which exit the process: none of them mount
       // the shell, and a palette attached to `document.body` would outlive it.
       palette = new Palette(commands);
+
+      // After the palette, and it has to be: a menu item for a command that
+      // takes an argument opens the palette rather than running anything, so
+      // installing the menu first would put a live item in the bar with nowhere
+      // for its value to be typed.
+      await installMenu();
 
       // The launch check, and its position here is the whole of what keeps every
       // spike, benchmark and check run offline: all of them return above this
@@ -1195,6 +1266,10 @@
       if (!resuming) error = String(e);
     } finally {
       opening = false;
+      // In the `finally`, so that a failed open greys the menu back out. Every
+      // command but four is withheld without a document, and an open that threw
+      // leaves `viewer` null with the menu still saying otherwise.
+      refreshMenu();
     }
   }
 

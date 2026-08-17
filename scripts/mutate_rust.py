@@ -76,6 +76,14 @@ FILTERS = [
     # the harness for the same reason `print::` was: this list is what selects
     # them, and a mutation whose test cannot be seen reports SURVIVED.
     "pagetree::",
+    # Added 2026-08-17 with the menu bar. The guard fired a third time and said
+    # exactly which mutation it was, before the mutation could report SURVIVED.
+    #
+    # `menu.rs` is macOS-only, so on Windows this filter matches nothing and the
+    # mutation naming its test is refused rather than run. That is the right
+    # answer there --- the code under it does not exist on that platform --- and
+    # it is worth knowing before the refusal reads as a broken harness.
+    "menu::",
 ]
 
 
@@ -91,6 +99,17 @@ class Mutation:
 
 
 MUTATIONS = [
+    Mutation(
+        # Rename the tag the frontend writes. Nothing in either language reads
+        # the other's spelling, so this fails at runtime as a menu bar that does
+        # not appear -- inside a command whose only visible effect is its
+        # absence, on the one platform that has a menu bar at all.
+        "menu: rename the wire tag the frontend sends",
+        "src/menu.rs",
+        '#[serde(tag = "kind", rename_all = "lowercase")]',
+        '#[serde(tag = "type", rename_all = "lowercase")]',
+        "a_separator_and_a_command_are_told_apart_by_their_tag",
+    ),
     Mutation(
         # Report the selection's length as the file's. `write_copy` compares the
         # baseline against the source's real page count to catch a file that
