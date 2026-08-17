@@ -2435,11 +2435,34 @@ starts at 0 and increments within the month.
     publishing it is step 11 rather than a clause here: see that step for what describing
     it in this sentence cost.
 
+    **If a job fails, re-run the whole workflow --- never one job of it.** `26.8.3-rc2`'s
+    macOS build died in `Set up job` on a `429` from codeload, which is infrastructure and
+    not ours; `gh run rerun --failed` made every job green and produced **two drafts under
+    one tag**, with the artifacts split so that neither was complete --- one had no macOS
+    updater bundle, the other had no Windows installers at all. Deleting the tag and pushing
+    the next one costs a quarter of an hour; publishing half a release costs a point version.
+    The trap of that name has the table.
+
 11. **Publish the draft, and check it from outside the account.** A green `Release` run
     produces four artifacts and shows them to nobody --- GitHub hides a draft from everyone
     but repository owners, and its assets sit under `releases/download/untagged-<hash>/`
     rather than under the tag. Meanwhile the *tag* is public, so from outside the repository
     the state reads as a tag pushed by mistake.
+
+    **Count the assets before publishing, and count them with GraphQL.** A complete release
+    is **8** files: the `.dmg`, `tpdf_aarch64.app.tar.gz` and its `.sig`, the `.msi` and
+    `-setup.exe` with their two `.sig`s, and `latest.json`. Fewer than that is half a
+    release, and the two instruments that look right for this both fail: `gh release view
+    <tag>` returns *a* release for the tag with no way to say which, so with two drafts it
+    reports one of them as though it were the release; and `gh api
+    repos/tstone-1/tpdf/releases` answers **HTTP 200 with `[]`** under the keychain token,
+    because the REST endpoint wants a scope it lacks and reports that by returning nothing.
+
+    ```
+    gh api graphql -f query='{ repository(owner: "tstone-1", name: "tpdf") {
+      releases(first: 5, orderBy: {field: CREATED_AT, direction: DESC}) { nodes {
+        databaseId tagName isDraft releaseAssets(first: 20) { nodes { name } } } } } }'
+    ```
 
     ```
     gh release list --repo tstone-1/tpdf                      # second column: Draft
