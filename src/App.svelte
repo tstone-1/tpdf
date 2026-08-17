@@ -14,6 +14,11 @@
     type AppActions,
   } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
+  import {
+    ContextMenu,
+    PAGE_MENU,
+    SELECTION_MENU,
+  } from "./lib/contextmenu";
   import { Edits, type EditState } from "./lib/edits";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label, setPrintedKeys } from "./lib/keys";
@@ -391,6 +396,27 @@
   registerAppCommands(commands, appActions);
 
   /**
+   * The right-click menu, or null before the shell is built.
+   *
+   * One instance for every surface --- see `contextmenu.ts`. It lives on
+   * `document.body` rather than inside the panel it was opened from, so a menu
+   * opened on the last row of the strip is not clipped by the panel's scroll
+   * box.
+   */
+  let contextMenu: ContextMenu | null = null;
+
+  /**
+   * Shows the right-click menu, if any of its commands can run.
+   *
+   * Returns nothing and swallows the empty case deliberately: a menu with no
+   * entries is not opened, and no menu appearing is the correct answer to a
+   * right-click on something with nothing to offer.
+   */
+  function openContextMenu(entries: string[], at: { x: number; y: number }) {
+    contextMenu?.show(entries, at);
+  }
+
+  /**
    * Whether a native menu bar exists to keep up to date.
    *
    * False on every platform but macOS, and false before the install has
@@ -723,6 +749,13 @@
    * gives: ⌘K was unreachable by any check while it lived in this file.
    */
   function onWindowKey(event: KeyboardEvent) {
+    // First, and it has to be: Escape closes the menu rather than the find bar,
+    // and the arrows walk its rows rather than scrolling the document under it.
+    // A closed menu consumes nothing, so this costs one boolean per keystroke.
+    if (contextMenu?.handleKey(event)) {
+      event.preventDefault();
+      return;
+    }
     handleWindowKey(event, {
       actions: appActions,
       palette: () => palette,
@@ -767,6 +800,40 @@
       // After the spike entry points, which exit the process: none of them mount
       // the shell, and a palette attached to `document.body` would outlive it.
       palette = new Palette(commands);
+
+      // On `document.body`, not inside a panel: a menu opened on the last row
+      // of the page strip would otherwise be clipped by that panel's scroll
+      // box. Runs a chosen command through the registry, exactly as the palette
+      // and the menu bar do.
+      contextMenu = new ContextMenu(document.body, commands, (id) => {
+        commands.run(id);
+      });
+      // Any press outside the menu dismisses it, on the way down rather than on
+      // click, so a press that lands on the document does not both dismiss the
+      // menu and do whatever it was going to do -- the menu is gone by the time
+      // the click arrives.
+      window.addEventListener("pointerdown", (event) => {
+        if (!contextMenu?.isOpen) return;
+        const inside = (event.target as HTMLElement | null)?.closest?.(
+          ".context-menu",
+        );
+        if (!inside) contextMenu.close();
+      });
+      // The web view's own menu, everywhere it is not replaced. Its one entry
+      // reloads the frontend, which drops the reader's view of the document --
+      // a developer affordance that has been shipping to readers.
+      window.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        // On the document surface, offer what a selection can do. Elsewhere --
+        // the toolbar, the panel's chrome -- nothing is offered, and nothing is
+        // the right answer rather than a menu of commands about somewhere else.
+        const onSurface = (event.target as HTMLElement | null)?.closest?.(
+          ".surface",
+        );
+        if (onSurface) {
+          openContextMenu(SELECTION_MENU, { x: event.clientX, y: event.clientY });
+        }
+      });
 
       // After the palette, and it has to be: a menu item for a command that
       // takes an argument opens the palette rather than running anything, so
@@ -1070,6 +1137,16 @@
           // because the strip is what knows where the pointer was.
           onReorder: (from, to) => {
             void applyEdit((e) => e.move(from, to));
+          },
+          // Right-clicking a thumbnail goes to that page first, and then offers
+          // the page operations. Navigating on a right-click is unusual and it
+          // is the honest arrangement here: every one of these commands acts on
+          // the page the viewer is on, so the alternative is a second way to
+          // address a page --- and a reader who rotates a page wants to see it
+          // turn, which means being on it anyway.
+          onContextMenu: (slot, at) => {
+            viewer?.goToPage(slot);
+            openContextMenu(PAGE_MENU, at);
           },
         },
       });

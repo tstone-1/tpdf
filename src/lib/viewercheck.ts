@@ -306,6 +306,8 @@ async function run(path: string): Promise<void> {
   const problems: string[] = [];
   /** Every reorder the page strip asked for, in order. */
   const drags: [number, number][] = [];
+  /** Every right-click the page strip reported, as the slot it landed on. */
+  const menus: number[] = [];
   const panel = document.createElement("div");
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
@@ -328,6 +330,12 @@ async function run(path: string): Promise<void> {
       // real webview at all, so that is what this leaves for the window: real
       // pointer capture, real row geometry, real event delivery.
       onReorder: (from, to) => drags.push([from, to]),
+      // Recorded rather than opening a menu, for the reason `onReorder` gives:
+      // what the shell does with this is one line, and what no unit test can
+      // reach is whether a right-click on a row in a real web view arrives here
+      // at all -- carrying the slot it landed on, and having stopped the web
+      // view's own menu from appearing over it.
+      onContextMenu: (slot) => menus.push(slot),
     },
   });
 
@@ -514,7 +522,7 @@ async function run(path: string): Promise<void> {
   // nobody else needs.
   await commentChecks(root, viewer, sidebar, doc);
   await linkChecks(root, viewer, doc, problems);
-  await thumbnailChecks(root, viewer, sidebar, doc, page, drags);
+  await thumbnailChecks(root, viewer, sidebar, doc, page, drags, menus);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await pageRotationChecks(root, viewer, doc, seen);
   await pageDeletionChecks(root, viewer, doc, seen);
@@ -4511,6 +4519,7 @@ async function thumbnailChecks(
   doc: DocumentInfo,
   page: PageSize,
   drags: [number, number][],
+  menus: number[],
 ): Promise<void> {
   const strip = sidebar.thumbnails;
   if (!strip) {
@@ -4601,6 +4610,38 @@ async function thumbnailChecks(
   await navigateFromStrip(viewer, strip, doc);
   await dragFromStrip(strip, doc, drags);
   await yieldChecks(root, viewer, sidebar, doc.page_count, strip);
+  // Right-clicking a page. Two things at once, and both are the report that
+  // asked for this: the web view's own menu -- whose one entry reloads the
+  // frontend and throws away the reader's document -- must not appear, and the
+  // slot under the pointer must reach the shell. A synthetic `contextmenu` is
+  // the only way to ask: a real secondary click posted through the window
+  // server does not reach a web view's DOM at all, which was measured before
+  // this check existed.
+  {
+    const slot = strip.mounted[0] ?? 0;
+    const row = strip.elementFor(slot);
+    const before = menus.length;
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      // Without this `preventDefault` is a no-op and `defaultPrevented` stays
+      // false however correct the handler is --- an assertion that could only
+      // fail.
+      cancelable: true,
+      clientX: 20,
+      clientY: 20,
+    });
+    row?.dispatchEvent(event);
+    check(
+      "right-clicking a page suppresses the web view's own menu",
+      row !== null && event.defaultPrevented,
+      `row=${row !== null}, prevented=${event.defaultPrevented}`,
+    );
+    check(
+      "right-clicking a page reports the page it landed on",
+      menus.length === before + 1 && menus.at(-1) === slot,
+      `${menus.length - before} report(s), last=${menus.at(-1)}, wanted ${slot}`,
+    );
+  }
 }
 
 /**

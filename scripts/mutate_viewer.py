@@ -123,6 +123,29 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        # Let the web view's own menu through. That is the state the application
+        # shipped in and the reason this exists: right-clicking a page offered
+        # Reload, which throws away the reader's view of the document.
+        "thumbnails: let the web view's own context menu appear",
+        "src/lib/thumbnails.ts",
+        "        event.preventDefault();\n        const page =",
+        "        const page =",
+        "right-clicking a page suppresses the web view's own menu",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # Report the page the reader is on rather than the one they pointed at.
+        # Every command the menu offers acts on the current page, so this looks
+        # right whenever they happen to agree -- which on the first row of a
+        # freshly opened document is always.
+        "thumbnails: report the wrong page for a right-click",
+        "src/lib/thumbnails.ts",
+        "        offer(Number(slot), { x: event.clientX, y: event.clientY });",
+        "        offer(Number(slot) + 1, { x: event.clientX, y: event.clientY });",
+        "right-clicking a page reports the page it landed on",
+        runner="viewer-tagged",
+    ),
+    Mutation(
         "a11y: announce every heading at one level",
         "src/lib/a11y.ts",
         "  if (heading) return `h${heading[1]}`;",

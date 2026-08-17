@@ -1463,6 +1463,49 @@ what made its emptiness a defect. On Windows a menu bar is chrome *inside* the w
 this application exists partly because the alternatives put a ribbon there. `set_menu`
 answers `null` on that platform rather than refusing — a capability question, not an error.
 
+### The right-click menu, built 2026-08-17
+
+**Right-clicking a page thumbnail offered *Reload*.** Not tpdf's menu — there was no
+`contextmenu` listener anywhere in the application — but WKWebView's own, whose one entry
+reloads the frontend and throws away the reader's view of the document. Reported from use, the
+same day as the empty menu bar and by the same route: someone using the application looked
+where the affordance should be.
+
+`contextmenu.ts` is the fix, and it is deliberately the same shape as the menu bar. An entry is
+a command id; its title, shortcut and enabled guard come from the registry; what the file owns
+is which commands belong to which surface. Two surfaces so far — the page strip offers the page
+operations, the document offers what a selection can do.
+
+**Three decisions where it differs from the menu bar, all for one reason: a context menu is
+built fresh for one click and has no continuity to protect.**
+
+- **A command that cannot run is left out, not greyed.** A menu bar is a stable map of the
+  application, so an item vanishing from it would move the map under the reader. A menu that
+  exists for two seconds has no such promise, and a short list of things that work beats a long
+  grey one.
+- **A menu with nothing in it does not open at all**, because a menu with no entries reads as
+  the application being broken rather than as a surface with nothing to offer.
+- **No completeness rule.** A menu bar covers everything; a context menu is a selection. What
+  is asserted instead is that every id in a surface exists and that no surface is empty.
+
+**In the DOM rather than native**, which is the opposite of the menu bar's choice and settled by
+testability: one implementation serves both platforms, it shows the same shortcut labels the
+palette does, and `viewer_check.py` can drive it — a native popup is outside the page and the
+harness could not see it at all.
+
+**Right-clicking a thumbnail goes to that page first.** Unusual, and the honest arrangement:
+every command in that menu acts on the page the viewer is on, so the alternative is a second way
+to address a page — and a reader who rotates a page wants to see it turn.
+
+**Proving the suppression is where the work was.** Three ways of posting a secondary click from
+outside the process all failed silently, each looking exactly like a broken handler; the trap
+index has them. The check that works dispatches a real `contextmenu` event inside the page and
+reads `defaultPrevented` off it, which asserts the suppression directly. Two window checks, both
+proved by mutation, and the sweep's invariant moved 232 → 234 names.
+
+**Not done:** extracting the page under the pointer, which would need a command that takes a
+page rather than a range; and a menu on a comment in the annotations tab.
+
 **Not done, and worth knowing before it looks like an oversight.** The Find menu shows the
 palette's own titles, so it reads *"Find: match case on or off"* where a menu convention
 would be a checkmark beside *"Match Case"*; carrying check state would mean a second title

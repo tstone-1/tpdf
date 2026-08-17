@@ -8480,3 +8480,42 @@ not exist.
 The comment is the durable part. It now records the wrong reason, the measurement, and the fact
 that there is no test to add — because the next person to run mutation coverage will find the
 same survivor and, without it, will re-derive the same wrong explanation.
+
+### A synthetic right-click posted to the window server never reaches the web view
+
+Right-clicking a page thumbnail offered WKWebView's own menu, whose one entry reloads the
+frontend. Fixing that is one `preventDefault`; **proving it** turned out to be the interesting
+part, because the obvious instrument does not work.
+
+Three ways to post a secondary click from outside the process were tried and none of them
+reached the page:
+
+- `osascript`'s `key down control` + `click at {x, y}`. Control-click is the secondary click on
+  this platform, and the two events do not combine into one at the HID layer.
+- The same through System Events on the process rather than the screen.
+- A `CGEventCreateMouseEvent` with `kCGEventRightMouseDown` — which needs PyObjC, absent here.
+
+Each of them **appears to work**: the click lands, nothing errors, and the screenshot afterwards
+shows no menu — which is exactly what a broken handler looks like. Two rounds were spent on the
+handler before the instrument was suspected.
+
+**The right instrument was already in the repository.** `viewer_check.py` runs inside the page,
+so it can dispatch a real `contextmenu` `MouseEvent` at a row and read `defaultPrevented` off
+it — which asserts the *suppression* directly rather than inferring it from a screenshot. Two
+checks, both proved by mutation, in less time than one more round of fighting the event layer.
+
+Two details that are easy to get wrong and cannot fail loudly:
+
+- **`cancelable: true` is required.** Without it `preventDefault()` is a no-op and
+  `defaultPrevented` stays `false` no matter how right the handler is — an assertion that can
+  only fail, which is the loud direction, but it reads as the fix not working.
+- **A slot assertion needs a row that is not the current page.** Every command such a menu
+  offers acts on the page the viewer is on, so reporting the current page instead of the one
+  under the pointer looks correct whenever the two agree — which on a freshly opened document's
+  first row is always. The mutation that adds one to the slot is what says the check can tell
+  them apart.
+
+The general shape: **when a gesture crosses a process boundary, the check belongs on the far
+side of it.** Driving the operating system to drive the application is the wrong layer whenever
+the application can be asked directly — and the failure mode of the wrong layer is silence, not
+an error.

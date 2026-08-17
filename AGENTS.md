@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 313 entries
+The one thing this file does *not* carry in full is the trap list --- 314 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 313 of them and the full text
-was 93% of this file --- an instruction budget spent on the 312 traps that are not
+titles. Only the titles are here, because there are 314 of them and the full text
+was 93% of this file --- an instruction budget spent on the 313 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1096,6 +1096,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A status element that comes and goes rearranges the toolbar it sits beside
 - A menu item is a global key claim, not a label (the accelerator was derived correctly from the one binding table, and deriving it at all was the mistake)
 - A framework can abort your whole test binary, and 470 passing tests report nothing (a SIGABRT is not a red test; `cargo test` is the multi-threaded caller)
+- A synthetic right-click posted to the window server never reaches the web view (three ways to post one, all silent; the check belongs inside the page)
 
 ### Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented

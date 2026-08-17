@@ -39,6 +39,38 @@ export class FakeElement {
   /** Set by {@link focus}, so a test can assert where the keyboard went. */
   focused = false;
 
+  /**
+   * Classes, modelled as a set with the three methods anything here calls.
+   *
+   * Additive to this double rather than stubbed away in the code under test: a
+   * component that toggles a class is stating something about its own state,
+   * and a test that cannot see it would have to assert the inline style
+   * instead --- which is the presentation, not the state.
+   */
+  private readonly classes = new Set<string>();
+
+  readonly classList = {
+    add: (name: string): void => void this.classes.add(name),
+    remove: (name: string): void => void this.classes.delete(name),
+    contains: (name: string): boolean => this.classes.has(name),
+    toggle: (name: string, on?: boolean): boolean => {
+      const want = on ?? !this.classes.has(name);
+      if (want) this.classes.add(name);
+      else this.classes.delete(name);
+      return want;
+    },
+  };
+
+  /** What `className =` assigns, split as the browser splits it. */
+  set className(value: string) {
+    this.classes.clear();
+    for (const name of value.split(/\s+/).filter(Boolean)) this.classes.add(name);
+  }
+
+  get className(): string {
+    return [...this.classes].join(" ");
+  }
+
   constructor(tagName: string) {
     this.tagName = tagName;
   }
@@ -214,6 +246,10 @@ export function installFakeDom(width = 900, height = 700): FakeDom {
 
   const window = {
     devicePixelRatio: 1,
+    // A menu placed near an edge flips rather than overflowing, and without
+    // these it would read the window as zero-sized and flip every time.
+    innerWidth: width,
+    innerHeight: height,
     matchMedia: () => ({
       matches: false,
       addEventListener: () => {},
