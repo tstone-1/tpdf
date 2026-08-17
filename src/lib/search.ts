@@ -180,8 +180,24 @@ interface PageMatches {
 /** Scans a document for a query, accumulating matches as they are found. */
 export class Search {
   private readonly doc: number;
-  private readonly pageCount: number;
+  /**
+   * How many pages the reader sees.
+   *
+   * Not `readonly`: deleting a page changes it while the document is open, and a
+   * scan planned against the old count would ask about a slot that is no longer
+   * there.
+   */
+  private pageCount: number;
   private readonly onChange: () => void;
+  /**
+   * Which page of the file a slot draws.
+   *
+   * Everything in this class works in *slots* --- the scan order, the scope, the
+   * page a match reports --- because that is what the reader points at and what
+   * the viewer scrolls to. This is the one place the other vocabulary is needed:
+   * `search_page` asks the backend about a page of the file. See `pages.ts`.
+   */
+  private readonly sourceOf: (slot: number) => number | undefined;
   /** Bumped by every `run` and `cancel`; replies from an older one are dropped. */
   private generation = 0;
 
@@ -265,10 +281,41 @@ export class Search {
   scope: SearchScope | null = null;
   private startedAt = 0;
 
-  constructor(doc: number, pageCount: number, onChange: () => void) {
+  constructor(
+    doc: number,
+    pageCount: number,
+    onChange: () => void,
+    // Defaulted to the identity for the tests in `searchmapping.test.ts`, which
+    // are about the mapping verdicts rather than about which page was asked for
+    // --- and for which an unedited document is the truth. The viewer passes the
+    // real one. It is a default here and refused in `pages.ts` for the reason
+    // that file gives: there the fallback would hide a wrong answer, and here
+    // there is no order for it to disagree with.
+    sourceOf: (slot: number) => number | undefined = (slot) => slot,
+  ) {
     this.doc = doc;
     this.pageCount = pageCount;
     this.onChange = onChange;
+    this.sourceOf = sourceOf;
+  }
+
+  /**
+   * Takes a new page count, abandoning anything found under the old one.
+   *
+   * A match names the slot it was found in, and after a deletion every slot
+   * below the gap holds a different page --- so the hits are not merely stale,
+   * they point at the wrong pages. Cleared rather than re-mapped: the query is
+   * still in the box, the reader presses Enter, and the answer is then about the
+   * document in front of them. Re-mapping would also have to decide what a hit
+   * on the deleted page becomes, and there is no honest answer to that.
+   */
+  setPageCount(pageCount: number): void {
+    if (pageCount === this.pageCount) return;
+    this.pageCount = pageCount;
+    // The mapping is per page of the *file* and survives, which is why this is
+    // `clear` rather than a rebuild: the pages that are left have the same fonts
+    // they had.
+    this.clear();
   }
 
   /**
@@ -306,8 +353,11 @@ export class Search {
    * judge --- unknown is not unreadable. Used by the accessibility layer, which
    * would otherwise read the guess aloud as though it were the page.
    */
-  unreadablePage(page: number): boolean {
-    const entry = this.mapping?.[page];
+  unreadablePage(source: number): boolean {
+    // A page of the *file*, unlike everything else here: the mapping comes from
+    // `document_mapping`, which reports one entry per page of the file, and it
+    // does not change when a page is deleted.
+    const entry = this.mapping?.[source];
     return entry !== undefined && entry.guessing > 0;
   }
 
@@ -443,10 +493,15 @@ export class Search {
     const visit = async (page: number, joinsOnly = false): Promise<boolean> => {
       const carry = carried?.page === page - 1 ? carried.carry : undefined;
       let result: PageMatches | null = null;
+      // A slot with no page behind it, which a scan planned before an edit can
+      // still reach. Skipped rather than asked about: the alternative is asking
+      // the backend about a page number that means something else now.
+      const source = this.sourceOf(page);
+      if (source === undefined) return true;
       try {
         result = await invoke<PageMatches>("search_page", {
           doc: this.doc,
-          page,
+          page: source,
           query,
           options,
           carry,

@@ -9,15 +9,16 @@
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
   import { handleWindowKey, registerAppCommands, type AppActions } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
-  import { changedSlots, Edits, type EditState } from "./lib/edits";
+  import { Edits, type EditState } from "./lib/edits";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label } from "./lib/keys";
   import { Palette } from "./lib/palette";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import type { Comments } from "./lib/comments";
-  import { noticeFor as linkNotice, type Links } from "./lib/links";
+  import { noticeFor as linkNotice, type Link, type Links } from "./lib/links";
   import type { Outline } from "./lib/outline";
+  import { commentsIn, linksIn, NO_PAGES, outlineIn } from "./lib/pages";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import {
     clampPlace,
@@ -85,6 +86,20 @@
    */
   let openDoc = -1;
 
+  /**
+   * The document's links, comments and outline exactly as the backend sent them.
+   *
+   * Kept because they are answers about the *file*, and what the viewer and the
+   * panels need is the working document: every page number in them is a page of
+   * the file, and after a deletion that is no longer the slot it is drawn in.
+   * {@link applyPageOrder} is the one place that translates, and it re-translates
+   * from these rather than from what it pushed last time --- a second pass over
+   * an already-translated list would move every page twice.
+   */
+  let rawLinks: readonly Link[] = [];
+  let rawComments: Comments | null = null;
+  let rawOutline: Outline | null = null;
+
   /** Path of the open document, which is what a remembered place is keyed on. */
   let openPathName = "";
   /** Its page count, so a place can record what the document had when written. */
@@ -141,6 +156,7 @@
     updateAvailable: () => updates.state.kind === "available",
     updateReady: () => updates.state.kind === "ready",
     rotatePage: (delta) => void rotatePage(delta),
+    deletePage: () => void deletePage(),
     undoEdit: () => void applyEdit((e) => e.undo()),
     redoEdit: () => void applyEdit((e) => e.redo()),
     canUndo: () => edits?.state.can_undo ?? false,
@@ -163,28 +179,40 @@
   }
 
   /**
+   * Removes the page the reader is on from the document.
+   *
+   * The page comes from the viewer and the rule comes from the model: a document
+   * must keep at least one page, and that refusal arrives as a message rather
+   * than being predicted here --- see `edits.rs`. Undo puts the page back where
+   * it was, which is why this asks nothing before doing it.
+   */
+  async function deletePage(): Promise<void> {
+    const at = viewer?.position.page;
+    if (at === undefined) return;
+    await applyEdit((e) => e.delete(at));
+  }
+
+  /**
    * Runs one edit and moves the viewer to the state it produced.
    *
    * Every route in goes through here, which is the same reasoning that put the
    * history recording inside `goToDestination` rather than at its four callers:
    * the fifth caller is the one that forgets. What it must not become is a place
    * where the *next* state is computed --- it is handed one, and its whole job
-   * is to redraw the slots that differ.
+   * is to redraw what differs.
    */
   async function applyEdit(
     run: (edits: Edits) => Promise<EditState>,
   ): Promise<void> {
     const model = edits;
     if (!model || !viewer) return;
-    // Captured before the await: the model replaces its own cache when the reply
-    // lands, so reading it afterwards would compare the answer with itself and
-    // find nothing to redraw.
-    const before = model.state;
     try {
       const after = await run(model);
-      for (const slot of changedSlots(before, after)) {
-        viewer?.setPageTurns(slot, after.pages[slot]?.turns ?? 0);
-      }
+      // Only when the pages moved, and the viewer is what answers that: every
+      // call below throws work away --- the strip's thumbnails, the panels' rows
+      // --- and a turn moves no page, so doing it unconditionally would make
+      // rotating a page cost a re-render of the whole strip.
+      if (viewer?.setPages(after.pages)) applyPageOrder();
       dirty = after.dirty;
     } catch (e) {
       // Shown rather than logged. A refusal here is about the document --- a page
@@ -192,6 +220,41 @@
       // silently does nothing reads as a broken application.
       error = String(e);
     }
+  }
+
+  /**
+   * Re-reads the document's links, comments and outline against the page order.
+   *
+   * Every page number the backend sent is a page of the *file*, and after a
+   * deletion that is no longer the slot it is drawn in --- so a link would be
+   * hit-tested over the wrong page, a comment would open against one, and an
+   * outline row would scroll somewhere nobody asked for. `pages.ts` holds the
+   * rules; this is the one place they are applied, and it re-reads the answers
+   * the backend sent rather than the ones it pushed last time.
+   *
+   * Called on an order change and after each answer arrives, since those two
+   * races: a document whose links land *after* a page was deleted would
+   * otherwise be translated by nobody.
+   */
+  function applyPageOrder(): void {
+    const pages = edits?.map ?? NO_PAGES;
+    viewer?.setLinks(linksIn(rawLinks, pages));
+    // An answer that has not arrived is left alone rather than pushed as
+    // `null`: to these panels `null` means "this document's comments could not
+    // be read", which is a different thing to tell a reader than "not yet". The
+    // failing path still says it, from the `catch` that knows.
+    if (rawComments) {
+      const items = commentsIn(rawComments.items, pages);
+      viewer?.setComments(items);
+      sidebar?.setComments({ ...rawComments, items });
+    }
+    if (rawOutline) {
+      sidebar?.setOutline({
+        ...rawOutline,
+        items: outlineIn(rawOutline.items, pages),
+      });
+    }
+    sidebar?.thumbnails?.setPageCount(pages.length);
   }
 
   /**
@@ -292,6 +355,11 @@
     try {
       await invoke("print_document", {
         path: openPathName,
+        // The edits go with it: which pages are left, and how each is turned.
+        // Read from the model rather than sent from here --- the frontend's copy
+        // is a cache, and a print job built from a stale one would put a page on
+        // paper that the reader has deleted.
+        doc: openDoc,
         pages: null,
         turns: viewer.rotation,
       });
@@ -324,7 +392,14 @@
     const where = viewer.position;
     return {
       path: openPathName,
-      page: where.page,
+      // The page of the *file*, not the slot. A place outlives the edits that
+      // are not saved with it: the reader deletes page 2, quits, and reopens the
+      // file as it is on disk --- where the slot they were on names a different
+      // page, and the page they were reading is still where it was. Read back as
+      // a slot by `restore`, which is the same number on a document that has
+      // just been opened and is where a session that carried edits would have to
+      // translate instead.
+      page: edits?.map.sourceOf(where.page) ?? where.page,
       top_pt: where.top,
       zoom: viewer.currentZoom,
       fit: viewer.fitMode,
@@ -799,6 +874,12 @@
       if (!surface || !sidebarHost) throw new Error("no surface to mount into");
 
       query = "";
+      // Before the panels are built, so nothing carries over from the document
+      // that was open a moment ago --- these are answers about a file, and the
+      // file has changed.
+      rawLinks = [];
+      rawComments = null;
+      rawOutline = null;
       sidebar = new Sidebar(sidebarHost, {
         onNavigate: (target, top) => {
           viewer?.goToDestination(target, top);
@@ -829,6 +910,9 @@
           // The viewer is created below, so the strip reaches it lazily rather
           // than being handed a reference that does not exist yet.
           tier1: { placeholderFor: (at) => viewer?.placeholderFor(at) ?? null },
+          // A row is a slot and a tile request names a page of the file. The two
+          // are the same number until a page is deleted; see `pages.ts`.
+          sourceOf: (slot) => edits?.map.sourceOf(slot),
           onNavigate: (at) => {
             viewer?.goToPage(at);
             viewer?.focus();
@@ -841,7 +925,7 @@
       // model to ask. `refresh` is not awaited: it reads a `HashMap` in the
       // backend, and holding the first page behind it would put an IPC round
       // trip on the startup path for an answer that is "nothing is edited".
-      edits = new Edits(doc.id);
+      edits = new Edits(doc.id, doc.page_count);
       dirty = false;
       void edits.refresh().then(
         (state) => {
@@ -961,7 +1045,9 @@
         .then((result) => {
           // And again, because another document may have been opened while the
           // walk itself was in flight.
-          if (result && openDoc === wanted) sidebar?.setOutline(result);
+          if (!result || openDoc !== wanted) return;
+          rawOutline = result;
+          applyPageOrder();
         })
         .catch(() => {
           if (openDoc === wanted) sidebar?.setOutline(null);
@@ -981,11 +1067,12 @@
         })
         .then((result) => {
           if (!result || openDoc !== wanted) return;
-          sidebar?.setComments(result);
-          // The viewer needs them too, and for the other half of the feature:
-          // the panel lists them, and this is what makes the mark on the page
-          // openable.
-          viewer?.setComments(result.items);
+          // Both the panel that lists them and the viewer that makes the mark on
+          // the page openable, and both through the translation --- see
+          // `applyPageOrder`, which is also what re-runs this if a page is
+          // deleted later.
+          rawComments = result;
+          applyPageOrder();
         })
         .catch(() => {
           if (openDoc === wanted) sidebar?.setComments(null);
@@ -1005,7 +1092,8 @@
         })
         .then((result) => {
           if (!result || openDoc !== wanted) return;
-          viewer?.setLinks(result.items);
+          rawLinks = result.items;
+          applyPageOrder();
           // A cut list is worth saying out loud, for the reason every bound in
           // this application reports itself: a document whose cross-references
           // half work is worse to use than one whose links are all dead, and

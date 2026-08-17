@@ -102,6 +102,16 @@ export type { PageSize };
 export interface ThumbnailOptions {
   doc: number;
   pageCount: number;
+  /**
+   * Which page of the file a row draws, or `undefined` for a row that is not in
+   * the document.
+   *
+   * A row is a slot, and a tile request names a page of the file --- the two
+   * stopped being the same number when a page could be deleted. Optional, and
+   * defaulting to the identity, because the strip is also driven by harnesses
+   * that never edit; see `pages.ts`.
+   */
+  sourceOf?: (slot: number) => number | undefined;
   /** Geometry of page 1, taken as representative --- as `scroller.ts` does. */
   page: PageSize;
   tier1: Tier1Access;
@@ -468,6 +478,34 @@ export class Thumbnails {
     this.scrollTo(this.current);
   }
 
+  /**
+   * Takes a new page count, throwing away every thumbnail.
+   *
+   * Not selective, and the reason is the same one `Scroller.setPages` gives: a
+   * thumbnail is held under the row it was rendered for, and after a deletion
+   * every row below the gap shows a different page. Keeping them would leave the
+   * strip captioned "page 4" over a picture of the old page 4, which is the
+   * plausible wrong answer rather than an obviously stale one.
+   */
+  setPageCount(pageCount: number): void {
+    if (pageCount === this.opts.pageCount) return;
+    this.opts.pageCount = pageCount;
+    this.generation++;
+    this.withdraw("discard");
+
+    for (const bitmap of this.bitmaps.values()) bitmap.close();
+    this.bitmaps.clear();
+    this.borrowing.clear();
+    this.failed.clear();
+
+    this.spacer.style.height = `${this.opts.pageCount * this.rowHeight}px`;
+    for (const row of this.rows.values()) row.remove();
+    this.rows.clear();
+    this.current = Math.max(0, Math.min(this.current, pageCount - 1));
+    this.layout();
+    this.scrollTo(this.current);
+  }
+
   /** The page as displayed, i.e. after the view rotation. */
   private displayed(): PageSize {
     return displayedSize(this.opts.page, this.turns);
@@ -555,6 +593,7 @@ export class Thumbnails {
       return;
     }
 
+    const source = this.opts.sourceOf?.(page) ?? page;
     const rid = nextRequestId();
     const outstanding: Outstanding = { page, rid, withdrawn: false };
     this.request = outstanding;
@@ -567,7 +606,7 @@ export class Thumbnails {
     void fetchTile({
       rid,
       doc: this.opts.doc,
-      page,
+      page: source,
       scale: TIER1_WIDTH / this.displayed().width_pt,
       turns: this.turns,
       invert: this.invert,

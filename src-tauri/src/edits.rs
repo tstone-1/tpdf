@@ -20,16 +20,24 @@
 //! diagnosis, where a position would have silently rotated whichever page moved
 //! into that slot.
 //!
-//! **What this increment does not do, stated rather than left to be found.**
-//! Slot `i` is still baseline page `i` everywhere else in the application ---
-//! `page_text`, `search_page`, the outline's destinations, links and comments all
-//! address baseline pages, and the tile request's `page` is a baseline page. That
-//! equality holds because the only command wired up is [`Command::Rotate`], which
-//! changes no page's position. It stops holding the moment `Delete` or `Move` is
-//! wired, and every one of those consumers needs a slot-to-source translation at
-//! that point. A translation added *now* would be the identity function, which no
-//! test could tell from a broken one --- see `docs/TRAPS.md`, *"a property that
-//! holds by construction cannot test the thing it resembles"*.
+//! **Slot `i` is no longer baseline page `i`, as of the increment that wired
+//! [`Command::Delete`].** Every consumer that addresses a page --- the tile
+//! request, `page_text`, `search_page`, the outline's destinations, links,
+//! comments, the thumbnails, the accessibility tree --- goes through the
+//! translation in `src/lib/pages.ts`, which is built from the `pages` of a state
+//! reply and is the frontend's only copy of it.
+//!
+//! The translation is the frontend's rather than this layer's, and that is a
+//! decision rather than an accident: the frontend has to hold the order anyway in
+//! order to lay the document out, so a second translation here would be a second
+//! reader of the same rule, able to disagree with the first about which page is
+//! where. What crosses the boundary is one answer.
+//!
+//! What is still **not** here: nothing creates a page (`docmodel`'s note has the
+//! id-allocator property that would need proving first), and nothing moves one.
+//! `Command::Move` is written and tested in the model and is wired to nothing ---
+//! `save.rs` refuses a plan whose pages are out of document order rather than
+//! writing them in the order the file happens to have.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -154,6 +162,27 @@ impl Edits {
         )
     }
 
+    /// Removes one page from the working document, addressed by identity.
+    ///
+    /// The page is gone from the reply's `pages`, and its id is a tombstone: a
+    /// later command naming it is [`Refusal::PageDeleted`] rather than
+    /// [`Refusal::NoSuchPage`], which is the distinction a stale frontend needs.
+    /// Undo puts it back, at its old position and with its own rotation, because
+    /// undo is replay --- see `docmodel`'s note on why that is not an inverse.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the id names no page or a deleted one;
+    /// or it is the last page, since a document with no pages is not a document.
+    pub fn delete(&self, doc: u32, page: u64) -> Result<EditState, String> {
+        self.command(
+            doc,
+            Command::Delete {
+                page: PageId::from_raw(page),
+            },
+        )
+    }
+
     /// Applies a command and returns the state it produced.
     fn command(&self, doc: u32, cmd: Command) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
@@ -191,18 +220,58 @@ impl Edits {
         Ok(snapshot(model))
     }
 
-    /// The working pages of one document, for the save path.
+    /// What to write, or print, for one document.
     ///
-    /// Returns the same `(source, turns)` pairs [`state`](Edits::state) reports,
-    /// so a saved file and a rendered page cannot disagree about what the reader
-    /// was looking at --- they are two readings of one answer rather than two
-    /// derivations of one rule.
+    /// Carries the same pages [`state`](Edits::state) reports, so a saved file
+    /// and a rendered page cannot disagree about what the reader was looking at
+    /// --- two readings of one answer rather than two derivations of one rule ---
+    /// and the baseline beside them, which the frontend has no use for and a
+    /// writer cannot do without.
     ///
     /// # Errors
     ///
     /// The handle names no open document.
-    pub fn plan(&self, doc: u32) -> Result<Vec<PageView>, String> {
-        Ok(self.state(doc)?.pages)
+    pub fn plan(&self, doc: u32) -> Result<Plan, String> {
+        let docs = self.docs.lock().expect("edits lock");
+        let model = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        Ok(Plan {
+            baseline: model.baseline(),
+            pages: snapshot(model).pages,
+        })
+    }
+}
+
+/// The working document as something that writes a file needs it.
+///
+/// Not sent to the frontend. It is what [`save::write_copy`](crate::save::write_copy)
+/// and the print path are handed, and it exists rather than a bare `Vec<PageView>`
+/// because both of them have to answer a question the page list cannot: *how many
+/// pages did the file have*. Without the baseline a save cannot tell three pages
+/// kept out of five from a five-page document that lost two under it.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Plan {
+    /// How many pages the file this document was opened from had.
+    pub baseline: u32,
+    /// The kept pages, in reading order.
+    pub pages: Vec<PageView>,
+}
+
+impl Plan {
+    /// Whether this describes the file exactly as it is on disk.
+    ///
+    /// Every baseline page present, in order, unturned. It is what lets the print
+    /// path hand the file over byte for byte rather than rewriting it to produce
+    /// the same document --- a rewrite drops encryption silently and reflows
+    /// structure, so "nothing was edited" is worth recognising rather than
+    /// approximating with `dirty`, which is `true` after a turn and a turn back.
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        self.pages.len() == self.baseline as usize
+            && self
+                .pages
+                .iter()
+                .enumerate()
+                .all(|(at, page)| page.source as usize == at && page.turns % 4 == 0)
     }
 }
 
@@ -373,6 +442,127 @@ mod tests {
     }
 
     #[test]
+    fn a_deleted_page_leaves_the_order_and_the_ones_after_it_move_up() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        let after = edits.delete(7, pages[0].id).expect("delete");
+
+        assert_eq!(after.pages.len(), 2);
+        assert_eq!(
+            after.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            vec![1, 2],
+            "slot 0 is now baseline page 1 --- the equality between the two is what \
+             this command breaks, and every consumer that assumed it has to translate"
+        );
+        assert_eq!(
+            after.pages.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![pages[1].id, pages[2].id],
+            "and the survivors kept their identities, which is what makes a command \
+             in flight still land on the page it named"
+        );
+        assert!(after.dirty);
+        assert!(after.can_undo);
+    }
+
+    #[test]
+    fn undo_puts_a_deleted_page_back_where_it_was() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        // Turned first, so the restored page has something of its own to lose.
+        edits.rotate(7, pages[1].id, 1).expect("rotate");
+        edits.delete(7, pages[1].id).expect("delete");
+
+        let back = edits.undo(7).expect("undo");
+        assert_eq!(back.pages.len(), 3);
+        assert_eq!(back.pages[1].id, pages[1].id, "at its old position");
+        assert_eq!(
+            back.pages[1].turns, 1,
+            "with its own rotation. Undo is replay from the baseline, so this is \
+             free --- an inverse would have to store it"
+        );
+    }
+
+    #[test]
+    fn a_second_command_naming_a_deleted_page_says_it_was_deleted() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits.delete(7, pages[0].id).expect("delete");
+
+        let why = edits.rotate(7, pages[0].id, 1).expect_err("gone");
+        assert_eq!(
+            why, "that page has been deleted",
+            "distinct from 'no such page', which is what a frontend one state \
+             behind needs in order to tell a stale command from a wrong one"
+        );
+        assert_eq!(
+            edits.delete(7, pages[0].id).expect_err("still gone"),
+            "that page has been deleted"
+        );
+    }
+
+    #[test]
+    fn the_last_page_cannot_be_deleted() {
+        let edits = Edits::default();
+        edits.open(3, 1);
+        let only = edits.state(3).expect("open").pages[0].id;
+        let why = edits.delete(3, only).expect_err("must refuse");
+        assert_eq!(why, "a document must keep at least one page");
+        assert_eq!(
+            edits.state(3).expect("state").pages.len(),
+            1,
+            "a refusal changes nothing"
+        );
+        assert!(
+            !edits.state(3).expect("state").dirty,
+            "and does not enter the journal"
+        );
+    }
+
+    #[test]
+    fn a_plan_after_a_deletion_keeps_the_baseline_it_was_opened_with() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits.delete(7, pages[1].id).expect("delete");
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(plan.baseline, 3, "the file still has three pages");
+        assert_eq!(
+            plan.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            vec![0, 2],
+            "and the plan names the two it kept, by the page of the file they are"
+        );
+        assert!(
+            !plan.is_identity(),
+            "a save cannot hand this file over unchanged"
+        );
+    }
+
+    #[test]
+    fn only_an_unedited_document_is_the_file_on_disk() {
+        let edits = opened();
+        assert!(
+            edits.plan(7).expect("plan").is_identity(),
+            "nothing has been done to it"
+        );
+
+        let first = edits.state(7).expect("open").pages[0].id;
+        edits.rotate(7, first, 1).expect("rotate");
+        assert!(!edits.plan(7).expect("plan").is_identity());
+
+        // Turned back. The journal is two commands deep and the document is the
+        // one on disk again --- which is the case `dirty` deliberately reports
+        // the other way, and the reason this is not spelled `!dirty`.
+        edits.rotate(7, first, -1).expect("rotate back");
+        let plan = edits.plan(7).expect("plan");
+        assert!(plan.is_identity(), "every page present, in order, unturned");
+        assert!(
+            edits.state(7).expect("state").dirty,
+            "the control: the reader has unsaved commands, and this still describes \
+             the file exactly"
+        );
+    }
+
+    #[test]
     fn an_id_no_document_ever_had_is_refused_by_name() {
         let edits = opened();
         let why = edits.rotate(7, 9_999, 1).expect_err("unknown id");
@@ -434,7 +624,8 @@ mod tests {
         let pages = edits.state(7).expect("open").pages;
         edits.rotate(7, pages[1].id, 3).expect("rotate");
         let plan = edits.plan(7).expect("plan");
-        assert_eq!(plan, edits.state(7).expect("state").pages);
-        assert_eq!(plan[1].turns, 3);
+        assert_eq!(plan.pages, edits.state(7).expect("state").pages);
+        assert_eq!(plan.pages[1].turns, 3);
+        assert_eq!(plan.baseline, 3, "the file's pages, not the working ones");
     }
 }

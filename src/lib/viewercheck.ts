@@ -506,6 +506,7 @@ async function run(path: string): Promise<void> {
   await thumbnailChecks(root, viewer, sidebar, doc, page);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await pageRotationChecks(root, viewer, doc, seen);
+  await pageDeletionChecks(root, viewer, doc, seen);
   await invertChecks(viewer, doc, page, seen);
   // Last of the checks that drive the surface, because it is the only one that
   // deliberately leaves the view somewhere else: it scrolls the whole document
@@ -2863,6 +2864,7 @@ async function appCommandChecks(
     // and the `enabled` guards below are what needs the two booleans to be
     // separately settable.
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
+    deletePage: () => fired.push("deletePage"),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
     canUndo: () => canUndo,
@@ -3312,6 +3314,15 @@ async function appCommandChecks(
     {
       id: "edit.rotatePageCounterClockwise",
       ...shell("rotatePage:-1"),
+      read: () => fired.join(","),
+    },
+    {
+      // The only command with no keyboard binding, so the palette is not one of
+      // two routes to it --- it is the route. Driving it from there is therefore
+      // the whole of its wiring, which is why it is here rather than left to
+      // `appcommands.test.ts`.
+      id: "edit.deletePage",
+      ...shell("deletePage"),
       read: () => fired.join(","),
     },
     {
@@ -5049,6 +5060,317 @@ async function pageRotationChecks(
   // Back to upright again, for the phase after this one.
   viewer.setPageTurns(target, 0);
   await settle(() => viewer.idle);
+}
+
+/**
+ * Removing a page from the document, which is the edit that moves every other.
+ *
+ * **What makes this hard to check is the same thing that makes it worth
+ * checking**: a page count that went down by one is equally true of a viewer
+ * that dropped the *wrong* page, or the last one, or that renumbered without
+ * moving anything. So the assertion that carries the weight is the identity one
+ * --- the slot below the gap must now be showing the page that was under it ---
+ * and the only thing on this side that can tell one page from another is its
+ * text. Where a document has none, the check says so and skips rather than
+ * asserting a count that cannot fail.
+ *
+ * The order is driven directly rather than through the model. That is
+ * deliberate and is the same seam {@link pageRotationChecks} uses: the journal,
+ * the refusals and the undo replay are in Rust and have 437 tests there, and
+ * what no unit test can reach is a real layout with real tiles rearranging
+ * itself. The wire between the two --- `App.svelte` asking the backend and
+ * handing the answer here --- is covered by neither, and `docs/PLAN.md` says so.
+ *
+ * Puts the document back before returning, asserted rather than assumed, because
+ * every phase after this one inherits what it leaves.
+ */
+async function pageDeletionChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const names = [
+    "deleting a page leaves the document one page shorter",
+    "the page below the deleted one moves up into its slot",
+    "the page above the deleted one does not move",
+    "the last slot is gone rather than left empty",
+    "deleting a page does not rotate the view",
+    "deleting a page discards what was painted",
+    "recovers coverage after a page is deleted",
+    "putting the page back restores the document",
+    "the page that came back is the page that went",
+    "the reader stays on the page they were reading",
+    "the backend takes the page out of the working document",
+    "the backend refuses a page it has already deleted",
+    "undo puts the page back in the backend's answer",
+  ];
+
+  if (doc.page_count < 3) {
+    // Only the viewer's half needs a middle page to delete. The three that ask
+    // the backend need two pages and are left to say so for themselves --- on
+    // `tagged.pdf` they are the only checks here that can run at all, and
+    // skipping them with everything else would be a skip for a reason that is
+    // not theirs.
+    for (const name of names.slice(0, 10)) {
+      skip(name, `the document has ${doc.page_count} page(s), and this deletes a middle one`);
+    }
+    await deleteCommandChecks(doc, names);
+    return;
+  }
+
+  key(root, "Home");
+  await settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
+
+  const target = 1;
+  // Below the page that is about to go, so that "the reader follows their page"
+  // has a direction. Where they end up is read back rather than assumed --- on a
+  // short document the last page cannot reach the top of the viewport, which is
+  // a trap this file has paid for once.
+  viewer.goToPage(target + 1);
+  await settle(() => viewer.idle);
+  const readingAt = viewer.position.page;
+
+  const before = viewer.pageOrder;
+  const uprightRotation = viewer.rotation;
+  const above = viewer.pageBoxCssOf(0);
+  // Read while the pages are still where they were, so what the check compares
+  // against is this document rather than the state it is asserting.
+  const belowText = viewer.textOn(target + 1);
+  const aboveText = viewer.textOn(0);
+  const targetText = viewer.textOn(target);
+  const lastSlot = before.length - 1;
+
+  /** A page's text as a short comparable string, or "" if it has none. */
+  const fingerprint = (text: { codes: number[]; width_pt: number } | null): string =>
+    !text || text.codes.length === 0
+      ? ""
+      : `${text.codes.length}@${text.width_pt.toFixed(1)}:${text.codes
+          .slice(0, 32)
+          .join(",")}`;
+
+  // Whether the two pages this phase swaps around can be told apart at all. On a
+  // corpus whose pages carry the same text, "the page below moved up" and "the
+  // page below did not move" produce the same reading --- a fixture where the
+  // right rule and the wrong rule agree, which `AGENTS.md` says to skip rather
+  // than to report as a pass.
+  const targetPrint = fingerprint(targetText);
+  const belowPrint = fingerprint(belowText);
+  const distinct =
+    targetPrint !== "" && belowPrint !== "" && targetPrint !== belowPrint;
+
+  const without = before.filter((_unused, slot) => slot !== target);
+  viewer.setPages(without);
+  await frame();
+
+  check(
+    names[0] ?? "",
+    (seen.status?.pageCount ?? -1) === before.length - 1,
+    `${before.length} pages, now ${seen.status?.pageCount ?? -1}`,
+  );
+
+  const movedUp = fingerprint(viewer.textOn(target));
+  if (!distinct) {
+    skip(
+      names[1] ?? "",
+      belowPrint === "" || targetPrint === ""
+        ? "the pages have no extractable text to tell them apart"
+        : "pages 2 and 3 read alike, so moving one up is invisible here",
+    );
+  } else {
+    // Identity by content. A count cannot tell "page 2 was removed" from "page 3
+    // was removed and the pages renumbered", and those are different documents.
+    check(
+      names[1] ?? "",
+      movedUp === belowPrint,
+      `slot ${target + 1} held [${belowPrint.slice(0, 40)}], slot ${target} now ` +
+        `holds [${movedUp.slice(0, 40)}]`,
+    );
+  }
+
+  const aboveNow = viewer.pageBoxCssOf(0);
+  const aboveTextNow = viewer.textOn(0);
+  const shapeHeld =
+    Math.abs(aboveNow.width / aboveNow.height - above.width / above.height) <
+    0.02;
+  const textHeld =
+    !aboveText || !aboveTextNow
+      ? true
+      : aboveTextNow.codes.length === aboveText.codes.length;
+  check(
+    names[2] ?? "",
+    shapeHeld && textHeld,
+    `page 1 was ${above.width.toFixed(0)}x${above.height.toFixed(0)}, now ` +
+      `${aboveNow.width.toFixed(0)}x${aboveNow.height.toFixed(0)}` +
+      (aboveText && aboveTextNow
+        ? `, text ${aboveText.codes.length} -> ${aboveTextNow.codes.length}`
+        : ", no text to compare"),
+  );
+
+  const past = viewer.pageBoxCssOf(lastSlot);
+  check(
+    names[3] ?? "",
+    past.width === 0 && past.height === 0,
+    `slot ${lastSlot} reports ${past.width.toFixed(0)}x${past.height.toFixed(0)}`,
+  );
+
+  // The negative one, and the reason it is here: every statement above is also
+  // true of a viewer that rebuilt itself from scratch, and a rebuild that lost
+  // the reader's rotation is a defect they would meet immediately.
+  check(
+    names[4] ?? "",
+    viewer.rotation === uprightRotation,
+    `view turns ${uprightRotation} -> ${viewer.rotation}`,
+  );
+
+  // The control for the recovery below: pixels kept across a deletion would make
+  // "recovers" a wait for something that had never stopped being true.
+  check(
+    names[5] ?? "",
+    (seen.status?.any ?? 1) < 0.999,
+    `any=${((seen.status?.any ?? 1) * 100).toFixed(1)}% one frame later`,
+  );
+  await eventually(
+    names[6] ?? "",
+    () => (seen.status?.sharp ?? 0) >= 0.999,
+    () => `sharp=${((seen.status?.sharp ?? 0) * 100).toFixed(1)}%`,
+  );
+
+  // Where the reader is, after the page they were on has moved up one slot.
+  // Inside this deletion rather than in one of its own: every `setPages` throws
+  // both tiers away, and on the twelve A0 pages of `vector-multi` a tier-1
+  // render alone costs about a second and a half --- a phase that deleted and
+  // restored twice put the whole sweep past its timeout.
+  if (readingAt <= target) {
+    skip(
+      names[9] ?? "",
+      `the reader is on slot ${readingAt}, at or above the page being deleted, ` +
+        "so following it moves them nowhere",
+    );
+  } else {
+    check(
+      names[9] ?? "",
+      viewer.position.page === readingAt - 1,
+      `was reading slot ${readingAt}, now on ${viewer.position.page} ` +
+        `(wanted ${readingAt - 1})`,
+    );
+  }
+
+  // Putting the whole order back, which is exactly what an undo produces: the
+  // same pages, the same identities, the same slots.
+  viewer.setPages(before);
+  await frame();
+  check(
+    names[7] ?? "",
+    (seen.status?.pageCount ?? -1) === before.length,
+    `${seen.status?.pageCount ?? -1} pages, wanted ${before.length}`,
+  );
+
+  const restored = fingerprint(viewer.textOn(target));
+  if (!distinct) {
+    skip(
+      names[8] ?? "",
+      belowPrint === "" || targetPrint === ""
+        ? "the pages have no extractable text to tell them apart"
+        : "pages 2 and 3 read alike, so which one came back is invisible here",
+    );
+  } else {
+    // The page in the target slot must be the one that was there before, not the
+    // one that had moved up into it --- the failure a page count cannot see, and
+    // the reason the restore is checked at all rather than assumed from the
+    // count going back up.
+    check(
+      names[8] ?? "",
+      restored === targetPrint,
+      `slot ${target} holds [${restored.slice(0, 40)}], wanted ` +
+        `[${targetPrint.slice(0, 40)}] and not [${belowPrint.slice(0, 40)}]`,
+    );
+  }
+  await settle(() => viewer.idle);
+
+  await deleteCommandChecks(doc, names);
+}
+
+/**
+ * The `page_delete` command itself, against the model in the backend.
+ *
+ * The rest of the phase drives `Viewer.setPages` directly, which is the seam
+ * that lets a check watch a real layout rearrange itself --- and says nothing
+ * about the command a reader actually runs. This half asks the backend, so the
+ * round trip is covered: the command is registered, it names a page by the
+ * identity a state reply gave it, and it answers with a document one page
+ * shorter.
+ *
+ * What neither half covers is `App.svelte`, which carries the answer from one to
+ * the other. The harness runs instead of the shell.
+ *
+ * The model is left as it was found. The undo is asserted rather than assumed,
+ * because every phase after this one reads a document that this could otherwise
+ * have left a page short.
+ */
+async function deleteCommandChecks(
+  doc: DocumentInfo,
+  names: string[],
+): Promise<void> {
+  interface State {
+    pages: { id: number; source: number; turns: number }[];
+    can_undo: boolean;
+  }
+
+  const state = await invoke<State>("edit_state", { doc: doc.id }).catch(
+    () => null,
+  );
+  const doomed = state?.pages[1];
+  if (!state || !doomed) {
+    for (const name of names.slice(10)) {
+      skip(name, "the backend has no edit model with a page to spare");
+    }
+    return;
+  }
+
+  const after = await invoke<State>("page_delete", {
+    doc: doc.id,
+    page: doomed.id,
+  }).catch((e: unknown) => String(e));
+  if (typeof after === "string") {
+    check(names[10] ?? "", false, `the command failed: ${preview(after)}`);
+    for (const name of names.slice(11)) skip(name, "the deletion did not happen");
+    return;
+  }
+
+  check(
+    names[10] ?? "",
+    after.pages.length === state.pages.length - 1 &&
+      !after.pages.some((page) => page.id === doomed.id),
+    `${state.pages.length} pages, now ${after.pages.length}; the deleted id is ` +
+      (after.pages.some((page) => page.id === doomed.id) ? "still there" : "gone"),
+  );
+
+  // The tombstone, which is the distinction a frontend one state behind needs:
+  // an id that never existed and an id that was deleted are different answers.
+  const again = await invoke<State>("page_delete", {
+    doc: doc.id,
+    page: doomed.id,
+  }).then(
+    () => "",
+    (e: unknown) => String(e),
+  );
+  check(
+    names[11] ?? "",
+    again.includes("deleted"),
+    again ? preview(again) : "it accepted the second deletion",
+  );
+
+  const undone = await invoke<State>("edit_undo", { doc: doc.id }).catch(
+    () => null,
+  );
+  check(
+    names[12] ?? "",
+    undone?.pages.length === state.pages.length &&
+      undone.pages.some((page) => page.id === doomed.id),
+    `${after.pages.length} pages, now ${undone?.pages.length ?? -1}, wanted ` +
+      `${state.pages.length} with the deleted page among them`,
+  );
 }
 
 /**

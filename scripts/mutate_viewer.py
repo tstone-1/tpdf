@@ -421,7 +421,7 @@ MUTATIONS = [
         # would pass.
         "page turn: rotate the whole view instead of the one page",
         "src/lib/viewer.ts",
-        "    this.text.setPageTurns(page, turns);\n    this.scroller.setPageTurns(page, turns);",
+        "    if (source !== undefined) this.text.setPageTurns(source, turns);\n    this.scroller.setPageTurns(page, turns);",
         "    this.rotateBy(turns);",
         "a page nobody turned keeps its shape",
     ),
@@ -431,7 +431,7 @@ MUTATIONS = [
         # missing feature.
         "page turn: leave the text layer upright when a page turns",
         "src/lib/viewer.ts",
-        "    this.text.setPageTurns(page, turns);",
+        "    if (source !== undefined) this.text.setPageTurns(source, turns);",
         "",
         "the text layer turns with the page",
     ),
@@ -439,11 +439,49 @@ MUTATIONS = [
         # Invalidate only when the box moves. A half turn moves no box, so the
         # stale pixels stay on screen --- which is why `setPageTurns` invalidates
         # before it touches the geometry rather than relying on `applySizes`.
+        #
+        # **Credited to the half-turn check, and it named the quarter-turn one
+        # until 2026-08-17.** A quarter turn changes the page box, so `applySizes`
+        # invalidates the page whether the explicit call is there or not --- which
+        # is the whole reason the half-turn check was written, in the commit that
+        # added this expectation and did not move it. The run reported SURVIVED
+        # and printed the check that *had* gone red, which is what made a
+        # mis-aimed expectation readable rather than a hole in the suite.
         "page turn: invalidate a turned page only when its box moves",
         "src/lib/scroller.ts",
         "    this.pageTurns[page] = next;\n    this.invalidatePage(page);",
         "    this.pageTurns[page] = next;",
-        "a page turn discards that page's pixels",
+        "a half turn discards the pixels its box did not move",
+    ),
+    Mutation(
+        # Take the new order and leave the page count where it was. The document
+        # on screen is one page shorter and every count --- the status line, the
+        # page strip, the accessibility tree --- still says otherwise.
+        "page delete: keep the page count the document had",
+        "src/lib/viewer.ts",
+        "    this.opts.pageCount = after.length;",
+        "    this.opts.pageCount = Math.max(after.length, this.opts.pageCount);",
+        "deleting a page leaves the document one page shorter",
+    ),
+    Mutation(
+        # Keep what was painted. The tiles are placed by the slot they were
+        # requested for, so every page below the gap is drawn with the pixels of
+        # the page that used to be above it.
+        "page delete: keep the tiles across a change of order",
+        "src/lib/scroller.ts",
+        "    this.clearTiles();\n    this.dropPlaceholders();\n    this.estimate = this.meanKnownSize();",
+        "    this.estimate = this.meanKnownSize();",
+        "deleting a page discards what was painted",
+    ),
+    Mutation(
+        # Put the reader back on the slot number they were on rather than on the
+        # page they were reading. Deleting a page above them then scrolls the
+        # document under them by one page.
+        "page delete: keep the reader on the slot rather than on the page",
+        "src/lib/viewer.ts",
+        "      after.slotFrom(before, wasAt) ??",
+        "      undefined ??",
+        "the reader stays on the page they were reading",
     ),
     Mutation(
         # The third symptom, and the one whose reader can least easily tell

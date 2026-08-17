@@ -104,6 +104,7 @@ export interface AppActions {
    * answer. See `edits.ts`.
    */
   rotatePage(delta: number): void;
+  deletePage(): void;
   /** Step the edit journal back one command. */
   undoEdit(): void;
   /** Step the edit journal forward one command. */
@@ -367,6 +368,20 @@ export function registerAppCommands(
       keys: label("edit.rotatePageCounterClockwise"),
       enabled: withDocument,
       run: () => actions.rotatePage(-1),
+    },
+    {
+      // **No keyboard binding, and that is the decision rather than an
+      // omission.** Every other page operation has one, and this is the only
+      // command in the application that removes something a reader can see. It
+      // is undoable, which is the argument for a chord --- and a mis-pressed
+      // chord that silently removes a page from a document somebody is halfway
+      // through reading is a worse first experience than one extra keystroke. It
+      // is two keystrokes away in the palette, which is what `docs/PLAN.md` asks
+      // of every command.
+      id: "edit.deletePage",
+      title: "Delete page",
+      enabled: withDocument,
+      run: () => actions.deletePage(),
     },
     {
       // Guarded on there being something to undo rather than merely on a

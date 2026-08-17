@@ -19,6 +19,77 @@ have the binary.)
 
 ## [26.8.3] - Unreleased
 
+### Delete a page, and everything that has to move with it
+
+- **Delete page**, in the command palette. It takes the page the reader is on out of the
+  working document; **Undo** puts it back where it was, with its own rotation, because
+  undo is replay rather than an inverse. **Save a copy** writes the document without it.
+
+- **No keyboard shortcut, deliberately.** Every other page operation has one. This is the
+  only command in the application that removes something a reader can see, and a
+  mis-pressed chord that does that silently is worse than one extra keystroke --- it is
+  two of them in the palette, which is what tpdf asks of every command.
+
+- **The last page cannot be deleted**, because a document with no pages is not a document.
+  The rule is the model's and the refusal is a message, rather than a guard the frontend
+  keeps its own copy of.
+
+- **A page of the file and a page on screen are now different numbers**, and that is the
+  substance of this release rather than the command. Everything that addresses a page ---
+  the tile requests, the text extraction, the search, the links, the comments, the
+  outline, the page strip, the accessibility tree, the remembered place --- went through
+  one translation, `src/lib/pages.ts`, built from the model's own answer.
+
+- **A link on a deleted page goes with it; a link *into* one says so.** "Points at a page
+  this document does not have" was already the wording for a destination that resolves
+  nowhere, and it is exactly true of a page the reader has deleted. The outline keeps its
+  shape: an entry whose page has gone is still a heading with its subsections under it,
+  because dropping it would take a chapter out of the table of contents when its title
+  page went.
+
+- **Printing an edited document prints the edits.** It did not, and that was live from the
+  day page rotation landed: a reader who turned page 3 and pressed print got page 3 the
+  way it was on disk. A print job now carries which pages are left and how each is turned,
+  read from the model rather than from the frontend's cache --- and a document nobody has
+  edited is still handed to the printer byte for byte rather than rewritten to produce
+  itself.
+
+- **A saved copy loses the document's bookmarks when a page is deleted**, whole rather than
+  entry by entry. Their destinations name pages that are no longer in the file, and the
+  alternative is worse than it sounds: the pass that removes a deleted page's references
+  takes the page reference *out of* each destination array, leaving `[/XYZ 0 792 0]` ---
+  not a broken destination but a malformed one. Repairing them one by one is its own piece
+  of work and is written up in `docs/TRAPS.md`.
+
+- **A page that two page numbers share cannot be half-deleted, and tpdf says so.** A
+  malformed `/Kids` array can name one page object twice; removing one of its numbers
+  means removing an array *entry* rather than an object, which the deletion mechanism
+  cannot express --- so it is refused by name rather than silently doing nothing. Removing
+  both is accepted, and there is a control for that, since a blanket refusal would have
+  passed the first check while denying the case that works.
+
+- **Found on the way: a print job could turn the wrong page.** Resolving the plan against
+  the document *after* the unwanted pages had been dropped looked up page numbers that had
+  been renumbered by the drop --- so a job keeping pages 1 and 4 came back with page 4 at
+  its original angle. Caught by an existing check, and only because its fixture keeps the
+  first and last pages of a document whose four pages carry four different rotations.
+
+- **Thirteen new checks in a real window, and the discriminating one is about identity.**
+  A page count that went down by one is equally true of a viewer that dropped the wrong
+  page, or the last one, or that renumbered without moving anything --- so what is asserted
+  is that the slot below the gap now holds the page that was under it, compared by its
+  text. Where a document's pages read alike, the check says that and skips rather than
+  passing on a comparison that cannot fail. Three of the thirteen ask the backend for
+  real, from inside the running app, so the command's own round trip is covered and not
+  only the viewer's response to an order.
+
+- **A saved copy still carries a deleted page's *content*.** The page leaves the page tree
+  and its stream stays in the file as an object nothing points at, because a save is a
+  serialisation rather than a sanitation --- the position `docs/THREAT-MODEL.md` already
+  took, now with an operation where a reader could plausibly assume otherwise. It is
+  residual risk 15 there. Removing a page's content for real is what redaction means, and
+  redaction is not built.
+
 ### Turn a page in the document, undo it, and save a copy
 
 - **tpdf can now change a document.** Rotating the *view* has always been possible and

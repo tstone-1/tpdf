@@ -1,26 +1,35 @@
 //! Writing the working document to a file.
 //!
-//! One operation so far --- **save a copy with each page's turn applied** --- and
-//! the signature is what says so. It takes one turn per page, in order, so
-//! "every page, in the order the file already has them" is structural rather
-//! than a precondition somebody has to check: there is no way to spell a plan
-//! that drops or moves a page. Deleting and reordering are different operations
-//! and will need a different signature, which is the point --- a general "plan"
-//! parameter would need a guard for the shapes this code cannot honour, and
-//! `docs/TRAPS.md` is clear about what an unreachable guard is worth beside a
-//! type that carries the same thing.
+//! **Save a copy: the pages the reader kept, each with its turn applied.** The
+//! plan is [`edits::Plan`](crate::edits::Plan) --- the same answer the viewer is
+//! drawing from --- so a saved copy and a rendered page cannot disagree about
+//! what the reader was looking at. Two readings of one answer rather than two
+//! derivations of one rule.
 //!
-//! **Three refusals, and none of them is defensive.**
+//! **What the plan can and cannot say.** It names the kept pages, in order, each
+//! with the quarter turns to add. A page nobody kept is deleted from the page
+//! tree; a page nobody turned is written back byte for byte. What it may **not**
+//! say is that the pages have *moved*: [`write_copy`] deletes what is not wanted
+//! and leaves the survivors where they were, so it can honour a subset in
+//! document order and nothing else. That is refused rather than approximated ---
+//! see [`write_copy`]'s ordering check, which is the one guard here that is not
+//! yet reachable from the application and exists because the alternative, the day
+//! reordering lands, is a file that is silently in the wrong order.
+//!
+//! **Four refusals, and none of them is defensive.**
 //!
 //!  - An **encrypted** document. `docs/TRAPS.md` records that `lopdf` silently
 //!    drops encryption on save, so writing one produces a file whose restrictions
 //!    are gone and whose reader has no way to know. 3 of the 39 PDFs in a real
 //!    Downloads folder carry `/Encrypt` (measured for `progressive::open_failure`),
 //!    so this is a case a reader meets, not a hypothetical.
-//!  - A **page count that disagrees** with the plan. That is the external
-//!    modification §5 of `docs/PLAN.md` is about: the file changed under the open
-//!    document, and the turns the reader applied no longer name the pages they
-//!    were applied to.
+//!  - A **page count that disagrees** with the plan's baseline. That is the
+//!    external modification §5 of `docs/PLAN.md` is about: the file changed under
+//!    the open document, and the edits the reader applied no longer name the pages
+//!    they were applied to. Compared against the *baseline* rather than against
+//!    the plan's length, which is what makes it survive a deletion --- a plan of
+//!    three pages for a five-page file is what deleting two of them looks like.
+//!  - A plan whose pages are **not in document order**, as above.
 //!  - Writing **over the source**. The baseline the model replays against is the
 //!    file on disk; replacing it would leave every journalled command describing
 //!    a document that is gone. Saving in place is a different operation with its
@@ -30,13 +39,17 @@
 //! renamed over the destination, so an interrupted save leaves either the old
 //! file or the new one. A partially written PDF is the worst of the three
 //! outcomes --- it opens, and it is missing pages.
+//!
+//! The page-tree surgery itself is `pagetree.rs`, shared with the print path,
+//! which needs every one of the same operations for the same reasons.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use lopdf::{Document, Object};
+use lopdf::Document;
 
-use crate::print::{effective_rotation, MAX_DECODE};
+use crate::edits::Plan;
+use crate::pagetree::{agreed_turns, apply_turns, drop_outline, drop_pages, ordered_pages};
+use crate::print::MAX_DECODE;
 
 /// Extension of the file the bytes are written to before the rename.
 ///
@@ -45,15 +58,17 @@ use crate::print::{effective_rotation, MAX_DECODE};
 /// one.
 const PARTIAL: &str = "tpdf-partial";
 
-/// Writes `source` to `out` with `turns[i]` extra quarter-turns on page `i`.
+/// Writes the pages `plan` keeps, each with its own turn, from `source` to `out`.
 ///
 /// # Errors
 ///
 /// The source cannot be read or parsed; it is encrypted; it has a different
-/// number of pages than the plan; `out` is the source; or the write fails. The
-/// temporary file is removed on every failing path that created one.
-pub fn write_copy(source: &Path, turns: &[u8], out: &Path) -> Result<(), String> {
-    if turns.is_empty() {
+/// number of pages than the plan's baseline; the plan is empty, names a page the
+/// file does not have, or is not in document order; two of its pages are one
+/// object and disagree about the turn; `out` is the source; or the write fails.
+/// The temporary file is removed on every failing path that created one.
+pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> {
+    if plan.pages.is_empty() {
         return Err("a document must keep at least one page".into());
     }
     if same_file(source, out) {
@@ -82,40 +97,67 @@ pub fn write_copy(source: &Path, turns: &[u8], out: &Path) -> Result<(), String>
         );
     }
 
-    let pages: Vec<lopdf::ObjectId> = {
-        let table = doc.get_pages();
-        let mut numbers: Vec<u32> = table.keys().copied().collect();
-        numbers.sort_unstable();
-        numbers
-            .iter()
-            .map(|number| table[number])
-            .collect::<Vec<_>>()
-    };
-    if pages.len() != turns.len() {
+    let pages = ordered_pages(&doc);
+    if pages.len() != plan.baseline as usize {
         return Err(format!(
-            "the document on disk has {} page(s) and the edits describe {} --- it has changed \
-             since it was opened, so reopen it before saving",
+            "the document on disk has {} page(s) and the edits were made against {} --- it has \
+             changed since it was opened, so reopen it before saving",
             pages.len(),
-            turns.len()
+            plan.baseline
         ));
     }
 
-    for (id, extra) in agreed_turns(&pages, turns)? {
-        let extra = i64::from(extra);
-        if extra == 0 {
-            // Deliberately not written. A page the reader did not turn must come
-            // out of a save exactly as it went in, and writing the composed value
-            // would replace its inheritance with whatever the walk answered ---
-            // which is 0 whenever `effective_rotation`'s 64-hop bound gives up.
-            // See the trap; its first version had this reason wrong.
-            continue;
-        }
-        let composed = (effective_rotation(&doc, id) + extra * 90).rem_euclid(360);
-        doc.get_object_mut(id)
-            .and_then(Object::as_dict_mut)
-            .map_err(|e| format!("page {id:?} is not a dictionary: {e}"))?
-            .set("Rotate", composed);
+    // Ahead of every mutation, so a plan this code cannot honour costs nothing
+    // but the parse. Nothing in the application can produce one today: the only
+    // commands wired to the model are rotate and delete, and neither moves a
+    // page. It is here because the day `Command::Move` is wired, the failure
+    // without it is a file whose pages are in the order they were *before* the
+    // reader rearranged them --- a plausible document, silently the wrong one.
+    if plan
+        .pages
+        .windows(2)
+        .any(|two| two[0].source >= two[1].source)
+    {
+        return Err(
+            "tpdf cannot yet save a document whose pages have been reordered --- this writes the \
+             pages that are kept, in the order the file already has them"
+                .into(),
+        );
     }
+
+    // One-based, because that is how `lopdf` numbers pages and how
+    // `pagetree::drop_pages` reads them. The model's `source` is the zero-based
+    // baseline page, and `ordered_pages` is that same order, so the two line up
+    // by position rather than by anything either of them stores.
+    let kept: Vec<u32> = plan.pages.iter().map(|page| page.source + 1).collect();
+    if let Some(past) = kept.iter().find(|&&number| number as usize > pages.len()) {
+        return Err(format!(
+            "the edits name page {past}, which this document does not have"
+        ));
+    }
+
+    let turns: Vec<(lopdf::ObjectId, u8)> = plan
+        .pages
+        .iter()
+        .filter_map(|page| Some((*pages.get(page.source as usize)?, page.turns)))
+        .collect();
+
+    if kept.len() != pages.len() {
+        let dropped: Vec<u32> = (1..=pages.len() as u32)
+            .filter(|number| !kept.contains(number))
+            .collect();
+        unshared(&pages, &kept, &dropped)?;
+        drop_pages(&mut doc, &dropped)?;
+        // Its destinations name pages that are no longer in the file. Dropped
+        // whole rather than repaired --- `pagetree::drop_outline` carries what
+        // repairing it would take, and it is its own piece of work.
+        drop_outline(&mut doc)?;
+    }
+
+    // After the deletion, and it has to be: `drop_pages` removes objects, and a
+    // rotation written onto a page that is about to go is work thrown away. The
+    // ids are unaffected --- the survivors are the same objects they were.
+    apply_turns(&mut doc, &agreed_turns(&turns)?)?;
 
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes)
@@ -124,49 +166,39 @@ pub fn write_copy(source: &Path, turns: &[u8], out: &Path) -> Result<(), String>
     write_atomically(out, &bytes)
 }
 
-/// One turn per distinct page *object*, or a refusal naming the pages that disagree.
+/// Refuses a deletion that cannot be expressed by removing page *objects*.
 ///
-/// `pages[i]` supplies page `i + 1`, and a well-formed document gives every page
-/// an object of its own. A malformed one need not: `/Kids` may name the same page
-/// twice, and `lopdf`'s page walk returns it twice because it keeps no visited
-/// set --- so two page numbers share one `/Rotate`. Composing the turn once per
-/// *number* would then turn that page twice, because the second visit reads what
-/// the first wrote. See the trap; the same shape was live in `print.rs` in two
-/// places, one of them since printing landed.
+/// `/Kids` may name one page object twice, so two page numbers can be one page.
+/// [`drop_pages`] works in objects and correctly keeps any object a surviving
+/// number names --- which means "delete page 2" on such a document deletes
+/// nothing, and the copy comes out with the page the reader removed still in it.
 ///
-/// **Refused only where the plan genuinely cannot be honoured.** Turns that agree
-/// can be: the object turns once and both page numbers show it, which is what was
-/// asked for. Turns that differ cannot be by any output --- page 3 cannot be at 90
-/// and page 7 at 180 when they are one object --- so that is refused rather than
-/// resolved by picking one and handing back a file the reader would have to check.
-/// A blanket refusal was the obvious move and is wrong for the case that
-/// dominates: a document nobody edited, where every turn is zero and there is
-/// nothing to reconcile.
-fn agreed_turns(
-    pages: &[lopdf::ObjectId],
-    turns: &[u8],
-) -> Result<Vec<(lopdf::ObjectId, u8)>, String> {
-    let mut order: Vec<lopdf::ObjectId> = Vec::with_capacity(pages.len());
-    let mut chosen: HashMap<lopdf::ObjectId, (u8, usize)> = HashMap::new();
-    for (at, (id, extra)) in pages.iter().zip(turns).enumerate() {
-        let extra = extra % 4;
-        match chosen.get(id) {
-            None => {
-                chosen.insert(*id, (extra, at));
-                order.push(*id);
-            }
-            Some(&(first, first_at)) if first != extra => {
-                return Err(format!(
-                    "pages {} and {} are the same page in this file, so they cannot be turned \
-                     differently. Turn them the same way, or leave both as they are.",
-                    first_at + 1,
-                    at + 1
-                ));
-            }
-            Some(_) => {}
-        }
+/// The alternative to refusing is removing one *entry* from the `/Kids` array
+/// that holds it, which is a different operation on a different unit, and it is
+/// worth saying plainly that this is a refusal of a real request rather than a
+/// guard against a malformed one. It is the same shape as the conflicting-turns
+/// refusal in [`agreed_turns`]: no output satisfies the plan, so the reader is
+/// told instead of handed a file they would have to check.
+///
+/// `pages` is every page object in document order; `kept` and `dropped` are
+/// one-based page numbers into it.
+///
+/// # Errors
+///
+/// A dropped page whose object a kept page also names.
+fn unshared(pages: &[lopdf::ObjectId], kept: &[u32], dropped: &[u32]) -> Result<(), String> {
+    let at = |number: &u32| pages.get(*number as usize - 1).copied();
+    for gone in dropped {
+        let Some(id) = at(gone) else { continue };
+        let Some(shared) = kept.iter().find(|keep| at(keep) == Some(id)) else {
+            continue;
+        };
+        return Err(format!(
+            "pages {gone} and {shared} are the same page in this file, so page {gone} cannot be \
+             removed on its own. Remove both, or keep both."
+        ));
     }
-    Ok(order.into_iter().map(|id| (id, chosen[&id].0)).collect())
+    Ok(())
 }
 
 /// Writes `bytes` to `out` via a sibling temporary file and a rename.
@@ -214,7 +246,50 @@ fn canonical_parent(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edits::PageView;
+    use crate::pagetree::effective_rotation;
+    use lopdf::Object;
     use std::collections::HashSet;
+
+    /// A plan that keeps every page of an `n`-page document, turning each by
+    /// `turns[i]`.
+    ///
+    /// The ids are the model's own numbering --- one per baseline page, from 1 ---
+    /// and nothing here reads them: a plan is addressed by `source`, and the id
+    /// travels only so that this is the shape the model really produces.
+    fn plan_of(turns: &[u8]) -> Plan {
+        Plan {
+            baseline: turns.len() as u32,
+            pages: turns
+                .iter()
+                .enumerate()
+                .map(|(at, &turns)| PageView {
+                    id: at as u64 + 1,
+                    source: at as u32,
+                    turns,
+                })
+                .collect(),
+        }
+    }
+
+    /// A plan over a `baseline`-page document that keeps only `kept`.
+    ///
+    /// `kept` is `(source, turns)`, zero-based, in the order the pages are to
+    /// come out --- which for now must be the order the file has them, since
+    /// `write_copy` refuses anything else.
+    fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
+        Plan {
+            baseline,
+            pages: kept
+                .iter()
+                .map(|&(source, turns)| PageView {
+                    id: u64::from(source) + 1,
+                    source,
+                    turns,
+                })
+                .collect(),
+        }
+    }
 
     #[cfg(target_os = "macos")]
     use crate::print_macos as os_pdf;
@@ -287,7 +362,7 @@ mod tests {
             turns[1] = 1;
 
             let out = scratch.join(&format!("{name}.out.pdf"));
-            write_copy(&path, &turns, &out).unwrap_or_else(|e| panic!("{name}: {e}"));
+            write_copy(&path, &plan_of(&turns), &out).unwrap_or_else(|e| panic!("{name}: {e}"));
 
             let written = std::fs::read(&out).expect("read written");
             let after = os_pdf::read(&written)
@@ -339,7 +414,7 @@ mod tests {
         // everywhere and this is the fixture where those differ.
         let turns = vec![2u8; count];
         let out = scratch.join("composed.pdf");
-        write_copy(&path, &turns, &out).expect("write");
+        write_copy(&path, &plan_of(&turns), &out).expect("write");
 
         let before = Document::load(&path).expect("load source");
         let after = Document::load(&out).expect("load written");
@@ -350,13 +425,6 @@ mod tests {
             let got = effective_rotation(&after, *to).rem_euclid(360);
             assert_eq!(got, expected, "page {at}");
         }
-    }
-
-    fn ordered_pages(doc: &Document) -> Vec<lopdf::ObjectId> {
-        let table = doc.get_pages();
-        let mut numbers: Vec<u32> = table.keys().copied().collect();
-        numbers.sort_unstable();
-        numbers.iter().map(|n| table[n]).collect()
     }
 
     /// A page nobody turned must come out byte-for-byte as it went in, and the
@@ -374,7 +442,7 @@ mod tests {
         let out = scratch.join("out.pdf");
         // Turn the second page only. The first inherits 90 from the tree and is
         // left alone.
-        write_copy(&source, &[0, 1], &out).expect("write");
+        write_copy(&source, &plan_of(&[0, 1]), &out).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -534,7 +602,7 @@ mod tests {
 
         // One quarter-turn asked for on each page number. They are one page, so
         // the answer is one quarter-turn, not two.
-        write_copy(&source, &[1, 1], &out).expect("agreeing turns are honoured");
+        write_copy(&source, &plan_of(&[1, 1]), &out).expect("agreeing turns are honoured");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -553,7 +621,7 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &[1, 2], &out).expect_err("must refuse");
+        let why = write_copy(&source, &plan_of(&[1, 2]), &out).expect_err("must refuse");
         assert!(
             why.contains("same page"),
             "the message says why rather than naming an internal id: {why}"
@@ -580,8 +648,292 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        write_copy(&source, &[0, 0], &out).expect("an unedited document still saves");
+        write_copy(&source, &plan_of(&[0, 0]), &out).expect("an unedited document still saves");
         assert!(out.exists());
+    }
+
+    /// A deleted page is gone from the copy --- and the check says *which* pages
+    /// are left, not how many.
+    ///
+    /// `rotated.pdf` again, and for the same reason it is the fixture for the
+    /// turn: its four pages carry 0/90/180/270 and are otherwise identical, so a
+    /// save that dropped the *wrong* page produces a document with the right page
+    /// count and the wrong contents. The rotations are the only thing that tells
+    /// those two apart, which is why a page-count assertion on its own would be
+    /// satisfied by either.
+    ///
+    /// Read back through the platform's own parser, never through the `lopdf`
+    /// that wrote it.
+    #[test]
+    fn a_third_parser_sees_the_pages_that_were_kept_and_not_the_one_that_was_not() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let source = std::fs::read(&path).expect("read source");
+        let Some(before) = os_pdf::read(&source) else {
+            println!("[SKIP] the OS parser refused rotated.pdf");
+            return;
+        };
+        assert_eq!(
+            before.pages.len(),
+            4,
+            "the fixture this check is written for"
+        );
+        let rotations: Vec<i64> = before
+            .pages
+            .iter()
+            .map(|page| page.rotation.rem_euclid(360))
+            .collect();
+        assert_eq!(
+            rotations.iter().collect::<HashSet<_>>().len(),
+            4,
+            "the fixture discriminates: four pages, four different rotations. \
+             Without that, dropping the wrong page is invisible here"
+        );
+
+        let scratch = Scratch::new("delete");
+        let out = scratch.join("kept.pdf");
+        // Page 2 removed; the other three keep their own rotations.
+        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 0)]), &out).expect("write");
+
+        let written = std::fs::read(&out).expect("read written");
+        let after = os_pdf::read(&written).expect("the OS parser reads the saved copy");
+        assert_eq!(
+            after
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect::<Vec<_>>(),
+            vec![rotations[0], rotations[2], rotations[3]],
+            "pages 1, 3 and 4 in that order --- a count of three is equally true of \
+             the three WRONG pages"
+        );
+        println!(
+            "[OK] rotated.pdf 4 pages {rotations:?} --- kept 1,3,4 and read back \
+             through the platform parser"
+        );
+    }
+
+    /// Deleting and turning in one plan, since the two arrive together.
+    ///
+    /// The turn is aimed at a page *after* the deleted one, which is the case
+    /// that fails if anything resolves a plan entry against the document's page
+    /// numbers after the pages have gone: `get_pages` renumbers from 1, so the
+    /// old page 4 becomes page 3 and a turn aimed at "page 4" lands on nothing.
+    #[test]
+    fn a_turn_on_a_page_after_the_deleted_one_lands_where_it_was_aimed() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("delete-turn");
+        let out = scratch.join("out.pdf");
+
+        let before = Document::load(&path).expect("load source");
+        let source_ids = ordered_pages(&before);
+        // Drop page 2, and turn what was page 4 by a quarter.
+        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 1)]), &out).expect("write");
+
+        let after = Document::load(&out).expect("load written");
+        let ids = ordered_pages(&after);
+        assert_eq!(ids.len(), 3);
+        assert_eq!(
+            effective_rotation(&after, ids[2]).rem_euclid(360),
+            (effective_rotation(&before, source_ids[3]) + 90).rem_euclid(360),
+            "the last page is the old page 4, a quarter past where it was"
+        );
+        assert_eq!(
+            effective_rotation(&after, ids[1]).rem_euclid(360),
+            effective_rotation(&before, source_ids[2]).rem_euclid(360),
+            "and the page before it, which nobody turned, is untouched"
+        );
+    }
+
+    /// The outline goes when pages do, with the control that says it stays.
+    ///
+    /// Its destinations name pages that are no longer in the file. Dropping it
+    /// whole is a real loss and is the only option that cannot leave a
+    /// *malformed* one --- see `pagetree::drop_outline`.
+    #[test]
+    fn deleting_a_page_drops_the_outline_and_keeping_them_all_does_not() {
+        let Some(path) = fixture("outline-simple.pdf") else {
+            println!("[SKIP] outline-simple.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("outline");
+        let count = page_count(&path);
+        assert!(count > 1, "the fixture needs a page to spare");
+        assert!(
+            has_outline(&Document::load(&path).expect("load source")),
+            "the fixture carries one to begin with"
+        );
+
+        let kept: Vec<(u32, u8)> = (1..count as u32).map(|source| (source, 0)).collect();
+        let trimmed = scratch.join("trimmed.pdf");
+        write_copy(&path, &keeping(count as u32, &kept), &trimmed).expect("write");
+        assert!(
+            !has_outline(&Document::load(&trimmed).expect("load written")),
+            "a page was dropped, so its destinations are gone"
+        );
+
+        // The control. Without it this check passes for a save that drops every
+        // outline it ever sees, which is a different and much worse rule.
+        let whole = scratch.join("whole.pdf");
+        write_copy(&path, &plan_of(&vec![0u8; count]), &whole).expect("write");
+        assert!(
+            has_outline(&Document::load(&whole).expect("load written")),
+            "nothing was dropped, so the bookmarks survive"
+        );
+    }
+
+    fn has_outline(doc: &Document) -> bool {
+        doc.catalog()
+            .expect("a catalog")
+            .get(b"Outlines")
+            .map(|entry| {
+                // A dangling reference is not an outline. `drop_outline` removes
+                // the key, but a reader of this helper should not have to know
+                // that to trust the answer.
+                entry
+                    .as_reference()
+                    .is_ok_and(|id| doc.get_object(id).is_ok())
+            })
+            .unwrap_or(false)
+    }
+
+    /// Deleting one of two page numbers that are one page is refused.
+    ///
+    /// Not a guard against a malformed document --- it is a refusal of a request
+    /// no output satisfies. `drop_pages` removes page *objects* and correctly
+    /// keeps any object a surviving number names, so the deletion would silently
+    /// do nothing: the reader would be handed a copy with the page they removed
+    /// still in it, which is the plausible-wrong-answer shape this file is built
+    /// against. Found by writing the test that expected the deletion to work.
+    #[test]
+    fn deleting_one_of_two_numbers_that_are_one_page_is_refused() {
+        let scratch = Scratch::new("shared-delete");
+        let source = scratch.join("shared.pdf");
+        std::fs::write(&source, shared_page_document()).expect("write fixture");
+        let out = scratch.join("out.pdf");
+
+        let why = write_copy(&source, &keeping(2, &[(0, 0)]), &out).expect_err("must refuse");
+        assert!(
+            why.contains("same page") && why.contains("on its own"),
+            "the message says what cannot be done and what can: {why}"
+        );
+        assert!(!out.exists(), "and nothing was written");
+    }
+
+    /// The over-refusal control for the check above.
+    ///
+    /// Removing *both* numbers of a shared page is expressible --- the object goes
+    /// --- and a save that refused every shared page outright would pass the test
+    /// above while denying this one.
+    #[test]
+    fn deleting_both_numbers_of_a_shared_page_is_not_refused() {
+        let scratch = Scratch::new("shared-delete-both");
+        let source = scratch.join("shared.pdf");
+        std::fs::write(&source, shared_page_and_a_spare()).expect("write fixture");
+        let out = scratch.join("out.pdf");
+
+        // Pages 1 and 2 are one object; page 3 is its own. Keep only page 3.
+        write_copy(&source, &keeping(3, &[(2, 0)]), &out).expect("write");
+        let after = Document::load(&out).expect("load written");
+        assert_eq!(
+            ordered_pages(&after).len(),
+            1,
+            "both numbers went, so the object they shared went with them"
+        );
+    }
+
+    /// The shared-page fixture with one ordinary page after it.
+    ///
+    /// `shared_page_document` cannot express "delete both", because a document
+    /// must keep at least one page and both of its numbers are the same object.
+    fn shared_page_and_a_spare() -> Vec<u8> {
+        use lopdf::dictionary;
+        use lopdf::{Dictionary, Stream};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let resources = doc.add_object(Dictionary::new());
+        let content = doc.add_object(Stream::new(dictionary! {}, b"".to_vec()));
+        let shared = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+        });
+        let spare = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![
+                    Object::Reference(shared),
+                    Object::Reference(shared),
+                    Object::Reference(spare),
+                ],
+                "Count" => 3,
+                "Resources" => resources,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise fixture");
+        bytes
+    }
+
+    /// The one guard here nothing in the application can reach yet.
+    ///
+    /// `Command::Move` is written and tested in the model and is wired to
+    /// nothing, so no plan today is out of order. The day it is wired, the
+    /// failure without this is a file whose pages are in the order they were
+    /// *before* the reader rearranged them --- which opens, prints, and is wrong.
+    #[test]
+    fn a_plan_whose_pages_have_moved_is_refused_rather_than_written_in_file_order() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("reordered");
+        let out = scratch.join("out.pdf");
+
+        let why = write_copy(&path, &keeping(4, &[(2, 0), (0, 0), (1, 0)]), &out)
+            .expect_err("must refuse");
+        assert!(why.contains("reordered"), "{why}");
+        assert!(!out.exists(), "and nothing was written");
+
+        // The control: the same pages in document order are accepted, so the
+        // refusal is about the order rather than about the subset.
+        write_copy(&path, &keeping(4, &[(0, 0), (1, 0), (2, 0)]), &out).expect("in order");
+        assert!(out.exists());
+    }
+
+    #[test]
+    fn a_plan_naming_a_page_the_file_does_not_have_is_refused() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("past-end");
+        let out = scratch.join("out.pdf");
+
+        // A baseline that agrees with the file, and a page past its end. Only
+        // reachable from a frontend sending something the model never produced,
+        // which is exactly the argument for not trusting the number.
+        let why = write_copy(&path, &keeping(4, &[(0, 0), (9, 0)]), &out).expect_err("must refuse");
+        assert!(why.contains("does not have"), "{why}");
+        assert!(!out.exists());
     }
 
     #[test]
@@ -591,7 +943,7 @@ mod tests {
         std::fs::write(&source, encrypted_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &[0], &out).expect_err("must refuse");
+        let why = write_copy(&source, &plan_of(&[0]), &out).expect_err("must refuse");
         assert!(
             why.contains("encrypted"),
             "the message names the reason: {why}"
@@ -660,13 +1012,14 @@ mod tests {
         let out = scratch.join("out.pdf");
         let count = page_count(&path);
 
-        let why = write_copy(&path, &vec![0u8; count + 1], &out).expect_err("must refuse");
+        let why =
+            write_copy(&path, &plan_of(&vec![0u8; count + 1]), &out).expect_err("must refuse");
         assert!(why.contains("changed since it was opened"), "{why}");
         assert!(!out.exists());
 
         // And the matching plan is accepted, so the refusal is about the
         // mismatch rather than about this document.
-        write_copy(&path, &vec![0u8; count], &out).expect("the matching plan writes");
+        write_copy(&path, &plan_of(&vec![0u8; count]), &out).expect("the matching plan writes");
         assert!(out.exists());
     }
 
@@ -674,8 +1027,8 @@ mod tests {
     fn an_empty_plan_is_refused() {
         let scratch = Scratch::new("empty");
         let out = scratch.join("out.pdf");
-        let why =
-            write_copy(Path::new("../testdata/rotated.pdf"), &[], &out).expect_err("must refuse");
+        let why = write_copy(Path::new("../testdata/rotated.pdf"), &plan_of(&[]), &out)
+            .expect_err("must refuse");
         assert!(why.contains("at least one page"), "{why}");
     }
 
@@ -690,7 +1043,7 @@ mod tests {
         std::fs::copy(&path, &copy).expect("copy fixture");
         let before = std::fs::read(&copy).expect("read");
 
-        let why = write_copy(&copy, &[1, 0, 0, 0], &copy).expect_err("must refuse");
+        let why = write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &copy).expect_err("must refuse");
         assert!(why.contains("save over"), "{why}");
         assert_eq!(
             std::fs::read(&copy).expect("read"),
@@ -701,7 +1054,7 @@ mod tests {
         // The same file reached by a different spelling of the path is still the
         // same file --- a comparison of the strings would let this through.
         let indirect = scratch.join(".").join("copy.pdf");
-        assert!(write_copy(&copy, &[1, 0, 0, 0], &indirect).is_err());
+        assert!(write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &indirect).is_err());
     }
 
     #[test]
@@ -713,7 +1066,7 @@ mod tests {
         let scratch = Scratch::new("fresh");
         let out = scratch.join("brand-new.pdf");
         assert!(!out.exists(), "the control: it really is absent");
-        write_copy(&path, &[0, 0, 0, 0], &out).expect("a fresh destination is accepted");
+        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out).expect("a fresh destination is accepted");
         assert!(out.exists());
     }
 
@@ -725,7 +1078,7 @@ mod tests {
         };
         let scratch = Scratch::new("partial");
         let out = scratch.join("done.pdf");
-        write_copy(&path, &[1, 1, 1, 1], &out).expect("write");
+        write_copy(&path, &plan_of(&[1, 1, 1, 1]), &out).expect("write");
         assert!(out.exists());
         assert!(
             !out.with_extension(PARTIAL).exists(),
@@ -772,7 +1125,7 @@ mod tests {
              so a change to one is visible in the other"
         );
 
-        write_copy(&path, &[0, 0, 0, 0], &out).expect("write");
+        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out).expect("write");
 
         // Deliberately not `assert_eq!`: the failing side is a whole PDF, and
         // `assert_eq!` on two `Vec<u8>` prints every byte as a decimal number ---

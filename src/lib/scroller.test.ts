@@ -722,6 +722,170 @@ describe("Scroller page turns", () => {
   });
 });
 
+describe("Scroller when the page order changes", () => {
+  let dom: FakeDom;
+  let scroller: Scroller;
+
+  /** Three pages of different heights, so a size carried to the wrong slot shows. */
+  function threePages(): ScrollerOptions {
+    return {
+      ...options(),
+      pageCount: 3,
+      pages: [
+        { width_pt: 600, height_pt: 800 },
+        { width_pt: 600, height_pt: 400 },
+        { width_pt: 600, height_pt: 1200 },
+      ],
+      order: [
+        { id: 1, source: 0, turns: 0 },
+        { id: 2, source: 1, turns: 0 },
+        { id: 3, source: 2, turns: 0 },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => new Promise(() => {}));
+    scroller = new Scroller(dom.root as unknown as HTMLElement, threePages());
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  it("asks for the page of the file a slot draws, not for the slot", () => {
+    // The whole reason the order is here. Slot 1 draws page 2 of the file once
+    // page 2 is deleted, and a request naming the slot asks for a picture of the
+    // wrong page --- which looks like a rendering defect, not a bookkeeping one.
+    scroller.setPages([
+      { id: 1, source: 0, turns: 0 },
+      { id: 3, source: 2, turns: 0 },
+    ]);
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, performance.now());
+
+    const asked = tiles.fetchTile.mock.calls
+      .map(([request]) => request as { page: number })
+      .map((request) => request.page);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked).not.toContain(1);
+    expect(new Set(asked)).toEqual(new Set([0, 2]));
+  });
+
+  it("carries a learned size to wherever the page moved to", () => {
+    // Sizes belong to the page, not to the position. Carried by slot instead,
+    // every page below the gap is laid out at the size of the page that used to
+    // be there --- invisible on a document whose pages are all the same size,
+    // which is why this fixture's are not.
+    const tallBefore = scroller.pageBoxCssOf(2);
+    scroller.setPages([
+      { id: 1, source: 0, turns: 0 },
+      { id: 3, source: 2, turns: 0 },
+    ]);
+
+    const moved = scroller.pageBoxCssOf(1);
+    expect(moved.height).toBeCloseTo(tallBefore.height, 5);
+    expect(scroller.knowsPageSize(1)).toBe(true);
+  });
+
+  it("carries a page's own turn with it", () => {
+    scroller.setPageTurns(2, 1);
+    scroller.setPages([
+      { id: 1, source: 0, turns: 0 },
+      { id: 3, source: 2, turns: 1 },
+    ]);
+    expect(scroller.pageExtraTurns(1)).toBe(1);
+    expect(scroller.pageExtraTurns(0)).toBe(0);
+  });
+
+  it("drops a tile that was rendering when the order changed", async () => {
+    // Including one for a page that did **not** move, which is the half a check
+    // of the deleted page cannot see. A render already finished when the order
+    // changed still arrives; a withdrawal cannot reach it, and the slot it was
+    // requested for may now hold another page.
+    const late: Array<(value: unknown) => void> = [];
+    tiles.fetchTile.mockImplementation(
+      () =>
+        new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+    );
+    const held = new Scroller(dom.root as unknown as HTMLElement, threePages());
+    held.frame(0, performance.now());
+
+    const issued = tiles.fetchTile.mock.calls.map(
+      ([request]) => request as { page: number; scale: number },
+    );
+    const unmoved = issued.findIndex(
+      (request) => request.page === 0 && request.scale === 1,
+    );
+    expect(unmoved).toBeGreaterThanOrEqual(0);
+
+    held.setPages([
+      { id: 1, source: 0, turns: 0 },
+      { id: 3, source: 2, turns: 0 },
+    ]);
+
+    const bitmap = { close: vi.fn(), width: 64, height: 64 };
+    late[unmoved]?.({
+      bitmap: bitmap as unknown as ImageBitmap,
+      bytes: 1,
+      renderUs: 1,
+      decodeMs: 1,
+    });
+    await settle();
+    held.frame(0, performance.now());
+    expect(bitmap.close).toHaveBeenCalled();
+    held.destroy();
+  });
+
+  it("keeps a tile that arrives while the order is unchanged", async () => {
+    // The control, and it is what makes the test above able to fail: a scroller
+    // that closed every arrival would pass that one perfectly while drawing
+    // nothing at all.
+    const late: Array<(value: unknown) => void> = [];
+    tiles.fetchTile.mockImplementation(
+      () =>
+        new Promise((resolve) => late.push(resolve as (value: unknown) => void)),
+    );
+    const held = new Scroller(dom.root as unknown as HTMLElement, threePages());
+    held.frame(0, performance.now());
+
+    const issued = tiles.fetchTile.mock.calls.map(
+      ([request]) => request as { page: number; scale: number },
+    );
+    const first = issued.findIndex(
+      (request) => request.page === 0 && request.scale === 1,
+    );
+    expect(first).toBeGreaterThanOrEqual(0);
+
+    const bitmap = { close: vi.fn(), width: 64, height: 64 };
+    late[first]?.({
+      bitmap: bitmap as unknown as ImageBitmap,
+      bytes: 1,
+      renderUs: 1,
+      decodeMs: 1,
+    });
+    await settle();
+    held.frame(0, performance.now());
+    expect(bitmap.close).not.toHaveBeenCalled();
+    held.destroy();
+  });
+
+  it("reports a document that got shorter", () => {
+    const before = scroller.documentHeight;
+    scroller.setPages([
+      { id: 1, source: 0, turns: 0 },
+      { id: 3, source: 2, turns: 0 },
+    ]);
+    expect(scroller.documentHeight).toBeLessThan(before);
+    expect(scroller.pageBoxCssOf(2)).toEqual({ width: 0, height: 0 });
+  });
+});
+
 describe("displayedSize", () => {
   const portrait = { width_pt: 612, height_pt: 792 };
   const landscape = { width_pt: 792, height_pt: 612 };

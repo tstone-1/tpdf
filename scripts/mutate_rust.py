@@ -72,6 +72,10 @@ FILTERS = [
     # list is what `--list` is filtered by. It refused to start and said which
     # three, which is that guard doing its job rather than a bug in it.
     "print::",
+    # Added 2026-08-17 with the page-tree module. Its own tests were invisible to
+    # the harness for the same reason `print::` was: this list is what selects
+    # them, and a mutation whose test cannot be seen reports SURVIVED.
+    "pagetree::",
 ]
 
 
@@ -92,26 +96,28 @@ MUTATIONS = [
         # document whose every turned page ends at the same angle, which is
         # correct on the whole corpus except the one fixture that carries four
         # different rotations.
-        "save: set the rotation instead of composing onto the page's own",
-        "src/save.rs",
-        "        let composed = (effective_rotation(&doc, id) + extra * 90).rem_euclid(360);",
+        "pagetree: set the rotation instead of composing onto the page's own",
+        "src/pagetree.rs",
+        "        let composed = (effective_rotation(doc, *id) + extra * 90).rem_euclid(360);",
         "        let composed = (extra * 90).rem_euclid(360);",
         "a_turn_composes_with_the_rotation_the_page_already_had",
     ),
     Mutation(
-        # Turn a shared page once per page number. The `print.rs` half of the same
-        # root cause, and the one that has been live since printing landed.
-        "print: turn a shared page once per page number rather than once per object",
-        "src/print.rs",
-        "            .filter(|id| seen.insert(*id))",
-        "            .filter(|id| { seen.insert(*id); true })",
+        # Turn a shared page once per page NUMBER. One implementation now serves
+        # the save and the print path, so this reddens a test in each --- it is
+        # credited to the print one because that defect was live in shipped code,
+        # and `a_page_reached_twice_is_turned_once` covers the save side.
+        "pagetree: turn a shared page once per page number rather than once per object",
+        "src/pagetree.rs",
+        "    Ok(order.into_iter().map(|id| (id, chosen[&id].0)).collect())",
+        "    Ok(plan.to_vec())",
         "a_page_named_twice_is_turned_once",
     ),
     Mutation(
         # Delete a page object that a KEPT page number also names. The damaging
         # member of the family: printing "page 1" produces a blank sheet.
-        "print: drop a page object that a kept page number also names",
-        "src/print.rs",
+        "pagetree: drop a page object that a kept page number also names",
+        "src/pagetree.rs",
         "        .filter(|id| !kept.contains(id))",
         "        .filter(|id| kept.contains(id) || !kept.contains(id))",
         "a_page_a_kept_number_also_names_is_not_dropped",
@@ -119,27 +125,27 @@ MUTATIONS = [
     Mutation(
         # Decrement `/Count` once per doomed OBJECT rather than once per page
         # NUMBER, leaving a tree that claims a page it does not have.
-        "print: charge a shared page's deletion to /Count once, not once per number",
-        "src/print.rs",
+        "pagetree: charge a shared page's deletion to /Count once, not once per number",
+        "src/pagetree.rs",
         "    for number in numbers {",
         "    for number in numbers.iter().take(1) {",
         "a_shared_page_costs_the_tree_one_count_per_number_it_answered_to",
     ),
     Mutation(
-        # One turn per page NUMBER rather than per page OBJECT. Restores exactly
-        # the loop that was there before `agreed_turns`, so a shared page's second
-        # visit reads the 90 the first wrote and leaves 180.
+        # Compose each page's turn without reconciling the objects, which is the
+        # loop that was there before `agreed_turns` existed: a shared page's
+        # second visit reads the 90 the first wrote and leaves 180.
         "save: turn a shared page once per page number rather than once per object",
         "src/save.rs",
-        "    for (id, extra) in agreed_turns(&pages, turns)? {",
-        "    for (id, extra) in pages.iter().copied().zip(turns.iter().map(|t| t % 4)) {",
+        "    apply_turns(&mut doc, &agreed_turns(&turns)?)?;",
+        "    apply_turns(&mut doc, &turns)?;",
         "a_page_reached_twice_is_turned_once",
     ),
     Mutation(
         # Accept a plan that asks one shared page for two different turns, and
         # silently apply whichever came first.
         "save: accept two different turns for one shared page",
-        "src/save.rs",
+        "src/pagetree.rs",
         "            Some(&(first, first_at)) if first != extra => {",
         "            Some(&(first, first_at)) if first != extra && false => {",
         "a_page_reached_twice_cannot_be_turned_two_ways",
@@ -149,7 +155,7 @@ MUTATIONS = [
         # conflicts, which would deny saving an unedited document whose page tree
         # happens to be malformed.
         "save: refuse a shared page even when its turns agree",
-        "src/save.rs",
+        "src/pagetree.rs",
         "            Some(&(first, first_at)) if first != extra => {",
         "            Some(&(first, first_at)) if first == extra || first != extra => {",
         "a_page_reached_twice_is_saved_normally_when_nothing_conflicts",
@@ -161,11 +167,106 @@ MUTATIONS = [
         # its 64-hop walk gives up. It survived until the test stopped asserting
         # the effective rotation --- which is 90 either way --- and started
         # asserting that the untouched page states no `/Rotate` of its own.
-        "save: write a rotation onto every page, turned or not",
-        "src/save.rs",
+        "pagetree: write a rotation onto every page, turned or not",
+        "src/pagetree.rs",
         "        if extra == 0 {",
         "        if false {",
         "a_page_that_was_not_turned_keeps_an_inherited_rotation",
+    ),
+    Mutation(
+        # Keep every page whatever the plan says. The copy then comes out with
+        # the page the reader deleted still in it, which is the whole feature
+        # silently doing nothing.
+        "save: keep a page the plan does not name",
+        "src/save.rs",
+        "            .filter(|number| !kept.contains(number))",
+        "            .filter(|_number| false)",
+        "a_third_parser_sees_the_pages_that_were_kept_and_not_the_one_that_was_not",
+    ),
+    Mutation(
+        # Resolve each plan entry one page late. Every turn then lands on the
+        # page after the one it was aimed at --- which on an unedited document is
+        # invisible, because every turn is zero.
+        "save: aim each turn at the page after the one the plan named",
+        "src/save.rs",
+        "        .filter_map(|page| Some((*pages.get(page.source as usize)?, page.turns)))",
+        "        .filter_map(|page| Some((*pages.get(page.source as usize + 1)?, page.turns)))",
+        "a_turn_on_a_page_after_the_deleted_one_lands_where_it_was_aimed",
+    ),
+    Mutation(
+        # Let a shared page be half-deleted. `drop_pages` keeps any object a
+        # surviving number names, so the deletion silently does nothing and the
+        # copy has the page in it.
+        "save: accept a deletion that removes one of two numbers naming one page",
+        "src/save.rs",
+        "        unshared(&pages, &kept, &dropped)?;",
+        "        let _ = unshared(&pages, &kept, &dropped);",
+        "deleting_one_of_two_numbers_that_are_one_page_is_refused",
+    ),
+    Mutation(
+        # The over-refusal direction of the same guard: refuse a deletion whose
+        # doomed page nothing else names, which is every ordinary deletion.
+        "save: refuse a deletion that no kept page shares",
+        "src/save.rs",
+        "        let Some(shared) = kept.iter().find(|keep| at(keep) == Some(id)) else {",
+        "        let Some(shared) = kept.iter().find(|_keep| true) else {",
+        "deleting_both_numbers_of_a_shared_page_is_not_refused",
+    ),
+    Mutation(
+        # Write a reordered plan in the order the file already has. The pages
+        # come out in the wrong order, in a file that opens and prints.
+        "save: write a reordered plan in file order rather than refusing it",
+        "src/save.rs",
+        "        .any(|two| two[0].source >= two[1].source)",
+        "        .any(|_two| false)",
+        "a_plan_whose_pages_have_moved_is_refused_rather_than_written_in_file_order",
+    ),
+    Mutation(
+        # Keep the outline after pages have gone. Its destinations name objects
+        # that are not there, and `drop_pages` has already emptied the arrays
+        # they lived in --- so what survives is a malformed destination rather
+        # than a dead one.
+        "save: keep the outline of a document that lost pages",
+        "src/save.rs",
+        "        drop_outline(&mut doc)?;",
+        "        let _ = &mut doc;",
+        "deleting_a_page_drops_the_outline_and_keeping_them_all_does_not",
+    ),
+    Mutation(
+        # Delete the page in the slot rather than the one that was named.
+        # Identical on an unedited document and wrong the moment one moves.
+        "edits: delete the page in the slot rather than the page that was named",
+        "src/edits.rs",
+        "            Command::Delete {\n                page: PageId::from_raw(page),",
+        "            Command::Delete {\n                page: PageId::from_raw(page + 1),",
+        "a_deleted_page_leaves_the_order_and_the_ones_after_it_move_up",
+    ),
+    Mutation(
+        # Call every plan the file on disk. A print job then hands over the
+        # original bytes, and the reader's deletions and turns are not on paper.
+        "edits: report an edited document as the file on disk",
+        "src/edits.rs",
+        "            .all(|(at, page)| page.source as usize == at && page.turns % 4 == 0)",
+        "            .all(|(at, page)| page.source as usize == at || page.turns % 4 == 0)",
+        "only_an_unedited_document_is_the_file_on_disk",
+    ),
+    Mutation(
+        # Print the file rather than the working document. The pages the reader
+        # deleted come out of the printer.
+        "print: print the file even when the model says it has been edited",
+        "src/print.rs",
+        "    if plan.is_identity() {",
+        "    if true {",
+        "an_edited_document_prints_the_pages_the_model_kept",
+    ),
+    Mutation(
+        # Apply the view rotation and drop each page's own edit, which is what
+        # the print path did until a page could be turned in the document.
+        "print: apply the view rotation and not the page's own edit",
+        "src/print.rs",
+        "            Some((id, ((i16::from(page.turns) + view).rem_euclid(4)) as u8))",
+        "            Some((id, (view.rem_euclid(4)) as u8))",
+        "each_page_takes_its_own_edit_and_the_view_rotation_on_top",
     ),
     Mutation(
         # Save an encrypted document anyway. `lopdf` drops the encryption
@@ -182,7 +283,7 @@ MUTATIONS = [
         # land on whichever pages happen to be in those positions.
         "save: accept a plan of the wrong length",
         "src/save.rs",
-        "    if pages.len() != turns.len() {",
+        "    if pages.len() != plan.baseline as usize {",
         "    if false {",
         "a_plan_that_does_not_match_the_file_on_disk_is_refused",
     ),
@@ -218,8 +319,8 @@ MUTATIONS = [
         # Identical on an unedited document, and wrong the moment a page moves.
         "edits: rotate the page in the slot rather than the page that was named",
         "src/edits.rs",
-        "                page: PageId::from_raw(page),",
-        "                page: PageId::from_raw(page + 1),",
+        "            Command::Rotate {\n                page: PageId::from_raw(page),",
+        "            Command::Rotate {\n                page: PageId::from_raw(page + 1),",
         "a_turn_lands_on_the_page_it_named_and_nowhere_else",
     ),
     Mutation(
@@ -1182,12 +1283,24 @@ def all_test_names() -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", action="store_true")
+    # Same flag, same meaning as `mutate_viewer.py`'s. Added when the page
+    # deletion work put twenty new mutations into a table of a hundred: the
+    # whole table is what runs before a push, and re-proving ninety-odd
+    # mutations that could not have moved is an hour of somebody waiting.
+    # The control run and the name cross-check below still run in full.
+    parser.add_argument(
+        "--only", default="", help="run mutations whose name contains this"
+    )
     args = parser.parse_args()
+    chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
 
     if args.list:
-        for mutation in MUTATIONS:
+        for mutation in chosen:
             print(f"{mutation.name}  ->  expects: {mutation.expect}")
         return 0
+    if not chosen:
+        print(f"[FAIL] no mutation matches {args.only!r}")
+        return 1
 
     print("--- control: the suite must be green before anything is broken", flush=True)
     names, counted, out = run_tests()
@@ -1205,7 +1318,7 @@ def main() -> int:
     # run prints SURVIVED and the fault reads as a gap in the suite. Derived from
     # libtest's own list rather than from a hand-kept table.
     known = all_test_names()
-    unknown = [m for m in MUTATIONS if not any(m.expect in name for name in known)]
+    unknown = [m for m in chosen if not any(m.expect in name for name in known)]
     if unknown:
         for mutation in unknown:
             print(
@@ -1217,7 +1330,7 @@ def main() -> int:
 
     problems = 0
     with tempfile.TemporaryDirectory(prefix="tpdf-mutate-rs-") as scratch:
-        for mutation in MUTATIONS:
+        for mutation in chosen:
             target = CRATE / mutation.path
             # Copied aside and written *back*, never moved: docs/TRAPS.md
             # records a restore-by-move that left the mutated build in place.
@@ -1300,9 +1413,9 @@ def main() -> int:
 
     print()
     print(
-        f"[OK] all {len(MUTATIONS)} mutations caught by the test named for them"
+        f"[OK] all {len(chosen)} mutations caught by the test named for them"
         if problems == 0
-        else f"[FAIL] {problems} of {len(MUTATIONS)} mutations were not caught as described"
+        else f"[FAIL] {problems} of {len(chosen)} mutations were not caught as described"
     )
     return 0 if problems == 0 else 1
 

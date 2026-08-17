@@ -59,6 +59,7 @@ function harness(
     updateAvailable: () => update.available ?? false,
     updateReady: () => update.ready ?? false,
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
+    deletePage: () => fired.push("deletePage"),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
     // Default false for the same reason the update pair is: an empty journal is
@@ -272,8 +273,26 @@ describe("the page operations", () => {
   it("are withheld with no document", () => {
     const { registry, fired } = harness(false);
     expect(registry.run("edit.rotatePageClockwise")).toBe(false);
+    expect(registry.run("edit.deletePage")).toBe(false);
     expect(registry.run("file.saveCopy")).toBe(false);
     expect(fired).toEqual([]);
+  });
+
+  it("offer deleting a page in the palette and on no chord", () => {
+    // The one command here with no keyboard binding, deliberately: it is the
+    // only one that removes something a reader can see, and a mis-pressed chord
+    // that does that silently is worse than a second keystroke. The assertion is
+    // that it is reachable and that it advertises nothing --- a binding added
+    // later without reading `appcommands.ts` turns this red.
+    const { registry, fired } = harness();
+    const found = registry
+      .search("delete")
+      .map((ranked) => ranked.command)
+      .find((command) => command.id === "edit.deletePage");
+    expect(found?.title).toBe("Delete page");
+    expect(found?.keys).toBeUndefined();
+    expect(registry.run("edit.deletePage")).toBe(true);
+    expect(fired).toEqual(["deletePage"]);
   });
 
   it("say page rather than view, since both are offered at once", () => {
@@ -414,6 +433,7 @@ describe("the window shortcuts for editing", () => {
       updateAvailable: () => false,
       updateReady: () => false,
       rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
+      deletePage: () => fired.push("deletePage"),
       undoEdit: () => fired.push("undoEdit"),
       redoEdit: () => fired.push("redoEdit"),
       canUndo: () => journal.undo ?? false,

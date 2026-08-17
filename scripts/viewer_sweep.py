@@ -280,7 +280,14 @@ def main() -> int:
     parser.add_argument("app", nargs="?", help="the bundle executable to run")
     parser.add_argument("--list", action="store_true", help="print the corpora and exit")
     parser.add_argument("--only", help="comma-separated stems, for one fixture at a time")
-    parser.add_argument("--timeout", type=int, default=420)
+    # 420 until 2026-08-17, when the page-deletion phase pushed `vector-multi`
+    # --- twelve A0 pages, where a tier-1 render alone costs about a second and
+    # a half --- past it, and the sweep stopped there. Cutting that phase from
+    # two delete-and-restore cycles to one brought it back to **338 s measured**,
+    # which is 82 s of margin: enough today and not enough to build on. A
+    # generous timeout costs nothing on a fast run, and a tight one fails as
+    # "the run printed no CHECK-NAMES-JSON line", which reads as a crash.
+    parser.add_argument("--timeout", type=int, default=900)
     args = parser.parse_args()
 
     corpora, excluded = classify()

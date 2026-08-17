@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 287 entries
+The one thing this file does *not* carry in full is the trap list --- 294 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -921,7 +921,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 287 of them and the full text
+titles. Only the titles are here, because there are 294 of them and the full text
 was 93% of this file --- an instruction budget spent on the 286 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1024,12 +1024,16 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A worker killed a moment ago still says it is running
 - The cleanup after an fd shuffle can close what it just installed
 - A per-page invalidation counter is not the same as a generation
+- State keyed by a slot belongs to whatever moves into that slot (three honest answers, and the third is right for exactly one of the ten things on the list)
 - A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
 - A pool that replaces a dead worker with the same bytes faults again, forever
 - A diagnosis placed after a liveness check inherits that check's race
 - A valid in-place rewrite is served silently, and a length check cannot see it
 - Writing a page's rotation "for completeness" flattens what a bounded walk could not read (the entry's own first mechanism was wrong, and the test could not fail)
 - Two page numbers can be one page object, and the second turn composes on the first (the two call sites need *different* fixes; the print one had been wrong since printing landed)
+- A page number is a position, and deleting a page renumbers every one after it (an existing test caught it, and only because its fixture keeps the first and *last* pages)
+- Removing one of two page numbers that name one page cannot be done by removing objects (found by writing the test that expected it to work; the fix is a refusal with an over-refusal control)
+- Dropping a reference out of a destination array leaves a destination with no page
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
@@ -1153,14 +1157,17 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A harness that prints only at the end cannot say where it stopped
 - A harness that prints as it goes writes nothing until it exits, under a redirect
 - A `pgrep -f` wait loop is defeated by the command that checks on it (observing the job is what kept it blocked)
+- A wait built on `pgrep -f` outlives the job, and every later check agrees with it (the instrument agreed with the truth, and would have agreed with anything)
 - A mutation harness that dies leaves the mutation in the tree (a `finally` does not survive `pkill`, and on a feature branch the leftover is invisible in `git status`)
 - A mutation aimed at deleted code is refused far too late to matter
+- A mutation harness knows only the tests it was told to run (three lists in one increment; the guard is loud, and the fix for one of them was to move the function)
 - A verification chained after a failed edit reports success for work that is not there
 - A restored file with its original timestamp leaves the build serving the mutation
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
 - A mutation naming a test the harness cannot run reports SURVIVED
 - A mutation that survives may be a variant, not a gap --- check before strengthening
+- A check written because a mutation survived has to inherit that mutation's expectation (the run said SURVIVED for a defect the suite catches; what made it readable was printing which check went red)
 - A leaner data structure turned a wrong edit into a no-op
 - A harness that prints stderr only on failure hides what a passing run said
 - A wrapper's own verdicts are on the other stream, in the same shape as a check's

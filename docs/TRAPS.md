@@ -7715,3 +7715,168 @@ were written into one script anyway.
 The general shape, which is what makes it worth a fourth entry: **an instrument that shares a
 namespace with its subject can hold the subject in the state it is measuring.** Prefer a
 positive signal the job emits (`WIN2-DONE`) over an inference from the process table.
+
+### A page number is a position, and deleting a page renumbers every one after it
+
+`lopdf`'s `get_pages` numbers the pages it finds from 1 as it walks the tree, so a page number
+is an *index into the current document* rather than a name. Delete page 2 of four and the old
+page 4 is now page 3; look a plan's entry up in a table read after the deletion and the number
+either names a different page or names none at all.
+
+Both happened in the same function on 2026-08-17, when the print path learned to carry a
+per-page turn. The code read `doc.get_pages()` *after* `drop_pages`, and a job that kept pages
+1 and 4 of `rotated.pdf` came back with page 1 turned and page 4 untouched --- the lookup for
+number 4 found nothing, `filter_map` dropped it silently, and the result was a plausible
+document with one page at the wrong angle.
+
+**Object ids do not move.** The fix is one line of ordering: resolve every plan entry to an
+`ObjectId` *before* anything is dropped, and hand those to the code that writes. `save.rs` does
+the same thing for the same reason, and its comment says so at the point where the two could
+drift apart again.
+
+What caught it was an existing test, `a_third_parser_checks_a_job_built_from_a_document_we_did_not_write`,
+which keeps the **first and last** pages of a four-page fixture whose pages carry 0/90/180/270.
+A range of adjacent pages would not have shown it, and neither would a fixture whose pages all
+carry the same rotation: it needs a kept page whose number *changes*, and a way to tell that
+page apart from its neighbours afterwards.
+
+### Removing one of two page numbers that name one page cannot be done by removing objects
+
+A `/Kids` array may name the same page object twice, and then two page numbers are one page.
+`pagetree::drop_pages` works in objects and correctly keeps any object a *surviving* number
+names --- which is the guard that stops "print page 1 only" deleting the page it was asked
+for. The consequence on the save path is the opposite failure and it is not obvious: "delete
+page 2" of such a document computes a doomed set of one object, finds page 1 still names it,
+keeps it, and writes a copy **with the page the reader deleted still in it**.
+
+Found by writing the test that expected the deletion to work. Nothing was wrong with
+`drop_pages`; the request is one no output of that mechanism satisfies, because removing the
+page means removing one *entry* from a `/Kids` array rather than one object from the file.
+
+`save.rs` refuses it by name --- "pages 1 and 2 are the same page in this file, so page 2
+cannot be removed on its own. Remove both, or keep both." --- with a control asserting that
+removing **both** numbers is still accepted, since a blanket refusal of every shared page
+would have passed the first test while denying the case that works.
+
+### Dropping a reference out of a destination array leaves a destination with no page
+
+`drop_pages` removes every reference to a doomed object in one pass over the graph: an array
+entry naming it is dropped, and a dictionary key whose value names it is removed. That is
+right for a `/Kids` array and for an `/Annots` array, and it is subtly wrong for a
+**destination**, which is an array whose *first element is the page*: `[5 0 R /XYZ 0 792 0]`
+becomes `[/XYZ 0 792 0]`, which is not a broken destination but a malformed one.
+
+So a document that loses pages loses its outline whole, in the print path and now in the save
+path, rather than keeping entries whose destinations have been quietly hollowed out. It is a
+real loss --- delete one page of a 500-page manual and the bookmarks go --- and it is the only
+option that cannot write a structure no reader can parse.
+
+Repairing it instead is a piece of work rather than a flag: a destination is reachable as a
+direct `/Dest`, as a `/Dest` inside an `/A` action, as a name into `/Dests` or into the
+`/Names` tree, and each has to be resolved, tested against the pages that are going, and then
+either rewritten or removed together with the entry that held it. That is `links.rs`'s
+resolver, on the write side.
+
+### State keyed by a slot belongs to whatever moves into that slot
+
+Deleting a page is the first edit that makes the viewer's slots and the file's pages different
+numbers, and the interesting part is not the translation --- it is everything that was
+*already* keyed by a slot and quietly changes meaning: the scroller's learned page sizes, its
+tile epochs, the tiles themselves, the tier-1 placeholders, the page strip's thumbnails, the
+accessibility tree's built pages, a search's matches, the selection, the focused link, the open
+note.
+
+Each one gets one of three answers, and which is right depends on what the state is *about*.
+Two of them are cheap to get right:
+
+- **Carry it with the page**, by identity. A learned size and a page's own turn belong to the
+  page and must travel to wherever it went --- `Scroller.setPages` re-indexes both through a
+  map from page id to old slot. Carried by slot instead, every page below the gap is laid out
+  at the size of the page that used to be there, which is invisible on a document whose pages
+  are all the same size. That is most of them, which is why the test that pins it uses three
+  pages of three different heights rather than a corpus.
+
+  A tile epoch is carried the same way and deliberately **not** bumped, which took a mutation
+  to establish: `clearTiles` bumps the generation in the same call, one mechanism drops every
+  outstanding reply, and a per-page bump beside it changed nothing any test could see.
+- **Throw it away.** Tiles and thumbnails are placed by the slot they were rendered for, so
+  after a deletion the surviving pixels are in the wrong places rather than merely stale. A
+  search's matches name slots that now hold other pages. Keeping either is the plausible wrong
+  answer; dropping them costs a re-render the reader is already expecting.
+
+The third --- leave it alone and translate on the way out --- is the one to be careful of. It
+is right for exactly one thing on the list, the text cache, because a page's text belongs to
+the page of the file and the cache is keyed by that; applied to anything else it produces
+state that is quietly about a different page.
+
+### A wait built on `pgrep -f` outlives the job, and every later check agrees with it
+
+`docs/TRAPS.md` already records that `pgrep -f` matches the command written to look for a job,
+so `until ! pgrep -f mutate_rust.py; do sleep 60; done` holds itself open forever. The second
+half, found on 2026-08-17: **once one such waiter exists, every later `pgrep -f` check reports
+the job as running whether it is or not** --- the waiters match each other as well as
+themselves.
+
+Three of them were started while a mutation run was going, each a fresh "is it done yet". Every
+`pgrep -f mutate_rust >/dev/null && echo RUNNING` after the first one printed `RUNNING`, and
+would have printed it just as steadily if the harness had died in its first minute.
+
+**What that costs is not the wait, it is that a wrong belief cannot be corrected.** The run was
+believed to be two hours old and was six minutes old --- the log was silent (a harness that
+prints per mutation writes nothing to a redirected file until it exits, recorded here
+separately), so the only two instruments were an elapsed-time guess and a liveness check that
+always said yes. `ps -o lstart=` settled it in one call: the process had started at 08:53 and
+the clock read 08:59.
+
+Two habits, and the second is the one to keep: `pgrep -f "Python scripts/mutate_rust.py"` names
+the *process* rather than the file it runs, and better, **wait on a signal the job emits** ---
+append `exit=$?` to the log and `until grep -q "^exit=" log; do sleep 60; done`, which nothing
+but the job finishing can satisfy.
+
+### A mutation harness knows only the tests it was told to run
+
+Both unit harnesses select their suite from a list they carry: `mutate_rust.py`'s `FILTERS`
+names module prefixes for `cargo test --lib`, and `mutate_frontend.py`'s `TEST_FILES` names
+`.test.ts` files for vitest. A module or a file missing from that list is invisible to the
+harness --- so a mutation whose expected test lives there **cannot go red**, and the run would
+report it SURVIVED: a gap in the suite, reported as a gap in the suite, for a test that exists
+and passes.
+
+Three of them in one increment, on 2026-08-17. `pagetree.rs` was a new module and `pages.ts`
+was a new file, so their own tests were outside both lists; and `select` was written in
+`lib.rs`, whose crate-root `tests::` module no prefix in `FILTERS` reaches. Nine mutations in
+total, every one of them aimed at code that is tested.
+
+**None of them reported SURVIVED, and that is the point.** Both harnesses cross-check every
+mutation's `expect` against the *engine's own listing* --- `cargo test -- --list` and vitest's
+verbose reporter --- before running anything, and refuse to start while one names a test they
+cannot see. The failure is loud, names the mutations, and costs one run of the control.
+
+Two habits follow. When a module or a suite is added, add it to the harness's list in the same
+commit --- `scripts/check_mutation_anchors.py` is a gate and checks that anchors point at code
+that exists, not that expectations point at tests that run. And when a function's tests would
+land somewhere the harness cannot see, that is a reason to move the *function*: `select` went
+to `print.rs`, which owns the type it returns, and its tests came with it.
+
+### A check written because a mutation survived has to inherit that mutation's expectation
+
+The loop this repository runs on --- write a mutation, watch it survive, add the check that
+catches it --- has a step that is easy to leave out: the mutation still names the check it
+survived. The next run then reports **SURVIVED** for a defect the suite does catch, and the
+verdict is wrong in the direction that costs work rather than confidence.
+
+`page turn: invalidate a turned page only when its box moves` deletes the explicit
+`invalidatePage` from `Scroller.setPageTurns`. It named *"a page turn discards that page's
+pixels"*, which is a quarter turn --- and a quarter turn changes the page box, so `applySizes`
+invalidates the page whether the call is there or not. That is precisely why *"a half turn
+discards the pixels its box did not move"* was written, in the commit that added it and left
+the expectation pointing at the old check. One day later the run said SURVIVED.
+
+**What made it a two-minute fix rather than an investigation is that the harness prints the
+check that *did* go red**: `expected "a page turn discards that page's pixels" to fail; 1 did:
+['a half turn discards the pixels its box did not move ...']`. A verdict that had only said
+SURVIVED would have sent somebody to write a check that already exists.
+
+So: when a new check is added because a mutation survived, move that mutation's `expect` in the
+same edit --- and keep printing what went red, because a mutation credited to the wrong check
+is indistinguishable from a gap in the suite without it.

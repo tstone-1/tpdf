@@ -1511,17 +1511,30 @@ rather than transcribed.
 > these rotation checks. Every `testdata/*.pdf` is now either a window corpus with a stated
 > purpose or excluded with a stated reason, and a fixture matching neither fails the gate.
 
-**Every row below was measured on macOS on 2026-08-16**, in one sweep, and printed by the
-script rather than transcribed. Zero failures anywhere, and **all fourteen corpora report the
-same 204 check names** --- diffed as sets by the sweep, not inferred from the totals agreeing.
-The link work took the total from 171 to 189, and turning a page in the document took it to 204:
-ten for the page turn itself and five command probes. The tenth is the half turn, and it exists
-because a mutation deleting the invalidation that runs *before* the geometry survived all nine
-others --- a quarter turn changes the page box, so `applySizes` invalidates it either way, and
-only 180 degrees leaves the box identical. Of those nine the three carrying the
-weight are negative --- a page nobody turned keeps its proportions and its upright text, and
-`viewer.rotation` does not move --- because every positive statement about a turned page is
-equally true of a view that rotated everything.
+**Every row below was measured on macOS on 2026-08-17**, in one sweep of the committed tree,
+and printed by the script rather than transcribed --- the table is the sweep's own output,
+pasted. Zero failures
+anywhere, and **all fourteen corpora report the same 218 check names** --- diffed as sets by
+the sweep, not inferred from the totals agreeing.
+
+The link work took the total from 171 to 189, turning a page in the document took it to 204,
+and deleting one took it to 218: ten in the viewer, three against the backend, and one command
+probe. Of the ten, the one that carries the weight is about **identity** --- the slot below the
+gap must now hold the page that was under it, compared by its text --- because a page count one
+lower is equally true of a viewer that dropped the wrong page. On a corpus whose pages read
+alike that check says so and skips rather than passing on a comparison that cannot fail.
+
+The three that ask the backend are the `page_delete` round trip: the command is registered,
+names a page by identity, refuses a second deletion of that id as *deleted* rather than as
+unknown, and undo puts the page back. They leave the model as they found it, asserted rather
+than assumed, because every phase after them reads the document.
+
+Of the page-turn ten, three are negative --- a page nobody turned keeps its proportions and its
+upright text, and `viewer.rotation` does not move --- because every positive statement about a
+turned page is equally true of a view that rotated everything. The tenth is the half turn, and
+it exists because a mutation deleting the invalidation that runs *before* the geometry survived
+all nine others: a quarter turn changes the page box, so `applySizes` invalidates it either
+way, and only 180 degrees leaves the box identical.
 
 The Windows column is *not* carried forward: it was measured at 163 names on 2026-08-02 and
 nothing has re-run there since, so it is absent rather than adjusted --- which is what this
@@ -1535,26 +1548,42 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 162 | 42 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 168 | 36 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 168 | 36 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 99 | 105 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 122 | 82 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 159 | 45 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 157 | 47 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 149 | 55 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 149 | 55 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 150 | 54 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 158 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 170 | 34 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 177 | 27 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 136 | 68 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 176 | 42 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 182 | 36 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 182 | 36 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 100 | 118 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 134 | 84 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 171 | 47 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 171 | 47 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 153 | 65 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 163 | 55 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 164 | 54 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 172 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 184 | 34 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 191 | 27 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 137 | 81 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+
+**`tagged.pdf` runs three of these thirteen and skips ten**, which is the split worth knowing:
+the ten that drive the viewer need a middle page to delete and it has two, while the three that
+ask the backend need only a page to spare. They are the only checks of this phase that run
+there, and skipping them along with everything else would have been a skip for a reason that is
+not theirs.
+
+**`vector-multi` is the one with no margin, and the sweep's timeout was raised for it.** It
+takes **338 s** of the default 900 (420 until 2026-08-17, which the page-deletion phase went
+past before that phase was cut from two delete-and-restore cycles to one). Every other corpus
+is minutes. A tight timeout is worse than a generous one here: it fails as *"the run printed no
+CHECK-NAMES-JSON line"*, which reads as a crash rather than as a bound.
 
 **A `pkill -f "tpdf.app/Contents/MacOS/tpdf"` goes between runs**, and
 `scripts/viewer_sweep.py` does it. A leftover window occludes the next one, WebKit suspends an
 occluded page, and the run then produces nothing and uses no CPU --- twice, before that went
 into the sweep script. `TPDF_RAISE=1` covers the other half, a window with nowhere visible to
 go, and the script sets it.
+
+**`text-heavy.pdf` moved by one between two sweeps an hour apart** --- 177/41 and 176/42, the
+same 218 names --- which is the race the notes below describe, not a regression. It is left as
+the second reading rather than the flattering one.
 
 **Every row above is one run, and the notes below say why that is a point estimate rather than
 a bound.** Two of these fixtures have a check that lands on either side of a race, so their
@@ -2075,14 +2104,32 @@ starts at 0 and increments within the month.
    (`worker-probe`, `backend-probe`, and `worker-bench --mode engine|authority` after any
    PDFium bump). The half no probe covers is reading each claim and naming the line that
    keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
-7. Re-run the two mutation harnesses if any of the code they cover changed. They are not
+7. Re-run the three mutation harnesses if any of the code they cover changed. They are not
    gates --- each takes minutes and rebuilds per mutation --- and they are the only thing that
    says the tests can fail:
 
    ```
-   scripts/mutate_rust.py          # ten modules under src-tauri/src, `cargo test --lib`
-   scripts/mutate_frontend.py      # fourteen modules under src/lib, `vitest`
+   scripts/mutate_rust.py          # the modules in FILTERS, `cargo test --lib`
+   scripts/mutate_frontend.py      # the modules under src/lib, `vitest`
    scripts/mutate_viewer.py        # every runner below, in one pass
+
+   # None of the three prints anything to a *redirected* log until it exits, so
+   # a backgrounded run is silent from the first second to the last --- twenty
+   # minutes for the front end, and over two hours for the Rust table on a
+   # 114-mutation run that rebuilds per mutation. Wait for a signal the job
+   # emits rather than asking the process table whether it is alive:
+   #
+   #   scripts/mutate_rust.py > run.log 2>&1; echo "exit=$?" >> run.log
+   #   until grep -q '^exit=' run.log; do sleep 60; done
+   #
+   # `until ! pgrep -f mutate_rust.py` is the wrong instrument twice over, and
+   # `docs/TRAPS.md` has both halves.
+
+   # All three take `--only <substring>`, matched against the mutation's name,
+   # for the loop while a change is being made: `--only pagetree`, `--only
+   # "page delete"`. The whole table is what runs before a push --- the flag
+   # exists because re-proving a hundred mutations that could not have moved is
+   # an hour of somebody waiting, not because a subset is ever the gate.
 
    # Or one runner at a time. The three probe runners need no webview, no bundle
    # and no unlocked screen; the three viewer ones need all three.
