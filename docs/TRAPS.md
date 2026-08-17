@@ -8295,9 +8295,13 @@ made, so even the timestamps cannot separate them. Step 11 now counts assets bef
 publishing, because a count is the only thing here that can tell a whole release from half of
 one.
 
-**Two instruments are useless for this, one of them surprisingly.** `gh release view <tag>`
-returns *a* release for the tag with no way to say which, so it reports one draft's assets as
-though they were the release's. And `gh api repos/<owner>/<repo>/releases` answers **HTTP 200
+**Three instruments are useless for this, and the third one bites during cleanup.**
+`gh release view <tag>` returns *a* release for the tag with no way to say which, so it
+reports one draft's assets as though they were the release's. `gh release delete <tag>`
+answers **"release not found"** for a draft that plainly exists --- measured on `rc5`, where
+the draft was still there afterwards --- because it resolves the tag through the same REST
+endpoint that does not return drafts, which is the behaviour the whole `draft` job routes
+around. Delete by `databaseId` with `gh api -X DELETE`. And `gh api repos/<owner>/<repo>/releases` answers **HTTP 200
 with `[]`** under the token in the login keychain, while `gh release list` shows five releases
 --- the REST endpoint wants an OAuth scope this token lacks and says so by returning nothing
 rather than by failing. An empty list from an authenticated call is not evidence of an empty

@@ -2427,8 +2427,21 @@ starts at 0 and increments within the month.
 
     Clean up between rehearsals, and note the two are separate: `git push --delete origin
     <tag>` **does not remove the draft release**, which persists without its tag and will
-    sit in the release list looking like a real one. `gh release list` then
-    `gh release delete <tag> --yes`.
+    sit in the release list looking like a real one.
+
+    **Delete a draft by id, not by tag.** `gh release delete <tag> --yes` answers *"release
+    not found"* for a draft that plainly exists --- it resolves the tag through the same REST
+    endpoint that does not return drafts, which is the behaviour the `draft` job in
+    `release.yml` was written to route around. Measured on `26.8.3-rc5`: the command reported
+    not-found and the draft was still there afterwards.
+
+    ```
+    gh api graphql -f query='{ repository(owner: "tstone-1", name: "tpdf") {
+      releases(first: 5, orderBy: {field: CREATED_AT, direction: DESC}) { nodes {
+        databaseId tagName isDraft } } } }'
+    gh api -X DELETE repos/tstone-1/tpdf/releases/<databaseId>
+    git push --delete origin <tag>
+    ```
 
     A failed run publishes nothing --- `release` needs `gates`, and both legs create the
     release as a **draft**. That draft is the last chance to edit the release body, and
