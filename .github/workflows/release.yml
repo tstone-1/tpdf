@@ -166,6 +166,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       id: ${{ steps.draft.outputs.id }}
+      notes: ${{ steps.draft.outputs.notes }}
     steps:
       - name: Create the draft release, or adopt the one already there
         id: draft
@@ -210,31 +211,12 @@ jobs:
             return 1
           }
 
-          FOUND=$(find_drafts)
-          COUNT=$(printf '%s' "$FOUND" | grep -c . || true)
-
-          # Refused rather than resolved. More than one draft for this tag is the
-          # exact state this job exists to prevent, and picking one of them is how
-          # half a release gets published -- both look identical in `gh release
-          # list`, down to the `createdAt`, which for a release is the tagged
-          # commit's timestamp and not when the draft was made.
-          if [ "$COUNT" -gt 1 ]; then
-            echo "::error::$COUNT drafts already exist for $TAG; delete them and re-tag"
-            printf '%s\n' "$FOUND"
-            exit 1
-          fi
-
-          if [ "$COUNT" -eq 1 ]; then
-            # A re-run of this job, which must adopt rather than add.
-            ID="$FOUND"
-            echo "adopted the existing draft $ID for $TAG"
-          else
-            # The body is a literal here rather than read from CHANGELOG.md, so
-            # that no tag can pick up a heading of the wrong shape -- BUILD.md's
-            # versioning section has why. The cost is that it is only ever as
-            # current as the last person who read it, which is why the release
-            # checklist says to re-read it at the point it matters.
-            cat > release-notes.md <<'NOTES'
+          # The body is a literal here rather than read from CHANGELOG.md, so
+          # that no tag can pick up a heading of the wrong shape -- BUILD.md's
+          # versioning section has why. The cost is that it is only ever as
+          # current as the last person who read it, which is why the release
+          # checklist says to re-read it at the point it matters.
+          cat > release-notes.md <<'NOTES'
           **What this is.** A PDF reader that has begun to edit: fast,
           sandboxed — every document is parsed and rendered in worker processes
           with no filesystem or network authority — with search, selection, an
@@ -266,6 +248,26 @@ jobs:
           **Windows** — unsigned. SmartScreen warns on first launch: choose
           *More info* → *Run anyway*.
           NOTES
+
+          FOUND=$(find_drafts)
+          COUNT=$(printf '%s' "$FOUND" | grep -c . || true)
+
+          # Refused rather than resolved. More than one draft for this tag is the
+          # exact state this job exists to prevent, and picking one of them is how
+          # half a release gets published -- both look identical in `gh release
+          # list`, down to the `createdAt`, which for a release is the tagged
+          # commit's timestamp and not when the draft was made.
+          if [ "$COUNT" -gt 1 ]; then
+            echo "::error::$COUNT drafts already exist for $TAG; delete them and re-tag"
+            printf '%s\n' "$FOUND"
+            exit 1
+          fi
+
+          if [ "$COUNT" -eq 1 ]; then
+            # A re-run of this job, which must adopt rather than add.
+            ID="$FOUND"
+            echo "adopted the existing draft $ID for $TAG"
+          else
             # Attempted ONCE, and deliberately not retried the way the lookup is.
             # A create that fails may still have created: the request can land
             # and its response be lost, so a blind retry is how one tag ends up
@@ -298,6 +300,24 @@ jobs:
           fi
 
           echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+          # The notes go out as an output too, and this is not decoration: the
+          # action fills `latest.json`'s `notes` field from its `releaseBody`
+          # input, so dropping that input emptied the manifest's notes --- caught
+          # on rc5, where the file was 2,925 bytes against 26.8.2's 4,172 and the
+          # only difference was those 0 bytes of text. Nothing in tpdf displays
+          # them today (`update.ts` reads `version` and nothing else), so this
+          # restores a field rather than a feature; a silent loss is still a loss,
+          # and an updater UI that grows a notes panel would find it empty.
+          #
+          # Passing it as an output rather than repeating the prose keeps ONE
+          # copy, which is why the heredoc moved above the lookup: both paths
+          # through this job need the file now, not just the create.
+          {
+            echo "notes<<TPDF_NOTES_EOF"
+            cat release-notes.md
+            echo "TPDF_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
 
   release:
     name: ${{ matrix.label }}
@@ -538,6 +558,12 @@ jobs:
           # would read as though this job still resolves a release. It does not.
           # See the `draft` job for the two drafts this replaced.
           releaseId: ${{ needs.draft.outputs.id }}
+          # NOT for creating a release --- `releaseId` above already takes that
+          # branch away. This fills `latest.json`'s `notes` field, which the
+          # action populates from this input, and which was empty on rc5 after
+          # the create inputs were removed. Same text as the draft's body,
+          # carried from the one heredoc that writes it rather than repeated.
+          releaseBody: ${{ needs.draft.outputs.notes }}
           # Writes `latest.json` beside the payloads and uploads it. That file is
           # what an installed tpdf reads, through
           # `releases/latest/download/latest.json` -- a URL that resolves only to
