@@ -152,6 +152,38 @@ export class Edits {
     );
   }
 
+  /**
+   * Moves the page in slot `from` so that it ends up in slot `to`.
+   *
+   * **The one piece of arithmetic in this file, and it is an inversion rather
+   * than a rule.** The model takes a *neighbour*: put this page behind that one.
+   * A reader points at a destination, so something has to turn one into the
+   * other, and it has to be this side --- the model refuses an index for the
+   * reason `edits.rs` gives, and inverting it in Rust would need the order the
+   * frontend already holds.
+   *
+   * The inversion is over the order *without the moved page in it*, because that
+   * is the order the model inserts into: it removes the page first and then
+   * reads the anchor's position. Reading the anchor out of the order that still
+   * contains it is correct for every move towards the front, and for a move
+   * towards the back it lands one slot short --- except by exactly one slot,
+   * where it names the moved page itself and the model refuses it outright. Two
+   * different symptoms for one arithmetic error, which is why both are checked.
+   *
+   * A move to slot 0 has no anchor, which is what `null` means on the wire.
+   */
+  async move(from: number, to: number): Promise<EditState> {
+    const page = this.current.pages[from]?.id;
+    if (page === undefined) return this.current;
+    const rest = this.current.pages.filter((_, slot) => slot !== from);
+    const landing = Math.max(0, Math.min(to, rest.length));
+    if (landing === from) return this.current;
+    const after = landing === 0 ? null : (rest[landing - 1]?.id ?? null);
+    return this.adopt(
+      await invoke<EditState>("page_move", { doc: this.doc, page, after }),
+    );
+  }
+
   /** Steps the journal back one command. */
   async undo(): Promise<EditState> {
     return this.adopt(await invoke<EditState>("edit_undo", { doc: this.doc }));

@@ -105,6 +105,15 @@ export interface AppActions {
    */
   rotatePage(delta: number): void;
   deletePage(): void;
+  /**
+   * Move the page the reader is on `delta` slots along, in the document.
+   *
+   * A signed step rather than a pair of commands, so that the two palette
+   * entries are one action with two arguments --- the same shape `rotatePage`
+   * has, and for the same reason: two entry points into one call is where the
+   * second one drifts.
+   */
+  movePage(delta: number): void;
   /** Step the edit journal back one command. */
   undoEdit(): void;
   /** Step the edit journal forward one command. */
@@ -382,6 +391,28 @@ export function registerAppCommands(
       title: "Delete page",
       enabled: withDocument,
       run: () => actions.deletePage(),
+    },
+    {
+      // No binding either, and for a different reason than the deletion above:
+      // there is no chord left that reads as "move a page" rather than as "move
+      // the view", and a reader who wants to rearrange a document is going to
+      // want the page strip anyway. `docs/PLAN.md` has dragging as the half this
+      // increment did not build; these two are the command it will call.
+      //
+      // Off either end does nothing rather than wrapping. A reader who holds a
+      // key down expects a page to stop at the end of a document, and a page
+      // that reappeared at the other end would be a deletion as far as the eye
+      // is concerned.
+      id: "edit.movePageUp",
+      title: "Move page up",
+      enabled: withDocument,
+      run: () => actions.movePage(-1),
+    },
+    {
+      id: "edit.movePageDown",
+      title: "Move page down",
+      enabled: withDocument,
+      run: () => actions.movePage(1),
     },
     {
       // Guarded on there being something to undo rather than merely on a

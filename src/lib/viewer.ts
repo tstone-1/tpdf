@@ -1265,8 +1265,8 @@ export class Viewer {
 
     this.opts.pageCount = after.length;
     this.scroller.setPages([...views]);
-    this.a11y.setPageCount(after.length);
-    this.searcher.setPageCount(after.length);
+    this.a11y.setPages(after.length);
+    this.searcher.setPages(after.length);
 
     // Keyed by a slot, and every slot after the change holds a different page.
     // A selection left alone would highlight a run of characters on a page

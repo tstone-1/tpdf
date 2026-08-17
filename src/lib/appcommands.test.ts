@@ -60,6 +60,7 @@ function harness(
     updateReady: () => update.ready ?? false,
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
     deletePage: () => fired.push("deletePage"),
+    movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
     // Default false for the same reason the update pair is: an empty journal is
@@ -434,6 +435,7 @@ describe("the window shortcuts for editing", () => {
       updateReady: () => false,
       rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
       deletePage: () => fired.push("deletePage"),
+      movePage: (delta) => fired.push(`movePage:${delta}`),
       undoEdit: () => fired.push("undoEdit"),
       redoEdit: () => fired.push("redoEdit"),
       canUndo: () => journal.undo ?? false,

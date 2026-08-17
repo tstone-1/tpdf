@@ -94,6 +94,67 @@ MUTATIONS = [
         "deletes by identity, not by position",
     ),
     Mutation(
+        # Read the anchor out of the order that still holds the page being
+        # moved. The model removes it *before* reading the anchor's position, so
+        # this is one slot short for every move towards the back --- a drag that
+        # lands just before where the reader dropped it.
+        "edits: pick the move anchor out of the order the page is still in",
+        "src/lib/edits.ts",
+        "    const rest = this.current.pages.filter((_, slot) => slot !== from);",
+        "    const rest = this.current.pages;",
+        "turns a destination slot into the neighbour the model accepts",
+    ),
+    Mutation(
+        # Name no anchor at all, which puts every moved page at the front. Half
+        # of all one-slot moves then land correctly, and a suite reading only the
+        # page count sees nothing wrong with any of them.
+        "edits: move every page to the front whatever slot was asked for",
+        "src/lib/edits.ts",
+        "    const after = landing === 0 ? null : (rest[landing - 1]?.id ?? null);",
+        "    const after = null;",
+        "names the page after the one being moved for a single step back",
+    ),
+    Mutation(
+        # The same defect in the accessibility tree, where its reader can least
+        # easily notice it: a screen reader goes on reading the order the
+        # document used to be in, and nothing in the tree says otherwise.
+        "a11y: keep the built pages whenever the page count did not change",
+        "src/lib/a11y.ts",
+        "  setPages(pageCount: number): void {\n    this.pageCount = pageCount;",
+        "  setPages(pageCount: number): void {\n    if (pageCount === this.pageCount) return;\n    this.pageCount = pageCount;",
+        "rebuilds when the order changes and the page count does not",
+    ),
+    Mutation(
+        # And in the search results, where it is a highlight over a passage that
+        # is not there.
+        "search: keep the matches whenever the page count did not change",
+        "src/lib/search.ts",
+        "  setPages(pageCount: number): void {\n    this.pageCount = pageCount;",
+        "  setPages(pageCount: number): void {\n    if (pageCount === this.pageCount) return;\n    this.pageCount = pageCount;",
+        "drops the matches when the order changes and the page count does not",
+    ),
+    Mutation(
+        # Put the early return back. It was there, it was right for the deletion
+        # it was written for, and it is what leaves the page strip showing the
+        # old order after a move: same rows, same captions, the wrong pictures
+        # under them, and no observable in the strip that says otherwise.
+        "thumbnails: keep the strip whenever the page count did not change",
+        "src/lib/thumbnails.ts",
+        "  setPages(pageCount: number): void {\n    this.opts.pageCount = pageCount;",
+        "  setPages(pageCount: number): void {\n    if (pageCount === this.opts.pageCount) return;\n    this.opts.pageCount = pageCount;",
+        "throws its thumbnails away when the order changes and the count does not",
+    ),
+    Mutation(
+        # Send a move that moves nothing. The model applies it, so the reader
+        # gains an undo that visibly does nothing --- and a drag that ends where
+        # it began becomes a journal entry.
+        "edits: send a move onto the page's own slot",
+        "src/lib/edits.ts",
+        "    if (landing === from) return this.current;",
+        "",
+        "sends nothing for a move that changes no order",
+    ),
+    Mutation(
         # Answer a deleted page with a slot instead of nothing. Everything the
         # backend sends about a page --- a link, a comment, a destination --- then
         # lands on whichever page moved into the gap.
@@ -1450,6 +1511,12 @@ TEST_FILES = [
     "src/lib/edits.test.ts",
     "src/lib/scroller.test.ts",
     "src/lib/appcommands.test.ts",
+    # Added 2026-08-17 with the page strip's reset. `thumbnails.ts` had been
+    # covered by no mutation, so its suite had never been in this list --- and
+    # the mutation written for the move increment named a test the harness
+    # could not see. It said so and refused to start, which is the third time
+    # that guard has caught a list this file forgot to grow.
+    "src/lib/thumbnails.test.ts",
     # Added 2026-08-17 with `pages.ts`. This list is what the harness runs and
     # what its name cross-check reads, so a suite missing from it makes every
     # mutation naming one of its tests unprovable --- the check said so for

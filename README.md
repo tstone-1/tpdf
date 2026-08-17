@@ -48,18 +48,25 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Delete a page**, from the command palette. Undo puts it back where it was, with its own
   rotation. It has no keyboard shortcut on purpose: it is the one command that removes
   something you can see.
-- **Print what you edited.** A print job carries the pages that are left and the way each
-  one is turned, read from the document model rather than from the file on disk.
+- **Move a page**, one slot at a time, also from the palette. A moved page takes its size,
+  its crop and its rotation with it even where the file states none of them on the page
+  itself --- a PDF lets a page inherit those from the group it sits in, and that is where
+  moving one silently changes it.
+- **Print what you edited.** A print job carries the pages that are left, the order they
+  are in and the way each one is turned, read from the document model rather than from the
+  file on disk.
 - **Save a copy.** The open file is never written in place. The copy is written to a
   temporary sibling and renamed, so an interrupted save leaves the original rather than
   half of a new file. An encrypted source is refused outright rather than silently saved
   without its encryption. Deleting a page drops the document's bookmarks, because their
   destinations name pages that are no longer in the file --- repairing them one by one is
-  its own piece of work.
+  its own piece of work. Moving a page keeps them, because a bookmark names a page
+  rather than a position.
 
 ## Not built yet
 
-- The rest of the page operations: reorder, insert, extract, split, merge, crop
+- The rest of the page operations: insert, extract, split, merge, crop --- and
+  rearranging by dragging thumbnails, where today a page moves one slot at a time
 - Annotations: highlight, ink, notes, shapes, stamps --- real PDF annotation objects
 - **True redaction** with an automatic post-save verification pass
 - Forms and visual signatures

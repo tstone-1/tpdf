@@ -7880,3 +7880,162 @@ SURVIVED would have sent somebody to write a check that already exists.
 So: when a new check is added because a mutation survived, move that mutation's `expect` in the
 same edit --- and keep printing what went red, because a mutation credited to the wrong check
 is indistinguishable from a gap in the suite without it.
+
+### Flattening a page tree loses what a page inherited from the node it hung under
+
+`/Resources`, `/MediaBox`, `/CropBox` and `/Rotate` are **inheritable** (PDF 32000-1 table
+29): a page that states none of them takes the first value found walking up `/Parent`. That
+is why `print.rs` deletes pages *in place* rather than re-parenting them, and its module note
+has said so since printing landed.
+
+Reordering cannot be done in place. A permutation moves pages between the nodes they hang
+under, and **what a page inherits belongs to the slot, not to the page** --- so a page moved
+from a node stating `/MediaBox [0 0 595 842]` to one that does not silently changes size, and
+a page moved out from under `/Rotate 90` comes back upright. The document opens, has every
+page, in the right order, and one of them is wrong.
+
+`pagetree::reorder_pages` therefore writes the four attributes onto each page *before*
+rebuilding the tree, and only where the value would otherwise change: pushing all four onto
+every page costs an untouched page its byte-for-byte identity, and for `/Rotate` it is the
+flattening `apply_turns` already refuses to do, since `effective_rotation` answers 0 whenever
+its 64-hop walk gives up.
+
+**The corpus cannot test this and looks as though it can.** `text-heavy.pdf` is the only
+nested fixture --- 113 `/Pages` nodes, three levels --- and every inheritable attribute it has
+sits on the **root**, so flattening onto the root preserves all of them. A check written
+against it passes whether the push-down exists or not. The fixture is hand-built, four pages
+under two nodes, one of which states what the root does not; the same shape twice, in
+`pagetree.rs` for the mechanism and in `save.rs` for the file, where PDFKit reads the rotation
+back because `/Rotate` is the one inheritable attribute an OS parser reports.
+
+### A permutation and a subset are the same document to every reader, and not the same file
+
+The reorder above must run **only** when the order really changed, and the reason is not
+performance. A document nobody rearranged, put through `reorder_pages`, comes out with the
+same pages in the same order at the same angles --- so every check that reads the document
+agrees, including the third-parser ones that read it through PDFKit. What differs is that
+every page has been reparented and every intermediate tree node abandoned.
+
+So the control for "does it reorder when it should not" cannot be written against the pages.
+It is written against the **shape of the tree**: the `/Type` of the first thing the catalog's
+`/Pages` node points at, which is `Pages` for a document whose tree survived and `Page` for
+one that was flattened. Two checks, one in `save.rs` and one in `print.rs`, and each carries
+its own opposite --- the same document rearranged *does* come out flat --- because a check
+asserting "still nested" passes trivially against code that never reorders at all.
+
+The general shape: when two implementations produce the same output for the input you have,
+the difference is real and lives somewhere your checks are not reading. Find where, or the
+"optimisation" is an untested branch.
+
+### A quirk documented as harmless becomes a defect the day its precondition is wired
+
+`print::Pages::Only` carried this, in the type's own doc comment:
+
+> Exactly these, one-based --- and printed in **document order**, not in the order they are
+> listed here. [...] `[3, 1]` prints page 1 then page 3.
+
+Accurate, deliberate, and reasoned: `build` produced a subset by *deleting* the pages nobody
+wanted, so the survivors kept the positions the file gave them. It was harmless for as long as
+nothing in the application could produce an order the file did not already have.
+
+`Command::Move` being wired ended that, and nothing in the print path would have said so.
+`expect_pages` compares how many pages came out, never which, so a reader who rearranged a
+document and pressed print would have got the old order on paper with every check green ---
+the print path's own documentation being the only record that this was expected.
+
+`save.rs` had the same gap and had *closed* it, with a refusal whose test said in as many
+words that it was unreachable from the application and existed for the day `Move` landed. Two
+subsystems, one shared assumption, and only one of them left a tripwire.
+
+**So when a constraint is written down as "cannot happen yet", write down what happens when it
+does, and put it where the code is rather than only where the plan is.** A refusal that fails
+loudly is one way; the weaker one that print took --- a sentence in a doc comment --- depends
+entirely on somebody reading the right file at the right moment.
+
+### The order a model inserts into is not the order its caller is looking at
+
+`Command::Move` names a **neighbour**: put this page behind that one. A reader names a
+**destination**: put this page here. Something has to invert one into the other, and the
+inversion is not `pages[to - 1]`.
+
+The model removes the page first and *then* reads the anchor's position, so the anchor has to
+be read out of the order **without the moved page in it**. Reading it out of the order that
+still holds it is correct for every move towards the front and wrong for every move towards
+the back --- and it is wrong in two different ways, which is why both are checked:
+
+- **One slot short.** Moving slot 0 to slot 3 of four names the page at slot 2, and the page
+  lands at slot 2. A drag that stops just before where it was dropped.
+- **A refusal.** Moving slot 0 to slot 1 names the page at slot 0 --- the page being moved ---
+  and the model answers `AnchorIsTarget`. The same arithmetic error, with a completely
+  different symptom, on the shortest move there is.
+
+The inversion lives in `edits.ts` and is the one piece of arithmetic in a file whose header
+says it holds no rules. That is the honest place for it: the model refuses an index for a
+reason, and inverting it in Rust would need the order the frontend already holds.
+
+### A page count cannot see a move, and every deletion check is built on the page count
+
+`pageDeletionChecks` reads a deletion through observables a deletion produces: one page
+shorter, an empty last slot, coverage dropping, the page below moving up. **Every one of them
+reads identically for a move that worked and a move that did nothing at all**, because a move
+changes no length --- which is why the move phase is its own function rather than three more
+names in that one, and why its first check asserts the count *stayed*.
+
+What is left is identity, and identity needs a fixture that has two of whatever it
+discriminates. The phase compares the text on each page by fingerprint and **skips with a
+stated reason** where two pages read alike, rather than passing on a comparison that cannot
+fail. The one property the text cannot see --- that a page carries its *measured size* to
+wherever it moved --- runs only on `mixed.pdf`, the single corpus whose pages are different
+sizes, and the mutation aimed at it has its own runner for that reason: on a uniform document
+the estimate and the truth are the same number, so the check skips and a mutation aimed at a
+skipped check reports SURVIVED.
+
+### A duplicate key in an object literal is legal JavaScript, so the suite stayed green
+
+A mechanical edit that inserts a line after a matched one has to match the **whole** line.
+Adding a property after `deletePage: ...` in two files, once for each of two indent levels,
+inserted it twice wherever the four-space pattern occurred inside a six-space line --- the
+four-space form is a substring of the six-space form, so the second pass matched the line the
+first had already handled.
+
+The result was an object literal with the same key twice. `vitest` ran all 639 tests and
+passed: a duplicate key is legal, the last one wins, and both were identical here. The gate
+that caught it was `npm run check` --- TypeScript's *"An object literal cannot have multiple
+properties with the same name"* --- which is a diagnostic, not a test, and would not have
+existed to catch a duplicate whose two values differed.
+
+Two habits. Anchor a line-wise mechanical edit on the line *including* its indentation and
+assert the count you expect, rather than replacing whatever matches. And when an edit script
+reports more replacements than there are sites, that is the finding, not a rounding error ---
+the script said 3 for two known call sites and the number was read past.
+
+### A tolerance around one value is satisfied by an estimate that replaced every value
+
+`page move: forget every page's measured size when the order changes` SURVIVED, and the check
+it was aimed at was neither skipped nor absent --- it ran, and reported `[OK]`.
+
+The check compared the shape of the page that moved against the shape it had been measured at,
+within 0.02. That is the right comparison for the defect it was written against: a scroller
+re-indexing its learned sizes by position gives the moved page the size of whatever used to be
+at the front, and on `mixed.pdf` those shapes are 1.41 and 0.71, so it fires.
+
+The mutation is a different mechanism. It does not put the wrong size on the page, it drops
+**every** page's carried size, so the whole document falls back to one estimate --- and an
+estimate is free to land within 0.02 of whichever single shape is being compared. Here it did.
+One tolerance around one value cannot tell "this page kept its size" from "no page has a size
+and the placeholder resembles this one".
+
+The fix is not a tighter tolerance, which would trade this for flakiness. It is to compare
+**both** slots against the two shapes the check's own precondition has already established are
+further apart than the tolerance: a single shared estimate would have to be within 0.02 of both
+at once, which is arithmetically impossible. The assertion then fails for that mutation
+whatever value the estimate takes, rather than because the value was unlucky.
+
+Two things worth carrying. **A scale-invariant comparison is blind to a whole class of
+substitute**, and shape was chosen here for a good reason --- fit-width rescales every page when
+the widest one changes slot, and the moved page really does land at twice the width it was
+measured at. The property that survives normalising is smaller than the property you wanted.
+And **the coverage existed the whole time**: the same mutation reddened a deletion check that
+reads absolute boxes. A mutation that reports SURVIVED while some *other* check goes red is
+naming the check that cannot fail, not a gap in the suite --- read which check went red before
+concluding anything is missing.

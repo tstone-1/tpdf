@@ -583,9 +583,20 @@ unchanged --- and cannot invent an edit the model does not hold.
 by the same page-tree pass the print path has used since 2026-07-28 (`pagetree::drop_pages`),
 which walks the object graph under `sweep::MAX_NESTING` and refuses rather than stopping
 early --- a partial pass would leave a page tree naming an object that is gone, which is a
-document that opens and prints blank pages. Two refusals are correctness properties in the
-§T6.1 sense: a page two page numbers share cannot be half-deleted, and a plan whose pages
-have been reordered is refused rather than written in the order the file happens to have.
+document that opens and prints blank pages. One refusal is a correctness property in the
+§T6.1 sense: a page two page numbers share cannot be half-deleted, because removing it means
+removing one entry from a `/Kids` array rather than one object, and a pass that removed
+neither would hand back a copy with the page the reader deleted still in it.
+
+**What a reorder does to it.** A moved page cannot be written in place --- the four
+inheritable page attributes belong to the tree node a page hangs under, not to the page ---
+so `pagetree::reorder_pages` writes those attributes onto each page and rebuilds the tree one
+level deep. It runs **only** when the reader's order differs from the file's, which is a
+correctness property rather than a saving: a rebuild reparents every page of every document,
+and doing that to one nobody rearranged is a rewrite with no request behind it. The
+abandoned tree nodes stay in the file as unreachable objects, exactly as a deleted page's
+content does, and for the same stated reason --- a saved copy is a serialisation, not a
+sanitation (§T6.1, residual risk 15).
 
 **The outline is dropped whole from a copy that lost pages**, and that is a *smaller* claim
 than repairing it would be: what survives a repair is only as sound as the resolver that did

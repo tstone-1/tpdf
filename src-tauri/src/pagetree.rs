@@ -22,13 +22,52 @@
 //!    first wrote. Every function here counts in whichever unit its answer is in,
 //!    and says which.
 //!  - **`/Rotate` is inheritable**, so the value composed against must come up the
-//!    `/Parent` chain rather than out of the page's own dictionary.
+//!    `/Parent` chain rather than out of the page's own dictionary. It is one of
+//!    four, and the other three are why [`reorder_pages`] is more than a rewrite
+//!    of one array.
 
 use std::collections::{HashMap, HashSet};
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use crate::sweep;
+
+/// How far up a `/Parent` chain anything here will walk.
+///
+/// A cycle in a malformed file would otherwise spin, and every walk in this
+/// module runs on a document we did not write. One constant rather than one per
+/// walk, because the answer they give when they give up has to be the same.
+const MAX_PARENTS: usize = 64;
+
+/// The four page attributes a page may inherit from an ancestor.
+///
+/// PDF 32000-1 table 29. They are the reason [`reorder_pages`] cannot simply
+/// rewrite the root's `/Kids`: a page that inherits its size from the tree node
+/// it hangs under loses that size the moment it hangs somewhere else.
+const INHERITABLE: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
+
+/// The value a page has for an inheritable key, its own or an ancestor's.
+///
+/// Absent all the way up means the page really has none. A value that is present
+/// and malformed *is* the answer --- the lookup stops at the first ancestor
+/// stating the key, which is what the specification says and is not what this
+/// walk used to do for `/Rotate`: it stepped over a non-integer and inherited the
+/// grandparent's. The difference is only reachable on a document that states
+/// `/Rotate (ninety)`, and answering upright is the safer of the two.
+fn inherited(doc: &Document, page: ObjectId, key: &[u8]) -> Option<Object> {
+    let mut at = page;
+    for _ in 0..MAX_PARENTS {
+        let dictionary = doc.get_object(at).and_then(Object::as_dict).ok()?;
+        if let Ok(value) = dictionary.get(key) {
+            return Some(value.clone());
+        }
+        at = dictionary
+            .get(b"Parent")
+            .and_then(Object::as_reference)
+            .ok()?;
+    }
+    None
+}
 
 /// A page's `/Rotate` including anything it inherits.
 ///
@@ -37,22 +76,9 @@ use crate::sweep;
 /// correct on every document that states it and wrong on every document that
 /// does not --- which is the half nobody has a fixture for.
 pub fn effective_rotation(doc: &Document, page: ObjectId) -> i64 {
-    let mut at = page;
-    // Bounded: a `/Parent` cycle in a malformed file would otherwise spin here,
-    // and this runs on input we did not write.
-    for _ in 0..64 {
-        let Ok(dictionary) = doc.get_object(at).and_then(Object::as_dict) else {
-            break;
-        };
-        if let Ok(value) = dictionary.get(b"Rotate").and_then(Object::as_i64) {
-            return value;
-        }
-        match dictionary.get(b"Parent").and_then(Object::as_reference) {
-            Ok(parent) => at = parent,
-            Err(_) => break,
-        }
-    }
-    0
+    inherited(doc, page, b"Rotate")
+        .and_then(|value| value.as_i64().ok())
+        .unwrap_or(0)
 }
 
 /// The document's pages as object ids, in page-number order.
@@ -203,9 +229,9 @@ pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
             continue;
         }
         let mut at = parent_of(doc, id);
-        // Same `/Parent`-cycle bound as `effective_rotation`, same reason: this
-        // runs on input we did not write.
-        for _ in 0..64 {
+        // Same `/Parent`-cycle bound as `inherited`, same reason: this runs on
+        // input we did not write.
+        for _ in 0..MAX_PARENTS {
             let Some(parent) = at else { break };
             decrements.push(parent);
             at = parent_of(doc, parent);
@@ -229,6 +255,101 @@ pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
     }
     for id in &doomed {
         doc.objects.remove(id);
+    }
+    Ok(())
+}
+
+/// Rewrites the page tree so the document's pages are `order`, in that order.
+///
+/// `order` is object ids, which is what makes this expressible at all: page
+/// *numbers* are positions in the tree being replaced, so a plan spelled in them
+/// would name its own output.
+///
+/// **The tree comes out one level deep**, every page hanging directly off the
+/// catalog's `/Pages` node. A permutation cannot be done by shuffling entries
+/// between the nodes they already hang under --- what a page inherits belongs to
+/// the *slot*, not to the page, so a page moving from a node that states
+/// `/MediaBox [0 0 595 842]` to one that does not would silently change size.
+/// Flattening removes the question, and the four attributes a page may inherit
+/// are written onto it first, so that it takes its own size, box, resources and
+/// rotation with it.
+///
+/// The intermediate `/Pages` nodes are left in the file, unreachable. That is the
+/// same position `save.rs` takes about a deleted page's content --- a copy is a
+/// serialisation, not a sanitation --- and the print path's `sweep::collect`
+/// removes them because a print job is rewritten anyway.
+///
+/// **Call it only when the order really differs.** A plan in document order that
+/// went through here would flatten a nested tree, write inherited attributes onto
+/// pages nobody touched, and produce a copy that differs from its source
+/// everywhere. Both callers check first.
+///
+/// # Errors
+///
+/// The document has no catalog or no page tree, or a page id that is not a
+/// dictionary.
+pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), String> {
+    let root = doc
+        .catalog()
+        .map_err(|e| format!("no document catalog: {e}"))?
+        .get(b"Pages")
+        .and_then(Object::as_reference)
+        .map_err(|e| format!("no page tree: {e}"))?;
+
+    // What each page would inherit *after* the move: the root is about to be its
+    // only ancestor. Read before anything is written, so that a page pushed down
+    // to below cannot change the answer for the page after it.
+    let from_root: Vec<Option<Object>> = INHERITABLE
+        .iter()
+        .map(|key| inherited(doc, root, key))
+        .collect();
+
+    let mut pushes: Vec<(ObjectId, &[u8], Object)> = Vec::new();
+    for &page in order {
+        let Ok(dictionary) = doc.get_object(page).and_then(Object::as_dict) else {
+            continue;
+        };
+        for (at, key) in INHERITABLE.iter().enumerate() {
+            if dictionary.has(key) {
+                continue;
+            }
+            let now = inherited(doc, page, key);
+            // Equal means the move changes nothing, so writing it would only
+            // make an untouched page differ from its source. `None` means the
+            // page has no value for this key anywhere above it, and the root
+            // supplying one is a page *gaining* an attribute --- only reachable
+            // on a document whose `/Parent` chain does not reach its own root,
+            // and not something to synthesise from here.
+            match now {
+                Some(value) if Some(&value) != from_root[at].as_ref() => {
+                    pushes.push((page, key, value));
+                }
+                _ => {}
+            }
+        }
+    }
+    for (page, key, value) in pushes {
+        doc.get_object_mut(page)
+            .and_then(Object::as_dict_mut)
+            .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+            .set(key.to_vec(), value);
+    }
+
+    let kids: Vec<Object> = order.iter().map(|&id| Object::Reference(id)).collect();
+    let tree = doc
+        .get_object_mut(root)
+        .and_then(Object::as_dict_mut)
+        .map_err(|e| format!("the page tree root is not a dictionary: {e}"))?;
+    tree.set("Kids", kids);
+    // Entries in the tree, not distinct objects: a page reached twice is two
+    // pages to every reader, which is the same unit `drop_pages` decrements in.
+    tree.set("Count", order.len() as i64);
+
+    for &page in order {
+        doc.get_object_mut(page)
+            .and_then(Object::as_dict_mut)
+            .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+            .set("Parent", Object::Reference(root));
     }
     Ok(())
 }
@@ -389,6 +510,189 @@ mod tests {
         assert!(
             why.contains("pages 1 and 3"),
             "the message names the pages the reader sees: {why}"
+        );
+    }
+
+    /// Four pages under two intermediate nodes, only one of which states a size.
+    ///
+    /// Nothing in the corpus is shaped this way. `text-heavy.pdf` is three levels
+    /// deep --- the only nested fixture there is --- and its `/MediaBox` sits on
+    /// the *root*, so flattening it onto the root preserves everything and it
+    /// cannot tell a reorder that carries inherited attributes from one that
+    /// drops them. Whatever a fixture is meant to discriminate, it needs two of:
+    /// here that is two tree nodes that disagree.
+    ///
+    /// Returns the document, the root, and the four pages in tree order.
+    fn nested_pages() -> (Document, ObjectId, [ObjectId; 4]) {
+        let mut doc = Document::with_version("1.7");
+        let root_id = doc.new_object_id();
+        let left_id = doc.new_object_id();
+        let right_id = doc.new_object_id();
+
+        let page = |doc: &mut Document, parent: ObjectId| {
+            doc.add_object(dictionary! { "Type" => "Page", "Parent" => parent })
+        };
+        let a = page(&mut doc, left_id);
+        let b = page(&mut doc, left_id);
+        let c = page(&mut doc, right_id);
+        let d = page(&mut doc, right_id);
+
+        doc.objects.insert(
+            left_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => root_id,
+                "Kids" => vec![a.into(), b.into()],
+                "Count" => 2,
+            }),
+        );
+        doc.objects.insert(
+            right_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => root_id,
+                "Kids" => vec![c.into(), d.into()],
+                "Count" => 2,
+                // The two attributes this node has and the root does not. A page
+                // under it that moves to the root loses both unless they travel.
+                "MediaBox" => vec![0.into(), 0.into(), 200.into(), 400.into()],
+                "Rotate" => 90,
+            }),
+        );
+        doc.objects.insert(
+            root_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![left_id.into(), right_id.into()],
+                "Count" => 4,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => root_id });
+        doc.trailer.set("Root", catalog);
+        (doc, root_id, [a, b, c, d])
+    }
+
+    fn media_box(doc: &Document, page: ObjectId) -> Vec<i64> {
+        inherited(doc, page, b"MediaBox")
+            .and_then(|value| value.as_array().ok().cloned())
+            .expect("a page has a media box")
+            .iter()
+            .map(|n| n.as_i64().expect("an integer"))
+            .collect()
+    }
+
+    #[test]
+    fn the_nested_fixture_really_does_hang_two_sizes_off_two_nodes() {
+        // The precondition every check below rests on. Without it a reorder that
+        // silently flattened everything to one size would pass them all.
+        let (doc, _, [a, _, _, d]) = nested_pages();
+        assert_eq!(
+            media_box(&doc, a),
+            vec![0, 0, 612, 792],
+            "inherited from root"
+        );
+        assert_eq!(
+            media_box(&doc, d),
+            vec![0, 0, 200, 400],
+            "from its own node"
+        );
+        assert_eq!(effective_rotation(&doc, a), 0);
+        assert_eq!(effective_rotation(&doc, d), 90);
+    }
+
+    #[test]
+    fn a_reordered_page_takes_what_it_inherited_with_it() {
+        let (mut doc, _, [a, b, c, d]) = nested_pages();
+        reorder_pages(&mut doc, &[d, a, c, b]).expect("reorder");
+
+        assert_eq!(ordered_pages(&doc), vec![d, a, c, b], "the new order");
+        assert_eq!(
+            media_box(&doc, d),
+            vec![0, 0, 200, 400],
+            "the page that hung under the node stating a size keeps that size, \
+             which is the whole of why this flattens rather than shuffles"
+        );
+        assert_eq!(effective_rotation(&doc, d), 90, "and its rotation");
+        assert_eq!(media_box(&doc, c), vec![0, 0, 200, 400]);
+        assert_eq!(
+            media_box(&doc, a),
+            vec![0, 0, 612, 792],
+            "and a page that inherited from the root still does"
+        );
+        assert_eq!(effective_rotation(&doc, a), 0);
+    }
+
+    /// The control for the check above: a page that loses nothing gains nothing.
+    ///
+    /// Pushing every inherited attribute onto every page would pass that check
+    /// and would rewrite pages nobody moved --- and for `/Rotate` it is the
+    /// flattening `apply_turns` deliberately avoids, since a page whose `/Parent`
+    /// chain is longer than the bound reads back as upright.
+    #[test]
+    fn a_page_that_inherits_from_the_root_is_not_written_to() {
+        let (mut doc, _, [a, b, c, d]) = nested_pages();
+        reorder_pages(&mut doc, &[d, a, c, b]).expect("reorder");
+
+        let states = |doc: &Document, id: ObjectId, key: &[u8]| {
+            doc.get_object(id)
+                .and_then(Object::as_dict)
+                .expect("a page")
+                .has(key)
+        };
+        assert!(
+            !states(&doc, a, b"MediaBox"),
+            "the root supplies it either way, so the page says nothing"
+        );
+        assert!(!states(&doc, a, b"Rotate"), "and it is still upright");
+        assert!(
+            states(&doc, d, b"MediaBox") && states(&doc, d, b"Rotate"),
+            "the control: the page that WOULD have lost them does state both"
+        );
+    }
+
+    #[test]
+    fn the_flattened_tree_counts_what_it_holds_and_owns_every_page() {
+        let (mut doc, root, [_, b, c, _]) = nested_pages();
+        reorder_pages(&mut doc, &[c, b]).expect("reorder");
+
+        let tree = doc
+            .get_object(root)
+            .and_then(Object::as_dict)
+            .expect("the root");
+        assert_eq!(
+            tree.get(b"Count")
+                .and_then(Object::as_i64)
+                .expect("a count"),
+            2,
+            "the count is what the tree holds, not what the file used to"
+        );
+        assert_eq!(ordered_pages(&doc), vec![c, b]);
+        for page in [c, b] {
+            assert_eq!(
+                doc.get_object(page)
+                    .and_then(Object::as_dict)
+                    .expect("a page")
+                    .get(b"Parent")
+                    .and_then(Object::as_reference)
+                    .expect("a parent"),
+                root,
+                "every page hangs off the root now --- a page still pointing at \
+                 the node it came from would report a stale ancestry to anything \
+                 that walks up, this module included"
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_reached_twice_can_be_reordered_and_stays_reached_twice() {
+        let (mut doc, _, [a, b, _, d]) = nested_pages();
+        reorder_pages(&mut doc, &[d, a, d, b]).expect("reorder");
+        assert_eq!(
+            ordered_pages(&doc),
+            vec![d, a, d, b],
+            "one object under two page numbers is expressible in a `/Kids` array \
+             and stays expressible after a reorder"
         );
     }
 

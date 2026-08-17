@@ -222,6 +222,25 @@ describe("Thumbnails lifetime", () => {
     expect(tiles.fetchTile).toHaveBeenCalledTimes(1);
   });
 
+  it("throws its thumbnails away when the order changes and the count does not", async () => {
+    // The case a deletion cannot produce and a move always does. This method
+    // returned early on a matching count, which is right for the operation it
+    // was written for and leaves the strip showing the old order for the one it
+    // was not: same rows, same captions, the wrong pictures under them.
+    const closed: number[] = [];
+    const pages = strip();
+    pages.setActive(true);
+    deliver(render(() => closed.push(1)));
+    await settle();
+    // The control: nothing has been discarded yet.
+    expect(closed).toEqual([]);
+
+    // The same count it already has, which is what a move reports.
+    pages.setPages(40);
+    await settle();
+    expect(closed).toEqual([1]);
+  });
+
   it("releases a borrowed copy that lands after it was destroyed", async () => {
     // The strip's *other* arrival, and it was the one this fixture could not
     // reach: `placeholderFor` returns null above, so nothing is ever borrowed

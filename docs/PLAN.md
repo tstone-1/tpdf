@@ -4664,6 +4664,11 @@ through.
   in the application can produce one --- `Command::Move` is written, tested and wired to
   nothing --- and the guard is here because the failure the day it *is* wired is a file whose
   pages are silently in the old order.
+
+  **That day came one increment later, and the refusal is gone**: the section below on moving
+  a page has what replaced it. The guard did the job it was written for --- the first thing
+  the reordering work met was its own test, which is a better outcome than the file it
+  describes.
 - A **page two page numbers share, half-deleted**. Removing it means removing one entry from a
   `/Kids` array rather than one object, which the mechanism cannot express. Refused by name,
   with a control proving that removing *both* numbers is still accepted.
@@ -4706,6 +4711,81 @@ What none of it covers is `App.svelte`, which carries the answer from one to the
 function, `applyPageOrder`, and the four lines around it. The harness runs *instead of* the
 shell --- the same gap every shell action has, and the same one `opencheck.ts` states for the
 file dialog.
+
+#### Moving a page --- done 2026-08-17
+
+The third of the three commands the model has held since it was built, and the last one that
+was wired to nothing. It cost almost nothing on the frontend and a page-tree rebuild in the
+backend, which is the reverse of the deletion increment and worth saying why.
+
+**The frontend was already written.** `Viewer.setPages` takes an order and re-indexes
+everything keyed by a slot; `PageMap` translates both ways; `slotFrom` follows a reader by
+identity. All of that was built for deleting a page and none of it is about deletion --- a
+reorder goes through the same path and needed one new method, `Edits.move`, plus two palette
+entries. That is what a general mechanism buys, and it was not free: the deletion increment
+chose the order-shaped design over a shorter one, and this is where that is repaid.
+
+**The arithmetic that had to be added is an inversion, not a rule.** `Command::Move` names a
+neighbour --- put this page behind that one --- and a reader names a destination. The
+translation lives in `edits.ts`, because the model refuses an index for the reason `edits.rs`
+gives and inverting it in Rust would need the order the frontend already holds. It is read out
+of the order *without* the moved page in it, since that is the order the model inserts into;
+`docs/TRAPS.md` has the two symptoms of getting that wrong, which are a page one slot short
+and a refusal on the shortest move there is.
+
+**Dragging thumbnails is not built.** These two commands are the primitive it will call, and
+the page strip's drop handling is its own piece of work.
+
+##### The file half: a page tree that has to be rebuilt
+
+A deletion can be done in place --- take pages out, leave the survivors where they are. A move
+cannot, and the reason is the one `print.rs`'s module note has carried since printing landed:
+`/Resources`, `/MediaBox`, `/CropBox` and `/Rotate` are **inheritable**, so what a page has
+belongs to the node it hangs under. Shuffling pages between nodes silently changes their size
+and their angle.
+
+So `pagetree::reorder_pages` writes those four attributes onto each page --- only where the
+value would otherwise change --- and rebuilds the tree one level deep. Both writers use it,
+and both ask first whether the order really differs, which is a correctness property rather
+than a saving: a rebuild reparents every page of every document, and a plan in document order
+must not pay that.
+
+**The control for that is not readable from the pages.** A document nobody rearranged, put
+through the rebuild, comes out with the same pages in the same order at the same angles ---
+every check that reads the document agrees, third-parser ones included. What differs is the
+shape of the tree, so the two checks that hold this read the `/Type` of the first thing the
+catalog's `/Pages` node points at.
+
+**Printing was wrong here and had documented itself as such.** `Pages::Only` promised in its
+own doc comment that a selection prints in *document* order rather than the order it lists,
+because `build` produced a subset by deleting: accurate, deliberate, and harmless only while
+nothing could produce an order the file did not have. `save.rs` had closed the same gap with
+a refusal; print had a sentence. Now both honour the order, and `expect_pages` still cannot
+see it --- it compares how many pages came out, never which --- so what covers it is a
+third-parser read of `rotated.pdf`, whose four distinct rotations are the only thing that
+names a page.
+
+**The outline is kept.** A destination names a page *object*, and a move leaves every object
+where it was, so a bookmark follows its page to wherever the reader put it. That is the
+opposite of what a deletion does, one operation apart, and there is a check for each.
+
+##### What the checks are built around
+
+**The page count, which is the observable a move does not have.** Every assertion the deletion
+phase rests on --- one page shorter, an empty last slot, coverage dropping --- reads
+identically for a move that worked and a move that did nothing. So the move phase is its own,
+its first check asserts the length *stayed*, and the rest is identity by the text on each page,
+skipped with a stated reason wherever two pages read alike.
+
+**One property the text cannot see**, and it is the one the layout genuinely owns: a page
+carries its *measured* size to wherever it moved. Only observable on `mixed.pdf`, the single
+corpus whose pages are different sizes, so the mutation aimed at it has a runner of its own ---
+on a uniform document the estimate and the truth are the same number, the check skips, and a
+mutation aimed at a check that skips reports SURVIVED.
+
+**A later page is moved to the front rather than an early one to the back**, so that the
+reader-follows-their-page check has a landing slot that can reach the top of the viewport.
+The last page of a short document cannot, which this file has paid for once.
 
 ### Phase 3 — Redaction
 

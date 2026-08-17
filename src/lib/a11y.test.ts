@@ -125,6 +125,56 @@ describe("AccessibleText and a page whose text means nothing", () => {
   });
 });
 
+describe("AccessibleText and a change of order", () => {
+  function page(codes: number[]) {
+    return {
+      codes,
+      boxes: codes.flatMap((_, at) => [10 + at * 10, 100, 20 + at * 10, 90]),
+      width_pt: 612,
+      height_pt: 792,
+      turns: 0,
+    };
+  }
+
+  /** Everything the tree currently says, joined. */
+  function said(root: unknown): string {
+    const parts: string[] = [];
+    const walk = (element: { textContent: string; children: unknown[] }): void => {
+      if (element.textContent) parts.push(element.textContent);
+      for (const child of element.children) {
+        walk(child as { textContent: string; children: unknown[] });
+      }
+    };
+    walk(root as { textContent: string; children: unknown[] });
+    return parts.join("");
+  }
+
+  it("rebuilds when the order changes and the page count does not", () => {
+    // The case a deletion cannot produce. This dropped every built page only
+    // when the count differed, which is right for a document that lost a page
+    // and wrong for one whose pages were rearranged: a screen reader would go on
+    // reading the order the document used to be in, and nothing in the tree
+    // would say so.
+    const dom = installFakeDom();
+    try {
+      const layer = new AccessibleText(dom.root as never, 2);
+      layer.sync([0], () => page([72, 105]) as never);
+      expect(said(dom.root)).toContain("Hi");
+
+      // Two pages before and two after, which is what a swap reports.
+      layer.setPages(2);
+      expect(said(dom.root)).toBe("");
+
+      // And it builds again from whatever the pages now hold, rather than being
+      // left empty --- which is the half a bare "it cleared" assertion misses.
+      layer.sync([0], () => page([78, 111]) as never);
+      expect(said(dom.root)).toContain("No");
+    } finally {
+      dom.restore();
+    }
+  });
+});
+
 describe("AccessibleText and links", () => {
   /**
    * A page of one line: "GO" inside a link, then " ON" outside it.

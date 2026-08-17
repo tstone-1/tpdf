@@ -507,6 +507,7 @@ async function run(path: string): Promise<void> {
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
   await pageRotationChecks(root, viewer, doc, seen);
   await pageDeletionChecks(root, viewer, doc, seen);
+  await pageMoveChecks(root, viewer, doc, seen);
   await invertChecks(viewer, doc, page, seen);
   // Last of the checks that drive the surface, because it is the only one that
   // deliberately leaves the view somewhere else: it scrolls the whole document
@@ -2865,6 +2866,7 @@ async function appCommandChecks(
     // separately settable.
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
     deletePage: () => fired.push("deletePage"),
+    movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
     canUndo: () => canUndo,
@@ -3323,6 +3325,20 @@ async function appCommandChecks(
       // `appcommands.test.ts`.
       id: "edit.deletePage",
       ...shell("deletePage"),
+      read: () => fired.join(","),
+    },
+    {
+      // Palette-only as well, and the two are worth aiming at separately: they
+      // are one action taking a sign, so a copy-and-paste that left both at -1
+      // gives a reader a "move down" that moves up, which is not a wiring
+      // failure any single probe can see.
+      id: "edit.movePageUp",
+      ...shell("movePage:-1"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "edit.movePageDown",
+      ...shell("movePage:1"),
       read: () => fired.join(","),
     },
     {
@@ -5084,6 +5100,25 @@ async function pageRotationChecks(
  * Puts the document back before returning, asserted rather than assumed, because
  * every phase after this one inherits what it leaves.
  */
+/**
+ * A page's text as a short comparable string, or `""` if it has none.
+ *
+ * What makes a page identifiable to a check that can only see the layout. A
+ * count cannot tell "page 2 was removed" from "page 3 was removed and everything
+ * renumbered", and neither can it tell a page that moved from a page that stayed
+ * --- both phases below rest on this, and both skip rather than pass when two
+ * pages come back with the same string.
+ */
+function fingerprint(
+  text: { codes: number[]; width_pt: number } | null,
+): string {
+  return !text || text.codes.length === 0
+    ? ""
+    : `${text.codes.length}@${text.width_pt.toFixed(1)}:${text.codes
+        .slice(0, 32)
+        .join(",")}`;
+}
+
 async function pageDeletionChecks(
   root: HTMLElement,
   viewer: Viewer,
@@ -5140,14 +5175,6 @@ async function pageDeletionChecks(
   const aboveText = viewer.textOn(0);
   const targetText = viewer.textOn(target);
   const lastSlot = before.length - 1;
-
-  /** A page's text as a short comparable string, or "" if it has none. */
-  const fingerprint = (text: { codes: number[]; width_pt: number } | null): string =>
-    !text || text.codes.length === 0
-      ? ""
-      : `${text.codes.length}@${text.width_pt.toFixed(1)}:${text.codes
-          .slice(0, 32)
-          .join(",")}`;
 
   // Whether the two pages this phase swaps around can be told apart at all. On a
   // corpus whose pages carry the same text, "the page below moved up" and "the
@@ -5370,6 +5397,271 @@ async function deleteCommandChecks(
       undone.pages.some((page) => page.id === doomed.id),
     `${after.pages.length} pages, now ${undone?.pages.length ?? -1}, wanted ` +
       `${state.pages.length} with the deleted page among them`,
+  );
+}
+
+/**
+ * Moving a page: the layout rearranges, and nothing is lost on the way.
+ *
+ * The sibling of {@link pageDeletionChecks}, and it exists separately because a
+ * move fails in a way a deletion cannot: **the page count does not move**. Every
+ * observable a deletion is caught by --- one page shorter, an empty last slot,
+ * coverage dropping --- reads the same for a move that worked and a move that
+ * did nothing at all. So what is asserted here is identity, by the text on each
+ * page, and the length is asserted to have *stayed*.
+ *
+ * A later page is moved to the **front** rather than an early one to the back,
+ * which is not arbitrary: the reader stands on the page that moves, and only a
+ * page that can reach the top of the viewport can be checked for having been
+ * followed. The last page of a short document cannot, which is a trap this file
+ * has already paid for.
+ *
+ * Two `setPages` calls and no coverage wait, deliberately. Each one throws both
+ * tiers away and on the twelve A0 pages of `vector-multi` a tier-1 render costs
+ * about a second and a half; that the pixels are discarded and come back is
+ * {@link pageDeletionChecks}'s to assert, and asserting it twice would buy a
+ * minute of sweep for nothing.
+ *
+ * Puts the document back before returning, asserted rather than assumed.
+ */
+async function pageMoveChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const names = [
+    "moving a page leaves the document exactly as long",
+    "the moved page is in the slot it was moved to",
+    "the page that was there moves down rather than away",
+    "the reader follows the page they were reading",
+    "the moved page and the one it displaced keep their sizes",
+    "putting the order back restores the document",
+    "the backend moves the page in the working document",
+    "the backend refuses a page moved behind itself",
+    "undo puts a moved page back where it started",
+  ];
+
+  if (doc.page_count < 3) {
+    for (const name of names.slice(0, 6)) {
+      skip(
+        name,
+        `the document has ${doc.page_count} page(s), and this moves the third one`,
+      );
+    }
+    await moveCommandChecks(doc, names);
+    return;
+  }
+
+  key(root, "Home");
+  await settle(() => viewer.idle);
+
+  const target = 2;
+  viewer.goToPage(target);
+  await settle(() => viewer.idle);
+  const readingAt = viewer.position.page;
+
+  const before = viewer.pageOrder;
+  const movedText = fingerprint(viewer.textOn(target));
+  const frontText = fingerprint(viewer.textOn(0));
+  const distinct =
+    movedText !== "" && frontText !== "" && movedText !== frontText;
+
+  // Both pages have been laid out by now --- the sweep started at Home and the
+  // reader has just scrolled to `target` --- so these are measured sizes rather
+  // than the estimate a page nobody has seen is given.
+  const movedBox = viewer.pageBoxCssOf(target);
+  const frontBox = viewer.pageBoxCssOf(0);
+  const shape = (box: { width: number; height: number }): number =>
+    box.height === 0 ? 0 : box.width / box.height;
+  const shapesDiffer = Math.abs(shape(movedBox) - shape(frontBox)) > 0.02;
+
+  const after = [...before];
+  const [moved] = after.splice(target, 1);
+  if (!moved) return;
+  after.unshift(moved);
+  viewer.setPages(after);
+  await frame();
+
+  check(
+    names[0] ?? "",
+    (seen.status?.pageCount ?? -1) === before.length,
+    `${before.length} pages, now ${seen.status?.pageCount ?? -1}`,
+  );
+
+  if (!distinct) {
+    const why =
+      movedText === "" || frontText === ""
+        ? "the pages have no extractable text to tell them apart"
+        : `pages 1 and ${target + 1} read alike, so a move between them is invisible here`;
+    skip(names[1] ?? "", why);
+    skip(names[2] ?? "", why);
+  } else {
+    const atFront = fingerprint(viewer.textOn(0));
+    check(
+      names[1] ?? "",
+      atFront === movedText,
+      `slot 0 holds [${atFront.slice(0, 40)}], wanted [${movedText.slice(0, 40)}]`,
+    );
+    // The other direction, and it is what separates a move from a copy: the page
+    // that was at the front is still in the document, one slot further down.
+    const displaced = fingerprint(viewer.textOn(1));
+    check(
+      names[2] ?? "",
+      displaced === frontText,
+      `slot 1 holds [${displaced.slice(0, 40)}], wanted [${frontText.slice(0, 40)}]`,
+    );
+  }
+
+  if (readingAt !== target) {
+    skip(
+      names[3] ?? "",
+      `the reader is on slot ${readingAt} rather than the page being moved`,
+    );
+  } else {
+    // By identity, which is the whole reason `Viewer.setPages` takes an order
+    // rather than a count: a reader looking at a page that moved is still
+    // looking at that page.
+    check(
+      names[3] ?? "",
+      viewer.position.page === 0,
+      `was reading slot ${readingAt}, now on ${viewer.position.page} (wanted 0)`,
+    );
+  }
+
+  // What the layout carries by *identity* rather than by slot. A scroller that
+  // re-indexed its learned sizes by position would give the moved page the size
+  // of whatever used to be at the front. Only observable where the two pages are
+  // different shapes, and `mixed.pdf` is the one corpus that is.
+  //
+  // **Both slots are asserted, and one of them would not be enough.** The other
+  // way to lose a size is to lose them all --- the carry-forward returning
+  // nothing rather than the wrong thing --- and then every page falls back to
+  // the same estimate. A comparison against one measured shape cannot see that,
+  // because the estimate is free to land within tolerance of it, and on this
+  // corpus it does: the mutation that drops the carry-forward entirely left this
+  // check green while reddening a deletion check that reads absolute boxes.
+  // Comparing *both* closes it by arithmetic rather than by luck. If every page
+  // shares one estimate, that estimate would have to be within 0.02 of two
+  // shapes that `shapesDiffer` has just established are further apart than that,
+  // so at least one half must fail whatever the estimate happens to be.
+  //
+  // The comparison is of shape rather than of size because fit-width rescales
+  // every page when the widest one changes slot --- which is a trap of its own,
+  // and here the moved page really does land at twice the width it was measured
+  // at while being the same page.
+  if (!shapesDiffer) {
+    skip(
+      names[4] ?? "",
+      `pages 1 and ${target + 1} are the same shape, so a size that moved to the ` +
+        "wrong page reads exactly like one that travelled",
+    );
+  } else {
+    const landed = viewer.pageBoxCssOf(0);
+    const displacedBox = viewer.pageBoxCssOf(1);
+    check(
+      names[4] ?? "",
+      Math.abs(shape(landed) - shape(movedBox)) <= 0.02 &&
+        Math.abs(shape(displacedBox) - shape(frontBox)) <= 0.02,
+      `the page was ${movedBox.width.toFixed(0)}x${movedBox.height.toFixed(0)} ` +
+        `and landed as ${landed.width.toFixed(0)}x${landed.height.toFixed(0)}; ` +
+        `the page it displaced was ${frontBox.width.toFixed(0)}x${frontBox.height.toFixed(0)} ` +
+        `and is now ${displacedBox.width.toFixed(0)}x${displacedBox.height.toFixed(0)}`,
+    );
+  }
+
+  viewer.setPages(before);
+  await frame();
+  const restored = fingerprint(viewer.textOn(target));
+  check(
+    names[5] ?? "",
+    (seen.status?.pageCount ?? -1) === before.length &&
+      (!distinct || restored === movedText),
+    `${seen.status?.pageCount ?? -1} pages, slot ${target} holds ` +
+      (distinct ? `[${restored.slice(0, 40)}]` : "text nothing can tell apart"),
+  );
+  await settle(() => viewer.idle);
+
+  await moveCommandChecks(doc, names);
+}
+
+/**
+ * The `page_move` command itself, against the model in the backend.
+ *
+ * The same seam {@link deleteCommandChecks} covers, for the same reason: the
+ * rest of the phase drives `Viewer.setPages` directly and says nothing about the
+ * command a reader runs. Here the round trip is the subject --- the command is
+ * registered, it takes two identities rather than a destination index, and the
+ * order it answers with is the one asked for.
+ *
+ * The model is left as it was found, asserted rather than assumed.
+ */
+async function moveCommandChecks(
+  doc: DocumentInfo,
+  names: string[],
+): Promise<void> {
+  interface State {
+    pages: { id: number; source: number; turns: number }[];
+    can_undo: boolean;
+  }
+
+  const state = await invoke<State>("edit_state", { doc: doc.id }).catch(
+    () => null,
+  );
+  const first = state?.pages[0];
+  const last = state?.pages[state.pages.length - 1];
+  if (!state || !first || !last || state.pages.length < 2) {
+    for (const name of names.slice(6)) {
+      skip(name, "the backend has no edit model with two pages to swap");
+    }
+    return;
+  }
+
+  const wanted = [...state.pages.slice(1), first].map((page) => page.id);
+  const after = await invoke<State>("page_move", {
+    doc: doc.id,
+    page: first.id,
+    after: last.id,
+  }).catch((e: unknown) => String(e));
+  if (typeof after === "string") {
+    check(names[6] ?? "", false, `the command failed: ${preview(after)}`);
+    for (const name of names.slice(7)) skip(name, "the move did not happen");
+    return;
+  }
+
+  const got = after.pages.map((page) => page.id);
+  check(
+    names[6] ?? "",
+    got.length === wanted.length && got.every((id, at) => id === wanted[at]),
+    `ids ${preview(got.join(","))}, wanted ${preview(wanted.join(","))}`,
+  );
+
+  // A page cannot be its own anchor: that names no position, and answering it
+  // with "nothing happened" would leave a reader's undo holding a command that
+  // did nothing.
+  const itself = await invoke<State>("page_move", {
+    doc: doc.id,
+    page: first.id,
+    after: first.id,
+  }).then(
+    () => "",
+    (e: unknown) => String(e),
+  );
+  check(
+    names[7] ?? "",
+    itself.includes("after itself"),
+    itself ? preview(itself) : "it accepted a page as its own anchor",
+  );
+
+  const undone = await invoke<State>("edit_undo", { doc: doc.id }).catch(
+    () => null,
+  );
+  const back = undone?.pages.map((page) => page.id) ?? [];
+  const original = state.pages.map((page) => page.id);
+  check(
+    names[8] ?? "",
+    back.length === original.length && back.every((id, at) => id === original[at]),
+    `ids ${preview(back.join(","))}, wanted ${preview(original.join(","))}`,
   );
 }
 

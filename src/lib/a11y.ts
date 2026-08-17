@@ -205,9 +205,15 @@ export class AccessibleText {
    * announcement, so a stale one is read aloud. The elements go rather than
    * being patched: `sync` rebuilds a page it does not hold, and after a deletion
    * the page in a given slot is a different page.
+   *
+   * **It discards on every call rather than when the count changed.** The guard
+   * that compared the two was written for deletion, which always shortens the
+   * document, and a *move* never does --- leaving a screen reader with a tree
+   * built for the order the document used to be in. `Viewer.setPages` calls this
+   * only on the path where the order really changed, which is where the guard
+   * belongs: the model's reply is what answers it.
    */
-  setPageCount(pageCount: number): void {
-    if (pageCount === this.pageCount) return;
+  setPages(pageCount: number): void {
     this.pageCount = pageCount;
     for (const element of this.pages.values()) element.remove();
     this.pages.clear();

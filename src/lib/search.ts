@@ -309,9 +309,13 @@ export class Search {
    * document in front of them. Re-mapping would also have to decide what a hit
    * on the deleted page becomes, and there is no honest answer to that.
    */
-  setPageCount(pageCount: number): void {
-    if (pageCount === this.pageCount) return;
+  setPages(pageCount: number): void {
     this.pageCount = pageCount;
+    // Unconditionally, not when the count changed. A match is held under the
+    // slot it was found on, and a *move* leaves the count exactly as it was ---
+    // so a guard comparing the two keeps every highlight and puts it on the
+    // wrong page. `Viewer.setPages` calls this only when the order changed.
+    //
     // The mapping is per page of the *file* and survives, which is why this is
     // `clear` rather than a rebuild: the pages that are left have the same fonts
     // they had.

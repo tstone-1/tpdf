@@ -6,17 +6,19 @@
 //! what the reader was looking at. Two readings of one answer rather than two
 //! derivations of one rule.
 //!
-//! **What the plan can and cannot say.** It names the kept pages, in order, each
-//! with the quarter turns to add. A page nobody kept is deleted from the page
-//! tree; a page nobody turned is written back byte for byte. What it may **not**
-//! say is that the pages have *moved*: [`write_copy`] deletes what is not wanted
-//! and leaves the survivors where they were, so it can honour a subset in
-//! document order and nothing else. That is refused rather than approximated ---
-//! see [`write_copy`]'s ordering check, which is the one guard here that is not
-//! yet reachable from the application and exists because the alternative, the day
-//! reordering lands, is a file that is silently in the wrong order.
+//! **What the plan says.** The kept pages, in the order the reader put them,
+//! each with the quarter turns to add. A page nobody kept is deleted from the
+//! page tree; a page nobody turned is written back byte for byte; and a plan
+//! whose pages have *moved* is written as a new page tree rather than refused,
+//! which is what changed when `Command::Move` was wired.
 //!
-//! **Four refusals, and none of them is defensive.**
+//! **A move is paid for by the whole tree, and a plan in document order must not
+//! pay it.** `pagetree::reorder_pages` flattens the page tree so that every page
+//! carries what it used to inherit; run over a document nobody rearranged, that
+//! would rewrite pages nobody touched. So the order is compared against the
+//! file's before anything is written, and the common case goes nowhere near it.
+//!
+//! **Three refusals, and none of them is defensive.**
 //!
 //!  - An **encrypted** document. `docs/TRAPS.md` records that `lopdf` silently
 //!    drops encryption on save, so writing one produces a file whose restrictions
@@ -29,7 +31,6 @@
 //!    they were applied to. Compared against the *baseline* rather than against
 //!    the plan's length, which is what makes it survive a deletion --- a plan of
 //!    three pages for a five-page file is what deleting two of them looks like.
-//!  - A plan whose pages are **not in document order**, as above.
 //!  - Writing **over the source**. The baseline the model replays against is the
 //!    file on disk; replacing it would leave every journalled command describing
 //!    a document that is gone. Saving in place is a different operation with its
@@ -48,7 +49,9 @@ use std::path::{Path, PathBuf};
 use lopdf::Document;
 
 use crate::edits::Plan;
-use crate::pagetree::{agreed_turns, apply_turns, drop_outline, drop_pages, ordered_pages};
+use crate::pagetree::{
+    agreed_turns, apply_turns, drop_outline, drop_pages, ordered_pages, reorder_pages,
+};
 use crate::print::MAX_DECODE;
 
 /// Extension of the file the bytes are written to before the rename.
@@ -63,9 +66,10 @@ const PARTIAL: &str = "tpdf-partial";
 /// # Errors
 ///
 /// The source cannot be read or parsed; it is encrypted; it has a different
-/// number of pages than the plan's baseline; the plan is empty, names a page the
-/// file does not have, or is not in document order; two of its pages are one
-/// object and disagree about the turn; `out` is the source; or the write fails.
+/// number of pages than the plan's baseline; the plan is empty or names a page
+/// the file does not have; two of its pages are one object and disagree about
+/// the turn, or one of them is dropped without the other; `out` is the source;
+/// or the write fails.
 /// The temporary file is removed on every failing path that created one.
 pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> {
     if plan.pages.is_empty() {
@@ -107,23 +111,14 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
         ));
     }
 
-    // Ahead of every mutation, so a plan this code cannot honour costs nothing
-    // but the parse. Nothing in the application can produce one today: the only
-    // commands wired to the model are rotate and delete, and neither moves a
-    // page. It is here because the day `Command::Move` is wired, the failure
-    // without it is a file whose pages are in the order they were *before* the
-    // reader rearranged them --- a plausible document, silently the wrong one.
-    if plan
+    // Whether the reader moved anything. Read here, off the plan, because after
+    // the deletion below the document's own page numbers are not the plan's any
+    // more --- and because a plan that is already in document order must not go
+    // near `reorder_pages`, which flattens the tree.
+    let moved = plan
         .pages
         .windows(2)
-        .any(|two| two[0].source >= two[1].source)
-    {
-        return Err(
-            "tpdf cannot yet save a document whose pages have been reordered --- this writes the \
-             pages that are kept, in the order the file already has them"
-                .into(),
-        );
-    }
+        .any(|two| two[0].source >= two[1].source);
 
     // One-based, because that is how `lopdf` numbers pages and how
     // `pagetree::drop_pages` reads them. The model's `source` is the zero-based
@@ -152,6 +147,16 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
         // whole rather than repaired --- `pagetree::drop_outline` carries what
         // repairing it would take, and it is its own piece of work.
         drop_outline(&mut doc)?;
+    }
+
+    // After the deletion, so that the tree written here holds exactly the pages
+    // that survived it. The outline is *not* dropped for a move: a destination
+    // names a page object, and the object is still there --- a bookmark follows
+    // its page to wherever the reader put it, which is what a reader who
+    // rearranged a document means.
+    if moved {
+        let order: Vec<lopdf::ObjectId> = turns.iter().map(|(id, _)| *id).collect();
+        reorder_pages(&mut doc, &order)?;
     }
 
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
@@ -275,8 +280,7 @@ mod tests {
     /// A plan over a `baseline`-page document that keeps only `kept`.
     ///
     /// `kept` is `(source, turns)`, zero-based, in the order the pages are to
-    /// come out --- which for now must be the order the file has them, since
-    /// `write_copy` refuses anything else.
+    /// come out, which need not be the order the file has them.
     fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         Plan {
             baseline,
@@ -893,30 +897,338 @@ mod tests {
         bytes
     }
 
-    /// The one guard here nothing in the application can reach yet.
+    /// A moved page comes out where the reader put it, read by a third parser.
     ///
-    /// `Command::Move` is written and tested in the model and is wired to
-    /// nothing, so no plan today is out of order. The day it is wired, the
-    /// failure without this is a file whose pages are in the order they were
-    /// *before* the reader rearranged them --- which opens, prints, and is wrong.
+    /// `rotated.pdf` for the third time, and for the third reason: its four pages
+    /// carry 0/90/180/270 and are otherwise identical, so the rotations are a
+    /// *name* for each page. A save that wrote them in file order produces the
+    /// same four pages and the same page count, and nothing but the sequence of
+    /// rotations can tell the two apart.
     #[test]
-    fn a_plan_whose_pages_have_moved_is_refused_rather_than_written_in_file_order() {
+    fn a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them() {
         let Some(path) = fixture("rotated.pdf") else {
             println!("[SKIP] rotated.pdf not generated");
             return;
         };
+        let source = std::fs::read(&path).expect("read source");
+        let Some(before) = os_pdf::read(&source) else {
+            println!("[SKIP] the OS parser refused rotated.pdf");
+            return;
+        };
+        let at: Vec<i64> = before
+            .pages
+            .iter()
+            .map(|page| page.rotation.rem_euclid(360))
+            .collect();
+        assert_eq!(
+            at.iter().collect::<HashSet<_>>().len(),
+            4,
+            "the fixture discriminates: four pages, four different rotations"
+        );
+
         let scratch = Scratch::new("reordered");
         let out = scratch.join("out.pdf");
+        write_copy(&path, &keeping(4, &[(2, 0), (0, 0), (3, 0), (1, 0)]), &out).expect("write");
 
-        let why = write_copy(&path, &keeping(4, &[(2, 0), (0, 0), (1, 0)]), &out)
-            .expect_err("must refuse");
-        assert!(why.contains("reordered"), "{why}");
-        assert!(!out.exists(), "and nothing was written");
+        let written = std::fs::read(&out).expect("read written");
+        let after = os_pdf::read(&written).expect("the OS parser reads the saved copy");
+        assert_eq!(
+            after
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect::<Vec<_>>(),
+            vec![at[2], at[0], at[3], at[1]],
+            "the pages are in the reader's order, not the file's"
+        );
 
-        // The control: the same pages in document order are accepted, so the
-        // refusal is about the order rather than about the subset.
-        write_copy(&path, &keeping(4, &[(0, 0), (1, 0), (2, 0)]), &out).expect("in order");
-        assert!(out.exists());
+        // The control, and it is not ceremony: a save that reordered *every*
+        // plan would pass the assertion above and would flatten the page tree of
+        // every document anyone ever saved.
+        let untouched = scratch.join("untouched.pdf");
+        write_copy(
+            &path,
+            &keeping(4, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
+            &untouched,
+        )
+        .expect("in order");
+        let read_back = std::fs::read(&untouched).expect("read");
+        assert_eq!(
+            os_pdf::read(&read_back)
+                .expect("read back")
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect::<Vec<_>>(),
+            at,
+            "a plan in document order is the document"
+        );
+    }
+
+    /// Moving, deleting and turning in one plan, since a reader does all three.
+    ///
+    /// The turn is on a page that both moved *and* sits after the deleted one,
+    /// which is the entry that goes wrong if anything resolves the plan against
+    /// the document's page numbers after the tree has been rewritten under it.
+    #[test]
+    fn a_page_that_moved_carries_its_turn_to_where_it_landed() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("move-delete-turn");
+        let out = scratch.join("out.pdf");
+
+        let before = Document::load(&path).expect("load source");
+        let source_ids = ordered_pages(&before);
+        // Page 2 dropped; the old page 4 moved to the front and turned a quarter.
+        write_copy(&path, &keeping(4, &[(3, 1), (0, 0), (2, 0)]), &out).expect("write");
+
+        let after = Document::load(&out).expect("load written");
+        let ids = ordered_pages(&after);
+        assert_eq!(ids, vec![source_ids[3], source_ids[0], source_ids[2]]);
+        assert_eq!(
+            effective_rotation(&after, ids[0]).rem_euclid(360),
+            (effective_rotation(&before, source_ids[3]) + 90).rem_euclid(360),
+            "the page that moved to the front is a quarter past where it was"
+        );
+        assert_eq!(
+            effective_rotation(&after, ids[2]).rem_euclid(360),
+            effective_rotation(&before, source_ids[2]).rem_euclid(360),
+            "and a page that only moved is at the angle it always was"
+        );
+    }
+
+    /// A moved page keeps a rotation it *inherited*, read by a third parser.
+    ///
+    /// The mechanism is `pagetree::reorder_pages`, which has its own checks on a
+    /// document in memory. This is the end of the same wire: a real file, the
+    /// save path, and PDFKit rather than the `lopdf` that wrote it. `/Rotate` is
+    /// the inheritable attribute the OS parser reports, which is what makes the
+    /// property observable here at all --- the size would need a field neither
+    /// platform reading has.
+    ///
+    /// Without the push-down, the page hanging under the node that states
+    /// `/Rotate 90` is reparented to a root that states nothing and comes back
+    /// upright, in a file that opens and looks plausible.
+    #[test]
+    fn a_third_parser_sees_an_inherited_rotation_survive_a_move() {
+        let scratch = Scratch::new("inherit-move");
+        let source = scratch.join("nested.pdf");
+        std::fs::write(&source, nested_document()).expect("write fixture");
+
+        let original = std::fs::read(&source).expect("read");
+        let Some(before) = os_pdf::read(&original) else {
+            println!("[SKIP] the OS parser refused the hand-built nested document");
+            return;
+        };
+        assert_eq!(
+            before
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect::<Vec<_>>(),
+            vec![0, 0, 90, 90],
+            "the precondition: two pages inherit 90 from a node the root knows \
+             nothing about, and two inherit nothing"
+        );
+
+        let out = scratch.join("moved.pdf");
+        // The last page to the front, so it leaves the node it inherited from.
+        write_copy(
+            &source,
+            &keeping(4, &[(3, 0), (0, 0), (1, 0), (2, 0)]),
+            &out,
+        )
+        .expect("write");
+
+        let written = std::fs::read(&out).expect("read written");
+        let after = os_pdf::read(&written).expect("the OS parser reads the saved copy");
+        assert_eq!(
+            after
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect::<Vec<_>>(),
+            vec![90, 0, 0, 90],
+            "the moved page took its inherited rotation with it"
+        );
+    }
+
+    /// A plan the reader did not rearrange leaves the page tree where it is.
+    ///
+    /// The control for the two checks above, and the one that says why `moved`
+    /// is computed at all. Rebuilding the tree produces the same *document* for
+    /// a plan in document order --- same pages, same order, same rotations ---
+    /// so nothing about the reader's view can tell the two apart. What differs
+    /// is every page's ancestry, and a copy that reparented all 775 pages of a
+    /// document nobody rearranged is a rewrite nobody asked for.
+    #[test]
+    fn a_plan_in_document_order_leaves_the_page_tree_as_it_found_it() {
+        let scratch = Scratch::new("tree-untouched");
+        let source = scratch.join("nested.pdf");
+        std::fs::write(&source, nested_document()).expect("write fixture");
+        assert_eq!(
+            first_kid_type(&Document::load(&source).expect("load")),
+            "Pages",
+            "the precondition: the root's first child is a tree node, not a page"
+        );
+
+        let out = scratch.join("copied.pdf");
+        write_copy(
+            &source,
+            &keeping(4, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
+            &out,
+        )
+        .expect("write");
+        assert_eq!(
+            first_kid_type(&Document::load(&out).expect("load written")),
+            "Pages",
+            "the tree is the one the file had"
+        );
+
+        // The control for the control: the same document rearranged does come
+        // out flat, so the assertion above is about this plan rather than about
+        // a reorder that never happens.
+        let moved = scratch.join("moved.pdf");
+        write_copy(
+            &source,
+            &keeping(4, &[(3, 0), (0, 0), (1, 0), (2, 0)]),
+            &moved,
+        )
+        .expect("write");
+        assert_eq!(
+            first_kid_type(&Document::load(&moved).expect("load written")),
+            "Page"
+        );
+    }
+
+    /// The `/Type` of the first thing the catalog's page tree points at.
+    fn first_kid_type(doc: &Document) -> String {
+        let root = doc
+            .catalog()
+            .expect("a catalog")
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .expect("a page tree");
+        let first = doc
+            .get_object(root)
+            .and_then(Object::as_dict)
+            .expect("the root")
+            .get(b"Kids")
+            .and_then(Object::as_array)
+            .expect("kids")
+            .first()
+            .and_then(|entry| entry.as_reference().ok())
+            .expect("a first kid");
+        String::from_utf8_lossy(
+            doc.get_object(first)
+                .and_then(Object::as_dict)
+                .expect("a kid")
+                .get(b"Type")
+                .and_then(Object::as_name)
+                .expect("a type"),
+        )
+        .into_owned()
+    }
+
+    /// Four pages under two `/Pages` nodes, one of which states `/Rotate 90`.
+    ///
+    /// Hand-built because the corpus has nothing like it: `text-heavy.pdf` is the
+    /// only nested fixture, three levels deep, and every inheritable attribute it
+    /// has sits on the *root* --- so flattening it onto the root preserves
+    /// everything and it cannot tell a reorder that carries inherited attributes
+    /// from one that drops them.
+    fn nested_document() -> Vec<u8> {
+        use lopdf::dictionary;
+        use lopdf::{Dictionary, Stream};
+
+        let mut doc = Document::with_version("1.5");
+        let root_id = doc.new_object_id();
+        let left_id = doc.new_object_id();
+        let right_id = doc.new_object_id();
+        let resources = doc.add_object(Dictionary::new());
+        let content = doc.add_object(Stream::new(dictionary! {}, b"".to_vec()));
+
+        let page = |parent: lopdf::ObjectId, doc: &mut Document| {
+            doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => parent,
+                "Contents" => content,
+            })
+        };
+        let a = page(left_id, &mut doc);
+        let b = page(left_id, &mut doc);
+        let c = page(right_id, &mut doc);
+        let d = page(right_id, &mut doc);
+
+        doc.objects.insert(
+            left_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => root_id,
+                "Kids" => vec![a.into(), b.into()],
+                "Count" => 2,
+            }),
+        );
+        doc.objects.insert(
+            right_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => root_id,
+                "Kids" => vec![c.into(), d.into()],
+                "Count" => 2,
+                "Rotate" => 90,
+            }),
+        );
+        doc.objects.insert(
+            root_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![left_id.into(), right_id.into()],
+                "Count" => 4,
+                "Resources" => resources,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => root_id,
+        });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise fixture");
+        bytes
+    }
+
+    /// A reorder keeps the bookmarks, where a deletion drops them.
+    ///
+    /// The two are one operation apart and land in opposite places, which is the
+    /// reason this check exists beside the deletion one rather than instead of
+    /// it: an outline destination names a page *object*, and a move leaves every
+    /// object exactly where it was in the file. Dropping the outline for a move
+    /// as well would be a loss nothing requires.
+    #[test]
+    fn a_reorder_keeps_the_outline_that_a_deletion_would_have_dropped() {
+        let Some(path) = fixture("outline-simple.pdf") else {
+            println!("[SKIP] outline-simple.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("outline-move");
+        let count = page_count(&path);
+        assert!(count > 2, "the fixture needs two pages to swap");
+
+        // Every page kept, the first two swapped.
+        let mut kept: Vec<(u32, u8)> = (0..count as u32).map(|source| (source, 0)).collect();
+        kept.swap(0, 1);
+        let out = scratch.join("swapped.pdf");
+        write_copy(&path, &keeping(count as u32, &kept), &out).expect("write");
+
+        assert!(
+            has_outline(&Document::load(&out).expect("load written")),
+            "nothing was deleted, so the bookmarks are still there --- they point \
+             at page objects, and a move does not remove one"
+        );
     }
 
     #[test]

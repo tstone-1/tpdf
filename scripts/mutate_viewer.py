@@ -94,6 +94,13 @@ CHECK_TIMEOUT = 420
 #: aimed at the branch that is not taken.
 ENCODINGS_FIXTURE = ROOT / "testdata/encodings.pdf"
 
+#: The only corpus whose pages are not all the same size, which is what makes
+#: "a page carries its measured size to wherever it moved" observable at all.
+#: On a uniform document the right rule and the wrong one produce the same
+#: layout --- the check says so and skips, and a mutation aimed at it on any
+#: other fixture is aimed at a check that cannot go red.
+MIXED_FIXTURE = ROOT / "testdata/mixed.pdf"
+
 
 @dataclass(frozen=True)
 class Mutation:
@@ -484,6 +491,21 @@ MUTATIONS = [
         "the reader stays on the page they were reading",
     ),
     Mutation(
+        # The half of a reorder that a page count cannot see. A page's measured
+        # size is read out of the old array *by the slot the page used to be
+        # in*; forgetting it hands every page the estimate, which is the mean of
+        # a document whose pages are different sizes and therefore fits none of
+        # them. Only observable on `mixed.pdf` --- everywhere else the estimate
+        # and the truth are the same number, which is why this mutation has its
+        # own runner rather than riding on the default corpus.
+        "page move: forget every page's measured size when the order changes",
+        "src/lib/scroller.ts",
+        "      sizes.push(was === undefined ? null : (this.sizes[was] ?? null));",
+        "      sizes.push(null);",
+        "the moved page and the one it displaced keep their sizes",
+        "viewer-mixed",
+    ),
+    Mutation(
         # The third symptom, and the one whose reader can least easily tell
         # something is wrong: the guessed characters read aloud as though they
         # were the page.
@@ -541,6 +563,10 @@ RUNNERS = {
         "run": None,
     },
     "viewer-encodings": {
+        "build": APP_BUILD,
+        "run": None,
+    },
+    "viewer-mixed": {
         "build": APP_BUILD,
         "run": None,
     },
@@ -685,6 +711,8 @@ def execute(runner: str) -> tuple[list[str], str, str]:
         return run_check(TAGGED_FIXTURE)
     if runner == "viewer-encodings":
         return run_check(ENCODINGS_FIXTURE)
+    if runner == "viewer-mixed":
+        return run_check(MIXED_FIXTURE)
     return run_probe(runner)
 
 
@@ -746,6 +774,7 @@ def main() -> int:
         "viewer": FIXTURE,
         "viewer-tagged": TAGGED_FIXTURE,
         "viewer-encodings": ENCODINGS_FIXTURE,
+        "viewer-mixed": MIXED_FIXTURE,
     }
     for needed in {fixtures[m.runner] for m in chosen if m.runner in fixtures}:
         if not needed.exists():
