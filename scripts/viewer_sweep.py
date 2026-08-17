@@ -221,12 +221,31 @@ def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
 
     roll = NAMES_JSON.search(out)
     if roll is None:
-        # Refused rather than fallen back on. A bundle predating the roll is an
-        # old bundle, and comparing name sets recovered by guesswork is how the
-        # first version of this reported agreement about a set that was wrong.
+        # Refused rather than fallen back on. Comparing name sets recovered by
+        # guesswork is how the first version of this reported agreement about a
+        # set that was wrong.
+        #
+        # What it must NOT do is name a cause it has not established. This said
+        # "the bundle predates it --- rebuild" and nothing else, and the first
+        # time it fired the bundle was current: the run had died before printing
+        # the roll for an unrelated reason, and a freshly built app was rebuilt
+        # again on the strength of a sentence. A stale bundle, a crash, a
+        # timeout, a window that never became visible and an app that refused to
+        # start all produce this same silence, so report what was actually seen
+        # and let the reader pick. See the trap about a static reason turning a
+        # failure into a wrong diagnosis.
+        failures = [line for line in out.splitlines() if line.startswith("[FAIL]")]
+        tail = "\n".join(f"       | {line}" for line in out.splitlines()[-8:]) or "       | (no output at all)"
         raise SystemExit(
-            f"[FAIL] {stem}: the run printed no CHECK-NAMES-JSON line.\n"
-            "       The bundle predates it --- rebuild with `npm run tauri build`."
+            f"[FAIL] {stem}: the run printed no CHECK-NAMES-JSON line, so its\n"
+            "       check names cannot be compared with the other corpora.\n"
+            f"       exit={result.returncode}  bytes={len(out)}  "
+            f"summary-line={'yes' if summary else 'no'}  "
+            f"[FAIL] lines={len(failures)}\n"
+            "       Causes that all look like this: a bundle predating the roll\n"
+            "       (rebuild with `npm run tauri build`), a crash, the --timeout\n"
+            "       expiring, or a window that never became visible. The last\n"
+            "       lines of the run:\n" + tail
         )
     names = json.loads(roll.group(1))
     if summary is None:

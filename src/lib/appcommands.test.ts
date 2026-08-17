@@ -16,7 +16,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { registerAppCommands, type AppActions } from "./appcommands";
+import {
+  handleWindowKey,
+  registerAppCommands,
+  type AppActions,
+} from "./appcommands";
 import { CommandRegistry } from "./commands";
 
 /**
@@ -26,7 +30,11 @@ import { CommandRegistry } from "./commands";
  * guards read --- so the same builder serves both directions and the
  * with-document case cannot quietly become the only one tested.
  */
-function harness(hasDocument = true, update: { available?: boolean; ready?: boolean } = {}) {
+function harness(
+  hasDocument = true,
+  update: { available?: boolean; ready?: boolean } = {},
+  journal: { undo?: boolean; redo?: boolean } = {},
+) {
   const fired: string[] = [];
   const actions: AppActions = {
     // Not a real viewer: nothing here calls a method on it, and the guards ask
@@ -50,6 +58,15 @@ function harness(hasDocument = true, update: { available?: boolean; ready?: bool
     // state a launch actually starts in rather than the convenient one.
     updateAvailable: () => update.available ?? false,
     updateReady: () => update.ready ?? false,
+    rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
+    undoEdit: () => fired.push("undoEdit"),
+    redoEdit: () => fired.push("redoEdit"),
+    // Default false for the same reason the update pair is: an empty journal is
+    // the state every document opens in, and defaulting to true would make the
+    // guards' with-nothing-to-undo direction the untested one.
+    canUndo: () => journal.undo ?? false,
+    canRedo: () => journal.redo ?? false,
+    saveCopy: () => fired.push("saveCopy"),
   };
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);
@@ -198,19 +215,32 @@ describe("every registered command", () => {
     // ones taking an argument or touching the viewer are excluded by name
     // rather than by a filter on behaviour, so adding one to that list is a
     // deliberate act with a reason beside it.
+    //
+    // The three selection commands are named in full rather than excluded by an
+    // `edit.` prefix, and that is a correction rather than a style. The prefix
+    // was right while every `edit.` command reached the viewer, and it silently
+    // stopped covering the page operations the day they were added under the
+    // same prefix --- an exclusion that grows on its own is not an exclusion.
     const REACHES_THE_VIEWER = [
       "view.",
       "nav.",
-      "edit.",
+      "edit.selectAll",
+      "edit.copy",
+      "edit.clearSelection",
       "find.next",
       "find.previous",
     ];
-    // Built with an update on offer, because otherwise `app.installUpdate` is
-    // correctly disabled and this sweep would read a working guard as a
-    // no-op command. The sweep asks "does every command reach an action",
-    // which presumes each is in a state where it is allowed to run; the guard
-    // itself is asserted four tests above, in both directions.
-    const { registry, fired } = harness(true, { available: true });
+    // Built with an update on offer and a journal in both directions, because
+    // otherwise `app.installUpdate`, `edit.undo` and `edit.redo` are correctly
+    // disabled and this sweep would read a working guard as a no-op command.
+    // The sweep asks "does every command reach an action", which presumes each
+    // is in a state where it is allowed to run; the guards themselves are
+    // asserted above, in both directions.
+    const { registry, fired } = harness(
+      true,
+      { available: true },
+      { undo: true, redo: true },
+    );
     const shell = registry
       .all()
       .filter(
@@ -225,5 +255,227 @@ describe("every registered command", () => {
       );
     }
     expect(shell.length).toBeGreaterThan(3);
+  });
+});
+
+describe("the page operations", () => {
+  it("rotate the page with the sign the reader asked for", () => {
+    // The sign is the half that fails quietly. A command wired to the wrong
+    // direction reaches the right action, returns true, and turns the page the
+    // other way --- which reads as a viewer that ignores which key was pressed.
+    const { registry, fired } = harness();
+    expect(registry.run("edit.rotatePageClockwise")).toBe(true);
+    expect(registry.run("edit.rotatePageCounterClockwise")).toBe(true);
+    expect(fired).toEqual(["rotatePage:1", "rotatePage:-1"]);
+  });
+
+  it("are withheld with no document", () => {
+    const { registry, fired } = harness(false);
+    expect(registry.run("edit.rotatePageClockwise")).toBe(false);
+    expect(registry.run("file.saveCopy")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+
+  it("say page rather than view, since both are offered at once", () => {
+    // Both rotations are in the palette on any open document, so the titles are
+    // the only thing telling a reader which one turns the file. A search for
+    // "rotate" that could not distinguish them would be a list of four rows
+    // where two do something permanent.
+    const { registry } = harness();
+    const titles = registry
+      .search("rotate")
+      .map((ranked) => ranked.command.title);
+    expect(titles).toContain("Rotate page clockwise");
+    expect(titles).toContain("Rotate view clockwise");
+  });
+
+  it("offer a copy of any open document, edited or not", () => {
+    // Deliberately not guarded on the journal. Saving an unedited copy is how a
+    // reader gets a file out of a downloads folder, and a command that appears
+    // only after an edit is one nobody finds.
+    const { registry, fired } = harness();
+    expect(registry.run("file.saveCopy")).toBe(true);
+    expect(fired).toEqual(["saveCopy"]);
+  });
+});
+
+describe("Undo and Redo", () => {
+  it("are withheld while the journal is empty", () => {
+    // Both halves. The palette filters on `enabled`, and a keybinding reaches
+    // `run` without consulting the list --- so a guard that only hid the row
+    // would leave ⌘Z reaching an action with nothing to undo.
+    const { registry, fired } = harness();
+    const offered = registry.search("").map((ranked) => ranked.command.id);
+    expect(offered).not.toContain("edit.undo");
+    expect(offered).not.toContain("edit.redo");
+    expect(registry.run("edit.undo")).toBe(false);
+    expect(registry.run("edit.redo")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+
+  it("are offered separately, each on its own half of the journal", () => {
+    // One flag each, not one "has been edited" flag. A document with an edit
+    // and no undone command has something to undo and nothing to redo, and a
+    // single flag would offer both.
+    const undoable = harness(true, {}, { undo: true });
+    const undoOffered = undoable.registry
+      .search("")
+      .map((ranked) => ranked.command.id);
+    expect(undoOffered).toContain("edit.undo");
+    expect(undoOffered).not.toContain("edit.redo");
+
+    const redoable = harness(true, {}, { redo: true });
+    const redoOffered = redoable.registry
+      .search("")
+      .map((ranked) => ranked.command.id);
+    expect(redoOffered).toContain("edit.redo");
+    expect(redoOffered).not.toContain("edit.undo");
+  });
+
+  it("reach their own action and no other", () => {
+    const { registry, fired } = harness(true, {}, { undo: true, redo: true });
+    expect(registry.run("edit.undo")).toBe(true);
+    expect(registry.run("edit.redo")).toBe(true);
+    expect(fired).toEqual(["undoEdit", "redoEdit"]);
+  });
+
+  it("are withheld with no document even when the journal says otherwise", () => {
+    // The journal belongs to a document. A state that outlived its document is
+    // not a state a reader can act on, and the guard has to say so --- both
+    // conditions, not either.
+    const { registry, fired } = harness(false, {}, { undo: true, redo: true });
+    expect(registry.run("edit.undo")).toBe(false);
+    expect(registry.run("edit.redo")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+});
+
+/**
+ * The window shortcuts for the page operations.
+ *
+ * Driven with a plain object rather than a real `KeyboardEvent`, which is what
+ * the handler is written for: it reads five fields and `preventDefault`, and
+ * `inTextField` duck-types its target for exactly this reason. Measured here
+ * rather than assumed --- this runner has no DOM, `globalThis.HTMLElement` is
+ * `undefined`, and `x instanceof HTMLElement` throws
+ * `TypeError: Right-hand side of 'instanceof' is not an object`, so the
+ * conventional spelling of that guard could not be tested from this file at all.
+ */
+describe("the window shortcuts for editing", () => {
+  function press(
+    key: string,
+    modifiers: { shift?: boolean; alt?: boolean } = {},
+    target: { tagName?: string; isContentEditable?: boolean } | null = null,
+    journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
+  ) {
+    const { fired, actions } = keyHarness(journal);
+    let prevented = 0;
+    const event = {
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: modifiers.shift ?? false,
+      altKey: modifiers.alt ?? false,
+      target,
+      preventDefault: () => {
+        prevented++;
+      },
+    } as unknown as KeyboardEvent;
+    handleWindowKey(event, {
+      actions,
+      palette: () => null,
+      hasDocument: () => true,
+      refreshRecents: () => {},
+    });
+    return { fired, prevented };
+  }
+
+  function keyHarness(journal: { undo?: boolean; redo?: boolean }) {
+    // Its own recorders rather than the palette harness's. The two routes are
+    // separate mechanisms --- a command can be registered correctly and bound to
+    // nothing, which is the disagreement `keys.ts` exists to make impossible ---
+    // and the point of this block is the one the palette does not cover.
+    const fired: string[] = [];
+    const actions: AppActions = {
+      viewer: () => ({}) as never,
+      pageCount: () => 3,
+      openDocument: () => fired.push("openDocument"),
+      reloadDocument: () => fired.push("reloadDocument"),
+      busyOpening: () => false,
+      printDocument: () => fired.push("printDocument"),
+      focusFind: () => fired.push("focusFind"),
+      toggleSearchOption: (which) => fired.push(`toggleSearchOption:${which}`),
+      toggleSearchScope: () => fired.push("toggleSearchScope"),
+      toggleSidebar: () => fired.push("toggleSidebar"),
+      showTab: (tab) => fired.push(`showTab:${tab}`),
+      toggleInvert: () => fired.push("toggleInvert"),
+      checkForUpdates: () => fired.push("checkForUpdates"),
+      applyUpdate: () => fired.push("applyUpdate"),
+      updateAvailable: () => false,
+      updateReady: () => false,
+      rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
+      undoEdit: () => fired.push("undoEdit"),
+      redoEdit: () => fired.push("redoEdit"),
+      canUndo: () => journal.undo ?? false,
+      canRedo: () => journal.redo ?? false,
+      saveCopy: () => fired.push("saveCopy"),
+    };
+    return { fired, actions };
+  }
+
+  it("turns the page on Shift-Cmd-R and the other way on Shift-Cmd-L", () => {
+    expect(press("R", { shift: true }).fired).toEqual(["rotatePage:1"]);
+    expect(press("L", { shift: true }).fired).toEqual(["rotatePage:-1"]);
+  });
+
+  it("leaves the unshifted chords to the view, which owns them", () => {
+    // ⌘R and ⌘L rotate the *view*, and the viewer's own key handler has them.
+    // A window handler that matched them too would turn both at once.
+    expect(press("r").fired).toEqual([]);
+    expect(press("l").fired).toEqual([]);
+  });
+
+  it("saves a copy on Shift-Cmd-S", () => {
+    expect(press("S", { shift: true }).fired).toEqual(["saveCopy"]);
+  });
+
+  it("undoes on Cmd-Z and redoes on Shift-Cmd-Z", () => {
+    expect(press("z").fired).toEqual(["undoEdit"]);
+    expect(press("Z", { shift: true }).fired).toEqual(["redoEdit"]);
+  });
+
+  it("does nothing on Cmd-Z with an empty journal", () => {
+    const { fired } = press("z", {}, null, {});
+    expect(fired).toEqual([]);
+  });
+
+  it("leaves Cmd-Z to the text field a reader is typing in", () => {
+    // The failure this prevents is not subtle in effect and is invisible in
+    // cause: a reader correcting a typo in the find field silently undoes a
+    // page rotation instead, and nothing on screen connects the two.
+    for (const tagName of ["INPUT", "TEXTAREA", "SELECT"]) {
+      const { fired, prevented } = press("z", {}, { tagName });
+      expect(fired, tagName).toEqual([]);
+      expect(prevented, `${tagName} kept its own undo`).toBe(0);
+    }
+    const editable = press("z", {}, { tagName: "DIV", isContentEditable: true });
+    expect(editable.fired).toEqual([]);
+    expect(editable.prevented).toBe(0);
+  });
+
+  it("takes Cmd-Z outside a text field, and says so by preventing the default", () => {
+    // The control for the test above: without it, a handler that never fired at
+    // all would satisfy every "leaves it alone" assertion.
+    const { fired, prevented } = press("z", {}, { tagName: "DIV" });
+    expect(fired).toEqual(["undoEdit"]);
+    expect(prevented).toBe(1);
+  });
+
+  it("still takes Shift-Cmd-R from inside a text field", () => {
+    // The asymmetry, asserted rather than left to the comment: only the two
+    // journal chords yield to a text field, because only they collide with one.
+    expect(press("R", { shift: true }, { tagName: "INPUT" }).fired).toEqual([
+      "rotatePage:1",
+    ]);
   });
 });

@@ -148,3 +148,85 @@ describe("TextCache eviction", () => {
     expect(cache.peek(OVER - 1)?.quarter_turns).toBe(1);
   });
 });
+
+/**
+ * A turn applied to one page by an edit, composed with the view's own.
+ *
+ * The tiles for such a page are drawn turned by the sum, so the text over them
+ * has to be too --- and getting it wrong does not look like a bug in the text
+ * layer, it looks like selection being slightly off on one page of a document.
+ */
+describe("TextCache page turns", () => {
+  it("turns only the page the edit named", async () => {
+    const cache = new TextCache(1);
+    await cache.load(0);
+    await cache.load(1);
+    cache.setPageTurns(0, 1);
+
+    expect(cache.peek(0)?.quarter_turns).toBe(1);
+    // The assertion that separates a page turn from a view rotation. A
+    // `setPageTurns` that called `setTurns` would satisfy the line above.
+    expect(cache.peek(1)?.quarter_turns).toBe(0);
+  });
+
+  it("composes the page's turn with the view's", async () => {
+    const cache = new TextCache(1);
+    await cache.load(0);
+    await cache.load(1);
+    cache.setTurns(1);
+    cache.setPageTurns(0, 1);
+
+    expect(cache.peek(0)?.quarter_turns).toBe(2);
+    expect(cache.peek(1)?.quarter_turns).toBe(1);
+  });
+
+  it("swaps the turned page's dimensions and leaves its neighbour's", async () => {
+    const cache = new TextCache(1);
+    const raw = await cache.load(0);
+    await cache.load(1);
+    if (!raw) throw new Error("fixture");
+    const width = raw.width_pt;
+    const height = raw.height_pt;
+
+    cache.setPageTurns(1, 3);
+    expect(cache.peek(0)?.width_pt).toBe(width);
+    expect(cache.peek(1)?.width_pt).toBe(height);
+    expect(cache.peek(1)?.height_pt).toBe(width);
+  });
+
+  it("drops only that page's turned view when its turn changes", async () => {
+    const cache = new TextCache(1);
+    cache.setTurns(1);
+    await cache.load(0);
+    await cache.load(1);
+    cache.peek(0);
+    cache.peek(1);
+    expect(cache.retainedViews).toBe(2);
+
+    cache.setPageTurns(0, 1);
+    // One dropped, one kept. A `setPageTurns` that cleared the whole map would
+    // be correct and wasteful, and this is the accounting observable that can
+    // tell --- through `peek` the two are indistinguishable, since a dropped
+    // view is simply rebuilt.
+    expect(cache.retainedViews).toBe(1);
+    expect(cache.peek(1)?.quarter_turns).toBe(1);
+  });
+
+  it("returns the document's own text once a turn is taken back", async () => {
+    const cache = new TextCache(1);
+    const raw = await cache.load(0);
+    if (!raw) throw new Error("fixture");
+    cache.setPageTurns(0, 2);
+    expect(cache.peek(0)?.quarter_turns).toBe(2);
+    cache.setPageTurns(0, 0);
+    expect(cache.peek(0)?.quarter_turns).toBe(0);
+    expect(cache.peek(0)?.width_pt).toBe(raw.width_pt);
+  });
+
+  it("normalises a negative turn", async () => {
+    const cache = new TextCache(1);
+    await cache.load(0);
+    cache.setPageTurns(0, -1);
+    expect(cache.peek(0)?.quarter_turns).toBe(3);
+  });
+});

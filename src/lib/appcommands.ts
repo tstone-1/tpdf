@@ -96,6 +96,24 @@ export interface AppActions {
   updateReady(): boolean;
   /** Whether the last check found an update that has not been applied. */
   updateAvailable(): boolean;
+  /**
+   * Turn the page the reader is on by `delta` quarter-turns, in the document.
+   *
+   * A shell action rather than a viewer method, because the model that decides
+   * what a page's turn becomes is in the backend: the viewer is *told* the
+   * answer. See `edits.ts`.
+   */
+  rotatePage(delta: number): void;
+  /** Step the edit journal back one command. */
+  undoEdit(): void;
+  /** Step the edit journal forward one command. */
+  redoEdit(): void;
+  /** Whether there is an edit to undo. */
+  canUndo(): boolean;
+  /** Whether there is an edit to redo. */
+  canRedo(): boolean;
+  /** Ask for a name and write the working document to it. */
+  saveCopy(): void;
 }
 
 /**
@@ -331,6 +349,53 @@ export function registerAppCommands(
       keys: label("view.rotateCounterClockwise"),
       enabled: withDocument,
       run: () => actions.viewer()?.rotateBy(-1),
+    },
+    {
+      // ⇧⌘R beside ⌘R, because these two are the same gesture on two different
+      // subjects and a reader who knows one should be able to guess the other.
+      // The titles carry the distinction that matters --- "view" against
+      // "page" --- since the shortcut cannot.
+      id: "edit.rotatePageClockwise",
+      title: "Rotate page clockwise",
+      keys: label("edit.rotatePageClockwise"),
+      enabled: withDocument,
+      run: () => actions.rotatePage(1),
+    },
+    {
+      id: "edit.rotatePageCounterClockwise",
+      title: "Rotate page anticlockwise",
+      keys: label("edit.rotatePageCounterClockwise"),
+      enabled: withDocument,
+      run: () => actions.rotatePage(-1),
+    },
+    {
+      // Guarded on there being something to undo rather than merely on a
+      // document being open. A palette that offers Undo with an empty journal
+      // teaches a reader that the command does nothing, which is the same
+      // lesson a broken one teaches.
+      id: "edit.undo",
+      title: "Undo",
+      keys: label("edit.undo"),
+      enabled: () => actions.viewer() !== null && actions.canUndo(),
+      run: () => actions.undoEdit(),
+    },
+    {
+      id: "edit.redo",
+      title: "Redo",
+      keys: label("edit.redo"),
+      enabled: () => actions.viewer() !== null && actions.canRedo(),
+      run: () => actions.redoEdit(),
+    },
+    {
+      // Offered on any open document, not only an edited one. Saving an
+      // unedited copy is a thing readers do --- it is how you get a file out of
+      // a downloads folder --- and a command that appears only after an edit is
+      // one nobody finds.
+      id: "file.saveCopy",
+      title: "Save a copy...",
+      keys: label("file.saveCopy"),
+      enabled: withDocument,
+      run: () => actions.saveCopy(),
     },
     {
       id: "nav.nextPage",
@@ -604,5 +669,51 @@ export function handleWindowKey(
   } else if (matches("find.inSelection", event) && title) {
     event.preventDefault();
     actions.toggleSearchScope();
+  } else if (matches("edit.rotatePageClockwise", event) && title) {
+    event.preventDefault();
+    actions.rotatePage(1);
+  } else if (matches("edit.rotatePageCounterClockwise", event) && title) {
+    event.preventDefault();
+    actions.rotatePage(-1);
+  } else if (matches("file.saveCopy", event) && title) {
+    event.preventDefault();
+    actions.saveCopy();
+  } else if (matches("edit.undo", event) && title && !inTextField(event)) {
+    // The `inTextField` guard is on these two and on nothing else here, and the
+    // asymmetry is deliberate rather than an oversight. Every other binding
+    // above is a chord no text field claims, so taking it from the find bar is
+    // what a reader wants. Cmd-Z is the exception: it is *the* text-undo chord
+    // on both platforms, and stealing it would mean a reader correcting a typo
+    // in the find field silently undid a page rotation instead.
+    event.preventDefault();
+    if (actions.canUndo()) actions.undoEdit();
+  } else if (matches("edit.redo", event) && title && !inTextField(event)) {
+    event.preventDefault();
+    if (actions.canRedo()) actions.redoEdit();
   }
+}
+
+/**
+ * Whether the key went to something a reader is typing into.
+ *
+ * Duck-typed rather than `instanceof HTMLElement`, so that the guard is
+ * exercised by the same tests that exercise everything else here.
+ *
+ * Measured rather than assumed, because the guess was wrong: the test runner has
+ * no DOM at all, `globalThis.HTMLElement` is `undefined`, and
+ * `target instanceof HTMLElement` there **throws** ---
+ * `TypeError: Right-hand side of 'instanceof' is not an object`. So it does not
+ * quietly answer "not a text field"; it takes the whole handler down, and the
+ * only way to test the guard would be to stand up a DOM for it. Duck-typing
+ * costs three field reads and needs neither.
+ */
+function inTextField(event: KeyboardEvent): boolean {
+  const target = event.target as {
+    tagName?: string;
+    isContentEditable?: boolean;
+  } | null;
+  if (!target) return false;
+  if (target.isContentEditable === true) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }

@@ -153,6 +153,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "ci.yml and release.yml no longer run the same gates job",
         ),
         (
+            "anchors",
+            [sys.executable, str(REPO / "scripts" / "check_mutation_anchors.py")],
+            "a mutation is aimed at code that is gone, or a killed harness left its edit behind",
+        ),
+        (
             "corpora",
             [sys.executable, str(REPO / "scripts" / "viewer_sweep.py"), "--list"],
             "a testdata fixture is neither a window corpus nor excluded with a reason",

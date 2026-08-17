@@ -119,6 +119,22 @@ export const BINDINGS = {
     shift: true,
   },
   "nav.forward": { keys: ["]", "\u2018"], accel: true },
+  // The page operations, on Shift plus the view-rotation chords. Same gesture,
+  // different subject: ⌘R turns the view, ⇧⌘R turns the page in the document.
+  "edit.rotatePageClockwise": { keys: ["r", "R"], accel: true, shift: true },
+  "edit.rotatePageCounterClockwise": {
+    keys: ["l", "L"],
+    accel: true,
+    shift: true,
+  },
+  // ⌘Z and ⇧⌘Z, which is what every application on both platforms uses and the
+  // one place here where matching the convention beats any other argument.
+  "edit.undo": { keys: ["z", "Z"], accel: true },
+  "edit.redo": { keys: ["z", "Z"], accel: true, shift: true },
+  // ⇧⌘S is Save As everywhere, and this is Save As under a name that says what
+  // it does: the open document is not replaced, so calling it "Save" would
+  // promise an in-place write that tpdf deliberately does not do yet.
+  "file.saveCopy": { keys: ["s", "S"], accel: true, shift: true },
   "edit.selectAll": { keys: ["a"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },
   "edit.clearSelection": { keys: ["Escape"], shown: "Esc" },

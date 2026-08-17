@@ -519,6 +519,49 @@ level, including an annotation-only edit to a level-3 certified document that th
 specification explicitly permits. "The spec permits this edit" and "a validator will accept
 it" are different claims, and only the second is what a user sees.
 
+#### T6.1 — Saving a copy, added 2026-08-16
+
+**What changed.** `save_copy` is the first command that writes a file the reader names, and
+`dialog:allow-save` is the first new capability the application has taken since the updater.
+Both are narrower than they look and one of them is not as narrow as it should be.
+
+**The capability is inert on its own.** `dialog:allow-save` opens a native panel and returns
+a path; it writes nothing. The write is `save_copy`, and its authority is the process's ---
+which is to say the reader's, since nothing here is sandboxed on the app side. So the honest
+statement is: **a caller able to reach `save_copy` can write a PDF anywhere the reader can
+write**, without a panel and without a prompt --- and the *source* path is the frontend's
+too, so the same caller can read any PDF the reader can read. Neither end is checked against
+the document the render service actually opened, which it could be. It is not, because
+`print_document` has had exactly the same shape since 2026-07-28 and tightening one of the
+two would leave a consistent surface looking inconsistent; if this is closed, close both.
+
+**What bounds that is the same thing that bounds `spike_exit`, and no more.** The CSP is
+`default-src 'self'` with no `'unsafe-inline'`, so the only script that runs is the one that
+shipped --- residual risk 7, and the T8 invariant that keeps document text from becoming
+script. The marginal authority over what was already reachable is real but small: a caller
+that can reach `save_copy` can already reach `open_document` and the print path. It is
+recorded here rather than left implicit because it is the first *write*, and a write is a
+different kind of verb from the ones this surface had before.
+
+**Three refusals, and each is a correctness property rather than a security one:**
+
+- An **encrypted** source is refused outright. `lopdf` drops `/Encrypt` on save without a
+  word, so a copy of a restricted document would come out unrestricted and look identical.
+  This is exactly the T5 shape --- a false assurance --- pointed at the document's own
+  protection rather than at ours.
+- A **page count that disagrees with the model** is refused, which is the only part of §5's
+  external-modification story that exists yet.
+- **Writing over the source** is refused, compared by canonical path so that two spellings
+  of one file are one file.
+
+**The write is atomic** --- sibling temporary file, rename --- so an interrupted save leaves
+either the old file or the new one. The redaction path above needs the same property for a
+different reason and states it separately; this one is not that, and does not claim to be:
+**a saved copy is a serialisation, not a sanitation.** Nothing here garbage-collects an
+unreachable object or removes a prior incremental revision, so a copy of a document carries
+forward whatever the original carried. That is correct for "save a copy" and would be wrong
+for a redaction, and the two must not be confused when the redaction path is built on it.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -1010,6 +1053,18 @@ which is what makes it evidence rather than a milestone.
     its children's pipes and re-emitting what arrives — a change to the boundary rather than
     to the logging, and still future work. A crash of the coordinator itself logs nothing
     either, by construction: the process that would write the line is the one that died.
+13. **`save_copy` writes a PDF anywhere the reader can write** (§T6.1), added 2026-08-16 ---
+    the first command on this surface that creates a file, and its authority is the app
+    process's rather than a panel's. The path comes from the frontend, so a native save panel
+    is the *interface* and not the bound. What bounds it is residual risk 7: the CSP admits
+    only the script that shipped. The marginal authority is small --- a caller that can reach
+    this can already reach `open_document` and the print path --- and it is listed because a
+    write is a different verb from the ones this surface had, not because the CSP is believed
+    to be weaker than it was yesterday.
+14. **A saved copy is a serialisation and not a sanitation** (§T6.1). Nothing on that path
+    collects an unreachable object or drops a prior incremental revision, so whatever the
+    source carried, the copy carries. That is right for "save a copy" and wrong for a
+    redaction, and the redaction path must not be built on it by assuming otherwise.
 
 ## 8. How to re-verify any of this
 

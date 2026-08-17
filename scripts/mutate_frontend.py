@@ -66,6 +66,136 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Send the page's position instead of its identity. Identical on an
+        # unedited document and wrong the moment a page moves, which is the whole
+        # reason ids cross the boundary at all.
+        "edits: name a page by its slot rather than by its id",
+        "src/lib/edits.ts",
+        "    const id = this.current.pages[page]?.id;",
+        "    const id = page;",
+        "sends the page's identity, not its position",
+    ),
+    Mutation(
+        # Report a slot as unchanged when its turn went back to upright. The
+        # reader undoes a rotation and the page stays sideways on screen.
+        "edits: compare against upright rather than against what was there",
+        "src/lib/edits.ts",
+        "    if (was.id !== now.id || was.turns !== now.turns || was.source !== now.source) {",
+        "    if (was.id !== now.id || now.turns !== 0 || was.source !== now.source) {",
+        "reports a turn that went back to upright",
+    ),
+    Mutation(
+        # Compare slot by slot even when the page count moved. Every page has
+        # shifted, and a comparison of turns reports that nothing did.
+        "edits: diff by slot even when pages appeared or disappeared",
+        "src/lib/edits.ts",
+        "  if (before.pages.length !== after.pages.length) {",
+        "  if (false) {",
+        "reports every slot in the longer state when the page count moved",
+    ),
+    Mutation(
+        # Turn the view instead of the page. Every statement about the page that
+        # was turned still holds; only its neighbour can tell.
+        "scroller: apply a page's turn to the whole view",
+        "src/lib/scroller.ts",
+        "    return this.opts.turns + (this.pageTurns[page] ?? 0);",
+        "    return this.opts.turns + (this.pageTurns[0] ?? 0);",
+        "lays the turned page out sideways and leaves its neighbour alone",
+    ),
+    Mutation(
+        # Lay the page out upright and render it turned. The box keeps the old
+        # shape and the tile drawn into it is the new one.
+        "scroller: leave the page's own turn out of the layout",
+        "src/lib/scroller.ts",
+        "    return displayedSize(this.pageSize(page), this.effectiveTurns(page));",
+        "    return displayedSize(this.pageSize(page), this.opts.turns);",
+        "lays the turned page out sideways and leaves its neighbour alone",
+    ),
+    Mutation(
+        # Let the geometry decide what to invalidate. A half turn moves no box,
+        # so the old pixels stay on screen upside down.
+        "scroller: invalidate a turned page only when its box moves",
+        "src/lib/scroller.ts",
+        "    this.invalidatePage(page);\n    const moved = this.applySizes();",
+        "    const moved = this.applySizes();",
+        "discards a page's pixels even when its box does not move",
+    ),
+    Mutation(
+        # Ask the renderer for the view's turn alone. The page is laid out
+        # sideways and drawn upright inside its own box.
+        "scroller: request a tile without the page's own turn",
+        "src/lib/scroller.ts",
+        "      turns: this.requestTurns(key.page),",
+        "      turns: this.opts.turns,",
+        "asks the renderer for the page's turn composed with the view's",
+    ),
+    Mutation(
+        # Turn every page's text, not the one that was edited. Selection then
+        # lands wrongly on every page except the one that was turned.
+        "text: apply a page's turn to the whole cache",
+        "src/lib/text.ts",
+        "    const turns = this.turns + (this.extra.get(page) ?? 0);",
+        "    const turns = this.turns + (this.extra.values().next().value ?? 0);",
+        "turns only the page the edit named",
+    ),
+    Mutation(
+        # Drop every turned view rather than the one page's. Correct and
+        # wasteful, and invisible through `peek` --- only the accounting can see
+        # it, which is why there is one.
+        "text: clear the whole turned cache when one page is turned",
+        "src/lib/text.ts",
+        "    this.turned.delete(page);",
+        "    this.turned.clear();",
+        "drops only that page's turned view when its turn changes",
+    ),
+    Mutation(
+        # Both rotations clockwise. The command reaches the right action and
+        # turns the page the wrong way.
+        "commands: rotate the page clockwise whichever way was asked",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.rotatePage(-1),",
+        "      run: () => actions.rotatePage(1),",
+        "rotate the page with the sign the reader asked for",
+    ),
+    Mutation(
+        # Offer Undo with an empty journal. The palette then teaches a reader
+        # that the command does nothing.
+        "commands: offer Undo whenever a document is open",
+        "src/lib/appcommands.ts",
+        "      enabled: () => actions.viewer() !== null && actions.canUndo(),",
+        "      enabled: withDocument,",
+        "are withheld while the journal is empty",
+    ),
+    Mutation(
+        # One flag for both halves of the journal. A document with an edit and
+        # nothing undone then offers Redo as well.
+        "commands: guard Redo on there being something to undo",
+        "src/lib/appcommands.ts",
+        "      enabled: () => actions.viewer() !== null && actions.canRedo(),",
+        "      enabled: () => actions.viewer() !== null && actions.canUndo(),",
+        "are offered separately, each on its own half of the journal",
+    ),
+    Mutation(
+        # Take Cmd-Z from the find field. A reader correcting a typo silently
+        # undoes a page rotation instead, and nothing connects the two.
+        "keys: take Cmd-Z out of the text field a reader is typing in",
+        "src/lib/appcommands.ts",
+        "  } else if (matches(\"edit.undo\", event) && title && !inTextField(event)) {",
+        "  } else if (matches(\"edit.undo\", event) && title) {",
+        "leaves Cmd-Z to the text field a reader is typing in",
+    ),
+    Mutation(
+        # The half of the guard a tag-name check cannot cover: a contenteditable
+        # element is a text field and is not an INPUT. Aimed at the field rather
+        # than at the spelling, because the spelling is what makes the guard
+        # testable here at all --- see the note on the function.
+        "keys: miss a contenteditable target",
+        "src/lib/appcommands.ts",
+        "  if (target.isContentEditable === true) return true;",
+        "  if (false) return true;",
+        "leaves Cmd-Z to the text field a reader is typing in",
+    ),
+    Mutation(
         # `resumé` decomposed came back as three lines --- `resume`, the accent
         # alone, then the rest --- because an acute sits above the x-height and its
         # box does not touch a word with no ascender. `café` hides it: the `f`
@@ -1216,6 +1346,9 @@ TEST_FILES = [
     "src/lib/commentpopup.test.ts",
     "src/lib/links.test.ts",
     "src/lib/viewer.test.ts",
+    "src/lib/edits.test.ts",
+    "src/lib/scroller.test.ts",
+    "src/lib/appcommands.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

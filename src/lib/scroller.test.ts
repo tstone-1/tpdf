@@ -571,6 +571,157 @@ describe("Scroller geometry on a mixed-size document", () => {
   });
 });
 
+/**
+ * A page turned by an *edit*, which is one page rather than the whole view.
+ *
+ * The assertions that matter are the negative ones. Every statement about the
+ * page that was turned --- its box, its tiles, the turn it reports --- is also
+ * true of a defect that turned the view instead, so what separates the two is a
+ * neighbour that must not have moved and a `turns` option that must not have.
+ */
+describe("Scroller page turns", () => {
+  let dom: FakeDom;
+  let scroller: Scroller;
+
+  /** Two portrait pages, so a turn on one is visible against the other. */
+  function twoPages(): ScrollerOptions {
+    return {
+      ...options(),
+      pageCount: 2,
+      pages: [
+        { width_pt: 600, height_pt: 800 },
+        { width_pt: 600, height_pt: 800 },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => new Promise(() => {}));
+    scroller = new Scroller(dom.root as unknown as HTMLElement, twoPages());
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  it("reports no turn on a document nobody has edited", () => {
+    expect(scroller.pageExtraTurns(0)).toBe(0);
+    expect(scroller.pageExtraTurns(1)).toBe(0);
+  });
+
+  it("lays the turned page out sideways and leaves its neighbour alone", () => {
+    const otherBefore = scroller.pageBoxCssOf(1);
+    const turnedBefore = scroller.pageBoxCssOf(0);
+
+    scroller.setPageTurns(0, 1);
+
+    const turned = scroller.pageBoxCssOf(0);
+    expect(turned.width / turned.height).toBeCloseTo(
+      turnedBefore.height / turnedBefore.width,
+      3,
+    );
+    expect(scroller.pageBoxCssOf(1)).toEqual(otherBefore);
+  });
+
+  it("normalises the turn, so a negative one is three quarters clockwise", () => {
+    scroller.setPageTurns(0, -1);
+    expect(scroller.pageExtraTurns(0)).toBe(3);
+    scroller.setPageTurns(0, 5);
+    expect(scroller.pageExtraTurns(0)).toBe(1);
+  });
+
+  it("asks the renderer for the page's turn composed with the view's", () => {
+    scroller.setTurns(1);
+    scroller.setPageTurns(1, 1);
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, performance.now());
+
+    const turns = new Map<number, number>();
+    for (const [request] of tiles.fetchTile.mock.calls) {
+      turns.set(request.page, request.turns);
+    }
+    // Page 0 carries the view's turn alone; page 1 carries both, reduced. A
+    // request that sent five quarter-turns would be refused by the server
+    // rather than reduced there, which is why this is normalised here.
+    expect(turns.get(0)).toBe(1);
+    expect(turns.get(1)).toBe(2);
+  });
+
+  it("does not touch the view's own rotation", () => {
+    // The control for every assertion above: a `setPageTurns` implemented by
+    // rotating the view would satisfy all of them on a one-page document, and
+    // this is what it could not satisfy.
+    const before = twoPages().turns;
+    scroller.setPageTurns(0, 2);
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, performance.now());
+    const forOther = tiles.fetchTile.mock.calls
+      .map(([request]) => request)
+      .filter((request: { page: number }) => request.page === 1);
+    expect(forOther.length).toBeGreaterThan(0);
+    for (const request of forOther) expect(request.turns).toBe(before);
+  });
+
+  it("discards a page's pixels even when its box does not move", async () => {
+    // A half turn leaves the box exactly as it was, so a geometry comparison
+    // sees nothing move --- and the page is upside down. Written without this,
+    // an implementation that let `applySizes` decide what to invalidate would
+    // leave the old pixels on screen at 180 degrees and pass every other test
+    // in this block.
+    //
+    // The tiles have to have *landed* first, which is the whole precondition:
+    // a request still in flight is not re-issued while it is outstanding, so a
+    // version of this that turned the page mid-flight would see no new request
+    // and read as a defect in the invalidation rather than in the fixture.
+    const closes: Array<() => void> = [];
+    tiles.fetchTile.mockImplementation(() => {
+      const bitmap = { close: vi.fn(), width: 64, height: 64 };
+      closes.push(bitmap.close);
+      return Promise.resolve({
+        bitmap: bitmap as unknown as ImageBitmap,
+        bytes: 1,
+        renderUs: 1,
+        decodeMs: 1,
+      });
+    });
+    scroller.frame(0, performance.now());
+    await Promise.resolve();
+    await Promise.resolve();
+    scroller.frame(0, performance.now());
+    const landed = closes.length;
+    expect(landed).toBeGreaterThan(0);
+
+    const boxBefore = scroller.pageBoxCssOf(0);
+    tiles.fetchTile.mockClear();
+
+    scroller.setPageTurns(0, 2);
+    scroller.frame(0, performance.now());
+
+    expect(scroller.pageBoxCssOf(0)).toEqual(boxBefore);
+    const asked = tiles.fetchTile.mock.calls
+      .map(([request]) => request)
+      .filter((request: { page: number }) => request.page === 0);
+    expect(asked.length).toBeGreaterThan(0);
+    for (const request of asked) expect(request.turns).toBe(2);
+  });
+
+  it("ignores a page that is not in the document", () => {
+    expect(scroller.setPageTurns(-1, 1)).toBe(false);
+    expect(scroller.setPageTurns(2, 1)).toBe(false);
+    expect(scroller.pageExtraTurns(0)).toBe(0);
+  });
+
+  it("ignores a turn a page already has", () => {
+    scroller.setPageTurns(0, 1);
+    expect(scroller.setPageTurns(0, 1)).toBe(false);
+  });
+});
+
 describe("displayedSize", () => {
   const portrait = { width_pt: 612, height_pt: 792 };
   const landscape = { width_pt: 792, height_pt: 612 };

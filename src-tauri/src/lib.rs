@@ -11,6 +11,7 @@
 pub mod annots;
 pub mod diag;
 pub mod docmodel;
+pub mod edits;
 pub mod encoding;
 pub mod invert;
 pub mod launch;
@@ -33,6 +34,7 @@ pub mod render;
 /// lists are all Win32 with no portable counterpart.
 #[cfg(windows)]
 pub mod sandbox_win;
+pub mod save;
 pub mod search;
 pub mod session;
 pub mod startup;
@@ -359,6 +361,7 @@ async fn await_reply<T>(command: &str, mut rx: ReplyRx<T>) -> Result<T, String> 
 async fn open_document(
     app: tauri::AppHandle,
     service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
     path: String,
 ) -> Result<DocumentInfo, String> {
     let wanted = PathBuf::from(&path);
@@ -373,14 +376,27 @@ async fn open_document(
         // lose, rather than returning the wrong document.
         .filter(|eager| eager.path == wanted)
         .and_then(|eager| eager.pending.lock().take());
-    if let Some(rx) = eager {
+    // Both branches end at the same place on purpose. The edit model has to be
+    // started for the document that was actually opened, and the eager path
+    // returns a `DocumentInfo` produced before this call existed --- registering
+    // it in only one of the two would leave a reader who opened a file the fast
+    // way with no model and no error, which reads as "rotate does nothing".
+    let info = if let Some(rx) = eager {
         startup::mark("eager open collected");
-        return await_reply("open_document", rx).await;
-    }
-
-    let (reply, rx) = reply_channel();
-    service.open(wanted, lazy_geometry(), reply);
-    await_reply("open_document", rx).await
+        await_reply("open_document", rx).await?
+    } else {
+        let (reply, rx) = reply_channel();
+        service.open(wanted, lazy_geometry(), reply);
+        await_reply("open_document", rx).await?
+    };
+    let pages = u32::try_from(info.page_count).map_err(|_| {
+        format!(
+            "a document of {} pages is past what tpdf can edit",
+            info.page_count
+        )
+    })?;
+    edits.open(info.id, pages);
+    Ok(info)
 }
 
 /// Releases a document the reader has finished with.
@@ -400,10 +416,101 @@ async fn open_document(
 /// this promise would put a process teardown on the path to the first page of
 /// the file they asked for, and that is the only decision this end makes.
 #[tauri::command]
-async fn close_document(service: tauri::State<'_, RenderService>, doc: u32) -> Result<(), String> {
+async fn close_document(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+) -> Result<(), String> {
+    // Before the service call rather than after, and not for tidiness: document
+    // numbers are reused, so a model left behind under a handle the service is
+    // about to hand to another file is one document's journal applied to
+    // another's pages.
+    edits.close(doc);
     let (reply, rx) = reply_channel();
     service.close(doc, reply);
     await_reply("close_document", rx).await
+}
+
+/// Turns one page of the working document, without touching the file.
+///
+/// The page is named by the identity a state reply gave it, never by its
+/// position --- see `edits.rs` on why. Returns the whole edit state rather than
+/// an acknowledgement, so the frontend's copy is replaced by the answer rather
+/// than advanced by its own arithmetic.
+///
+/// Synchronous work in an `async fn`, which the note on [`print_document`] warns
+/// about, and here it is right: this is a `HashMap` lookup, a journal push and a
+/// walk of the page order. Nothing parses and nothing touches the disk.
+#[tauri::command]
+async fn page_rotate(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    page: u64,
+    turns: i8,
+) -> Result<edits::EditState, String> {
+    edits.rotate(doc, page, turns)
+}
+
+/// Steps the edit journal back one command.
+#[tauri::command]
+async fn edit_undo(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+) -> Result<edits::EditState, String> {
+    edits.undo(doc)
+}
+
+/// Steps the edit journal forward one command.
+#[tauri::command]
+async fn edit_redo(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+) -> Result<edits::EditState, String> {
+    edits.redo(doc)
+}
+
+/// The edit state of an open document.
+///
+/// Asked for once after an open, so the frontend starts from the model's answer
+/// rather than from an assumption that a freshly opened document is unedited.
+/// Those are the same thing today and will not be once a session can carry
+/// edits, and the difference is invisible until it is wrong.
+#[tauri::command]
+async fn edit_state(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+) -> Result<edits::EditState, String> {
+    edits.state(doc)
+}
+
+/// Writes the working document to a new file.
+///
+/// `source` comes from the frontend, which is what [`print_document`] does and
+/// for the same reason: the render service holds the document, and the path is
+/// the frontend's own record of what it asked to open.
+///
+/// On the blocking pool, unlike the four commands above: this parses the whole
+/// document with `lopdf` and serialises it, which on the 337 MB scan is not work
+/// to do on a runtime worker. Read the argument in [`print_document`] --- it is
+/// the same one, and the two commands are the two members of this repository
+/// that genuinely belong there.
+#[tauri::command]
+async fn save_copy(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    source: String,
+    path: String,
+) -> Result<(), String> {
+    // Read out of the model *before* the move onto the pool. The state is behind
+    // a mutex that is not held across an await anywhere in this file, and taking
+    // a `State` handle into a `spawn_blocking` closure would need it to outlive
+    // the command.
+    let plan: Vec<u8> = edits.plan(doc)?.iter().map(|page| page.turns).collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        save::write_copy(Path::new(&source), &plan, Path::new(&path))
+    })
+    .await
+    .map_err(|e| format!("the save did not run: {e}"))?
 }
 
 /// Extracts one page's characters and their positions.
@@ -1184,6 +1291,11 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .manage(launch)
+        // One edit model per open document. Managed on the builder rather than in
+        // the setup hook because it needs nothing from the app --- no path, no
+        // library directory --- and because `RunEvent::Opened` can fire before
+        // the hook runs, which is the trap the render service works around.
+        .manage(edits::Edits::default())
         .plugin(tauri_plugin_dialog::init())
         // The one place tpdf talks to the network, and the only code path that
         // can replace the binary. It is deliberately inert until the frontend
@@ -1319,6 +1431,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_document,
+            page_rotate,
+            edit_undo,
+            edit_redo,
+            edit_state,
+            save_copy,
             close_document,
             page_text,
             search_page,

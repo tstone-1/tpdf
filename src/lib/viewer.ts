@@ -907,9 +907,13 @@ export class Viewer {
    * window with no way to see its edge.
    */
   private displayedPage(): PageSize {
+    const page = this.currentPage();
+    // Both turns, for the reason `Scroller.effectiveTurns` gives: a fit is about
+    // the sheet in front of the reader, and a page an edit has turned is a
+    // different shape from the one the file describes.
     return displayedSize(
-      this.scroller.pageSize(this.currentPage()),
-      this.turns,
+      this.scroller.pageSize(page),
+      this.turns + this.scroller.pageExtraTurns(page),
     );
   }
 
@@ -1129,6 +1133,57 @@ export class Viewer {
     this.turns = next;
     this.text.setTurns(next);
     this.scroller.setTurns(next);
+  }
+
+  /**
+   * Turns one page of the *document*, which is what a save writes.
+   *
+   * Distinct from {@link rotateBy} in the only way that matters: that one
+   * changes how the whole document is looked at and writes nothing, and this one
+   * changes one page and makes the document differ from the file on disk. They
+   * compose --- a page turned by an edit inside a view turned by the reader is
+   * turned by the sum, and the scroller and the text layer are handed the same
+   * number so they cannot disagree about which.
+   *
+   * The model is the authority: this is told what a page's turn *is*, never by
+   * how much to change it, because the arithmetic belongs to the journal that
+   * has to replay it. `App.svelte` calls the backend and hands the answer here.
+   *
+   * Re-anchors like {@link rotateBy}, and for the same reason --- a turned page
+   * is a different height, so everything below it has moved and a reader left at
+   * the same offset is looking somewhere else. Refits for the same reason too:
+   * under fit-page a page that has just become landscape is otherwise shown at a
+   * scale chosen for the portrait one.
+   */
+  setPageTurns(page: number, turns: number): void {
+    if (page < 0 || page >= this.opts.pageCount) return;
+    if (this.scroller.pageExtraTurns(page) === (((turns % 4) + 4) % 4)) return;
+
+    const anchor = this.currentPage();
+    const before = this.scroller.pagePitchOf(anchor);
+    const through =
+      before > 0
+        ? (this.scrollTop - this.scroller.pageTopOf(anchor)) / before
+        : 0;
+
+    this.text.setPageTurns(page, turns);
+    this.scroller.setPageTurns(page, turns);
+    this.applyFit();
+
+    this.scrollTop = Math.max(
+      0,
+      Math.min(
+        this.scroller.pageTopOf(anchor) +
+          through * this.scroller.pagePitchOf(anchor),
+        this.scroller.maxScroll,
+      ),
+    );
+    this.wake();
+  }
+
+  /** Quarter-turns an edit has applied to a page, 0 to 3. For the checks. */
+  pageExtraTurns(page: number): number {
+    return this.scroller.pageExtraTurns(page);
   }
 
   /** What the zoom is following, if anything. */

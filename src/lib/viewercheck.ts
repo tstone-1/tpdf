@@ -505,6 +505,7 @@ async function run(path: string): Promise<void> {
   await linkChecks(root, viewer, doc, problems);
   await thumbnailChecks(root, viewer, sidebar, doc, page);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
+  await pageRotationChecks(root, viewer, doc, seen);
   await invertChecks(viewer, doc, page, seen);
   // Last of the checks that drive the surface, because it is the only one that
   // deliberately leaves the view somewhere else: it scrolls the whole document
@@ -2826,6 +2827,11 @@ async function appCommandChecks(
   let busy = false;
   let recents = 0;
   let hasDocument = true;
+  // Both false to begin with, which is the state a launch is really in, and both
+  // movable so that Undo and Redo can be checked in each direction. A guard
+  // pinned to one answer is a guard with no failing case.
+  let canUndo = false;
+  let canRedo = false;
 
   const actions: AppActions = {
     viewer: () => viewer,
@@ -2851,6 +2857,17 @@ async function appCommandChecks(
     // run where nothing has been found.
     updateReady: () => false,
     updateAvailable: () => false,
+    // The page operations. Recorders like the rest of the shell half: the model
+    // that decides what a page's turn becomes is in the backend, so what these
+    // commands can be checked for here is that they reach the right action ---
+    // and the `enabled` guards below are what needs the two booleans to be
+    // separately settable.
+    rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
+    undoEdit: () => fired.push("undoEdit"),
+    redoEdit: () => fired.push("redoEdit"),
+    canUndo: () => canUndo,
+    canRedo: () => canRedo,
+    saveCopy: () => fired.push("saveCopy"),
   };
 
   // Where the viewer was on arrival, so it can be put back. Every phase after
@@ -3280,6 +3297,48 @@ async function appCommandChecks(
       read: selection,
       moved: (b, a) => Number(b) > 0 && a === "0",
       unless: withText,
+    },
+    {
+      // The page operations. Shell probes, because the model that decides what
+      // a page's turn becomes lives in the backend --- what is asserted here is
+      // that the command a reader types reaches the right action with the right
+      // sign, which is the half that was covered by nothing. That a turn then
+      // reaches the tiles and the text layer is asserted separately, against a
+      // real viewer, by `pageRotationChecks`.
+      id: "edit.rotatePageClockwise",
+      ...shell("rotatePage:1"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "edit.rotatePageCounterClockwise",
+      ...shell("rotatePage:-1"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.saveCopy",
+      ...shell("saveCopy"),
+      read: () => fired.join(","),
+    },
+    {
+      // Both journal commands are withheld unless there is something to act on,
+      // so `from` has to grant it --- and granting it is what makes the probe a
+      // statement about the wiring rather than about the guard. The guard's own
+      // other direction is in `appcommands.test.ts`, where an empty journal
+      // keeps them out of the palette entirely.
+      id: "edit.undo",
+      from: () => {
+        canUndo = true;
+      },
+      ...shell("undoEdit"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "edit.redo",
+      from: () => {
+        canRedo = true;
+      },
+      ...shell("redoEdit"),
+      read: () => fired.join(","),
     },
   ];
 
@@ -4801,6 +4860,255 @@ async function rotatedTextLayerCheck(
       `the text layer reports /Rotate ${shown.quarter_turns * 90} ` +
       `(wanted ${wanted * 90}) on a ${shown.width_pt.toFixed(0)} pt wide page ` +
       `(the document says ${raw.width_pt.toFixed(0)})`,
+  );
+}
+
+/**
+ * Turning one page of the document, which is the edit a save writes.
+ *
+ * The whole difficulty is telling this apart from a view rotation, and the
+ * assertions are chosen for exactly that. A defect that turned the *view*
+ * instead would satisfy every statement about the page that was turned --- it
+ * would be the right shape, its tiles would be gone, its text would run
+ * sideways --- so the checks that carry the weight are the two negative ones: a
+ * page nobody touched must keep its shape, and `viewer.rotation` must not have
+ * moved. Written with only the positive half, a `setPageTurns` that called
+ * `rotateBy` would pass.
+ *
+ * Runs after {@link rotationChecks}, which leaves the view upright, and puts the
+ * page back before returning --- every phase after this one inherits whatever
+ * state it is left in, and the file's own history has eight assertions going red
+ * across three phases for exactly that reason.
+ */
+async function pageRotationChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  doc: DocumentInfo,
+  seen: { status: ViewerStatus | null },
+): Promise<void> {
+  const names = [
+    "a page turn is recorded against that page",
+    "the turned page has the turned shape",
+    "a page nobody turned keeps its shape",
+    "turning a page does not rotate the view",
+    "a page turn discards that page's pixels",
+    "recovers coverage after a page turn",
+    "the text layer turns with the page",
+    "a page nobody turned keeps its text upright",
+    "turning a page back restores the layout",
+    "a half turn discards the pixels its box did not move",
+  ];
+
+  if (doc.page_count < 2) {
+    for (const name of names) skip(name, "the document has one page");
+    return;
+  }
+
+  key(root, "Home");
+  await settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
+
+  const target = 0;
+  const other = 1;
+  const uprightTarget = viewer.pageBoxCssOf(target);
+  const uprightOther = viewer.pageBoxCssOf(other);
+  const uprightRotation = viewer.rotation;
+
+  // A square page cannot report a quarter turn through its shape, and neither
+  // can a page whose box is within the tolerance of square. Skipping is the
+  // honest answer: the alternative is three assertions that hold whatever the
+  // code does.
+  const aspect = uprightTarget.width / uprightTarget.height;
+  if (Math.abs(aspect - 1) < 0.05) {
+    for (const name of names) {
+      skip(name, `page 1 is square (${aspect.toFixed(3)}), so a turn is invisible`);
+    }
+    return;
+  }
+
+  // Read before the turn, so the text assertions compare against this document.
+  const otherTextBefore = viewer.textOn(other);
+
+  viewer.setPageTurns(target, 1);
+  await frame();
+
+  check(
+    names[0] ?? "",
+    viewer.pageExtraTurns(target) === 1 && viewer.pageExtraTurns(other) === 0,
+    `page 1 turned ${viewer.pageExtraTurns(target) * 90}, ` +
+      `page 2 turned ${viewer.pageExtraTurns(other) * 90}`,
+  );
+
+  const turnedTarget = viewer.pageBoxCssOf(target);
+  const turnedAspect = turnedTarget.width / turnedTarget.height;
+  check(
+    names[1] ?? "",
+    Math.abs(turnedAspect * aspect - 1) < 0.02,
+    `${uprightTarget.width.toFixed(0)}x${uprightTarget.height.toFixed(0)} -> ` +
+      `${turnedTarget.width.toFixed(0)}x${turnedTarget.height.toFixed(0)}, ` +
+      `aspect ${aspect.toFixed(3)} then ${turnedAspect.toFixed(3)}`,
+  );
+
+  // The assertion that separates a page turn from a view rotation. A viewer that
+  // turned everything would pass every check above this line.
+  //
+  // **Proportions, not pixels**, and the difference is a whole corpus. Fit-width
+  // sizes the layout to the widest page, so turning page 1 to landscape makes it
+  // the widest and every other page is legitimately rescaled: on `text-heavy` the
+  // neighbour went 640x828 to 495x640 --- 22% smaller, and the *same* shape to
+  // three decimals. Comparing absolute boxes called that a defect. Comparing the
+  // ratio still catches what this check exists for, because a page that was
+  // turned reports the reciprocal, which no rescale can produce.
+  //
+  // Found by the first sweep across all fourteen corpora, having been written and
+  // watched pass on one. That is what the sweep is for.
+  const turnedOther = viewer.pageBoxCssOf(other);
+  const otherAspect = uprightOther.width / uprightOther.height;
+  const turnedOtherAspect = turnedOther.width / turnedOther.height;
+  const rescaled = Math.abs(turnedOther.width - uprightOther.width) >= 1;
+  check(
+    names[2] ?? "",
+    Math.abs(turnedOtherAspect / otherAspect - 1) < 0.02,
+    `page 2 was ${uprightOther.width.toFixed(0)}x${uprightOther.height.toFixed(0)}, ` +
+      `now ${turnedOther.width.toFixed(0)}x${turnedOther.height.toFixed(0)} ` +
+      `-- aspect ${otherAspect.toFixed(3)} then ${turnedOtherAspect.toFixed(3)}` +
+      (rescaled ? ", rescaled by the wider page" : ", unmoved"),
+  );
+
+  check(
+    names[3] ?? "",
+    viewer.rotation === uprightRotation,
+    `view turns ${uprightRotation} -> ${viewer.rotation}`,
+  );
+
+  // The control for the recovery check below: a turn that kept its tiles would
+  // recover instantly, and "recovers" would have waited for nothing.
+  check(
+    names[4] ?? "",
+    (seen.status?.any ?? 1) < 0.999,
+    `any=${((seen.status?.any ?? 1) * 100).toFixed(1)}% one frame later`,
+  );
+  await eventually(
+    names[5] ?? "",
+    () => (seen.status?.sharp ?? 0) >= 0.999,
+    () => `sharp=${((seen.status?.sharp ?? 0) * 100).toFixed(1)}%`,
+  );
+
+  await pageTurnTextChecks(viewer, doc, target, other, otherTextBefore, names);
+
+  // Back to where the phase found it, and asserted rather than assumed --- a
+  // restore that silently did nothing would leave every later phase reading a
+  // document with a sideways first page.
+  viewer.setPageTurns(target, 0);
+  await frame();
+  const restored = viewer.pageBoxCssOf(target);
+  check(
+    names[8] ?? "",
+    viewer.pageExtraTurns(target) === 0 &&
+      Math.abs(restored.width - uprightTarget.width) < 1 &&
+      Math.abs(restored.height - uprightTarget.height) < 1,
+    `${turnedTarget.width.toFixed(0)}x${turnedTarget.height.toFixed(0)} -> ` +
+      `${restored.width.toFixed(0)}x${restored.height.toFixed(0)}, ` +
+      `wanted ${uprightTarget.width.toFixed(0)}x${uprightTarget.height.toFixed(0)}`,
+  );
+  await settle(() => viewer.idle);
+
+  // The half turn, and it is the only thing that tests the ordering inside
+  // `Scroller.setPageTurns`. That method discards the page's tiles *before* it
+  // touches the geometry, because `applySizes` invalidates a page only when its
+  // box dimensions change --- and 180 degrees swaps width and height twice, so
+  // the box is identical and `applySizes` sees nothing.
+  //
+  // A quarter turn cannot show this: the box does change, so the geometry pass
+  // invalidates the page whether the explicit call is there or not. Found by a
+  // mutation that deleted the call and survived every check above, which is the
+  // harness reporting a hole in the corpus rather than a hole in the code. The
+  // bug it would have let through is plain to a reader: turn a page twice, and
+  // the tiles on screen are still the ones from before the turn.
+  // Full coverage FIRST, or the assertion below cannot fail. `settle(idle)` is
+  // not the same thing: the viewer goes idle while tiles are still arriving, so
+  // `any` was already under the threshold when the half turn happened and the
+  // check passed whether the invalidation ran or not. The mutation survived a
+  // whole run saying exactly that.
+  await settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
+
+  const beforeHalf = viewer.pageBoxCssOf(target);
+  viewer.setPageTurns(target, 2);
+  await frame();
+  const afterHalf = viewer.pageBoxCssOf(target);
+  const boxHeld =
+    Math.abs(afterHalf.width - beforeHalf.width) < 1 &&
+    Math.abs(afterHalf.height - beforeHalf.height) < 1;
+  check(
+    names[9] ?? "",
+    boxHeld && (seen.status?.any ?? 1) < 0.999,
+    `box ${boxHeld ? "unmoved" : "MOVED"} at ` +
+      `${afterHalf.width.toFixed(0)}x${afterHalf.height.toFixed(0)}, ` +
+      `any=${((seen.status?.any ?? 1) * 100).toFixed(1)}% one frame later`,
+  );
+
+  // Back to upright again, for the phase after this one.
+  viewer.setPageTurns(target, 0);
+  await settle(() => viewer.idle);
+}
+
+/**
+ * The text layer's half of a page turn, on the page and on its neighbour.
+ *
+ * Split out so that the two text assertions skip together and for one stated
+ * reason: half the corpus has no extractable text, and a text check on such a
+ * document is not a failure, it is a question the document cannot answer.
+ */
+async function pageTurnTextChecks(
+  viewer: Viewer,
+  doc: DocumentInfo,
+  target: number,
+  other: number,
+  otherBefore: { quarter_turns: number; width_pt: number } | null,
+  names: string[],
+): Promise<void> {
+  const turned = names[6] ?? "";
+  const untouched = names[7] ?? "";
+  const shown = viewer.textOn(target);
+  if (!shown || shown.codes.length === 0) {
+    skip(turned, "the page has no extractable text");
+    skip(untouched, "the page has no extractable text");
+    return;
+  }
+
+  // From the backend, so the comparison is against the document rather than
+  // against the same cache being checked.
+  const raw = await invoke<{ quarter_turns: number; width_pt: number }>(
+    "page_text",
+    { doc: doc.id, page: target },
+  ).catch(() => null);
+  if (!raw) {
+    skip(turned, "the page's text could not be fetched a second time");
+    skip(untouched, "the page's text could not be fetched a second time");
+    return;
+  }
+
+  const wanted = (raw.quarter_turns + viewer.pageExtraTurns(target)) % 4;
+  check(
+    turned,
+    shown.quarter_turns === wanted && shown.width_pt !== raw.width_pt,
+    `page is /Rotate ${raw.quarter_turns * 90}, turned ${viewer.pageExtraTurns(target) * 90}: ` +
+      `the text layer reports /Rotate ${shown.quarter_turns * 90} ` +
+      `(wanted ${wanted * 90}) on a ${shown.width_pt.toFixed(0)} pt wide page ` +
+      `(the document says ${raw.width_pt.toFixed(0)})`,
+  );
+
+  const otherNow = viewer.textOn(other);
+  if (!otherBefore || !otherNow) {
+    skip(untouched, "the neighbouring page has no text layer to compare");
+    return;
+  }
+  check(
+    untouched,
+    otherNow.quarter_turns === otherBefore.quarter_turns &&
+      otherNow.width_pt === otherBefore.width_pt,
+    `page 2 was /Rotate ${otherBefore.quarter_turns * 90} at ` +
+      `${otherBefore.width_pt.toFixed(0)} pt wide, now /Rotate ` +
+      `${otherNow.quarter_turns * 90} at ${otherNow.width_pt.toFixed(0)} pt`,
   );
 }
 

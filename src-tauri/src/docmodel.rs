@@ -94,6 +94,22 @@ impl PageId {
     pub fn get(self) -> u64 {
         self.0
     }
+
+    /// Rebuilds an id from a value [`get`](Self::get) produced.
+    ///
+    /// The inverse of `get`, and it exists for one caller: a command arriving
+    /// from the frontend, which was handed these ids in a state reply and sends
+    /// one back. That round trip is the whole reason ids cross the boundary ---
+    /// see `edits.rs` on why a command may not name a position.
+    ///
+    /// **Constructing one from an arbitrary number is safe**, which is not an
+    /// accident of this being a newtype: every command checks the id against the
+    /// live pages and the tombstones before it mutates anything, so a number
+    /// nobody issued is [`Refusal::NoSuchPage`] rather than a page. That is what
+    /// keeps this from being a hole in the opacity the type is for.
+    pub fn from_raw(value: u64) -> PageId {
+        PageId(value)
+    }
 }
 
 /// A rectangle in PDF user space, in points, lower-left and upper-right.

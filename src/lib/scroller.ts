@@ -506,6 +506,21 @@ export class Scroller {
    */
   private readonly epochs: number[];
 
+  /**
+   * Quarter-turns clockwise a page is turned by **on top of the view**, 0 to 3.
+   *
+   * A property of the *document being edited*, which is what separates it from
+   * {@link ScrollerOptions.turns}: rotating the view writes nothing and is one
+   * number for the whole document, and this one is per page and is what a save
+   * puts in the file. They compose, and everything downstream wants the sum ---
+   * see {@link effectiveTurns}, which is the only place the two are added.
+   *
+   * Not in `ScrollerOptions` because it is not an option: a scroller is
+   * constructed once per document and this changes while the reader is looking
+   * at it.
+   */
+  private readonly pageTurns: number[];
+
   constructor(host: HTMLElement, opts: ScrollerOptions) {
     this.host = host;
     this.opts = opts;
@@ -513,6 +528,7 @@ export class Scroller {
     this.sizes = new Array<PageSize | null>(Math.max(0, opts.pageCount)).fill(
       null,
     );
+    this.pageTurns = new Array<number>(Math.max(0, opts.pageCount)).fill(0);
     for (let page = 0; page < this.sizes.length; page++) {
       this.sizes[page] = opts.pages[page] ?? null;
     }
@@ -557,9 +573,73 @@ export class Scroller {
     return this.sizes[page] != null;
   }
 
-  /** A page's size in points as displayed, i.e. after the view rotation. */
+  /**
+   * Quarter-turns a page is drawn by: the view's, plus the page's own edit.
+   *
+   * The one place the two are added. Everything that asks a renderer for pixels
+   * or lays a box out has to agree about this sum, and three of them had grown
+   * their own copy of the view's number --- which is the shape `displayedSize`
+   * already exists to stop.
+   *
+   * Not reduced modulo four here. Every consumer either normalises (the tile
+   * request must, since the server refuses a fifth turn rather than reducing it)
+   * or does not care ({@link displayedSize} tests the parity), and reducing in
+   * two places is how one of them comes to disagree.
+   */
+  private effectiveTurns(page: number): number {
+    return this.opts.turns + (this.pageTurns[page] ?? 0);
+  }
+
+  /** Quarter-turns a page is drawn by, normalised to 0..3. For a tile request. */
+  private requestTurns(page: number): number {
+    const turns = this.effectiveTurns(page);
+    return ((turns % 4) + 4) % 4;
+  }
+
+  /**
+   * A page's size in points as displayed, i.e. after every rotation in force.
+   *
+   * Both of them: the view's and the page's own. A page turned by an edit is a
+   * different shape in the layout, and a `displayedSize` that saw only the view
+   * would lay a turned page out in its old box and then paint a tile of the new
+   * one into it.
+   */
   private displayedPageSize(page: number): PageSize {
-    return displayedSize(this.pageSize(page), this.opts.turns);
+    return displayedSize(this.pageSize(page), this.effectiveTurns(page));
+  }
+
+  /** Quarter-turns an edit has applied to a page, 0 to 3. */
+  pageExtraTurns(page: number): number {
+    return this.pageTurns[page] ?? 0;
+  }
+
+  /**
+   * Records that an edit turned a page, relaying out and redrawing it.
+   *
+   * Returns whether the layout moved, which is the caller's cue to re-anchor the
+   * reader --- the same contract {@link notePageSize} has, and for the same
+   * reason: a page that changed shape changed the length of the document above
+   * everything below it.
+   *
+   * **The page is invalidated whatever the turn was**, before the geometry is
+   * even consulted. A half turn leaves the box exactly as it was, so the box
+   * comparison inside {@link applySizes} sees nothing move --- and the pixels
+   * are upside down. Letting the geometry decide what to invalidate is right
+   * for a size correction, where a box that did not move really does still hold
+   * the right picture, and wrong here.
+   */
+  setPageTurns(page: number, turns: number): boolean {
+    if (page < 0 || page >= this.pageTurns.length) return false;
+    const next = ((turns % 4) + 4) % 4;
+    if (this.pageTurns[page] === next) return false;
+    this.pageTurns[page] = next;
+    this.invalidatePage(page);
+    const moved = this.applySizes();
+    // `applySizes` relays out only when something moved. A half turn moves
+    // nothing and still has to be drawn again, and the tiles to draw it with
+    // were just discarded.
+    if (!moved) this.relayout();
+    return moved;
   }
 
   /** The mean of the page sizes that are known, which is never none. */
@@ -1358,7 +1438,7 @@ export class Scroller {
       doc: this.opts.doc,
       page: key.page,
       scale: this.opts.zoom * this.opts.dpr,
-      turns: this.opts.turns,
+      turns: this.requestTurns(key.page),
       invert: this.opts.invert,
       x: rect.x,
       y: rect.y,
@@ -1505,7 +1585,7 @@ export class Scroller {
       doc: this.opts.doc,
       page,
       scale,
-      turns: this.opts.turns,
+      turns: this.requestTurns(page),
       invert: this.opts.invert,
       x: 0,
       y: 0,

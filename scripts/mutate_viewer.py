@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -81,6 +82,12 @@ FIXTURE = ROOT / "testdata/outline-simple.pdf"
 #: red, so a mutation aimed at one would report SURVIVED against a harness that
 #: never ran it.
 TAGGED_FIXTURE = ROOT / "testdata/tagged.pdf"
+
+# Bound on one `viewer_check.py` run, matching `viewer_sweep.py`'s default. It
+# exists so that a hang ends as a failure with a transcript instead of stopping
+# the harness for as long as nobody looks.
+CHECK_TIMEOUT = 420
+
 #: The corpus with a page whose fonts state no character mapping. The three
 #: checks about it assert the *presence* of a warning there and its *absence*
 #: everywhere else, so a mutation aimed at one of them on any other fixture is
@@ -131,11 +138,19 @@ MUTATIONS = [
         # ones it was written before. A selector naming `p` reads a tagged page
         # short by its headings --- and presents that as the page's text being
         # wrong rather than the selector.
+        # Re-aimed 2026-08-16. Its anchor was `joined = texts.filter(...).join(" ")`,
+        # a line commit 9e9be98 removed when links were announced as links, and
+        # nothing noticed for as long as this harness was not completing a run.
+        # The separator now goes in per range, so this is the same edit at the
+        # line that took over the job.
         "a11y: hand a paragraph's lines over as separate paragraphs",
         "src/lib/a11y.ts",
-        "    const joined = texts.filter((text) => text.length > 0).join(\" \");",
-        '    const joined = texts.filter((text) => text.length > 0).join("");',
-        "the accessibility tree is built in the order the tags give",
+        '      if (breaks.has(rangeAt)) piece += " ";',
+        "      if (false) piece += \" \";",
+        # Aimed at the TEXT rather than the order: dropping the separator merges
+        # two lines into one word and changes no block's position, so the
+        # order check it named cannot see it.
+        "the text read out is the page's own text",
         runner="viewer-tagged",
     ),
     Mutation(
@@ -382,6 +397,55 @@ MUTATIONS = [
         "a reader is told when a page could not be searched",
     ),
     Mutation(
+        # Hand the next phase a document with a sideways first page. The
+        # analogue of "the phase does not put the rotation back", and it has to
+        # be aimed at this phase's OWN restore assertion: the cross-phase check
+        # named "leaves the viewer as the phase before it did" runs at the end of
+        # the palette phase, which is well before this one, so it could not see a
+        # turn left behind here however it were worded.
+        "page turn: hand the next phase a page still turned",
+        "src/lib/viewercheck.ts",
+        # Narrowed to the FIRST put-back. The phase gained a second
+        # `setPageTurns(target, 0)` when the half-turn check was added, and a
+        # bare anchor then matched twice -- caught by the `anchors` gate rather
+        # than by a run.
+        "  viewer.setPageTurns(target, 0);\n  await frame();\n  const restored",
+        "  await frame();\n  const restored",
+        "turning a page back restores the layout",
+    ),
+    Mutation(
+        # Turn the whole VIEW instead of the one page. The defect the three
+        # negative checks exist for: every positive statement about the turned
+        # page --- its shape, its discarded tiles, its sideways text --- is
+        # equally true of this, so written with only the positive half the phase
+        # would pass.
+        "page turn: rotate the whole view instead of the one page",
+        "src/lib/viewer.ts",
+        "    this.text.setPageTurns(page, turns);\n    this.scroller.setPageTurns(page, turns);",
+        "    this.rotateBy(turns);",
+        "a page nobody turned keeps its shape",
+    ),
+    Mutation(
+        # The text layer left behind. Tiles turn, the caret does not, and it
+        # reads as selection being slightly wrong on one page rather than as a
+        # missing feature.
+        "page turn: leave the text layer upright when a page turns",
+        "src/lib/viewer.ts",
+        "    this.text.setPageTurns(page, turns);",
+        "",
+        "the text layer turns with the page",
+    ),
+    Mutation(
+        # Invalidate only when the box moves. A half turn moves no box, so the
+        # stale pixels stay on screen --- which is why `setPageTurns` invalidates
+        # before it touches the geometry rather than relying on `applySizes`.
+        "page turn: invalidate a turned page only when its box moves",
+        "src/lib/scroller.ts",
+        "    this.pageTurns[page] = next;\n    this.invalidatePage(page);",
+        "    this.pageTurns[page] = next;",
+        "a page turn discards that page's pixels",
+    ),
+    Mutation(
         # The third symptom, and the one whose reader can least easily tell
         # something is wrong: the guessed characters read aloud as though they
         # were the page.
@@ -539,17 +603,37 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     and the count from the summary disagreed, and it refused to answer rather
     than picking the wrong one. The stream split is the fix.
     """
+    # Three things `viewer_sweep.py` does that this did not, and the absence of
+    # them made a mutation run hang rather than fail. Measured 2026-08-16: the
+    # app sat for fourteen minutes at 0.0% CPU with the harness waiting on it,
+    # which is what an occluded window looks like --- WebKit suspends the page,
+    # nothing runs, and there is nothing to time out because no bound was passed.
+    #
+    #  - `pkill` first, because a leftover window occludes the next one.
+    #  - `TPDF_RAISE`, which covers the other half: a window with nowhere visible
+    #    to go.
+    #  - `--timeout`, so that a hang is a bounded failure. A harness whose worst
+    #    case is an unbounded wait cannot report anything at all, and this one is
+    #    run unattended by design.
+    subprocess.run(
+        ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"],
+        check=False,
+        capture_output=True,
+    )
     done = subprocess.run(
         [
             sys.executable,
             str(ROOT / "scripts/viewer_check.py"),
             str(APP),
             str(fixture),
+            "--timeout",
+            str(CHECK_TIMEOUT),
         ],
         cwd=ROOT,
         capture_output=True,
         text=True,
         errors="replace",
+        env={**os.environ, "TPDF_RAISE": "1"},
     )
     lines = [line for line in done.stdout.splitlines() if MARKER.match(line)]
     return lines, done.stdout, done.stderr

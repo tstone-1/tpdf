@@ -365,20 +365,33 @@ jobs:
           # by hand remains the act that offers the update to anybody.
           includeUpdaterJson: true
           releaseName: "tpdf ${{ github.ref_name }}"
-          # The scope paragraph is deliberate. tpdf is named and described as a
-          # viewer *and editor*, and nothing in this release edits a document ---
-          # the README says so a scroll below the fold, which is not where
-          # someone downloading a binary reads. A release that oversells itself
-          # is corrected by the first person who tries to annotate something.
+          # The scope paragraph is deliberate, and it has to be re-read on every
+          # release rather than inherited. tpdf is named and described as a
+          # viewer *and editor*, and a release that oversells itself is corrected
+          # by the first person who tries to annotate something -- the README
+          # says what is missing a scroll below the fold, which is not where
+          # someone downloading a binary reads.
+          #
+          # It went wrong in the *other* direction first, which is the direction
+          # worth expecting: this said "nothing here edits a document" and stayed
+          # true for exactly as long as that was so. The body is a literal here
+          # and nothing reads the CHANGELOG, so a feature landing does not move
+          # it and no gate can -- the paragraph is only ever as current as the
+          # last person who looked. Page rotation landed in 26.8.3 and this
+          # paragraph would have shipped denying it.
           releaseBody: |
-            **What this is.** A PDF *reader*: fast, sandboxed — every document is
-            parsed and rendered in worker processes with no filesystem or network
-            authority — with search, selection, an outline, thumbnails, session
-            restore and printing.
+            **What this is.** A PDF reader that has begun to edit: fast,
+            sandboxed — every document is parsed and rendered in worker processes
+            with no filesystem or network authority — with search, selection, an
+            outline, thumbnails, session restore and printing.
 
-            **What it is not, yet.** Nothing here edits a document. Annotations,
-            page operations, true redaction, forms and text editing are not built.
-            See the roadmap in `docs/PLAN.md`.
+            **What it edits.** Pages can be turned, with undo and redo, and the
+            result written out with *Save a copy*. The open file is never
+            modified in place.
+
+            **What it is not, yet.** Annotations, inserting and deleting pages,
+            true redaction, forms and text editing are not built. See the roadmap
+            in `docs/PLAN.md`.
 
             **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
             the `-setup.exe` if you prefer an installer that asks fewer
