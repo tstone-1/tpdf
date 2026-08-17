@@ -16,6 +16,8 @@ pub mod encoding;
 pub mod invert;
 pub mod launch;
 pub mod links;
+#[cfg(target_os = "macos")]
+pub mod menu;
 pub mod ocr;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
@@ -578,6 +580,66 @@ async fn extract_pages(
     })
     .await
     .map_err(|e| format!("the extract did not run: {e}"))?
+}
+
+/// Installs the native menu bar from the layout the frontend holds.
+///
+/// Returns the event name a chosen item will arrive on, or `None` where there is
+/// no menu bar --- which is every platform but macOS.
+///
+/// An answer rather than a refusal: nothing is wrong on Windows, the palette is
+/// that platform's route, and an error there would put a red line in front of a
+/// reader about a thing that was never meant to happen. So this is a capability
+/// question, and the frontend stops sending enablement updates for a menu that
+/// does not exist rather than pushing them into a silent no-op.
+///
+/// **The event name travels with the answer** for the reason `launch_open_event`
+/// exists: a constant agreed in two languages fails by silence, and this one
+/// would fail as a menu bar that is fully built, fully enabled, and does nothing
+/// when clicked. One call carries both, so the name cannot be fetched for a menu
+/// that was never installed.
+///
+/// The spec is built from the command registry; see `src/lib/menubar.ts`.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn set_menu(
+    app: tauri::AppHandle,
+    sections: Vec<menu::SectionSpec>,
+) -> Result<Option<&'static str>, String> {
+    menu::install(&app, sections).await?;
+    Ok(Some(menu::RUN_EVENT))
+}
+
+/// The non-macOS answer: no menu, and nothing wrong. See the macOS arm above.
+///
+/// Takes the payload as an unread `Value` rather than the typed shape, because
+/// `menu::SectionSpec` does not exist here --- and takes it at all so that the
+/// frontend has one call site rather than a platform test of its own.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn set_menu(_sections: serde_json::Value) -> Result<Option<&'static str>, String> {
+    Ok(None)
+}
+
+/// Enables or disables menu items to match the commands' own guards.
+///
+/// Separate from [`set_menu`] because a rebuild per edit would rebuild the whole
+/// bar several times a second while a reader works --- every rotation changes
+/// whether Undo is live.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn set_menu_enabled(
+    app: tauri::AppHandle,
+    state: std::collections::HashMap<String, bool>,
+) -> Result<(), String> {
+    menu::set_enabled(&app, state).await
+}
+
+/// The non-macOS answer. See the macOS arm above.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn set_menu_enabled(_state: std::collections::HashMap<String, bool>) -> Result<(), String> {
+    Ok(())
 }
 
 /// Extracts one page's characters and their positions.
@@ -1383,6 +1445,25 @@ pub fn run() {
         // bytes that were not signed by the key in `docs/THREAT-MODEL.md` §T9.
         .plugin(tauri_plugin_updater::Builder::new().build());
 
+    // The native menu bar. macOS only, for the reason `menu.rs` gives: there the
+    // bar is outside the window and its emptiness was the defect, and on Windows
+    // it would be chrome inside the window that this application exists to avoid.
+    //
+    // Registered on the builder rather than in the setup hook, and the handler
+    // has to be: a menu event can only arrive once there is a menu, which the
+    // frontend installs, but `on_menu_event` is a builder method and there is no
+    // later place to add one.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .manage(menu::MenuItems::<tauri::Wry>::default())
+            // The id travels to the frontend and is run through the same
+            // registry the palette uses. Nothing is decided here --- a menu that
+            // acted in Rust would be a second implementation of every command in
+            // it, with its own copy of each `enabled` guard.
+            .on_menu_event(|app, event| menu::forward(app, event.id().as_ref()));
+    }
+
     // The Windows counterpart of the `RunEvent::Opened` arm at the bottom of this
     // file, and the reason it exists is parity rather than tidiness: without it a
     // second launch is a **second process**, with its own window and its own worker
@@ -1513,6 +1594,8 @@ pub fn run() {
             edit_state,
             save_copy,
             extract_pages,
+            set_menu,
+            set_menu_enabled,
             close_document,
             page_text,
             search_page,

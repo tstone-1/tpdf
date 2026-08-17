@@ -1370,10 +1370,77 @@ discovery.
 - **One thin toolbar** — page navigation, zoom, search, sidebar toggle. Everything else in
   the palette or in context.
 - **Keyboard-first,** every command bindable, Sumatra-familiar navigation.
+- **A native menu bar on macOS, generated from the command registry** — added
+  2026-08-17, and see below for why it is not a contradiction of the first bullet.
 - **No modal dialogs for routine work.**
 - **Sidebar** with thumbnails, outline, annotations and search results as tabs. All four
   exist as of 2026-08-16; the annotations tab is read-only --- see *Reading comments* below.
 - Dark and light themes following the system.
+
+### The menu bar, built 2026-08-17
+
+**The palette is the thesis and it was also the only door.** Every command was
+reachable from ⌘K and from a chord, and from nothing else. On macOS that left Tauri's
+default menu bar in place — About, Hide, Quit, the web view's Cut/Copy/Paste, Window —
+with **no tpdf command in it at all**. So the page strip, and therefore deleting or
+reordering a page, was reachable only by someone who already knew ⌘\ or the palette.
+Reported by the user, in the form the failure actually takes: *"I can't see any option
+exposed via the menubar on macOS?"*
+
+That is a discoverability failure against the second of this project's three
+non-negotiables, and the palette does not answer it. A palette is a fast path for
+someone who knows the command exists; a menu is how you find out that it does. The two
+are complements, and the first bullet above was read as though it made the second
+unnecessary.
+
+**It is generated from `CommandRegistry`, not written.** `src/lib/menubar.ts` reads the
+same registry the palette reads and sends the result to Rust, which turns it into AppKit
+menus and turns a click back into the command's id — run through the same
+`registry.run`, guards and all. Nothing about a command is restated: not its title, not
+its shortcut, not its enablement. What the file *does* own is the layout, which is
+genuinely new information, and `menubar.test.ts` asserts that every registered command is
+either in it or excluded with a written reason. Adding a command and forgetting the menu
+is a red test rather than the silence that produced this in the first place.
+
+The one thing that could not be derived: a command taking an argument opens the palette
+in argument mode rather than running, because a menu has nowhere to type `1-3,5`. That is
+what ⌥⌘G already does for "Go to page".
+
+**A menu item is a key claim, not a label — and that shaped everything.** AppKit hands a
+menu accelerator the key before the web view sees it, so an item does not display a
+shortcut, it *takes* one. Two families therefore appear with no accelerator, and both keep
+working through handlers that can see what has focus: bindings with no ⌘ at all (bare `n`
+turns the page, and as a menu accelerator it would leave the find field), and ⌘Z, ⇧⌘Z, ⌘C,
+⌘A, Esc, which a text field claims even with the modifier. `handleWindowKey` already
+carries an explicit `inTextField` guard on undo; a menu accelerator would have undone that
+guard from outside the page, where no test of the guard could see it.
+
+**And a third family, which was measured rather than reasoned about.** An accelerator names
+a *physical key*; `keys.ts` matches on `event.key`, the *character* that key produced. Read
+out of the running application's own menu bar on this machine's German layout, the first
+version advertised **⌘#** for Toggle sidebar and **⌘Ö** / **⌘Ä** for Back and Forward,
+because `Backslash` and `BracketLeft` are those keys there. Pressing both settled it: ⌘ with
+the `\` character did nothing; ⌘ with physical key 42 toggled the sidebar. So the menu now
+claims letters and digits only.
+
+That measurement found a **defect that predates the menu**: ⌘\, ⌘[ and ⌘] are advertised in
+the palette and cannot be typed on a German keyboard at all — `\` is ⌥⇧7 there, and `matches`
+requires Option and Shift to be *up*. Three shortcuts this application has always shown and
+never delivered on this layout. The fix belongs to `keys.ts` rather than to the menu, and it
+is the same fix as the AZERTY case the menu cannot serve either: **match on `event.code`**,
+which would make the handler and the accelerator one vocabulary instead of two. Not done.
+
+**macOS only.** There the bar is outside the window and costs the reader nothing, which is
+what made its emptiness a defect. On Windows a menu bar is chrome *inside* the window, and
+this application exists partly because the alternatives put a ribbon there. `set_menu`
+answers `null` on that platform rather than refusing — a capability question, not an error.
+
+**Not done, and worth knowing before it looks like an oversight.** The Find menu shows the
+palette's own titles, so it reads *"Find: match case on or off"* where a menu convention
+would be a checkmark beside *"Match Case"*; carrying check state would mean a second title
+per command, which is the drift this whole design avoids, so it waits for the spec to carry
+state properly. File > Open Recent is absent for a mechanical reason — that group is rebuilt
+whenever a document opens, and a menu following it needs rebuilding with it.
 
 **Accessibility is an architectural constraint, not a later pass.** A canvas-rendered,
 virtualized page list is inaccessible by default: there is no DOM text to read, and

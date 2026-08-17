@@ -172,6 +172,73 @@ export function label(id: BoundCommand): string {
 }
 
 /**
+ * The accelerator string a native menu item wants, or null for no accelerator.
+ *
+ * A third rendering of the same {@link Binding} the palette's label and the key
+ * handler read, for the same reason the second one exists: three hand-written
+ * spellings of one chord drift, and the one that drifts is whichever nothing
+ * presses.
+ *
+ * **Null for any binding that does not hold the accelerator key**, and that is
+ * the load-bearing half. A menu accelerator is claimed by the menu bar *before*
+ * the web view sees the key, so registering a bare `n` --- what
+ * `nav.nextPage` is bound to --- would take the letter out of the find field
+ * and out of every text input the application ever grows. The unmodified
+ * bindings keep working exactly as they do now, through handlers that can see
+ * what has focus; they simply appear in the menu without a shortcut beside
+ * them. `menubar.ts` withholds a further four for the same reason at one
+ * remove: ⌘Z, ⇧⌘Z, ⌘C and ⌘A are chords a text field claims even though they
+ * carry the modifier.
+ *
+ * **Null for anything but a letter or a digit, and that one is measured rather
+ * than cautious.** A menu accelerator names a *physical key*; {@link matches}
+ * reads `event.key`, which is the *character* that key produced. On a US layout
+ * the two agree and the difference is invisible. On the German layout this was
+ * developed against they do not: `Backslash` is the `#` key, `BracketLeft` is
+ * `ö`, and a menu built from the character table advertised ⌘#, ⌘Ö and ⌘Ä for
+ * commands whose palette entry says ⌘\, ⌘[ and ⌘]. Read out of the running
+ * application's own menu bar, and then confirmed by pressing both: ⌘ with the
+ * `\` character did nothing, ⌘ with physical key 42 toggled the sidebar.
+ *
+ * So the menu claims only the keys whose character and position agree on the
+ * layouts this ships to. The punctuation chords keep working exactly as they
+ * did --- which on a German keyboard means three of them do not work at all,
+ * a defect that predates the menu and is `keys.ts`'s to fix, not the menu's to
+ * paper over by claiming a different chord than the one it advertises.
+ *
+ * The residual, stated rather than implied: a layout that moves *letters* ---
+ * AZERTY swaps A and Q --- breaks the same way for letter chords. The durable
+ * fix for both is matching on `event.code` instead of `event.key`, which would
+ * make the handler and the accelerator one vocabulary rather than two.
+ */
+export function accelerator(binding: Binding): string | null {
+  if (!binding.accel) return null;
+  const key = plainKey(binding.keys[0] ?? "");
+  if (key === null) return null;
+  // The parser is order-insensitive; this is macOS reading order so that a
+  // string read in a diff matches the glyphs `render` produces beside it.
+  const parts = [];
+  if (binding.alt) parts.push("Alt");
+  if (binding.shift) parts.push("Shift");
+  parts.push("CmdOrCtrl", key);
+  return parts.join("+");
+}
+
+/**
+ * A single letter or digit, upper-cased, or null for anything else.
+ *
+ * The refusal is the point --- see {@link accelerator}. A punctuation key is
+ * spelled by position in an accelerator and by character in a binding, and the
+ * parser accepts the position happily, so a guess here claims a chord nobody
+ * chose rather than failing.
+ */
+function plainKey(key: string): string | null {
+  if (key.length !== 1) return null;
+  const upper = key.toUpperCase();
+  return /^[A-Z0-9]$/.test(upper) ? upper : null;
+}
+
+/**
  * Whether an event is this binding.
  *
  * `metaKey || ctrlKey` for the accelerator, so the same table serves both
