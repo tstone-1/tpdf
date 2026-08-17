@@ -46,6 +46,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -204,7 +205,16 @@ def classify() -> tuple[list[str], list[str], list[str]]:
 
 
 def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
-    """One fixture through the harness, returning what the table needs."""
+    """One fixture through the harness, returning what the table needs.
+
+    The wall-clock is measured because the sweep is the slowest thing anyone
+    runs here and, until it was, nobody could say which fixture was costing
+    them. It is one A0 corpus: `vector-multi` was 338 s of a 721 s sweep --- 47%
+    of the run in one of fourteen entries --- and that is a fact about the
+    fixture rather than about the checks, so a total tells you nothing about
+    where to look.
+    """
+    began = time.monotonic()
     subprocess.run(
         ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"],
         check=False,
@@ -277,6 +287,7 @@ def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
     fails = [line for line in out.splitlines() if line.startswith("[FAIL]")]
     return {
         "stem": stem,
+        "seconds": time.monotonic() - began,
         "exit": result.returncode,
         "names": names,
         "ran": ran,
@@ -361,7 +372,7 @@ def main() -> int:
         mark = "[OK]  " if result["exit"] == 0 else "[FAIL]"
         print(
             f"{mark} {stem:<16} {result['ran']} ran, {result['skipped']} skipped, "
-            f"{len(result['names'])} names",
+            f"{len(result['names'])} names, {result['seconds']:.0f}s",
             flush=True,
         )
         for line in result["fails"]:
@@ -377,6 +388,18 @@ def main() -> int:
             f"| `{stem}.pdf` | {result['ran']} | {result['skipped']} | "
             f"{purpose[stem]} |"
         )
+
+    # Where the time went, which is the question a total cannot answer. One A0
+    # corpus was 47% of a 721 s sweep, and the only way anyone found that out
+    # was by timing the fixtures by hand after being asked why the machine had
+    # been at full tilt for twelve minutes. Printed as a share of the run so a
+    # fixture that starts dominating says so before it has to be measured again.
+    total = sum(float(result["seconds"]) for result in results)
+    slowest = sorted(results, key=lambda r: float(r["seconds"]), reverse=True)[:3]
+    print(f"\n=== {total:.0f}s over {len(results)} corpora")
+    for result in slowest:
+        share = 100.0 * float(result["seconds"]) / total if total else 0.0
+        print(f"  {str(result['stem']):<16} {float(result['seconds']):>6.0f}s  {share:>4.0f}%")
 
     # The invariant the totals cannot express. Compared as sets against the
     # first fixture's, and printed as a difference rather than a count: two
