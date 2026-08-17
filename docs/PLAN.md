@@ -1426,9 +1426,28 @@ claims letters and digits only.
 That measurement found a **defect that predates the menu**: ⌘\, ⌘[ and ⌘] are advertised in
 the palette and cannot be typed on a German keyboard at all — `\` is ⌥⇧7 there, and `matches`
 requires Option and Shift to be *up*. Three shortcuts this application has always shown and
-never delivered on this layout. The fix belongs to `keys.ts` rather than to the menu, and it
-is the same fix as the AZERTY case the menu cannot serve either: **match on `event.code`**,
-which would make the handler and the accelerator one vocabulary instead of two. Not done.
+never delivered on this layout.
+
+**One of the three is fixed, and the other two cannot be.** `Binding` now carries an optional
+`code`, a `KeyboardEvent.code` matched *as well as* the character, and `view.toggleSidebar`
+names `Backslash`. So the chord is "the `\` character, or the key in that position" — whichever
+the keyboard can offer — and the menu accelerator is derived from the same field, which is what
+makes the handler and the accelerator one vocabulary instead of two tables that agree by
+coincidence. Verified on the running application: ⌘ with physical key 42 toggles the sidebar
+in both directions, and the menu shows **⌘#**, which is what that key prints here.
+
+Back and Forward get none, and the reason is a collision rather than an oversight.
+`BracketRight` is the **`+` key** on a German keyboard, which `view.zoomIn` already claims, so
+a position for Forward would make one press of ⌘+ match two commands and leave the winner to
+whichever branch a handler tested first. `keys.test.ts` encodes the German punctuation row and
+fails on exactly that edit, because it is the obvious symmetric next step and it is wrong.
+Moving the pair to a layout-safe chord is a decision about *which* chord, not a bug fix.
+
+Two residuals, stated rather than implied. The palette still renders `⌘\` from the character
+while the menu shows `⌘#`; making them agree needs the layout's own character for a code, which
+macOS can answer (`UCKeyTranslate`) and WebKit cannot — `navigator.keyboard` is Chromium-only.
+And on macOS the menu claims the accelerator before the page sees it, so `matches`'s position
+path is what delivers this chord on **Windows**, not here.
 
 **macOS only.** There the bar is outside the window and costs the reader nothing, which is
 what made its emptiness a defect. On Windows a menu bar is chrome *inside* the window, and

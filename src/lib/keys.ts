@@ -31,6 +31,40 @@ export interface Binding {
    * Matching one spelling makes a shortcut that works on one keyboard.
    */
   keys: string[];
+  /**
+   * The physical key, as a `KeyboardEvent.code`, matched *as well as* {@link keys}.
+   *
+   * For a chord whose character a keyboard cannot produce without extra
+   * modifiers. ⌘\ is the case that forced it: on the German layout `\` is
+   * **⌥⇧7**, so the event arrives with Option and Shift held, {@link matches}
+   * refuses it for that reason, and the shortcut this application has always
+   * advertised has never once worked on that keyboard. Measured on the running
+   * application rather than deduced --- ⌘ with the `\` character did nothing,
+   * ⌘ with physical key 42 toggled the sidebar.
+   *
+   * **As well as, never instead of**, and that is not belt and braces. A code
+   * names a *position*: `Backslash` is `\` on a US keyboard and `#` on a German
+   * one, so matching only the code would move a chord for every reader outside
+   * the layout it was written on. Matching both means the chord is *either* the
+   * character or the key in that position, whichever the keyboard can offer.
+   *
+   * **Which path actually delivers the chord differs by platform**, and it is
+   * worth saying rather than leaving to be discovered. On macOS the menu bar
+   * claims the accelerator, so the chord never reaches the page and
+   * {@link matches} is not what fixes it there --- `menubar.ts` derives the
+   * accelerator from this same field, which is the point: the two agree by
+   * construction instead of by two tables happening to say the same thing. On
+   * Windows there is no menu bar, and this field is the only thing standing
+   * between a German keyboard and a dead shortcut.
+   *
+   * Only one binding carries one, and the absences are deliberate.
+   * `view.zoomIn` and `view.zoomOut` are punctuation too and are left alone
+   * because they already work: German puts `+` and `-` on unshifted keys, so
+   * the character path matches, and adding the position would claim two further
+   * chords for nothing. And see the collision test in `keys.test.ts` for why
+   * `nav.forward` cannot have one at all.
+   */
+  code?: string;
   /** Whether the platform accelerator (⌘ on macOS, Ctrl elsewhere) is held. */
   accel?: boolean;
   /** Whether Shift is held. Absent means "must not be". */
@@ -96,7 +130,12 @@ export const BINDINGS = {
   "view.zoomTo": { keys: ["z", "Ω"], accel: true, alt: true },
   "view.rotateClockwise": { keys: ["r", "R"], accel: true },
   "view.rotateCounterClockwise": { keys: ["l", "L"], accel: true },
-  "view.toggleSidebar": { keys: ["\\"], accel: true },
+  // The one binding with a physical key beside its character, and the reason is
+  // in `Binding.code`: `\` is ⌥⇧7 on a German keyboard, so this chord could not
+  // be typed there at all. `Backslash` is the `#` key on that layout, which is
+  // where a Mac reader's finger goes for ⌘\ anyway, because that is the key the
+  // menu bar highlights.
+  "view.toggleSidebar": { keys: ["\\"], code: "Backslash", accel: true },
   "view.invertPages": { keys: ["i", "I"], accel: true, shift: true },
   "nav.nextPage": { keys: ["n"] },
   "nav.previousPage": { keys: ["p"] },
@@ -213,7 +252,11 @@ export function label(id: BoundCommand): string {
  */
 export function accelerator(binding: Binding): string | null {
   if (!binding.accel) return null;
-  const key = plainKey(binding.keys[0] ?? "");
+  // A binding that names its physical key can be claimed as that key, whatever
+  // character the layout prints on it --- which is the whole reason `code`
+  // exists, and it makes the menu and the handler agree by construction rather
+  // than by two tables happening to say the same thing.
+  const key = binding.code ?? plainKey(binding.keys[0] ?? "");
   if (key === null) return null;
   // The parser is order-insensitive; this is macOS reading order so that a
   // string read in a diff matches the glyphs `render` produces beside it.
@@ -252,5 +295,9 @@ export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
   if (accel !== (binding.accel ?? false)) return false;
   if (event.shiftKey !== (binding.shift ?? false)) return false;
   if (event.altKey !== (binding.alt ?? false)) return false;
+  // Position *or* character --- see `Binding.code`. The character alone leaves
+  // ⌘\ untypable on a German keyboard; the position alone would move the chord
+  // for everyone whose layout is not the one it was written on.
+  if (binding.code !== undefined && event.code === binding.code) return true;
   return binding.keys.includes(event.key);
 }
