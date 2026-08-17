@@ -1443,11 +1443,20 @@ whichever branch a handler tested first. `keys.test.ts` encodes the German punct
 fails on exactly that edit, because it is the obvious symmetric next step and it is wrong.
 Moving the pair to a layout-safe chord is a decision about *which* chord, not a bug fix.
 
-Two residuals, stated rather than implied. The palette still renders `⌘\` from the character
-while the menu shows `⌘#`; making them agree needs the layout's own character for a code, which
-macOS can answer (`UCKeyTranslate`) and WebKit cannot — `navigator.keyboard` is Chromium-only.
-And on macOS the menu claims the accelerator before the page sees it, so `matches`'s position
-path is what delivers this chord on **Windows**, not here.
+**The palette says `⌘#` too**, as of the same day. It rendered `⌘\` from the character while
+the menu showed the key — one application disagreeing with itself about one shortcut, which is
+the exact defect `keys.ts` was extracted to prevent. `src-tauri/src/keylayout.rs` asks the
+platform what this keyboard prints at each punctuation position (`UCKeyTranslate` through the
+active layout's `UCKeyboardLayout`), the frontend records the answer once at startup and
+re-renders the labels from it. The web view cannot answer it —
+`navigator.keyboard.getLayoutMap()` is the API for exactly this and WebKit does not implement
+it — so the platform has to be asked. Verified in the running application: the palette row for
+Toggle sidebar reads **⌘#**, beside a menu item that reads the same.
+
+Two residuals remain, stated rather than implied. On macOS the menu claims the accelerator
+before the page sees it, so `matches`'s position path is what delivers this chord on
+**Windows**, not here. And the label lookup is macOS-only, so a Windows reader on a German
+keyboard gets a working chord under a label that still spells the character.
 
 **macOS only.** There the bar is outside the window and costs the reader nothing, which is
 what made its emptiness a defect. On Windows a menu bar is chrome *inside* the window, and

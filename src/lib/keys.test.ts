@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   accelerator,
   BINDINGS,
   label,
+  setPrintedKeys,
   matches,
   render,
   type Binding,
@@ -248,6 +249,53 @@ describe("the binding table", () => {
       });
       expect(clash, `${id} names ${code}, which prints ${prints} here`).toEqual([]);
     }
+  });
+});
+
+describe("labelling a key by what the keyboard prints on it", () => {
+  // Module state, so every test here puts it back. Without this the first one
+  // to run decides what the rest of the file sees, which is the kind of order
+  // dependence that shows up as one test failing only in a full run.
+  afterEach(() => setPrintedKeys({}));
+
+  it("names the key this keyboard shows, once the platform has said", () => {
+    // The whole point of asking macOS. `Backslash` prints `#` on a German
+    // keyboard, and a palette advertising ⌘\\ there teaches a chord that
+    // cannot be typed -- while the menu bar, which resolves the key itself,
+    // shows ⌘#. Two parts of one application disagreeing about one shortcut.
+    setPrintedKeys({ Backslash: "#" });
+    expect(label("view.toggleSidebar")).toBe("⌘#");
+  });
+
+  it("falls back to the declared character before the platform answers", () => {
+    // The control, and the state every launch passes through: the lookup is a
+    // round trip, so this is what is rendered until it returns, and what is
+    // rendered forever on a platform that cannot answer.
+    setPrintedKeys({});
+    expect(label("view.toggleSidebar")).toBe("⌘\\");
+  });
+
+  it("leaves a binding that names no position alone", () => {
+    // A position map is not a licence to relabel everything. `nav.back` has no
+    // `code`, so what a keyboard prints at `BracketLeft` is none of its
+    // business -- and on this layout that is `ü`, which would be a wrong label
+    // for a chord that is still the `[` character.
+    setPrintedKeys({ Backslash: "#", BracketLeft: "ü" });
+    expect(label("nav.back")).toBe("⌘[");
+    expect(label("file.open")).toBe("⌘O");
+  });
+
+  it("ignores a position nobody asked about", () => {
+    setPrintedKeys({ Semicolon: "ö" });
+    expect(label("view.toggleSidebar")).toBe("⌘\\");
+  });
+
+  it("replaces the whole map rather than merging into it", () => {
+    // A layout change replaces what the keyboard prints; merging would leave
+    // the previous layout's glyph on any position the new one does not name.
+    setPrintedKeys({ Backslash: "#" });
+    setPrintedKeys({ Minus: "ß" });
+    expect(label("view.toggleSidebar")).toBe("⌘\\");
   });
 });
 

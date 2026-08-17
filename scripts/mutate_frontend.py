@@ -74,6 +74,28 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Render the declared character even when the platform has said what the
+        # key prints. The palette then advertises Cmd-backslash while the menu
+        # bar, which resolves the key itself, shows Cmd-#: one application
+        # disagreeing with itself about one shortcut, on the layout where the
+        # chord could not be typed at all until this week.
+        "keys: label a positional binding by its character rather than the key cap",
+        "src/lib/keys.ts",
+        "  const printed = binding.code === undefined ? undefined : PRINTED[binding.code];",
+        "  const printed = undefined;",
+        "names the key this keyboard shows, once the platform has said",
+    ),
+    Mutation(
+        # Merge each answer into the last. A layout change then leaves the
+        # previous layout's glyph on any position the new one does not name --
+        # invisible until someone switches layouts, and wrong forever after.
+        "keys: merge the printed keys instead of replacing them",
+        "src/lib/keys.ts",
+        "  for (const key of Object.keys(PRINTED)) delete PRINTED[key];",
+        "",
+        "replaces the whole map rather than merging into it",
+    ),
+    Mutation(
         # Drop the position path. `\\` is Option-Shift-7 on a German keyboard, so
         # the character path arrives with modifiers the binding refuses -- which
         # is why Cmd-backslash had never once worked there, measured on the

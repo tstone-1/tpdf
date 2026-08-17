@@ -196,13 +196,45 @@ export type BoundCommand = keyof typeof BINDINGS;
  */
 export function render(binding: Binding): string {
   const modified = Boolean(binding.accel || binding.shift || binding.alt);
-  const first = binding.keys[0] ?? "";
+  // What this keyboard prints in that position, when the binding names one and
+  // the platform has answered. Before the answer arrives, and on a platform that
+  // cannot give one, this is the character the binding declares --- which is the
+  // label the palette showed before any of this existed.
+  const printed = binding.code === undefined ? undefined : PRINTED[binding.code];
+  const first = printed ?? binding.keys[0] ?? "";
   // A letter in a chord is capitalised and a bare one is not, which is what
   // every menu on this platform does: ⌘O, but `n` for the unmodified key.
   const key =
     binding.shown ?? (modified && first.length === 1 ? first.toUpperCase() : first);
   // macOS order, which is Control, Option, Shift, Command, then the key.
   return `${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}${binding.accel ? "⌘" : ""}${key}`;
+}
+
+/**
+ * What the reader's keyboard prints, by `KeyboardEvent.code`.
+ *
+ * Empty until {@link setPrintedKeys} is told otherwise, which is deliberate: a
+ * label rendered before the platform answers is the character the binding
+ * declares, and that is exactly what was shown before this existed. There is no
+ * state in which a chord renders blank.
+ */
+const PRINTED: Record<string, string> = {};
+
+/**
+ * Records what this keyboard prints, so labels can name the key a reader sees.
+ *
+ * Called once at startup with the platform's answer --- see `keylayout.rs` for
+ * why the platform has to be asked at all: `navigator.keyboard.getLayoutMap()`
+ * is the browser API for this and WebKit does not implement it.
+ *
+ * Mutates a module-level map rather than being threaded through every caller,
+ * because the alternative is making {@link label} async and every command
+ * registration wait on a keyboard read. Labels are already re-derived from this
+ * by `relabel`, so the ordering is: ask, record, relabel.
+ */
+export function setPrintedKeys(printed: Record<string, string>): void {
+  for (const key of Object.keys(PRINTED)) delete PRINTED[key];
+  Object.assign(PRINTED, printed);
 }
 
 /** The string the palette shows for a bound command. */
