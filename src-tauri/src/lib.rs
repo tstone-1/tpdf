@@ -468,6 +468,23 @@ async fn page_delete(
     edits.delete(doc, page)
 }
 
+/// Moves one page of the working document, without touching the file.
+///
+/// `after` is the id of the page the moved one should end up behind, and `null`
+/// means the front. Both ends are identities, for the reason [`page_delete`]
+/// gives twice over: a destination *index* would be read against an order the
+/// frontend may no longer have, and the page would land beside whatever had
+/// taken that position.
+#[tauri::command]
+async fn page_move(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    page: u64,
+    after: Option<u64>,
+) -> Result<edits::EditState, String> {
+    edits.move_page(doc, page, after)
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 async fn edit_undo(
@@ -1457,6 +1474,7 @@ pub fn run() {
             open_document,
             page_rotate,
             page_delete,
+            page_move,
             edit_undo,
             edit_redo,
             edit_state,

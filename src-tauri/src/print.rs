@@ -19,6 +19,11 @@
 //!   and `/Rotate` are *inheritable*, so a page moved out from under its parent
 //!   loses whatever it was inheriting --- and a page that has lost its resources
 //!   still counts as a page, still opens, and prints blank.
+//! - **A range in an order the file does not have.** Here the tree *is* rebuilt,
+//!   because a permutation cannot be expressed any other way, and the four
+//!   inheritable attributes are written onto each page first so that nothing is
+//!   lost on the way --- `pagetree::reorder_pages`. Only when the orders differ:
+//!   a subset in document order still takes the in-place path above.
 //! - **A rotated view.** The reader asked for what they are looking at, so the
 //!   view rotation is composed onto each page's own `/Rotate` --- the effective
 //!   one, resolved up the `/Parent` chain, not the literal one, which is absent
@@ -34,7 +39,7 @@ use std::path::Path;
 use lopdf::{Document, LoadOptions};
 
 use crate::edits::Plan;
-use crate::pagetree::{agreed_turns, apply_turns, drop_outline, drop_pages};
+use crate::pagetree::{agreed_turns, apply_turns, drop_outline, drop_pages, reorder_pages};
 use crate::sweep;
 
 /// Cap on a single decompressed stream, matching the sanitizing rewrite.
@@ -61,16 +66,19 @@ pub struct PagePlan {
 pub enum Pages {
     /// Every page, in document order, exactly as the file has them.
     All,
-    /// Exactly these, one-based --- and printed in **document order**, not in
-    /// the order they are listed here.
+    /// Exactly these, one-based, printed **in the order they are listed here**.
     ///
-    /// [`build`] produces a subset by *deleting* the pages nobody asked for, so
-    /// the survivors keep the positions they already had; `[3, 1]` prints page 1
-    /// then page 3. Assembling a new page tree in the listed order is a
-    /// different operation and this is not it. Said here rather than left to be
-    /// discovered because nothing downstream would report it: [`expect_pages`]
-    /// compares how many pages came out, never which, so a reordering that the
-    /// caller expected and did not get is invisible until it is on paper.
+    /// That is a change, and the old behaviour was a trap waiting for its
+    /// trigger: [`build`] produced a subset by deleting the pages nobody asked
+    /// for, so the survivors kept the positions the file gave them and `[3, 1]`
+    /// printed page 1 then page 3. Harmless while nothing could reorder a
+    /// document, and silently wrong the day `Command::Move` was wired --- a
+    /// reader who rearranged a document and pressed print would have got the old
+    /// order on paper, with nothing downstream able to say so: [`expect_pages`]
+    /// compares how many pages came out, never which.
+    ///
+    /// A listed order that is already the document's costs nothing: `build`
+    /// rewrites the page tree only when the two differ.
     Only(Vec<PagePlan>),
 }
 
@@ -195,6 +203,14 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
         drop_pages(&mut doc, &dropped)?;
         // Destinations into pages that are no longer here.
         drop_outline(&mut doc)?;
+    }
+
+    // Only when the reader's order differs from the file's. `reorder_pages`
+    // flattens the page tree, and doing that to a job that is merely a *subset*
+    // would rewrite the ancestry of every page for nothing.
+    if wanted.windows(2).any(|two| two[0].number >= two[1].number) {
+        let order: Vec<_> = plan.iter().map(|(id, _)| *id).collect();
+        reorder_pages(&mut doc, &order)?;
     }
 
     // Per page rather than per document, because an edit turns one page and the
@@ -1249,6 +1265,78 @@ mod tests {
         assert_eq!(read_back(&out).pages.len(), 3);
     }
 
+    /// A job prints its pages in the order it lists them.
+    ///
+    /// This used to be documented as *not* happening --- the subset came out in
+    /// document order --- and the day a reader could rearrange a document that
+    /// stopped being a quirk and became a print that silently disagrees with the
+    /// screen. Read back through PDFKit, on `rotated.pdf` because its four
+    /// distinct rotations are the only thing that names a page: a job in the
+    /// wrong order has the right pages and the right count.
+    #[test]
+    fn a_job_prints_its_pages_in_the_order_it_lists_them() {
+        let path = Path::new("../testdata/rotated.pdf");
+        if !path.exists() {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        }
+        let source = std::fs::read(path).expect("read source");
+        let Some(before) = os_pdf::read(&source) else {
+            println!("[SKIP] the OS parser refused rotated.pdf");
+            return;
+        };
+        let at: Vec<i64> = before
+            .pages
+            .iter()
+            .map(|page| page.rotation.rem_euclid(360))
+            .collect();
+        assert_eq!(
+            at.iter().collect::<HashSet<_>>().len(),
+            4,
+            "the fixture discriminates: four pages, four different rotations"
+        );
+
+        let job = build(
+            path,
+            &Job {
+                pages: only(&[4, 1, 3]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+        let after = os_pdf::read(&job).expect("the OS parser reads the job");
+        assert_eq!(
+            after
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect::<Vec<_>>(),
+            vec![at[3], at[0], at[2]],
+            "the pages listed, in the order they were listed"
+        );
+
+        // The control: the same three in ascending order are the document's own
+        // order, and nothing rewrites the tree for them. A build that reordered
+        // unconditionally passes the assertion above.
+        let ascending = build(
+            path,
+            &Job {
+                pages: only(&[1, 3, 4]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+        assert_eq!(
+            os_pdf::read(&ascending)
+                .expect("read")
+                .pages
+                .iter()
+                .map(|page| page.rotation.rem_euclid(360))
+                .collect::<Vec<_>>(),
+            vec![at[0], at[2], at[3]]
+        );
+    }
+
     /// `build` fed documents that no Rust code in this repository wrote.
     ///
     /// Every other check in this module builds its input with `fixture`, which
@@ -1380,6 +1468,75 @@ mod tests {
         // zero-page job with a zero expectation is a state nothing can reach,
         // and this pins which of the two guards is doing the work.
         assert!(expect_pages(0, Some(0)).is_ok());
+    }
+
+    #[test]
+    fn a_job_in_document_order_keeps_the_page_tree_the_file_had() {
+        // The control for reordering, and the reason `build` asks whether the
+        // orders differ instead of rebuilding every time. Both routes produce
+        // the same *document* here --- the same pages in the same order --- and
+        // what tells them apart is the shape of the tree underneath.
+        let dir = TempDir::new("nested-order");
+        let path = dir.file("in.pdf");
+        nested_fixture(&path, 3, 2);
+
+        let kind = |bytes: &[u8]| {
+            let doc = Document::load_mem(bytes).expect("load");
+            let root = doc
+                .catalog()
+                .expect("a catalog")
+                .get(b"Pages")
+                .and_then(Object::as_reference)
+                .expect("a page tree");
+            let first = doc
+                .get_object(root)
+                .and_then(Object::as_dict)
+                .expect("the root")
+                .get(b"Kids")
+                .and_then(Object::as_array)
+                .expect("kids")
+                .first()
+                .and_then(|entry| entry.as_reference().ok())
+                .expect("a first kid");
+            String::from_utf8_lossy(
+                doc.get_object(first)
+                    .and_then(Object::as_dict)
+                    .expect("a kid")
+                    .get(b"Type")
+                    .and_then(Object::as_name)
+                    .expect("a type"),
+            )
+            .into_owned()
+        };
+
+        let ascending = build(
+            &path,
+            &Job {
+                pages: only(&[1, 2, 4]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+        assert_eq!(
+            kind(&ascending),
+            "Pages",
+            "a subset in document order is deleted in place, so the groups above \
+             it are still groups"
+        );
+
+        let shuffled = build(
+            &path,
+            &Job {
+                pages: only(&[4, 1, 2]),
+                turns: 0,
+            },
+        )
+        .expect("build");
+        assert_eq!(
+            kind(&shuffled),
+            "Page",
+            "and the same pages in another order cannot be, so the tree is rebuilt"
+        );
     }
 
     #[test]

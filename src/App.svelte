@@ -157,6 +157,7 @@
     updateReady: () => updates.state.kind === "ready",
     rotatePage: (delta) => void rotatePage(delta),
     deletePage: () => void deletePage(),
+    movePage: (delta) => void movePage(delta),
     undoEdit: () => void applyEdit((e) => e.undo()),
     redoEdit: () => void applyEdit((e) => e.redo()),
     canUndo: () => edits?.state.can_undo ?? false,
@@ -193,6 +194,21 @@
   }
 
   /**
+   * Moves the page the reader is on by one slot.
+   *
+   * A destination slot rather than a direction, because that is what `edits.ts`
+   * inverts into the neighbour the model wants --- and because the day the page
+   * strip can be dragged, the destination is what a drag produces and this is
+   * already the call it makes. Off either end is a no-op, decided there rather
+   * than guarded here.
+   */
+  async function movePage(delta: number): Promise<void> {
+    const at = viewer?.position.page;
+    if (at === undefined) return;
+    await applyEdit((e) => e.move(at, at + delta));
+  }
+
+  /**
    * Runs one edit and moves the viewer to the state it produced.
    *
    * Every route in goes through here, which is the same reasoning that put the
@@ -212,7 +228,16 @@
       // call below throws work away --- the strip's thumbnails, the panels' rows
       // --- and a turn moves no page, so doing it unconditionally would make
       // rotating a page cost a re-render of the whole strip.
-      if (viewer?.setPages(after.pages)) applyPageOrder();
+      if (viewer?.setPages(after.pages)) {
+        applyPageOrder();
+        // The strip, which is the one consumer that cannot work out for itself
+        // that anything happened: its thumbnails are held under the row they
+        // were rendered for, and a *move* leaves the row count exactly as it
+        // was. Called here rather than in `applyPageOrder`, which also runs
+        // when a late outline or a late set of comments arrives and has no
+        // business throwing away a strip somebody is looking at.
+        sidebar?.thumbnails?.setPages(after.pages.length);
+      }
       dirty = after.dirty;
     } catch (e) {
       // Shown rather than logged. A refusal here is about the document --- a page
@@ -254,7 +279,6 @@
         items: outlineIn(rawOutline.items, pages),
       });
     }
-    sidebar?.thumbnails?.setPageCount(pages.length);
   }
 
   /**

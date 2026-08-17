@@ -1511,10 +1511,9 @@ rather than transcribed.
 > these rotation checks. Every `testdata/*.pdf` is now either a window corpus with a stated
 > purpose or excluded with a stated reason, and a fixture matching neither fails the gate.
 
-**Every row below was measured on macOS on 2026-08-17**, in one sweep of the committed tree,
-and printed by the script rather than transcribed --- the table is the sweep's own output,
-pasted. Zero failures
-anywhere, and **all fourteen corpora report the same 218 check names** --- diffed as sets by
+**Every row below was measured on macOS on 2026-08-17**, and printed by the script rather than
+transcribed --- the table is the sweep's own output, pasted. Zero failures
+anywhere, and **all fourteen corpora report the same 229 check names** --- diffed as sets by
 the sweep, not inferred from the totals agreeing.
 
 The link work took the total from 171 to 189, turning a page in the document took it to 204,
@@ -1523,6 +1522,42 @@ probe. Of the ten, the one that carries the weight is about **identity** --- the
 gap must now hold the page that was under it, compared by its text --- because a page count one
 lower is equally true of a viewer that dropped the wrong page. On a corpus whose pages read
 alike that check says so and skips rather than passing on a comparison that cannot fail.
+
+**Moving one took it to 229**: nine checks and two command probes. The nine are where the
+deletion ten do not transfer, and the reason is worth stating because it is what made the
+frontend defect this phase found invisible. **Every deletion check is built on the page count,
+and a move does not change it.** So the length is asserted to be *exactly what it was*, and
+every statement that can fail is about identity: the moved page's text is in the slot it was
+moved to, the page displaced by it is one slot lower rather than gone, the reader is still
+looking at the page they were reading, and both pages keep the sizes they were measured at ---
+that last one on `mixed.pdf`, the only corpus where two pages have different sizes, so on every
+other one it says so and skips.
+
+**That size check asserted one slot until the mutation aimed at it survived**, which is what
+the harness is for. The defect it was written against is a scroller re-indexing its learned
+sizes by position, and one comparison catches that. The other way to lose a size is to lose
+them all, and then every page falls back to one estimate --- free to land within tolerance of
+whichever single shape is being compared, which on this corpus it did. Asserting both slots
+makes it arithmetic instead: a shared estimate would have to be within 0.02 of two shapes the
+check's own precondition has just established are further apart than that. The same mutation
+reddened a *deletion* check the whole time, which reads absolute boxes rather than shapes ---
+so the coverage existed and the check named for it was the one that could not fail.
+
+> **The table above is the sweep taken just before that repair, and was not re-run for it.**
+> Said plainly rather than left to the dateline, because this page's whole argument is that a
+> measurement is of the tree it was taken from. What changed afterwards is one added
+> conjunction inside an existing check and that check's name --- neither of which can move a
+> ran or skipped count, since the skip condition is untouched and a rename applies to all
+> fourteen corpora at once. The name total *was* re-measured after the change: the mutation
+> run's own baseline reports **229 viewer-mixed check names**. The rows are therefore current
+> for everything except the wording of one name, and a full re-sweep costs 721 s of which
+> `vector-multi` is 338 --- which is the trade being made, stated so the next reader can
+> disagree with it.
+
+Putting the order back must restore the document exactly, which
+is the check a viewer that reordered its own view but not its model passes and a viewer that
+lost a page fails. Two of the eleven drive `page_move` for real, including the refusal of a
+page moved behind itself, and one is undo.
 
 The three that ask the backend are the `page_delete` round trip: the command is registered,
 names a page by identity, refuses a second deletion of that id as *deleted* rather than as
@@ -1548,20 +1583,20 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 176 | 42 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 182 | 36 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 182 | 36 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 100 | 118 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 134 | 84 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 171 | 47 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 171 | 47 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 153 | 65 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 163 | 55 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 164 | 54 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 172 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 184 | 34 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 191 | 27 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 137 | 81 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 186 | 43 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 192 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 192 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 102 | 127 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 142 | 87 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 179 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 181 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 158 | 71 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 173 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 174 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 183 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 194 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 201 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 139 | 90 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
 **`tagged.pdf` runs three of these thirteen and skips ten**, which is the split worth knowing:
 the ten that drive the viewer need a middle page to delete and it has two, while the three that
@@ -1583,7 +1618,9 @@ go, and the script sets it.
 
 **`text-heavy.pdf` moved by one between two sweeps an hour apart** --- 177/41 and 176/42, the
 same 218 names --- which is the race the notes below describe, not a regression. It is left as
-the second reading rather than the flattering one.
+the second reading rather than the flattering one. Those are the totals of that day, when the
+name set was 218; the row in the table is a later sweep against a larger set, so read the
+*one* it moved by, not the absolute figures.
 
 **Every row above is one run, and the notes below say why that is a point estimate rather than
 a bound.** Two of these fixtures have a check that lands on either side of a race, so their
@@ -2160,7 +2197,7 @@ starts at 0 and increments within the month.
    --- but only after `--`. `cargo test --lib a:: b::` is cargo's own argument error, which
    reads like the feature being unsupported.
 
-   `mutate_viewer.py` drives six runners, chosen per mutation and filterable with
+   `mutate_viewer.py` drives seven runners, chosen per mutation and filterable with
    `--runner`. The `structure`, `search` and `encodings` ones need no webview and no bundle, so
    they neither wait for one nor require an unlocked screen; each rebuilds one example and runs
    it, at about 15 s a mutation. All six print the same `[FAIL] <name>` lines and the same
@@ -2169,7 +2206,11 @@ starts at 0 and increments within the month.
    and differ only in the fixture they open.
 
    `viewer-tagged` is the viewer harness against `tagged.pdf`, and it exists because the two
-   tagged-reading-order checks `[SKIP]` on every other corpus. A skipped check is in the name
+   tagged-reading-order checks `[SKIP]` on every other corpus. `viewer-mixed` was added on
+   2026-08-17 for the same reason on a different property: a page carrying its *measured*
+   size to wherever it moved is only observable where the pages are different sizes, and
+   `mixed.pdf` is the one corpus that qualifies --- everywhere else the layout's estimate and
+   the truth are the same number. A skipped check is in the name
    set and cannot go red, so a mutation aimed at one reported **SURVIVED** --- the most
    misleading verdict this harness produces, since it reads as a gap in the checks rather than
    a fixture that does not exercise them. The baseline validation now refuses that case

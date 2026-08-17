@@ -479,16 +479,24 @@ export class Thumbnails {
   }
 
   /**
-   * Takes a new page count, throwing away every thumbnail.
+   * Takes the document's page order, throwing away every thumbnail.
    *
    * Not selective, and the reason is the same one `Scroller.setPages` gives: a
    * thumbnail is held under the row it was rendered for, and after a deletion
    * every row below the gap shows a different page. Keeping them would leave the
    * strip captioned "page 4" over a picture of the old page 4, which is the
    * plausible wrong answer rather than an obviously stale one.
+   *
+   * **It takes a count and discards on every call, which is not the same thing
+   * as taking a count and discarding when the count changed.** This was
+   * `setPageCount`, and it returned early when the number matched --- correct
+   * for a deletion, which always shortens the document, and wrong for a *move*,
+   * which never does. The strip would have gone on showing the old order with
+   * nothing to say it had not been asked. So the guard is the caller's: it is
+   * called when the order changed, and the order changing is what the model's
+   * reply answers.
    */
-  setPageCount(pageCount: number): void {
-    if (pageCount === this.opts.pageCount) return;
+  setPages(pageCount: number): void {
     this.opts.pageCount = pageCount;
     this.generation++;
     this.withdraw("discard");

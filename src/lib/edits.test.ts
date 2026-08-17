@@ -127,6 +127,101 @@ describe("Edits", () => {
     });
   });
 
+  it("turns a destination slot into the neighbour the model accepts", async () => {
+    const opened = state(4);
+    core.invoke.mockResolvedValueOnce(opened);
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    // The first page to the last slot. The anchor is read out of the order
+    // *without* it: the page that ends up in front of it is the old page 4, id
+    // 4 --- reading the order that still holds it would name id 3 and land the
+    // page one slot short of where the reader put it.
+    core.invoke.mockResolvedValueOnce(opened);
+    await edits.move(0, 3);
+    expect(core.invoke).toHaveBeenLastCalledWith("page_move", {
+      doc: 9,
+      page: 1,
+      after: 4,
+    });
+  });
+
+  it("sends no anchor for a move to the front", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(state(3));
+    await edits.move(2, 0);
+    expect(core.invoke).toHaveBeenLastCalledWith("page_move", {
+      doc: 9,
+      page: 3,
+      after: null,
+    });
+  });
+
+  it("names the page after the one being moved for a single step back", async () => {
+    // The case the naive arithmetic breaks loudly on rather than quietly: it
+    // would name the moved page as its own anchor, which the model refuses.
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(state(3));
+    await edits.move(0, 1);
+    expect(core.invoke).toHaveBeenLastCalledWith("page_move", {
+      doc: 9,
+      page: 1,
+      after: 2,
+    });
+  });
+
+  it("names the page before the destination for a step towards the front", async () => {
+    core.invoke.mockResolvedValueOnce(state(4));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(state(4));
+    await edits.move(3, 2);
+    expect(core.invoke).toHaveBeenLastCalledWith("page_move", {
+      doc: 9,
+      page: 4,
+      after: 2,
+    });
+  });
+
+  it("sends nothing for a move that changes no order", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockReset();
+
+    // Onto its own slot, and — after the clamp — onto the end it is already at.
+    // A journal entry for a move that moves nothing costs the reader an undo
+    // that does nothing visible.
+    await edits.move(1, 1);
+    await edits.move(0, -4);
+    await edits.move(2, 9);
+    expect(core.invoke).not.toHaveBeenCalled();
+
+    // The control: the same clamp on a page that is *not* already at that end
+    // is a real move, so the three above are silent because they change nothing
+    // rather than because a destination past the end is dropped.
+    core.invoke.mockResolvedValueOnce(state(3));
+    await edits.move(0, 9);
+    expect(core.invoke).toHaveBeenLastCalledWith("page_move", {
+      doc: 9,
+      page: 1,
+      after: 3,
+    });
+  });
+
+  it("does not send a move for a slot the model has never mentioned", async () => {
+    const edits = new Edits(9);
+    await edits.move(0, 1);
+    expect(core.invoke).not.toHaveBeenCalled();
+  });
+
   it("builds the map from the pages the last reply carried", async () => {
     const opened = state(3);
     core.invoke.mockResolvedValueOnce(opened);

@@ -19,6 +19,38 @@ have the binary.)
 
 ## [26.8.3] - Unreleased
 
+### Move a page
+
+- **Move page up** and **Move page down**, in the command palette. They move the page the
+  reader is on one slot in the working document; **Undo** puts it back. **Save a copy**
+  and **Print** both write the document in the order the reader put it in.
+
+- **No keyboard shortcut**, for a different reason than Delete page has none: there is no
+  chord left that reads as "move a *page*" rather than "move the *view*", and rearranging
+  a document is work a reader does in the page strip. Dragging thumbnails is not built
+  yet; these two commands are the operation it will call.
+
+- **Off either end does nothing** rather than wrapping. A page that reappeared at the
+  other end of the document would look, to the reader holding the key down, exactly like
+  one that had been deleted.
+
+- **A saved or printed copy keeps its bookmarks**, which is the opposite of what happens
+  when a page is deleted. A bookmark names a page *object*, and moving a page leaves every
+  object exactly where it is in the file --- so the entry follows its page to wherever the
+  reader put it.
+
+- **Printing a rearranged document prints it rearranged.** It would not have: a print job
+  built its pages by removing the ones nobody asked for, so a selection came out in the
+  order the file had rather than the order it was asked for. That was written down as
+  intended behaviour and was harmless until this release; both writers now honour the
+  order.
+
+- **A moved page keeps its size, its crop and its rotation**, including where the file
+  never stated them on the page itself. A PDF lets a page inherit those from the group it
+  sits in, so moving a page between groups is where they silently change --- a page that
+  comes out of the wrong group is a page at the wrong size, in a document that opens and
+  looks plausible.
+
 ### Delete a page, and everything that has to move with it
 
 - **Delete page**, in the command palette. It takes the page the reader is on out of the

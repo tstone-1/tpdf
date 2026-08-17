@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 294 entries
+The one thing this file does *not* carry in full is the trap list --- 301 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -921,8 +921,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 294 of them and the full text
-was 93% of this file --- an instruction budget spent on the 286 traps that are not
+titles. Only the titles are here, because there are 301 of them and the full text
+was 93% of this file --- an instruction budget spent on the 293 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1034,6 +1034,10 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A page number is a position, and deleting a page renumbers every one after it (an existing test caught it, and only because its fixture keeps the first and *last* pages)
 - Removing one of two page numbers that name one page cannot be done by removing objects (found by writing the test that expected it to work; the fix is a refusal with an over-refusal control)
 - Dropping a reference out of a destination array leaves a destination with no page
+- Flattening a page tree loses what a page inherited from the node it hung under (the one nested fixture in the corpus cannot tell the two apart, and looks as though it can)
+- A permutation and a subset are the same document to every reader, and not the same file (the control has to read the tree's shape, because nothing about the pages differs)
+- A quirk documented as harmless becomes a defect the day its precondition is wired (one shared assumption, two subsystems, and only one left a tripwire)
+- The order a model inserts into is not the order its caller is looking at (one off-by-one, two symptoms --- a page one slot short, and a refusal on the shortest move there is)
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
@@ -1149,6 +1153,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Every statement about a turned page is also true of a rotated view (the assertions that can fail are the negative ones)
 - An exclusion keyed on a prefix grows on its own
 - `instanceof` against a constructor the runner does not have throws, it does not answer no (measured; the guess was wrong in the reassuring direction)
+- A page count cannot see a move, and every deletion check is built on the page count
+- A duplicate key in an object literal is legal JavaScript, so the suite stayed green (the gate that caught it was the type-checker, and it would not have caught the version that mattered)
+- A tolerance around one value is satisfied by an estimate that replaced every value (the check ran and passed; the same mutation reddened a different check the whole time)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing

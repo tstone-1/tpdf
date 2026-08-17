@@ -61,6 +61,33 @@ beforeEach(() => {
   core.invoke.mockReset();
 });
 
+describe("Search and a change of order", () => {
+  it("drops the matches when the order changes and the page count does not", async () => {
+    // A match is held under the slot it was found on, so after a move it is a
+    // highlight over a passage that is not there. This dropped them only when
+    // the count differed --- right for a deletion, and a move never changes the
+    // count, so every highlight would have survived onto the wrong pages.
+    core.invoke.mockImplementation((command: string, args: { page?: number }) =>
+      command === "search_page"
+        ? Promise.resolve({
+            page: args.page ?? 0,
+            matches: [{ page: args.page ?? 0, start: 0, end: 3, rects: [] }],
+            chars: 10,
+            guessing: 0,
+            truncated: false,
+          })
+        : Promise.resolve([]),
+    );
+    const searcher = new Search(1, 2, () => {});
+    await searcher.run("cat", 0);
+    // The control: there is something to lose.
+    expect(searcher.matches.length).toBeGreaterThan(0);
+
+    searcher.setPages(2);
+    expect(searcher.matches).toEqual([]);
+  });
+});
+
 describe("Search.unsearchablePages", () => {
   it("counts a page the document declares no mapping for", () => {
     // The case the whole feature exists for.

@@ -174,6 +174,98 @@ MUTATIONS = [
         "a_page_that_was_not_turned_keeps_an_inherited_rotation",
     ),
     Mutation(
+        # Reparent every page and take nothing with it. `/MediaBox`, `/Rotate`,
+        # `/Resources` and `/CropBox` are inheritable, so a page that hung under
+        # a tree node stating one loses it the moment it hangs off the root ---
+        # producing a document that opens, looks plausible, and has a page at
+        # the wrong size or the wrong angle.
+        "pagetree: reorder without carrying what a page inherited",
+        "src/pagetree.rs",
+        "                    pushes.push((page, key, value));",
+        "                    let _ = value;",
+        "a_reordered_page_takes_what_it_inherited_with_it",
+    ),
+    Mutation(
+        # The other direction: write every inherited attribute onto every page.
+        # It costs pages nobody moved their byte-for-byte identity, and for
+        # `/Rotate` it is the flattening `apply_turns` deliberately avoids --- a
+        # page whose `/Parent` chain outruns the bound reads back as upright.
+        "pagetree: push an inherited value down even when the root already supplies it",
+        "src/pagetree.rs",
+        "                Some(value) if Some(&value) != from_root[at].as_ref() => {",
+        "                Some(value) => {",
+        "a_page_that_inherits_from_the_root_is_not_written_to",
+    ),
+    Mutation(
+        # Leave `/Count` at whatever the file declared. The tree then claims
+        # pages a reader walking `/Kids` will not find, which is a document
+        # every parser is entitled to reject.
+        "pagetree: leave the rebuilt tree claiming the page count the file had",
+        "src/pagetree.rs",
+        "    tree.set(\"Count\", order.len() as i64);",
+        "",
+        "the_flattened_tree_counts_what_it_holds_and_owns_every_page",
+    ),
+    Mutation(
+        # Rebuild `/Kids` and leave every page pointing at the node it used to
+        # hang under. The document reads correctly --- `get_pages` walks down
+        # from the root --- and every walk *up* a `/Parent` chain, this module's
+        # included, resolves against an ancestry that is no longer there.
+        "pagetree: rebuild the tree without telling the pages who their parent is",
+        "src/pagetree.rs",
+        "            .set(\"Parent\", Object::Reference(root));",
+        "            .set(\"NotParent\", Object::Reference(root));",
+        "the_flattened_tree_counts_what_it_holds_and_owns_every_page",
+    ),
+    Mutation(
+        # Rebuild the tree for every save. The document is identical either way,
+        # so nothing a reader sees can tell --- and every page of every copy has
+        # been reparented for a plan that moved nothing.
+        "save: rebuild the page tree even when nothing moved",
+        "src/save.rs",
+        "    let moved = plan\n        .pages\n        .windows(2)\n        .any(|two| two[0].source >= two[1].source);",
+        "    let moved = true;",
+        "a_plan_in_document_order_leaves_the_page_tree_as_it_found_it",
+    ),
+    Mutation(
+        # The print half of the same defect, and it was live in shipped code as
+        # a documented property: a subset came out in document order whatever
+        # order it was asked for.
+        "print: hand the printer the pages in the file's order rather than the job's",
+        "src/print.rs",
+        "    if wanted.windows(2).any(|two| two[0].number >= two[1].number) {",
+        "    if false {",
+        "a_job_prints_its_pages_in_the_order_it_lists_them",
+    ),
+    Mutation(
+        # And its over-application, which no page a reader sees can distinguish.
+        "print: rebuild the page tree for a job whose pages never moved",
+        "src/print.rs",
+        "    if wanted.windows(2).any(|two| two[0].number >= two[1].number) {",
+        "    if true {",
+        "a_job_in_document_order_keeps_the_page_tree_the_file_had",
+    ),
+    Mutation(
+        # Drop the anchor and put every moved page at the front. Half of all
+        # moves then land where they were asked to, which is the shape that
+        # survives a test suite reading only the page count.
+        "edits: move every page to the front whatever anchor was named",
+        "src/edits.rs",
+        "                after: after.map(PageId::from_raw),",
+        "                after: None,",
+        "a_moved_page_lands_behind_the_page_it_named_and_keeps_its_identity",
+    ),
+    Mutation(
+        # Call a plan the file on disk whenever it has every page unturned,
+        # which a reordered document does. The print path then hands the file
+        # over byte for byte and the reader's rearrangement never reaches paper.
+        "edits: read a plan's length and turns as meaning it is the file on disk",
+        "src/edits.rs",
+        "                .all(|(at, page)| page.source as usize == at && page.turns % 4 == 0)",
+        "                .all(|(_at, page)| page.turns % 4 == 0)",
+        "a_plan_after_a_move_is_out_of_document_order",
+    ),
+    Mutation(
         # Keep every page whatever the plan says. The copy then comes out with
         # the page the reader deleted still in it, which is the whole feature
         # silently doing nothing.
@@ -215,11 +307,16 @@ MUTATIONS = [
     Mutation(
         # Write a reordered plan in the order the file already has. The pages
         # come out in the wrong order, in a file that opens and prints.
-        "save: write a reordered plan in file order rather than refusing it",
+        #
+        # It named the refusal this replaced --- and when that test went, the
+        # harness refused to start rather than reporting the mutation survived.
+        # Same edit, same defect, and now a test that asserts the pages came out
+        # where the reader put them instead of that the save declined to try.
+        "save: write a reordered plan in file order rather than in the reader's",
         "src/save.rs",
         "        .any(|two| two[0].source >= two[1].source)",
         "        .any(|_two| false)",
-        "a_plan_whose_pages_have_moved_is_refused_rather_than_written_in_file_order",
+        "a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them",
     ),
     Mutation(
         # Keep the outline after pages have gone. Its destinations name objects

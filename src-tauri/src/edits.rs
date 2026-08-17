@@ -33,11 +33,13 @@
 //! reader of the same rule, able to disagree with the first about which page is
 //! where. What crosses the boundary is one answer.
 //!
-//! What is still **not** here: nothing creates a page (`docmodel`'s note has the
-//! id-allocator property that would need proving first), and nothing moves one.
-//! `Command::Move` is written and tested in the model and is wired to nothing ---
-//! `save.rs` refuses a plan whose pages are out of document order rather than
-//! writing them in the order the file happens to have.
+//! **A plan can now be out of document order**, as of the increment that wired
+//! [`Command::Move`]. `save.rs` and `print.rs` rebuild the page tree for one
+//! rather than refusing it, and both check first: rebuilding it costs every page
+//! its ancestry, so a document nobody rearranged must not go through that path.
+//!
+//! What is still **not** here: nothing creates a page --- `docmodel`'s note has
+//! the id-allocator property that would need proving first.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -179,6 +181,30 @@ impl Edits {
             doc,
             Command::Delete {
                 page: PageId::from_raw(page),
+            },
+        )
+    }
+
+    /// Moves one page so that it sits immediately after `after`, or first when
+    /// `after` is `None`.
+    ///
+    /// **A neighbour rather than a destination index**, which is the same
+    /// argument as addressing the page by identity: an index names a position in
+    /// an order that a command in flight may already have changed, and the page
+    /// would land next to whatever moved into it. The frontend does the
+    /// arithmetic, because it is the side that holds the order --- see
+    /// `pages.ts`.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; either id names no page or a deleted
+    /// one; or the anchor is the page itself, which describes no move.
+    pub fn move_page(&self, doc: u32, page: u64, after: Option<u64>) -> Result<EditState, String> {
+        self.command(
+            doc,
+            Command::Move {
+                page: PageId::from_raw(page),
+                after: after.map(PageId::from_raw),
             },
         )
     }
@@ -516,6 +542,145 @@ mod tests {
             !edits.state(3).expect("state").dirty,
             "and does not enter the journal"
         );
+    }
+
+    #[test]
+    fn a_moved_page_lands_behind_the_page_it_named_and_keeps_its_identity() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        // The first page to the end: behind the last one.
+        let after = edits
+            .move_page(7, pages[0].id, Some(pages[2].id))
+            .expect("move");
+
+        assert_eq!(
+            after.pages.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![pages[1].id, pages[2].id, pages[0].id]
+        );
+        assert_eq!(
+            after.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            vec![1, 2, 0],
+            "and the sources say which page of the FILE is now in each slot --- \
+             the equality between the two is what a move breaks without changing \
+             the page count, which is how it differs from a deletion"
+        );
+        assert!(after.dirty);
+        assert!(after.can_undo);
+    }
+
+    #[test]
+    fn a_move_to_the_front_names_no_anchor() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        let after = edits.move_page(7, pages[2].id, None).expect("move");
+        assert_eq!(
+            after.pages.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![pages[2].id, pages[0].id, pages[1].id]
+        );
+    }
+
+    #[test]
+    fn a_moved_page_keeps_the_turn_it_had() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits.rotate(7, pages[0].id, 1).expect("rotate");
+        let after = edits
+            .move_page(7, pages[0].id, Some(pages[2].id))
+            .expect("move");
+        assert_eq!(
+            after.pages.iter().map(|p| p.turns).collect::<Vec<_>>(),
+            vec![0, 0, 1],
+            "the turn travelled with the page rather than staying in slot 0"
+        );
+    }
+
+    #[test]
+    fn undo_puts_a_moved_page_back_where_it_came_from() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits
+            .move_page(7, pages[0].id, Some(pages[2].id))
+            .expect("move");
+        let back = edits.undo(7).expect("undo");
+        assert_eq!(
+            back.pages.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![pages[0].id, pages[1].id, pages[2].id]
+        );
+        assert!(!back.dirty);
+    }
+
+    #[test]
+    fn a_page_cannot_be_moved_behind_itself() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        let why = edits
+            .move_page(7, pages[1].id, Some(pages[1].id))
+            .expect_err("must refuse");
+        assert_eq!(why, "a page cannot be moved after itself");
+        assert!(
+            !edits.state(7).expect("state").dirty,
+            "a refusal does not enter the journal"
+        );
+    }
+
+    #[test]
+    fn a_move_naming_a_deleted_anchor_says_the_anchor_was_deleted() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits.delete(7, pages[2].id).expect("delete");
+        let why = edits
+            .move_page(7, pages[0].id, Some(pages[2].id))
+            .expect_err("gone");
+        assert_eq!(
+            why, "that page has been deleted",
+            "the anchor is checked as carefully as the subject --- a frontend one \
+             state behind is as likely to name a stale neighbour as a stale page"
+        );
+        assert_eq!(
+            edits.state(7).expect("state").pages.len(),
+            2,
+            "and the move did not half-happen"
+        );
+    }
+
+    #[test]
+    fn a_plan_after_a_move_is_out_of_document_order() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits
+            .move_page(7, pages[0].id, Some(pages[2].id))
+            .expect("move");
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(plan.baseline, 3);
+        assert_eq!(
+            plan.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            vec![1, 2, 0],
+            "which is what `save.rs` and `print.rs` rebuild a page tree for"
+        );
+        assert!(
+            !plan.is_identity(),
+            "every page is present and unturned, and this is still not the file \
+             on disk --- a length-and-turns check would have said it was"
+        );
+    }
+
+    #[test]
+    fn a_plan_after_a_moved_page_lands_back_where_it_started_is_the_file_again() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits
+            .move_page(7, pages[0].id, Some(pages[2].id))
+            .expect("move");
+        edits.move_page(7, pages[0].id, None).expect("move back");
+
+        let plan = edits.plan(7).expect("plan");
+        assert!(
+            plan.is_identity(),
+            "the control for the check above: `is_identity` is reading the order \
+             rather than counting the commands"
+        );
+        assert!(edits.state(7).expect("state").dirty);
     }
 
     #[test]
