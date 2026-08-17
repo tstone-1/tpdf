@@ -2435,13 +2435,15 @@ starts at 0 and increments within the month.
     publishing it is step 11 rather than a clause here: see that step for what describing
     it in this sentence cost.
 
-    **If a job fails, re-run the whole workflow --- never one job of it.** `26.8.3-rc2`'s
-    macOS build died in `Set up job` on a `429` from codeload, which is infrastructure and
-    not ours; `gh run rerun --failed` made every job green and produced **two drafts under
-    one tag**, with the artifacts split so that neither was complete --- one had no macOS
-    updater bundle, the other had no Windows installers at all. Deleting the tag and pushing
-    the next one costs a quarter of an hour; publishing half a release costs a point version.
-    The trap of that name has the table.
+    **Expect two drafts under one tag, and check before publishing.** `26.8.3-rc2` and
+    `26.8.3-rc3` each produced two, with the artifacts split so that neither was complete ---
+    one draft holding no macOS updater bundle, the other no Windows installers at all.
+    `v26.8.2` produced one complete release of 8 assets from this same workflow six days
+    earlier, and the only change to `release.yml` between them is the wording of
+    `releaseBody`. Two plausible causes were recorded and both were falsified: a single-job
+    re-run (`rc3` had none and split identically) and a race between the legs (`max-parallel:
+    1` is set, and `rc3`'s two uploads were eleven minutes apart). **The cause is open.**
+    Until it is found, step 11's asset count is the guard, and it is not optional.
 
 11. **Publish the draft, and check it from outside the account.** A green `Release` run
     produces four artifacts and shows them to nobody --- GitHub hides a draft from everyone

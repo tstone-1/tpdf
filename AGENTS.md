@@ -1283,7 +1283,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 - A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it (15/15 green for sixteen commits while an example did not compile; one type error reads as four broken gates)
 - A gate that refuses on a precondition of running is red on every machine that is not running (the gate demanded fixtures the repository had already written down as deliberately absent)
-- Re-running one job of a release run splits the artifacts across two drafts, and neither is complete (`gh release view <tag>` cannot tell them apart, and `gh api .../releases` answers 200 with `[]`)
+- Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong (the second was wrong too; `gh release view <tag>` cannot tell them apart, and `gh api .../releases` answers 200 with `[]`)
 
 ### Fixtures
 - The test fixtures are generated, not committed

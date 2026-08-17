@@ -8230,7 +8230,7 @@ the whole set is present. On a runner holding seven fixtures most patterns match
 reason that is not rot, and a warning that fires on every CI run is one nobody reads on the run
 where it means something.
 
-### Re-running one job of a release run splits the artifacts across two drafts, and neither is complete
+### Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong
 
 `v26.8.3-rc2`'s macOS build died in `Set up job` on `429 Too Many Requests` fetching an
 action from codeload --- an infrastructure failure, before a line of our code ran. Re-running
@@ -8247,9 +8247,23 @@ broken: a release macOS cannot update from, or one with no Windows build at all.
 `26.8.1` and `26.8.2` each produced exactly one complete draft, and none of them involved a
 re-run.
 
-**The rule is to re-run the whole workflow, never one job of it.** The exact mechanism is not
-established here and is deliberately not guessed at --- what is established is the asset
-split, and that it followed a single-job re-run.
+**That paragraph attributed it to the re-run, and the next tag falsified it.** `rc3` was a
+clean run with no re-run of anything, and it split identically: 5 assets and 4. So the re-run
+was a coincidence, and this entry is left with its first answer visible rather than quietly
+corrected, because the shape of the error is the lesson --- a plausible cause, adjacent in
+time, recorded in the same breath as a sentence promising not to guess at one.
+
+**The second answer was wrong too.** A race between the two build jobs is ruled out by the
+timestamps: `max-parallel: 1` is already set and has been, `rc3`'s macOS leg uploaded at
+14:27:49 and its Windows leg at 14:38:20 --- eleven minutes apart, strictly serial, and the
+second still did not find the first's draft.
+
+**What is established, and no more.** `v26.8.2` produced one complete release of 8 assets
+from this same workflow six days earlier, with a `latest.json` of 4,172 bytes carrying both
+platforms; `rc2` and `rc3` each produced two incomplete drafts whose `latest.json` files are
+2,721 and 3,336 bytes, one platform each. The only change to `release.yml` between them is
+the wording of `releaseBody`. That is not a mechanism, and nothing here should be read as
+one.
 
 **The reason this is dangerous rather than merely untidy is that the checklist said "publish
 the draft".** With one draft that sentence is unambiguous and for three releases it was true.
