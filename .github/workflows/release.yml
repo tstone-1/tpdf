@@ -180,16 +180,34 @@ jobs:
           # here; it also answers HTTP 200 with `[]` under some tokens, so an
           # empty list from it is not evidence of an empty repository. GraphQL
           # returned the drafts every time this was checked by hand.
+          #
+          # RETRIED, because github.com's own availability is a real failure mode
+          # of this workflow rather than a hypothetical one. In one afternoon it
+          # produced a `429` that killed a macOS build while fetching an action
+          # from codeload, and the `503` that killed `26.8.3-rc4` here --- on this
+          # very call, at its first attempt. `-e` turned that into a correct
+          # refusal and a lost release. Six attempts with a widening gap; a
+          # genuine outage still fails, which is the point of bounding it.
           find_drafts() {
-            gh api graphql -f query='
-              query($owner:String!, $name:String!) {
-                repository(owner:$owner, name:$name) {
-                  releases(first: 30, orderBy: {field: CREATED_AT, direction: DESC}) {
-                    nodes { databaseId tagName isDraft }
+            local attempt out
+            for attempt in 1 2 3 4 5 6; do
+              if out=$(gh api graphql -f query='
+                query($owner:String!, $name:String!) {
+                  repository(owner:$owner, name:$name) {
+                    releases(first: 30, orderBy: {field: CREATED_AT, direction: DESC}) {
+                      nodes { databaseId tagName isDraft }
+                    }
                   }
-                }
-              }' -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" \
-              --jq ".data.repository.releases.nodes[] | select(.tagName == \"$TAG\") | select(.isDraft) | .databaseId"
+                }' -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" \
+                --jq ".data.repository.releases.nodes[] | select(.tagName == \"$TAG\") | select(.isDraft) | .databaseId" 2>&1); then
+                printf '%s' "$out"
+                return 0
+              fi
+              echo "release lookup attempt $attempt failed: $out" >&2
+              sleep $(( attempt * 5 ))
+            done
+            echo "::error::could not list releases after 6 attempts" >&2
+            return 1
           }
 
           FOUND=$(find_drafts)
@@ -248,9 +266,25 @@ jobs:
           **Windows** — unsigned. SmartScreen warns on first launch: choose
           *More info* → *Run anyway*.
           NOTES
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
-              --title "tpdf $TAG" --notes-file release-notes.md
+            # Attempted ONCE, and deliberately not retried the way the lookup is.
+            # A create that fails may still have created: the request can land
+            # and its response be lost, so a blind retry is how one tag ends up
+            # with the two drafts this job exists to prevent. Instead the failure
+            # falls through to the read-back below, which is the same question
+            # asked of the server rather than of this call's exit code.
+            if ! gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+                 --title "tpdf $TAG" --notes-file release-notes.md; then
+              echo "release create reported a failure; asking the server what exists" >&2
+            fi
             ID=$(find_drafts)
+            # More than one now means the create landed twice, or landed beside
+            # something already there. Refused for the same reason as above --
+            # this is the only place that could quietly produce the split.
+            if [ "$(printf '%s' "$ID" | grep -c . || true)" -gt 1 ]; then
+              echo "::error::more than one draft exists for $TAG after create"
+              printf '%s\n' "$ID"
+              exit 1
+            fi
             # `gh release create` prints a URL, not an id, and for a draft that
             # URL carries an `untagged-<hash>` slug rather than the tag. So the
             # id is read back rather than parsed out, and a read-back that finds
