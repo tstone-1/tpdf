@@ -8167,3 +8167,65 @@ size and there is no spacing that is two lines and one block for this generator.
 renamed to what it establishes, and the tag distinction it was reaching for is proved a layer
 up in `reading.test.ts`, where a mutation on the same property is caught. **A control you
 cannot make fail is a control you must rename, not keep.**
+
+### A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it
+
+`scripts/gates.py` was 15/15 for sixteen commits while `examples/print_probe.rs` did not
+compile. The page-move work changed `print::Pages::Only` from `Vec<u32>` to `Vec<PagePlan>`,
+because printing a reordered document has to carry the order and each page's own turns; every
+caller was updated except the one behind `#[cfg(windows)]`, and a Mac never parses that line.
+The first tag of `26.8.3` turned **both** runner legs red on it, and the Windows leg reported
+four failures rather than one --- clippy, test and bins all stop at the same `error[E0308]`,
+so one type error reads as four broken gates.
+
+**The reason it survived so long is that these commits reached CI for the first time that
+day.** Sixteen commits of Phase 2 work sat local, so the platform that could see the break was
+never asked. That is the trap `AGENTS.md` names as *the gates had never run on the platform
+where they fail*, arriving through a different door: not a gate that fails on Windows, but a
+*file* that only Windows compiles.
+
+**`cargo check --target x86_64-pc-windows-msvc --all-targets` answers it from a Mac in about
+eight seconds warm**, and `scripts/check_windows.py` is that command with the environment it
+needs. `check` does not link, so no MSVC linker is required --- but four things are, and each
+fails with an error naming a different missing tool, so finding them one at a time is five
+rebuilds:
+
+- the splatted SDK headers (`xwin`), or `ring` stops at `'assert.h' file not found`;
+- `llvm-lib` as the archiver, or `cc-rs` wants MSVC's `lib.exe`;
+- `llvm-rc` **on `PATH`**, or `tauri-winres` panics with `NotAttempted("llvm-rc")`;
+- `vendor/pdfium/bin/pdfium.dll`, because Tauri resolves `bundle.resources` for the *target*
+  platform and otherwise dies on `resource path ... doesn't exist`, which reads like a broken
+  checkout rather than a missing cross-compilation input.
+
+**Three controls, and the first one is the honest limit.** Changing a `PagePlan`'s `turns`
+from 0 to a wrong value stays **green** --- this is a type-check, not a test, and it says
+nothing about whether the Windows code is correct, only that it compiles. Restoring the
+original type error goes red with CI's exact diagnostic, and hiding the DLL makes it refuse
+with exit 2 rather than fail confusingly. It is not a gate on purpose: it needs a 629 MB SDK
+splat that a fresh checkout does not have, and CI runs a real `windows-2025` runner, which is
+strictly better evidence. What it buys is that the runner confirms rather than discovers.
+
+### A gate that refuses on a precondition of running is red on every machine that is not running
+
+The same tag's macOS leg failed on the `corpora` gate, and the gate was right about everything
+except which question it was being asked. `classify()` in `scripts/viewer_sweep.py` did two
+jobs: *is every fixture on disk accounted for* --- an invariant of the repository, true
+anywhere --- and *is every corpus present*, which is a precondition of running a sweep. It
+raised on the second inside the first, so `--list`, which sweeps nothing, refused.
+
+`scripts/ci_fixtures.py` generates seven fixtures and **states in its own docstring** why the
+other nine are not generatable on a hosted runner: fonttools with a per-image system font,
+qpdf, a 550 MB write. So the gate demanded, on every runner, something the repository had
+already written down as deliberately absent --- and no local run could notice, because a
+development checkout has all forty-three.
+
+The fix returns the missing list instead of raising on it. `--list` prints it as `[INFO]`, and
+the refusal moves to the run path, aimed at the corpora that run will actually open rather than
+at all fourteen: a full sweep is unchanged, and `--only links` on a machine holding `links`
+now works instead of being refused over twelve fixtures it was never going to touch.
+
+**One consequence is worth stating because it is the same mistake one level down.** The
+exclusion-rot warning --- an exclusion pattern matching no fixture --- is now asked only where
+the whole set is present. On a runner holding seven fixtures most patterns match nothing for a
+reason that is not rot, and a warning that fires on every CI run is one nobody reads on the run
+where it means something.

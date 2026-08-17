@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 305 entries
+The one thing this file does *not* carry in full is the trap list --- 307 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -634,6 +634,18 @@ ordered rather than merely present: `toolchain` runs **first**, because every re
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
 
+**All fifteen can be green on a Mac while the Windows tree does not compile**, and that is not
+a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
+runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
+line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
+outside everything the list covers. `scripts/check_windows.py` closes it in about 8 s ---
+`cargo check --target x86_64-pc-windows-msvc --all-targets`, which does not link and so needs
+headers rather than a linker. **Deliberately not a gate**: it needs a 629 MB SDK splat a fresh
+checkout does not have, and CI runs a real `windows-2025` runner, which is better evidence. Run
+it before pushing anything that touches a Windows-only file, and before a tag; `BUILD.md` step
+5 has the one-time setup and the reason the missing PDFium DLL reads as a broken checkout.
+Its honest limit is that a type-check is not a test --- a wrong *value* passes it.
+
 **`anchors` exists because two different failures are invisible in `git status`, and both
 happened on 2026-08-16.** It asserts that every mutation's search string occurs exactly once in
 the file it names, across all three tables --- 289 of them.
@@ -659,6 +671,17 @@ error rather than an omission. Same shape as `ci_fixtures.py` and `check_trap_in
 of which exist because the same class of list went wrong the same way. It also asserts, when
 run for real, that every corpus reports the **same check names** --- diffed as sets, since a
 check that stopped being printed and a check that started skipping are identical in a total.
+
+**It also asked a second question until 26.8.3, and that one made it red on every hosted
+runner**: whether every corpus has a fixture. That is a precondition of *running* a sweep,
+not an invariant of the repository, and `ci_fixtures.py` states in its own docstring why nine
+of the fourteen are deliberately not generatable there --- fonttools with a per-image system
+font, qpdf, a 550 MB write. So the gate demanded on a runner exactly what the repository had
+already written down as absent, and no local run could notice, because a development checkout
+has all forty-three fixtures. The missing list is reported by `--list` as `[INFO]` now, and
+the refusal moved to the run path, aimed at the corpora that run will actually open: a full
+sweep is unchanged, and `--only links` on a machine holding `links` works instead of being
+refused over twelve fixtures it was never going to touch.
 
 **`workflows` exists because the first tag this repository ever pushed went red on both
 runners, and the code was fine.** `release.yml`'s `gates` job was written from `ci.yml` and
@@ -921,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 305 of them and the full text
-was 93% of this file --- an instruction budget spent on the 297 traps that are not
+titles. Only the titles are here, because there are 307 of them and the full text
+was 93% of this file --- an instruction budget spent on the 306 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1258,6 +1281,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A bundled app that finds its library in the dev tree proves nothing about the bundle
 - Moving a binary out of the installer moves it out of the gate that links it
 - `cargo fmt` was blamed for mangling a string, and it was innocent
+- A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it (15/15 green for sixteen commits while an example did not compile; one type error reads as four broken gates)
+- A gate that refuses on a precondition of running is red on every machine that is not running (the gate demanded fixtures the repository had already written down as deliberately absent)
 
 ### Fixtures
 - The test fixtures are generated, not committed
