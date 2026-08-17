@@ -268,35 +268,49 @@ jobs:
             ID="$FOUND"
             echo "adopted the existing draft $ID for $TAG"
           else
-            # Attempted ONCE, and deliberately not retried the way the lookup is.
-            # A create that fails may still have created: the request can land
-            # and its response be lost, so a blind retry is how one tag ends up
-            # with the two drafts this job exists to prevent. Instead the failure
-            # falls through to the read-back below, which is the same question
-            # asked of the server rather than of this call's exit code.
-            if ! gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
-                 --title "tpdf $TAG" --notes-file release-notes.md; then
-              echo "release create reported a failure; asking the server what exists" >&2
-            fi
-            ID=$(find_drafts)
-            # More than one now means the create landed twice, or landed beside
-            # something already there. Refused for the same reason as above --
-            # this is the only place that could quietly produce the split.
-            if [ "$(printf '%s' "$ID" | grep -c . || true)" -gt 1 ]; then
-              echo "::error::more than one draft exists for $TAG after create"
-              printf '%s\n' "$ID"
-              exit 1
-            fi
-            # `gh release create` prints a URL, not an id, and for a draft that
-            # URL carries an `untagged-<hash>` slug rather than the tag. So the
-            # id is read back rather than parsed out, and a read-back that finds
-            # nothing must fail here: an empty `releaseId` reaching the build
-            # legs would silently restore the behaviour this job removes.
+            # A create is retried only when the SERVER says nothing landed, never
+            # on the call's own exit code. That distinction is the whole design: a
+            # create that reports failure may still have created --- the request
+            # lands and the response is lost --- and a blind retry is exactly how
+            # one tag ends up with the two drafts this job exists to prevent. So
+            # every attempt is followed by a read-back, and the read-back decides:
+            # one draft is the answer, none means it is safe to try again, more
+            # than one is refused.
+            #
+            # rc6 is why this loops at all rather than trying once. github.com was
+            # returning 503 to GraphQL *and* to the create that afternoon; the job
+            # refused correctly and cost a release for a server that was fine
+            # ninety seconds later. `gh release create` also prints a URL rather
+            # than an id --- and for a draft that URL carries an `untagged-<hash>`
+            # slug, not the tag --- so the id has to be read back regardless.
+            ID=""
+            for attempt in 1 2 3; do
+              if ! gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+                   --title "tpdf $TAG" --notes-file release-notes.md; then
+                echo "create attempt $attempt reported a failure; asking the server what exists" >&2
+              fi
+              ID=$(find_drafts)
+              COUNT=$(printf '%s' "$ID" | grep -c . || true)
+              if [ "$COUNT" -gt 1 ]; then
+                echo "::error::more than one draft exists for $TAG after create"
+                printf '%s\n' "$ID"
+                exit 1
+              fi
+              if [ "$COUNT" -eq 1 ]; then
+                echo "created draft $ID for $TAG on attempt $attempt"
+                break
+              fi
+              # Nothing landed, so nothing can be duplicated by trying again.
+              ID=""
+              echo "no draft exists for $TAG after attempt $attempt" >&2
+              sleep $(( attempt * 10 ))
+            done
+            # An empty id reaching the build legs would silently restore the
+            # behaviour this job removes, so it is a refusal rather than a warning.
             if [ -z "$ID" ]; then
-              echo "::error::created a draft for $TAG and could not read its id back"
+              echo "::error::could not create a draft for $TAG in 3 attempts"
               exit 1
             fi
-            echo "created draft $ID for $TAG"
           fi
 
           echo "id=$ID" >> "$GITHUB_OUTPUT"
