@@ -17,7 +17,16 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.3] - Unreleased
+## [26.8.3] - 2026-08-17
+
+### A screen reader heard a wrapped paragraph as one word
+
+- **Fixed.** Where a document tags a paragraph and that paragraph wraps, the space between
+  its lines was dropped, so the last word of one line ran into the first of the next. Present
+  since the accessibility tree learned to read tagged blocks whole, on 2026-08-01.
+
+- Only tagged documents were affected, and only paragraphs that wrap. A page whose blocks
+  tpdf infers from the geometry was never joined and is unchanged.
 
 ### Drag a thumbnail to move a page
 

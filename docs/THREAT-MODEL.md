@@ -72,10 +72,32 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands | No filesystem, no network, no PDF parsing |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- two of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
 | **Disk** | Holds the document and tpdf's output | — |
+
+**That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
+since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
+`core:default`, `dialog:allow-open`, `dialog:allow-save` and `updater:default`, and the two
+dialog permissions open panels and write nothing. But it can issue `save_copy` and
+`print_document`, and both write a file at the process's authority with a path the caller
+chose. So the accurate statement is that the webview cannot touch the filesystem *itself* and
+can ask for two specific writes; the flat version reads as the stronger claim, and a reader
+who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why
+neither path checks its argument against the document actually open.
+
+**"No network" was wrong in the same way and for longer.** `updater:default` is granted to
+this window, and it is the *frontend* that spends it: `App.svelte` imports
+`@tauri-apps/plugin-updater` and calls `check()`, which issues the one request this
+application makes. The row has said "no network" since before the updater landed in `26.8.2`
+and nothing moved it. What the webview does not have is network reach of its own --- no
+`fetch` to an arbitrary host, because the CSP is `default-src 'self'` --- which is a real and
+different property, and the one the row now states. §T9 is the worked-out version.
+
+Both corrections are the failure the release checklist's step 6 exists for: a row in a
+summary table that stopped agreeing with the section beneath it, in the direction that
+over-claims. Neither could go red, and neither was found by a probe.
 
 Two consequences of that table are load-bearing and worth stating separately.
 
@@ -562,11 +584,12 @@ unreachable object or removes a prior incremental revision, so a copy of a docum
 forward whatever the original carried. That is correct for "save a copy" and would be wrong
 for a redaction, and the two must not be confused when the redaction path is built on it.
 
-#### T6.2 — Deleting a page, added 2026-08-17
+#### T6.2 — Deleting and moving a page, added 2026-08-17
 
-**Nothing new crosses the boundary.** `page_delete` takes a document handle and a page
-identity and mutates a `HashMap` in the app process; it opens no file, writes none, and
-reaches no worker. Its authority is the same as `page_rotate`'s, which is to say the ability
+**Nothing new crosses the boundary.** `page_delete` and `page_move` each take a document
+handle and one or two page identities and mutate a `HashMap` in the app process; they open
+no file, write none, and reach no worker. Their authority is the same as `page_rotate`'s,
+which is to say the ability
 to make the reader's *unsaved* document differ from the file on disk --- reversible with
 undo, and never written until the reader names a file. The commands that write are still
 `save_copy` and `print_document`, and their authority is unchanged and stated above.
@@ -597,6 +620,13 @@ and doing that to one nobody rearranged is a rewrite with no request behind it. 
 abandoned tree nodes stay in the file as unreachable objects, exactly as a deleted page's
 content does, and for the same stated reason --- a saved copy is a serialisation, not a
 sanitation (§T6.1, residual risk 15).
+
+**Dragging a thumbnail adds nothing here**, checked rather than assumed when it landed on
+2026-08-17. It registers no command, takes no capability and reaches no new sink: the gesture
+ends in `page_move`, which is the command above. What it does add to the webview is pointer
+listeners and a `setPointerCapture` on the strip's own panel, neither of which parses markup
+or builds a URL-bearing element --- the `sinks` gate is what says so mechanically, and §T8 is
+where that invariant lives.
 
 **The outline is dropped whole from a copy that lost pages**, and that is a *smaller* claim
 than repairing it would be: what survives a repair is only as sound as the resolver that did
@@ -718,14 +748,24 @@ That is **sufficient**, not merely necessary, and the reason is what lets a grep
 question about taint. If no sink exists, a string reaching the DOM has only `textContent`,
 `createTextNode`, `value` and `setAttribute` left to travel by, and none of those parses
 markup — so the check never has to decide *which* strings came from a document, which is the
-part no grep could do. It scans 58 files and 22,073 lines for nine patterns
+part no grep could do. It scans the whole frontend for nine patterns
 (`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`,
 `createContextualFragment`, `srcdoc`, `{@html`, plus `eval(` and `new Function(`, which the
 CSP would turn into a production-only failure).
 
 `setAttribute` is the one of those four that *can* be a sink — with `href`, `src` or an event
 handler — so the gate carries a second rule: **every `.setAttribute(` call must name its
-attribute with a string literal.** All 45 do.
+attribute with a string literal.** Every one does, or the gate is red.
+
+**The gate prints its own population, and this section deliberately no longer does.** It said
+"58 files and 22,073 lines" and "all 45" from 2026-08-02 until 2026-08-17, against an actual
+81 files, 36,029 lines and 59 calls --- the frontend had grown by more than half and the
+sentence describing what was covered had not moved, which is a count in prose with nothing
+able to go red about it. Read it from the run instead:
+
+```
+python3 scripts/check_webview_sinks.py   # scanned N files, N lines, ... N setAttribute call(s)
+```
 
 Four failure modes were proved by mutation before the gate was trusted, each singly and with
 a byte-digest restore: an outline title assigned by `innerHTML` (caught, named to the line), a

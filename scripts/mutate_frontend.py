@@ -145,6 +145,19 @@ MUTATIONS = [
         "throws its thumbnails away when the order changes and the count does not",
     ),
     Mutation(
+        # Moved here from `mutate_viewer.py` on 2026-08-17, and the move is the
+        # finding. Aimed at the window harness it SURVIVED a full run: the
+        # separator exists only for a tagged block, `tagged.pdf` is the only
+        # corpus with a structure tree, and none of its blocks wraps --- so no
+        # fixture reached the branch and nothing could go red. Writing the test
+        # that judges it found the branch had been broken since it was written.
+        "a11y: hand a paragraph's lines over with no space between them",
+        "src/lib/a11y.ts",
+        "        if (wrote || piece) piece += \" \";",
+        "        if (false) piece += \" \";",
+        "joins the lines of one tagged paragraph with a space",
+    ),
+    Mutation(
         # The off-by-one the whole helper exists for. Reading the gap against
         # the order the page is still in, and handing that straight to the
         # model, leaves every drag towards the back of the document one slot

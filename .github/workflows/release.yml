@@ -385,7 +385,8 @@ jobs:
             with no filesystem or network authority — with search, selection, an
             outline, thumbnails, session restore and printing.
 
-            **What it edits.** Pages can be turned, deleted and moved, with undo
+            **What it edits.** Pages can be turned, deleted and moved — drag a
+            thumbnail in the page strip, or use the command palette — with undo
             and redo, and the result printed or written out with *Save a copy*.
             The open file is never modified in place.
 

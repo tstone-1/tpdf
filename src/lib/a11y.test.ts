@@ -345,3 +345,114 @@ describe("AccessibleText and links", () => {
     }
   });
 });
+
+/**
+ * Joining the lines of one tagged paragraph.
+ *
+ * A tagged block is handed to a screen reader whole, so its lines have to be
+ * joined with a space --- a line break inside a paragraph is a decision the
+ * producer made about the page, not part of what it says. Without the join the
+ * last word of one line runs into the first of the next, which reads aloud as a
+ * word that is not in the document.
+ *
+ * **This is here rather than in the window harness because no fixture reaches
+ * it.** The separator exists only for a *tagged* block, `tagged.pdf` is the one
+ * corpus carrying a `/StructTreeRoot`, and none of its tagged blocks spans two
+ * lines --- so the mutation aimed at this branch survived the whole viewer run
+ * while changing nothing observable. The trap *A mutation aimed at code no
+ * fixture reaches survives, and the fix is not a new corpus* is the same
+ * finding from the other direction, and prescribes exactly this: test the
+ * branch directly, and move the mutation to the harness that can judge it.
+ */
+describe("AccessibleText and a paragraph the producer wrapped", () => {
+  /**
+   * Two lines of two characters each, one above the other.
+   *
+   * `AB` on the upper line and `CD` on the lower --- far enough apart to be two
+   * lines, and **close enough to stay one block**, which the control depends on.
+   * Spread them further and the geometry splits them into two blocks, at which
+   * point the tagged path and the untagged one both emit two paragraphs and the
+   * control cannot tell them apart. Measured, after a mutation survived it.
+   */
+  function wrapped(runs: unknown[] | undefined) {
+    return {
+      codes: [65, 66, 67, 68],
+      boxes: [
+        10, 100, 20, 112, // A
+        20, 100, 30, 112, // B
+        10, 130, 20, 142, // C
+        20, 130, 30, 142, // D
+      ],
+      width_pt: 612,
+      height_pt: 792,
+      turns: 0,
+      quarter_turns: 0,
+      extract_ms: 0,
+      runs,
+    };
+  }
+
+  /** The text of every leaf, and how many elements the page became. */
+  function build(runs: unknown[] | undefined): {
+    dom: ReturnType<typeof installFakeDom>;
+    text: string;
+    blocks: number;
+  } {
+    const dom = installFakeDom();
+    const layer = new AccessibleText(dom.root as never, 1);
+    layer.sync([0], () => wrapped(runs) as never);
+
+    let text = "";
+    let blocks = 0;
+    const walk = (element: {
+      tagName: string;
+      textContent: string;
+      children: unknown[];
+    }): void => {
+      if (element.tagName === "p") blocks += 1;
+      if (element.children.length === 0) text += element.textContent;
+      for (const child of element.children) walk(child as never);
+    };
+    walk(dom.root as never);
+    return { dom, text, blocks };
+  }
+
+  it("joins the lines of one tagged paragraph with a space", () => {
+    const { dom, text, blocks } = build([
+      { tag: "P", path: ["Document", "P"], start: 0, end: 4 },
+    ]);
+    try {
+      // One element, because the producer said these four characters are one
+      // paragraph -- and the space is the whole point: without it a reader hears
+      // "ABCD".
+      expect(blocks).toBe(1);
+      expect(text).toBe("AB CD");
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("leaves an untagged page as a paragraph per line, unjoined", () => {
+    // The control on the assertion above: without it, "joins the lines" is
+    // satisfied by an implementation that joins everything, and a join applied
+    // to an inferred boundary would silently merge two columns into a sentence.
+    //
+    // **It is a weaker control than it looks and is named for what it actually
+    // establishes.** On this fixture the geometry puts the two lines in two
+    // *blocks*, not one block of two lines --- measured, after a mutation that
+    // sent untagged blocks down the tagged path survived it, because both paths
+    // then emit one paragraph per block. Tightening the spacing further did not
+    // help; the block cut is a multiple of the type size and these lines are
+    // past it either way. The tag distinction itself is proved a layer up, in
+    // `reading.test.ts`, by the mutation `a11y: treat an inferred block as a
+    // stated paragraph`, which is caught. What this pins is the consumer side:
+    // an untagged page comes out unjoined.
+    const { dom, text, blocks } = build(undefined);
+    try {
+      expect(blocks).toBe(2);
+      expect(text).toBe("ABCD");
+    } finally {
+      dom.restore();
+    }
+  });
+});

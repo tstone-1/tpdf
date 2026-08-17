@@ -8130,3 +8130,40 @@ Three things to carry:
   explanation for a failing sweep before the sweep had been asked whether it agreed, and the
   next run said no.
 
+
+### A break recorded as a position in a list the callee does not own
+
+A tagged paragraph's lines were joined with a space by recording *where* the separators fell
+as a count of entries in the input list, then walking the output of `linkRunsIn` and inserting
+a space at the matching count. The two lists are not the same list. `linkRunsIn` walks
+character by character and **coalesces** adjacent indices into one range, so a paragraph whose
+two lines are contiguous in the character stream — the ordinary case — comes back as one run
+holding one range. The loop never reached position 1, the space was never written, and a
+screen reader read the last word of one line joined to the first of the next.
+
+The fix is one word of vocabulary: record the break as a **character index**, which names a
+place in the page's own stream, rather than as a position in a list the function receiving it
+is free to restructure. An index into somebody else's intermediate representation is a
+coupling that nothing declares and no type checks.
+
+**It shipped for sixteen days and no fixture reached it.** The separator exists only for a
+*tagged* block; `tagged.pdf` is the only corpus carrying a `/StructTreeRoot`; and none of its
+blocks wraps to a second line. So the branch was unreachable across the whole fourteen-corpus
+sweep, the window check that would have noticed compares text as a sorted multiset and never
+ran on a page that could differ, and the release passed every gate.
+
+**What surfaced it was a mutation reporting SURVIVED**, which is the verdict this project
+treats as least trustworthy and most valuable: it reads as a gap in the checks, and it was one,
+but writing the test that closed the gap is what found the code beneath it had been wrong since
+it was written. Per the trap about a branch no fixture reaches, the mutation moved to the
+harness where a unit test can judge it rather than earning a fifteenth corpus.
+
+**The control cost two fixtures and is still weaker than its first name claimed.** Written as
+"does not join the lines of a block nobody tagged", it was measured against a mutation that
+sends untagged blocks down the tagged path — and survived, because at every line spacing tried
+the geometry had already split the two lines into two *blocks*, so both paths emit one
+paragraph each and the fixture cannot tell them apart. The block cut is a multiple of the type
+size and there is no spacing that is two lines and one block for this generator. The test was
+renamed to what it establishes, and the tag distinction it was reaching for is proved a layer
+up in `reading.test.ts`, where a mutation on the same property is caught. **A control you
+cannot make fail is a control you must rename, not keep.**
