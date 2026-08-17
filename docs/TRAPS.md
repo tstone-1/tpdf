@@ -8229,3 +8229,41 @@ exclusion-rot warning --- an exclusion pattern matching no fixture --- is now as
 the whole set is present. On a runner holding seven fixtures most patterns match nothing for a
 reason that is not rot, and a warning that fires on every CI run is one nobody reads on the run
 where it means something.
+
+### Re-running one job of a release run splits the artifacts across two drafts, and neither is complete
+
+`v26.8.3-rc2`'s macOS build died in `Set up job` on `429 Too Many Requests` fetching an
+action from codeload --- an infrastructure failure, before a line of our code ran. Re-running
+that one job with `gh run rerun --failed` turned every job green, and left **two draft
+releases under the one tag**:
+
+| draft | assets | what is missing |
+|---|---|---|
+| `371785472` | 6 | `tpdf_aarch64.app.tar.gz` and its `.sig` --- the macOS updater bundle |
+| `371787661` | 4 | every Windows installer |
+
+A complete release is 8 assets, as `v26.8.2` is. So publishing either one ships something
+broken: a release macOS cannot update from, or one with no Windows build at all. `26.8.0`,
+`26.8.1` and `26.8.2` each produced exactly one complete draft, and none of them involved a
+re-run.
+
+**The rule is to re-run the whole workflow, never one job of it.** The exact mechanism is not
+established here and is deliberately not guessed at --- what is established is the asset
+split, and that it followed a single-job re-run.
+
+**The reason this is dangerous rather than merely untidy is that the checklist said "publish
+the draft".** With one draft that sentence is unambiguous and for three releases it was true.
+With two it names neither, and both look right in `gh release list`: same tag, same name, same
+`createdAt` --- which for a release is the tagged commit's timestamp, not when the draft was
+made, so even the timestamps cannot separate them. Step 11 now counts assets before
+publishing, because a count is the only thing here that can tell a whole release from half of
+one.
+
+**Two instruments are useless for this, one of them surprisingly.** `gh release view <tag>`
+returns *a* release for the tag with no way to say which, so it reports one draft's assets as
+though they were the release's. And `gh api repos/<owner>/<repo>/releases` answers **HTTP 200
+with `[]`** under the token in the login keychain, while `gh release list` shows five releases
+--- the REST endpoint wants an OAuth scope this token lacks and says so by returning nothing
+rather than by failing. An empty list from an authenticated call is not evidence of an empty
+repository. `gh api graphql` reaches them, ids and assets included, and is what the table
+above was read from.
