@@ -206,6 +206,31 @@ export class Edits {
     await invoke<void>("save_copy", { doc: this.doc, source, path });
   }
 
+  /**
+   * Writes the pages at `slots` to `path`, as a second file.
+   *
+   * Changes nothing about this document --- not the order, not the journal, not
+   * {@link dirty} --- which is why it returns no state to adopt. Extract is a
+   * read of the working document, and the thing it produces is somewhere else.
+   *
+   * The slots are positions in the current order, and the backend refuses a
+   * selection that is empty, out of range, repeated or descending rather than
+   * normalising it. Normalising here and there would be two readers of one
+   * rule; refusing means the one place that sorts is `parsePageRange`.
+   */
+  async extractPages(
+    source: string,
+    path: string,
+    slots: number[],
+  ): Promise<void> {
+    await invoke<void>("extract_pages", {
+      doc: this.doc,
+      source,
+      path,
+      slots,
+    });
+  }
+
   /** Records an answer, and the translation it implies, and returns it. */
   private adopt(state: EditState): EditState {
     this.current = state;

@@ -32,6 +32,7 @@
 
 import type { CommandRegistry } from "./commands";
 import { label, matches } from "./keys";
+import { describeRange, parsePageRange } from "./pageranges";
 import type { Tab } from "./sidebar";
 import type { Viewer } from "./viewer";
 import { MAX_ZOOM, MIN_ZOOM, parseZoomPercent, percentOf } from "./zoom";
@@ -124,6 +125,8 @@ export interface AppActions {
   canRedo(): boolean;
   /** Ask for a name and write the working document to it. */
   saveCopy(): void;
+  /** Ask for a name and write the pages at `slots` to it, as a second file. */
+  extractPages(slots: number[]): void;
 }
 
 /**
@@ -442,6 +445,42 @@ export function registerAppCommands(
       keys: label("file.saveCopy"),
       enabled: withDocument,
       run: () => actions.saveCopy(),
+    },
+    {
+      // Takes a selection where `file.saveCopy` takes none, and is otherwise
+      // the same operation over fewer pages --- it shares the whole write path,
+      // so an encrypted document is refused here for the reason it is refused
+      // there.
+      //
+      // The parse runs twice, in `problem` and again in `run`, and that is
+      // deliberate: `parsePageRange` is pure and cheap, and the alternative is
+      // a validated value cached between two callbacks that the palette is free
+      // to invoke in either order. Two calls to one function cannot disagree;
+      // a cache and its writer can.
+      id: "file.extractPages",
+      title: "Extract pages...",
+      // No shortcut, for the reason the two move commands have none: there is
+      // no chord left that reads as "extract", and this is a command a reader
+      // reaches deliberately rather than by muscle memory.
+      enabled: withDocument,
+      argument: {
+        placeholder: "Pages, e.g. 1-3,5",
+        problem: (raw: string) =>
+          parsePageRange(raw, actions.pageCount()).problem ?? null,
+        preview: (raw: string) => {
+          const range = parsePageRange(raw, actions.pageCount());
+          return range.slots ? describeRange(range.slots) : "";
+        },
+        run: (raw: string) => {
+          const range = parsePageRange(raw, actions.pageCount());
+          // Cannot be reached through the palette, which refuses to run a
+          // command whose `problem` answered. Written as a guard rather than a
+          // `!` because the two callbacks are independent entry points and this
+          // one is what actually writes a file.
+          if (!range.slots) return;
+          actions.extractPages(range.slots);
+        },
+      },
     },
     {
       id: "nav.nextPage",

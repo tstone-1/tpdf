@@ -92,6 +92,38 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        # Report the selection's length as the file's. `write_copy` compares the
+        # baseline against the source's real page count to catch a file that
+        # changed under the open one, so this turns every extract of a subset
+        # into that error -- or, worse, makes a genuine external modification
+        # invisible when the numbers happen to agree.
+        "edits: give a subset plan the selection's length as its baseline",
+        "src/edits.rs",
+        "        Ok(Plan {\n            baseline: model.baseline(),\n            pages,\n        })",
+        "        Ok(Plan {\n            baseline: pages.len() as u32,\n            pages,\n        })",
+        "a_subset_plan_names_the_pages_asked_for_and_keeps_the_file_s_baseline",
+    ),
+    Mutation(
+        # Silently sort instead of refusing. Extract would then reorder as well
+        # as select, which is the one thing its own note says it must not do --
+        # and `5,1` would produce a document no reader could have predicted.
+        "edits: accept slots out of order instead of refusing them",
+        "src/edits.rs",
+        '        if taken.windows(2).any(|pair| pair[0] >= pair[1]) {\n            return Err("the pages are not in document order".into());\n        }',
+        "        taken.sort_unstable();",
+        "slots_out_of_order_are_refused_rather_than_silently_reordering",
+    ),
+    Mutation(
+        # Let an empty selection through to the writer. `write_copy` refuses an
+        # empty plan too, so the document is safe either way -- what is lost is
+        # the message, which stops describing what the reader typed.
+        "edits: let an empty selection reach the writer",
+        "src/edits.rs",
+        '        if slots.is_empty() {\n            return Err("no pages were named".into());\n        }',
+        "        if false {\n            return Err(String::new());\n        }",
+        "an_empty_selection_is_refused_here_rather_than_by_the_writer",
+    ),
+    Mutation(
         # The composition. Setting the turn rather than adding it produces a
         # document whose every turned page ends at the same angle, which is
         # correct on the whole corpus except the one fixture that carries four

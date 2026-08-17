@@ -74,6 +74,66 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Lexicographic sort, which is what `Array.prototype.sort` does without
+        # a comparator. Page 10 lands before page 2, `write_copy` writes a valid
+        # PDF in an order nobody asked for, and no downstream check could see
+        # it: the file opens, it has the right pages, and it is wrong.
+        "pageranges: sort the slots the way JavaScript sorts by default",
+        "src/lib/pageranges.ts",
+        "  return { slots: [...slots].sort((a, b) => a - b) };",
+        "  return { slots: [...slots].sort() };",
+        "sorts numerically, so page 11 comes after page 3",
+    ),
+    Mutation(
+        # Read a backwards range as the range it resembles. A reader who typed
+        # `5-3` made a mistake, and this is the version that silently gives them
+        # three pages instead of telling them.
+        "pageranges: quietly correct a range that runs backwards",
+        "src/lib/pageranges.ts",
+        "    if (from > to) {\n      return { problem: `${from}-${to} runs backwards` };\n    }",
+        "    if (from > to) {\n      return { slots: [] };\n    }",
+        "refuses a range that runs backwards instead of correcting it",
+    ),
+    Mutation(
+        # Off by one at the conversion. Every page a reader names comes out one
+        # later, which on a range still produces the right *number* of pages --
+        # so a check counting them passes.
+        "pageranges: keep the reader's one-based numbers as slots",
+        "src/lib/pageranges.ts",
+        "      slots.add(one - 1);",
+        "      slots.add(one);",
+        "reads a single page as one zero-based slot",
+    ),
+    Mutation(
+        # Exclusive at the top, which is what a reader of `2-4` does not mean
+        # and what a half-open loop written from habit produces.
+        "pageranges: make a range exclusive at its top end",
+        "src/lib/pageranges.ts",
+        "    for (let page = from; page <= to; page += 1) slots.add(page - 1);",
+        "    for (let page = from; page < to; page += 1) slots.add(page - 1);",
+        "reads a range inclusively at both ends",
+    ),
+    Mutation(
+        # Accept anything `Number()` accepts. `2.0` becomes page 2, `1e1`
+        # becomes page 10, and `+2` becomes page 2 -- none of which is a page
+        # number a reader typed on purpose.
+        "pageranges: accept every numeric literal rather than digits",
+        "src/lib/pageranges.ts",
+        '  if (!/^[0-9]+$/.test(text)) return `"${text}" is not a page number`;',
+        "  if (Number.isNaN(Number(text))) return `not a page number`;",
+        "refuses +2, which Number() would have accepted",
+    ),
+    Mutation(
+        # Run the extract with whatever parsed, including nothing. The palette
+        # guards this, so the mutation is aimed at the second line of defence --
+        # the one that decides whether a defect writes a file.
+        "appcommands: extract even when the range did not parse",
+        "src/lib/appcommands.ts",
+        "          if (!range.slots) return;\n          actions.extractPages(range.slots);",
+        "          actions.extractPages(range.slots ?? []);",
+        "refuse to extract what does not parse, and reach no action",
+    ),
+    Mutation(
         # Send the page's position instead of its identity. Identical on an
         # unedited document and wrong the moment a page moves, which is the whole
         # reason ids cross the boundary at all.
@@ -1625,6 +1685,13 @@ TEST_FILES = [
     # seven of them rather than reporting them survived, which is that guard
     # doing its job.
     "src/lib/pages.test.ts",
+    # Added 2026-08-17 with extract. The guard fired a fourth time, for five
+    # mutations at once: every one named a `pageranges.test.ts` test and the
+    # harness could not see the file, so it refused to start rather than
+    # reporting all five SURVIVED. Four out of four times this list has been
+    # forgotten, the refusal is what said so -- which is the argument for
+    # keeping it loud rather than making it infer the files from the mutations.
+    "src/lib/pageranges.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

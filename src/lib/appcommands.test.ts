@@ -69,6 +69,7 @@ function harness(
     canUndo: () => journal.undo ?? false,
     canRedo: () => journal.redo ?? false,
     saveCopy: () => fired.push("saveCopy"),
+    extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);
@@ -309,6 +310,47 @@ describe("the page operations", () => {
     expect(titles).toContain("Rotate view clockwise");
   });
 
+  it("extract the pages a reader named, as slots", () => {
+    const { registry, fired } = harness();
+    // The harness document has three pages, so the selection is written
+    // against that rather than against a longer one -- a range past the end is
+    // refused, and this test would then be asserting the refusal.
+    expect(registry.run("file.extractPages", "1,3")).toBe(true);
+    expect(fired).toEqual(["extractPages:0+2"]);
+  });
+
+  it("refuse to extract what does not parse, and reach no action", () => {
+    // Reached through the command's own `run` rather than through
+    // `registry.run`, and that is the whole test. The registry refuses a value
+    // its `problem` rejected, so going through it means the guard under test is
+    // never executed --- the mutation that deletes the guard SURVIVED against
+    // exactly that, which is the trap about a test whose precondition is
+    // already satisfied.
+    //
+    // This is the second line of defence, and it is the one that decides
+    // whether a defect writes a file: a caller that skipped validation is what
+    // it exists for.
+    const { registry, fired } = harness();
+    const command = registry.all().find((c) => c.id === "file.extractPages");
+    command?.argument?.run("nonsense");
+    expect(fired).toEqual([]);
+  });
+
+  it("report a problem for a range that runs backwards", () => {
+    const { registry } = harness();
+    const command = registry.all().find((c) => c.id === "file.extractPages");
+    expect(command?.argument?.problem("3-1")).toBe("3-1 runs backwards");
+  });
+
+  it("report no problem for a range this document has", () => {
+    // The other direction, and the one that would go missing silently: a
+    // `problem` that answered for everything would make the command
+    // unrunnable while every refusal test above still passed.
+    const { registry } = harness();
+    const command = registry.all().find((c) => c.id === "file.extractPages");
+    expect(command?.argument?.problem("1-2")).toBeNull();
+  });
+
   it("offer a copy of any open document, edited or not", () => {
     // Deliberately not guarded on the journal. Saving an unedited copy is how a
     // reader gets a file out of a downloads folder, and a command that appears
@@ -441,6 +483,7 @@ describe("the window shortcuts for editing", () => {
       canUndo: () => journal.undo ?? false,
       canRedo: () => journal.redo ?? false,
       saveCopy: () => fired.push("saveCopy"),
+    extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     };
     return { fired, actions };
   }

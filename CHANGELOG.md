@@ -17,6 +17,33 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.4] - Unreleased
+
+### Extract pages to a new file
+
+- **Extract pages...**, in the command palette. Type `1-3,5` --- the form every
+  print dialog already uses --- and the pages you named are written to a second
+  file. The open document is not changed in any way: nothing to undo, nothing
+  marked unsaved.
+
+- **The pages come out in document order, whatever order you type them in.**
+  `5,1` extracts pages 1 and 5. Extract produces a subset; rearranging a
+  document is what the page strip and the two move commands are for, and one
+  command quietly doing both would make `5,1` mean something you could not
+  predict.
+
+- **A range that runs backwards is refused rather than corrected.** `5-3` is a
+  typo, and silently reading it as `3-5` hides it --- the same reason typing 900
+  in a 775-page document is refused instead of taking you to the last page. An
+  overlap is not a typo, so `1-3,2` is simply three pages.
+
+- **The suggested filename says which pages are in it**, because that is the one
+  thing you cannot tell from a file called `report copy.pdf`.
+
+- Whatever you have already done to the document comes with it: a page you
+  turned is extracted turned, and a page you moved is extracted from where you
+  moved it to.
+
 ## [26.8.3] - 2026-08-17
 
 ### A screen reader heard a wrapped paragraph as one word

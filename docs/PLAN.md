@@ -4834,6 +4834,87 @@ with a handler that records rather than edits. Two names, and the control is the
 found something: its first version could not fail, for two unrelated reasons. Both are in
 `docs/TRAPS.md`.
 
+#### Extracting pages to a second file --- done 2026-08-17
+
+The first page operation that does not change the document. Everything before it
+--- rotate, delete, move --- edits the working document and is undone by pressing
+undo; this reads it and writes somewhere else, so there is nothing to undo and
+nothing marked dirty. That is why `plan_subset` is a **plan** rather than a
+`Command`: putting it in the journal would mean the model had to know how to
+replay an operation with no effect on itself.
+
+**It shares the whole write path with `Save a copy`**, which is most of why it is
+small. `save.rs` already writes a subset in order --- that is what deleting a page
+produces --- so extract needed no new page-tree surgery, and the three refusals
+that path already states (an encrypted source, a page count that disagrees with
+the baseline, a write over the source) apply unchanged and are not restated
+anywhere.
+
+**The baseline is the file's, not the selection's.** A three-page extract from a
+ten-page document carries `baseline: 10`, because that field answers *how many
+pages did the file have* and is what catches a document modified under the open
+one. Setting it to the selection's length would make every extract look like an
+external modification, or --- worse, and this is the direction the mutation is
+aimed at --- make a genuine one invisible when the numbers happened to agree.
+
+**Slots, not ids, and this is the one place that is right.** Every command takes
+a `PageId` for the reason §5 gives. A selection is different in kind: it is what
+a reader typed, in the vocabulary they typed it in, and it is resolved inside the
+same lock that reads the order --- so there is no window in which it can go stale.
+A reader who moves a page and then extracts "1 to 3" gets the three they can see.
+
+**Three normalisations and three refusals, and which is which is the whole
+design.** `parsePageRange` merges an overlap (`1-3,2` is three pages: a subset is
+a set) and returns document order whatever order was typed (`5,1` is pages 1 and
+5). It refuses a reversed range rather than correcting it, for the reason
+`nav.goToPage` refuses 900 in a 775-page document rather than clamping. The
+backend then refuses what the frontend cannot send --- empty, out of range,
+repeated, descending --- rather than normalising it a second time, because two
+normalisers are two readers of one rule and the second one agrees with the first
+by construction.
+
+**Extract must not reorder**, and that is the property the refusal protects. One
+operation that silently did both would make `5,1` mean something no reader could
+predict from what dragging a thumbnail does.
+
+##### What the tests can and cannot say
+
+The arithmetic is 30 unit tests over two pure functions, `parsePageRange` and its
+inverse `namePages` --- which exists because the one thing a reader cannot tell
+from a file called `report copy.pdf` is which three pages of the report are in
+it. The subset plan is ten Rust tests. The command is four more, and one of them
+had to be rewritten: driving it through `registry.run` meant the registry
+refused the value before the command's own guard ran, so the mutation that
+deletes that guard **survived** a test that could not execute it.
+
+Two fixtures were wrong before they were right, and both are recorded traps
+arriving again. The sort test used pages 1, 10 and 2 --- slots 0, 9 and 1, which a
+lexicographic sort orders exactly as a numeric one does, so the mutation removing
+the comparator survived it; slots 2 and 10 are the smallest pair that
+discriminates. And five mutations named tests in a file `mutate_frontend.py` had
+never been told to run, which the harness refused to start over rather than
+reporting as survivors --- the fourth time that guard has caught this list.
+
+The window check drives the command with a real argument, `1-2`, because the
+value is where the work is: it has to survive the palette's input, reach the
+parser against this document's page count, and arrive as two slots. A single
+page would read the same whether the parser produced one or dropped one.
+
+**Its first version asserted, in a comment, that every window corpus has at
+least two pages.** Two of the fourteen are single-page documents, so `1-2` was
+out of range, the palette refused it correctly, and the sweep went red on
+`vector-heavy` and `links-cropped`. The fix is a skip with a stated reason
+rather than narrowing the argument to `1`: a weaker check under the same name
+reads exactly like the strong one, and the whole point of the sweep asserting
+identical name sets is that a skip is visible where a quietly diminished check
+is not.
+
+**Not done:** splitting a document into several files at once, and merging. Split
+is this operation repeated and needs a second question answered --- how the files
+are named --- rather than new machinery. Merge is its inverse and is the larger
+one: nothing in the model creates a page, and `docmodel`'s note has the
+id-allocator property that would need proving first.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
