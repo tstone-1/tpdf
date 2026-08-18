@@ -213,6 +213,21 @@ impl Quad {
     }
 }
 
+/// One version of one mark's note.
+///
+/// Opaque, and it never leaves this module: the frontend addresses a note by the
+/// [`MarkId`] it hangs on, and this is the identity of *what it said at a point
+/// in the journal*. A [`Command::Renote`] carries one of these rather than the
+/// text, for exactly the reason [`Command::Annotate`] carries a [`MarkId`] ---
+/// a `String` in the enum is a `Copy` bound lost and a clone per replayed
+/// command.
+///
+/// The allocator behind it has the same property [`Doc::next_mark`] has and for
+/// the same reason: it only counts up, so the text an undone `Renote` named is
+/// still the text its id names when a redo re-applies it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct NoteId(u32);
+
 /// What kind of mark a reader made.
 ///
 /// **Only what tpdf can write.** [`crate::annots::Kind`] is the reading
@@ -232,6 +247,12 @@ pub enum MarkKind {
 /// Not `Copy`, which is why it lives in a table on [`Doc`] keyed by [`MarkId`]
 /// rather than inside the command: keeping [`Command`] `Copy` is what lets
 /// replay stay a `for &cmd in ...` loop over the journal.
+///
+/// **The note is not here**, and that is the one field a reader can change after
+/// the fact. Everything in this struct is fixed at the moment the mark is made,
+/// which is what lets [`Doc`] keep one body per id and never touch it again; a
+/// mutable field would have to be rebuilt by undo, and undo rebuilds
+/// [`Working`]. So the note lives there --- see [`NoteId`].
 #[derive(Clone, PartialEq, Debug)]
 pub struct Mark {
     pub kind: MarkKind,
@@ -244,8 +265,6 @@ pub struct Mark {
     pub color: [f32; 3],
     /// `/T`. Empty when the reader has no name set.
     pub author: String,
-    /// `/Contents`: what the reader typed, empty for a mark with no note.
-    pub note: String,
     /// `/M`, already in PDF date form.
     ///
     /// Supplied by the caller rather than read from a clock here. This module
@@ -298,19 +317,34 @@ pub enum Command {
     ///
     /// The mark's body is in [`Doc`]'s table under `mark`; only the identity is
     /// journalled, which is what keeps this enum `Copy` and replay allocation-free.
-    Annotate { mark: MarkId, page: PageId },
+    ///
+    /// `note` is what the mark says when this command is applied, which is
+    /// almost always nothing: a reader highlights a line and types on it
+    /// afterwards, if at all.
+    Annotate {
+        mark: MarkId,
+        page: PageId,
+        note: NoteId,
+    },
     /// Take a mark off the page it is on.
     Unannotate { mark: MarkId },
+    /// Replace what a mark says.
+    ///
+    /// A whole note rather than an edit to one: the reader types in a box and
+    /// commits it, so the command is *what it now says*, and undo is the
+    /// previous `Renote` (or the `Annotate`) being replayed instead. An
+    /// insert-at-offset command would make the journal a text editor's, which is
+    /// a different thing to get right and buys nothing a reader can see.
+    Renote { mark: MarkId, note: NoteId },
 }
 
 impl Command {
     /// The page the command acts on, for diagnostics.
     ///
-    /// `None` for [`Unannotate`](Command::Unannotate), which names a mark and
-    /// not a page --- and deliberately does not go looking one up. The page a
-    /// mark sits on is in the table, and a diagnostic that has to consult
-    /// another structure to answer is one that can be asked after the answer has
-    /// gone.
+    /// `None` for the two variants that name a mark and not a page --- and
+    /// deliberately does not go looking one up. The page a mark sits on is in
+    /// the table, and a diagnostic that has to consult another structure to
+    /// answer is one that can be asked after the answer has gone.
     pub fn subject(self) -> Option<PageId> {
         match self {
             Command::Rotate { page, .. }
@@ -318,7 +352,7 @@ impl Command {
             | Command::Delete { page }
             | Command::Move { page, .. }
             | Command::Annotate { page, .. } => Some(page),
-            Command::Unannotate { .. } => None,
+            Command::Unannotate { .. } | Command::Renote { .. } => None,
         }
     }
 }
@@ -392,6 +426,19 @@ pub struct Working {
     /// a caller that wants to know about the page is asking about a page, where
     /// [`Refusal::PageDeleted`] is waiting for it.
     mark_graves: HashSet<MarkId>,
+    /// What each live mark says, as the id of the text rather than the text.
+    ///
+    /// Here rather than on the mark's body because it is the one thing about a
+    /// mark that changes, and everything that changes has to be rebuildable by
+    /// replay --- which rebuilds this struct and nothing else.
+    ///
+    /// **Its keys are exactly the live marks**, empty note or not: `Annotate`
+    /// puts one in, `Unannotate` and a page's deletion take it out. So an absent
+    /// entry means the mark is not on a page, never that it has nothing to say
+    /// --- which is the opposite of the "absent rather than empty" rule `marks`
+    /// above states, and worth saying because the two maps sit next to each
+    /// other.
+    notes: HashMap<MarkId, NoteId>,
 }
 
 impl Working {
@@ -418,6 +465,7 @@ impl Working {
             graves: HashSet::new(),
             marks: HashMap::new(),
             mark_graves: HashSet::new(),
+            notes: HashMap::new(),
         }
     }
 
@@ -484,6 +532,28 @@ impl Working {
             .collect()
     }
 
+    /// Refuses unless the id names a mark on a page, naming which of the two it
+    /// is, and answers with the page it found.
+    ///
+    /// One implementation for three callers --- [`Command::Unannotate`],
+    /// [`Command::Renote`] and [`Doc::renote`]'s pre-check --- because two
+    /// copies of "which refusal is this" is precisely the pair that drifts:
+    /// they would agree on every ordinary id and disagree about the one case
+    /// the distinction exists for.
+    fn live_mark(&self, mark: MarkId) -> Result<PageId, Refusal> {
+        self.page_of(mark)
+            .ok_or(if self.mark_graves.contains(&mark) {
+                Refusal::MarkRemoved(mark)
+            } else {
+                Refusal::NoSuchMark(mark)
+            })
+    }
+
+    /// What a live mark says, as an id into [`Doc`]'s table.
+    pub fn note_of(&self, mark: MarkId) -> Option<NoteId> {
+        self.notes.get(&mark).copied()
+    }
+
     /// Refuses unless the id names a live page, naming which of the two it is.
     fn live(&self, id: PageId) -> Result<(), Refusal> {
         if self.pages.contains_key(&id) {
@@ -531,6 +601,11 @@ impl Working {
                 // inverts.
                 for mark in self.marks.remove(&page).unwrap_or_default() {
                     self.mark_graves.insert(mark);
+                    // The note goes too, and it is the *only* piece of a mark
+                    // this has to clear: the body stays in `Doc`'s table, where
+                    // a redo finds it. Left here, a note would be reachable
+                    // through a mark this document no longer has.
+                    self.notes.remove(&mark);
                 }
             }
             Command::Move { page, after } => {
@@ -554,7 +629,7 @@ impl Working {
                 };
                 self.order.insert(to, page);
             }
-            Command::Annotate { mark, page } => {
+            Command::Annotate { mark, page, note } => {
                 self.live(page)?;
                 // Not a check on `mark_graves`: an id is issued once and a
                 // journalled `Annotate` is replayed exactly where it was
@@ -566,15 +641,10 @@ impl Working {
                 );
                 self.marks.entry(page).or_default().push(mark);
                 self.mark_graves.remove(&mark);
+                self.notes.insert(mark, note);
             }
             Command::Unannotate { mark } => {
-                let Some(page) = self.page_of(mark) else {
-                    return Err(if self.mark_graves.contains(&mark) {
-                        Refusal::MarkRemoved(mark)
-                    } else {
-                        Refusal::NoSuchMark(mark)
-                    });
-                };
+                let page = self.live_mark(mark)?;
                 let list = self.marks.get_mut(&page).expect("page_of found it here");
                 list.retain(|&held| held != mark);
                 // An empty entry is removed rather than left, so that a document
@@ -584,6 +654,11 @@ impl Working {
                     self.marks.remove(&page);
                 }
                 self.mark_graves.insert(mark);
+                self.notes.remove(&mark);
+            }
+            Command::Renote { mark, note } => {
+                self.live_mark(mark)?;
+                self.notes.insert(mark, note);
             }
         }
         Ok(())
@@ -628,6 +703,16 @@ pub struct Doc {
     /// command that has since been undone is still spent, so redo restores the
     /// mark it named rather than a different one wearing its number.
     next_mark: u64,
+    /// What each note says, keyed by the id its command carries.
+    ///
+    /// A second table for the same reason as `marks`, with one difference worth
+    /// stating: a mark has one body and many notes over its life, so this is
+    /// keyed by the *version* rather than by the mark. Which version is current
+    /// is [`Working`]'s answer, and that is the whole of what makes a note
+    /// undoable.
+    notes: HashMap<NoteId, String>,
+    /// The next note id to issue. Only ever counts up, as [`next_mark`](Doc::next_mark) does.
+    next_note: u32,
 }
 
 impl Doc {
@@ -641,6 +726,8 @@ impl Doc {
             snapshots: HashMap::new(),
             marks: HashMap::new(),
             next_mark: 1,
+            notes: HashMap::new(),
+            next_note: 1,
         }
     }
 
@@ -737,7 +824,7 @@ impl Doc {
     /// [`Command::Annotate`] refuses --- the page not existing, or having been
     /// deleted. **The id is issued after those checks**, so a refused mark spends
     /// nothing; a document where every attempt failed has issued no ids at all.
-    pub fn annotate(&mut self, mark: Mark) -> Result<MarkId, Refusal> {
+    pub fn annotate(&mut self, mark: Mark, note: String) -> Result<MarkId, Refusal> {
         if !mark.quads.iter().any(|quad| quad.covers_area()) {
             return Err(Refusal::EmptyMark);
         }
@@ -747,13 +834,71 @@ impl Doc {
         let page = mark.page;
         self.marks.insert(id, mark);
         self.next_mark += 1;
+        let note = self.issue_note(note);
         // A refusal cannot reach here: the page was checked live a line ago
         // against the same working document, and the id is fresh. It is still
         // routed through `apply` rather than mutating `now` directly, so that
         // the journal, the cursor, the snapshot rule and the redo-tail discard
         // are all the ones every other command gets.
-        self.apply(Command::Annotate { mark: id, page })?;
+        self.apply(Command::Annotate {
+            mark: id,
+            page,
+            note,
+        })?;
         Ok(id)
+    }
+
+    /// Replaces what a mark says.
+    ///
+    /// Takes the whole note, for the reason [`Command::Renote`] gives. Setting
+    /// it to what it already says is still a command: it lands in the journal,
+    /// makes the document dirty and costs an undo. That is the honest reading of
+    /// what the caller asked for, and the alternative --- comparing against the
+    /// current text and dropping a no-op --- puts a rule in the model about what
+    /// a reader *meant*, which the frontend is better placed to decide and does.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::NoSuchMark`] for an id nobody issued, and
+    /// [`Refusal::MarkRemoved`] for a mark that was taken off the page ---
+    /// including one that went with a deleted page. Checked before the id is
+    /// issued, so a refused note spends nothing.
+    pub fn renote(&mut self, mark: MarkId, note: String) -> Result<(), Refusal> {
+        self.now.live_mark(mark)?;
+        let note = self.issue_note(note);
+        self.apply(Command::Renote { mark, note })
+    }
+
+    /// Records a note's text and returns the id that names it.
+    fn issue_note(&mut self, note: String) -> NoteId {
+        let id = NoteId(self.next_note);
+        self.notes.insert(id, note);
+        self.next_note += 1;
+        id
+    }
+
+    /// What a mark says, empty for one nobody has typed on.
+    ///
+    /// Reads the *working* document, so it answers what an undo has restored
+    /// rather than what was last typed. Empty for a mark that is not on a page,
+    /// which is the same posture [`Working::marks_on`] takes: every caller of
+    /// this is writing a mark out or drawing it, and a mark that is not there
+    /// has no note to show either way.
+    pub fn note_of(&self, mark: MarkId) -> &str {
+        self.now
+            .note_of(mark)
+            .and_then(|note| self.notes.get(&note))
+            .map_or("", String::as_str)
+    }
+
+    /// How many note versions are held.
+    ///
+    /// The accounting observable for notes, and it exists for the reason
+    /// [`mark_bodies`](Doc::mark_bodies) does: a version kept after the command
+    /// naming it was discarded, and one correctly dropped, produce identical
+    /// documents.
+    pub fn note_bodies(&self) -> usize {
+        self.notes.len()
     }
 
     /// Applies a command, or refuses and changes nothing.
@@ -766,8 +911,15 @@ impl Doc {
         // reader who annotates and undoes in a loop grows the table forever ---
         // and the ids are never re-issued, so nothing else would ever notice.
         for discarded in &self.journal[self.cursor..] {
-            if let Command::Annotate { mark, .. } = *discarded {
-                self.marks.remove(&mark);
+            match *discarded {
+                Command::Annotate { mark, note, .. } => {
+                    self.marks.remove(&mark);
+                    self.notes.remove(&note);
+                }
+                Command::Renote { note, .. } => {
+                    self.notes.remove(&note);
+                }
+                _ => {}
             }
         }
         self.journal.truncate(self.cursor);
@@ -869,7 +1021,6 @@ mod tests {
             }],
             color: [1.0, 0.9, 0.2],
             author: "a reader".to_string(),
-            note: String::new(),
             made: "D:20260818T120000Z".to_string(),
         }
     }
@@ -1346,7 +1497,9 @@ mod tests {
     fn a_mark_lands_on_the_page_it_names() {
         let mut doc = Doc::open(3);
         let second = doc.working().order()[1];
-        let id = doc.annotate(mark_on(second)).expect("annotate");
+        let id = doc
+            .annotate(mark_on(second), String::new())
+            .expect("annotate");
 
         assert_eq!(doc.working().marks_on(second), [id]);
         assert_eq!(doc.working().page_of(id), Some(second));
@@ -1363,9 +1516,9 @@ mod tests {
         // allocator, so the second mark is a second mark.
         let mut doc = Doc::open(2);
         let page = doc.working().order()[0];
-        let first = doc.annotate(mark_on(page)).expect("first");
+        let first = doc.annotate(mark_on(page), String::new()).expect("first");
         assert!(doc.undo());
-        let second = doc.annotate(mark_on(page)).expect("second");
+        let second = doc.annotate(mark_on(page), String::new()).expect("second");
 
         assert_ne!(
             first, second,
@@ -1386,9 +1539,10 @@ mod tests {
         // anything.
         let mut doc = Doc::open(2);
         let page = doc.working().order()[0];
-        let mut body = mark_on(page);
-        body.note = "the one I made".to_string();
-        let id = doc.annotate(body.clone()).expect("annotate");
+        let body = mark_on(page);
+        let id = doc
+            .annotate(body.clone(), "the one I made".to_string())
+            .expect("annotate");
 
         assert!(doc.undo());
         assert!(doc.working().marks_on(page).is_empty());
@@ -1396,6 +1550,9 @@ mod tests {
 
         assert_eq!(doc.working().marks_on(page), [id]);
         assert_eq!(doc.mark(id), Some(&body));
+        // Including what it said, which the body does not carry: a redo that
+        // restored the mark and not its note would satisfy every line above.
+        assert_eq!(doc.note_of(id), "the one I made");
         assert_eq!(
             doc.marks_issued(),
             1,
@@ -1410,7 +1567,7 @@ mod tests {
 
         let mut empty = mark_on(page);
         empty.quads.clear();
-        assert_eq!(doc.annotate(empty), Err(Refusal::EmptyMark));
+        assert_eq!(doc.annotate(empty, String::new()), Err(Refusal::EmptyMark));
 
         // A quad with no area, which is what a click rather than a drag
         // produces, and what a selection collapsed to a caret produces.
@@ -1421,7 +1578,10 @@ mod tests {
             right: 100.0,
             bottom: 140.0,
         }];
-        assert_eq!(doc.annotate(degenerate), Err(Refusal::EmptyMark));
+        assert_eq!(
+            doc.annotate(degenerate, String::new()),
+            Err(Refusal::EmptyMark)
+        );
 
         // A `NaN` corner, which no comparison accepts -- the same reason
         // `Rect::is_proper` refuses one, and worth its own case because it
@@ -1433,7 +1593,7 @@ mod tests {
             right: 300.0,
             bottom: 140.0,
         }];
-        assert_eq!(doc.annotate(nan), Err(Refusal::EmptyMark));
+        assert_eq!(doc.annotate(nan, String::new()), Err(Refusal::EmptyMark));
 
         assert_eq!(doc.marks_issued(), 0, "a refused mark spent an id");
         assert_eq!(doc.mark_bodies(), 0);
@@ -1455,7 +1615,7 @@ mod tests {
             right: 300.0,
             bottom: 108.0,
         });
-        assert!(doc.annotate(mixed).is_ok());
+        assert!(doc.annotate(mixed, String::new()).is_ok());
     }
 
     #[test]
@@ -1464,10 +1624,13 @@ mod tests {
         let gone = doc.working().order()[0];
         doc.apply(Command::Delete { page: gone }).expect("delete");
 
-        assert_eq!(doc.annotate(mark_on(gone)), Err(Refusal::PageDeleted(gone)));
+        assert_eq!(
+            doc.annotate(mark_on(gone), String::new()),
+            Err(Refusal::PageDeleted(gone))
+        );
         let never = PageId::from_raw(99);
         assert_eq!(
-            doc.annotate(mark_on(never)),
+            doc.annotate(mark_on(never), String::new()),
             Err(Refusal::NoSuchPage(never))
         );
     }
@@ -1476,7 +1639,9 @@ mod tests {
     fn deleting_a_page_takes_its_marks_and_undo_brings_both_back() {
         let mut doc = Doc::open(2);
         let page = doc.working().order()[0];
-        let id = doc.annotate(mark_on(page)).expect("annotate");
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
 
         doc.apply(Command::Delete { page }).expect("delete");
         assert!(doc.working().page_of(id).is_none());
@@ -1499,7 +1664,9 @@ mod tests {
     fn removing_a_mark_twice_says_so() {
         let mut doc = Doc::open(1);
         let page = doc.working().order()[0];
-        let id = doc.annotate(mark_on(page)).expect("annotate");
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
 
         doc.apply(Command::Unannotate { mark: id }).expect("remove");
         assert!(doc.working().marks_on(page).is_empty());
@@ -1524,7 +1691,9 @@ mod tests {
         // reason -- or fails for none.
         let mut doc = Doc::open(2);
         let page = doc.working().order()[0];
-        let id = doc.annotate(mark_on(page)).expect("annotate");
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
         doc.apply(Command::Unannotate { mark: id }).expect("remove");
 
         let mut untouched = Doc::open(2);
@@ -1550,8 +1719,8 @@ mod tests {
             doc.working().order()[1],
             doc.working().order()[2],
         ];
-        let on_a = doc.annotate(mark_on(a)).expect("a");
-        let on_c = doc.annotate(mark_on(c)).expect("c");
+        let on_a = doc.annotate(mark_on(a), String::new()).expect("a");
+        let on_c = doc.annotate(mark_on(c), String::new()).expect("c");
         assert_eq!(doc.working().all_marks(), vec![(a, on_a), (c, on_c)]);
 
         // Put c first. The marks must follow their pages.
@@ -1572,7 +1741,9 @@ mod tests {
         // mark on the far side of one.
         let mut doc = Doc::open(2);
         let page = doc.working().order()[0];
-        let id = doc.annotate(mark_on(page)).expect("annotate");
+        let id = doc
+            .annotate(mark_on(page), "what it said".to_string())
+            .expect("annotate");
         for _ in 0..SNAPSHOT_EVERY {
             doc.apply(Command::Rotate { page, turns: 1 }).expect("turn");
         }
@@ -1590,6 +1761,180 @@ mod tests {
             doc.working().marks_on(page),
             [id],
             "the mark did not survive a rebuild from a snapshot"
+        );
+        // And what it said, which is the other half of `Working` and the half a
+        // snapshot could plausibly be built without: the mark is in the map that
+        // was already there, the note is in the one this increment added.
+        assert_eq!(doc.note_of(id), "what it said");
+    }
+
+    // --- Notes ---------------------------------------------------------------
+
+    #[test]
+    fn a_mark_says_what_it_was_last_told_to_say() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
+        assert_eq!(doc.note_of(id), "", "a fresh mark said something");
+
+        doc.renote(id, "check this".to_string()).expect("note it");
+        assert_eq!(doc.note_of(id), "check this");
+        doc.renote(id, "checked".to_string())
+            .expect("note it again");
+        assert_eq!(doc.note_of(id), "checked");
+    }
+
+    #[test]
+    fn undo_takes_a_note_back_to_what_it_said_before() {
+        // The property the whole `NoteId` arrangement exists for. A note held on
+        // the mark's body would satisfy every assertion in the test above and
+        // fail every one in this one, because undo rebuilds the working document
+        // and touches no body.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
+        doc.renote(id, "first".to_string()).expect("first");
+        doc.renote(id, "second".to_string()).expect("second");
+
+        assert!(doc.undo());
+        assert_eq!(doc.note_of(id), "first");
+        assert!(doc.undo());
+        assert_eq!(doc.note_of(id), "", "the note before the first was empty");
+        assert!(doc.redo());
+        assert_eq!(doc.note_of(id), "first");
+        assert!(doc.redo());
+        assert_eq!(doc.note_of(id), "second");
+        // The mark itself never moved, which is what says the undos above were
+        // about the note rather than about the highlight.
+        assert_eq!(doc.working().marks_on(page), [id]);
+    }
+
+    #[test]
+    fn a_note_names_a_mark_and_is_refused_by_name() {
+        let mut doc = Doc::open(2);
+        let [page, other] = [doc.working().order()[0], doc.working().order()[1]];
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
+        let never = MarkId::from_raw(4242);
+        assert_eq!(
+            doc.renote(never, "hello".to_string()),
+            Err(Refusal::NoSuchMark(never))
+        );
+
+        doc.apply(Command::Unannotate { mark: id }).expect("remove");
+        assert_eq!(
+            doc.renote(id, "hello".to_string()),
+            Err(Refusal::MarkRemoved(id)),
+            "a removed mark answered as one that never existed"
+        );
+
+        // And a mark that went with its page answers the same way, which is the
+        // distinction `mark_graves` was widened to keep -- see its own note.
+        let on_other = doc.annotate(mark_on(other), String::new()).expect("second");
+        doc.apply(Command::Delete { page: other }).expect("delete");
+        assert_eq!(
+            doc.renote(on_other, "hello".to_string()),
+            Err(Refusal::MarkRemoved(on_other))
+        );
+    }
+
+    #[test]
+    fn a_mark_that_is_removed_says_nothing() {
+        // The keys of the note map are meant to be exactly the live marks, and a
+        // leftover is invisible everywhere else: the mark is gone from the page,
+        // out of every list, and out of anything written. This is the only
+        // observable it has.
+        //
+        // The obvious stronger assertion -- that the working document now equals
+        // one nobody annotated -- is *false* and was written here first: the
+        // mark's tombstone stays on purpose, so that naming the mark again is
+        // answered truthfully rather than as an id nobody issued.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
+        doc.renote(id, "for now".to_string()).expect("note it");
+
+        doc.apply(Command::Unannotate { mark: id })
+            .expect("remove it");
+        assert_eq!(doc.note_of(id), "");
+
+        // And the note comes back with the mark, which is what says the line
+        // above removed an entry rather than the text behind it.
+        assert!(doc.undo());
+        assert_eq!(doc.note_of(id), "for now");
+    }
+
+    #[test]
+    fn a_refused_note_spends_nothing() {
+        // The same accounting `annotate` states for ids: a refusal must leave the
+        // document exactly as it was, and an id issued before the check is a
+        // version of a note nobody can ever read.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
+        let (before, held) = (doc.depth(), doc.note_bodies());
+
+        assert!(doc.renote(MarkId::from_raw(99), "x".to_string()).is_err());
+
+        assert_eq!(doc.depth(), before, "a refused note reached the journal");
+        assert_eq!(doc.note_bodies(), held, "a refused note kept its text");
+        assert_eq!(doc.note_of(id), "");
+    }
+
+    #[test]
+    fn a_note_in_the_discarded_redo_tail_goes_with_it() {
+        // The leak `note_bodies` exists to see. Two notes typed, one undone, and
+        // then a command that discards the tail: the undone version is reachable
+        // by nothing afterwards, and no assertion over the working document
+        // could tell it was still held.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
+        doc.renote(id, "kept".to_string()).expect("kept");
+        doc.renote(id, "discarded".to_string()).expect("discarded");
+        assert_eq!(doc.note_bodies(), 3, "the empty note counts too");
+
+        assert!(doc.undo());
+        doc.apply(Command::Rotate { page, turns: 1 })
+            .expect("this discards the tail");
+
+        assert_eq!(doc.note_bodies(), 2, "the discarded version was kept");
+        assert_eq!(doc.note_of(id), "kept");
+    }
+
+    #[test]
+    fn a_marks_note_goes_with_it_and_comes_back_with_it() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(mark_on(page), String::new())
+            .expect("annotate");
+        doc.renote(id, "still here".to_string()).expect("note it");
+
+        doc.apply(Command::Delete { page })
+            .expect("delete the page");
+        assert_eq!(
+            doc.note_of(id),
+            "",
+            "a mark that is on no page still had something to say"
+        );
+
+        assert!(doc.undo());
+        assert_eq!(
+            doc.note_of(id),
+            "still here",
+            "the page came back without what was written on it"
         );
     }
 }

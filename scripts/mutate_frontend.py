@@ -1536,9 +1536,9 @@ MUTATIONS = [
         # right edge then opens past the window, where the reader cannot see it
         # at all --- and every note on every other comment still looks right.
         "comments: open the note to the right of the mark whatever the room",
-        "src/lib/commentpopup.ts",
-        "      rightOf + POPUP_WIDTH + MARGIN <= width",
-        "      true",
+        "src/lib/popup.ts",
+        "    rightOf + POPUP_WIDTH + MARGIN <= width",
+        "    true",
         "flips to the left of the mark when there is not",
     ),
     Mutation(
@@ -1560,6 +1560,71 @@ MUTATIONS = [
         "    this.element.style.display = \"none\";\n    this.element.replaceChildren();",
         "    this.element.style.display = \"none\";",
         "forgets the comment when it hides",
+    ),
+    Mutation(
+        # Send the note to the command that removes marks. The note is lost and
+        # the mark goes with it, from a reader who was typing -- and the state
+        # that comes back is a document with one fewer highlight, which is
+        # exactly what the *other* button does.
+        "marks: send a typed note to the removal command",
+        "src/lib/edits.ts",
+        '      await invoke<EditState>("annot_note", { doc: this.doc, mark, note }),',
+        '      await invoke<EditState>("annot_remove", { doc: this.doc, mark, note }),',
+        "sends the mark's own id and the whole note when one is typed",
+    ),
+    # --- markpopup.ts -------------------------------------------------------
+    Mutation(
+        # Commit on every close. Nothing on screen differs: the note says what
+        # it said. What differs is the journal, which gains an entry for a
+        # reader who opened a note to read it and closed it again --- so undo
+        # steps over an edit nobody made, twice for every note they looked at.
+        "marks: commit a note that nobody changed",
+        "src/lib/markpopup.ts",
+        "    const now = this.field.value;\n    if (now === this.was) return;",
+        "    const now = this.field.value;",
+        "sends nothing for a note that was opened and not typed in",
+    ),
+    Mutation(
+        # Commit even when the caller said not to. The two callers that pass
+        # false are a removal and a mark undone under the box; both would then
+        # journal a note onto a highlight that is going, which costs the reader
+        # a second undo and, for the undone one, a refusal from the model.
+        "marks: commit the note of a mark that is going",
+        "src/lib/markpopup.ts",
+        "    if (commit) this.commit();",
+        "    this.commit();",
+        "sends nothing when the mark is going",
+    ),
+    Mutation(
+        # Let a second mark take the box without committing the first. A reader
+        # clicking straight from one highlight to the next loses what they
+        # typed, and the box shows the new mark's text as though nothing was
+        # there.
+        "marks: let a second mark take the box without committing the first",
+        "src/lib/markpopup.ts",
+        "    if (this.shown !== null && this.shown !== mark.id) this.commit();\n",
+        "",
+        "commits the first mark's note when a second one takes the box",
+    ),
+    Mutation(
+        # Open every note empty. The reader sees a blank box on a mark they
+        # wrote on, and --- because the commit compares against what was filled
+        # in --- typing anything then replaces what was there without warning.
+        "marks: show the box empty rather than what the mark says",
+        "src/lib/markpopup.ts",
+        "    this.field.value = mark.note;",
+        '    this.field.value = "";',
+        "shows what the mark says",
+    ),
+    Mutation(
+        # Close from inside instead of asking. The popup then disappears while
+        # the viewer still believes a note is open: `markOpen` names a mark with
+        # no box, and the Edit menu offers to remove it.
+        "marks: close the note from inside rather than asking",
+        "src/lib/markpopup.ts",
+        "      this.opts.onClose();\n    });\n\n    this.field = document.createElement",
+        "      this.hide();\n    });\n\n    this.field = document.createElement",
+        "asks to be closed rather than closing itself",
     ),
     # --- links.ts -----------------------------------------------------------
     Mutation(
@@ -1918,6 +1983,12 @@ TEST_FILES = [
     # than after the guard fired for a fifth time, which is the whole of what
     # four previous entries here are about.
     "src/lib/menubar.test.ts",
+    # Added 2026-08-18 with the note on a mark. Sixth time: the five mutations
+    # below `markpopup.ts` all named tests in a file this list did not have, and
+    # the guard refused to start rather than calling them survivors. Adding the
+    # file first would have been the lesson of the four entries above; adding it
+    # second is at least the guard proving itself again.
+    "src/lib/markpopup.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

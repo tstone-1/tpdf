@@ -19,6 +19,29 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### Take a highlight off, or write a note on it
+
+- **Click a highlight and a box opens.** Type in it and what you wrote is the
+  note on that mark --- the same field Preview and Acrobat show when you click
+  an annotation, and it is in the file when you save a copy.
+
+- **The note is saved when the box closes.** Clicking away, pressing Escape or
+  using the × all keep what you typed; there is no separate save, and nothing
+  is discarded for pressing the wrong key.
+
+- **Remove highlight** is in that box, and in the Edit menu while a note is
+  open. Undo puts the mark back, with its note.
+
+- Undo also steps over a note on its own, so a note you did not mean to write
+  costs one press to take back.
+
+- Not yet: a colour, a note on a comment that was already in the file, and
+  reaching a mark from the keyboard --- clicking it is the only way in.
+
+- Fixed: **Highlight selection was greyed out in the menu bar** exactly when
+  there was a selection to highlight. It had always worked from the palette
+  and the right-click menu.
+
 ### Highlight what you are reading
 
 - **Drag across a line and choose Highlight selection**, and the words are
@@ -44,8 +67,9 @@ have the binary.)
   a chord that does nothing whenever there is no selection teaches itself
   badly. Two keystrokes in the palette, one click in the right-click menu.
 
-- Not yet: choosing a colour, typing a note on a mark, taking one off again,
-  and every other kind of annotation. Highlighting is the first.
+- Not yet: choosing a colour, and every other kind of annotation. Highlighting
+  is the first. (Typing a note and taking a mark off arrived in the same
+  release --- see above.)
 
 ### Right-click a page
 

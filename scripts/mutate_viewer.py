@@ -146,6 +146,78 @@ MUTATIONS = [
         runner="viewer-tagged",
     ),
     Mutation(
+        # Commit the note on the way out of a removal. The reader loses nothing
+        # visible -- the mark and its note both go -- and the journal gains a
+        # note on a highlight that the very next command deletes, so undoing the
+        # removal takes two presses and the first one appears to do nothing.
+        "marks: send the note along with the removal",
+        "src/lib/viewer.ts",
+        "    const id = this.markNote.openId;\n    if (id === null) return;\n    this.markNote.hide(false);",
+        "    const id = this.markNote.openId;\n    if (id === null) return;\n    this.markNote.hide();",
+        "removing a mark from its note sends a removal and no note",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # Commit the note of a mark that has gone. The frame loop closes the box
+        # when its mark leaves the state -- an undo, or a page deletion -- and
+        # committing then sends a note for a mark the model no longer has, which
+        # comes back as a refusal the reader sees as an error for their own undo.
+        "marks: commit the note of a mark that has been undone",
+        "src/lib/viewer.ts",
+        "    if (!mark) {\n      this.markNote.hide(false);",
+        "    if (!mark) {\n      this.markNote.hide();",
+        "a mark that goes while its note is open takes the note with it",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # Forget to register the note command. Every layer below it still works
+        # and every test of them still passes -- the model, the boundary, the
+        # writer, and the frontend's call shape against a mock -- and a reader
+        # typing on a highlight is told the command does not exist. This is the
+        # one mutation in the table aimed at a *list* rather than at logic, and
+        # the only check that can see it is the one that talks to the real app.
+        "lib: leave the note command out of the handler list",
+        "src-tauri/src/lib.rs",
+        "            annot_note,\n",
+        "",
+        "the model takes a note through the command",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # Leave the note open behind whatever the reader pressed next. Two boxes
+        # sit over the page at once, and what was typed in the first is
+        # committed by nothing until something else closes it.
+        "marks: leave a note open behind whatever was pressed next",
+        "src/lib/viewer.ts",
+        "    if (this.markNote.openId !== null && this.markNote.openId !== own?.id) {\n      this.closeMark();\n    }\n",
+        "",
+        "a press on the page closes the note and keeps what was typed",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # Reopen the note on the mark it is already open on. The box is refilled
+        # from the model, which still holds the note as it was -- so a second
+        # click on the mark being worked on silently throws away what has been
+        # typed since, and nothing else in the application shows a difference.
+        "marks: reopen the note on the mark it is already open on",
+        "src/lib/viewer.ts",
+        "      if (this.markNote.openId !== own.id) this.showMark(own.id);",
+        "      this.showMark(own.id);",
+        "pressing the same mark again leaves what was typed alone",
+        runner="viewer-tagged",
+    ),
+    Mutation(
+        # Open the note for whichever mark the state listed first. Every check
+        # that presses a single mark still passes, and a reader with two
+        # highlights on a page opens the wrong one half the time.
+        "marks: open the first mark rather than the one under the pointer",
+        "src/lib/viewer.ts",
+        "    return hitTest(here, page, x, y)?.mark ?? null;",
+        "    return here[0]?.mark ?? null;",
+        "a press away from every mark opens no note",
+        runner="viewer-tagged",
+    ),
+    Mutation(
         "a11y: announce every heading at one level",
         "src/lib/a11y.ts",
         "  if (heading) return `h${heading[1]}`;",

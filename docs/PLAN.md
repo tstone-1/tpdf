@@ -5146,6 +5146,99 @@ no UI reaches them), the other sixteen markup subtypes, and writing a reply.
 write path can produce something both readers render, so growing it is a change
 to `save.rs` and not to a list of names.
 
+#### Taking a mark off, and typing on one --- done 2026-08-18
+
+The two items the increment above left with a model and no route in. A press on a
+highlight opens a box: what the reader types is the annotation's `/Contents`, and
+the button beside it takes the mark off the page. Both are journal commands, so
+undo steps over them and the document is dirty until it is saved.
+
+**A note is a version, not a field**, and that is the one structural decision
+here. Everything else on a `Mark` is fixed when the mark is made, which is what
+lets `Doc` hold one body per id and never touch it again --- but a note changes,
+and everything that changes has to be rebuildable by replay, because undo rebuilds
+the working document and nothing else. So the text lives in a table keyed by a
+`NoteId` and `Working` holds which version each mark is on. `Command::Renote`
+carries the id rather than the string, for the reason `Annotate` carries a
+`MarkId`: a `String` in the enum costs `Copy` and a clone per replayed command.
+
+The allocator behind it has the same property `next_mark` does and needs it for
+the same reason: it only counts up, so the text an undone `Renote` named is still
+the text its id names when a redo re-applies it. Two versions are dropped rather
+than kept --- the ones whose commands went with a discarded redo tail --- and
+`note_bodies()` is the only observable that can see the difference, exactly as
+`mark_bodies()` is for marks.
+
+**The writer needed no change at all.** `save.rs` has written `/Contents` from
+`PlannedMark.note` since the day it was written; what moved is where that string
+is read from, which is now the working document rather than the mark's body. So
+the file half of this increment is one line, and `annot-probe --mode roundtrip`
+proves it end to end: the probe now *types* its note through `renote` instead of
+passing it at creation, and reads it back out of the written file with
+`annots.rs`.
+
+**The note commits when the box closes, and Escape is a close rather than a
+cancel.** Not on every keystroke, which would put a journal entry between two
+letters; not on a button, because a reader who types and clicks away has said what
+they meant. Escape commits for the same reason: the thing it would discard is text
+somebody just typed, and a reflex press must not lose work. The two cases that do
+*not* commit are a removal --- the note is going with the mark --- and a mark that
+disappears under an open box, which is what an undo of the highlight looks like;
+committing there would send a note for a mark the model no longer has and put a
+refusal in front of a reader for their own undo.
+
+**Which mark is always "the one whose note is open."** The popup's own button and
+the Edit menu's *Remove highlight* both go through one method on the viewer that
+reads that, rather than each naming an id --- two ways to name the subject of a
+command is how they come to disagree.
+
+**Adding the menu item found a defect in the one already there.** Menu-bar
+enablement is a map *pushed* to AppKit, and it was pushed after an edit, after an
+open, and when the updater moved --- so a guard reading the *selection* was never
+refreshed while a selection existed, and Highlight selection had been greyed at
+exactly the moment it applied since the day it shipped. It is pushed from the
+frame loop now, compared against the last one so nothing crosses the boundary
+unless an answer changed. `docs/TRAPS.md` has it; the general form is that a
+pushed enablement is a cache, and every guard reading state that changes outside
+the push sites is wrong between them.
+
+**Seven window checks, and each of the two that matter has its control beside
+it.** Closing after typing sends the note; closing without typing sends nothing
+--- a popup that committed on every close would pass the first and fail the
+second, and nothing in the document would show the difference, only the undo
+stack. Removing types *first* and then presses the button, so a popup that
+committed unconditionally fails it. They are driven against a synthetic mark the
+harness hands the viewer rather than one made through the backend, which is what
+lets them run on the two corpora with no extractable text: the model is tested in
+`docmodel.rs`, the file in `annot-probe`, and this phase tests the half neither
+can reach --- a rectangle on screen, a press landing on it, and the box that
+opens.
+
+**Not done:** a colour, a keyboard route to a mark (the pointer is the only way to
+open one), editing a comment that came *out of* a file --- the model knows nothing
+about those, and giving it a command that names one is its own increment --- and
+a note long enough to be worth bounding, which nothing does today.
+
+**And one finding this increment did not act on, stated as what it is: read from
+the code and not measured.** The reader's own marks are placed with
+`scroller.effectiveTurns(slot)`, which is the view's rotation *plus* the turn an
+edit applied to that page. Comments and links are placed with `this.turns`
+alone --- `commentUnder`, `anchorFor`, `topPtOf` and `linksOn` all pass it --- and
+nothing else adds the page's own edit turn on their behalf: `pages.commentsIn`
+maps page numbers and leaves the rectangle exactly as the backend sent it. The
+tile *is* drawn with both turns, so on a page a reader has rotated with
+⌘⌥→, a comment's icon and a link's rectangle should be drawn in one place and
+hit-tested in another.
+
+That is a complete argument from the code with the obvious alternative
+explanation checked, and it is still not a measurement --- `docs/TRAPS.md` has an
+entry about exactly this shape, where five rounds of reading produced four wrong
+answers to one question about runtime behaviour. **So the next increment here
+starts with the experiment, not with the fix**: press a comment on an
+edit-rotated page and see. If it reproduces, the fix is `effectiveTurns` at four
+call sites and it needs a check per subsystem, which is why it is not folded into
+this one.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

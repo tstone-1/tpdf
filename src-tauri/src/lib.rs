@@ -523,6 +523,23 @@ async fn annot_remove(
     edits.unannotate(doc, mark)
 }
 
+/// Replaces what one mark says.
+///
+/// The whole note, not an edit to it --- see [`docmodel::Command::Renote`]. The
+/// text is the reader's own words rather than the document's, which is why
+/// nothing sanitises it here: it goes into `/Contents` on the way out, and the
+/// path that reads it back in is `annots.rs`, where a *stranger's* string
+/// arrives and is treated as one.
+#[tauri::command]
+async fn annot_note(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+    note: String,
+) -> Result<edits::EditState, String> {
+    edits.renote(doc, mark, note)
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 async fn edit_undo(
@@ -1665,6 +1682,7 @@ pub fn run() {
             page_move,
             annot_highlight,
             annot_remove,
+            annot_note,
             edit_undo,
             edit_redo,
             edit_state,

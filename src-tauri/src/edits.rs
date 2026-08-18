@@ -302,15 +302,17 @@ impl Edits {
         let mut docs = self.docs.lock().expect("edits lock");
         let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         model
-            .annotate(Mark {
-                kind: MarkKind::Highlight,
-                page: PageId::from_raw(want.page),
-                quads,
-                color: want.color,
-                author: want.author,
-                note: want.note,
-                made,
-            })
+            .annotate(
+                Mark {
+                    kind: MarkKind::Highlight,
+                    page: PageId::from_raw(want.page),
+                    quads,
+                    color: want.color,
+                    author: want.author,
+                    made,
+                },
+                want.note,
+            )
             .map_err(describe)?;
         Ok(snapshot(model))
     }
@@ -329,6 +331,27 @@ impl Edits {
                 mark: MarkId::from_raw(mark),
             },
         )
+    }
+
+    /// Replaces what one mark says, addressed by identity.
+    ///
+    /// Not routed through [`command`](Edits::command) like the other four, and
+    /// the reason is the same one [`annotate`](Edits::annotate) has: the command
+    /// carries an id that only the model may issue --- here the note's --- so
+    /// what crosses this boundary is the text, and the [`Command`] is built on
+    /// the far side of the lock.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the id names no mark, or one that has
+    /// already been removed.
+    pub fn renote(&self, doc: u32, mark: u64, note: String) -> Result<EditState, String> {
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        model
+            .renote(MarkId::from_raw(mark), note)
+            .map_err(describe)?;
+        Ok(snapshot(model))
     }
 
     /// Applies a command and returns the state it produced.
@@ -478,7 +501,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     quads: body.quads.clone(),
                     color: body.color,
                     author: body.author.clone(),
-                    note: body.note.clone(),
+                    note: model.note_of(*mark).to_string(),
                     made: body.made.clone(),
                 }
             })
@@ -603,7 +626,7 @@ fn snapshot(model: &Doc) -> EditState {
                     .flat_map(|q| [q.left, q.top, q.right, q.bottom])
                     .collect(),
                 color: mark.color,
-                note: mark.note.clone(),
+                note: model.note_of(id).to_string(),
             }
         })
         .collect();
@@ -1262,5 +1285,63 @@ mod tests {
         // it was, which the model guarantees for its own refusals and this one
         // never reaches.
         assert!(!edits.state(7).expect("state").dirty);
+    }
+
+    #[test]
+    fn a_note_reaches_the_reader_and_the_writer_as_the_same_words() {
+        // The two readings of one note, which is the pair this layer exists to
+        // keep in step: the frontend redraws from `MarkView` and the file is
+        // written from `PlannedMark`, and they are built by different code from
+        // the same model.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        let made = edits.annotate(7, a_mark(id), stamped()).expect("annotate");
+        assert_eq!(made.marks[0].note, "");
+
+        let state = edits
+            .renote(7, made.marks[0].id, "ask about this".to_string())
+            .expect("note it");
+        assert_eq!(state.marks[0].note, "ask about this");
+        assert_eq!(edits.plan(7).expect("plan").marks[0].note, "ask about this");
+    }
+
+    #[test]
+    fn a_note_on_a_mark_that_is_gone_is_refused_by_name() {
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[0].id;
+        let made = edits.annotate(7, a_mark(id), stamped()).expect("annotate");
+        let mark = made.marks[0].id;
+
+        let why = edits
+            .renote(7, mark + 1000, "hello".to_string())
+            .expect_err("no such mark");
+        assert!(why.contains("no such mark"), "{why}");
+
+        edits.unannotate(7, mark).expect("remove it");
+        let why = edits
+            .renote(7, mark, "hello".to_string())
+            .expect_err("already removed");
+        assert!(why.contains("already been removed"), "{why}");
+    }
+
+    #[test]
+    fn a_note_makes_the_document_dirty() {
+        // A note is a change to the file, not a view setting: a reader who types
+        // one and closes the window has to be asked. `dirty` is read off the
+        // journal, which is the whole reason `renote` is a command.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[0].id;
+        let made = edits.annotate(7, a_mark(id), stamped()).expect("annotate");
+        edits.undo(7).expect("undo the highlight");
+        assert!(!edits.state(7).expect("state").dirty);
+
+        edits.redo(7).expect("redo it");
+        let state = edits
+            .renote(7, made.marks[0].id, "typed".to_string())
+            .expect("note it");
+        assert!(state.dirty);
+        let back = edits.undo(7).expect("undo the note");
+        assert_eq!(back.marks[0].note, "", "undo left the note behind");
+        assert!(back.dirty, "the highlight is still an edit");
     }
 }
