@@ -669,6 +669,37 @@ is what makes that checkable. `edits::MarkView` says so at its declaration and t
 gate is what enforces it mechanically. Today the note is always empty, because nothing types
 one; the field exists because the write path needs it and the reading path already has it.
 
+**Something types one as of 2026-08-18** (§T6.4), and the paragraph above is what it was
+written against --- so the surface is the one already described rather than a new one. The
+box a reader types in is a `<textarea>`, whose `value` is text by construction and parses no
+markup; the note is displayed nowhere else while the document is open. The route by which it
+becomes *somebody else's* string is unchanged: it goes into `/Contents`, and comes back
+through `annots.rs` into the comment panel and the comment popup, which have treated a body
+that way since they were written.
+
+#### T6.4 — A note on a mark, and taking one off, added 2026-08-18
+
+**`annot_note` and `annot_remove` add no authority either**, for the same reason `annot_highlight`
+does not: both take a document handle and an identity, both mutate a `HashMap` in the app
+process, and neither opens a file, writes one or reaches a worker. `annot_note` additionally
+takes a string, which is the reader's own and is not interpreted by anything on the way in ---
+`save.rs` encodes it as a PDF text string when a copy is written, and that encoding is the
+same one the author field already goes through.
+
+**Two bounds it does not have**, stated because their absence is a decision rather than an
+oversight:
+
+- **No length limit.** A note is as long as the reader makes it. The memory it costs is one
+  copy per journalled version, in a process that already holds the document, and the file it
+  produces is one the reader asked for. `annots.rs` *does* bound what it reads back, so a
+  note longer than that clip is written whole and reported clipped on reopen --- visible to a
+  reader as a truncated note in the panel, which is a display limit and not a loss of the
+  file's bytes.
+- **No content rules.** Control characters, right-to-left overrides and anything else a
+  keyboard can produce go through. They are the reader's own bytes in the reader's own file;
+  the place where such a string becomes dangerous is where it is *read*, and that path is
+  §T8's.
+
 **What the write adds to a saved copy** is one annotation object and one form XObject per
 mark, appended to the page's `/Annots` --- and one refusal that is a correctness property in
 the §T6.1 sense: a mark on a page object that two page numbers share is refused, because an

@@ -218,6 +218,21 @@ export class Edits {
     );
   }
 
+  /**
+   * Replaces what one mark says, by the id a state reply gave it.
+   *
+   * The whole note, not an edit to it: the reader types in a box and what is
+   * sent is what the box now holds. Whether that is a change is not decided
+   * here --- the model journals whatever it is told, so the caller is the one
+   * that must not send an unchanged note, and `markpopup.ts` is where that
+   * comparison lives, next to the box it compares.
+   */
+  async renote(mark: number, note: string): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("annot_note", { doc: this.doc, mark, note }),
+    );
+  }
+
   /** Takes one mark off the page it is on, by the id a state reply gave it. */
   async unmark(mark: number): Promise<EditState> {
     return this.adopt(

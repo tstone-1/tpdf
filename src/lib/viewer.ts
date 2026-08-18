@@ -32,6 +32,8 @@
 import { AccessibleText } from "./a11y";
 import { matches } from "./keys";
 import { CommentPopup } from "./commentpopup";
+import { MarkPopup } from "./markpopup";
+import type { Anchor } from "./popup";
 import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
 import {
   History,
@@ -68,6 +70,7 @@ import {
   wordAt,
   type Caret,
   type PageText,
+  type Quad,
 } from "./text";
 import { ClickCounter } from "./clicks";
 import {
@@ -237,6 +240,17 @@ export interface ViewerOptions {
    * read. Optional, because the check harness builds a viewer with no sidebar.
    */
   onComment?: (id: number | null) => void;
+  /**
+   * Called when the reader typed a note on one of their own marks.
+   *
+   * The whole note, and only when it changed --- see `markpopup.ts`. Optional
+   * for the reason `onComment` is: a viewer with no model behind it can still be
+   * driven, and a mark it cannot save a note for is better than one it refuses
+   * to open.
+   */
+  onMarkNote?: (mark: number, note: string) => void;
+  /** Called when the reader asked to take one of their own marks off the page. */
+  onMarkRemove?: (mark: number) => void;
   /**
    * Called after a jump that Back can undo, so a caller can re-enable a button.
    *
@@ -470,6 +484,7 @@ export class Viewer {
   private readonly ring: HTMLElement;
   /** The note shown on the page, built once and reused. */
   private readonly popup: CommentPopup;
+  private readonly markNote: MarkPopup;
 
   private readonly life = new Lifetime();
   /**
@@ -607,6 +622,14 @@ export class Viewer {
     // to either.
     this.popup = new CommentPopup(root, () => this.closeComment());
 
+    // The reader's own marks get their own box, for the reason `markpopup.ts`
+    // gives. Hosted by the root and built once, exactly as above.
+    this.markNote = new MarkPopup(root, {
+      onNote: (mark, note) => this.opts.onMarkNote?.(mark, note),
+      onRemove: () => this.removeOpenMark(),
+      onClose: () => this.closeMark(),
+    });
+
     // The keyboard's position on the page, drawn as an outline over the focused
     // link. Hosted by the root rather than the tile surface for the same reason
     // the popup is: the surface is `aria-hidden`.
@@ -645,6 +668,10 @@ export class Viewer {
     // surface that is about to be replaced, and the next document's first frame
     // would otherwise paint under somebody else's comment.
     this.popup.hide();
+    // Without committing. A document being closed is not a reader finishing a
+    // sentence, and the model behind this viewer is going away with it --- the
+    // note would be sent to a handle nobody holds.
+    this.markNote.hide(false);
     this.clearLinkFocus();
     clearTimeout(this.retryTimer);
     this.a11y.destroy();
@@ -771,6 +798,7 @@ export class Viewer {
     this.prefetchText();
     this.syncAccessibleText();
     this.syncComment();
+    this.syncMark();
     if (this.focusedLink) this.placeRing();
     this.paintOverlay();
     this.paintThumb();
@@ -1965,12 +1993,7 @@ export class Viewer {
    */
   private commentUnder(event: PointerEvent): Comment | null {
     if (this.commentItems.length === 0) return null;
-    const bounds = this.root.getBoundingClientRect();
-    const docY = event.clientY - bounds.top + this.scrollTop;
-    const page = this.scroller.pageAt(docY);
-    const origin = this.scroller.pageOrigin(page);
-    const x = (event.clientX - bounds.left - origin.left) / this.zoom;
-    const y = (docY - origin.top) / this.zoom;
+    const { page, x, y } = this.pageAndPoint(event);
 
     const size = this.scroller.pageSize(page);
     const here = turnedFor(
@@ -1992,13 +2015,29 @@ export class Viewer {
    */
   private linkUnder(event: PointerEvent): Link | null {
     if (this.linkItems.length === 0) return null;
+    const { page, x, y } = this.pageAndPoint(event);
+    return linkAt(this.linksOn(page), page, x, y);
+  }
+
+  /**
+   * Which page a pointer event is over, and where on it, in that page's points.
+   *
+   * The three hit tests --- comments, the reader's own marks, links --- all need
+   * exactly this and had two copies of it between them before the third arrived.
+   * Deliberately *not* {@link pointFrom}, which answers the same question and
+   * additionally refuses a page whose text has not been extracted: a mark is not
+   * text and must be clickable on a scanned page, which has none.
+   */
+  private pageAndPoint(event: PointerEvent): { page: number; x: number; y: number } {
     const bounds = this.root.getBoundingClientRect();
     const docY = event.clientY - bounds.top + this.scrollTop;
     const page = this.scroller.pageAt(docY);
     const origin = this.scroller.pageOrigin(page);
-    const x = (event.clientX - bounds.left - origin.left) / this.zoom;
-    const y = (docY - origin.top) / this.zoom;
-    return linkAt(this.linksOn(page), page, x, y);
+    return {
+      page,
+      x: (event.clientX - bounds.left - origin.left) / this.zoom,
+      y: (docY - origin.top) / this.zoom,
+    };
   }
 
   /** One page's links in the view's space, memoised across pointer moves. */
@@ -2052,6 +2091,188 @@ export class Viewer {
       return;
     }
     this.popup.place(this.anchorFor(comment));
+  }
+
+  /**
+   * One mark's rectangles as the view draws them, and the slot they are on.
+   *
+   * The three things that need a mark's geometry --- painting it, hit-testing
+   * it, and anchoring its note to it --- go through here, so what a reader can
+   * click is by construction what they can see. Two of them wrote this loop out
+   * before the third arrived, which is the shape this repository records as *two
+   * copies of a distinction drift*.
+   *
+   * `null` when the mark's page is not in the current order, which is what an
+   * undo of a page deletion looks like for one frame.
+   */
+  private viewQuadsOf(mark: MarkView): { slot: number; quads: Quad[] } | null {
+    const slot = this.pages.slotOfId(mark.page);
+    if (slot === undefined) return null;
+    // The page size handed to `turnQuad` is the *document's*, before either
+    // turn, and the turns are the sum of the view's and the page's own edit ---
+    // `scroller.effectiveTurns` is the one place those are added.
+    const size = this.scroller.pageSize(slot);
+    const turns = this.scroller.effectiveTurns(slot);
+    const quads: Quad[] = [];
+    for (let at = 0; at + 3 < mark.quads.length; at += 4) {
+      quads.push(
+        turnQuad(
+          {
+            left: mark.quads[at] ?? 0,
+            top: mark.quads[at + 1] ?? 0,
+            right: mark.quads[at + 2] ?? 0,
+            bottom: mark.quads[at + 3] ?? 0,
+          },
+          turns,
+          size.width_pt,
+          size.height_pt,
+        ),
+      );
+    }
+    return { slot, quads };
+  }
+
+  /**
+   * The reader's own mark under a pointer event, or `null`.
+   *
+   * Hit-tested per *rectangle* rather than over the mark's bounding box: a
+   * highlight running across three lines has a box that covers the margins
+   * beside the short last line, and a note that opened from a press on white
+   * paper reads as a misplaced mark.
+   *
+   * {@link hitTest} rather than an inequality written here, so the slack around
+   * a small rectangle and the "smallest wins" rule for overlapping ones are the
+   * ones comments and links already use.
+   */
+  private markUnder(event: PointerEvent): MarkView | null {
+    if (this.marks.length === 0) return null;
+    const { page, x, y } = this.pageAndPoint(event);
+    const here: { page: number; rect: [number, number, number, number]; mark: MarkView }[] =
+      [];
+    for (const mark of this.marks) {
+      const placed = this.viewQuadsOf(mark);
+      if (!placed) continue;
+      for (const quad of placed.quads) {
+        // Labelled with the slot the mark is *on*, not the one under the
+        // pointer, so `hitTest` does the page match rather than a filter here
+        // agreeing with it --- two page tests are two chances to disagree.
+        here.push({
+          page: placed.slot,
+          rect: [quad.left, quad.top, quad.right, quad.bottom],
+          mark,
+        });
+      }
+    }
+    return hitTest(here, page, x, y)?.mark ?? null;
+  }
+
+  /** Where a mark's note hangs: the union of its rectangles, in the host's space. */
+  private anchorForMark(mark: MarkView): Anchor | null {
+    const placed = this.viewQuadsOf(mark);
+    const first = placed?.quads[0];
+    if (!placed || !first) return null;
+    const box = placed.quads.reduce(
+      (into, quad) => ({
+        left: Math.min(into.left, quad.left),
+        top: Math.min(into.top, quad.top),
+        right: Math.max(into.right, quad.right),
+        bottom: Math.max(into.bottom, quad.bottom),
+      }),
+      { ...first },
+    );
+    const origin = this.scroller.pageOrigin(placed.slot);
+    return {
+      left: origin.left + box.left * this.zoom,
+      top: origin.top + box.top * this.zoom - this.scrollTop,
+      right: origin.left + box.right * this.zoom,
+      bottom: origin.top + box.bottom * this.zoom - this.scrollTop,
+    };
+  }
+
+  /** The mark whose note is open, or -1. For the check harness and the menu. */
+  get markOpen(): number {
+    return this.markNote.openId ?? -1;
+  }
+
+  /** What the open note's box holds. For the check harness. */
+  get markNoteText(): string {
+    return this.markNote.text;
+  }
+
+  /** The note editor's element, so the check harness can look at it. */
+  get markPopup(): HTMLElement {
+    return this.markNote.node;
+  }
+
+  /**
+   * Opens the note on one of the reader's own marks.
+   *
+   * Does not scroll to it, unlike {@link showComment}: every route in is a press
+   * on the mark itself, so it is on screen by construction. The day a panel
+   * lists these, that stops being true and this needs the same treatment.
+   */
+  showMark(id: number): void {
+    const mark = this.marks.find((item) => item.id === id);
+    const at = mark ? this.anchorForMark(mark) : null;
+    if (!mark || !at) return;
+    this.markNote.show(mark, at, true);
+    this.wake();
+  }
+
+  /**
+   * Takes the mark whose note is open off the page.
+   *
+   * The one implementation, reached from the popup's own button and from the
+   * Edit menu --- which is why it reads the open note for its subject rather
+   * than taking an id: both callers mean *this* mark, and an id parameter would
+   * let them mean different ones.
+   *
+   * Closed **without committing**, because the note is going with the mark: a
+   * commit here would journal a note onto a highlight that the next command
+   * deletes, and the reader would have to undo twice.
+   */
+  removeOpenMark(): void {
+    const id = this.markNote.openId;
+    if (id === null) return;
+    this.markNote.hide(false);
+    this.opts.onMarkRemove?.(id);
+    this.root.focus();
+  }
+
+  /** Closes the note editor, committing what was typed in it. */
+  closeMark(): void {
+    if (this.markNote.openId === null) return;
+    this.markNote.hide();
+    // The keyboard goes back to the page rather than nowhere, for the reason
+    // `closeComment` gives: focus left in a `display:none` element stops the
+    // arrow keys scrolling anything.
+    this.root.focus();
+  }
+
+  /**
+   * Keeps an open note against the mark it belongs to.
+   *
+   * The mark half of {@link syncComment}, with one difference that is not
+   * cosmetic: a mark can be *removed* under the box --- by an undo, or by a page
+   * deletion --- and the note is then closed **without committing**. Sending
+   * what was typed would be refused by the model, and the reader would see an
+   * error for a highlight they took off themselves.
+   */
+  private syncMark(): void {
+    const id = this.markNote.openId;
+    if (id === null) return;
+    const mark = this.marks.find((item) => item.id === id);
+    if (!mark) {
+      this.markNote.hide(false);
+      this.root.focus();
+      return;
+    }
+    const at = this.anchorForMark(mark);
+    if (!at || !this.scroller.visiblePages().includes(this.pages.slotOfId(mark.page) ?? -1)) {
+      this.closeMark();
+      return;
+    }
+    this.markNote.place(at);
   }
 
   /** A page's text as the view shows it, or `null` if it has not arrived. */
@@ -2122,11 +2343,43 @@ export class Viewer {
     // click counter, deliberately: a double-click on a note is two requests to
     // open the same note, not a request to select the word underneath it.
     const mark = this.commentUnder(event);
+    // Then the reader's own marks. Below the file's comments, because a note
+    // somebody wrote is the more specific claim on a point --- a sticky note is
+    // 24 points square and a highlight covers whole lines, so putting marks
+    // first would make an existing note under one unreachable, and there is no
+    // other route to it. Above links, because a press is the *only* way to open
+    // a mark's note or take it off, while a link inside a highlighted paragraph
+    // is still reachable from the keyboard.
+    //
+    // Decided before anything acts on it, rather than in the branch that uses
+    // it, because the rule below needs to know the winner: a comment that wins
+    // a shared point means the mark under it did *not*.
+    const own = mark ? null : this.markUnder(event);
+
+    // **One note box at a time, and one line that says so.** Any press that is
+    // not on the mark whose note is open closes it, committing what was typed
+    // --- a comment, a link, a word, the paper. Written once here rather than in
+    // each branch below, three of which return before reaching the next.
+    if (this.markNote.openId !== null && this.markNote.openId !== own?.id) {
+      this.closeMark();
+    }
+
     if (mark) {
       event.preventDefault();
       this.showComment(mark.id, false);
       return;
     }
+    if (own) {
+      event.preventDefault();
+      if (this.popup.openId !== null) this.closeComment();
+      // Already open on this mark: the box and what is in it are left alone.
+      // Reopening would refill it from the model, which still holds the note as
+      // it was --- the reader's typing has not been committed yet, and will not
+      // be until the box closes.
+      if (this.markNote.openId !== own.id) this.showMark(own.id);
+      return;
+    }
+
     // Then a link, which loses a shared point to a comment above and wins it
     // against a selection here: a press on a cross-reference is a request to go
     // there, and starting a selection instead is what makes a link in a PDF
@@ -2455,24 +2708,11 @@ export class Viewer {
 
     const visible = new Set(this.scroller.visiblePages());
     for (const mark of this.marks) {
-      const slot = this.pages.slotOfId(mark.page);
-      if (slot === undefined || !visible.has(slot)) continue;
+      const placed = this.viewQuadsOf(mark);
+      if (!placed || !visible.has(placed.slot)) continue;
 
-      const size = this.scroller.pageSize(slot);
-      const turns = this.scroller.effectiveTurns(slot);
-      const origin = this.scroller.pageOrigin(slot);
-      for (let at = 0; at + 3 < mark.quads.length; at += 4) {
-        const quad = turnQuad(
-          {
-            left: mark.quads[at] ?? 0,
-            top: mark.quads[at + 1] ?? 0,
-            right: mark.quads[at + 2] ?? 0,
-            bottom: mark.quads[at + 3] ?? 0,
-          },
-          turns,
-          size.width_pt,
-          size.height_pt,
-        );
+      const origin = this.scroller.pageOrigin(placed.slot);
+      for (const quad of placed.quads) {
         ctx.fillRect(
           (origin.left + quad.left * this.zoom) * dpr,
           (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,

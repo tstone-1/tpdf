@@ -348,6 +348,23 @@ describe("Edits", () => {
     expect(edits.state.marks.map((m) => m.id)).toEqual([5]);
   });
 
+  it("sends the mark's own id and the whole note when one is typed", async () => {
+    // Addressed by identity, like the removal above -- and the *whole* note,
+    // because the model takes a version rather than an edit to one. A caller
+    // that sent only what changed would need the model to hold a cursor.
+    core.invoke.mockResolvedValueOnce(state(2, {}, [mark(4, 1)]));
+    const edits = new Edits(3);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(state(2, {}, [mark(4, 1)]));
+    await edits.renote(4, "ask about this");
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_note", {
+      doc: 3,
+      mark: 4,
+      note: "ask about this",
+    });
+  });
+
   it("carries the marks a reply brought, and drops the ones it did not", async () => {
     // The cache is replaced by each answer rather than merged into. A merge
     // would leave an undone mark on screen, which is the one failure undo

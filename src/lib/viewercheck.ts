@@ -50,6 +50,8 @@ import {
   usableRuns,
 } from "./reading";
 import { TextCache, type PageText } from "./text";
+import type { EditState } from "./edits";
+import type { MarkView } from "./pages";
 import { Sidebar } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor, type Thumbnails } from "./thumbnails";
@@ -304,6 +306,7 @@ async function run(path: string): Promise<void> {
   // one row and every assertion about windowing would pass on nothing.
   // Every message the viewer reported through `onError`, in order.
   const problems: string[] = [];
+  const markEdits: string[] = [];
   /** Every reorder the page strip asked for, in order. */
   const drags: [number, number][] = [];
   /** Every right-click the page strip reported, as the slot it landed on. */
@@ -362,6 +365,11 @@ async function run(path: string): Promise<void> {
     // is what makes "a refused link said so" an assertion instead of an
     // observation about a press that may simply have missed.
     onError: (message) => problems.push(message),
+    // What the viewer asked the model to do with the reader's own marks. There
+    // is no model here, so this record *is* the observable --- see
+    // `markNoteChecks`.
+    onMarkNote: (mark, note) => markEdits.push(`note:${mark}:${note}`),
+    onMarkRemove: (mark) => markEdits.push(`remove:${mark}`),
   });
 
   // The constructor sizes itself against a root the layout has not reached, so
@@ -521,6 +529,10 @@ async function run(path: string): Promise<void> {
   // does apply the turn --- and running here is cheaper than a second mapping
   // nobody else needs.
   await commentChecks(root, viewer, sidebar, doc);
+  // Beside the comments and under the same constraint: `screenPoint` does not
+  // apply the view's rotation, so both have to run before `rotationChecks`
+  // leaves the view turned.
+  await markNoteChecks(root, viewer, markEdits);
   await linkChecks(root, viewer, doc, problems);
   await thumbnailChecks(root, viewer, sidebar, doc, page, drags, menus);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
@@ -533,6 +545,9 @@ async function run(path: string): Promise<void> {
   // to make every page's size known, and refits on the widest page. Everything
   // after it talks to the backend rather than to the viewer.
   await geometryChecks(viewer, doc, seen);
+  // Before the print and the release, because it leaves a journal entry on the
+  // open document: a highlight made, noted and taken off again.
+  await markCommandChecks(doc);
   await printChecks(path, doc);
   await releaseChecks(path);
 
@@ -2965,6 +2980,11 @@ async function appCommandChecks(
     // of the palette and make the probe below unrunnable.
     highlightSelection: () => fired.push("highlightSelection"),
     hasSelection: () => viewer.selectedText.length > 0,
+    // And the same for the other guard that reads the viewer: which mark to
+    // remove *is* the open note, so pinning this true would take the only
+    // interesting thing about the command out of the check.
+    removeMark: () => fired.push("removeMark"),
+    hasOpenMark: () => viewer.markOpen >= 0,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
@@ -3445,6 +3465,25 @@ async function appCommandChecks(
       unless: withText,
     },
     {
+      // The other viewer-guarded command, and its `from` has to *make* the
+      // state the guard reads: a mark, and its note open. Nothing else in this
+      // phase leaves one open, which is deliberate --- the sweep below asserts
+      // that a document alone does not offer this, and a note left open by an
+      // earlier probe would make that read as a broken guard.
+      id: "edit.removeMark",
+      ...shell("removeMark"),
+      read: () => fired.join(","),
+      from: () => {
+        // On the page the mark is on, because the frame loop closes a note
+        // whose page has scrolled out of sight -- and the probes before this
+        // one leave the viewer wherever they finished.
+        viewer.goToPage(0);
+        const mark = syntheticMark(viewer, 4243, "");
+        viewer.setMarks([mark]);
+        viewer.showMark(mark.id);
+      },
+    },
+    {
       // Palette-only as well, and the two are worth aiming at separately: they
       // are one action taking a sign, so a copy-and-paste that left both at -1
       // gives a reader a "move down" that moves up, which is not a wiring
@@ -3680,6 +3719,9 @@ async function appCommandChecks(
     "app.installUpdate",
     "find.inSelection",
     "edit.highlightSelection",
+    // Guarded on a note being open, which is how a reader names the mark they
+    // mean. A document with no marks in it offers nothing to remove.
+    "edit.removeMark",
   ];
 
   // And the other direction, declared for the same reason. This list was the
@@ -3692,6 +3734,11 @@ async function appCommandChecks(
   const NEEDS_NO_DOCUMENT = ["file.open", "app.checkForUpdates"];
 
   viewer.clearSelection();
+  // And the mark the removal probe made, for the same reason the selection is
+  // cleared: `edit.removeMark` is offered while its note is open, and the sweep
+  // below asks what a document *alone* offers.
+  viewer.closeMark();
+  viewer.setMarks([]);
   await settle(() => viewer.idle);
 
   const detached = new CommandRegistry();
@@ -3737,6 +3784,255 @@ async function appCommandChecks(
       `${viewer.selectedText.length} characters selected, ` +
       `${viewer.searchMatches.length} matches held`,
   );
+}
+
+/**
+ * A mark of the harness's own making, on the first page.
+ *
+ * Marks come from the model, and there is no model here --- so rather than drive
+ * a highlight through the backend, the checks below hand the viewer the same
+ * shape a state reply carries and press on it. What that leaves untested is the
+ * model, which `docmodel.rs` and `edits.rs` test directly, and the mapping into
+ * the file, which `annot-probe` measures against a rendered page. What it *does*
+ * test is the half nothing else can reach: a rectangle on screen, a press
+ * landing on it, and the note that opens.
+ *
+ * Deliberately not built from a selection, unlike {@link markQuadChecks}: this
+ * is about the press rather than about where the rectangles came from, and a
+ * synthetic one runs on the two corpora with no extractable text as well.
+ *
+ * Near the top of the page and well inside it, so the point is on screen once
+ * the first page is, whatever the fixture's size --- `links-cropped.pdf`'s
+ * displayed page is a fraction of its media box.
+ */
+function syntheticMark(viewer: Viewer, id: number, note: string): MarkView {
+  const size = viewer.pageSize(0);
+  return {
+    id,
+    // The *id* of the first page, which for an unedited document is 1 --- see
+    // `pages.ts`. Sending 0 here would name no page and the mark would not be
+    // drawn at all, which is the slot-for-identity confusion this type exists
+    // to make visible.
+    page: 1,
+    quads: [
+      size.width_pt * 0.15,
+      size.height_pt * 0.06,
+      size.width_pt * 0.6,
+      size.height_pt * 0.11,
+    ],
+    color: [1, 0.9, 0.2],
+    note,
+  };
+}
+
+/** Where a synthetic mark's centre lands on screen, in client coordinates. */
+function markCentre(viewer: Viewer, mark: MarkView): { x: number; y: number } {
+  const [left, top, right, bottom] = [
+    mark.quads[0] ?? 0,
+    mark.quads[1] ?? 0,
+    mark.quads[2] ?? 0,
+    mark.quads[3] ?? 0,
+  ];
+  return viewer.screenPoint(0, (left + right) / 2, (top + bottom) / 2);
+}
+
+/** The names this phase reports, so a run that cannot start still prints them. */
+const MARK_NOTE_CHECKS = [
+  "a press on the reader's own mark opens its note",
+  "the note shows what the mark says",
+  "a press away from every mark opens no note",
+  "closing a note that was typed in sends the whole note",
+  "closing a note nobody typed in sends nothing",
+  "a press on the page closes the note and keeps what was typed",
+  "pressing the same mark again leaves what was typed alone",
+  "removing a mark from its note sends a removal and no note",
+  "a mark that goes while its note is open takes the note with it",
+];
+
+/**
+ * The note on one of the reader's own marks: opening it, typing, and removing.
+ *
+ * Every assertion here has its control beside it, and two of them are the whole
+ * point of the phase:
+ *
+ * - **Closing sends the note only when it changed.** The pair is a close after
+ *   typing and a close after not typing, because a popup that sent on every
+ *   close would put a journal entry in for a reader who opened a note to read
+ *   it --- which is not visible in the state, only in the undo stack.
+ * - **Removing sends no note.** The mark is going, so committing first would
+ *   journal a note onto a highlight the next command deletes, and undo would
+ *   need two presses. The check types *first*, so a popup that committed
+ *   unconditionally fails it.
+ *
+ * `edits` is the harness's record of what the viewer asked the model for ---
+ * there is no model, so the callback is the observable.
+ */
+async function markNoteChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  edits: string[],
+): Promise<void> {
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+
+  const mark = syntheticMark(viewer, 4242, "what it already said");
+  viewer.setMarks([mark]);
+  await frame();
+
+  const centre = markCentre(viewer, mark);
+  const bounds = root.getBoundingClientRect();
+  if (
+    centre.y < bounds.top + 4 ||
+    centre.y > bounds.bottom - 4 ||
+    centre.x < bounds.left + 4 ||
+    centre.x > bounds.right - 4
+  ) {
+    // A window too small to show the top of the first page. Said rather than
+    // failed: the checks below would report the viewer as broken for a fault in
+    // the harness's own arithmetic.
+    for (const name of MARK_NOTE_CHECKS) {
+      skip(name, `the mark's centre is off screen at (${centre.x}, ${centre.y})`);
+    }
+    viewer.setMarks([]);
+    return;
+  }
+
+  const openBefore = viewer.markOpen;
+  pointer(root, "pointerdown", centre.x, centre.y);
+  pointer(root, "pointerup", centre.x, centre.y);
+  check(
+    MARK_NOTE_CHECKS[0] ?? "",
+    openBefore === -1 && viewer.markOpen === mark.id,
+    `open=${viewer.markOpen} for #${mark.id} at (${centre.x.toFixed(0)}, ` +
+      `${centre.y.toFixed(0)}), before=${openBefore}`,
+  );
+
+  check(
+    MARK_NOTE_CHECKS[1] ?? "",
+    viewer.markNoteText === mark.note,
+    `box holds ${JSON.stringify(viewer.markNoteText)}, mark says ${JSON.stringify(mark.note)}`,
+  );
+
+  // The control for the press: the same gesture, on paper the mark does not
+  // cover. Below the mark rather than beside it, because a page narrower than
+  // the window has window either side of it and a press there reaches no page
+  // at all --- which would pass this check without testing the hit test.
+  viewer.closeMark();
+  const belowMark = viewer.screenPoint(
+    0,
+    (mark.quads[0] ?? 0) + 10,
+    (mark.quads[3] ?? 0) + 40,
+  );
+  pointer(root, "pointerdown", belowMark.x, belowMark.y);
+  pointer(root, "pointerup", belowMark.x, belowMark.y);
+  check(
+    MARK_NOTE_CHECKS[2] ?? "",
+    viewer.markOpen === -1,
+    `open=${viewer.markOpen} after a press at (${belowMark.x.toFixed(0)}, ` +
+      `${belowMark.y.toFixed(0)})`,
+  );
+
+  const typed = "read this again";
+  edits.length = 0;
+  viewer.showMark(mark.id);
+  // Found once and reused below: the popup builds its box in its constructor and
+  // reuses it, so this is the same element every time it opens. Looking it up
+  // again per check would read as though it might be a different one.
+  const box = viewer.markPopup.querySelector("textarea");
+  if (!box) {
+    for (const name of MARK_NOTE_CHECKS.slice(3)) {
+      skip(name, "the note has no box to type in");
+    }
+    viewer.setMarks([]);
+    return;
+  }
+  box.value = typed;
+  // Escape rather than `closeMark`, so what is exercised is the key a reader
+  // presses --- the popup's own handler, which commits on the way out.
+  key(viewer.markPopup, "Escape");
+  check(
+    MARK_NOTE_CHECKS[3] ?? "",
+    edits.join(",") === `note:${mark.id}:${typed}`,
+    `sent [${edits.join(", ")}]`,
+  );
+
+  edits.length = 0;
+  viewer.showMark(mark.id);
+  key(viewer.markPopup, "Escape");
+  check(
+    MARK_NOTE_CHECKS[4] ?? "",
+    edits.length === 0 && viewer.markOpen === -1,
+    `sent [${edits.join(", ")}], open=${viewer.markOpen}`,
+  );
+
+  // The other way out of the box, and the one a reader reaches for without
+  // thinking: press the page. It closes the note and commits, exactly as Escape
+  // does --- one rule, written once in `onSelectStart`.
+  edits.length = 0;
+  viewer.showMark(mark.id);
+  box.value = "typed and then clicked away from";
+  pointer(root, "pointerdown", belowMark.x, belowMark.y);
+  pointer(root, "pointerup", belowMark.x, belowMark.y);
+  check(
+    MARK_NOTE_CHECKS[5] ?? "",
+    edits.join(",") === `note:${mark.id}:typed and then clicked away from` &&
+      viewer.markOpen === -1,
+    `sent [${edits.join(", ")}], open=${viewer.markOpen}`,
+  );
+
+  // And the press that must *not* close it: the mark whose note is already
+  // open. Reopening would refill the box from the model, which still holds the
+  // note as it was, so what the reader has typed since would go -- silently,
+  // and only for the second click on the mark they are working on.
+  edits.length = 0;
+  viewer.showMark(mark.id);
+  box.value = "still being typed";
+  pointer(root, "pointerdown", centre.x, centre.y);
+  pointer(root, "pointerup", centre.x, centre.y);
+  check(
+    MARK_NOTE_CHECKS[6] ?? "",
+    edits.length === 0 &&
+      viewer.markOpen === mark.id &&
+      viewer.markNoteText === "still being typed",
+    `sent [${edits.join(", ")}], open=${viewer.markOpen}, box holds ` +
+      `${JSON.stringify(viewer.markNoteText)}`,
+  );
+  viewer.closeMark();
+
+  edits.length = 0;
+  viewer.showMark(mark.id);
+  box.value = "typed and then thrown away";
+  const remove = [...viewer.markPopup.querySelectorAll("button")].find(
+    (button) => button.textContent === "Remove highlight",
+  );
+  remove?.dispatchEvent(
+    new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+  );
+  check(
+    MARK_NOTE_CHECKS[7] ?? "",
+    edits.join(",") === `remove:${mark.id}` && viewer.markOpen === -1,
+    `sent [${edits.join(", ")}], open=${viewer.markOpen}, button ${remove ? "found" : "missing"}`,
+  );
+
+  // The undo case: a mark can go while its note is open, and the note must
+  // close without sending what was in it. Sending would be refused by a model
+  // that no longer has the mark, and the reader would see an error for an undo
+  // they asked for.
+  edits.length = 0;
+  viewer.setMarks([mark]);
+  viewer.showMark(mark.id);
+  box.value = "typed while it was being undone";
+  viewer.setMarks([]);
+  await frame();
+  await frame();
+  check(
+    MARK_NOTE_CHECKS[8] ?? "",
+    edits.length === 0 && viewer.markOpen === -1,
+    `sent [${edits.join(", ")}], open=${viewer.markOpen}`,
+  );
+
+  viewer.setMarks([]);
+  viewer.closeMark();
 }
 
 /**
@@ -7088,6 +7384,120 @@ async function drawnPastFirstPageCheck(
     `"${beyond.text}" at ${beyond.x.toFixed(0)} pt: ` +
       `${(marker.white * 100).toFixed(0)}% page, ${(marker.ink * 100).toFixed(1)}% ink ` +
       `(off the page: ${(outside.white * 100).toFixed(0)}% page)`,
+  );
+}
+
+/** What this phase reports, so a run that cannot start still prints the names. */
+const MARK_COMMAND_CHECKS = [
+  "the model takes a highlight through the command",
+  "the model takes a note through the command",
+  "the model takes a mark off through the command",
+  "a note on a mark that is gone is refused in the reader's words",
+];
+
+/**
+ * One backend command, with a throw turned into a message rather than a stack.
+ *
+ * **Not a convenience.** An `invoke` for a command that is not registered
+ * *rejects*, and an unguarded `await` on it walks out of the phase, past every
+ * check below it, and ends the run --- so the finding arrives as
+ * `[FAIL] run completed  Command annot_note not found` with no check name on
+ * it at all. Measured: the mutation that removes `annot_note` from
+ * `generate_handler!` was reported **SURVIVED** by `mutate_viewer.py` for
+ * exactly that reason, because the check it names never printed. Caught here,
+ * the same mutation reddens the check that names the command, which is what
+ * makes it attributable.
+ */
+async function attempt(
+  command: string,
+  args: Record<string, unknown>,
+): Promise<{ state: EditState | null; error: string }> {
+  try {
+    return { state: await invoke<EditState>(command, args), error: "" };
+  } catch (e) {
+    return { state: null, error: String(e) };
+  }
+}
+
+/**
+ * The three mark commands, driven against the real backend.
+ *
+ * The one thing here that no other check can say: **that the commands are
+ * registered**. Every layer below is tested somewhere --- the model in
+ * `docmodel.rs`, the boundary in `edits.rs`, the file in `annot-probe`, and the
+ * frontend's call shape in `edits.test.ts` against a mock --- and all of it
+ * passes with a `generate_handler!` list that forgot a name. The reader finds
+ * that out by clicking a highlight and being told the command does not exist.
+ *
+ * The refusal at the end is the control: the three answers above it could come
+ * from a backend that accepts anything, and a note on the mark that was just
+ * removed has to come back as the diagnosis the model names, in the words a
+ * reader would be shown.
+ */
+async function markCommandChecks(doc: DocumentInfo): Promise<void> {
+  const opened = await attempt("edit_state", { doc: doc.id });
+  const page = opened.state?.pages[0]?.id;
+  if (page === undefined) {
+    for (const name of MARK_COMMAND_CHECKS) {
+      skip(name, opened.error || "the model reports no pages");
+    }
+    return;
+  }
+
+  const made = await attempt("annot_highlight", {
+    doc: doc.id,
+    mark: {
+      page,
+      quads: [72, 100, 300, 118],
+      color: [1, 0.9, 0.2],
+      author: "",
+      note: "",
+    },
+  });
+  const mark = made.state?.marks[0]?.id;
+  check(
+    MARK_COMMAND_CHECKS[0] ?? "",
+    made.state?.marks.length === 1 && mark !== undefined && made.state.dirty,
+    made.error
+      ? preview(made.error)
+      : `${made.state?.marks.length} mark(s), dirty=${made.state?.dirty}`,
+  );
+  if (mark === undefined) {
+    for (const name of MARK_COMMAND_CHECKS.slice(1)) {
+      skip(name, "the highlight was not taken, so there is no mark to name");
+    }
+    return;
+  }
+
+  const noted = await attempt("annot_note", {
+    doc: doc.id,
+    mark,
+    note: "typed through the command",
+  });
+  check(
+    MARK_COMMAND_CHECKS[1] ?? "",
+    noted.state?.marks[0]?.note === "typed through the command",
+    noted.error
+      ? preview(noted.error)
+      : `the model says ${JSON.stringify(noted.state?.marks[0]?.note ?? null)}`,
+  );
+
+  const gone = await attempt("annot_remove", { doc: doc.id, mark });
+  check(
+    MARK_COMMAND_CHECKS[2] ?? "",
+    gone.state?.marks.length === 0,
+    gone.error ? preview(gone.error) : `${gone.state?.marks.length} mark(s) left`,
+  );
+
+  const after = await attempt("annot_note", {
+    doc: doc.id,
+    mark,
+    note: "after it went",
+  });
+  check(
+    MARK_COMMAND_CHECKS[3] ?? "",
+    after.error.includes("already been removed"),
+    after.error ? preview(after.error) : "it accepted a note on a mark that is gone",
   );
 }
 

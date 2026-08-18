@@ -8650,3 +8650,85 @@ concurrent with editing:
 The tell in both cases is that the failing tests are somewhere you have not been. Before
 believing it, check whether a harness is running: `git status` will not show it — the harness
 restores the file — and the failure is gone by the time you look.
+
+### A menu item's greying is a snapshot, so a guard that moves without an edit is stale for ever
+
+The macOS menu bar is AppKit's, and enablement crosses the boundary as a pushed map:
+`menuEnablement(commands)` evaluates every guard once and `set_menu_enabled` sends the
+answers. `App.svelte` pushed it from three places --- after an edit, after an open, and when
+the updater's state moved.
+
+`edit.highlightSelection`'s guard reads the *selection*, which moves through none of those. So
+from the day it shipped, **the menu bar's Highlight selection was greyed at exactly the moment
+there was something to highlight**, and became live only if the reader happened to make an
+edit while the selection stood. Nothing failed: the command worked from the palette, worked
+from the right-click menu, and the item was there in the menu with the right title and the
+right shortcut beside it.
+
+Three things made it invisible:
+
+- **A greyed item cannot be pressed**, so there is no refusal to notice and no error to read.
+  `runMenuCommand` refuses a disabled command, which is a second gate that never got the
+  chance to fire.
+- **The palette evaluates `enabled()` live**, so every check that drives a command through the
+  palette --- which is all of them, including the window harness's sweep over every
+  registered id --- sees the guard working perfectly.
+- The `refreshMenu` docblock already said a missed call "leaves a menu item live that the
+  palette would withhold", i.e. it had reasoned about the *stale-live* direction and named the
+  cost as a stale grey. The direction that actually bit is the other one, and it is not
+  cosmetic: a stale grey is a route the reader cannot take.
+
+Found while adding `edit.removeMark`, whose guard reads whether a mark's note is open --- the
+same shape, and it would have shipped dead in the menu for the same reason.
+
+**Found by reading the three call sites, not by a check**, and worth saying because this
+repository's own rule is that a claim about runtime behaviour belongs in an experiment. What
+makes reading sufficient here is that the question is a closed one: `set_menu_enabled` is a
+one-shot push, the three callers are all there are, and none of them fires when a selection
+appears --- there is no fourth mechanism that could be re-querying. Nothing in the harness
+covers `App.svelte`'s wiring, which is the honest gap: the fix is asserted by neither a gate
+nor a window check, only by the diff.
+
+The fix is to push from the frame loop and compare before sending: `refreshMenu` now
+JSON-encodes the map and returns early when it matches what was last pushed, so twenty
+closures run per frame and a message crosses the boundary only when an answer changed. The
+failed-push path clears the memo, because remembering a push that did not land would withhold
+the identical retry that would have corrected it.
+
+**The general shape: an enablement that is *pushed* is a cache, and every guard reading state
+that changes outside the push sites is wrong between them.** Enumerate what each guard reads,
+not what each command does.
+
+### An unguarded `invoke` for a command that is not registered ends the run, and the harness calls it SURVIVED
+
+Written while adding a window check whose whole purpose is to notice a `generate_handler!`
+list that forgot a name --- every layer under the command is tested somewhere, and all of it
+passes with the command unreachable, so the reader is the one who finds out.
+
+The check worked. The mutation that removes `annot_note` from the handler list was then
+reported by `mutate_viewer.py` as:
+
+```
+0/1 caught, 1 survived
+  SURVIVED: lib: leave the note command out of the handler list
+expected 'the model takes a note through the command' to fail;
+1 did: ['run completed    Command annot_note not found']
+```
+
+**The defect was detected and the verdict was wrong**, because a rejected `invoke` is a
+rejected promise: an unguarded `await` on it walks out of the phase, past every check below
+it, and out of the run. The named check never printed at all, so the harness --- which asks
+whether *that name* went red --- could only answer no. What went red was the wrapper's own
+line about the run, with no check name on it.
+
+Two things follow, and the second is the one worth carrying:
+
+- **Guard every backend call in a check with `try`/`catch` and turn the rejection into the
+  named check's failure message.** Three lines, and the mutation then reports `[CAUGHT] -> 2
+  red` --- the check that names the command, and the refusal control beneath it, which calls
+  the same command.
+- **A harness that keys on check names cannot see a failure that prevented the name from
+  being printed.** That is the same shape as this file's entries on a crash producing no test
+  results and a timeout read as "no result": absence and refutation are different answers, and
+  a name-keyed verdict collapses them. The tell is a SURVIVED verdict whose evidence line
+  quotes a failure that is obviously the mutation --- read the evidence, not the verdict.

@@ -60,6 +60,9 @@ const DOC: u32 = 1;
 /// How much of the page's text to highlight, in characters.
 const DEFAULT_CHARS: usize = 40;
 
+/// What the probe types on the mark, read back out of the written file.
+const NOTE: &str = "written by annot-probe";
+
 /// The colour written, and the one the pixel counts look for.
 const YELLOW: [f32; 3] = [1.0, 0.9, 0.2];
 
@@ -208,7 +211,7 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
         .ok_or_else(|| format!("no page {} in the model", args.page))?
         .id;
 
-    edits
+    let made = edits
         .annotate(
             DOC,
             NewMark {
@@ -219,11 +222,25 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
                     .collect(),
                 color: YELLOW,
                 author: "annot-probe".to_string(),
-                note: "written by annot-probe".to_string(),
+                note: String::new(),
             },
             save::pdf_date(std::time::SystemTime::now()),
         )
         .map_err(|e| format!("the model refused the mark: {e}"))?;
+
+    // Typed afterwards rather than passed above, which is the route a reader
+    // actually takes: a highlight is made from a selection with nothing to say,
+    // and the note arrives as a separate command that undo can step over. The
+    // two routes end in the same `/Contents`, so covering this one covers both,
+    // and it is the only one where the text has to survive a journal.
+    let mark = made
+        .marks
+        .first()
+        .ok_or("the state carried no mark to note")?
+        .id;
+    edits
+        .renote(DOC, mark, NOTE.to_string())
+        .map_err(|e| format!("the model refused the note: {e}"))?;
 
     let plan = edits.plan(DOC).map_err(|e| format!("no plan: {e}"))?;
     let out = args.keep.clone().unwrap_or_else(|| {
@@ -301,7 +318,7 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
     ok &= check("kind is /Highlight", mark.kind == Kind::Highlight);
     ok &= check("page is the one marked", mark.page == args.page);
     ok &= check("author survived", mark.author == "annot-probe");
-    ok &= check("note survived", mark.body == "written by annot-probe");
+    ok &= check("note survived", mark.body == NOTE);
     ok &= check("date was read as a date", mark.date.is_some());
     ok &= check("nothing was cut", !found.limits.any());
 

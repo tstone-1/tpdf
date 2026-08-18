@@ -1474,6 +1474,27 @@ MUTATIONS = [
         "a_mark_is_carried_into_the_plan_for_the_page_it_is_on",
     ),
     Mutation(
+        # Write out the note the mark was made with rather than the one it says
+        # now. A reader who types on a highlight and saves gets a file with the
+        # highlight in it and an empty note, and everything on screen still says
+        # what they typed -- so nothing is wrong until the file is reopened.
+        "edits: write the note a mark was made with rather than what it says",
+        "src/edits.rs",
+        "                    note: model.note_of(*mark).to_string(),",
+        "                    note: String::new(),",
+        "a_note_reaches_the_reader_and_the_writer_as_the_same_words",
+    ),
+    Mutation(
+        # The same on the other side of the boundary. The model has the note,
+        # the file gets the note, and the box the reader types in opens empty
+        # every time they come back to it.
+        "edits: leave the note out of the state the frontend redraws from",
+        "src/edits.rs",
+        "                note: model.note_of(id).to_string(),",
+        "                note: String::new(),",
+        "a_note_reaches_the_reader_and_the_writer_as_the_same_words",
+    ),
+    Mutation(
         # Rewind the allocator with the cursor. This is the failure `docmodel`'s
         # module note names and deferred until something issued an id: the mark
         # a reader undid gives its number back, and the next mark is created
@@ -1512,8 +1533,8 @@ MUTATIONS = [
         # never existed, which is the wrong diagnosis rather than a coarse one.
         "docmodel: let a deleted page's marks go without tombstoning them",
         "src/docmodel.rs",
-        "                for mark in self.marks.remove(&page).unwrap_or_default() {\n                    self.mark_graves.insert(mark);\n                }",
-        "                self.marks.remove(&page);",
+        "                for mark in self.marks.remove(&page).unwrap_or_default() {\n                    self.mark_graves.insert(mark);",
+        "                for mark in self.marks.remove(&page).unwrap_or_default() {\n                    let _ = mark;",
         "deleting_a_page_takes_its_marks_and_undo_brings_both_back",
     ),
     Mutation(
@@ -1532,9 +1553,63 @@ MUTATIONS = [
         # long as a reader keeps annotating and undoing.
         "docmodel: keep mark bodies whose commands were discarded",
         "src/docmodel.rs",
-        "        for discarded in &self.journal[self.cursor..] {\n            if let Command::Annotate { mark, .. } = *discarded {\n                self.marks.remove(&mark);\n            }\n        }",
-        "",
+        "                Command::Annotate { mark, note, .. } => {\n                    self.marks.remove(&mark);\n                    self.notes.remove(&note);\n                }",
+        "                Command::Annotate { .. } => {}",
         "an_id_spent_by_an_undone_mark_is_never_issued_again",
+    ),
+    Mutation(
+        # Keep the note when the mark's page is deleted. The mark is gone from
+        # every list, so nothing on screen or in a written file differs -- and
+        # the note is still reachable through a mark this document no longer
+        # has, which an undo then restores twice over.
+        "docmodel: keep a note when the page it is on is deleted",
+        "src/docmodel.rs",
+        "                    self.notes.remove(&mark);\n                }\n            }\n            Command::Move",
+        "                }\n            }\n            Command::Move",
+        "a_marks_note_goes_with_it_and_comes_back_with_it",
+    ),
+    Mutation(
+        # Keep the note when the mark is taken off the page. Same shape as the
+        # entry above and a different arm: the map's keys are meant to be
+        # exactly the live marks, and a leftover makes a document that was
+        # annotated and un-annotated compare unequal to one that never was --
+        # which is what a snapshot rebuild is checked against.
+        "docmodel: keep a note when its mark is taken off the page",
+        "src/docmodel.rs",
+        "                self.mark_graves.insert(mark);\n                self.notes.remove(&mark);",
+        "                self.mark_graves.insert(mark);",
+        "a_mark_that_is_removed_says_nothing",
+    ),
+    Mutation(
+        # Keep note versions whose commands went with the discarded redo tail.
+        # No behaviour differs at all: the versions are unreachable, the ids are
+        # never re-issued, and a reader who types and undoes in a loop grows the
+        # table forever. `note_bodies` is the only observable there is.
+        "docmodel: keep note versions whose commands were discarded",
+        "src/docmodel.rs",
+        "                Command::Renote { note, .. } => {\n                    self.notes.remove(&note);\n                }",
+        "                Command::Renote { .. } => {}",
+        "a_note_in_the_discarded_redo_tail_goes_with_it",
+    ),
+    Mutation(
+        # Issue the note's id before checking the mark is live. A refused note
+        # then spends a version that nothing can ever read, which is the same
+        # accounting `annotate` states for mark ids and the same reason.
+        "docmodel: issue a note's id before checking the mark",
+        "src/docmodel.rs",
+        "        self.now.live_mark(mark)?;\n        let note = self.issue_note(note);",
+        "        let note = self.issue_note(note);\n        self.now.live_mark(mark)?;",
+        "a_refused_note_spends_nothing",
+    ),
+    Mutation(
+        # Answer "no such mark" for one that was removed. The coarse diagnosis,
+        # and the wrong one: it says the mark never existed to a caller whose
+        # own undo took it off a moment ago.
+        "docmodel: report a removed mark as one that never existed",
+        "src/docmodel.rs",
+        "            .ok_or(if self.mark_graves.contains(&mark) {",
+        "            .ok_or(if false {",
+        "a_note_names_a_mark_and_is_refused_by_name",
     ),
     Mutation(
         # Report the marks in whatever order the map iterates. The overlay and

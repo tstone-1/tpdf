@@ -29,23 +29,9 @@
  */
 
 import { bylineOf, labelFor, type Comment } from "./comments";
+import { place, POPUP_WIDTH, type Anchor } from "./popup";
 
-/** Width of the popup, in CSS pixels. */
-export const POPUP_WIDTH = 280;
-
-/** Gap between the mark and the popup, in CSS pixels. */
-const GAP = 10;
-
-/** Margin kept between the popup and the window's edges, in CSS pixels. */
-const MARGIN = 8;
-
-/** A rectangle in the host's coordinates, which is what the viewer computes. */
-export interface Anchor {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
+export { POPUP_WIDTH, type Anchor };
 
 /** The note shown for one comment, with its replies under it. */
 export class CommentPopup {
@@ -157,36 +143,10 @@ export class CommentPopup {
     return button;
   }
 
-  /**
-   * Moves the popup to a new anchor, without rebuilding it.
-   *
-   * Called every frame while it is open, so it does no work beyond two style
-   * writes --- and it reads the host's size each time rather than caching it,
-   * because the window can be resized while a popup is open and a cached size
-   * would put the clamp somewhere the window no longer is.
-   */
+  /** Moves the popup to a new anchor, without rebuilding it. See `popup.ts`. */
   place(at: Anchor): void {
     if (this.shown === null) return;
-    const width = this.host.clientWidth;
-    const height = this.host.clientHeight;
-    const own = this.element.offsetHeight || 0;
-
-    // To the right of the mark, or to its left when there is no room. Compared
-    // against the *window*, not against the page: a page narrower than the
-    // window has room to its right even when the mark is at its edge.
-    const rightOf = at.right + GAP;
-    const left =
-      rightOf + POPUP_WIDTH + MARGIN <= width
-        ? rightOf
-        : Math.max(MARGIN, at.left - GAP - POPUP_WIDTH);
-
-    const top = Math.max(
-      MARGIN,
-      Math.min(at.top, Math.max(MARGIN, height - own - MARGIN)),
-    );
-
-    this.element.style.left = `${Math.round(left)}px`;
-    this.element.style.top = `${Math.round(top)}px`;
+    place(this.host, this.element, at);
   }
 }
 

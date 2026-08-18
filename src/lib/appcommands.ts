@@ -132,6 +132,10 @@ export interface AppActions {
    * the journal's answer, replayed on undo.
    */
   highlightSelection(): void;
+  /** Takes the mark whose note is open off the page it is on. */
+  removeMark(): void;
+  /** Whether a mark's note is open, which is what names the mark to remove. */
+  hasOpenMark(): boolean;
   /** Whether there is a selection to highlight. */
   hasSelection(): boolean;
   /** Ask for a name and write the working document to it. */
@@ -405,6 +409,16 @@ export function registerAppCommands(
       title: "Highlight selection",
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.highlightSelection(),
+    },
+    {
+      // Takes the mark whose note is open, because that is the one the reader
+      // has named. There is no "the mark under the pointer" here: a menu item
+      // is chosen with the pointer somewhere else entirely, and the open note
+      // is the application's own record of which mark is being worked on.
+      id: "edit.removeMark",
+      title: "Remove highlight",
+      enabled: () => withDocument() && actions.hasOpenMark(),
+      run: () => actions.removeMark(),
     },
     {
       // **No keyboard binding, and that is the decision rather than an

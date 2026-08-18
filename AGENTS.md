@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 321 entries
+The one thing this file does *not* carry in full is the trap list --- 323 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 321 of them and the full text
-was 93% of this file --- an instruction budget spent on the 320 traps that are not
+titles. Only the titles are here, because there are 323 of them and the full text
+was 93% of this file --- an instruction budget spent on the 322 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1098,6 +1098,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Turning on updater artifacts makes every build demand the signing key
 - A status element that comes and goes rearranges the toolbar it sits beside
 - A menu item is a global key claim, not a label (the accelerator was derived correctly from the one binding table, and deriving it at all was the mistake)
+- A menu item's greying is a snapshot, so a guard that moves without an edit is stale for ever (the item was greyed at exactly the moment it applied, and every check drives commands through the palette, which evaluates live)
 - A framework can abort your whole test binary, and 470 passing tests report nothing (a SIGABRT is not a red test; `cargo test` is the multi-threaded caller)
 - A synthetic right-click posted to the window server never reaches the web view (three ways to post one, all silent; the check belongs inside the page)
 
@@ -1218,6 +1219,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A wrapper's own verdicts are on the other stream, in the same shape as a check's
 - A mutation aimed at a check that skips reports SURVIVED
 - A mutation caught by an access violation produces no test results at all
+- An unguarded `invoke` for a command that is not registered ends the run, and the harness calls it SURVIVED (the defect was detected and the verdict was wrong; read the evidence line, not the verdict)
 - A guard that also guarantees termination fails as a hang, not as a red test
 - A comment claimed an ordering mattered, and the mutation that should have hurt did not
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it

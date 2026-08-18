@@ -146,6 +146,10 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 #   roundtrip  writes a mark, reads it back through `annots.rs` -- a separate
 #              implementation of the inverse mapping -- and compares. Also pins
 #              the `/QuadPoints` corner order against the bytes.  9/9
+#              Since 2026-08-18 the note is *typed* through `renote` rather than
+#              passed at creation, so this covers the route a reader takes: a
+#              highlight made with nothing to say, and the words added after.
+#              Both routes end in the same `/Contents`.
 #   ink        renders the saved page and counts wash per quad, with the SOURCE
 #              page as the control. 90-96% of each quad across the corpus.  3/3
 #   noap       the same with the appearance stream stripped, so the wash is the
@@ -1654,27 +1658,38 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 192 | 45 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 200 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 200 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 104 | 133 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 144 | 93 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 187 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 189 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 164 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 181 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 182 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 191 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 202 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 209 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 144 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 206 | 45 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 214 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 214 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 118 | 133 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 158 | 93 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 201 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 203 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 178 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 195 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 196 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 205 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 216 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 223 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 158 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
-**Re-measured 2026-08-18** with the three mark checks, on all fourteen corpora: every one
-reports the same **237** names, and the two vector fixtures gained three *skips* rather than
-three runs, because a highlight needs text to be made from. That is the sweep working: their
-first version left the two quad checks out of the no-text path entirely, so those corpora
-reported 235 names against everything else's 237 --- a name that had vanished rather than one
-that skipped, which is exactly what the identical-name-sets rule is for.
+**Re-measured 2026-08-18** with the note on a mark, on all fourteen corpora: every one
+reports the same **251** names, and the rows above are that sweep's, pasted from what
+`viewer_sweep.py` prints. Fourteen names on top of the 237 the morning's highlight work
+left: **nine** for the note box, **four** for the three mark commands driven against the real
+backend, and **one** for `edit.removeMark` in the sweep every registered command gets.
+
+**Every corpus gained runs and no skips**, which is the difference from the highlight
+increment and is deliberate. Those checks needed a selection, so the two fixtures with no
+extractable text skipped them; these are driven against a mark the harness hands the viewer
+itself. The model is tested in `docmodel.rs`, the file in `annot-probe`, and this phase tests
+what neither can reach --- a rectangle on screen, a press landing on it, and the box that
+opens --- for which a synthetic rectangle is the right input and runs everywhere.
+
+That earlier sweep is worth keeping for the shape of its failure: the first version of the
+quad checks left them out of the no-text path entirely, so two corpora reported 235 names
+against everything else's 237 --- a name that had *vanished* rather than one that skipped,
+which is exactly what the identical-name-sets rule is for.
 
 **`tagged.pdf` runs three of these thirteen and skips ten**, which is the split worth knowing:
 the ten that drive the viewer need a middle page to delete and it has two, while the three that

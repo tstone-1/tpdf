@@ -35,6 +35,7 @@ function harness(
   update: { available?: boolean; ready?: boolean } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
+  markOpen = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -74,6 +75,11 @@ function harness(
     // that says nothing about a selection exercises.
     highlightSelection: () => fired.push("highlightSelection"),
     hasSelection: () => selected,
+    // Default false, on the same reasoning: a document opens with no note open,
+    // so the withheld direction is what a test that says nothing about a mark
+    // exercises.
+    removeMark: () => fired.push("removeMark"),
+    hasOpenMark: () => markOpen,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
@@ -239,10 +245,11 @@ describe("every registered command", () => {
       "find.next",
       "find.previous",
     ];
-    // Built with an update on offer, a journal in both directions and a live
-    // selection, because otherwise `app.installUpdate`, `edit.undo`, `edit.redo`
-    // and `edit.highlightSelection` are correctly disabled and this sweep would
-    // read a working guard as a no-op command. The sweep asks "does every
+    // Built with an update on offer, a journal in both directions, a live
+    // selection and an open note, because otherwise `app.installUpdate`,
+    // `edit.undo`, `edit.redo`, `edit.highlightSelection` and `edit.removeMark`
+    // are correctly disabled and this sweep would read a working guard as a
+    // no-op command. The sweep asks "does every
     // command reach an action", which presumes each is in a state where it is
     // allowed to run; the guards themselves are asserted above, in both
     // directions.
@@ -250,6 +257,7 @@ describe("every registered command", () => {
       true,
       { available: true },
       { undo: true, redo: true },
+      true,
       true,
     );
     const shell = registry
@@ -492,6 +500,8 @@ describe("the window shortcuts for editing", () => {
       canRedo: () => journal.redo ?? false,
       highlightSelection: () => fired.push("highlightSelection"),
       hasSelection: () => false,
+      removeMark: () => fired.push("removeMark"),
+      hasOpenMark: () => false,
       saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     };

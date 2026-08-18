@@ -176,6 +176,8 @@
     canRedo: () => edits?.state.can_redo ?? false,
     highlightSelection: () => void highlightSelection(),
     hasSelection: () => (status?.selected ?? 0) > 0,
+    removeMark: () => removeMark(),
+    hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
     saveCopy: () => void saveCopy(),
     extractPages: (slots) => void extractPages(slots),
   };
@@ -213,6 +215,20 @@
     for (const { page, quads } of marks) {
       await applyEdit((e) => e.highlight(page, quads));
     }
+  }
+
+  /**
+   * Takes the mark whose note is open off the page it is on.
+   *
+   * *Which* mark is the viewer's answer, because the open note is where a
+   * reader says which one they mean --- there is no selected-mark concept
+   * beside it, and two ways to name the subject of a command is how they come
+   * to disagree. So this hands the question straight back to the viewer, which
+   * answers it the same way for the button inside the note; both arrive at
+   * `onMarkRemove` below, and the removal itself is the model's.
+   */
+  function removeMark(): void {
+    viewer?.removeOpenMark();
   }
 
   /**
@@ -451,6 +467,15 @@
   let menuInstalled = false;
 
   /**
+   * The enablement last pushed to the native menu, as its own JSON.
+   *
+   * Not a rune: nothing renders from it. It exists so that `refreshMenu` can be
+   * called from the frame loop without sending a message per frame --- see
+   * there for why it has to be.
+   */
+  let menuPushed = "";
+
+  /**
    * Builds the menu once the commands are registered.
    *
    * Called after the spike entry points have returned --- every one of them
@@ -480,22 +505,42 @@
   /**
    * Pushes each command's `enabled` guard into its menu item.
    *
-   * Called from the three places where an answer can change --- an edit, an
-   * update-state transition, and the end of an open --- rather than from an
-   * effect, because the guards read `viewer` and `edits`, which are plain
-   * variables rather than runes and so are not tracked. A missed call leaves a
-   * menu item live that the palette would withhold; choosing it is refused by
-   * `runMenuCommand`, so the cost is a stale grey rather than a wrong action.
+   * Called from an edit, an update-state transition, the end of an open **and
+   * the frame loop** --- rather than from an effect, because the guards read
+   * `viewer` and `edits`, which are plain variables rather than runes and so are
+   * not tracked.
+   *
+   * The frame loop is the correction, and the reasoning it replaces was half
+   * right. This used to be called from the first three alone, on the argument
+   * that a missed call leaves an item *live* that the palette would withhold ---
+   * refused by `runMenuCommand`, so the cost is a stale grey. The direction that
+   * actually bit is the other one, and a stale grey is not a cosmetic cost: it
+   * is a route the reader cannot take. `edit.highlightSelection`'s guard reads
+   * the selection, which moves through none of those three, so the menu bar
+   * offered it greyed at exactly the moment there was something to highlight.
+   * `docs/TRAPS.md` has the entry; the shape is that a *pushed* enablement is a
+   * cache, and every guard reading state that changes outside the push sites is
+   * wrong between them.
    */
   function refreshMenu(): void {
     if (!menuInstalled) return;
-    void invoke("set_menu_enabled", { state: menuEnablement(commands) }).catch(
-      () => {
-        // Quiet, unlike the install. This runs after every edit, and a menu
-        // whose greying is one step behind is not worth putting a red line in
-        // front of a reader for.
-      },
-    );
+    const state = menuEnablement(commands);
+    // Compared rather than pushed, because this is now called from the frame
+    // loop: the enablement of twenty commands is twenty closures reading local
+    // variables, and the message across the boundary is the expensive half.
+    const key = JSON.stringify(state);
+    if (key === menuPushed) return;
+    menuPushed = key;
+    void invoke("set_menu_enabled", { state }).catch(() => {
+      // Quiet, unlike the install. This runs after every edit, and a menu
+      // whose greying is one step behind is not worth putting a red line in
+      // front of a reader for.
+      //
+      // Forgotten as well as unreported: a failed push left the menu saying
+      // something else, and remembering it as sent would withhold the next
+      // identical attempt --- which is the one that would have corrected it.
+      menuPushed = "";
+    });
   }
 
   function toggleInvert() {
@@ -1204,6 +1249,11 @@
         // which comment is being read, which is the whole reason this is a
         // callback rather than each side tracking its own idea of it.
         onComment: (id) => sidebar?.comments.select(id),
+        // The note the reader typed on one of their own marks, committed when
+        // its box closed. A command like any other: it lands in the journal, so
+        // undo steps over it and the document is dirty until it is saved.
+        onMarkNote: (mark, note) => void applyEdit((e) => e.renote(mark, note)),
+        onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),
         onStatus: (next) => {
           status = next;
           // Here rather than in a `$derived`, because this is the only moment
@@ -1235,6 +1285,13 @@
             );
           }
           notePlace();
+          // Every frame, and almost always a no-op: the guards that move
+          // without an edit --- a selection appearing, a mark's note opening ---
+          // have no event of their own, and `refreshMenu` pushes nothing when
+          // the answers have not changed. Without this the menu bar's Highlight
+          // selection is greyed at exactly the moment there is a selection,
+          // because the last thing to refresh it was an edit.
+          refreshMenu();
         },
         onPosition: (at, top) => {
           sidebar?.setPosition(at, top);
