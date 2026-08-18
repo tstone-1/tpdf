@@ -329,6 +329,30 @@ export class TextCache {
     return this.view(page, text);
   }
 
+  /**
+   * A page's text as the *document* displays it, before any turn a reader added.
+   *
+   * {@link peek} answers in view space: the page's own `/Rotate`, plus the
+   * reader's rotation, plus whatever quarter turns an edit has applied. That is
+   * right for drawing and wrong for anything that has to outlive the view --- a
+   * highlight is stored against the page, not against how somebody was holding
+   * it, so the quads it is built from must come from here.
+   *
+   * The alternative was to take the view's quads and turn them back, which is a
+   * second inverse of {@link turnedView} living in the caller. Reading the
+   * untuned boxes instead means there is nothing to invert: the character
+   * *indices* are the same in both, because turning a page renumbers nothing.
+   *
+   * Counts as a use, as {@link peek} does, so a page a mark is being made on
+   * cannot be evicted between the two calls.
+   */
+  peekUnturned(page: number): PageText | null {
+    const text = this.pages.get(page);
+    if (text === undefined) return null;
+    this.touch(page);
+    return text;
+  }
+
   /** Moves a page to the young end of the eviction order. */
   private touch(page: number): void {
     const text = this.pages.get(page);

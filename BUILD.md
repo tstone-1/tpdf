@@ -135,6 +135,52 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/text-base14.pdf --mode clean
 
+# Marks: does a highlight a reader makes land on the words they made it from?
+# Run ALL FOUR modes, and run them on BOTH geometry fixtures -- that is not
+# thoroughness, it is the only way two of the checks can fail at all. Measured by
+# mutation: dropping the crop-box origin from the write path reddens
+# `links-cropped` and NOTHING else, and mapping with no rotation reddens
+# `rotated-90` and nothing else. An upright, uncropped page cannot tell either
+# mistake from correct behaviour, and `--mode roundtrip` says so in its output.
+#
+#   roundtrip  writes a mark, reads it back through `annots.rs` -- a separate
+#              implementation of the inverse mapping -- and compares. Also pins
+#              the `/QuadPoints` corner order against the bytes.  9/9
+#   ink        renders the saved page and counts wash per quad, with the SOURCE
+#              page as the control. 90-96% of each quad across the corpus.  3/3
+#   noap       the same with the appearance stream stripped, so the wash is the
+#              renderer's own, from `/QuadPoints`. Nothing else reads those
+#              numbers: a mutation reordering every corner passed every other
+#              mode.  3/3
+#   legible    the glyphs survive the wash. Removing `/Multiply` leaves 0 of
+#              2,744 ink pixels on `text-base14`.  2/2
+#   refuse     the refusals, with a control proving a real mark is still taken.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/rotated-90.pdf --mode roundtrip
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/links-cropped.pdf --mode roundtrip
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode ink
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/rotated-90.pdf --mode ink
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/links-cropped.pdf --mode ink
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode noap
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/columns.pdf --mode noap
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode legible
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode refuse
+
+# `--out PATH` keeps the marked copy instead of removing it, for opening in
+# Preview or Acrobat by hand. Worth doing once per release: the probe proves the
+# geometry and the pixels PDFium draws, and what it cannot prove is that somebody
+# else's reader shows the mark at all.
+
 # `--mode agree` needs NO manifest since 2026-08-16, which is the point of it:
 # it resolves the same outline through PDFium and through lopdf and compares the
 # two lists, so any document with an outline is a test. Run it over real files --
@@ -1608,20 +1654,27 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 189 | 45 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 197 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 197 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 104 | 130 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 144 | 90 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 184 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 186 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 161 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 178 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 179 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 188 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 199 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 206 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 141 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 192 | 45 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 200 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 200 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 104 | 133 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 144 | 93 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 187 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 189 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 164 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 181 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 182 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 191 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 202 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 209 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 144 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+
+**Re-measured 2026-08-18** with the three mark checks, on all fourteen corpora: every one
+reports the same **237** names, and the two vector fixtures gained three *skips* rather than
+three runs, because a highlight needs text to be made from. That is the sweep working: their
+first version left the two quad checks out of the no-text path entirely, so those corpora
+reported 235 names against everything else's 237 --- a name that had vanished rather than one
+that skipped, which is exactly what the identical-name-sets rule is for.
 
 **`tagged.pdf` runs three of these thirteen and skips ten**, which is the split worth knowing:
 the ten that drive the viewer need a middle page to delete and it has two, while the three that

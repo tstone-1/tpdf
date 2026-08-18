@@ -123,6 +123,17 @@ export interface AppActions {
   canUndo(): boolean;
   /** Whether there is an edit to redo. */
   canRedo(): boolean;
+  /**
+   * Highlight the selected text, as a real annotation on the document.
+   *
+   * A shell action rather than a viewer method, for the reason `rotatePage`
+   * gives: the *selection* is the viewer's and the *mark* is the model's, and
+   * what a highlight becomes --- its id, whether it is accepted at all --- is
+   * the journal's answer, replayed on undo.
+   */
+  highlightSelection(): void;
+  /** Whether there is a selection to highlight. */
+  hasSelection(): boolean;
   /** Ask for a name and write the working document to it. */
   saveCopy(): void;
   /** Ask for a name and write the pages at `slots` to it, as a second file. */
@@ -380,6 +391,20 @@ export function registerAppCommands(
       keys: label("edit.rotatePageCounterClockwise"),
       enabled: withDocument,
       run: () => actions.rotatePage(-1),
+    },
+    {
+      // **No keyboard binding, deliberately, and for the opposite reason to
+      // the deletion below.** ⌘H is the macOS shortcut for hiding the
+      // application and cannot be taken; ⌘⇧H is Acrobat's and is free, but a
+      // chord for a command that only ever applies to a selection teaches
+      // itself badly --- a reader who presses it with nothing selected gets
+      // nothing and no explanation. It is offered in the palette, in the Edit
+      // menu, and in the right-click menu over a selection, which is where a
+      // reader who has just dragged across a line is already looking.
+      id: "edit.highlightSelection",
+      title: "Highlight selection",
+      enabled: () => withDocument() && actions.hasSelection(),
+      run: () => actions.highlightSelection(),
     },
     {
       // **No keyboard binding, and that is the decision rather than an

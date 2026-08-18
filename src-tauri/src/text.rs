@@ -235,6 +235,47 @@ pub fn to_device(turns: u8, width_pt: f32, height_pt: f32, page_box: [f64; 4]) -
     }
 }
 
+/// Maps a display-space rectangle back into the page's own unrotated space.
+///
+/// The inverse of [`to_device`], and it exists because writing an annotation
+/// runs the mapping the other way: a reader drags across glyphs whose boxes are
+/// in display space, and `/QuadPoints` is written in the page's own space with y
+/// upwards. Placing that quad by a second, hand-derived rotation table is how a
+/// highlight ends up one quarter-turn away from the words it was made from ---
+/// `docs/TRAPS.md` records two such tables disagreeing at every turn but zero.
+///
+/// Takes `[left, top, right, bottom]` with y downwards from the displayed page's
+/// top-left corner, and returns `[left, bottom, right, top]` with y upwards, the
+/// order [`to_device`] accepts. `width_pt` and `height_pt` are the **displayed**
+/// size, exactly as [`to_device`] takes them.
+///
+/// **A proper rectangle in gives a proper rectangle out, at every turn, and
+/// there is no normalisation step here saying so.** There was one, and a
+/// mutation deleting it survived: each arm below already emits its corners in
+/// ascending order whenever the display box has `left <= right` and
+/// `top <= bottom`, so the `min`/`max` pass could not change a single value it
+/// was ever given. Unreachable defence reads as load-bearing and quietly becomes
+/// wrong, so what pins the property now is
+/// `a_mapped_back_rectangle_is_proper` --- which fails the moment an arm emits
+/// two corners the wrong way round, where the normalisation would have hidden
+/// exactly that.
+pub fn from_device(turns: u8, width_pt: f32, height_pt: f32, device: [f32; 4]) -> [f64; 4] {
+    let [left, top, right, bottom] = device;
+    // The page's own size, recovered the same way `to_device` recovers it.
+    let (w0, h0) = match turns % 2 {
+        0 => (width_pt, height_pt),
+        _ => (height_pt, width_pt),
+    };
+
+    let page = match turns % 4 {
+        0 => [left, h0 - bottom, right, h0 - top],
+        1 => [top, left, bottom, right],
+        2 => [w0 - right, top, w0 - left, bottom],
+        _ => [w0 - bottom, h0 - right, w0 - top, h0 - left],
+    };
+    page.map(f64::from)
+}
+
 /// Turns a device-space box by `turns` quarter-turns clockwise.
 ///
 /// The view rotation, as distinct from the page's own: [`to_device`] has already
@@ -425,7 +466,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{retarget, scalar_of, to_device, turn_device};
+    use super::{from_device, retarget, scalar_of, to_device, turn_device};
     use crate::structure::TaggedRun;
 
     /// A run over PDFium's indices, which is what `structure.rs` returns.
@@ -659,6 +700,92 @@ mod tests {
         // free and the alternative is a panic on a value nobody validated.
         assert_eq!(map(4), map(0));
         assert_eq!(map(5), map(1));
+    }
+
+    #[test]
+    fn a_display_box_maps_back_to_the_page_box_it_came_from() {
+        // The property that lets a highlight be written where the reader made
+        // it: `from_device` is the inverse of `to_device` at every turn, not
+        // only at zero, which is where a hand-derived second table agrees by
+        // accident.
+        for turns in 0..4u8 {
+            let (width, height) = displayed(turns);
+            let back = from_device(
+                turns,
+                width,
+                height,
+                to_device(turns, width, height, CORNER),
+            );
+            for (at, (got, want)) in back.iter().zip(CORNER.iter()).enumerate() {
+                assert!(
+                    (got - want).abs() < 1e-3,
+                    "corner {at} at /Rotate {}: {got} is not {want}",
+                    turns as u32 * 90,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mapping_back_with_the_wrong_turn_moves_the_box() {
+        // The control. The round trip above would pass for a `from_device` that
+        // ignored `turns` and always undid the flip --- three of its four arms
+        // would then be wrong and nothing would say so, because each is only
+        // ever composed with its own partner. This asserts the arms differ: a
+        // box mapped down at one turn and back at another does not come home.
+        //
+        // Skips the 180-degree pair on purpose rather than quietly passing it.
+        // `CORNER` is 30 x 80 points on a 600 x 800 page, so a half turn about
+        // the centre sends it somewhere else entirely --- but at turns 1 and 3
+        // the *displayed* size is swapped, and undoing turn 1 with arm 3 on a
+        // square page would be an identity. The page here is not square, which
+        // is what makes every pair below discriminating.
+        for turns in 0..4u8 {
+            let (width, height) = displayed(turns);
+            let down = to_device(turns, width, height, CORNER);
+            for wrong in 0..4u8 {
+                if wrong == turns {
+                    continue;
+                }
+                let back = from_device(wrong, width, height, down);
+                assert!(
+                    back.iter()
+                        .zip(CORNER.iter())
+                        .any(|(got, want)| (got - want).abs() > 1.0),
+                    "undoing /Rotate {} with the arm for {} came home anyway: {back:?}",
+                    turns as u32 * 90,
+                    wrong as u32 * 90,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_mapped_back_rectangle_is_proper() {
+        // Half the turns produce their corners in an order that is not
+        // `[left, bottom, right, top]`, so this is the normalisation being
+        // asserted rather than the algebra. A `/QuadPoints` written from an
+        // improper rectangle is one PDF 32000-1 tells every consumer to
+        // normalise -- and a consumer that does not draws nothing at all.
+        for turns in 0..4u8 {
+            let (width, height) = displayed(turns);
+            let back = from_device(
+                turns,
+                width,
+                height,
+                to_device(turns, width, height, CORNER),
+            );
+            assert!(
+                back[0] < back[2],
+                "/Rotate {}: left is not < right",
+                turns as u32 * 90
+            );
+            assert!(
+                back[1] < back[3],
+                "/Rotate {}: bottom is not < top",
+                turns as u32 * 90
+            );
+        }
     }
 
     #[test]

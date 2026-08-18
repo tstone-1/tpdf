@@ -613,7 +613,7 @@ export class Scroller {
    * or does not care ({@link displayedSize} tests the parity), and reducing in
    * two places is how one of them comes to disagree.
    */
-  private effectiveTurns(page: number): number {
+  effectiveTurns(page: number): number {
     return this.opts.turns + (this.pageTurns[page] ?? 0);
   }
 

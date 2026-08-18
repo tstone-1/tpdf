@@ -55,14 +55,33 @@
 //! existed are different diagnoses, and collapsing them loses the only
 //! distinction a caller can act on.
 //!
+//! ## Marks are created, and that needed the allocator
+//!
+//! A highlight is the first thing here that did not come out of the file, so it
+//! is the first id this module has to *issue*. The property the note below used
+//! to defer is now live and proved: **an id released by an undo is never
+//! re-issued to a different mark by a later redo.**
+//!
+//! Two things carry it, and neither is a check that has to be remembered:
+//!
+//! * [`Doc::next_mark`] only ever counts up. Undo rewinds the *cursor*, never
+//!   the allocator, so an id that has been issued is spent for the life of the
+//!   document whether or not the command that used it is currently applied.
+//! * A command carries the id it was issued, so **replay allocates nothing**.
+//!   Redo re-applies `Annotate { id, .. }` with the id from the journal, which
+//!   is why an undone mark comes back as itself rather than as a copy.
+//!
+//! What the ids buy is the same thing they buy for pages, one step further on:
+//! [`Command::Unannotate`] names a mark that a stale frontend may have watched
+//! disappear, and the answer is a refusal that says which of the two it is.
+//!
 //! ## What is deliberately not here yet
 //!
-//! **Nothing creates a page.** Insert, extract, split, merge and duplicate all
-//! bring pages in from somewhere, which needs an id allocator, and an allocator
-//! carries a property this module cannot currently get wrong: an id released by
-//! an undo must never be re-issued to a different page by a later redo. `Doc`
-//! has no allocator at all, so ids here are the baseline's own and that failure
-//! is unreachable. When creation lands, that is the property to prove first.
+//! **Nothing creates a page.** Insert, split, merge and duplicate all bring
+//! pages in from somewhere. That now needs the allocator above rather than a new
+//! one --- but a page id is also a *position* in the order and a source in the
+//! baseline, so what a created page has to answer that a created mark does not
+//! is where its content comes from.
 //!
 //! Save, save-mode classification, crash recovery and external-modification
 //! handling are §5's other halves and none of them are here. This module holds
@@ -134,6 +153,107 @@ impl Rect {
     }
 }
 
+/// A mark's identity, stable for the life of the working document.
+///
+/// Opaque for the same reason [`PageId`] is, and issued rather than derived ---
+/// see the module note on the allocator, which is the one property this type
+/// exists to carry.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct MarkId(u64);
+
+impl MarkId {
+    /// The raw value, for logging and for keying a map across the IPC boundary.
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    /// Rebuilds an id from a value [`get`](Self::get) produced.
+    ///
+    /// Safe for the reason [`PageId::from_raw`] is safe: every command checks the
+    /// id against the live marks and the graves before it mutates anything, so a
+    /// number nobody issued is [`Refusal::NoSuchMark`] rather than a mark.
+    pub fn from_raw(value: u64) -> MarkId {
+        MarkId(value)
+    }
+}
+
+/// A rectangle in **display** space: points from the displayed page's top-left
+/// corner, y increasing downwards, after the page's `/Rotate` and relative to
+/// its crop box.
+///
+/// **Not [`Rect`]**, and the two must not be confused: `Rect` is PDF user space
+/// with y upwards, which is what a `/CropBox` is written in, and this is the
+/// space the viewer lays glyphs out in. They differ by a flip and a turn, and a
+/// value of one passed where the other is expected is a plausible rectangle in
+/// the wrong place --- which is why they are separate types rather than one
+/// four-field struct used twice.
+///
+/// The model holds display space because that is what the reader's drag produced
+/// and what the overlay draws; `save.rs` maps it into the page's own space with
+/// [`crate::text::from_device`] at the moment it writes, where the crop box and
+/// `/Rotate` are in hand.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Quad {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+impl Quad {
+    /// Whether the quad covers any area at all.
+    ///
+    /// `NaN` in any corner is not covered, which falls out of the comparisons
+    /// exactly as it does for [`Rect::is_proper`] --- and is asserted rather than
+    /// left to be rediscovered, because a `/QuadPoints` entry built from one
+    /// makes a whole annotation undrawable in some readers and invisible in the
+    /// rest.
+    pub fn covers_area(self) -> bool {
+        self.right > self.left && self.bottom > self.top
+    }
+}
+
+/// What kind of mark a reader made.
+///
+/// **Only what tpdf can write.** [`crate::annots::Kind`] is the reading
+/// vocabulary and has seventeen variants, because a document may contain any of
+/// them; this is the producing vocabulary, and a variant here is a promise that
+/// the write path can turn it into an annotation Acrobat and Preview both
+/// render. Growing this enum is therefore a change to `save.rs` and not only to
+/// a list of names.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MarkKind {
+    /// A wash over text, `/Highlight`.
+    Highlight,
+}
+
+/// One mark a reader made, with everything a writer needs to put it in a file.
+///
+/// Not `Copy`, which is why it lives in a table on [`Doc`] keyed by [`MarkId`]
+/// rather than inside the command: keeping [`Command`] `Copy` is what lets
+/// replay stay a `for &cmd in ...` loop over the journal.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Mark {
+    pub kind: MarkKind,
+    /// The page the mark is on. Held here as well as in [`Working`] so that a
+    /// writer holding only the table knows where each mark goes.
+    pub page: PageId,
+    /// The covered rectangles, in display space, in reading order.
+    pub quads: Vec<Quad>,
+    /// Red, green and blue in 0..=1, as `/C` takes them.
+    pub color: [f32; 3],
+    /// `/T`. Empty when the reader has no name set.
+    pub author: String,
+    /// `/Contents`: what the reader typed, empty for a mark with no note.
+    pub note: String,
+    /// `/M`, already in PDF date form.
+    ///
+    /// Supplied by the caller rather than read from a clock here. This module
+    /// has no clock on purpose --- a test that has to freeze time to assert a
+    /// journal is a test about the clock.
+    pub made: String,
+}
+
 /// One page of the working document.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Page {
@@ -174,16 +294,31 @@ pub enum Command {
     /// Expressed against a neighbouring *id* rather than a destination index for
     /// the reason the module note gives.
     Move { page: PageId, after: Option<PageId> },
+    /// Put a mark on a page.
+    ///
+    /// The mark's body is in [`Doc`]'s table under `mark`; only the identity is
+    /// journalled, which is what keeps this enum `Copy` and replay allocation-free.
+    Annotate { mark: MarkId, page: PageId },
+    /// Take a mark off the page it is on.
+    Unannotate { mark: MarkId },
 }
 
 impl Command {
     /// The page the command acts on, for diagnostics.
-    pub fn subject(self) -> PageId {
+    ///
+    /// `None` for [`Unannotate`](Command::Unannotate), which names a mark and
+    /// not a page --- and deliberately does not go looking one up. The page a
+    /// mark sits on is in the table, and a diagnostic that has to consult
+    /// another structure to answer is one that can be asked after the answer has
+    /// gone.
+    pub fn subject(self) -> Option<PageId> {
         match self {
             Command::Rotate { page, .. }
             | Command::Crop { page, .. }
             | Command::Delete { page }
-            | Command::Move { page, .. } => page,
+            | Command::Move { page, .. }
+            | Command::Annotate { page, .. } => Some(page),
+            Command::Unannotate { .. } => None,
         }
     }
 }
@@ -213,6 +348,21 @@ pub enum Refusal {
     /// value. The test below does exactly that, and it found this by failing
     /// with the two sides printing identically.
     DegenerateCrop(Rect),
+    /// No mark has ever had this id.
+    NoSuchMark(MarkId),
+    /// The id names a mark that was taken off the page. Distinct from
+    /// [`NoSuchMark`](Refusal::NoSuchMark) for the reason
+    /// [`PageDeleted`](Refusal::PageDeleted) is distinct from
+    /// [`NoSuchPage`](Refusal::NoSuchPage): a reader who removed a highlight and
+    /// a frontend addressing one that never existed need different answers.
+    MarkRemoved(MarkId),
+    /// A mark covering nothing: no quads at all, or every quad degenerate.
+    ///
+    /// Refused here rather than at the write path, because a mark that covers
+    /// nothing is invisible in the viewer *and* in the file --- so accepting one
+    /// puts the reader in front of a document that claims an unsaved change and
+    /// shows no sign of it.
+    EmptyMark,
 }
 
 /// Baseline plus the commands applied so far, materialized.
@@ -224,6 +374,24 @@ pub struct Working {
     /// page from the journal, so a tombstone only has to make a later command
     /// naming it refusable by name.
     graves: HashSet<PageId>,
+    /// The marks on each page, in the order they were made.
+    ///
+    /// A page with no marks has no entry rather than an empty vector, so that
+    /// two working documents that have never been annotated compare equal --- and
+    /// they must, because `PartialEq` here is what a snapshot is checked against.
+    marks: HashMap<PageId, Vec<MarkId>>,
+    /// Marks that were on a page and are not, for the same reason `graves` holds
+    /// pages: a second [`Command::Unannotate`] naming one has to be told which
+    /// of the two answers it is getting.
+    ///
+    /// **A mark that went with its deleted page is in here too**, and that was
+    /// not the first design. The first left it out on the reasoning that the
+    /// page is the better diagnosis --- and the result was that removing a
+    /// highlight on a deleted page answered [`Refusal::NoSuchMark`], which says
+    /// the mark never existed. A wrong diagnosis is worse than a coarse one, and
+    /// a caller that wants to know about the page is asking about a page, where
+    /// [`Refusal::PageDeleted`] is waiting for it.
+    mark_graves: HashSet<MarkId>,
 }
 
 impl Working {
@@ -248,6 +416,8 @@ impl Working {
             order: ids,
             pages: table,
             graves: HashSet::new(),
+            marks: HashMap::new(),
+            mark_graves: HashSet::new(),
         }
     }
 
@@ -276,6 +446,42 @@ impl Working {
     /// Whether an id names a page that once existed and was deleted.
     pub fn is_deleted(&self, id: PageId) -> bool {
         self.graves.contains(&id)
+    }
+
+    /// The marks on a page, in the order they were made.
+    ///
+    /// Empty for a page nobody has annotated and for a page that does not exist,
+    /// which is deliberate: every caller of this is drawing, and a page that is
+    /// not there has nothing to draw either way. A caller that needs the two
+    /// distinguished is asking about a *page*, and [`page`](Self::page) answers
+    /// that.
+    pub fn marks_on(&self, page: PageId) -> &[MarkId] {
+        self.marks.get(&page).map_or(&[], |list| list.as_slice())
+    }
+
+    /// Which page a live mark is on, if any.
+    ///
+    /// A linear walk of the pages that have marks. That is the right shape at
+    /// this size --- a reader makes tens of highlights, not thousands --- and the
+    /// alternative is a second index that has to be kept in step with the first
+    /// by every mutation, which is the class of defect this model is arranged to
+    /// avoid.
+    pub fn page_of(&self, mark: MarkId) -> Option<PageId> {
+        self.marks
+            .iter()
+            .find(|(_, list)| list.contains(&mark))
+            .map(|(page, _)| *page)
+    }
+
+    /// Every live mark, with the page it sits on, in page order.
+    ///
+    /// Page order rather than creation order, because both consumers --- the
+    /// overlay and the writer --- work a page at a time.
+    pub fn all_marks(&self) -> Vec<(PageId, MarkId)> {
+        self.order
+            .iter()
+            .flat_map(|page| self.marks_on(*page).iter().map(|mark| (*page, *mark)))
+            .collect()
     }
 
     /// Refuses unless the id names a live page, naming which of the two it is.
@@ -319,6 +525,13 @@ impl Working {
                 self.order.remove(at);
                 self.pages.remove(&page);
                 self.graves.insert(page);
+                // The marks go with the page, and their ids are tombstoned so
+                // that naming one afterwards is answered truthfully. Undo brings
+                // page and marks back together, because it replays rather than
+                // inverts.
+                for mark in self.marks.remove(&page).unwrap_or_default() {
+                    self.mark_graves.insert(mark);
+                }
             }
             Command::Move { page, after } => {
                 self.live(page)?;
@@ -340,6 +553,37 @@ impl Working {
                     Some(anchor) => self.position(anchor) + 1,
                 };
                 self.order.insert(to, page);
+            }
+            Command::Annotate { mark, page } => {
+                self.live(page)?;
+                // Not a check on `mark_graves`: an id is issued once and a
+                // journalled `Annotate` is replayed exactly where it was
+                // accepted, so an id arriving here twice is a broken model
+                // rather than a user error. It is asserted rather than assumed.
+                debug_assert!(
+                    self.page_of(mark).is_none(),
+                    "a mark was annotated onto two pages: {mark:?}"
+                );
+                self.marks.entry(page).or_default().push(mark);
+                self.mark_graves.remove(&mark);
+            }
+            Command::Unannotate { mark } => {
+                let Some(page) = self.page_of(mark) else {
+                    return Err(if self.mark_graves.contains(&mark) {
+                        Refusal::MarkRemoved(mark)
+                    } else {
+                        Refusal::NoSuchMark(mark)
+                    });
+                };
+                let list = self.marks.get_mut(&page).expect("page_of found it here");
+                list.retain(|&held| held != mark);
+                // An empty entry is removed rather than left, so that a document
+                // annotated and un-annotated compares equal to one that never
+                // was --- which is what a snapshot comparison rests on.
+                if list.is_empty() {
+                    self.marks.remove(&page);
+                }
+                self.mark_graves.insert(mark);
             }
         }
         Ok(())
@@ -371,6 +615,19 @@ pub struct Doc {
     /// they are the same number and mean different things, and the key is "how
     /// many commands had been applied".
     snapshots: HashMap<usize, Working>,
+    /// What each mark is, keyed by the id its command carries.
+    ///
+    /// Outside [`Working`] on purpose. A mark's body never changes --- editing
+    /// one would be a command of its own --- so a snapshot has no reason to clone
+    /// it, and keeping it here is what lets [`Command`] stay `Copy`.
+    marks: HashMap<MarkId, Mark>,
+    /// The next id to issue.
+    ///
+    /// **Only ever counts up.** Undo moves the cursor and never this, which is
+    /// the whole of the property the module note states: an id spent by a
+    /// command that has since been undone is still spent, so redo restores the
+    /// mark it named rather than a different one wearing its number.
+    next_mark: u64,
 }
 
 impl Doc {
@@ -382,6 +639,8 @@ impl Doc {
             journal: Vec::new(),
             cursor: 0,
             snapshots: HashMap::new(),
+            marks: HashMap::new(),
+            next_mark: 1,
         }
     }
 
@@ -436,12 +695,81 @@ impl Doc {
         self.nearest(upto)
     }
 
+    /// What a mark is, for a mark this document has issued.
+    ///
+    /// Answers for an id whose command has been undone as well as for a live
+    /// one, and that is not an oversight: the body outlives the command, which
+    /// is what lets redo restore it. A caller asking *which marks are on the
+    /// page* asks [`Working::marks_on`], and this only ever fills in the detail.
+    pub fn mark(&self, id: MarkId) -> Option<&Mark> {
+        self.marks.get(&id)
+    }
+
+    /// How many mark bodies are held.
+    ///
+    /// An accounting observable, here for the reason [`snapshots`](Doc::snapshots)
+    /// is: a body kept after the command that used it was discarded, and a body
+    /// correctly dropped, produce identical documents. Without this, the pruning
+    /// below could stop happening and no assertion over
+    /// [`working`](Doc::working) would notice.
+    pub fn mark_bodies(&self) -> usize {
+        self.marks.len()
+    }
+
+    /// The highest id issued so far.
+    ///
+    /// The second half of that accounting, and the one that says the allocator
+    /// was not rewound: after an undo this is unchanged, which is exactly what
+    /// makes the next mark a new one.
+    pub fn marks_issued(&self) -> u64 {
+        self.next_mark - 1
+    }
+
+    /// Puts a mark on a page, issuing its id.
+    ///
+    /// The one entry point that allocates. Everything else replays, which is why
+    /// this is a method rather than a [`Command`] a caller can build: an id that
+    /// a caller chose is an id two marks can share.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::EmptyMark`] when the mark covers no area, and whatever
+    /// [`Command::Annotate`] refuses --- the page not existing, or having been
+    /// deleted. **The id is issued after those checks**, so a refused mark spends
+    /// nothing; a document where every attempt failed has issued no ids at all.
+    pub fn annotate(&mut self, mark: Mark) -> Result<MarkId, Refusal> {
+        if !mark.quads.iter().any(|quad| quad.covers_area()) {
+            return Err(Refusal::EmptyMark);
+        }
+        self.now.live(mark.page)?;
+
+        let id = MarkId(self.next_mark);
+        let page = mark.page;
+        self.marks.insert(id, mark);
+        self.next_mark += 1;
+        // A refusal cannot reach here: the page was checked live a line ago
+        // against the same working document, and the id is fresh. It is still
+        // routed through `apply` rather than mutating `now` directly, so that
+        // the journal, the cursor, the snapshot rule and the redo-tail discard
+        // are all the ones every other command gets.
+        self.apply(Command::Annotate { mark: id, page })?;
+        Ok(id)
+    }
+
     /// Applies a command, or refuses and changes nothing.
     ///
     /// A successful apply **discards the redo tail**, which is what makes the
     /// journal a line rather than a tree.
     pub fn apply(&mut self, cmd: Command) -> Result<(), Refusal> {
         self.now.apply(cmd)?;
+        // Bodies belonging to the discarded tail go with it. Without this, a
+        // reader who annotates and undoes in a loop grows the table forever ---
+        // and the ids are never re-issued, so nothing else would ever notice.
+        for discarded in &self.journal[self.cursor..] {
+            if let Command::Annotate { mark, .. } = *discarded {
+                self.marks.remove(&mark);
+            }
+        }
         self.journal.truncate(self.cursor);
         // Snapshots past the cursor describe states that no longer exist. Keeping
         // one would not merely waste a clone: the next rebuild through that
@@ -526,6 +854,24 @@ mod tests {
 
     fn rect(llx: f64, lly: f64, urx: f64, ury: f64) -> Rect {
         Rect { llx, lly, urx, ury }
+    }
+
+    /// A highlight over one ordinary-looking line, on `page`.
+    fn mark_on(page: PageId) -> Mark {
+        Mark {
+            kind: MarkKind::Highlight,
+            page,
+            quads: vec![Quad {
+                left: 72.0,
+                top: 90.0,
+                right: 300.0,
+                bottom: 108.0,
+            }],
+            color: [1.0, 0.9, 0.2],
+            author: "a reader".to_string(),
+            note: String::new(),
+            made: "D:20260818T120000Z".to_string(),
+        }
     }
 
     #[test]
@@ -992,5 +1338,258 @@ mod tests {
             assert!(doc.redo());
             assert_eq!(doc.working(), want, "redo to {upto}");
         }
+    }
+
+    // --- Marks ---------------------------------------------------------------
+
+    #[test]
+    fn a_mark_lands_on_the_page_it_names() {
+        let mut doc = Doc::open(3);
+        let second = doc.working().order()[1];
+        let id = doc.annotate(mark_on(second)).expect("annotate");
+
+        assert_eq!(doc.working().marks_on(second), [id]);
+        assert_eq!(doc.working().page_of(id), Some(second));
+        // The other pages are untouched, which a `marks_on` that ignored its
+        // argument would also have to satisfy.
+        assert!(doc.working().marks_on(doc.working().order()[0]).is_empty());
+        assert_eq!(doc.mark(id).expect("body").kind, MarkKind::Highlight);
+    }
+
+    #[test]
+    fn an_id_spent_by_an_undone_mark_is_never_issued_again() {
+        // The property `docmodel` deferred until something created an id, stated
+        // as the module note states it: undo rewinds the cursor and never the
+        // allocator, so the second mark is a second mark.
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let first = doc.annotate(mark_on(page)).expect("first");
+        assert!(doc.undo());
+        let second = doc.annotate(mark_on(page)).expect("second");
+
+        assert_ne!(
+            first, second,
+            "an undone mark's id was handed to a different mark"
+        );
+        assert_eq!(doc.marks_issued(), 2);
+        // And the first is gone rather than merely unreachable: its command was
+        // in the redo tail that the second annotate discarded, so keeping its
+        // body would be a leak no behaviour could see.
+        assert!(doc.mark(first).is_none());
+        assert_eq!(doc.mark_bodies(), 1);
+    }
+
+    #[test]
+    fn redo_restores_the_mark_it_undid_rather_than_a_copy() {
+        // The other half of the same property, and the reason the id is carried
+        // in the command rather than allocated on apply: replay must not spend
+        // anything.
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let mut body = mark_on(page);
+        body.note = "the one I made".to_string();
+        let id = doc.annotate(body.clone()).expect("annotate");
+
+        assert!(doc.undo());
+        assert!(doc.working().marks_on(page).is_empty());
+        assert!(doc.redo());
+
+        assert_eq!(doc.working().marks_on(page), [id]);
+        assert_eq!(doc.mark(id), Some(&body));
+        assert_eq!(
+            doc.marks_issued(),
+            1,
+            "replay issued an id, so a later undo would rename the mark"
+        );
+    }
+
+    #[test]
+    fn a_mark_covering_nothing_is_refused_and_spends_no_id() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+
+        let mut empty = mark_on(page);
+        empty.quads.clear();
+        assert_eq!(doc.annotate(empty), Err(Refusal::EmptyMark));
+
+        // A quad with no area, which is what a click rather than a drag
+        // produces, and what a selection collapsed to a caret produces.
+        let mut degenerate = mark_on(page);
+        degenerate.quads = vec![Quad {
+            left: 100.0,
+            top: 100.0,
+            right: 100.0,
+            bottom: 140.0,
+        }];
+        assert_eq!(doc.annotate(degenerate), Err(Refusal::EmptyMark));
+
+        // A `NaN` corner, which no comparison accepts -- the same reason
+        // `Rect::is_proper` refuses one, and worth its own case because it
+        // arrives from arithmetic rather than from a click.
+        let mut nan = mark_on(page);
+        nan.quads = vec![Quad {
+            left: f32::NAN,
+            top: 100.0,
+            right: 300.0,
+            bottom: 140.0,
+        }];
+        assert_eq!(doc.annotate(nan), Err(Refusal::EmptyMark));
+
+        assert_eq!(doc.marks_issued(), 0, "a refused mark spent an id");
+        assert_eq!(doc.mark_bodies(), 0);
+        assert!(!doc.can_undo(), "a refusal reached the journal");
+    }
+
+    #[test]
+    fn one_quad_with_area_is_enough() {
+        // The control for the three refusals above, and it is not a formality:
+        // a selection that runs off the end of a line yields a real rectangle
+        // followed by an empty one, so an `all` where the code says `any` would
+        // refuse ordinary highlights and pass every test in the case above.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let mut mixed = mark_on(page);
+        mixed.quads.push(Quad {
+            left: 300.0,
+            top: 90.0,
+            right: 300.0,
+            bottom: 108.0,
+        });
+        assert!(doc.annotate(mixed).is_ok());
+    }
+
+    #[test]
+    fn a_mark_on_a_page_that_is_not_there_is_refused_by_the_page() {
+        let mut doc = Doc::open(2);
+        let gone = doc.working().order()[0];
+        doc.apply(Command::Delete { page: gone }).expect("delete");
+
+        assert_eq!(doc.annotate(mark_on(gone)), Err(Refusal::PageDeleted(gone)));
+        let never = PageId::from_raw(99);
+        assert_eq!(
+            doc.annotate(mark_on(never)),
+            Err(Refusal::NoSuchPage(never))
+        );
+    }
+
+    #[test]
+    fn deleting_a_page_takes_its_marks_and_undo_brings_both_back() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page)).expect("annotate");
+
+        doc.apply(Command::Delete { page }).expect("delete");
+        assert!(doc.working().page_of(id).is_none());
+        assert!(doc.working().all_marks().is_empty());
+
+        // Naming it now says it was removed, not that it never existed. The
+        // first version of this model left the id out of the tombstones and
+        // answered `NoSuchMark`, which is a wrong diagnosis rather than a coarse
+        // one.
+        assert_eq!(
+            doc.apply(Command::Unannotate { mark: id }),
+            Err(Refusal::MarkRemoved(id))
+        );
+
+        assert!(doc.undo());
+        assert_eq!(doc.working().marks_on(page), [id]);
+    }
+
+    #[test]
+    fn removing_a_mark_twice_says_so() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page)).expect("annotate");
+
+        doc.apply(Command::Unannotate { mark: id }).expect("remove");
+        assert!(doc.working().marks_on(page).is_empty());
+        assert_eq!(
+            doc.apply(Command::Unannotate { mark: id }),
+            Err(Refusal::MarkRemoved(id))
+        );
+        assert_eq!(
+            doc.apply(Command::Unannotate {
+                mark: MarkId::from_raw(4242)
+            }),
+            Err(Refusal::NoSuchMark(MarkId::from_raw(4242)))
+        );
+    }
+
+    #[test]
+    fn a_document_annotated_and_cleared_compares_equal_to_one_that_never_was() {
+        // Not a nicety about `PartialEq`: a snapshot is a clone of `Working` and
+        // a rebuild is checked against one. An empty vector left behind under a
+        // page key makes two identical documents unequal, which turns every
+        // assertion built on a snapshot into one that passes for the wrong
+        // reason -- or fails for none.
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page)).expect("annotate");
+        doc.apply(Command::Unannotate { mark: id }).expect("remove");
+
+        let mut untouched = Doc::open(2);
+        // Something in the journal, so the two differ in history and not in
+        // state -- otherwise this compares two documents nothing happened to.
+        untouched
+            .apply(Command::Rotate {
+                page: untouched.working().order()[0],
+                turns: 4,
+            })
+            .expect("a full turn is a no-op");
+        assert_eq!(doc.working().marks, untouched.working().marks);
+    }
+
+    #[test]
+    fn marks_come_back_in_page_order_after_the_pages_move() {
+        // `all_marks` walks the order rather than the map, which is what makes
+        // it answer in reading order -- and a `HashMap` iteration would pass a
+        // one-page test forever.
+        let mut doc = Doc::open(3);
+        let [a, b, c] = [
+            doc.working().order()[0],
+            doc.working().order()[1],
+            doc.working().order()[2],
+        ];
+        let on_a = doc.annotate(mark_on(a)).expect("a");
+        let on_c = doc.annotate(mark_on(c)).expect("c");
+        assert_eq!(doc.working().all_marks(), vec![(a, on_a), (c, on_c)]);
+
+        // Put c first. The marks must follow their pages.
+        doc.apply(Command::Move {
+            page: c,
+            after: None,
+        })
+        .expect("move");
+        assert_eq!(doc.working().order(), [c, a, b]);
+        assert_eq!(doc.working().all_marks(), vec![(c, on_c), (a, on_a)]);
+    }
+
+    #[test]
+    fn a_mark_survives_the_snapshot_boundary() {
+        // Undo past a snapshot rebuilds from the clone rather than from the
+        // baseline, so a `Working` that did not carry its marks would lose them
+        // here and nowhere else. `SNAPSHOT_EVERY` commands of padding puts the
+        // mark on the far side of one.
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page)).expect("annotate");
+        for _ in 0..SNAPSHOT_EVERY {
+            doc.apply(Command::Rotate { page, turns: 1 }).expect("turn");
+        }
+        assert!(
+            doc.snapshots() > 0,
+            "no snapshot was taken, so this tests nothing"
+        );
+        assert!(
+            doc.replay_base(doc.depth().0) > 0,
+            "the rebuild would not use one"
+        );
+
+        assert!(doc.undo());
+        assert_eq!(
+            doc.working().marks_on(page),
+            [id],
+            "the mark did not survive a rebuild from a snapshot"
+        );
     }
 }

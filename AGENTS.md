@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 314 entries
+The one thing this file does *not* carry in full is the trap list --- 321 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 314 of them and the full text
-was 93% of this file --- an instruction budget spent on the 313 traps that are not
+titles. Only the titles are here, because there are 321 of them and the full text
+was 93% of this file --- an instruction budget spent on the 320 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -982,6 +982,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - PDFium rendering *is* interruptible --- via the progressive API
 - PDFium decides how often it can be interrupted, and the slice does not change it
 - `FPDF_LoadPage` re-parses every time, and on a complex page that is 44 ms
+- `PdfiumLibraryBindingsAlreadyInitialized` — a helper that binds its own library works alone and fails in company (the error names the library path, and neither the path nor the pin is wrong)
+- A wash that reads as zero everywhere: PDFium's buffer is RGBA, not BGRA (a count of zero cannot say where to look; a bounding box can)
 - PDFium's render rotation composes with `/Rotate`, and wants the turned size
 - PDFium accepting a file is not evidence the file is well formed
 - An error message that names no cause is not vague, it is a wrong diagnosis
@@ -1075,6 +1077,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A shortcut can produce the right answer and lose the report
 - An empty answer from a whole-document scan cannot say whether it looked
 - A cited instance can be half right, and the wrong half is the one doing the work
+- A mutation that survives every check because nothing reads the field (the appearance stream draws the wash, so `/QuadPoints` is read by nobody until it is removed)
 - A panel that lists a hidden comment must not let the page open it
 - `/F` is a bit field, and the flag every real link sets is not the one you are testing
 
@@ -1116,6 +1119,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Three similarity metrics in a row, each unable to see its own failure
 - A timer that starts after the setup measures the wrong thing, and reports it
 - `cargo test` is a debug build, and a debug number in a doc comment is a lie
+- PDFKit reports an annotation's bounds rotated and renders the page unrotated (a cross-check read in the wrong convention produced a confident wrong conclusion)
 
 ### Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration
@@ -1187,6 +1191,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Pressing a row navigates, and navigating scrolls the list out from under the drag (the guard was right, and was not what the sweep found --- the check's own coordinates were stale, and a detached element measures as the origin)
 - A break recorded as a position in a list the callee does not own (a shipped defect no fixture could reach; the SURVIVED verdict was the finding, and the control had to be renamed rather than kept)
 - A caller that validates first cannot reach the guard beneath it (the test passed, and so did the mutation that deleted the guard)
+- A coverage figure over the union of several quads measures the line spacing (and two more statistics that were right for one input and meaningless for another)
+- A control refused by a different guard than the one it was written for (it failed, which was the lucky case)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1232,6 +1238,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mutation aimed at one branch when the fixture only reaches the other
 - A delivery counter cannot say WHICH delivery, and the guard was satisfied by the event it excluded (the control that proved the first fix's reasoning wrong, and was then deleted for asserting the race)
 - A snapshot taken after the first mutation restores the mutation, and verifies itself clean
+- `--only "text: "` runs every `context:` mutation too (a substring filter, and two false diagnoses from harnesses overlapping each other and a test run)
 - A rewritten line leaves a mutation aimed at nothing, and only the harness says so
 - A stream split done for the failing direction leaves the passing one where it was
 - Two budgets for one run, and the one that was raised is not the one that decides

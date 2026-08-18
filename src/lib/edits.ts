@@ -16,17 +16,18 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-import { PageMap, unedited, type PageView } from "./pages";
+import { PageMap, unedited, type MarkView, type PageView } from "./pages";
 
 // Re-exported because this is the module a reader of the edit state comes to
 // first, and the declaration lives in `pages.ts` so that the modules which only
 // need the shape --- the scroller, the thumbnails --- do not have to import this
 // one, which cannot be loaded outside a webview.
-export type { PageView };
+export type { MarkView, PageView };
 
 /** Mirrors `edits::EditState`. */
 export interface EditState {
   pages: PageView[];
+  marks: MarkView[];
   can_undo: boolean;
   can_redo: boolean;
   /** Whether anything differs from the file on disk. */
@@ -36,10 +37,20 @@ export interface EditState {
 /** The state of a document nobody has edited and nobody has opened. */
 export const NOTHING_OPEN: EditState = {
   pages: [],
+  marks: [],
   can_undo: false,
   can_redo: false,
   dirty: false,
 };
+
+/**
+ * The wash a highlight is written in, as red, green and blue in 0..=1.
+ *
+ * One colour, because there is one command. A palette of them is a UI question
+ * --- where the swatches live, what a reader picks before or after marking ---
+ * and answering it with a constant here would be answering it invisibly.
+ */
+const HIGHLIGHT_COLOR: [number, number, number] = [1, 0.9, 0.2];
 
 /**
  * The edit state of one open document, and the commands that change it.
@@ -181,6 +192,36 @@ export class Edits {
     const after = landing === 0 ? null : (rest[landing - 1]?.id ?? null);
     return this.adopt(
       await invoke<EditState>("page_move", { doc: this.doc, page, after }),
+    );
+  }
+
+  /**
+   * Highlights `quads` on the page in slot `page`.
+   *
+   * The quads are display-space rectangles --- see {@link MarkView} --- and they
+   * must come from the page's *own* text rather than from the view's, which is
+   * what `TextCache.peekUnturned` is for. Sending view-space quads would store a
+   * mark that moves when the reader rotates the window.
+   *
+   * Takes a slot and sends the id, as {@link rotate} does. What it does not do
+   * is decide whether the mark is acceptable: a mark covering nothing is refused
+   * by the model, and predicting that here would be a second copy of the rule.
+   */
+  async highlight(page: number, quads: number[], note = ""): Promise<EditState> {
+    const id = this.current.pages[page]?.id;
+    if (id === undefined) return this.current;
+    return this.adopt(
+      await invoke<EditState>("annot_highlight", {
+        doc: this.doc,
+        mark: { page: id, quads, color: HIGHLIGHT_COLOR, author: "", note },
+      }),
+    );
+  }
+
+  /** Takes one mark off the page it is on, by the id a state reply gave it. */
+  async unmark(mark: number): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("annot_remove", { doc: this.doc, mark }),
     );
   }
 

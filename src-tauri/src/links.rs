@@ -62,9 +62,6 @@ use crate::outline::Target;
 /// Largest decompressed stream the scan will accept, matching [`crate::annots`].
 const MAX_DECODE: usize = 64 * 1024 * 1024;
 
-/// Deepest the `/MediaBox` and `/Rotate` inheritance walk will follow `/Parent`.
-const MAX_INHERIT: usize = 32;
-
 /// Most links the scan will report for one page.
 ///
 /// Higher than the comment budget because links are legitimately dense: an index
@@ -780,115 +777,26 @@ struct PageBox {
     origin: (f32, f32),
 }
 
-/// The displayed page box: `/CropBox` where there is one, else `/MediaBox`.
+/// The displayed page box, its rotation and its origin.
 ///
-/// **Reading `/MediaBox` alone was wrong, and the failure is silent.** PDFium
-/// lays a page out from its crop box, so the viewer's coordinates start at that
-/// box's corner --- while this used the media box, whose corner may be somewhere
-/// else. Every link and comment rectangle was then offset by the difference, on
-/// a page that looks entirely normal.
+/// **The arithmetic moved to [`crate::pagetree::displayed_page`]** when the save
+/// path needed it in order to place a highlight: it was here, duplicated in
+/// [`crate::annots`], and a third copy is the drift `docs/TRAPS.md` records.
+/// This wrapper stays so that the shape the rest of this module reads ---
+/// [`PageBox`] --- is defined where it is used, and so that the change to a
+/// shared implementation is one line rather than a rename across the file.
 ///
-/// Measured before the fix: a fixture with `/CropBox [50 50 545 742]` on
-/// `/MediaBox [0 0 595 842]` renders 495x692 and put its character boxes on ink
-/// **0%** of the time, against 100% for the same page uncropped. One of the 43
-/// PDFs on this machine carries an off-origin crop box --- `[0 7.83 595.5
-/// 850.08]` on all ten pages --- so it is live rather than theoretical, and its
-/// 7.8-point offset is small enough that nothing coarse would have caught it.
-///
-/// §14.11.2 says the crop box is intersected with the media box, and that is
-/// done here rather than trusted: a producer may write a crop box larger than
-/// the sheet, and a page displayed bigger than its own paper is not something to
-/// map coordinates into.
-///
-/// The same computation [`crate::annots`] does. It is not shared between them
-/// because sharing it would mean a public seam through one module into the other
-/// for a dozen lines of arithmetic --- but they must agree, and
-/// `both_scans_agree_about_a_rotated_page` is the test that says they do.
+/// `annots.rs` deliberately keeps its own copy: `both_scans_agree_about_a_rotated_page`
+/// compares the two answers on one document, and collapsing them would leave a
+/// test that cannot fail.
 fn page_geometry(document: &Document, page: ObjectId) -> PageBox {
-    let box_of = |key: &[u8]| {
-        inherited(document, page, key)
-            .and_then(|object| numbers_of(document, &object, 4))
-            .filter(|values| values.iter().all(|value| value.is_finite()))
-            .map(|v| {
-                [
-                    v[0].min(v[2]),
-                    v[1].min(v[3]),
-                    v[0].max(v[2]),
-                    v[1].max(v[3]),
-                ]
-            })
-            .filter(|b| b[2] > b[0] && b[3] > b[1])
-    };
-
-    let media = box_of(b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0]);
-    let shown = match box_of(b"CropBox") {
-        Some(crop) => [
-            crop[0].max(media[0]),
-            crop[1].max(media[1]),
-            crop[2].min(media[2]),
-            crop[3].min(media[3]),
-        ],
-        None => media,
-    };
-    // An intersection can be empty if the two boxes do not overlap, which is a
-    // malformed document rather than a page of no size. The media box is the
-    // honest fallback: it is the sheet, and §14.11.2 makes the crop box the
-    // thing being questioned.
-    let shown = if shown[2] > shown[0] && shown[3] > shown[1] {
-        shown
-    } else {
-        media
-    };
-
-    let turns = inherited(document, page, b"Rotate")
-        .and_then(|object| resolve(document, &object).as_i64().ok())
-        .map(|degrees| (((degrees / 90) % 4 + 4) % 4) as u8)
-        .unwrap_or(0);
-
-    let (width, height) = (shown[2] - shown[0], shown[3] - shown[1]);
+    let shown = crate::pagetree::displayed_page(document, page);
     PageBox {
-        width: if turns % 2 == 1 { height } else { width },
-        height: if turns % 2 == 1 { width } else { height },
-        turns,
-        origin: (shown[0], shown[1]),
+        width: shown.width,
+        height: shown.height,
+        turns: shown.turns,
+        origin: shown.origin,
     }
-}
-
-/// An inheritable page attribute, walking `/Parent` under a bound.
-fn inherited(document: &Document, page: ObjectId, key: &[u8]) -> Option<Object> {
-    let mut node = page;
-    let mut seen: HashSet<ObjectId> = HashSet::new();
-
-    for _ in 0..MAX_INHERIT {
-        if !seen.insert(node) {
-            return None;
-        }
-        let dict = document.get_dictionary(node).ok()?;
-        if let Ok(value) = dict.get(key) {
-            return Some(value.clone());
-        }
-        match dict.get(b"Parent") {
-            Ok(Object::Reference(parent)) => node = *parent,
-            _ => return None,
-        }
-    }
-    None
-}
-
-/// Reads an array of `count` numbers, following one reference at each level.
-fn numbers_of(document: &Document, object: &Object, count: usize) -> Option<Vec<f32>> {
-    let Object::Array(array) = resolve(document, object) else {
-        return None;
-    };
-    if array.len() < count {
-        return None;
-    }
-    let values: Vec<f32> = array
-        .iter()
-        .take(count)
-        .filter_map(|item| resolve(document, item).as_float().ok())
-        .collect();
-    (values.len() == count).then_some(values)
 }
 
 /// A link's `/Rect`, normalised and mapped into display space.
@@ -903,7 +811,7 @@ fn rect_of(annot: &Dictionary, document: &Document, shown: PageBox) -> [f32; 4] 
     let Some(values) = annot
         .get(b"Rect")
         .ok()
-        .and_then(|object| numbers_of(document, object, 4))
+        .and_then(|object| crate::pagetree::numbers_of(document, object, 4))
     else {
         return [0.0, 0.0, 0.0, 0.0];
     };

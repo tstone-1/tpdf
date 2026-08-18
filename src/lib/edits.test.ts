@@ -15,22 +15,43 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Edits, NOTHING_OPEN, type EditState } from "./edits";
+import {
+  Edits,
+  NOTHING_OPEN,
+  type EditState,
+  type MarkView,
+} from "./edits";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
 
 /** A state of `count` pages, ids from 1, with `turns` applied where given. */
-function state(count: number, turns: Record<number, number> = {}): EditState {
+function state(
+  count: number,
+  turns: Record<number, number> = {},
+  marks: MarkView[] = [],
+): EditState {
   return {
     pages: Array.from({ length: count }, (_, at) => ({
       id: at + 1,
       source: at,
       turns: turns[at] ?? 0,
     })),
+    marks,
     can_undo: Object.keys(turns).length > 0,
     can_redo: false,
     dirty: Object.keys(turns).length > 0,
+  };
+}
+
+/** One highlight on the page with id `page`. */
+function mark(id: number, page: number): MarkView {
+  return {
+    id,
+    page,
+    quads: [72, 100, 300, 118],
+    color: [1, 0.9, 0.2],
+    note: "",
   };
 }
 
@@ -274,5 +295,70 @@ describe("Edits", () => {
       source: "/in.pdf",
       path: "/out.pdf",
     });
+  });
+
+  it("sends the page's id rather than its slot when a mark is made", async () => {
+    // The same reason `rotate` sends an id, one degree sharper: a mark carries
+    // *coordinates*, so a stale slot would put a reader's highlight on a
+    // different page at the place the words used to be.
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(state(3, {}, [mark(1, 3)]));
+    const after = await edits.highlight(2, [10, 20, 30, 40], "a note");
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_highlight", {
+      doc: 9,
+      mark: {
+        page: 3,
+        quads: [10, 20, 30, 40],
+        color: [1, 0.9, 0.2],
+        author: "",
+        note: "a note",
+      },
+    });
+    expect(after.marks).toHaveLength(1);
+    expect(edits.state.marks[0]?.id).toBe(1);
+  });
+
+  it("does not send a mark for a slot the model has never mentioned", async () => {
+    core.invoke.mockResolvedValueOnce(state(2));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockClear();
+
+    await edits.highlight(7, [10, 20, 30, 40]);
+    expect(core.invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends the mark's own id when one is removed", async () => {
+    // A mark is addressed by identity all the way through: there is no slot
+    // that names one, and its position in `marks` moves whenever an earlier
+    // mark is removed.
+    core.invoke.mockResolvedValueOnce(state(2, {}, [mark(4, 1), mark(5, 2)]));
+    const edits = new Edits(3);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(state(2, {}, [mark(5, 2)]));
+    await edits.unmark(4);
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_remove", {
+      doc: 3,
+      mark: 4,
+    });
+    expect(edits.state.marks.map((m) => m.id)).toEqual([5]);
+  });
+
+  it("carries the marks a reply brought, and drops the ones it did not", async () => {
+    // The cache is replaced by each answer rather than merged into. A merge
+    // would leave an undone mark on screen, which is the one failure undo
+    // exists to prevent.
+    core.invoke.mockResolvedValueOnce(state(1, {}, [mark(1, 1), mark(2, 1)]));
+    const edits = new Edits(1);
+    await edits.refresh();
+    expect(edits.state.marks).toHaveLength(2);
+
+    core.invoke.mockResolvedValueOnce(state(1));
+    await edits.undo();
+    expect(edits.state.marks).toEqual([]);
   });
 });

@@ -174,6 +174,8 @@
     redoEdit: () => void applyEdit((e) => e.redo()),
     canUndo: () => edits?.state.can_undo ?? false,
     canRedo: () => edits?.state.can_redo ?? false,
+    highlightSelection: () => void highlightSelection(),
+    hasSelection: () => (status?.selected ?? 0) > 0,
     saveCopy: () => void saveCopy(),
     extractPages: (slots) => void extractPages(slots),
   };
@@ -190,6 +192,27 @@
     const at = viewer?.position.page;
     if (at === undefined) return;
     await applyEdit((e) => e.rotate(at, delta));
+  }
+
+  /**
+   * Highlights the selected text, as an annotation on the document.
+   *
+   * The *rectangles* come from the viewer and everything else comes from the
+   * model: whether the mark is accepted, what its identity is, and what undo
+   * does with it. Nothing here decides any of that --- see `edits.rs`.
+   *
+   * A selection can span pages, and each page is a mark of its own: a
+   * `/QuadPoints` array addresses one page, so a highlight running from page 3
+   * to page 4 is two annotations however it is presented. They are applied in
+   * order, so undo takes them off one page at a time --- which is the honest
+   * behaviour rather than a pleasant one, and the alternative is a journal
+   * entry that groups commands, which the model does not have.
+   */
+  async function highlightSelection(): Promise<void> {
+    const marks = viewer?.selectionQuadsByPage() ?? [];
+    for (const { page, quads } of marks) {
+      await applyEdit((e) => e.highlight(page, quads));
+    }
   }
 
   /**
@@ -251,6 +274,7 @@
         // business throwing away a strip somebody is looking at.
         sidebar?.thumbnails?.setPages(after.pages.length);
       }
+      viewer?.setMarks(after.marks);
       dirty = after.dirty;
       // Undo and Redo are the two menu items whose enablement moves on every
       // edit, which is why this is here rather than only at the ends of an open.

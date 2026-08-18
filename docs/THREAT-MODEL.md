@@ -642,6 +642,45 @@ than repairing it would be: what survives a repair is only as sound as the resol
 it, and what survives this is nothing. Stated in the changelog as a real loss rather than
 hidden as a detail.
 
+#### T6.3 — Highlighting a selection, added 2026-08-18
+
+**The first thing tpdf adds to a document rather than rearranging, and it adds no
+authority.** `annot_highlight` and `annot_remove` take a document handle, a page identity and
+a list of numbers, and mutate a `HashMap` in the app process. They open no file, write none
+and reach no worker --- the T6.2 shape exactly, and the commands that write are still
+`save_copy`, `extract_pages` and `print_document`.
+
+**Two things the frontend cannot say, and both are deliberate.**
+
+- **The timestamp.** `edits::NewMark` has no field for it; `lib.rs` reads the clock when the
+  command arrives. What a mark claims about when it was made is the application's statement,
+  and a `made` on the wire would be one more attacker-chosen string in a file tpdf signs its
+  name to.
+- **The subtype.** `MarkKind` has one variant and `save.rs` maps it with a `match`, so the
+  `/Subtype` written is a literal of ours. A document cannot choose it, and neither can the
+  frontend --- the same property `annots.rs` keeps on the way *in*, where `Kind` is an enum of
+  our own literals rather than the document's `/Subtype` string.
+
+**A mark's note is attacker-controlled the moment a saved file is reopened**, which is the
+one genuinely new surface. The reader types it, tpdf writes it, and `annots.rs` reads it back
+out of a file that may by then have been edited by anything --- so it is treated exactly as a
+comment body already is: it reaches the DOM as text, it may carry no URL, and §T8's invariant
+is what makes that checkable. `edits::MarkView` says so at its declaration and the `sinks`
+gate is what enforces it mechanically. Today the note is always empty, because nothing types
+one; the field exists because the write path needs it and the reading path already has it.
+
+**What the write adds to a saved copy** is one annotation object and one form XObject per
+mark, appended to the page's `/Annots` --- and one refusal that is a correctness property in
+the §T6.1 sense: a mark on a page object that two page numbers share is refused, because an
+annotation hangs off the *object* and would appear on both pages. That is the same shape as
+the half-deletion refusal above, one level on, and it is scoped to the marked page rather
+than to the file: a document with one malformed page must not become unmarkable everywhere.
+
+**The appearance stream is ours rather than the reader's**, and that is a security-adjacent
+choice worth stating: the content stream `save.rs` writes is built from numbers, with no
+string from the document or from the reader in it. Nothing about a mark's appearance depends
+on text anyone typed.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —

@@ -5053,6 +5053,99 @@ are named --- rather than new machinery. Merge is its inverse and is the larger
 one: nothing in the model creates a page, and `docmodel`'s note has the
 id-allocator property that would need proving first.
 
+#### Highlighting a selection --- done 2026-08-18
+
+The first thing tpdf **adds** to a document rather than rearranging, and the
+first user of the id allocator `docmodel`'s note deferred. A reader drags across
+a line, chooses *Highlight selection*, and the mark is on the page immediately
+and in the file when they save a copy --- as a real `/Highlight` annotation that
+Preview and Acrobat both render, not a rectangle tpdf alone knows about.
+
+**The allocator property is now live, and it is carried by types rather than by
+care.** `Doc::next_mark` only counts up, and undo rewinds the *cursor*; a command
+carries the id it was issued, so replay allocates nothing. Together those make
+"an id released by an undo is re-issued to a different mark" unreachable rather
+than merely unlikely --- and both halves are asserted, because a document where
+redo restored a mark that was not the one undone would look entirely normal.
+
+**Marks are held in display space and mapped at the moment of writing**, which is
+the decision the whole increment turns on. The reader's drag produces rectangles
+in the space the viewer lays glyphs out in --- points from the displayed page's
+top-left, after `/Rotate` --- and `/QuadPoints` wants the page's own space, y
+upwards, from the media box. Storing the display-space form means the overlay
+draws exactly what the model holds, with no conversion between what a reader
+dragged and what they see; `save.rs` converts once, where the crop box and the
+rotation are in hand.
+
+That mapping is `text::from_device`, the inverse of the `to_device` every
+consumer of a character box already goes through. It is a separate
+implementation from the one `annots.rs` uses to read a rectangle *back*, and that
+is deliberate: `annot-probe --mode roundtrip` writes a mark through one and reads
+it through the other, so an agreement between them is evidence rather than a
+tautology. On ten fixtures the rectangle comes back **exact**, including a page
+carrying `/Rotate 90` and one with a `/CropBox` inset by 50 points --- and each of
+those two is the only fixture that catches its own mutation: dropping the crop
+origin reddens `links-cropped` alone, and mapping with no rotation reddens
+`rotated-90` alone.
+
+**Pixels are the independent evidence**, because two mappings wrong in the same
+way agree perfectly. `--mode ink` renders the saved page and counts wash inside
+each quad, with the *source* page as the control --- and `--mode legible` counts
+the glyph ink before and after, which is what says the wash is a wash: the blend
+mode is `/Multiply`, and removing it leaves **0 of 2,744** ink pixels in the band
+on `text-base14`, a highlight that hides what it marks.
+
+**An appearance stream is written even though every reader generates one.**
+Measured before deciding: a `/Highlight` with no `/AP` renders in Preview and in
+PDFium. What a reader generates is *its* wash, though, so the same file would
+differ between them and could differ again after an update; an `/AP` makes the
+appearance the document's own. The cost is that nothing then reads
+`/QuadPoints` --- a mutation reordering every quad's corners changed no pixel and
+passed every other check --- so `--mode noap` strips the appearance and renders
+what the numbers alone produce, and the corner order is additionally pinned
+against the bytes.
+
+**Two renderers draw this mark and they must agree**, which is §10 question 8
+answered for this shape: the overlay draws it while the document is open, PDFium
+draws the saved file's appearance stream after a reopen. The overlay was the
+cheap half --- the canvas already composites the search hits and the selection
+with `multiply`, so a highlight is a third fill in the same pass, painted under
+both so a search hit stays legible over a marked line.
+
+**A selection spanning pages is several marks**, one per page, because a
+`/QuadPoints` array addresses one page. They are applied in order, so undo takes
+them off a page at a time. That is the honest behaviour rather than a pleasant
+one; grouping them would need a journal entry that groups commands, which the
+model does not have.
+
+**No keyboard binding, deliberately.** ⌘H is macOS's hide; ⌘⇧H is free and was
+not taken, because a chord for a command that only ever applies to a selection
+teaches itself badly --- pressed with nothing selected it does nothing and
+explains nothing. It is in the palette, the Edit menu, and the right-click menu
+over a selection, which is where a reader who has just dragged across a line is
+already looking.
+
+**The window harness has three checks on it**, and the interesting one is not the
+command. *"`edit.highlightSelection` runs from the palette"* is the ordinary
+wiring check every command gets. The pair beside it is what protects the
+decision above: it takes the selection's rectangles, rotates the view, takes
+them again, and asserts they are **identical**. Built from the view's boxes
+instead --- which is the obvious source, and what the selection paints with ---
+they would turn with the window, and a mark made at 90° would sit somewhere else
+at 0°. With the view upright the two sources agree exactly, so nothing else in
+the harness can tell them apart.
+
+Adding the command also turned a standing check red, which is that check working:
+the harness *declares* which commands a document alone does not enable rather
+than subtracting a count, so a new one in that class has to be named.
+
+**Not done, and none of it is hidden by this:** editing a mark's note, choosing a
+colour, removing one from the page (the model and the command exist;
+no UI reaches them), the other sixteen markup subtypes, and writing a reply.
+`MarkKind` has one variant on purpose --- a variant there is a promise that the
+write path can produce something both readers render, so growing it is a change
+to `save.rs` and not to a list of names.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
@@ -5148,10 +5241,26 @@ that it presented several genuinely unresolved questions as settled architecture
    linked and bundled, is pragmatic; static linking means building PDFium. Bundling has
    macOS notarization and signing implications that bit `screenpick`'s release path and
    need settling early. ~10 MB per platform, so ~25 MB total against Acrobat's gigabyte.
-8. **Where the annotation overlay lives.** Frontend drawing gives 60 fps manipulation but
-   means two rendering paths that can diverge visually; round-tripping through PDFium on
-   every change is correct but slow. Likely: frontend while editing, PDFium on commit,
-   with a visual regression test asserting they agree.
+8. ~~**Where the annotation overlay lives.**~~ **Answered 2026-08-18 for a highlight**, in
+   the shape this question predicted: the frontend draws it while the document is open, and
+   PDFium draws the appearance stream `save.rs` wrote once the file has been saved and
+   reopened. The overlay cost nothing to add --- the canvas already composites the search
+   hits and the selection with `multiply`, so a mark is a third fill in the same pass.
+
+   What the answer does *not* yet have is the visual regression test this question asks
+   for. `annot-probe --mode ink` measures the **saved** side against the quads the mark was
+   made from --- 90--96% of each quad covered, across ten fixtures --- and the overlay is
+   measured against nothing but the same numbers. That is a real gap and a narrow one: both
+   draw the rectangles the model holds, so they can only diverge in colour, blend and
+   inset, none of which any check compares. The comparison worth building is a screenshot
+   of the overlay against a render of the saved file, and it is only worth building once a
+   mark can be edited --- a highlight that never changes shape is the easy case.
+
+   Two things generalise past a highlight and are worth stating before ink or a text box
+   makes them urgent. **A mark held in display space and mapped at write time** keeps the
+   overlay free of conversions and puts the one conversion where the crop box and rotation
+   are known. And **an appearance stream is written even where readers generate one**, so
+   the appearance is the document's rather than whichever reader opened it.
 9. **Can redaction ever certify a document containing constructs the sanitizer does not
    understand?** Current answer is no, by design — and spike 0.4 measured what that costs
    (§6). Under the rule as written, one stream in an unimplemented filter makes the whole

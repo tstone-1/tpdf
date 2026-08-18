@@ -46,7 +46,7 @@ import {
 } from "./links";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
-import { PageMap, unedited, type PageView } from "./pages";
+import { PageMap, unedited, type MarkView, type PageView } from "./pages";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import {
   PLAIN_SEARCH,
@@ -64,6 +64,7 @@ import {
   nearestChar,
   runsFor,
   TextCache,
+  turnQuad,
   wordAt,
   type Caret,
   type PageText,
@@ -284,6 +285,18 @@ const COPY_CHUNK = 16;
  * one: on a page with many hits, "which of these am I on" has to survive being
  * read at a glance and next to a highlight of the other colour.
  */
+/**
+ * The wash a highlight is drawn in while the document is open.
+ *
+ * **Two renderers draw this mark, and they must agree.** This is the overlay's,
+ * painted over a tile with `multiply`; the other is the appearance stream
+ * `save.rs` writes, drawn by PDFium once the file has been saved and reopened.
+ * The colour is the one `edits.ts` sends the model (`1, 0.9, 0.2`), written here
+ * as the same values with the alpha the overlay needs on top of a tile --- and
+ * `annot-probe --mode ink` is what says the saved file's wash lands where this
+ * one did. `docs/PLAN.md` §10 question 8 is this decision.
+ */
+const MARK_FILL = "rgba(255, 230, 51, 0.85)";
 const SELECTION_FILL = "rgba(80, 140, 255, 0.35)";
 const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
 const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
@@ -2345,7 +2358,65 @@ export class Viewer {
     return this.selection ? this.selection.text(this.text) : "";
   }
 
-  /** Draws the search highlights and the selection, in that order. */
+  /**
+   * The marks the model last reported, in page order.
+   *
+   * Held rather than derived: they arrive with an edit state, which is the one
+   * answer the frontend caches. Keyed by the page's *id* --- see
+   * {@link PageMap.slotOfId}.
+   */
+  private marks: readonly MarkView[] = [];
+
+  /**
+   * Records the marks an edit state carried, and redraws.
+   *
+   * Called with every state, not only when the list changed: the comparison
+   * that would avoid the redraw is the comparison the redraw already is, and a
+   * mark that was undone has to leave the screen in the same frame the model
+   * says it is gone.
+   */
+  setMarks(marks: readonly MarkView[]): void {
+    this.marks = marks;
+    // `wake` rather than a repaint: the overlay is drawn from the frame loop,
+    // which may be idle when a mark is made from the menu bar with nothing
+    // scrolling. Painting here as well would draw the same rectangles twice.
+    this.wake();
+  }
+
+  /**
+   * The selected text's rectangles on each page, in the page's own space.
+   *
+   * **Not the view's space**, which is what {@link TextCache.peek} answers and
+   * what the selection paints with. A mark outlives the view: stored against
+   * the reader's rotation it would move the next time they turned the window,
+   * or the next time an edit turned the page. `peekUnturned` is the page as the
+   * document displays it, and the character indices are identical in both --- a
+   * rotation renumbers nothing --- so the same range yields the same characters.
+   *
+   * Empty when nothing is selected, and empty for a page whose text has not
+   * arrived. Not requested here: the copy path already loads what it needs, and
+   * asking from a command would queue an extraction the reader is waiting on.
+   */
+  selectionQuadsByPage(): { page: number; quads: number[] }[] {
+    if (!this.selection) return [];
+    const out: { page: number; quads: number[] }[] = [];
+    for (const page of this.selection.pages()) {
+      const text = this.text.peekUnturned(page);
+      if (!text) continue;
+      const range = this.selection.rangeOn(page);
+      if (!range) continue;
+      const quads = runsFor(text, range.from, range.to).flatMap((quad) => [
+        quad.left,
+        quad.top,
+        quad.right,
+        quad.bottom,
+      ]);
+      if (quads.length > 0) out.push({ page, quads });
+    }
+    return out;
+  }
+
+  /** Draws the marks, the search highlights and the selection. */
   private paintOverlay(): void {
     const ctx = this.overlayCtx;
     if (!ctx) return;
@@ -2356,9 +2427,60 @@ export class Viewer {
     // Multiply keeps the glyphs legible underneath, which a flat fill over the
     // tile would not: the text is already painted into the pixels.
     ctx.globalCompositeOperation = "multiply";
+    // Marks first, and **the order does not change the pixels** --- which is
+    // worth stating because the obvious reading of it is wrong. Under
+    // `multiply` each layer contributes a factor that does not depend on what
+    // is underneath, even with alpha: painting A then B and B then A both leave
+    // `dst * ((1-a) + a*A) * ((1-b) + b*B)`. So this is a reading order, not a
+    // z-order, and a search hit is legible over a highlighted line either way.
+    // The day one of the three stops multiplying, that stops being true.
+    this.paintMarks(ctx, dpr);
     this.paintMatches(ctx, dpr);
     this.paintSelection(ctx, dpr);
     ctx.globalCompositeOperation = "source-over";
+  }
+
+  /**
+   * Draws every mark on a visible page.
+   *
+   * The quads are in the page's own display space and the reader may be looking
+   * at the page turned --- by the view, or by an edit, or both --- so each is
+   * put through {@link turnQuad} with the sum of the two, which
+   * `scroller.effectiveTurns` is the one place that adds. The page size handed
+   * in is the *document's*, before either turn, which is what `turnQuad` takes.
+   */
+  private paintMarks(ctx: CanvasRenderingContext2D, dpr: number): void {
+    if (this.marks.length === 0) return;
+    ctx.fillStyle = MARK_FILL;
+
+    const visible = new Set(this.scroller.visiblePages());
+    for (const mark of this.marks) {
+      const slot = this.pages.slotOfId(mark.page);
+      if (slot === undefined || !visible.has(slot)) continue;
+
+      const size = this.scroller.pageSize(slot);
+      const turns = this.scroller.effectiveTurns(slot);
+      const origin = this.scroller.pageOrigin(slot);
+      for (let at = 0; at + 3 < mark.quads.length; at += 4) {
+        const quad = turnQuad(
+          {
+            left: mark.quads[at] ?? 0,
+            top: mark.quads[at + 1] ?? 0,
+            right: mark.quads[at + 2] ?? 0,
+            bottom: mark.quads[at + 3] ?? 0,
+          },
+          turns,
+          size.width_pt,
+          size.height_pt,
+        );
+        ctx.fillRect(
+          (origin.left + quad.left * this.zoom) * dpr,
+          (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,
+          (quad.right - quad.left) * this.zoom * dpr,
+          (quad.bottom - quad.top) * this.zoom * dpr,
+        );
+      }
+    }
   }
 
   private paintSelection(ctx: CanvasRenderingContext2D, dpr: number): void {

@@ -171,6 +171,10 @@ name = "text-roundtrip"
 path = "examples/text_roundtrip.rs"
 
 [[example]]
+name = "annot-probe"
+path = "examples/annot_probe.rs"
+
+[[example]]
 name = "remove-probe"
 path = "examples/remove_probe.rs"
 

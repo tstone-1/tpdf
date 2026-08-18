@@ -489,6 +489,40 @@ async fn page_move(
     edits.move_page(doc, page, after)
 }
 
+/// Puts a highlight on a page, over the rectangles a reader dragged across.
+///
+/// The page is named by identity, as [`page_rotate`] names it, and for the
+/// sharper version of the same reason: a mark is placed by *coordinates*, so a
+/// stale position would put a reader's highlight on a different page at the
+/// place the words used to be.
+///
+/// **The timestamp is taken here and cannot be sent.** `edits::NewMark` has no
+/// field for it: what a mark claims about when it was made is the application's
+/// statement, not the frontend's, and a `made` on the wire would be one more
+/// attacker-controlled string in a file tpdf signs its name to.
+///
+/// Synchronous work in an `async fn`, which is right for the same reason it is
+/// right in [`page_rotate`]: a lock, a journal push and a page walk. The
+/// coordinate mapping and the writing happen at save time, not here.
+#[tauri::command]
+async fn annot_highlight(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: edits::NewMark,
+) -> Result<edits::EditState, String> {
+    edits.annotate(doc, mark, save::pdf_date(std::time::SystemTime::now()))
+}
+
+/// Takes one mark off the page it is on.
+#[tauri::command]
+async fn annot_remove(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+) -> Result<edits::EditState, String> {
+    edits.unannotate(doc, mark)
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 async fn edit_undo(
@@ -1629,6 +1663,8 @@ pub fn run() {
             page_rotate,
             page_delete,
             page_move,
+            annot_highlight,
+            annot_remove,
             edit_undo,
             edit_redo,
             edit_state,
