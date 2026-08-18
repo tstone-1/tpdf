@@ -8732,3 +8732,148 @@ Two things follow, and the second is the one worth carrying:
   results and a timeout read as "no result": absence and refutation are different answers, and
   a name-keyed verdict collapses them. The tell is a SURVIVED verdict whose evidence line
   quotes a failure that is obviously the mutation --- read the evidence, not the verdict.
+
+### A page's own turn is not the view's, and a rectangle drawn by one was found by the other
+
+A comment, a link and one of the reader's own marks all arrive as a rectangle in the page's
+**display** space: points from the displayed page's top-left, after the file's `/Rotate` and
+before any turn the reader or an edit added. Placing one on screen therefore needs both of
+the turns still outstanding, and `Scroller.effectiveTurns` exists to add them --- its own
+doc comment says it is *"the one place the two are added"*.
+
+Eleven places did not ask it. Six turned rectangles by `this.turns`, the reader's rotation
+alone: `commentUnder`, `anchorFor`, `topPtOf`, `linksOn`, `linkTopPt` and `linkAnchor`.
+Four decided whether a vertical offset within a page was meaningful by `this.turns === 0`,
+which is a per-document test of a per-page quantity: `goToDestination`, `position`, and the
+two restores. One removed `-this.turns` from a size that had every turn in it. And a
+twelfth, `displayedPage`, wrote the sum out by hand rather than calling the method.
+
+So on a page turned with Rotate Right, a comment's icon was painted where the tile put it
+and was clickable where it used to be. **The mark subsystem was right**, because it was
+written after the page turn existed and asked `effectiveTurns` from the start --- which is
+what made the measurement decisive:
+
+```
+turn=1 eff=1 viewTurns=0  painted=(730,120) -> comment -1  | lookedUp=(120,70) -> comment 7
+                                            -> mark     3  |                    -> mark    -1
+```
+
+One rectangle, one page, two subsystems, disjoint answers. Nothing about PDFium is assumed
+there: the mark path has window checks behind it, so the comment is the one that moved.
+
+**The reason it survived 772 frontend tests and fourteen window corpora is that a page turn
+and a view rotation are the same picture.** Every check that rotates rotates the *view*,
+where the two numbers are equal, and every check with a comment in it leaves the page
+upright. The defect needs both at once, and no fixture had both.
+
+The fix is one primitive, `turnsOn(page)`, returning the effective turns and the document's
+size; `viewQuadsOf` was changed to use it too, so the mark path stops being a second copy of
+the same distinction. Four `this.turns` uses are left and all four are right: the status
+report, the getter, and `rotateBy`'s own arithmetic --- the view's rotation, where the view's
+rotation is what is meant.
+
+### A size is learned once, so a page turned before it was seen keeps a transposed one
+
+The quietest of the eleven, and the only one that does not correct itself. `learnGeometry`
+takes a page's size from its extracted text and records it, and `TextCache.peek` answers in
+**view** space --- which its own doc comment says includes the page's edit turn. Removing
+only the view's rotation therefore leaves the page turn in:
+
+```
+LEARN turn=0 knows=true size={"width_pt":600,"height_pt":800}   <- control
+LEARN turn=1 knows=true size={"width_pt":800,"height_pt":600}   <- a 600x800 page
+```
+
+A size is learned once, so the transposed one is the page's geometry for the life of the
+document: its layout box, the fit, `displayedSize` applying the turn to an already-turned
+size, and every rectangle divided by a width that is really a height. Reaching it needs a
+page turned *before it has ever been on screen* --- Rotate All, or a rotate followed by a
+scroll --- which is why nothing had.
+
+### A single-entry cache is evicted by the grid scan that was about to test it
+
+The links memo holds one page's rectangles, keyed by page and turn count. Both ends of that
+key were mutated and both mutations **survived** a test that pressed a grid of points across
+the page, rotated it, and pressed again.
+
+The scan was the reason. It walks `y` from 0 to 800, and past the bottom of page 0 those
+presses land on pages 1 and 2 --- each one a lookup that replaces the single cached entry. So
+the poisoned page-0 entry was evicted by the tail of the very scan that produced it, and the
+next scan started cold and recomputed correctly. The test could not have failed.
+
+Two things it took to make both halves reachable, and they are different:
+
+- **One press per turn, never off the page under test.** The reference points come from a
+  separate throwaway viewer holding a mark, so the test still recomputes no geometry.
+- **Turn, and turn back.** Reading at turn 1 after warming at 0 catches a *lookup* by the
+  view's number, which hits when it should miss. Only returning to 0 catches a *store* by it,
+  which leaves the turned rectangles under a key the untuned lookup matches. A one-way test
+  catches exactly one of the two, and it is not obvious in advance which.
+
+The general shape: **a cache with one slot makes any test of it order-dependent, and a
+sweep is the worst possible order.** Sweeping is the instinct for "cover the page", and here
+covering the page is what destroyed the evidence.
+
+### Reading the code predicted four call sites, and there were eleven
+
+`docs/PLAN.md` recorded this defect a day before it was fixed, and recorded it honestly ---
+as read from the code, not measured, with the alternative explanation checked and the
+experiment named as the next step. It was right that the defect was real. It was wrong about
+its extent, and in the direction that matters: *"the fix is `effectiveTurns` at four call
+sites"*.
+
+Four is what a grep for `viewRect(..., this.turns, ...)` finds while looking at comments. It
+missed the two link twins of the same call, both one screen further down; the four offset
+guards, which are the same mistake written as `=== 0` instead of as an argument; and
+`learnGeometry`, which is the same mistake with a minus sign. Eleven, plus one place that
+had written the sum out by hand.
+
+The estimate came from reading, and reading is what produced the undercount --- the same
+mechanism as this file's entry on a claim about runtime behaviour belonging in an
+experiment, applied to *scope* rather than to behaviour. The cheap corrective is mechanical
+and takes one command: grep the whole file for the symbol, not for the shape of the call you
+have in mind. `grep -n 'this\.turns' src/lib/viewer.ts` lists sixteen lines, and deciding
+each one is right or wrong is a minute's work that no amount of careful reading around the
+part you already suspect will substitute for.
+
+### Removing the second copy is what made the differential unable to fail
+
+The eight placement checks in `viewerturns.test.ts` compare a comment's found region and a
+link's against a *mark's*, at each of the four turns. That was the right instrument for the
+defect: the mark path was correct, the other two were not, and comparing them settled it
+without the test recomputing any geometry the code computes.
+
+Then the fix collapsed all three onto one primitive --- `viewQuadsOf` had held its own
+correct copy of the same two lines, and leaving it there would have been the *two copies of a
+distinction drift* trap kept deliberately. Correct, and it silently changed what the eight
+checks can say. Measured rather than assumed, because the mutation was re-run afterwards on
+the finished tree:
+
+```
+before the collapse:  place a page's rectangles under the view's turn alone -> 8 red
+after  the collapse:  ... -> 2 red, and NOT the expected one
+```
+
+**A comparison between subsystems that share an implementation is true by construction.** A
+fault in the primitive moves all three regions together, so all eight comparisons still
+agree, and the only thing left red was the control beside them --- which happened to survive
+because it asserts the region *moves* when the page turns, and a placement using the view's
+number alone does not move at all.
+
+So a differential needs an absolute half beside it, and the absolute half has to come from
+somewhere other than the geometry under test. Here it is the page: **a rectangle on a page
+must be found within that page**, bounded by the laid-out pitch read off the scroller. A
+turn one quarter too far still moves the region, so the control cannot see it; it puts the
+rectangle 130 pt off the bottom of a page the turn made 600 pt tall, which the bound can.
+
+Two mutations now, and they are opposite failures of the same line: no turn at all, caught by
+the control, and one turn too many, caught by the bound. Neither is caught by the eight
+comparisons, which are worth keeping for what they *do* test --- that nobody re-inlines the
+geometry into one of the three, which is exactly how this defect was born. The mutation that
+proves that is the one that breaks only the link path: 4 red.
+
+The general form is worth carrying past this file. **Deduplication changes what your tests
+prove, in the direction of proving less**, and nothing goes red at the moment it happens ---
+the suite that was passing goes on passing. If a check compares two implementations, merging
+them is a reason to re-run the mutation that check was written for, not a tidy-up to do
+afterwards.

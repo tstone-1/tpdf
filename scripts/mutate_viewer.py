@@ -615,6 +615,25 @@ MUTATIONS = [
         "a page whose characters mean nothing is not read out",
         runner="viewer-encodings",
     ),
+    Mutation(
+        # Proves the window harness reaches `turnsOn`, which is the one place
+        # comments, links and the reader's own marks now turn their rectangles.
+        # It had three copies until 2026-08-18, and six call sites of one of
+        # them turned by the view's rotation alone -- so a page an edit had
+        # turned drew a comment in one place and found it in another.
+        #
+        # A quarter turn added rather than the view's number substituted: the
+        # mark phase runs before anything turns a page or the view, so
+        # `effectiveTurns` and `this.turns` are both 0 there and swapping them
+        # is a no-op. What this check can see is the primitive being wrong at
+        # all, which is what makes it evidence that the phase reaches it.
+        "placement: turn every rectangle a quarter too far",
+        "src/lib/viewer.ts",
+        "      turns: this.scroller.effectiveTurns(page),",
+        "      turns: this.scroller.effectiveTurns(page) + 1,",
+        "a press on the reader's own mark opens its note",
+        "viewer",
+    ),
 ]
 
 MARKER = re.compile(r"^\[(OK|FAIL|SKIP)\]\s+")

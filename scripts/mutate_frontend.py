@@ -1877,7 +1877,8 @@ MUTATIONS = [
         "viewer: replay a recorded place through the destination path",
         "src/lib/viewer.ts",
         "      const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));\n"
-        "      const offset = this.turns === 0 ? Math.max(0, place.top) : 0;\n"
+        "      const offset =\n"
+        "        this.scroller.effectiveTurns(page) === 0 ? Math.max(0, place.top) : 0;\n"
         "      this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);",
         "      this.goToDestination(place.page, place.top);",
         "leaves air above a destination, and none above a recorded place",
@@ -1935,6 +1936,97 @@ MUTATIONS = [
         "  slotOfId(id: number): number | undefined {\n    return this.views.length > 0 ? 0 : undefined;\n  }",
         "finds the slot a page identity is showing in",
     ),
+    Mutation(
+        # The defect this whole increment is about, at the one place it now
+        # lives. Six call sites held this line before `turnsOn` collected them,
+        # so the mutation that used to be needed six times is needed once --
+        # which is the argument for the primitive rather than the rule.
+        #
+        # It names the *control* rather than one of the eight comparisons, and
+        # that is the whole lesson of collapsing three copies into one: marks,
+        # comments and links now agree by construction, so a fault in the
+        # primitive moves all three together and every comparison stays green.
+        # This was measured, not reasoned about -- the mutation reddened eight
+        # checks before `viewQuadsOf` was routed through here and two after.
+        "viewer: place a page's rectangles under the view's turn alone",
+        "src/lib/viewer.ts",
+        "      turns: this.scroller.effectiveTurns(page),",
+        "      turns: this.turns,",
+        "puts the rectangle somewhere else once the page is turned",
+    ),
+    Mutation(
+        # And the other direction, which the control cannot see: a rectangle
+        # that still moves when the page turns, just to the wrong place. Caught
+        # by the absolute half of the differential -- a rectangle on a page has
+        # to be found *within* that page, and a quarter too far puts it 130 pt
+        # off the bottom of a page the turn made 600 pt tall.
+        "viewer: turn every rectangle a quarter too far",
+        "src/lib/viewer.ts",
+        "      turns: this.scroller.effectiveTurns(page),",
+        "      turns: this.scroller.effectiveTurns(page) + 1,",
+        "places a comment where a mark with the same rectangle is, at 1 turns",
+    ),
+    Mutation(
+        # The same line against the link half, which is a different subsystem
+        # reaching the same primitive: `linksOn` turns its rectangles through
+        # `turnsOn` while `commentUnder` turns its own.
+        "viewer: place a link under the view's turn alone",
+        "src/lib/viewer.ts",
+        "  private turnsOn(page: number): { turns: number; width_pt: number; height_pt: number } {",
+        "  private turnsOn(page: number): { turns: number; width_pt: number; height_pt: number } {\n    if (this.linkCount > 0) return { ...this.scroller.pageSize(page), turns: this.turns };",
+        "places a link where a mark with the same rectangle is, at 1 turns",
+    ),
+    Mutation(
+        # Read the links memo by the view's turn. It hits when it should miss,
+        # so a page turned under a warm cache is hit-tested against the
+        # rectangles it had before the turn.
+        "viewer: look the links memo up by the view's turn",
+        "src/lib/viewer.ts",
+        "    if (cached && cached.page === page && cached.turns === turns) {",
+        "    if (cached && cached.page === page && cached.turns === this.turns) {",
+        "does not serve a link's old rectangle out of the cache after a turn",
+    ),
+    Mutation(
+        # And write it by the view's turn, which is the half a one-way test
+        # cannot reach: the poisoned entry is only read back after the turn is
+        # undone. Two mutations because the key has two ends and only one of
+        # them is exercised by turning a page once.
+        "viewer: store the links memo under the view's turn",
+        "src/lib/viewer.ts",
+        "    this.turnedLinks = { page, turns, items };",
+        "    this.turnedLinks = { page, turns: this.turns, items };",
+        "does not serve a link's old rectangle out of the cache after a turn",
+    ),
+    Mutation(
+        # A destination on a page an edit turned, scrolled down an axis that is
+        # no longer vertical. The rotated *view* has followed the opposite rule
+        # since it was written; this is the same rule reaching the same page by
+        # the other route.
+        "viewer: scroll into a turned page as though the view were upright",
+        "src/lib/viewer.ts",
+        "    const offset = this.scroller.effectiveTurns(clamped) === 0 ? (top ?? 0) : 0;",
+        "    const offset = this.turns === 0 ? (top ?? 0) : 0;",
+        "lands a destination on a turned page rather than partway down it",
+    ),
+    Mutation(
+        # The number `position` reports goes into the history and the session,
+        # so an offset down a turned page is what Back and a restart land on.
+        "viewer: report an offset down a page an edit turned",
+        "src/lib/viewer.ts",
+        "    if (this.scroller.effectiveTurns(page) !== 0) return { page, top: 0 };",
+        "    if (this.turns !== 0) return { page, top: 0 };",
+        "reports no offset within a page an edit turned",
+    ),
+    Mutation(
+        # The one that does not correct itself: a size is learned once, so a
+        # page turned before it was ever on screen keeps a transposed size for
+        # the life of the document.
+        "viewer: learn a turned page's size without removing its turn",
+        "src/lib/viewer.ts",
+        "          displayedSize(shown, -this.scroller.effectiveTurns(page)),",
+        "          displayedSize(shown, -this.turns),",
+        "learns a page's size in the document's space, not the turned view's",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
@@ -1983,6 +2075,10 @@ TEST_FILES = [
     # than after the guard fired for a fifth time, which is the whole of what
     # four previous entries here are about.
     "src/lib/menubar.test.ts",
+    # Added 2026-08-18 with the page turn's placement, before writing a single
+    # mutation below --- which is what the six entries above are collectively
+    # about, and the second time in two increments it was done in that order.
+    "src/lib/viewerturns.test.ts",
     # Added 2026-08-18 with the note on a mark. Sixth time: the five mutations
     # below `markpopup.ts` all named tests in a file this list did not have, and
     # the guard refused to start rather than calling them survivors. Adding the
