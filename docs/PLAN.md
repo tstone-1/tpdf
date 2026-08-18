@@ -5219,8 +5219,11 @@ open one), editing a comment that came *out of* a file --- the model knows nothi
 about those, and giving it a command that names one is its own increment --- and
 a note long enough to be worth bounding, which nothing does today.
 
-**And one finding this increment did not act on, stated as what it is: read from
-the code and not measured.** The reader's own marks are placed with
+**And one finding this increment did not act on --- since measured, and it was
+real. See the section below. Kept as written, because what it got right and what
+it got wrong are both worth having on the record: the defect was there, and the
+extent was under half of it.** Stated at the time as what it was: read from
+the code and not measured. The reader's own marks are placed with
 `scroller.effectiveTurns(slot)`, which is the view's rotation *plus* the turn an
 edit applied to that page. Comments and links are placed with `this.turns`
 alone --- `commentUnder`, `anchorFor`, `topPtOf` and `linksOn` all pass it --- and
@@ -5238,6 +5241,102 @@ starts with the experiment, not with the fix**: press a comment on an
 edit-rotated page and see. If it reproduces, the fix is `effectiveTurns` at four
 call sites and it needs a check per subsystem, which is why it is not folded into
 this one.
+
+#### The turn a page carries, as against the turn the view has --- done 2026-08-18
+
+The experiment the section above called for, run first and settled in two
+minutes. It reproduces, and the instrument is a differential rather than a
+recomputation: one rectangle, on one page an edit had turned once, with a
+comment at it and one of the reader's own marks at it, pressed at both the
+painted position and the pre-turn one.
+
+```
+turn=1 eff=1 viewTurns=0  painted=(730,120) -> comment -1  | lookedUp=(120,70) -> comment 7
+                                            -> mark     3  |                    -> mark    -1
+```
+
+Disjoint. The mark path was already right and has window checks behind it, so
+nothing here rests on a theory about where PDFium paints an annotation --- the
+comment is the one that moved.
+
+**The extent was the surprise.** The estimate above said four call sites; there
+were eleven, plus a twelfth that wrote the sum out by hand. Six turned a
+rectangle by the view's rotation alone --- the two link twins of the comment
+calls were missed because they sit a screen further down. Four decided whether a
+vertical offset within a page means anything by `this.turns === 0`, which is the
+same mistake spelled as a comparison rather than as an argument:
+`goToDestination`, `position`, and both restores. And `learnGeometry` removes a
+turn from a size that has every turn in it, which is the one that does not
+correct itself --- a page turned before it has ever been on screen learns its
+size **transposed**, 800x600 for a 600x800 page, and keeps it for the life of
+the document, because a size is learned once.
+
+Measured, each against the behaviour of a rotated *view*, which has followed the
+right rule since it was written:
+
+| | rotated view | page turned by an edit |
+|---|---|---|
+| destination 400 pt down page 1 | lands on the page | scrolls 394 pt down a 600 pt axis |
+| `position.top` at 100 pt in | 0 | 100 |
+
+That second number goes into the history and the session, so Back and a restart
+land on it.
+
+**The fix is one primitive rather than eleven corrections.** `Viewer.turnsOn`
+returns the effective turns and the document's size for a page, and everything
+that places a rectangle goes through it --- including `viewQuadsOf`, which held
+its own correct copy of the same two lines and is now the third caller rather
+than a second implementation. Four uses of `this.turns` are left and all four
+are right: the status report, the getter, and `rotateBy`'s own arithmetic.
+
+**Why 772 frontend tests and fourteen window corpora were all green.** A page
+turn and a view rotation are the same picture on screen. Every check that
+rotates rotates the *view*, where the two numbers are equal; every check with a
+comment in it leaves the page upright. The defect needs both at once and no
+fixture had both --- which is this repository's *"a fixture where the right rule
+and the wrong rule agree cannot tell them apart"*, arriving as a fixture where
+the two rules never meet.
+
+Thirteen checks in `viewerturns.test.ts`, every one proved able to fail. Eight
+compare a comment's and a link's found region against a *mark's* --- a grid of
+presses collected into a set, at each of the four turns, so the test recomputes
+no geometry the code computes. A ninth is their control: the region has to
+**move** when the page turns, since a placement that ignored every turn would
+satisfy all eight by having all three subsystems ignore it together.
+
+**And the collapse onto one primitive is what made that control load-bearing,
+which was measured rather than foreseen.** Re-running the mutation on the
+finished tree reddened *two* checks where it had reddened eight before
+`viewQuadsOf` was routed through `turnsOn` --- because three subsystems sharing
+an implementation agree by construction, so a fault in it moves all three
+regions together and every comparison stays green. The absolute half is a bound
+that comes from somewhere else: a rectangle on a page has to be found **within**
+that page, measured against the laid-out pitch. Two mutations now stand against
+that one line, and they are opposite: no turn at all, caught by the control, and
+one turn too many, caught by the bound. `docs/TRAPS.md` has it, and the general
+form --- deduplication changes what a suite proves, in the direction of proving
+less, and nothing goes red at the moment it happens.
+
+The other four are the offset guards, the learned size, and the links memo. That
+last one is worth reading in `docs/TRAPS.md`: both ends of its key were mutated
+and **both survived** the first version of the test, because a grid scan walks
+off the bottom of the page it is testing and every press on the next page evicts
+the single cached entry. Turning back as well as forward is what catches the
+writing end.
+
+**The window harness reaches the primitive**, which is what makes one
+implementation worth more than three agreeing ones: a mutation turning every
+rectangle a quarter too far reddens three of the mark phase's checks against a
+real window, with no new check name added. Substituting the view's number there
+would have been a no-op --- that phase runs before anything turns a page or the
+view, so both numbers are zero --- which is why the mutation adds a turn rather
+than swapping the source.
+
+**Not done, and none of it is a placement question:** the `/Rotate` a save writes
+for a page the reader turned is the model's business and is tested there; the
+sidebar's comment rows and the outline's destinations are page granularity and
+carry no rectangle; and nothing here touches how a *selection* behaves on a
+turned page, which goes through `caretFrom` and has its own checks.
 
 ### Phase 3 — Redaction
 

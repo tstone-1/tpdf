@@ -1679,6 +1679,17 @@ reports the same **251** names, and the rows above are that sweep's, pasted from
 left: **nine** for the note box, **four** for the three mark commands driven against the real
 backend, and **one** for `edit.removeMark` in the sweep every registered command gets.
 
+**Re-run 2026-08-18** after the page-turn placement fix, and every one of the twenty-eight
+numbers above came back **byte-identical**, diffed rather than eyeballed. That is the honest
+result and it is worth stating rather than quietly re-pasting the same table: the defect it
+fixed --- a comment or a link on a page an edit had turned, drawn in one place and found in
+another --- needs a page turn and an annotation *at the same time*, and no fixture in this
+corpus has both. The window harness could not have caught it and still cannot. What it does
+cover is the primitive underneath: a mutation that turns every rectangle a quarter too far
+reddens three of the mark phase's checks, so the one implementation those three subsystems
+now share is reached from here. The measurement that found the defect is a differential in
+`viewerturns.test.ts`; see `docs/PLAN.md`.
+
 **Every corpus gained runs and no skips**, which is the difference from the highlight
 increment and is deliberate. Those checks needed a selection, so the two fixtures with no
 extractable text skipped them; these are driven against a mark the harness hands the viewer

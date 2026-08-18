@@ -856,12 +856,21 @@ export class Viewer {
       if (this.scroller.knowsPageSize(page)) continue;
       const text = this.text.peek(page);
       if (!text) continue;
-      // `PageText` reports the page as *displayed*, so the view's own rotation
-      // has to come back out before this is the document's geometry. The two
-      // are the same thing at an even number of quarter-turns, which is why
-      // getting it wrong is invisible until somebody rotates a mixed document.
+      // `PageText` reports the page as *displayed*, so every turn in force has
+      // to come back out before this is the document's geometry --- the page's
+      // own edit turn as well as the view's, since `TextCache.peek` applies
+      // both. The two are the same thing at an even number of quarter-turns,
+      // which is why getting it wrong is invisible until somebody rotates a
+      // mixed document. Measured wrong before the page turn was included: a
+      // page turned before it had ever been on screen learned its size
+      // transposed, 800x600 for a 600x800 page, and kept it.
       const shown = { width_pt: text.width_pt, height_pt: text.height_pt };
-      if (this.scroller.notePageSize(page, displayedSize(shown, -this.turns))) {
+      if (
+        this.scroller.notePageSize(
+          page,
+          displayedSize(shown, -this.scroller.effectiveTurns(page)),
+        )
+      ) {
         moved = true;
       }
     }
@@ -968,11 +977,11 @@ export class Viewer {
     const page = this.currentPage();
     // Both turns, for the reason `Scroller.effectiveTurns` gives: a fit is about
     // the sheet in front of the reader, and a page an edit has turned is a
-    // different shape from the one the file describes.
-    return displayedSize(
-      this.scroller.pageSize(page),
-      this.turns + this.scroller.pageExtraTurns(page),
-    );
+    // different shape from the one the file describes. Through that method
+    // rather than adding here, which is what the method exists to stop: this
+    // line held the only other copy of the sum, and six further places held the
+    // view's half of it alone and were wrong.
+    return displayedSize(this.scroller.pageSize(page), this.scroller.effectiveTurns(page));
   }
 
   /** A page's size in points, real or estimated. For the check harness. */
@@ -1369,7 +1378,8 @@ export class Viewer {
     else this.applyFit();
 
     const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
-    const offset = this.turns === 0 ? Math.max(0, place.top_pt) : 0;
+    const offset =
+      this.scroller.effectiveTurns(page) === 0 ? Math.max(0, place.top_pt) : 0;
     this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
     this.wake();
   }
@@ -1382,15 +1392,21 @@ export class Viewer {
    * the screen, and "which section am I in" is about the heading above me,
    * which sits at the top.
    *
-   * A rotated view reports the page and no offset, for the same reason
-   * {@link goToDestination} ignores one: the destinations this is compared
-   * against are measured down an upright page, and under a quarter turn that is
-   * not the axis being scrolled. Outline highlighting falls back to page
-   * granularity, which is coarse and right, rather than fine and wrong.
+   * A page under a quarter turn reports the page and no offset, for the same
+   * reason {@link goToDestination} ignores one: the destinations this is
+   * compared against are measured down an upright page, and under a quarter
+   * turn that is not the axis being scrolled. Outline highlighting falls back to
+   * page granularity, which is coarse and right, rather than fine and wrong.
+   *
+   * **Either turn counts**, which is what `effectiveTurns` is asked rather than
+   * the view's own number: a page the reader rotated with Rotate Right is as
+   * turned as one under a rotated view, and reported an offset down an axis it
+   * no longer had until 2026-08-18. That number goes into the history and the
+   * session, so it is what Back and a restart land on.
    */
   get position(): { page: number; top: number } {
     const page = this.scroller.pageAt(this.scrollTop);
-    if (this.turns !== 0) return { page, top: 0 };
+    if (this.scroller.effectiveTurns(page) !== 0) return { page, top: 0 };
     const top = (this.scrollTop - this.scroller.pageTopOf(page)) / this.zoom;
     return { page, top: Math.max(0, top) };
   }
@@ -1416,13 +1432,17 @@ export class Viewer {
     if (!this.replaying) this.history.push(this.position);
     const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
     const base = this.scroller.pageTopOf(clamped);
-    // A rotated view has no vertical offset within a page to scroll to: at a
-    // quarter turn the destination's axis is the screen's horizontal one, and at
-    // a half turn it counts upwards from the bottom while the reader still
-    // scrolls down. Rather than place a heading somewhere plausible and wrong,
-    // this lands on the page --- which is exactly what `/Fit` means, and what
-    // `outline.rs` already returns for a destination it cannot place.
-    const offset = this.turns === 0 ? (top ?? 0) : 0;
+    // A turned page has no vertical offset to scroll to: at a quarter turn the
+    // destination's axis is the screen's horizontal one, and at a half turn it
+    // counts upwards from the bottom while the reader still scrolls down.
+    // Rather than place a heading somewhere plausible and wrong, this lands on
+    // the page --- which is exactly what `/Fit` means, and what `outline.rs`
+    // already returns for a destination it cannot place.
+    //
+    // The page's own turn as well as the view's, and for the page being jumped
+    // *to* rather than the one being left: this asked `this.turns === 0` until
+    // 2026-08-18 and scrolled 394 pt down a page an edit had made 600 pt tall.
+    const offset = this.scroller.effectiveTurns(clamped) === 0 ? (top ?? 0) : 0;
     // A little air above, for the same reason `goToMatch` leaves a third of a
     // screen: a heading flush against the top edge reads as cut off.
     //
@@ -1778,27 +1798,12 @@ export class Viewer {
 
   /** Points from the displayed page's top to the focused link's top edge. */
   private linkTopPt(link: Link): number {
-    const size = this.scroller.pageSize(link.page);
-    const quad = viewRect(link.rect, this.turns, size.width_pt, size.height_pt);
-    return quad.top;
+    return this.viewRectOn(link.page, link.rect).top;
   }
 
   /** Where a link's rectangle is on screen, in the root's coordinates. */
-  private linkAnchor(link: Link): {
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-  } {
-    const size = this.scroller.pageSize(link.page);
-    const quad = viewRect(link.rect, this.turns, size.width_pt, size.height_pt);
-    const origin = this.scroller.pageOrigin(link.page);
-    return {
-      left: origin.left + quad.left * this.zoom,
-      top: origin.top + quad.top * this.zoom - this.scrollTop,
-      right: origin.left + quad.right * this.zoom,
-      bottom: origin.top + quad.bottom * this.zoom - this.scrollTop,
-    };
+  private linkAnchor(link: Link): Anchor {
+    return this.anchorOn(link.page, link.rect);
   }
 
   /**
@@ -1882,7 +1887,8 @@ export class Viewer {
       // they land --- which is the shape that reads as "Back is unreliable"
       // rather than as an off-by-one.
       const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
-      const offset = this.turns === 0 ? Math.max(0, place.top) : 0;
+      const offset =
+        this.scroller.effectiveTurns(page) === 0 ? Math.max(0, place.top) : 0;
       this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
       this.wake();
     } finally {
@@ -1952,34 +1958,69 @@ export class Viewer {
   }
 
   /**
-   * A comment's distance from the top of its page, in points, under the view.
+   * Everything that turns a page's rectangles, and the size to turn them in.
    *
-   * `goToDestination` takes the destination convention --- points from the
-   * page's top --- and the rectangle is already in that space, so the only work
-   * is the view's own rotation.
+   * A rectangle the backend sends --- a comment's, a link's, a mark's --- is in
+   * the page's **display** space: after the file's own `/Rotate` and before any
+   * turn the reader or an edit added. Placing one therefore needs both of those
+   * turns, and `scroller.effectiveTurns` is the one place they are added.
+   *
+   * Here rather than at each call site because six of them wrote `this.turns`
+   * instead --- the view's rotation alone --- and were wrong by exactly the page
+   * turn. The measurement is in `docs/PLAN.md`: on a page turned by an edit, a
+   * comment was painted in one place and found in another, while a *mark* with
+   * the identical rectangle was found where it was painted. The size is the
+   * document's, before either turn, because that is what `turnQuad` turns in.
    */
-  private topPtOf(comment: Comment): number {
-    const size = this.scroller.pageSize(comment.page);
-    const quad = viewRect(comment.rect, this.turns, size.width_pt, size.height_pt);
-    return Math.max(0, quad.top);
+  private turnsOn(page: number): { turns: number; width_pt: number; height_pt: number } {
+    const size = this.scroller.pageSize(page);
+    return {
+      turns: this.scroller.effectiveTurns(page),
+      width_pt: size.width_pt,
+      height_pt: size.height_pt,
+    };
   }
 
-  /** Where a comment's rectangle is on screen, in the root's coordinates. */
-  private anchorFor(comment: Comment): {
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-  } {
-    const size = this.scroller.pageSize(comment.page);
-    const quad = viewRect(comment.rect, this.turns, size.width_pt, size.height_pt);
-    const origin = this.scroller.pageOrigin(comment.page);
+  /** A rectangle in a page's display space, placed under every turn in force. */
+  private viewRectOn(page: number, rect: readonly [number, number, number, number]): Quad {
+    const { turns, width_pt, height_pt } = this.turnsOn(page);
+    return viewRect(rect, turns, width_pt, height_pt);
+  }
+
+  /**
+   * Where a rectangle on a page is on screen, in the root's coordinates.
+   *
+   * One implementation for a comment's note and a link's focus ring, which had
+   * a copy each and differed only in the type of the thing being placed.
+   */
+  private anchorOn(
+    page: number,
+    rect: readonly [number, number, number, number],
+  ): Anchor {
+    const quad = this.viewRectOn(page, rect);
+    const origin = this.scroller.pageOrigin(page);
     return {
       left: origin.left + quad.left * this.zoom,
       top: origin.top + quad.top * this.zoom - this.scrollTop,
       right: origin.left + quad.right * this.zoom,
       bottom: origin.top + quad.bottom * this.zoom - this.scrollTop,
     };
+  }
+
+  /**
+   * A comment's distance from the top of its page, in points, as displayed.
+   *
+   * `goToDestination` takes the destination convention --- points from the
+   * page's top --- and the rectangle is already in that space, so the only work
+   * is the turns {@link turnsOn} collects.
+   */
+  private topPtOf(comment: Comment): number {
+    return Math.max(0, this.viewRectOn(comment.page, comment.rect).top);
+  }
+
+  /** Where a comment's rectangle is on screen, in the root's coordinates. */
+  private anchorFor(comment: Comment): Anchor {
+    return this.anchorOn(comment.page, comment.rect);
   }
 
   /**
@@ -1995,13 +2036,8 @@ export class Viewer {
     if (this.commentItems.length === 0) return null;
     const { page, x, y } = this.pageAndPoint(event);
 
-    const size = this.scroller.pageSize(page);
-    const here = turnedFor(
-      onPage(this.commentItems, page),
-      this.turns,
-      size.width_pt,
-      size.height_pt,
-    );
+    const { turns, width_pt, height_pt } = this.turnsOn(page);
+    const here = turnedFor(onPage(this.commentItems, page), turns, width_pt, height_pt);
     return hitTest(here, page, x, y);
   }
 
@@ -2042,18 +2078,21 @@ export class Viewer {
 
   /** One page's links in the view's space, memoised across pointer moves. */
   private linksOn(page: number): Link[] {
+    const { turns, width_pt, height_pt } = this.turnsOn(page);
+    // Keyed on the *effective* turns, not the view's: a page an edit turned
+    // while this page was the cached one would otherwise be served rectangles
+    // placed under the rotation it had before the turn.
     const cached = this.turnedLinks;
-    if (cached && cached.page === page && cached.turns === this.turns) {
+    if (cached && cached.page === page && cached.turns === turns) {
       return cached.items;
     }
-    const size = this.scroller.pageSize(page);
     const items = linksTurnedFor(
       linksOnPage(this.linkItems, page),
-      this.turns,
-      size.width_pt,
-      size.height_pt,
+      turns,
+      width_pt,
+      height_pt,
     );
-    this.turnedLinks = { page, turns: this.turns, items };
+    this.turnedLinks = { page, turns, items };
     return items;
   }
 
@@ -2108,11 +2147,13 @@ export class Viewer {
   private viewQuadsOf(mark: MarkView): { slot: number; quads: Quad[] } | null {
     const slot = this.pages.slotOfId(mark.page);
     if (slot === undefined) return null;
-    // The page size handed to `turnQuad` is the *document's*, before either
-    // turn, and the turns are the sum of the view's and the page's own edit ---
-    // `scroller.effectiveTurns` is the one place those are added.
-    const size = this.scroller.pageSize(slot);
-    const turns = this.scroller.effectiveTurns(slot);
+    // Through {@link turnsOn}, which comments and links also place their
+    // rectangles with. This held its own copy of the same two lines until
+    // 2026-08-18, and a copy of a distinction is what lets one of them drift ---
+    // which is exactly what had happened on the other side, where six call
+    // sites turned by the view's rotation alone. One implementation also means
+    // the window checks on a mark reach the primitive all three use.
+    const { turns, width_pt, height_pt } = this.turnsOn(slot);
     const quads: Quad[] = [];
     for (let at = 0; at + 3 < mark.quads.length; at += 4) {
       quads.push(
@@ -2124,8 +2165,8 @@ export class Viewer {
             bottom: mark.quads[at + 3] ?? 0,
           },
           turns,
-          size.width_pt,
-          size.height_pt,
+          width_pt,
+          height_pt,
         ),
       );
     }

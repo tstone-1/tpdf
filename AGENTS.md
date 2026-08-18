@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 323 entries
+The one thing this file does *not* carry in full is the trap list --- 328 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,7 +944,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 323 of them and the full text
+titles. Only the titles are here, because there are 328 of them and the full text
 was 93% of this file --- an instruction budget spent on the 322 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1099,6 +1099,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A status element that comes and goes rearranges the toolbar it sits beside
 - A menu item is a global key claim, not a label (the accelerator was derived correctly from the one binding table, and deriving it at all was the mistake)
 - A menu item's greying is a snapshot, so a guard that moves without an edit is stale for ever (the item was greyed at exactly the moment it applied, and every check drives commands through the palette, which evaluates live)
+- A page's own turn is not the view's, and a rectangle drawn by one was found by the other (eleven call sites, and the mark subsystem was the one that was right --- which is what made the measurement decisive)
+- A size is learned once, so a page turned before it was seen keeps a transposed one (the quietest of the eleven, and the only one that does not correct itself)
 - A framework can abort your whole test binary, and 470 passing tests report nothing (a SIGABRT is not a red test; `cargo test` is the multi-threaded caller)
 - A synthetic right-click posted to the window server never reaches the web view (three ways to post one, all silent; the check belongs inside the page)
 
@@ -1121,6 +1123,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A timer that starts after the setup measures the wrong thing, and reports it
 - `cargo test` is a debug build, and a debug number in a doc comment is a lie
 - PDFKit reports an annotation's bounds rotated and renders the page unrotated (a cross-check read in the wrong convention produced a confident wrong conclusion)
+- Reading the code predicted four call sites, and there were eleven (the finding was right and its scope was not; grep the symbol, not the shape of the call you have in mind)
 
 ### Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration
@@ -1194,6 +1197,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A caller that validates first cannot reach the guard beneath it (the test passed, and so did the mutation that deleted the guard)
 - A coverage figure over the union of several quads measures the line spacing (and two more statistics that were right for one input and meaningless for another)
 - A control refused by a different guard than the one it was written for (it failed, which was the lucky case)
+- A single-entry cache is evicted by the grid scan that was about to test it (two mutations of one key both survived; sweeping the page is what destroyed the evidence, and only turning back caught the writing end)
+- Removing the second copy is what made the differential unable to fail (8 red before the deduplication and 2 after; a comparison between subsystems that share an implementation is true by construction, and nothing goes red at the moment it stops testing anything)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing

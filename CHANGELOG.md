@@ -19,6 +19,25 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### Fixed: comments and links on a page you rotated
+
+- **A comment or a link on a page you turned is now where you can see it.**
+  Rotating a *page* --- Rotate Right on one page, as against turning the whole
+  view --- moved the picture but not the click: a sticky note stayed clickable
+  where it used to be, and clicking where it now is did nothing.
+
+- **Jumping to a bookmark or a search hit on a turned page lands on the page**
+  rather than partway down an edge it no longer has, which is what turning the
+  whole view has always done.
+
+- **Back, Forward and reopening a document put you back on a turned page**
+  rather than at an arbitrary point down it.
+
+- **A page you turn before you have scrolled to it is now laid out the right
+  shape.** It was being measured with its turn counted twice, so it came out
+  with its width and height swapped and stayed that way until the document was
+  reopened.
+
 ### Take a highlight off, or write a note on it
 
 - **Click a highlight and a box opens.** Type in it and what you wrote is the
