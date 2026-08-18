@@ -9111,3 +9111,142 @@ probes share on the page and not in the code: **when a probe's reset is copied, 
 original was resetting.** A reset that names the right subject for one command can be silent
 about the state the next one actually depends on, and the failure arrives as a defect report
 against working code.
+
+---
+### A fallback is in the coordinate system of whoever wrote it
+
+`RawPage::crop_pt` reads the page's visible box, and its fallback --- for a page whose crop
+box PDFium will not report --- was:
+
+```rust
+normalised(ok != 0, [left, bottom, right, top])
+    .unwrap_or([0.0, 0.0, self.width_pt(), self.height_pt()])
+```
+
+Which is wrong, and was wrong for months without a single symptom. `width_pt` and
+`height_pt` are the page's **displayed** size, after `/Rotate`; a crop box is in the page's
+**own** space, before it. On an unrotated page those are the same four numbers, so thirteen
+of the fourteen corpora cannot tell them apart.
+
+It surfaced when cropping gave the box a second consumer. `testdata/rotated-90.pdf` is
+`/MediaBox [0 0 612 792]` with `/Rotate 90`, so the sheet is 612 by 792 and the displayed
+page is 792 by 612. Reading the fallback and writing it back through `FPDFPage_SetCropBox`,
+which reads page space, made PDFium intersect the two:
+
+```text
+FPDFPage_GetMediaBox -> [0, 0, 612, 792]   ok = true    the sheet
+FPDFPage_GetCropBox  -> [0, 0, 0, 0]       ok = FALSE   there is no /CropBox
+the fallback         -> [0, 0, 792, 612]                the DISPLAYED page
+after SetCropBox     -> the page reports 612 x 612
+```
+
+A size that page never had, on a document nobody had cropped, from the code path whose
+whole job was to leave it alone.
+
+**The half worth keeping is why it was invisible.** The fallback had exactly one consumer,
+`origin_pt`, which takes the *corner* --- and the corner of a page-space box and of a
+display-space one are both `(0, 0)`. A fallback is written in the coordinate system its
+first caller happens to need, and the second caller is where that stops being harmless.
+So: **a default value is a value, and it inherits every frame, unit and convention of the
+function it was written inside.** When a second consumer arrives, re-derive the default
+rather than the call.
+
+Two further notes, because the first diagnosis of this was wrong and recorded as a trap
+before being checked:
+
+- **PDFium behaved correctly throughout.** `FPDFPage_GetCropBox` returns *false* for a page
+  with no `/CropBox` --- there is none to report --- and answers in page space when there is
+  one (`links-cropped.pdf`'s `[50 50 545 742]`). The first write-up of this entry blamed the
+  library for "answering with the displayed rectangle", which is what the *fallback* did.
+  The evidence that settled it was reading `ok` separately from the box, on a page nothing
+  had yet written to; every earlier reading had been taken through a code path that had
+  already set a crop.
+- The fix is `/CropBox` **intersected** with `/MediaBox` --- §14.11.2's own rule, and the one
+  `pagetree::displayed_page` already applied to the same two boxes through `lopdf`. Two
+  libraries, one rule, stated in both places, because a rectangle measured against one page
+  and drawn on another is the failure this whole family of entries is about.
+
+### Two handles to one cached page are aliases, and a reading taken after a change describes the change
+
+`RawDocument` caches four loaded pages, so `page(3)` twice hands back two `RawPage` values
+wrapping **one** `FPDF_PAGE`. They are not copies of a page; they are two views of it.
+
+That has a design consequence and a measurement consequence, and both were paid for.
+
+The design one: a crop set on a handle stays set, so a request that simply took the cached
+page would see whichever crop the *previous* request left — a tile of page 3 rendered
+cropped because a text extraction two seconds earlier asked for it that way. The fix is not
+to write that rule down for callers to follow. `RawDocument::page` **restores the file's own
+box** and `page_cropped(index, Some(box))` is the explicit opt-in, so the dangerous state is
+unreachable rather than merely discouraged.
+
+The measurement one is sharper, because it produced a number that cannot exist. A probe
+comparing ink density before and after a crop read the page's size *after* cropping through
+a second handle:
+
+```rust
+let page = doc.page(index)?;               // the uncropped page
+let before = inked(&tile(&page));
+let cropped = doc.page_cropped(index, Some(box_pt))?;   // same handle
+let after = inked(&tile(&cropped));
+let page_px = page.width_pt() * page.height_pt();       // <- the CROPPED size
+```
+
+`page` and `cropped` alias, so the denominator for the uncropped count was the cropped
+page's. The probe reported a density of **1.23** — a fraction of a page's pixels that are
+ink, larger than one. That impossibility is the only reason it was caught rather than being
+read as a marginal improvement. **Take every reading of the old state before creating the
+new one**, and treat a normalised quantity outside its range as an instrument fault rather
+than a surprising result.
+
+---
+### A denominator that is constant in one dimension cannot compare areas
+
+The same probe's next guard was to skip pages with nothing to crop, so that a page whose
+ink already reaches its edges could not report a failure for doing the right thing. It
+compared the two renders' **pixel counts**:
+
+```rust
+if crop_px >= page_px * 0.98 { skip("the content box is the page") }
+```
+
+Both renders are 200 pixels wide whatever shape the page is — the height follows from the
+aspect ratio — so `crop_px / page_px` is the ratio of two *aspect ratios* and not of two
+areas. A crop keeping a fifth of the sheet came out as "247% of it", every corpus skipped,
+and the two rows that had something to say were silent. The output looked orderly: twelve
+`[SKIP]` lines with a stated reason, which is exactly what a careful harness prints.
+
+The rule: **when a measurement is normalised by a value held constant on one axis, it can
+compare shapes and not sizes.** Compare in the units the question is asked in — here
+points, from the boxes themselves — and keep the pixel counts for what they are, which is
+ink per rendered pixel.
+
+The tell was available and was not read for a round: a "percentage of the page" above 100.
+Two guards in one probe, on the same afternoon, both produced an out-of-range fraction, and
+both were arithmetic in the harness rather than anything about the subject.
+
+---
+### Two tests sharing a name make a mutation harness's two counts disagree
+
+`crop.test.ts` had `moves nothing for a page nobody cropped` twice — once under
+`describe("intoCrop")` and once under `describe("outOfCrop")`. Both are good tests and
+vitest runs both; the full name differs by its describe block and nothing complains.
+
+`scripts/mutate_frontend.py` reads failing test **names into a set** and cross-checks that
+count against the summary line's own arithmetic. A mutation that reddened five tests
+therefore reported:
+
+```text
+[FAIL] crop: give an uncropped page a corner that is not the origin:
+       4 failing test lines but the summary says 5 -- this harness cannot read its own output
+```
+
+Which is the guard working exactly as designed — it refused the run rather than reporting a
+survivor — and it took a manual re-run of the mutation to see that the fault was two
+identical `it(...)` strings rather than anything about the code.
+
+Worth knowing in both directions. **Naming two tests the same thing is not free**, even
+where the runner tolerates it: any tool that keys on the name alone silently merges them.
+And a harness whose two counts disagree should be believed about the disagreement and not
+about its cause — the message names the symptom correctly and says nothing about duplicate
+names, because it cannot know.

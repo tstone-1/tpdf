@@ -46,7 +46,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use crate::docmodel::{Command, Doc, Mark, MarkId, MarkKind, PageId, Quad, Refusal};
+use crate::docmodel::{Command, Doc, Mark, MarkId, MarkKind, PageId, Quad, Rect, Refusal};
 
 /// One page as the frontend sees it.
 ///
@@ -71,6 +71,21 @@ pub struct PageView {
     /// Named for the composition, not the result --- the page may already say
     /// `/Rotate 90`, and PDFium composes the render rotation with it.
     pub turns: u8,
+    /// The page's visible box as the reader has set it, or `None` for the
+    /// file's own.
+    ///
+    /// `[llx, lly, urx, ury]` in the page's own space, y upwards --- what
+    /// `/CropBox` uses, and the one place in this reply that is *not* in display
+    /// space. It has to be: it is the number that decides what display space
+    /// even is, so expressing it in that space would be circular.
+    ///
+    /// **Absolute, never a delta.** A second crop replaces the first, so
+    /// clearing one is `None` rather than an inverse to compute, and a reader
+    /// who crops twice gets the second answer rather than the composition of two
+    /// --- which is what `docmodel::Command::Crop` means by taking an
+    /// `Option<Rect>` rather than an adjustment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
 }
 
 /// One mark as the frontend sees it.
@@ -246,6 +261,39 @@ impl Edits {
             Command::Rotate {
                 page: PageId::from_raw(page),
                 turns,
+            },
+        )
+    }
+
+    /// Sets or clears one page's visible box, addressed by identity.
+    ///
+    /// `to` is `[llx, lly, urx, ury]` in the page's own space, y upwards, or
+    /// `None` to put the file's own box back. Absolute rather than relative for
+    /// the reason [`PageView::crop`] gives.
+    ///
+    /// **Nothing is written to the file here**, and the separation is worth
+    /// stating because two different mechanisms carry this number. What the
+    /// reader *sees* comes from PDFium being handed the box on every request
+    /// (`RawDocument::page_cropped`); what they *save* comes from `save.rs`
+    /// writing `/CropBox` out of the plan. Neither reads the other, so a check
+    /// that the two agree is a real check rather than a tautology.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the id names no page or a deleted one;
+    /// or the rectangle encloses no area, which includes any corner that is not
+    /// a number --- see `docmodel::Rect::is_proper`.
+    pub fn crop(&self, doc: u32, page: u64, to: Option<[f64; 4]>) -> Result<EditState, String> {
+        self.command(
+            doc,
+            Command::Crop {
+                page: PageId::from_raw(page),
+                to: to.map(|r| Rect {
+                    llx: r[0],
+                    lly: r[1],
+                    urx: r[2],
+                    ury: r[3],
+                }),
             },
         )
     }
@@ -643,6 +691,7 @@ fn snapshot(model: &Doc) -> EditState {
                 id: id.get(),
                 source: page.source,
                 turns: page.extra_turns,
+                crop: page.crop.map(|r| [r.llx, r.lly, r.urx, r.ury]),
             }
         })
         .collect();
@@ -1263,6 +1312,45 @@ mod tests {
         // A plan naming the model's id would name nothing `lopdf` knows.
         assert_eq!(plan.marks[0].source, 1);
         assert_eq!(plan.marks[0].author, "a reader");
+    }
+
+    #[test]
+    fn a_crop_reaches_the_reply_and_the_plan_and_clearing_it_removes_it() {
+        // The crop crosses the boundary twice, like a mark's kind: in on the
+        // command, out on `PageView`, and through the plan to the writer. Both
+        // directions in one test, because a reply that carried it and a plan
+        // that did not would put a crop on screen that no saved file has.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        let want = [10.0, 20.0, 300.0, 400.0];
+
+        let state = edits.crop(7, id, Some(want)).expect("the model takes it");
+        assert_eq!(state.pages[1].crop, Some(want));
+        assert_eq!(edits.plan(7).expect("plan").pages[1].crop, Some(want));
+        // The control: only that page. A crop written across the order would
+        // satisfy every assertion above.
+        assert_eq!(state.pages[0].crop, None);
+
+        let cleared = edits.crop(7, id, None).expect("the model clears it");
+        assert_eq!(cleared.pages[1].crop, None);
+        assert_eq!(edits.plan(7).expect("plan").pages[1].crop, None);
+    }
+
+    #[test]
+    fn a_crop_that_encloses_nothing_is_refused_in_the_reader_s_words() {
+        // The corners the wrong way round, which is what a rectangle dragged
+        // from bottom-right to top-left produces before anyone normalises it.
+        // Refused rather than normalised: the model is not the place to guess
+        // which of two readings a caller meant.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[0].id;
+        let why = edits
+            .crop(7, id, Some([300.0, 400.0, 10.0, 20.0]))
+            .expect_err("backwards corners");
+        assert_eq!(why, "that crop encloses no area");
+        // A refusal changes nothing, which is the model's own guarantee and is
+        // worth asserting here because this is the caller that would notice.
+        assert_eq!(edits.state(7).expect("state").pages[0].crop, None);
     }
 
     #[test]

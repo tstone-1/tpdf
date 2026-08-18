@@ -27,6 +27,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import type { CropGeometry } from "./crop";
 import {
   handleWindowKey,
   registerAppCommands,
@@ -548,6 +549,7 @@ async function run(path: string): Promise<void> {
   // Before the print and the release, because it leaves a journal entry on the
   // open document: a highlight made, noted and taken off again.
   await markCommandChecks(doc);
+  await cropCommandChecks(doc);
   await printChecks(path, doc);
   await releaseChecks(path);
 
@@ -2969,6 +2971,7 @@ async function appCommandChecks(
     // separately settable.
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
     deletePage: () => fired.push("deletePage"),
+    cropPage: (to) => fired.push(`cropPage:${to}`),
     movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
@@ -3644,6 +3647,14 @@ async function appCommandChecks(
     // against.
     "app.checkForUpdates": "it would reach the network from an offline check",
     "app.installUpdate": "it would replace the running binary mid-run",
+    // Driving either from the palette would time the layout against a chain of
+    // two IPC round trips --- measure the ink, then ask what size the page
+    // becomes --- and the probe framework's settle is a frame-loop wait, not a
+    // reply wait. Their wiring is covered by `appcommands.test.ts`'s sweep over
+    // every registered command, and the commands underneath them by
+    // `cropCommandChecks` above, which drives all three against this backend.
+    "edit.cropToContent": "its outcome is two IPC replies the probe cannot wait for",
+    "edit.resetCrop": "its outcome is an IPC reply the probe cannot wait for",
   };
 
   const registered = registry.all().map((command) => command.id);
@@ -7598,6 +7609,135 @@ async function attempt(
   } catch (e) {
     return { state: null, error: String(e) };
   }
+}
+
+/** What this phase reports, so a run that cannot start still prints the names. */
+const CROP_CHECKS = [
+  "the backend measures a page's content box",
+  "the content box is inside the page and encloses something",
+  "the model takes a crop through the command and reports it back",
+  "a cropped page is smaller than the page the file describes",
+  "the crop sits inside the file's own page",
+  "clearing the crop puts the page back",
+  "a crop that encloses nothing is refused in the reader's words",
+];
+
+/**
+ * The crop commands, driven against the real backend.
+ *
+ * Registration is the thing no other layer can say --- see
+ * {@link markCommandChecks} --- and there are three commands here rather than
+ * one: the measurement, the geometry the layout needs, and the model command.
+ * Each is registered separately and any of the three can be the one missing from
+ * `generate_handler!`.
+ *
+ * The last check is the control. Every answer above it could come from a backend
+ * that accepts whatever it is handed, and a crop box whose corners are the wrong
+ * way round has to come back as the refusal the model names.
+ *
+ * It runs on **every** corpus, including the two with no extractable text: a
+ * content box is measured from pixels, so a page of vector drawing has one and a
+ * page of text has one, and the only page that would skip is a blank one.
+ */
+async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
+  const opened = await attempt("edit_state", { doc: doc.id });
+  const first = opened.state?.pages[0];
+  if (!first) {
+    for (const name of CROP_CHECKS) {
+      skip(name, opened.error || "the model reports no pages");
+    }
+    return;
+  }
+
+  let found: [number, number, number, number] | null = null;
+  let why = "";
+  try {
+    found = await invoke<[number, number, number, number] | null>(
+      "page_content_box",
+      { doc: doc.id, page: first.source },
+    );
+  } catch (e) {
+    why = String(e);
+  }
+  check(CROP_CHECKS[0] ?? "", found !== null, why || `box ${JSON.stringify(found)}`);
+  if (!found) {
+    for (const name of CROP_CHECKS.slice(1)) {
+      skip(name, why || "the page has no ink to crop to");
+    }
+    return;
+  }
+
+  const whole = await invoke<CropGeometry>("page_geometry", {
+    doc: doc.id,
+    page: first.source,
+    crop: null,
+  }).catch(() => null);
+  const at = await invoke<CropGeometry>("page_geometry", {
+    doc: doc.id,
+    page: first.source,
+    crop: found,
+  }).catch(() => null);
+  check(
+    CROP_CHECKS[1] ?? "",
+    !!whole && !!at && at.width_pt > 0 && at.height_pt > 0,
+    `${JSON.stringify(at)} inside ${JSON.stringify(whole)}`,
+  );
+
+  const cropped = await attempt("page_crop", {
+    doc: doc.id,
+    page: first.id,
+    to: found,
+  });
+  const back = cropped.state?.pages[0]?.crop;
+  check(
+    CROP_CHECKS[2] ?? "",
+    !!back && back.every((value, index) => Math.abs(value - (found?.[index] ?? NaN)) < 0.01),
+    cropped.error || `sent ${JSON.stringify(found)}, back ${JSON.stringify(back)}`,
+  );
+  check(
+    CROP_CHECKS[3] ?? "",
+    !!whole &&
+      !!at &&
+      at.width_pt <= whole.width_pt + 0.01 &&
+      at.height_pt <= whole.height_pt + 0.01,
+    `${at?.width_pt.toFixed(1)}x${at?.height_pt.toFixed(1)} against ` +
+      `${whole?.width_pt.toFixed(1)}x${whole?.height_pt.toFixed(1)}`,
+  );
+  check(
+    CROP_CHECKS[4] ?? "",
+    !!whole &&
+      !!at &&
+      at.left >= -0.01 &&
+      at.top >= -0.01 &&
+      at.left + at.width_pt <= whole.width_pt + 0.01 &&
+      at.top + at.height_pt <= whole.height_pt + 0.01,
+    `at (${at?.left.toFixed(1)}, ${at?.top.toFixed(1)}) in ` +
+      `${whole?.width_pt.toFixed(1)}x${whole?.height_pt.toFixed(1)}`,
+  );
+
+  const cleared = await attempt("page_crop", {
+    doc: doc.id,
+    page: first.id,
+    to: null,
+  });
+  check(
+    CROP_CHECKS[5] ?? "",
+    cleared.state?.pages[0]?.crop === undefined,
+    cleared.error || `crop ${JSON.stringify(cleared.state?.pages[0]?.crop)}`,
+  );
+
+  // The control: corners the wrong way round enclose nothing, and the model has
+  // to say so rather than accept a page that renders as nothing.
+  const refused = await attempt("page_crop", {
+    doc: doc.id,
+    page: first.id,
+    to: [found[2], found[3], found[0], found[1]],
+  });
+  check(
+    CROP_CHECKS[6] ?? "",
+    refused.state === null && refused.error.includes("encloses no area"),
+    `state ${refused.state === null ? "refused" : "accepted"}, said "${refused.error}"`,
+  );
 }
 
 /**

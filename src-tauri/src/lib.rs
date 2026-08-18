@@ -9,6 +9,7 @@
 //! caller is a shell command in `BUILD.md`.
 
 pub mod annots;
+pub mod content;
 pub mod diag;
 pub mod docmodel;
 pub mod edits;
@@ -456,6 +457,64 @@ async fn page_rotate(
     edits.rotate(doc, page, turns)
 }
 
+/// Sets or clears one page's visible box, without touching the file.
+///
+/// Named by identity like [`page_rotate`]. `to` is `[llx, lly, urx, ury]` in the
+/// page's own space, y upwards, or absent to put the file's own box back.
+///
+/// **The reader sees this through PDFium and saves it through `lopdf`, and the
+/// two paths never meet.** Every render and every text extraction hands the box
+/// to `RawDocument::page_cropped`, which sets it on the loaded page; a save
+/// writes `/CropBox` out of the plan in `save.rs`. That is a real duplication and
+/// it is the reason a check comparing what is on screen with what comes back out
+/// of the saved file can fail at all.
+#[tauri::command]
+async fn page_crop(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    page: u64,
+    to: Option<[f64; 4]>,
+) -> Result<edits::EditState, String> {
+    edits.crop(doc, page, to)
+}
+
+/// The box one page's ink occupies, in the page's own space, or `None` if blank.
+///
+/// `page` is a position in the **baseline file**, not a page id and not a slot:
+/// this asks PDFium about the document on disk, which knows nothing about the
+/// model's identities. The caller has the source index in the state reply.
+///
+/// Measured by rendering the page small and finding the bounding box of
+/// everything that is not paper --- see `crate::content` for why the object
+/// graph cannot answer this for a scan.
+#[tauri::command]
+async fn page_content_box(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    page: u32,
+) -> Result<Option<[f64; 4]>, String> {
+    let (reply, rx) = reply_channel();
+    service.content(doc, page, reply);
+    await_reply("page_content_box", rx).await
+}
+
+/// One page's displayed size under a crop box, or under the file's own.
+///
+/// The frontend lays out from this and cannot compute it: a crop is in the
+/// page's own space, the layout is in display space, and the turn between them
+/// is the page's `/Rotate`, which the frontend is never told.
+#[tauri::command]
+async fn page_geometry(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    page: u32,
+    crop: Option<[f32; 4]>,
+) -> Result<render::CropGeometry, String> {
+    let (reply, rx) = reply_channel();
+    service.geometry(doc, page, crop, reply);
+    await_reply("page_geometry", rx).await
+}
+
 /// Removes one page from the working document, without touching the file.
 ///
 /// Named by identity like [`page_rotate`], and here that is not a nicety: the
@@ -753,9 +812,10 @@ async fn page_text(
     service: tauri::State<'_, RenderService>,
     doc: u32,
     page: u32,
+    crop: Option<[f32; 4]>,
 ) -> Result<text::PageText, String> {
     let (reply, rx) = reply_channel();
-    service.text(doc, page, reply);
+    service.text(doc, page, crop, reply);
     await_reply("page_text", rx).await
 }
 
@@ -1686,6 +1746,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_document,
             page_rotate,
+            page_crop,
+            page_content_box,
+            page_geometry,
             page_delete,
             page_move,
             annot_mark,

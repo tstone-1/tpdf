@@ -59,6 +59,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   not a rectangle drawn over the page, so Acrobat and Preview show it as what it is. Each
   mark takes a note, and **Next mark** / **Previous mark** walk them from the keyboard:
   the pointer is not the only way to reach one.
+- **Crop a page to what is on it**, which trims the margins away so the text fills the
+  window. It measures where the ink actually is rather than reading the page's objects, so
+  it works on a scan --- where every object union is the whole sheet --- as well as on a
+  page of type. The crop is part of the document: undoable, carried when the page moves,
+  and written into a saved copy as a real `/CropBox`, so another reader opens the file
+  cropped the way you left it.
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.
@@ -72,7 +78,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 ## Not built yet
 
-- The rest of the page operations: insert, split, merge, crop
+- The rest of the page operations: insert, split, merge
+- Cropping by dragging a rectangle. Today the crop is measured for you or reset; a
+  rectangle you draw needs a drag that means something other than selecting text.
 - The annotations that are not about a text selection: ink, shapes, text boxes, stamps ---
   each needs a way to *draw* rather than a way to select. Squiggly is the one text-selection
   kind still missing.

@@ -76,6 +76,10 @@ FILTERS = [
     # the harness for the same reason `print::` was: this list is what selects
     # them, and a mutation whose test cannot be seen reports SURVIVED.
     "pagetree::",
+    # Added 2026-08-18 with the crop. Fourth time this list has been forgotten
+    # and fourth time the guard is what said so, before six mutations could
+    # report SURVIVED for tests it simply could not see.
+    "content::",
     # Added 2026-08-17 with the menu bar. The guard fired a third time and said
     # exactly which mutation it was, before the mutation could report SURVIVED.
     #
@@ -1376,10 +1380,14 @@ MUTATIONS = [
         # a live PDFium page and no unit test could reach it -- so both of its
         # rules were guarded by nothing, in the function every character, link
         # and comment position is measured from.
+        # Re-aimed 2026-08-18: `corner_of` was folded into `normalised`, which
+        # answers with the whole rectangle rather than one corner, because the
+        # crop a reader sets needs all four numbers. The rule and its test are
+        # the same; only where they live moved.
         "progressive: take a crop box's corners in the order they were written",
         "src/progressive.rs",
-        "    (box_pt[0].min(box_pt[2]), box_pt[1].min(box_pt[3]))",
-        "    (box_pt[0], box_pt[1])",
+        "        box_pt[0].min(box_pt[2]),\n        box_pt[1].min(box_pt[3]),\n        box_pt[0].max(box_pt[2]),\n        box_pt[1].max(box_pt[3]),",
+        "        box_pt[0],\n        box_pt[1],\n        box_pt[2],\n        box_pt[3],",
         "a_crop_box_written_backwards_still_yields_its_lower_left",
     ),
     Mutation(
@@ -1751,6 +1759,118 @@ def all_test_names() -> set[str]:
     )
     out = done.stdout + done.stderr
     return {m for m in LISTED_TEST.findall(out)}
+
+
+# --- cropping a page -----------------------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Count a transparent pixel as ink. The renderer leaves the overhang
+        # beyond the page as it found the buffer, so every page comes back
+        # uncroppable.
+        "content: read the paper beyond the page as ink",
+        "src/content.rs",
+        "            if px[3] == 0 || (px[0] >= WHITE && px[1] >= WHITE && px[2] >= WHITE) {",
+        "            if px[0] >= WHITE && px[1] >= WHITE && px[2] >= WHITE {",
+        "transparent_pixels_are_paper_too",
+    ),
+    Mutation(
+        # Require every channel to be dark. Red text on white paper is then
+        # blank, and a page of coloured type has no content box.
+        "content: read only black as ink",
+        "src/content.rs",
+        "            if px[3] == 0 || (px[0] >= WHITE && px[1] >= WHITE && px[2] >= WHITE) {",
+        "            if px[3] == 0 || px[0] >= WHITE || px[1] >= WHITE || px[2] >= WHITE {",
+        "a_single_channel_of_colour_is_ink",
+    ),
+    Mutation(
+        # Treat the far edges as inclusive. Every crop is a pixel short on two
+        # sides, which at the scan's resolution is three points of ink.
+        "content: take the ink bounds as a closed rectangle",
+        "src/content.rs",
+        "            right = right.max(x + 1);\n            bottom = bottom.max(y + 1);",
+        "            right = right.max(x);\n            bottom = bottom.max(y);",
+        "one_inked_pixel_bounds_itself_and_nothing_else",
+    ),
+    Mutation(
+        # Read past the end of a buffer smaller than it claims, in the process
+        # holding the reader's document.
+        "content: trust a buffer's claimed size",
+        "src/content.rs",
+        "    if pixels.len() < width * height * 4 {\n        return None;\n    }",
+        "",
+        "a_buffer_smaller_than_it_claims_is_refused",
+    ),
+    Mutation(
+        # A threshold at pure white. Antialiasing puts a near-white fringe around
+        # every glyph, so the box is found one pixel outside the ink.
+        "content: find ink one pixel outside the ink",
+        "src/content.rs",
+        "const WHITE: u8 = 240;",
+        "const WHITE: u8 = 255;",
+        "a_near_white_fringe_is_paper_and_a_grey_is_not",
+    ),
+    Mutation(
+        # No margin. The scan under-reports, so cropping to exactly the measured
+        # box shaves descenders.
+        "content: crop to exactly the measured ink",
+        "src/content.rs",
+        "pub const MARGIN_PT: f64 = 2.0;",
+        "pub const MARGIN_PT: f64 = 0.0;",
+        "the_margin_is_larger_than_a_pixel_of_the_scan",
+    ),
+    Mutation(
+        # Write the crop onto the page's parent, which is inheritable -- so
+        # cropping one page crops every page hanging under that node.
+        "pagetree: write a crop where every page inherits it",
+        "src/pagetree.rs",
+        "        doc.get_object_mut(*id)\n            .and_then(Object::as_dict_mut)\n            .map_err(|e| format!(\"page {id:?} is not a dictionary: {e}\"))?\n            .set(\n                \"CropBox\",",
+        "        let parent = doc\n            .get_object(*id)\n            .and_then(Object::as_dict)\n            .and_then(|d| d.get(b\"Parent\"))\n            .and_then(Object::as_reference)\n            .unwrap_or(*id);\n        doc.get_object_mut(parent)\n            .and_then(Object::as_dict_mut)\n            .map_err(|e| format!(\"page {id:?} is not a dictionary: {e}\"))?\n            .set(\n                \"CropBox\",",
+        "a_crop_lands_on_the_page_and_not_on_its_parent",
+    ),
+    Mutation(
+        # Write a crop that shares no area with the sheet. The page renders as
+        # nothing, in whatever reader opens the file.
+        "pagetree: write a crop that misses the page",
+        "src/pagetree.rs",
+        "        if box_pt[2] <= box_pt[0] || box_pt[3] <= box_pt[1] {",
+        "        if false {",
+        "a_crop_that_misses_the_page_is_refused",
+    ),
+    Mutation(
+        # Skip the intersection with the sheet. A producer's oversized crop box
+        # is written straight through.
+        "pagetree: write a crop without clamping it to the sheet",
+        "src/pagetree.rs",
+        "        let box_pt = [\n            want[0].max(media[0]),\n            want[1].max(media[1]),\n            want[2].min(media[2]),\n            want[3].min(media[3]),\n        ];",
+        "        let box_pt = *want;",
+        "a_crop_outside_the_page_is_brought_back_onto_it",
+    ),
+    Mutation(
+        # Let the last of two crops for one page win, silently, for both.
+        "save: let one page be cropped two ways",
+        "src/save.rs",
+        "        match chosen.get(&page.source) {\n            None => {",
+        "        match None::<&([f64; 4], usize)> {\n            None => {",
+        "one_page_cropped_two_ways_is_refused_and_cropped_one_way_is_not",
+    ),
+    Mutation(
+        # Write a crop box onto every page of every document tpdf saves.
+        "save: plan a crop for a page nobody cropped",
+        "src/save.rs",
+        "        let Some(want) = page.crop else { continue };",
+        "        let want = page.crop.unwrap_or([0.0, 0.0, 1.0, 1.0]);",
+        "a_plan_with_no_crop_writes_no_crop_box",
+    ),
+    Mutation(
+        # Drop the crop between the model and the writer. The reader sees a
+        # cropped page and every file they save is uncropped.
+        "edits: leave the crop out of the plan",
+        "src/edits.rs",
+        "                crop: page.crop.map(|r| [r.llx, r.lly, r.urx, r.ury]),",
+        "                crop: None,",
+        "a_crop_reaches_the_reply_and_the_plan_and_clearing_it_removes_it",
+    ),
+]
 
 
 def main() -> int:

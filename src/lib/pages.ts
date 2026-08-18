@@ -96,6 +96,21 @@ export interface PageView {
   source: number;
   /** Quarter turns clockwise an edit has applied, on top of the page's own. */
   turns: number;
+  /**
+   * The page's visible box as the reader has set it, or absent for the file's
+   * own.
+   *
+   * `[llx, lly, urx, ury]` in the **page's own** space, y upwards --- the one
+   * value here that is not in display space, because it decides what display
+   * space is and expressing it there would be circular.
+   *
+   * Nothing in the frontend does arithmetic with it beyond passing it back to
+   * the renderer. What the *layout* needs is a page's displayed size and where
+   * the crop sits inside the file's own page, and neither can be computed from
+   * this without the page's `/Rotate`, which the frontend is never told: see
+   * `edits.ts`'s `pageGeometry`, which asks.
+   */
+  crop?: readonly [number, number, number, number];
 }
 
 /**

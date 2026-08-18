@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 335 entries
+The one thing this file does *not* carry in full is the trap list --- 339 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 335 of them and the full text
-was 93% of this file --- an instruction budget spent on the 334 traps that are not
+titles. Only the titles are here, because there are 339 of them and the full text
+was 93% of this file --- an instruction budget spent on the 338 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -987,6 +987,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - PDFium's render rotation composes with `/Rotate`, and wants the turned size
 - PDFium accepting a file is not evidence the file is well formed
 - An error message that names no cause is not vague, it is a wrong diagnosis
+- A fallback is in the coordinate system of whoever wrote it (PDFium was right and the first write-up of this entry blamed it; the corner survived for months and the size did not)
+- Two handles to one cached page are aliases, and a reading taken after a change describes the change (the impossible number is the only reason it was caught)
 
 ### PDFium: text, coordinates and outlines
 - A byte scan cannot verify a document with a Type0 font
@@ -1199,6 +1201,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A caller that validates first cannot reach the guard beneath it (the test passed, and so did the mutation that deleted the guard)
 - A coverage figure over the union of several quads measures the line spacing (and two more statistics that were right for one input and meaningless for another)
 - A control refused by a different guard than the one it was written for (it failed, which was the lucky case)
+- A denominator that is constant in one dimension cannot compare areas (twelve orderly `[SKIP]` lines, and a percentage above 100 that went unread for a round)
 - A probe that writes one colour cannot measure a mark drawn in another (a zero reading that reads as the renderer ignoring our appearance stream; derive the classifier from the value sent, do not correct the constant)
 - A single-entry cache is evicted by the grid scan that was about to test it (two mutations of one key both survived; sweeping the page is what destroyed the evidence, and only turning back caught the writing end)
 - Removing the second copy is what made the differential unable to fail (8 red before the deduplication and 2 after; a comparison between subsystems that share an implementation is true by construction, and nothing goes red at the moment it stops testing anything)
@@ -1260,6 +1263,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
 - A draft release is invisible, and the tag beside it says the work shipped
 - A test that walks every prefix of a journal still could not see the snapshot rule (thoroughness is bounded by the constants a test happens to exceed; the harness's name cross-check is what turned a pass into a finding)
+- Two tests sharing a name make a mutation harness's two counts disagree (the guard was right about the symptom and cannot know the cause)
 - An event without the modifier fields a matcher tests reads as no match at all (four keys reported guarded were four leaks; the tidy result was the tell)
 - A probe copied from its neighbour inherits a starting point that may not apply (a working command measured as dead, and its sibling failed in the direction that looks like a pass)
 

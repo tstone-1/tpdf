@@ -206,6 +206,51 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
 # geometry and the pixels PDFium draws, and what it cannot prove is that somebody
 # else's reader shows the mark at all.
 
+# crop-probe: the crop the reader sets, against PDFium rather than against us.
+#
+# Four modes, and the first is the one the whole design rests on:
+#   follows    setting a page's crop box moves EVERYTHING that reads it -- the
+#              reported size, the origin every character box is measured from,
+#              the render, and the text mapping. Its control is the restore:
+#              asking for no crop must put every one of those back, or the page
+#              cache turns one request's crop into everyone's. Its FIRST check
+#              is the only one here not derived from `crop_pt`: PDFium's page
+#              size against `pagetree::displayed_page`'s, read from the same
+#              file through lopdf. Every other check would survive a corrupt
+#              crop rule, because their before and their after corrupt
+#              together.                                          6/6
+#   content    the measured content box is inside the page and encloses
+#              something.                                        2/2
+#   geometry   the crop's rectangle inside the file's page and the cropped
+#              page's own reported size must agree -- two derivations, one
+#              through `text::to_device`'s rotation table and one from PDFium.
+#              Its control is the uncropped case, where the rectangle has to be
+#              the whole page at the origin.                      3/3
+#   ink        cropping to the content box raises the ink per rendered pixel.
+#              The reader-visible claim, and the one no structural check makes.
+#              Skips with a stated reason on a page whose ink already reaches
+#              its edges, which is the honest control for every other row.
+#
+# Green on all fourteen corpora. Two rows are worth running by hand after any
+# change to the rotation table or the box arithmetic:
+cargo run --release --manifest-path src-tauri/Cargo.toml --example crop-probe -- \
+    testdata/rotated-90.pdf --mode follows
+cargo run --release --manifest-path src-tauri/Cargo.toml --example crop-probe -- \
+    testdata/rotated-90.pdf --mode geometry
+cargo run --release --manifest-path src-tauri/Cargo.toml --example crop-probe -- \
+    testdata/links-cropped.pdf --mode content
+cargo run --release --manifest-path src-tauri/Cargo.toml --example crop-probe -- \
+    testdata/columns.pdf --mode ink
+cargo run --release --manifest-path src-tauri/Cargo.toml --example crop-probe -- \
+    testdata/vector-heavy.pdf --mode ink
+
+# `rotated-90.pdf` is not one fixture among fourteen here. It is the page that
+# proves `FPDFPage_GetCropBox` and `FPDFPage_SetCropBox` are not inverses: with
+# no `/CropBox` of its own the getter answers with the DISPLAYED rectangle, and
+# writing that back shrinks a 612x792 page to 612x612. See `docs/TRAPS.md`.
+# `vector-heavy.pdf` is the other end -- an A0 drawing with no margins, where the
+# right answer is to crop nothing.
+
 # `--mode agree` needs NO manifest since 2026-08-16, which is the point of it:
 # it resolves the same outline through PDFium and through lopdf and compares the
 # two lists, so any document with an outline is a test. Run it over real files --
@@ -1679,20 +1724,33 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 215 | 45 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 223 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 223 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 125 | 135 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 165 | 95 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 210 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 212 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 187 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 204 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 205 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 214 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 225 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 232 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 167 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 222 | 45 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 230 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 230 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 132 | 135 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 172 | 95 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 217 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 219 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 194 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 211 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 212 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 221 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 232 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 239 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 174 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+
+**Re-run 2026-08-18** with the crop: **267** names on all fourteen, seven more than the 260
+below, and the rows above are that sweep's. Every corpus gained seven *runs* and lost none.
+All seven are one backend phase, driving `page_content_box`, `page_geometry` and `page_crop`
+against the real backend --- which is the only place that can say the three commands are
+*registered*, the failure every layer below passes through. Its last check is the control: a
+crop whose corners are the wrong way round has to come back as the refusal the model names.
+
+The two palette commands are deliberately **not** driven from the palette, and the reason is
+in `viewercheck.ts` beside them: cropping to content is two IPC replies deep --- measure the
+ink, then ask what size the page becomes --- and the probe framework's settle is a frame-loop
+wait rather than a reply wait. Their wiring is covered by `appcommands.test.ts`'s sweep over
+every registered command.
 
 **Re-run 2026-08-18** with the keyboard route to a mark: **260** names on all fourteen,
 six more than the 254 below, and the rows above are that sweep's. Every corpus gained six

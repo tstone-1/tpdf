@@ -141,6 +141,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.movePageUp",
       "edit.movePageDown",
       SEPARATOR,
+      "edit.cropToContent",
+      "edit.resetCrop",
       "edit.deletePage",
     ],
   },

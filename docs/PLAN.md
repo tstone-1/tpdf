@@ -5578,6 +5578,175 @@ increment: squiggly, and the ones that are not about a text selection at all
 a way to select. And a colour a reader can choose, still the UI question the
 `MARK_COLORS` table's comment names.
 
+#### Cropping a page --- done 2026-08-18
+
+The last command in `docmodel`'s `Command` with no caller. `Crop { page, to }`
+had been there since the model was written, with tests, a `Refusal` for a
+degenerate rectangle and a `Rect` whose `is_proper` already refused a `NaN`
+corner --- exactly the shape `Delete` and `Move` were in before their own
+increments.
+
+**The experiment came first, and it decided the whole design.** The question was
+whether a crop has to be threaded through every consumer --- the render, the text
+extraction, the links, the comments, the marks, the layout, the writer --- or
+whether one of them can carry it for the others. Setting `FPDFPage_SetCropBox` on
+the loaded page and reading everything back answered it in about ten minutes:
+
+```text
+before: size 595.0x842.0  origin (0.0, 0.0)     first char box [60.4, 135.6, 66.2, 142.1]
+asked:  [148.8 210.5 446.2 631.5]
+after:  size 297.5x421.0  origin (148.8, 210.5)  first char box [-88.3, -74.9, -82.6, -68.4]
+```
+
+The reported size, the origin every character is measured from, the render and
+the text mapping all follow the box. So **the page carries the crop and no
+consumer needs to know**, which is why `text.rs`, `links.rs`, `progressive.rs`
+and `annots.rs` are untouched by this increment: they already read the crop box,
+and now it is the reader's.
+
+##### What that costs, and where the two spaces meet
+
+Two things do not follow, and both are real work rather than tidying.
+
+**The page cache makes a crop sticky.** `RawDocument` holds four loaded pages, so
+a crop set on a handle is in force for every later request for that page --- a
+tile rendered cropped because a text extraction two seconds earlier asked for it
+that way. The fix is not a rule for callers: `RawDocument::page` **restores the
+file's own box** and `page_cropped(index, Some(box))` is the explicit opt-in, so
+the dangerous state is unreachable rather than discouraged. Which needed the
+file's own box remembered before the first override, because `GetCropBox` answers
+with whatever was last written.
+
+**`lopdf` reads the file and PDFium reads the reader's crop, so two spaces meet
+in the frontend.** A comment, a link and one of the reader's own marks arrive
+measured from the **file's** displayed corner; a cropped page's own corner is
+somewhere else. Rather than teaching three subsystems about crops, everything
+stays in the file's space and is drawn at `rect - (left, top)`: `crop.ts` holds
+the pair and both directions of it, and the *inverse* matters as much --- a mark
+is **sent** in the file's space, so a highlight made while cropped and saved
+after the crop changed is still written where the words are.
+
+Text is the exception and it is not an omission: `page_text` is answered by a
+worker that already applied the crop, so a character box arrives in the cropped
+page's space. The asymmetry is stated at `viewRectOn`, which is the one place
+either could be got wrong.
+
+The offset itself is asked for rather than computed. A crop box is in the page's
+own space, a layout is in display space, and the turn between them is the page's
+`/Rotate` --- which the frontend is never told, deliberately, because the renderer
+already composes it. `page_geometry` answers with the cropped size **and** where
+the crop sits inside the file's page, and it derives the two by different routes:
+the rectangle through `text::to_device`'s rotation table, the size from PDFium.
+`crop-probe --mode geometry` asserts they agree, which is a check rather than a
+tautology precisely because they are two derivations.
+
+##### Crop to content, and why it is measured in pixels
+
+There is deliberately **no crop-by-dragging**. A rectangle a reader draws needs a
+drag mode this application does not have --- every gesture on a page today means
+select, open or follow --- and inventing one is its own increment. What a reader
+wants from a crop is answered without it: remove the margins.
+
+`content.rs` renders the page 400 pixels wide and takes the bounding box of every
+pixel that is neither white nor transparent. **The object graph cannot answer
+this**, and the reason is the document it matters most for: a scan is one image
+object covering the sheet, so the union of the page's object bounds *is* the
+sheet, and "crop to content" would do nothing on precisely the file with the
+widest margins. Transparent counts as paper because the renderer fills the page
+rectangle and leaves the overhang beyond it untouched; a scan testing colour
+alone reads that overhang as ink and no page is ever croppable.
+
+Measured across the whole corpus, cropping to the content box and re-rendering:
+
+| fixture | ink per rendered pixel, before -> after |
+|---|---|
+| `columns.pdf` | 0.019 -> 0.074 |
+| `tagged.pdf` | 0.024 -> 0.169 |
+| `rotated-90.pdf` | 0.065 -> 0.274 |
+| `multilingual.pdf` | 0.020 -> 0.036 |
+| `text-heavy.pdf` | 0.308 -> 0.335 |
+| `vector-heavy.pdf` | the content box is 100.0% of the page, so nothing was cropped |
+
+The last row is the control and it is the honest kind: an A0 drawing that reaches
+its own edges has no margins, and a "content box" that always shrank by a fixed
+amount would pass every row above it. `rotated-90.pdf` is the row that says the
+rotation is right --- a wrong table crops the wrong region, and the density does
+not rise.
+
+##### What the checks can and cannot say
+
+**Thirteen unit tests in Rust, eleven in the frontend, and twenty-eight
+mutations**, every check proved able to fail. The pure half is where the
+assertions are: `ink_bounds` against a buffer whose ink is at known coordinates,
+`intoCrop`/`outOfCrop` as inverses, `agreed_crops` refusing one page cropped two
+ways, and `apply_crops` writing on the page rather than on the `/Pages` node it
+inherits from --- which is the one that matters most, since `/CropBox` is
+inheritable and a write onto the parent crops every page under it.
+
+**A differential in `viewercrop.test.ts`** puts one rectangle through the comment
+subsystem and the mark subsystem and asserts they land in the same place, with
+the control that the place *moved*. That is the shape the page-turn increment
+arrived at, and for the same reason: three subsystems agreeing about an unchanged
+number agree by construction.
+
+**`crop-probe` is where the claims about PDFium live**, because none of them can
+be made without a loaded library: that the size, the origin, the render and the
+text mapping follow the box; that asking for no crop puts every one of them back;
+that the content box is inside the page and proper; that the rectangle and the
+cropped page agree about the size. Four modes, fourteen corpora, and the two
+pages with no text or no margins skip with a stated reason rather than passing
+quietly.
+
+**Three findings, and all three were instruments rather than the subject.**
+
+The first was a real defect in this repository, months old, and it is why the
+crop rule now reads the media box. `RawPage::crop_pt` fell back to
+`[0, 0, width_pt(), height_pt()]` for a page whose crop box PDFium would not
+report --- and those are the page's **displayed** dimensions, after `/Rotate`,
+where a crop box is in the page's own space. On an unrotated page the two are the
+same four numbers, so thirteen of the fourteen corpora cannot tell. On
+`rotated-90.pdf` the sheet is 612 by 792 and the displayed page 792 by 612, and
+writing the fallback back through `FPDFPage_SetCropBox` made PDFium report the
+page as **612x612**: a size it never had, on a document nobody had cropped.
+
+It had been harmless because its only consumer was `origin_pt`, which takes the
+*corner*, and the corner is `(0, 0)` in both frames. **A fallback is in the
+coordinate system of whoever wrote it**, and the second consumer is where that
+stops being invisible.
+
+The first write-up of that trap blamed PDFium --- "`GetCropBox` answers with the
+displayed rectangle" --- and was wrong. `FPDFPage_GetCropBox` returns *false* for
+a page with no `/CropBox` and answers in page space when there is one; every
+reading that suggested otherwise had been taken through a code path that had
+already written a crop. What settled it was reading the success flag separately
+from the box, on a page nothing had touched. A trap recorded with the wrong cause
+is worse than none, so it is worth saying that this one was corrected rather than
+written once.
+
+The other two are the probe's own arithmetic and each produced a number that
+cannot exist. A density of **1.23** came from reading the page's size after
+cropping it through a second handle --- two `RawPage` values for one cached page
+are aliases. A skip guard comparing the two renders' **pixel counts** compared
+aspect ratios rather than areas, because both renders are 200 pixels wide
+whatever shape the page is: a crop keeping a fifth of the sheet read as "247% of
+it", and every corpus skipped with an orderly stated reason. Both tells were
+available for a round before being read. `docs/TRAPS.md` has all three.
+
+**The window sweep is 267 check names on all fourteen corpora**, seven more than
+before and every corpus seven runs richer. All seven are one backend phase
+driving `page_content_box`, `page_geometry` and `page_crop` against the real
+backend --- the only place that can say the three are *registered*, which is the
+failure every layer below passes through. The two palette commands are
+deliberately not driven from the palette: cropping to content is two IPC replies
+deep and the probe framework's settle is a frame-loop wait, so their wiring is
+covered by `appcommands.test.ts`'s sweep over every registered command instead.
+
+**Not done:** a crop a reader drags, which is the gesture question above and
+needs a drag mode; cropping several pages at once, which is a selection question
+rather than a new mechanism; and `insert`, `split` and `merge`, unchanged --- the
+first two need a page the model creates, and `docmodel`'s note has the
+id-allocator property that would have to be proved first.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

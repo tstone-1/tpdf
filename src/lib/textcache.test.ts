@@ -230,3 +230,58 @@ describe("TextCache page turns", () => {
     expect(cache.peek(0)?.quarter_turns).toBe(3);
   });
 });
+
+describe("TextCache crops", () => {
+  it("re-asks for a page whose crop changed, and sends the box", async () => {
+    // Not stale in the usual sense: a character box is measured from the
+    // displayed page's corner, and a crop moves that corner, so what is held is
+    // an answer in another space. Dropped and re-asked rather than translated,
+    // because the backend's answer under the new box is the renderer's own.
+    const cache = new TextCache(1);
+    await cache.load(0);
+    expect(core.invoke).toHaveBeenCalledTimes(1);
+    expect(core.invoke.mock.calls[0]?.[1]).toEqual({ doc: 1, page: 0, crop: null });
+
+    cache.setPageCrop(0, [10, 20, 300, 400]);
+    expect(cache.cachedPages).toBe(0);
+    await cache.load(0);
+    expect(core.invoke.mock.calls[1]?.[1]).toEqual({
+      doc: 1,
+      page: 0,
+      crop: [10, 20, 300, 400],
+    });
+  });
+
+  it("keeps a page whose crop was set to the same box again", async () => {
+    // A state reply arrives after every command, and most commands are not a
+    // crop. Dropping on every reply would re-extract every visible page each
+    // time a reader turned one --- correct, and an IPC round trip per page for
+    // nothing.
+    const cache = new TextCache(1);
+    cache.setPageCrop(0, [10, 20, 300, 400]);
+    await cache.load(0);
+    cache.setPageCrop(0, [10, 20, 300, 400]);
+    expect(cache.cachedPages).toBe(1);
+  });
+
+  it("keeps its neighbours when one page's crop changes", async () => {
+    // The scope, and the same one `setPageTurns` has: a crop is one page's.
+    const cache = new TextCache(1);
+    await cache.load(0);
+    await cache.load(1);
+    cache.setPageCrop(0, [10, 20, 300, 400]);
+    expect(cache.cachedPages).toBe(1);
+    expect(cache.peek(1)).not.toBeNull();
+  });
+
+  it("drops the page again when the crop is taken off", async () => {
+    // The other direction. A cache that dropped on the way in and not on the way
+    // out would serve the cropped extraction for an uncropped page, which is the
+    // same defect with the sign reversed and looks like it fixed itself.
+    const cache = new TextCache(1);
+    cache.setPageCrop(0, [10, 20, 300, 400]);
+    await cache.load(0);
+    cache.setPageCrop(0, undefined);
+    expect(cache.cachedPages).toBe(0);
+  });
+});

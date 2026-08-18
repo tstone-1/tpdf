@@ -56,6 +56,16 @@ export interface TileRequest {
    * with itself, and no evidence about what reached the screen.
    */
   invert?: boolean;
+  /**
+   * The page's visible box as the reader's edits have it, or absent for the
+   * file's own.
+   *
+   * `[llx, lly, urx, ury]` in the page's own space, y upwards --- the one value
+   * in this request that is not in display space, because it is the value that
+   * decides what display space is. The server refuses three of the four corners
+   * rather than completing the rectangle from the page.
+   */
+  crop?: readonly [number, number, number, number] | undefined;
   x: number;
   y: number;
   width: number;
@@ -137,7 +147,13 @@ export function tileUrl(req: TileRequest): string {
   // a stringified `false` reaching it would otherwise be a light page and look
   // exactly like the mode being switched off.
   const invert = req.invert ? "&invert=1" : "";
-  return `${tileOrigin()}${path}?fmt=${req.format}${rid}${turns}${invert}`;
+  // All four or none: the server refuses a partial box rather than completing
+  // it from the page, so a caller whose arithmetic dropped one corner gets an
+  // error instead of a page cropped somewhere nobody asked for.
+  const crop = req.crop
+    ? `&cl=${req.crop[0]}&cb=${req.crop[1]}&cr=${req.crop[2]}&ct=${req.crop[3]}`
+    : "";
+  return `${tileOrigin()}${path}?fmt=${req.format}${rid}${turns}${invert}${crop}`;
 }
 
 let lastRequestId = 0;

@@ -19,6 +19,7 @@
     PAGE_MENU,
     SELECTION_MENU,
   } from "./lib/contextmenu";
+  import { contentBox } from "./lib/crop";
   import { Edits, type EditState } from "./lib/edits";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label, setPrintedKeys } from "./lib/keys";
@@ -175,6 +176,7 @@
     updateReady: () => updates.state.kind === "ready",
     rotatePage: (delta) => void rotatePage(delta),
     deletePage: () => void deletePage(),
+    cropPage: (to) => void cropPage(to),
     movePage: (delta) => void movePage(delta),
     undoEdit: () => void applyEdit((e) => e.undo()),
     redoEdit: () => void applyEdit((e) => e.redo()),
@@ -254,6 +256,35 @@
     const at = viewer?.position.page;
     if (at === undefined) return;
     await applyEdit((e) => e.delete(at));
+  }
+
+  /**
+   * Crops the page the reader is on to its ink, or puts the file's box back.
+   *
+   * The measurement is the backend's and names a page of the **file**, while the
+   * command names a page of the **model** --- the two vocabularies meet here, as
+   * they do for every other page operation, and the source index comes out of
+   * the state reply rather than being assumed equal to the slot.
+   *
+   * A page with no ink is left alone and said so: cropping a blank page to
+   * nothing is not what "crop to content" means, and silence would read as the
+   * command being broken.
+   */
+  async function cropPage(to: "content" | "reset"): Promise<void> {
+    const at = viewer?.position.page;
+    if (at === undefined || !edits) return;
+    if (to === "reset") {
+      await applyEdit((e) => e.crop(at, null));
+      return;
+    }
+    const source = edits.state.pages[at]?.source;
+    if (source === undefined) return;
+    const box = await contentBox(edits.doc, source).catch(() => null);
+    if (!box) {
+      error = "There is nothing on this page to crop to.";
+      return;
+    }
+    await applyEdit((e) => e.crop(at, box));
   }
 
   /**

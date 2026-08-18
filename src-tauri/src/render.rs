@@ -141,6 +141,15 @@ pub struct TileRequest {
     pub width: u16,
     pub height: u16,
     pub format: TileFormat,
+    /// The page's crop box as the reader's edits have it, or `None` for the
+    /// file's own.
+    ///
+    /// `[llx, lly, urx, ury]` in the page's own space, y upwards. Carried on
+    /// every request rather than set once on the document, because a worker's
+    /// pages are cached and shared: a crop is a property of *this* request, and
+    /// a page holding the last one is the state `RawDocument::page` exists to
+    /// make unreachable.
+    pub crop: Option<[f32; 4]>,
 }
 
 /// A rendered tile plus the timings that make spike 0.1 answerable.
@@ -340,6 +349,7 @@ pub(crate) enum Job {
     Text {
         doc: u32,
         page: u32,
+        crop: Option<[f32; 4]>,
         reply: Reply<PageText>,
     },
     Search {
@@ -351,6 +361,17 @@ pub(crate) enum Job {
         /// `search::Carry`.
         carry: Option<search::Carry>,
         reply: Reply<PageMatches>,
+    },
+    Content {
+        doc: u32,
+        page: u32,
+        reply: Reply<Option<[f64; 4]>>,
+    },
+    Geometry {
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        reply: Reply<CropGeometry>,
     },
     Outline {
         doc: u32,
@@ -613,8 +634,17 @@ impl RenderService {
     /// whatever tile is running --- up to a second on the A0 sheet --- and a
     /// second thread there would need a second `FPDF_DOCUMENT`, which is
     /// undefined behaviour (see AGENTS.md).
-    pub fn text(&self, doc: u32, page: u32, reply: Reply<PageText>) {
-        if self.tx.send(Job::Text { doc, page, reply }).is_err() {
+    pub fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>, reply: Reply<PageText>) {
+        if self
+            .tx
+            .send(Job::Text {
+                doc,
+                page,
+                crop,
+                reply,
+            })
+            .is_err()
+        {
             // Render thread is gone; nothing left to reply with.
         }
     }
@@ -660,6 +690,39 @@ impl RenderService {
     /// walk is bounded at 10,000 entries and touches no page content, so it
     /// finishes in single-digit milliseconds, and a per-level protocol would
     /// hand the caller a cycle to terminate rather than a tree.
+    /// Measures a page's content box, invoking `reply` on a service thread.
+    ///
+    /// One job per page, and it costs a render --- the reader asked for this
+    /// page, so measuring the document would be measuring 774 pages nobody is
+    /// looking at.
+    pub fn content(&self, doc: u32, page: u32, reply: Reply<Option<[f64; 4]>>) {
+        if self.tx.send(Job::Content { doc, page, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
+    /// Reports a page's displayed size under a crop, on a service thread.
+    pub fn geometry(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        reply: Reply<CropGeometry>,
+    ) {
+        if self
+            .tx
+            .send(Job::Geometry {
+                doc,
+                page,
+                crop,
+                reply,
+            })
+            .is_err()
+        {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     pub fn outline(&self, doc: u32, reply: Reply<Outline>) {
         if self.tx.send(Job::Outline { doc, reply }).is_err() {
             // Render thread is gone; nothing left to reply with.
@@ -769,7 +832,7 @@ impl RenderService {
 pub(crate) trait Engine {
     fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String>;
     fn tile(&self, request: &TileRequest) -> Result<TileOutcome, String>;
-    fn text(&self, doc: u32, page: u32) -> Result<PageText, String>;
+    fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String>;
     fn search(
         &self,
         doc: u32,
@@ -778,6 +841,9 @@ pub(crate) trait Engine {
         options: search::Options,
         carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String>;
+    fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String>;
+    fn geometry(&self, doc: u32, page: u32, crop: Option<[f32; 4]>)
+        -> Result<CropGeometry, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
 
@@ -795,7 +861,12 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             reply,
         } => reply(engine.open(&path, lazy_geometry)),
         Job::Tile { request, reply } => reply(engine.tile(&request)),
-        Job::Text { doc, page, reply } => reply(engine.text(doc, page)),
+        Job::Text {
+            doc,
+            page,
+            crop,
+            reply,
+        } => reply(engine.text(doc, page, crop)),
         Job::Search {
             doc,
             page,
@@ -804,6 +875,13 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             carry,
             reply,
         } => reply(engine.search(doc, page, &query, options, carry.as_ref())),
+        Job::Content { doc, page, reply } => reply(engine.content(doc, page)),
+        Job::Geometry {
+            doc,
+            page,
+            crop,
+            reply,
+        } => reply(engine.geometry(doc, page, crop)),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
@@ -827,6 +905,8 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Tile { reply, .. } => reply(Err(error.to_string())),
             Job::Text { reply, .. } => reply(Err(error.to_string())),
             Job::Search { reply, .. } => reply(Err(error.to_string())),
+            Job::Content { reply, .. } => reply(Err(error.to_string())),
+            Job::Geometry { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
             Job::Comments { reply, .. } => reply(Err(error.to_string())),
             Job::Links { reply, .. } => reply(Err(error.to_string())),
@@ -939,8 +1019,8 @@ impl Engine for InProcess {
         result
     }
 
-    fn text(&self, doc: u32, page: u32) -> Result<PageText, String> {
-        run_text(open_slot(&self.docs.borrow(), doc)?, page)
+    fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String> {
+        run_text(open_slot(&self.docs.borrow(), doc)?, page, crop)
     }
 
     fn search(
@@ -962,6 +1042,24 @@ impl Engine for InProcess {
 
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String> {
         Ok(run_mapping(open_slot(&self.docs.borrow(), doc)?))
+    }
+
+    fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String> {
+        run_content(
+            self.bindings,
+            open_slot(&self.docs.borrow(), doc)?,
+            page,
+            &CancelToken::default(),
+        )
+    }
+
+    fn geometry(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+    ) -> Result<CropGeometry, String> {
+        geometry_of(open_slot(&self.docs.borrow(), doc)?, page, crop)
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
@@ -1023,7 +1121,7 @@ pub(crate) fn render_tile(
     // Cached, because Pdfium re-parses a page on every `FPDF_LoadPage` --- 44 ms
     // on the A0 sheet, which loading per tile request would charge a six-tile
     // screenful nearly four times over.
-    let page = doc.page(req.page)?;
+    let page = doc.page_cropped(req.page, req.crop)?;
 
     let spec = TileSpec {
         scale: req.scale,
@@ -1098,9 +1196,105 @@ pub(crate) fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>
     Ok(out)
 }
 
+/// A crop box's size and its place inside the page the file describes.
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CropGeometry {
+    /// The cropped page's displayed width in points.
+    pub width_pt: f32,
+    /// The cropped page's displayed height in points.
+    pub height_pt: f32,
+    /// The crop's left edge in the file's display space, points from its corner.
+    pub left: f32,
+    /// The crop's top edge in the file's display space, points from its corner.
+    pub top: f32,
+}
+
+/// Measures one page's content box on the render thread.
+pub(crate) fn run_content(
+    bindings: Bindings,
+    document: &RawDocument,
+    page: u32,
+    cancel: &CancelToken,
+) -> Result<Option<[f64; 4]>, String> {
+    crate::content::content_box(bindings, &document.page(page)?, cancel)
+}
+
+/// Where a crop box lands inside the page the file describes, and how big it is.
+///
+/// **The frontend keeps every rectangle in the file's display space and this is
+/// what lets it.** A comment, a link and one of the reader's own marks all
+/// arrive measured from the *file's* displayed corner; a crop moves that corner,
+/// and rather than restating all three in a space that changes whenever the
+/// reader crops, they stay put and are drawn at `rect - (left, top)`. One number
+/// pair, applied at the point of drawing, against three vocabularies that would
+/// otherwise each need a crop-aware variant.
+///
+/// It is also why a mark is *sent* in the file's space: a mark made while
+/// cropped and saved after the crop changed would otherwise be written where the
+/// crop was rather than where the words are.
+pub fn geometry_of(
+    document: &RawDocument,
+    page: u32,
+    crop: Option<[f32; 4]>,
+) -> Result<CropGeometry, String> {
+    // The file's own box first, and its size: everything below is expressed
+    // against it, so it has to be read from a page nothing has cropped.
+    let (file_box, file_width, file_height, turns) = {
+        let page = document.page(page)?;
+        (
+            page.crop_pt(),
+            page.width_pt(),
+            page.height_pt(),
+            page.quarter_turns(),
+        )
+    };
+    let Some(want) = crop else {
+        return Ok(CropGeometry {
+            width_pt: file_width,
+            height_pt: file_height,
+            left: 0.0,
+            top: 0.0,
+        });
+    };
+
+    // Into the file box's own frame, then through the one implementation that
+    // knows the turn. A second rotation table here is the trap `docs/TRAPS.md`
+    // records as two tables disagreeing at every turn but zero.
+    let placed = crate::text::to_device(
+        turns,
+        file_width,
+        file_height,
+        [
+            f64::from(want[0] - file_box[0]),
+            f64::from(want[1] - file_box[1]),
+            f64::from(want[2] - file_box[0]),
+            f64::from(want[3] - file_box[1]),
+        ],
+    );
+    // The cropped page's *own* report of its size rather than the rectangle's
+    // width and height, so that a disagreement between the two is something a
+    // check can see instead of something this function defines away.
+    let cropped = document.page_cropped(page, crop)?;
+    Ok(CropGeometry {
+        width_pt: cropped.width_pt(),
+        height_pt: cropped.height_pt(),
+        left: placed[0],
+        top: placed[1],
+    })
+}
+
 /// Extracts one page's characters on the render thread.
-pub(crate) fn run_text(document: &RawDocument, page: u32) -> Result<PageText, String> {
-    text::extract(&document.page(page)?)
+///
+/// `crop` for the reason [`TileRequest::crop`] gives, and it is not optional in
+/// the sense of "nice to have": character boxes are measured from the displayed
+/// page's corner, so text extracted without the reader's crop lands every caret
+/// and every highlight out by the crop's offset.
+pub(crate) fn run_text(
+    document: &RawDocument,
+    page: u32,
+    crop: Option<[f32; 4]>,
+) -> Result<PageText, String> {
+    text::extract(&document.page_cropped(page, crop)?)
 }
 
 /// Searches one page on the render thread.
@@ -1117,8 +1311,13 @@ pub(crate) fn run_search(
     options: search::Options,
     carry: Option<&search::Carry>,
 ) -> Result<PageMatches, String> {
+    // `None`, and that is a statement rather than a shortcut: a crop moves
+    // character *boxes* and leaves character *indices* alone, and a match is a
+    // range of indices. Extracting under the reader's crop would cost the crop
+    // set-and-restore on every page of a document-wide search to produce
+    // identical answers.
     Ok(search::search_page(
-        &run_text(document, page)?,
+        &run_text(document, page, None)?,
         page,
         query,
         options,

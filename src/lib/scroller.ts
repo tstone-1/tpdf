@@ -536,6 +536,14 @@ export class Scroller {
    * at it.
    */
   private pageTurns: number[];
+  /**
+   * Each slot's crop box, as the model has it, or `undefined` for the file's.
+   *
+   * Beside {@link pageTurns} and travelling with it for the same reason: both
+   * belong to the *page*, so a move has to carry them rather than leave them
+   * behind in the slot --- see {@link setPages}.
+   */
+  private pageCrops: (readonly [number, number, number, number] | undefined)[];
 
   /**
    * Which page of the file each slot draws, and under which identity.
@@ -556,6 +564,7 @@ export class Scroller {
       null,
     );
     this.pageTurns = this.order.map((page) => page.turns % 4);
+    this.pageCrops = this.order.map((page) => page.crop);
     for (let page = 0; page < this.sizes.length; page++) {
       this.sizes[page] = opts.pages[page] ?? null;
     }
@@ -702,11 +711,18 @@ export class Scroller {
     // would read entries it had already written.
     const sizes: (PageSize | null)[] = [];
     const turns: number[] = [];
+    const crops: (readonly [number, number, number, number] | undefined)[] = [];
     const epochs: number[] = [];
     for (const page of next) {
       const was = at.get(page.id);
       sizes.push(was === undefined ? null : (this.sizes[was] ?? null));
       turns.push(page.turns % 4);
+      // Read off the reply rather than carried from the old slot, unlike the
+      // size beside it: a crop is the *model's* answer and arrives in every
+      // state, while a size is something this class learned and the model never
+      // knows. Carrying it would mean a crop undone in the model stayed in force
+      // here until something else happened to correct it.
+      crops.push(page.crop);
       // Carried, and deliberately **not** bumped. A reply for a tile requested
       // under the old order can still arrive, and the mechanism that drops it is
       // the generation bump inside `clearTiles` below --- which covers every
@@ -721,6 +737,7 @@ export class Scroller {
     }
     this.sizes = sizes;
     this.pageTurns = turns;
+    this.pageCrops = crops;
     this.epochs = epochs;
 
     // Before the geometry moves, for the reason `setZoom` and `setTurns` clear
@@ -851,8 +868,12 @@ export class Scroller {
    * had already finished still arrives, and adopting it would paint a tile drawn
    * for the old box into the new one --- which on the page whose size was just
    * corrected is exactly the crop the correction exists to remove.
+   *
+   * Public since the reader can crop a page: a crop changes what a tile of that
+   * page contains without changing the layout in any way this class can see, so
+   * the viewer has to say so. Every other caller is inside this class.
    */
-  private invalidatePage(page: number): void {
+  invalidatePage(page: number): void {
     this.epochs[page] = (this.epochs[page] ?? 0) + 1;
 
     for (const [id, entry] of this.tiles) {
@@ -1506,6 +1527,18 @@ export class Scroller {
    * fallback is right for every unedited document and asks for the wrong page in
    * exactly the case the order exists for.
    */
+  /**
+   * A slot's crop box, for the renderer, or `undefined` for the file's own.
+   *
+   * Carried on every tile request rather than set once on the document: a
+   * worker's pages are cached and shared, so a crop is a property of *this*
+   * request and a page holding the last one is a state the backend deliberately
+   * cannot be in.
+   */
+  private cropOf(slot: number): readonly [number, number, number, number] | undefined {
+    return this.pageCrops[slot];
+  }
+
   private sourceOf(slot: number): number | undefined {
     return this.order[slot]?.source;
   }
@@ -1549,6 +1582,7 @@ export class Scroller {
       page: source,
       scale: this.opts.zoom * this.opts.dpr,
       turns: this.requestTurns(key.page),
+      crop: this.cropOf(key.page),
       invert: this.opts.invert,
       x: rect.x,
       y: rect.y,
@@ -1698,6 +1732,7 @@ export class Scroller {
       page: source,
       scale,
       turns: this.requestTurns(page),
+      crop: this.cropOf(page),
       invert: this.opts.invert,
       x: 0,
       y: 0,

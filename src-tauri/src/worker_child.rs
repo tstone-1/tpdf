@@ -295,7 +295,7 @@ fn handle(
         // Consumed on the reader thread; reaching here would mean the dispatch
         // above changed and this arm was forgotten.
         Request::Withdraw { .. } => Response::err("a withdrawal is not a request to answer"),
-        Request::Text { page } => match render::run_text(document, *page) {
+        Request::Text { page, crop } => match render::run_text(document, *page, *crop) {
             Ok(text) => Response::json(&text),
             Err(e) => Response::err(e),
         },
@@ -306,6 +306,16 @@ fn handle(
             carry,
         } => match render::run_search(document, *page, query, *options, carry.as_ref()) {
             Ok(matches) => Response::json(&matches),
+            Err(e) => Response::err(e),
+        },
+        Request::Content { page } => {
+            match render::run_content(bindings, document, *page, &CancelToken::default()) {
+                Ok(found) => Response::json(&found),
+                Err(e) => Response::err(e),
+            }
+        }
+        Request::Geometry { page, crop } => match render::geometry_of(document, *page, *crop) {
+            Ok(size) => Response::json(&size),
             Err(e) => Response::err(e),
         },
         Request::Outline => Response::json(&render::run_outline(document)),
@@ -378,6 +388,7 @@ fn render(
         width,
         height,
         png,
+        crop,
     } = *request
     else {
         return Response::err("not a tile request");
@@ -398,6 +409,7 @@ fn render(
         rid,
         doc: 0,
         page,
+        crop,
         scale,
         turns,
         invert,
@@ -536,6 +548,9 @@ fn warm_fonts(bindings: progressive::Bindings) {
         rid: 0,
         doc: 0,
         page: 0,
+        // The warm document's own box, because warming has to take the path a
+        // real tile takes and the overwhelming majority of tiles carry no crop.
+        crop: None,
         scale: 1.0,
         turns: 0,
         invert: false,
