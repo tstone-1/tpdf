@@ -19,6 +19,34 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### Highlight what you are reading
+
+- **Drag across a line and choose Highlight selection**, and the words are
+  marked. It is in the Edit menu, in the command palette, and in the
+  right-click menu over a selection --- which is where your hand already is
+  after a drag.
+
+- **The highlight is a real annotation.** Save a copy and open it in Preview,
+  Acrobat, or anything else that reads PDFs: the mark is there, in the file,
+  with your text still legible through it. It is not a rectangle only tpdf
+  knows about.
+
+- **Undo takes it off**, like every other edit, and redo puts back the same
+  mark rather than a copy of it.
+
+- **It stays on the words when you turn the page or rotate the view.** A mark
+  is stored against the page, not against how you were holding it.
+
+- A selection running across a page break becomes one mark per page, because
+  that is what a PDF annotation can be. Undo removes them one page at a time.
+
+- **No keyboard shortcut, on purpose.** ⌘H hides the application on macOS, and
+  a chord that does nothing whenever there is no selection teaches itself
+  badly. Two keystrokes in the palette, one click in the right-click menu.
+
+- Not yet: choosing a colour, typing a note on a mark, taking one off again,
+  and every other kind of annotation. Highlighting is the first.
+
 ### Right-click a page
 
 - **Right-clicking a page thumbnail offers what you can do to that page** —

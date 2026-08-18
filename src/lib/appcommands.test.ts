@@ -34,6 +34,7 @@ function harness(
   hasDocument = true,
   update: { available?: boolean; ready?: boolean } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
+  selected = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -68,6 +69,11 @@ function harness(
     // guards' with-nothing-to-undo direction the untested one.
     canUndo: () => journal.undo ?? false,
     canRedo: () => journal.redo ?? false,
+    // Default false, like the two pairs above: a document opens with nothing
+    // selected, so the highlight command's withheld direction is the one a test
+    // that says nothing about a selection exercises.
+    highlightSelection: () => fired.push("highlightSelection"),
+    hasSelection: () => selected,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
@@ -233,16 +239,18 @@ describe("every registered command", () => {
       "find.next",
       "find.previous",
     ];
-    // Built with an update on offer and a journal in both directions, because
-    // otherwise `app.installUpdate`, `edit.undo` and `edit.redo` are correctly
-    // disabled and this sweep would read a working guard as a no-op command.
-    // The sweep asks "does every command reach an action", which presumes each
-    // is in a state where it is allowed to run; the guards themselves are
-    // asserted above, in both directions.
+    // Built with an update on offer, a journal in both directions and a live
+    // selection, because otherwise `app.installUpdate`, `edit.undo`, `edit.redo`
+    // and `edit.highlightSelection` are correctly disabled and this sweep would
+    // read a working guard as a no-op command. The sweep asks "does every
+    // command reach an action", which presumes each is in a state where it is
+    // allowed to run; the guards themselves are asserted above, in both
+    // directions.
     const { registry, fired } = harness(
       true,
       { available: true },
       { undo: true, redo: true },
+      true,
     );
     const shell = registry
       .all()
@@ -482,6 +490,8 @@ describe("the window shortcuts for editing", () => {
       redoEdit: () => fired.push("redoEdit"),
       canUndo: () => journal.undo ?? false,
       canRedo: () => journal.redo ?? false,
+      highlightSelection: () => fired.push("highlightSelection"),
+      hasSelection: () => false,
       saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     };
@@ -542,5 +552,39 @@ describe("the window shortcuts for editing", () => {
     expect(press("R", { shift: true }, { tagName: "INPUT" }).fired).toEqual([
       "rotatePage:1",
     ]);
+  });
+});
+
+describe("Highlight selection", () => {
+  it("is withheld with nothing selected, and offered once there is", () => {
+    // The guard reads two things and both have to bite. A document with no
+    // selection is the state every open starts in, so a command offered there
+    // does nothing when chosen -- which is the failure a palette exists to
+    // prevent.
+    const { registry: idle } = harness(true);
+    expect(idle.run("edit.highlightSelection")).toBe(false);
+
+    const { registry, fired } = harness(true, {}, {}, true);
+    expect(registry.run("edit.highlightSelection")).toBe(true);
+    expect(fired).toEqual(["highlightSelection"]);
+  });
+
+  it("is withheld with no document even when something is selected", () => {
+    // Not reachable through the application -- there is nothing to select
+    // without a document -- and asserted because the guard is an `&&` of two
+    // conditions, and a test for only one of them passes for either.
+    const { registry } = harness(false, {}, {}, true);
+    expect(registry.run("edit.highlightSelection")).toBe(false);
+  });
+
+  it("has no keyboard binding", () => {
+    // Deliberate, and stated in the command's own note: a chord that does
+    // nothing whenever there is no selection teaches itself badly. Asserted so
+    // that adding one is a decision rather than a diff nobody reads.
+    const { registry } = harness(true, {}, {}, true);
+    const command = registry
+      .all()
+      .find((entry: { id: string }) => entry.id === "edit.highlightSelection");
+    expect(command?.keys).toBeUndefined();
   });
 });

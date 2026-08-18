@@ -37,6 +37,23 @@ describe("PageMap", () => {
     expect(pages.slotOf(3)).toBe(2);
   });
 
+  it("finds the slot a page identity is showing in", () => {
+    // The direction a *mark* needs, and the one where a slot cannot stand in
+    // for an identity: the model keys a highlight by the page's id, and the
+    // overlay draws in slots. Built with the pages out of order, because on a
+    // document nobody rearranged every id equals its slot plus one and any
+    // answer at all looks right.
+    const pages = map([3, 2], [1, 0], [4, 3]);
+    expect(pages.slotOfId(3)).toBe(0);
+    expect(pages.slotOfId(1)).toBe(1);
+    expect(pages.slotOfId(4)).toBe(2);
+    // An id that is not on screen -- a deleted page's, or one nobody issued --
+    // is nowhere rather than slot 0, which would draw its marks on whatever
+    // page happens to be first.
+    expect(pages.slotOfId(2)).toBeUndefined();
+    expect(pages.slotOfId(99)).toBeUndefined();
+  });
+
   it("says a deleted page is nowhere rather than answering with a slot", () => {
     const pages = map([1, 0], [3, 2], [4, 3]);
     // Source 1 is the page that was deleted. A link pointing at it, a comment on

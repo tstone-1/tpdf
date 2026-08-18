@@ -131,8 +131,8 @@ MUTATIONS = [
         # invisible when the numbers happen to agree.
         "edits: give a subset plan the selection's length as its baseline",
         "src/edits.rs",
-        "        Ok(Plan {\n            baseline: model.baseline(),\n            pages,\n        })",
-        "        Ok(Plan {\n            baseline: pages.len() as u32,\n            pages,\n        })",
+        "        Ok(Plan {\n            baseline: model.baseline(),\n            pages,\n            marks,\n        })",
+        "        Ok(Plan {\n            baseline: pages.len() as u32,\n            pages,\n            marks,\n        })",
         "a_subset_plan_names_the_pages_asked_for_and_keeps_the_file_s_baseline",
     ),
     Mutation(
@@ -1304,8 +1304,13 @@ MUTATIONS = [
         # Lay the page out from /MediaBox, which is what stood here before.
         # PDFium lays it out from /CropBox, so every rectangle on a cropped page
         # is out by the difference -- silently, on a page that looks normal.
-        "links: place rectangles against the media box rather than the crop box",
-        "src/links.rs",
+        #
+        # Aimed at `pagetree.rs` since the arithmetic moved there to serve the
+        # mark writer as well. The test it expects is still `links.rs`'s: that
+        # module is the caller that has a cropped fixture, and one mutation
+        # reddening a test in another module is the point of sharing the code.
+        "pagetree: place rectangles against the media box rather than the crop box",
+        "src/pagetree.rs",
         "    let shown = match box_of(b\"CropBox\") {",
         "    let shown = match None::<[f32; 4]> {",
         "a_cropped_page_places_a_rectangle_in_the_crop_box_s_space",
@@ -1314,8 +1319,8 @@ MUTATIONS = [
         # Take the crop box's *size* and ignore its origin. Subtler than the one
         # above and wrong in the same way: the page is the right shape and every
         # rectangle on it is shifted.
-        "links: use the crop box's size but not its origin",
-        "src/links.rs",
+        "pagetree: use the crop box's size but not its origin",
+        "src/pagetree.rs",
         "        origin: (shown[0], shown[1]),",
         "        origin: (0.0, 0.0),",
         "a_cropped_page_places_a_rectangle_in_the_crop_box_s_space",
@@ -1324,8 +1329,8 @@ MUTATIONS = [
         # Trust a crop box larger than the sheet, so the page is displayed bigger
         # than its own paper and every rectangle is scaled against a size the
         # renderer never uses.
-        "links: trust a crop box larger than the media box",
-        "src/links.rs",
+        "pagetree: trust a crop box larger than the media box",
+        "src/pagetree.rs",
         "    let shown = match box_of(b\"CropBox\") {\n        Some(crop) => [\n            crop[0].max(media[0]),\n            crop[1].max(media[1]),\n            crop[2].min(media[2]),\n            crop[3].min(media[3]),\n        ],",
         "    let shown = match box_of(b\"CropBox\") {\n        Some(crop) => crop,",
         "a_crop_box_larger_than_the_page_is_intersected_with_it",
@@ -1394,6 +1399,173 @@ MUTATIONS = [
         "    if !ok || !box_pt.iter().all(|value| value.is_finite()) {",
         "    if false || !box_pt.iter().all(|value| value.is_finite()) {",
         "a_crop_box_pdfium_would_not_answer_for_is_the_origin",
+    ),
+    Mutation(
+        # Replace the page's `/Annots` rather than extending it. A page that had
+        # no comments is unaffected, which is most pages and every fixture
+        # written by hand -- and a page that had one loses it the moment a reader
+        # highlights anything.
+        "save: replace a page's /Annots instead of extending it",
+        "src/save.rs",
+        "        Some(Object::Array(mut array)) => {\n            array.push(Object::Reference(annotation));",
+        "        Some(Object::Array(mut array)) => {\n            array.clear();\n            array.push(Object::Reference(annotation));",
+        "a_mark_is_written_whatever_shape_the_page_s_annots_is_in",
+    ),
+    Mutation(
+        # Write the annotation object and leave it off the page. The file grows
+        # by a perfectly well-formed annotation that is on no page, which every
+        # reader reports as a document with no comments -- and which any check
+        # counting objects passes.
+        "save: write the mark object without listing it on the page",
+        "src/save.rs",
+        "        let annotation = doc.add_object(dictionary);\n        attach(doc, page, annotation)?;",
+        "        let _annotation = doc.add_object(dictionary);",
+        "a_marked_page_lists_the_mark_in_its_own_annots",
+    ),
+    Mutation(
+        # Let a mark be written onto a page object that two page numbers share.
+        # It appears on both, which is not what the reader asked for and not
+        # something the file records as a mistake.
+        "save: allow a mark on a page two numbers share",
+        "src/save.rs",
+        "        if kept\n            .iter()\n            .filter(|number| pages.get(**number as usize - 1) == Some(&page))\n            .count()\n            > 1\n        {",
+        "        if false {",
+        "a_mark_on_a_page_two_numbers_share_is_refused",
+    ),
+    Mutation(
+        # Scope the shared-page refusal to the whole file rather than to this
+        # mark's page. Every refusal test still passes; what breaks is the
+        # ordinary case, where one malformed page makes the rest unmarkable.
+        "save: refuse a mark anywhere in a file that has a shared page",
+        "src/save.rs",
+        "            .filter(|number| pages.get(**number as usize - 1) == Some(&page))",
+        "            .filter(|number| pages.iter().filter(|p| Some(*p) == pages.get(**number as usize - 1)).count() > 1)",
+        "a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written",
+    ),
+    Mutation(
+        # Keep a quad that covers nothing. A `/QuadPoints` entry of zero area is
+        # one some readers draw as nothing at all and others draw as a hairline,
+        # so the mark's appearance stops being the document's.
+        "save: keep quads that cover no area",
+        "src/save.rs",
+        "        .filter(|quad| quad.covers_area())",
+        "        .filter(|_| true)",
+        "a_mark_whose_quads_all_collapse_is_refused_rather_than_written_empty",
+    ),
+    Mutation(
+        # Let a plan carrying a mark call itself the file on disk. The print path
+        # then hands over the original bytes, and a reader who highlighted a
+        # document prints one without the highlights -- with nothing failing,
+        # because what it printed is a perfectly good file.
+        "edits: call a plan with marks in it the file itself",
+        "src/edits.rs",
+        "        self.marks.is_empty()\n            && self.pages.len() == self.baseline as usize",
+        "        self.pages.len() == self.baseline as usize",
+        "a_plan_carrying_a_mark_is_not_the_file_on_disk",
+    ),
+    Mutation(
+        # Drop the marks a subset plan should carry. An extract of pages a reader
+        # highlighted comes out unmarked, which looks like a feature nobody
+        # implemented rather than one that was lost on the way.
+        "edits: leave the marks out of a plan",
+        "src/edits.rs",
+        "    pages\n        .iter()\n        .flat_map(|view| {",
+        "    pages\n        .iter()\n        .take(0)\n        .flat_map(|view| {",
+        "a_mark_is_carried_into_the_plan_for_the_page_it_is_on",
+    ),
+    Mutation(
+        # Rewind the allocator with the cursor. This is the failure `docmodel`'s
+        # module note names and deferred until something issued an id: the mark
+        # a reader undid gives its number back, and the next mark is created
+        # wearing it -- so a redo restores "the" mark and gets somebody else's.
+        "docmodel: give an undone mark's id back to the allocator",
+        "src/docmodel.rs",
+        "        self.cursor -= 1;\n        self.now = self.rebuild(self.cursor);",
+        "        self.cursor -= 1;\n        self.next_mark = self.next_mark.saturating_sub(1);\n        self.now = self.rebuild(self.cursor);",
+        "an_id_spent_by_an_undone_mark_is_never_issued_again",
+    ),
+    Mutation(
+        # Spend the id before the preconditions are checked. Nothing visible
+        # changes -- the mark is still refused -- which is the point: the ids
+        # then run ahead of the marks, and the only thing that can see it is the
+        # accounting observable.
+        "docmodel: issue a mark's id before checking that it covers anything",
+        "src/docmodel.rs",
+        "        if !mark.quads.iter().any(|quad| quad.covers_area()) {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(self.next_mark);",
+        "        let id = MarkId(self.next_mark);\n        self.next_mark += 1;\n        if !mark.quads.iter().any(|quad| quad.covers_area()) {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(id.get());",
+        "a_mark_covering_nothing_is_refused_and_spends_no_id",
+    ),
+    Mutation(
+        # Demand that every quad have area. A selection running to the end of a
+        # line yields a real rectangle followed by an empty one, so this refuses
+        # ordinary highlights -- and passes every case in the refusal test,
+        # which only ever hands it marks where nothing has area.
+        "docmodel: require every quad to cover area rather than any",
+        "src/docmodel.rs",
+        "        if !mark.quads.iter().any(|quad| quad.covers_area()) {",
+        "        if !mark.quads.iter().all(|quad| quad.covers_area()) {",
+        "one_quad_with_area_is_enough",
+    ),
+    Mutation(
+        # Drop a deleted page's marks without tombstoning their ids. The marks
+        # vanish correctly and a command naming one afterwards is then told it
+        # never existed, which is the wrong diagnosis rather than a coarse one.
+        "docmodel: let a deleted page's marks go without tombstoning them",
+        "src/docmodel.rs",
+        "                for mark in self.marks.remove(&page).unwrap_or_default() {\n                    self.mark_graves.insert(mark);\n                }",
+        "                self.marks.remove(&page);",
+        "deleting_a_page_takes_its_marks_and_undo_brings_both_back",
+    ),
+    Mutation(
+        # Leave an empty vector behind. Every behaviour is identical; what
+        # changes is that a working document compares unequal to one that was
+        # never annotated, which is what a snapshot rebuild is checked against.
+        "docmodel: leave an empty mark list under a page key",
+        "src/docmodel.rs",
+        "                if list.is_empty() {\n                    self.marks.remove(&page);\n                }",
+        "                let _ = list.is_empty();",
+        "a_document_annotated_and_cleared_compares_equal_to_one_that_never_was",
+    ),
+    Mutation(
+        # Keep the bodies of commands the redo tail discarded. Nothing behaves
+        # differently and no document is wrong -- the table simply grows for as
+        # long as a reader keeps annotating and undoing.
+        "docmodel: keep mark bodies whose commands were discarded",
+        "src/docmodel.rs",
+        "        for discarded in &self.journal[self.cursor..] {\n            if let Command::Annotate { mark, .. } = *discarded {\n                self.marks.remove(&mark);\n            }\n        }",
+        "",
+        "an_id_spent_by_an_undone_mark_is_never_issued_again",
+    ),
+    Mutation(
+        # Report the marks in whatever order the map iterates. The overlay and
+        # the writer both take this as reading order, and a map's order is not
+        # one -- it is stable within a run and unrelated to the document.
+        "docmodel: report marks in map order rather than page order",
+        "src/docmodel.rs",
+        "        self.order\n            .iter()\n            .flat_map(|page| self.marks_on(*page).iter().map(|mark| (*page, *mark)))\n            .collect()",
+        "        self.marks\n            .iter()\n            .flat_map(|(page, list)| list.iter().map(|mark| (*page, *mark)))\n            .collect()",
+        "marks_come_back_in_page_order_after_the_pages_move",
+    ),
+    Mutation(
+        # Undo the flip regardless of the turn. Correct at /Rotate 0 -- which is
+        # most documents and every fixture written by hand -- and a quarter turn
+        # out on the scanned pages that carry a rotation, which is exactly where
+        # a highlight would land beside the words it was made from.
+        "text: map a display box back with the arm for no rotation",
+        "src/text.rs",
+        "        1 => [top, left, bottom, right],",
+        "        1 => [left, h0 - bottom, right, h0 - top],",
+        "a_display_box_maps_back_to_the_page_box_it_came_from",
+    ),
+    Mutation(
+        # Emit one arm's corners the wrong way round. `/QuadPoints` built from
+        # an improper rectangle is one PDF 32000-1 tells consumers to normalise,
+        # and the ones that do not draw nothing at all.
+        "text: emit a mapped-back rectangle with its corners swapped",
+        "src/text.rs",
+        "        _ => [w0 - bottom, h0 - right, w0 - top, h0 - left],",
+        "        _ => [w0 - top, h0 - left, w0 - bottom, h0 - right],",
+        "a_mapped_back_rectangle_is_proper",
     ),
 ]
 

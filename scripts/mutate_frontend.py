@@ -1827,6 +1827,49 @@ MUTATIONS = [
         "    const air = offset - DESTINATION_MARGIN_PT;",
         "lands on the page a top-of-page destination names, not the one before",
     ),
+    Mutation(
+        # Send the slot instead of the page's id. The two are the same number on
+        # a document nobody has rearranged, which is every document until
+        # somebody moves a page -- and then a highlight lands on whichever page
+        # took that slot, at the coordinates of the words it was made from.
+        "edits: send a mark's slot rather than its page id",
+        "src/lib/edits.ts",
+        "        mark: { page: id, quads, color: HIGHLIGHT_COLOR, author: \"\", note },",
+        "        mark: { page, quads, color: HIGHLIGHT_COLOR, author: \"\", note },",
+        "sends the page's id rather than its slot when a mark is made",
+    ),
+    Mutation(
+        # Merge each reply's marks into the cache instead of replacing it. Every
+        # visible behaviour is identical until an undo, which is the one moment
+        # the cache has to shrink -- and a mark that stays on screen after being
+        # undone is the failure undo exists to prevent.
+        "edits: merge the marks a reply carries into the ones already held",
+        "src/lib/edits.ts",
+        "  private adopt(state: EditState): EditState {\n    this.current = state;",
+        "  private adopt(state: EditState): EditState {\n    this.current = {\n      ...state,\n      marks: [...this.current.marks, ...state.marks],\n    };",
+        "carries the marks a reply brought, and drops the ones it did not",
+    ),
+    Mutation(
+        # Offer the highlight command with nothing selected. It appears in the
+        # palette, it is selectable, and choosing it sends a mark with no quads
+        # -- which the model refuses, so the reader gets an error message for
+        # pressing a button the application offered them.
+        "appcommands: offer the highlight with nothing selected",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.hasSelection(),",
+        "      enabled: withDocument,",
+        "is withheld with nothing selected, and offered once there is",
+    ),
+    Mutation(
+        # Answer the first slot for every mark id. Correct on a document nobody
+        # has rearranged and wrong the moment one page moves, which is exactly
+        # the case this translation exists for.
+        "pages: answer the first slot for any mark id",
+        "src/lib/pages.ts",
+        "  slotOfId(id: number): number | undefined {\n    for (let slot = 0; slot < this.views.length; slot++) {\n      if (this.views[slot]?.id === id) return slot;\n    }\n    return undefined;\n  }",
+        "  slotOfId(id: number): number | undefined {\n    return this.views.length > 0 ? 0 : undefined;\n  }",
+        "finds the slot a page identity is showing in",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below

@@ -48,9 +48,13 @@ use std::path::{Path, PathBuf};
 
 use lopdf::Document;
 
-use crate::edits::Plan;
+use lopdf::{Dictionary, Object, ObjectId};
+
+use crate::docmodel::MarkKind;
+use crate::edits::{Plan, PlannedMark};
 use crate::pagetree::{
-    agreed_turns, apply_turns, drop_outline, drop_pages, ordered_pages, reorder_pages,
+    agreed_turns, apply_turns, displayed_page, drop_outline, drop_pages, ordered_pages,
+    reorder_pages, DisplayedPage,
 };
 use crate::print::MAX_DECODE;
 
@@ -159,6 +163,13 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
         reorder_pages(&mut doc, &order)?;
     }
 
+    // Before `apply_turns`, and the order is load-bearing rather than tidy: a
+    // mark was made against the rotation the file had when it was opened, and
+    // the mapping below reads the rotation the file has *now*. Turn the page
+    // first and every quad is a quarter turn out, on exactly the pages a reader
+    // rotated.
+    write_marks(&mut doc, &pages, &kept, &plan.marks)?;
+
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
     // rotation written onto a page that is about to go is work thrown away. The
     // ids are unaffected --- the survivors are the same objects they were.
@@ -169,6 +180,366 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
         .map_err(|e| format!("could not serialise the document: {e}"))?;
 
     write_atomically(out, &bytes)
+}
+
+/// A PDF date string for an instant, in UTC.
+///
+/// `D:YYYYMMDDHHmmSSZ`, which PDF 32000-1 §7.9.4 calls a date and `annots.rs`
+/// reads back. UTC with a literal `Z` rather than a local offset: the offset
+/// form is `+HH'mm'`, the apostrophes are load-bearing, and a machine's timezone
+/// is not something a reader of the file needs in order to know when a mark was
+/// made.
+///
+/// A clock before the epoch reads as the epoch, which is the same answer
+/// `diag.rs` gives and for the same reason --- a machine whose clock is wrong by
+/// decades should still get its mark written.
+///
+/// The civil-date arithmetic is `diag.rs`'s, shared rather than copied: it is
+/// pinned there by a table of known instants including a leap day, and a second
+/// copy here would have no table.
+pub fn pdf_date(at: std::time::SystemTime) -> String {
+    let seconds = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (year, month, day) = crate::diag::civil_from_days(seconds / 86_400);
+    let rest = seconds % 86_400;
+    format!(
+        "D:{year:04}{month:02}{day:02}{:02}{:02}{:02}Z",
+        rest / 3_600,
+        (rest / 60) % 60,
+        rest % 60
+    )
+}
+
+/// The opacity of a highlight's wash, as `/CA`.
+///
+/// Below 1 because a wash is meant to be read through. The blend mode does most
+/// of that work --- see [`appearance_stream`] --- and this is what keeps the mark
+/// legible in a reader that ignores the blend and paints the fill flat.
+const WASH_ALPHA: f32 = 0.4;
+
+/// Writes the reader's marks into the document as real annotations.
+///
+/// **One object per mark, appended to its page's `/Annots`.** That array may be
+/// absent, written inline, or an indirect reference to an array; `AGENTS.md`
+/// records that the distinction decides how large an annotation edit is, and
+/// [`attach`] handles all three.
+///
+/// **The coordinates are the whole of the difficulty.** A mark is held in
+/// display space --- what the reader dragged across, y downwards from the
+/// displayed page's top-left corner --- and `/QuadPoints` is the page's own
+/// space, y upwards, before `/Rotate` and measured from the media box. The
+/// mapping is [`crate::text::from_device`] followed by the crop box's origin,
+/// which is exactly the two steps `annots.rs` performs in reverse when it reads
+/// one back. Those are separate implementations, which is what makes
+/// `annot-probe`'s round trip a differential rather than a tautology.
+///
+/// `kept` is the one-based page numbers being written, used only for the
+/// shared-object refusal.
+///
+/// # Errors
+///
+/// A mark naming a page the file does not have; a mark on a page object that
+/// more than one kept page number names; or a mark whose quads map to nothing.
+fn write_marks(
+    doc: &mut Document,
+    pages: &[ObjectId],
+    kept: &[u32],
+    marks: &[PlannedMark],
+) -> Result<(), String> {
+    for mark in marks {
+        let page = *pages.get(mark.source as usize).ok_or_else(|| {
+            format!(
+                "a mark names page {}, which this document does not have",
+                mark.source + 1
+            )
+        })?;
+
+        // The same refusal as `unshared` and for the same reason, one level on:
+        // an annotation is attached to a page *object*, so a mark made on page 3
+        // would appear on page 7 as well when `/Kids` names one object twice.
+        // `docs/TRAPS.md` has this shape twice already, once live in `print.rs`
+        // for months.
+        if kept
+            .iter()
+            .filter(|number| pages.get(**number as usize - 1) == Some(&page))
+            .count()
+            > 1
+        {
+            return Err(format!(
+                "page {} is the same page object as another page in this file, so a mark on it \
+                 would appear on both. tpdf will not write it.",
+                mark.source + 1
+            ));
+        }
+
+        let shown = displayed_page(doc, page);
+        let quads = user_quads(mark, shown);
+        if quads.is_empty() {
+            return Err(format!(
+                "a mark on page {} covers no area in that page's own space",
+                mark.source + 1
+            ));
+        }
+
+        let rect = bounds(&quads);
+        let appearance = appearance_stream(doc, mark, &quads, rect);
+        let dictionary = mark_dictionary(mark, page, &quads, rect, appearance);
+        let annotation = doc.add_object(dictionary);
+        attach(doc, page, annotation)?;
+    }
+    Ok(())
+}
+
+/// A mark's quads in the page's own space, `[llx, lly, urx, ury]` each.
+///
+/// Degenerate quads are dropped rather than written. The model already refuses a
+/// mark where *every* quad is empty ([`crate::docmodel::Refusal::EmptyMark`]);
+/// this is the per-quad half, and it exists because a selection that runs to the
+/// end of a line legitimately produces one empty rectangle after a real one.
+fn user_quads(mark: &PlannedMark, shown: DisplayedPage) -> Vec<[f64; 4]> {
+    let (ox, oy) = (f64::from(shown.origin.0), f64::from(shown.origin.1));
+    mark.quads
+        .iter()
+        .filter(|quad| quad.covers_area())
+        .map(|quad| {
+            let page = crate::text::from_device(
+                shown.turns,
+                shown.width,
+                shown.height,
+                [quad.left, quad.top, quad.right, quad.bottom],
+            );
+            // The origin comes back on *after* the turn, because it came off
+            // before one: `annots.rs` shifts into crop space and then maps.
+            [page[0] + ox, page[1] + oy, page[2] + ox, page[3] + oy]
+        })
+        .collect()
+}
+
+/// The rectangle enclosing every quad.
+fn bounds(quads: &[[f64; 4]]) -> [f64; 4] {
+    quads
+        .iter()
+        .fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |acc, q| {
+            [
+                acc[0].min(q[0]),
+                acc[1].min(q[1]),
+                acc[2].max(q[2]),
+                acc[3].max(q[3]),
+            ]
+        })
+}
+
+/// The annotation dictionary for one mark.
+///
+/// `/F 4` sets the Print flag, which is what makes a highlight appear on paper
+/// and in a print-to-PDF --- an annotation without it is a screen-only mark, and
+/// a reader who highlights a document in order to print it would get a blank
+/// page back.
+///
+/// `/NM` is the mark's own id. It has to be unique within the page and ours are
+/// unique within the document, which is the stronger property; it is written
+/// because a reader that reopens the file and edits it needs a name for the
+/// annotation that is not its position in an array.
+fn mark_dictionary(
+    mark: &PlannedMark,
+    page: ObjectId,
+    quads: &[[f64; 4]],
+    rect: [f64; 4],
+    appearance: ObjectId,
+) -> Dictionary {
+    let mut dictionary = Dictionary::new();
+    dictionary.set("Type", Object::Name(b"Annot".to_vec()));
+    dictionary.set("Subtype", Object::Name(subtype(mark.kind).to_vec()));
+    dictionary.set("Rect", numbers(rect));
+    dictionary.set("QuadPoints", quad_points(quads));
+    dictionary.set(
+        "C",
+        Object::Array(mark.color.iter().map(|c| Object::Real(*c)).collect()),
+    );
+    dictionary.set("CA", Object::Real(WASH_ALPHA));
+    dictionary.set("F", Object::Integer(4));
+    dictionary.set("P", Object::Reference(page));
+    dictionary.set("AP", {
+        let mut ap = Dictionary::new();
+        ap.set("N", Object::Reference(appearance));
+        Object::Dictionary(ap)
+    });
+    // Written as PDFDocEncoded literals. Both are the reader's own text rather
+    // than a document's, so the encoding question `annots.rs` answers on the way
+    // in does not arise on the way out --- but a non-ASCII author would be
+    // mangled by a literal, so anything outside ASCII goes out as UTF-16BE with
+    // the byte-order mark the specification asks for.
+    dictionary.set("T", text_string(&mark.author));
+    dictionary.set("Contents", text_string(&mark.note));
+    dictionary.set("M", text_string(&mark.made));
+    dictionary
+}
+
+/// The PDF name for a mark's kind.
+///
+/// A `match` rather than a table, so that adding a [`MarkKind`] is a compile
+/// error here rather than a mark that silently writes as a highlight.
+fn subtype(kind: MarkKind) -> &'static [u8] {
+    match kind {
+        MarkKind::Highlight => b"Highlight",
+    }
+}
+
+/// `/QuadPoints`: four corners per quad, upper-left, upper-right, lower-left,
+/// lower-right.
+///
+/// **That order is not the one PDF 32000-1 §12.5.6.10 appears to describe**, and
+/// it is the one every producer writes and every consumer expects --- the
+/// specification's wording is a known erratum. Writing the specification's
+/// literal reading produces a highlight that draws as an hourglass or not at
+/// all, which is why this is stated here rather than left to look arbitrary.
+fn quad_points(quads: &[[f64; 4]]) -> Object {
+    Object::Array(
+        quads
+            .iter()
+            .flat_map(|&[llx, lly, urx, ury]| {
+                [
+                    Object::Real(llx as f32),
+                    Object::Real(ury as f32),
+                    Object::Real(urx as f32),
+                    Object::Real(ury as f32),
+                    Object::Real(llx as f32),
+                    Object::Real(lly as f32),
+                    Object::Real(urx as f32),
+                    Object::Real(lly as f32),
+                ]
+            })
+            .collect(),
+    )
+}
+
+fn numbers(values: [f64; 4]) -> Object {
+    Object::Array(values.iter().map(|v| Object::Real(*v as f32)).collect())
+}
+
+/// A PDF text string: an ASCII literal, or UTF-16BE with a byte-order mark.
+///
+/// The two encodings `annots.rs` reads are PDFDocEncoding and UTF-16BE, and this
+/// writes the subset of the first that needs no table --- ASCII --- falling back
+/// to the second for anything else. Choosing by content rather than always
+/// writing UTF-16 keeps an ordinary author's name readable in a hex dump, which
+/// is worth something when the next person to debug this is reading bytes.
+fn text_string(value: &str) -> Object {
+    if value.is_ascii() {
+        return Object::string_literal(value);
+    }
+    let mut bytes = vec![0xFE, 0xFF];
+    for unit in value.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_be_bytes());
+    }
+    Object::String(bytes, lopdf::StringFormat::Hexadecimal)
+}
+
+/// The appearance stream a reader draws when it does not generate its own.
+///
+/// **Not optional, even though both PDFKit and PDFium generate one.** Measured
+/// before this was written: a `/Highlight` with no `/AP` renders in Preview, so
+/// the file would look right in the two readers this repository can drive --- and
+/// what a reader generates is *its* wash, not ours, so the same file would
+/// differ between them and could differ again after an update. An `/AP` is what
+/// makes the appearance the document's own.
+///
+/// `/BBox` is the annotation's rectangle in page coordinates and the matrix is
+/// the identity, so §12.5.5's mapping of the transformed box onto `/Rect` is a
+/// no-op and the content below can be written in page coordinates rather than in
+/// a translated space of its own.
+///
+/// `/Multiply` is what keeps the glyphs readable: a flat fill over the text
+/// hides it, and the text is already in the pixels underneath. It is the same
+/// choice, for the same reason, that the viewer's overlay makes with
+/// `globalCompositeOperation`.
+fn appearance_stream(
+    doc: &mut Document,
+    mark: &PlannedMark,
+    quads: &[[f64; 4]],
+    rect: [f64; 4],
+) -> ObjectId {
+    let mut state = Dictionary::new();
+    state.set("Type", Object::Name(b"ExtGState".to_vec()));
+    state.set("BM", Object::Name(b"Multiply".to_vec()));
+    state.set("CA", Object::Real(1.0));
+    state.set("ca", Object::Real(1.0));
+    let state = doc.add_object(state);
+
+    let mut states = Dictionary::new();
+    states.set("GS0", Object::Reference(state));
+    let mut resources = Dictionary::new();
+    resources.set("ExtGState", Object::Dictionary(states));
+
+    let mut content = format!(
+        "/GS0 gs {} {} {} rg\n",
+        mark.color[0], mark.color[1], mark.color[2]
+    );
+    for quad in quads {
+        content.push_str(&format!(
+            "{} {} {} {} re f\n",
+            quad[0],
+            quad[1],
+            quad[2] - quad[0],
+            quad[3] - quad[1]
+        ));
+    }
+
+    let mut dictionary = Dictionary::new();
+    dictionary.set("Type", Object::Name(b"XObject".to_vec()));
+    dictionary.set("Subtype", Object::Name(b"Form".to_vec()));
+    dictionary.set("FormType", Object::Integer(1));
+    dictionary.set("BBox", numbers(rect));
+    dictionary.set("Resources", Object::Dictionary(resources));
+    doc.add_object(lopdf::Stream::new(dictionary, content.into_bytes()))
+}
+
+/// Appends an annotation to a page's `/Annots`, whatever shape that array is in.
+///
+/// Three cases, and the middle one is why this is a function rather than three
+/// lines at the call site: the entry may be missing, an inline array, or a
+/// reference to an array object that other pages may also name. The reference is
+/// followed and the array it points at is extended, so the file's own structure
+/// is preserved rather than replaced with an inline copy.
+///
+/// # Errors
+///
+/// The page is not a dictionary, or `/Annots` is a reference to something that
+/// is not an array. Both are malformed documents, and a mark written into one
+/// anyway would be a mark nothing displays.
+fn attach(doc: &mut Document, page: ObjectId, annotation: ObjectId) -> Result<(), String> {
+    let existing = doc
+        .get_object(page)
+        .and_then(Object::as_dict)
+        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+        .get(b"Annots")
+        .ok()
+        .cloned();
+
+    match existing {
+        Some(Object::Reference(array_id)) => {
+            let array = doc
+                .get_object_mut(array_id)
+                .and_then(Object::as_array_mut)
+                .map_err(|e| format!("this page's /Annots is not an array: {e}"))?;
+            array.push(Object::Reference(annotation));
+        }
+        Some(Object::Array(mut array)) => {
+            array.push(Object::Reference(annotation));
+            doc.get_object_mut(page)
+                .and_then(Object::as_dict_mut)
+                .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+                .set("Annots", Object::Array(array));
+        }
+        _ => {
+            doc.get_object_mut(page)
+                .and_then(Object::as_dict_mut)
+                .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+                .set("Annots", Object::Array(vec![Object::Reference(annotation)]));
+        }
+    }
+    Ok(())
 }
 
 /// Refuses a deletion that cannot be expressed by removing page *objects*.
@@ -274,6 +645,7 @@ mod tests {
                     turns,
                 })
                 .collect(),
+            marks: Vec::new(),
         }
     }
 
@@ -292,6 +664,7 @@ mod tests {
                     turns,
                 })
                 .collect(),
+            marks: Vec::new(),
         }
     }
 
@@ -1465,5 +1838,378 @@ mod tests {
             4,
             "the replacement is the document, not a fragment of it"
         );
+    }
+
+    // --- Marks ---------------------------------------------------------------
+
+    /// A one-page document whose `/Annots` is written in the shape `annots`
+    /// describes: absent, inline, or an indirect reference to an array.
+    ///
+    /// The three exist because `AGENTS.md` records that this distinction decides
+    /// how large an annotation edit is --- and because a writer tested only
+    /// against the absent case would corrupt the other two silently, by
+    /// replacing an array other objects point at.
+    fn document_with_annots(annots: AnnotShape) -> Vec<u8> {
+        use lopdf::dictionary;
+        use lopdf::{Dictionary, Stream};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let resources = doc.add_object(Dictionary::new());
+        let content = doc.add_object(Stream::new(dictionary! {}, b"".to_vec()));
+        let mut page = dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        // The existing annotation is created only where it is referenced. An
+        // unreferenced one left in the file for the absent case would be counted
+        // by every check below -- which is how the first version of this made
+        // "absent" report two annotations and look like a writer defect.
+        match annots {
+            AnnotShape::Absent => {}
+            AnnotShape::Inline => {
+                let existing = doc.add_object(existing_note());
+                page.set("Annots", vec![Object::Reference(existing)]);
+            }
+            AnnotShape::Indirect => {
+                let existing = doc.add_object(existing_note());
+                let array = doc.add_object(Object::Array(vec![Object::Reference(existing)]));
+                page.set("Annots", Object::Reference(array));
+            }
+        }
+        let page_id = doc.add_object(page);
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page_id)],
+                "Count" => 1,
+                "Resources" => resources,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise fixture");
+        bytes
+    }
+
+    /// A comment the document already had, so that extending its `/Annots` can
+    /// be told from replacing it.
+    fn existing_note() -> lopdf::Dictionary {
+        use lopdf::dictionary;
+        dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "Contents" => Object::string_literal("already here"),
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum AnnotShape {
+        Absent,
+        Inline,
+        Indirect,
+    }
+
+    /// A plan for a one-page document carrying one highlight.
+    fn plan_with_mark(quads: Vec<crate::docmodel::Quad>) -> Plan {
+        Plan {
+            baseline: 1,
+            pages: vec![PageView {
+                id: 1,
+                source: 0,
+                turns: 0,
+            }],
+            marks: vec![PlannedMark {
+                kind: MarkKind::Highlight,
+                source: 0,
+                quads,
+                color: [1.0, 0.9, 0.2],
+                author: "a reader".to_string(),
+                note: "a note".to_string(),
+                made: "D:20260818120000Z".to_string(),
+            }],
+        }
+    }
+
+    fn one_quad() -> Vec<crate::docmodel::Quad> {
+        vec![crate::docmodel::Quad {
+            left: 72.0,
+            top: 100.0,
+            right: 300.0,
+            bottom: 118.0,
+        }]
+    }
+
+    /// The subtypes a saved page **lists** in its own `/Annots`, in order.
+    ///
+    /// **Not a scan of the file's objects**, which is what this was first
+    /// written as --- and a mutation that cleared the page's array before
+    /// appending survived it, because the annotation the array used to name is
+    /// still an object in the file. An orphaned annotation is on no page and is
+    /// reported by every reader as absent, so counting objects answers a
+    /// question nobody is asking.
+    fn listed_on_page(path: &Path, page: usize) -> Vec<String> {
+        let doc = Document::load(path).expect("reopen");
+        let id = ordered_pages(&doc)[page];
+        let entry = doc
+            .get_object(id)
+            .and_then(Object::as_dict)
+            .expect("a page dictionary")
+            .get(b"Annots")
+            .cloned();
+        let array = match entry {
+            Ok(Object::Array(array)) => array,
+            Ok(Object::Reference(at)) => doc
+                .get_object(at)
+                .and_then(Object::as_array)
+                .expect("an /Annots reference points at an array")
+                .clone(),
+            Ok(other) => panic!("/Annots is neither an array nor a reference: {other:?}"),
+            Err(_) => Vec::new(),
+        };
+        array
+            .iter()
+            .map(|item| {
+                let dictionary = match item {
+                    Object::Reference(at) => doc
+                        .get_object(*at)
+                        .and_then(Object::as_dict)
+                        .expect("an /Annots entry points at a dictionary"),
+                    Object::Dictionary(inline) => inline,
+                    other => panic!("an /Annots entry is neither: {other:?}"),
+                };
+                let subtype = dictionary
+                    .get(b"Subtype")
+                    .and_then(Object::as_name)
+                    .expect("an annotation has a /Subtype");
+                String::from_utf8_lossy(subtype).to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_mark_is_written_whatever_shape_the_page_s_annots_is_in() {
+        for shape in [AnnotShape::Absent, AnnotShape::Inline, AnnotShape::Indirect] {
+            let scratch = Scratch::new(&format!("annots-{shape:?}"));
+            let source = scratch.join("in.pdf");
+            let out = scratch.join("out.pdf");
+            std::fs::write(&source, document_with_annots(shape)).expect("write fixture");
+
+            write_copy(&source, &plan_with_mark(one_quad()), &out)
+                .unwrap_or_else(|e| panic!("{shape:?}: {e}"));
+
+            // What the *page* lists, in order. The comment that was already
+            // there must still be first and the mark must be appended after it:
+            // an `/Annots` replaced rather than extended loses the first, and
+            // one written in the wrong order would put a new highlight above
+            // comments the document came with.
+            let listed = listed_on_page(&out, 0);
+            let expected: Vec<&str> = match shape {
+                AnnotShape::Absent => vec!["Highlight"],
+                _ => vec!["Text", "Highlight"],
+            };
+            assert_eq!(listed, expected, "{shape:?}: the page lists {listed:?}");
+        }
+    }
+
+    #[test]
+    fn a_marked_page_lists_the_mark_in_its_own_annots() {
+        // Written into the *page*, not merely into the file. An annotation
+        // object nothing points at is in the document and on no page, which
+        // every reader reports as a document with no comments -- and which every
+        // assertion counting objects would pass.
+        let scratch = Scratch::new("annots-reachable");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+        write_copy(&source, &plan_with_mark(one_quad()), &out).expect("save");
+
+        let doc = Document::load(&out).expect("reopen");
+        let page = ordered_pages(&doc)[0];
+        let listed = doc
+            .get_object(page)
+            .and_then(Object::as_dict)
+            .and_then(|d| d.get(b"Annots"))
+            .cloned()
+            .expect("the page has an /Annots");
+        let array = match listed {
+            Object::Array(array) => array,
+            Object::Reference(id) => doc
+                .get_object(id)
+                .and_then(Object::as_array)
+                .expect("an /Annots reference points at an array")
+                .clone(),
+            other => panic!("/Annots is neither an array nor a reference: {other:?}"),
+        };
+        assert_eq!(array.len(), 1);
+    }
+
+    #[test]
+    fn a_mark_on_a_page_two_numbers_share_is_refused() {
+        // The same refusal `unshared` makes for a deletion, one level on: an
+        // annotation hangs off a page *object*, so a mark made on page 1 would
+        // appear on page 2 as well. `docs/TRAPS.md` records this shape twice
+        // already, once live in `print.rs` for months.
+        let scratch = Scratch::new("annots-shared");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, shared_page_document()).expect("write fixture");
+
+        let plan = Plan {
+            baseline: 2,
+            pages: vec![
+                PageView {
+                    id: 1,
+                    source: 0,
+                    turns: 0,
+                },
+                PageView {
+                    id: 2,
+                    source: 1,
+                    turns: 0,
+                },
+            ],
+            marks: vec![PlannedMark {
+                kind: MarkKind::Highlight,
+                source: 0,
+                quads: one_quad(),
+                color: [1.0, 0.9, 0.2],
+                author: String::new(),
+                note: String::new(),
+                made: "D:20260818120000Z".to_string(),
+            }],
+        };
+        let why = write_copy(&source, &plan, &out).expect_err("a shared page must be refused");
+        assert!(
+            why.contains("same page object"),
+            "the refusal does not say why: {why}"
+        );
+        assert!(!out.exists(), "a refused save left a file behind");
+    }
+
+    #[test]
+    fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
+        // The control for the refusal above, and the first version of it could
+        // not run: it kept one of the two shared numbers, which `unshared`
+        // refuses first for the deletion that implies -- so it exercised the
+        // deletion guard and never reached the mark guard at all.
+        //
+        // This one keeps every page of a document where pages 1 and 2 are one
+        // object and page 3 is its own, and marks page 3. A guard written as
+        // "this file contains a shared page" rather than "this mark's page is
+        // shared" would refuse it, and a reader would be told they cannot
+        // highlight a page that has nothing to do with the malformed one.
+        let scratch = Scratch::new("annots-shared-spare");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, shared_page_and_a_spare()).expect("write fixture");
+
+        let plan = Plan {
+            baseline: 3,
+            pages: (0..3)
+                .map(|source| PageView {
+                    id: u64::from(source) + 1,
+                    source,
+                    turns: 0,
+                })
+                .collect(),
+            marks: vec![PlannedMark {
+                kind: MarkKind::Highlight,
+                source: 2,
+                quads: one_quad(),
+                color: [1.0, 0.9, 0.2],
+                author: String::new(),
+                note: String::new(),
+                made: "D:20260818120000Z".to_string(),
+            }],
+        };
+        write_copy(&source, &plan, &out).expect("a mark on the unshared page is fine");
+        assert_eq!(listed_on_page(&out, 2), vec!["Highlight".to_string()]);
+        // And nowhere else: a writer that put the mark on the first page it
+        // found would satisfy the line above on a one-page document and is
+        // exactly what this three-page fixture is for.
+        assert!(listed_on_page(&out, 0).is_empty());
+    }
+
+    #[test]
+    fn a_mark_whose_quads_all_collapse_is_refused_rather_than_written_empty() {
+        let scratch = Scratch::new("annots-empty");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+
+        let flat = vec![crate::docmodel::Quad {
+            left: 72.0,
+            top: 100.0,
+            right: 72.0,
+            bottom: 118.0,
+        }];
+        let why = write_copy(&source, &plan_with_mark(flat), &out)
+            .expect_err("a mark covering nothing must be refused");
+        assert!(why.contains("no area"), "{why}");
+    }
+
+    #[test]
+    fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
+        // `is_identity` is what lets the print path hand the original bytes over
+        // untouched. A plan with a mark in it must never qualify, or a reader
+        // prints a highlighted document and gets an unhighlighted one -- with
+        // nothing failing, because the file it printed is a perfectly good file.
+        let plain = Plan {
+            baseline: 1,
+            pages: vec![PageView {
+                id: 1,
+                source: 0,
+                turns: 0,
+            }],
+            marks: Vec::new(),
+        };
+        assert!(plain.is_identity());
+        assert!(!plan_with_mark(one_quad()).is_identity());
+    }
+
+    #[test]
+    fn a_date_is_written_in_the_form_the_scan_reads_back() {
+        // Fixed instants rather than `now`, and the epoch among them: the
+        // arithmetic is shared with `diag.rs`, so what this pins is the *format*
+        // -- the `D:` prefix, the zero padding and the trailing `Z`.
+        assert_eq!(
+            pdf_date(std::time::UNIX_EPOCH),
+            "D:19700101000000Z",
+            "the epoch"
+        );
+        assert_eq!(
+            pdf_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_781_438_400)),
+            "D:20260614120000Z"
+        );
+        // A clock before the epoch reads as the epoch rather than refusing, for
+        // the reason `diag.rs` gives: the mark is worth more than the timestamp.
+        assert_eq!(
+            pdf_date(std::time::UNIX_EPOCH - std::time::Duration::from_secs(60)),
+            "D:19700101000000Z"
+        );
+    }
+
+    #[test]
+    fn a_marked_document_still_refuses_what_it_refused_before() {
+        // Marks are written before the turns and after the deletions, so the
+        // three refusals `write_copy` documents have to survive one being
+        // present. Encryption is the one that would be worst to lose: a mark
+        // would then be the thing that silently stripped it.
+        let scratch = Scratch::new("annots-encrypted");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, encrypted_document()).expect("write fixture");
+        let why = write_copy(&source, &plan_with_mark(one_quad()), &out)
+            .expect_err("an encrypted source must still be refused");
+        assert!(why.contains("encrypted"), "{why}");
     }
 }

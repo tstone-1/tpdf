@@ -26,6 +26,35 @@ import type { Link } from "./links";
 import type { OutlineItem, Target } from "./outline";
 
 /**
+ * One mark a reader made, as the backend reports it.
+ *
+ * Mirrors `edits::MarkView`, and lives here rather than in `edits.ts` for the
+ * reason the note above {@link PageView} gives: the viewer paints these and must
+ * not import the module that talks to Tauri.
+ */
+export interface MarkView {
+  id: number;
+  /** The page it is on, by {@link PageView.id} --- never a slot. */
+  page: number;
+  /**
+   * Four numbers per rectangle --- `left, top, right, bottom` --- in the page's
+   * **display** space: points from the displayed page's top-left corner, after
+   * the page's own `/Rotate` and before any turn the reader or an edit added.
+   * The overlay applies those when it paints.
+   */
+  quads: number[];
+  color: [number, number, number];
+  /**
+   * What the reader typed, which may be empty.
+   *
+   * **Attacker-controlled once a saved file is reopened**, so it is treated as
+   * `annots.rs` treats a comment body: it reaches the DOM as text, and nothing
+   * here may carry a URL. See `docs/THREAT-MODEL.md` T8.
+   */
+  note: string;
+}
+
+/**
  * One page of the working document, as the backend reports it.
  *
  * Mirrors `edits::PageView`. It lives here rather than in `edits.ts` so that the
@@ -115,6 +144,23 @@ export class PageMap {
    */
   slotOf(source: number): number | undefined {
     return this.bySource.get(source);
+  }
+
+  /**
+   * The first slot showing the page with this identity, or `undefined`.
+   *
+   * The direction a *mark* needs: the model keys a highlight by the page's id,
+   * because a slot is not a name for a page, and the overlay draws in slots.
+   * {@link slotOf} answers the same question for a baseline page number, which
+   * is what links and comments carry --- two different keys because they come
+   * from two different places, and conflating them would silently work until a
+   * page moved.
+   */
+  slotOfId(id: number): number | undefined {
+    for (let slot = 0; slot < this.views.length; slot++) {
+      if (this.views[slot]?.id === id) return slot;
+    }
+    return undefined;
   }
 
   /** Quarter turns an edit has applied to the page in a slot, 0 to 3. */

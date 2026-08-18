@@ -115,6 +115,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.redo",
       SEPARATOR,
       "edit.copy",
+      "edit.highlightSelection",
       "edit.selectAll",
       "edit.clearSelection",
     ],

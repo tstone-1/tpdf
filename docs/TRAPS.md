@@ -8519,3 +8519,134 @@ The general shape: **when a gesture crosses a process boundary, the check belong
 side of it.** Driving the operating system to drive the application is the wrong layer whenever
 the application can be asked directly — and the failure mode of the wrong layer is silence, not
 an error.
+
+### `PdfiumLibraryBindingsAlreadyInitialized` — a helper that binds its own library works alone and fails in company
+
+A probe that renders two files wants a render helper, and the obvious one takes a path and does
+the whole job: bind the library, open the document, render the page. It works in isolation and
+fails the moment the caller has already opened a document of its own, which in a probe is
+always:
+
+```
+[FAIL] could not load Pdfium from vendor/pdfium/lib/libpdfium.dylib: PdfiumLibraryBindingsAlreadyInitialized
+```
+
+`Pdfium::bind_to_library` may be called once per process. So a helper takes
+`progressive::Bindings` and never loads anything — the same shape `RawDocument::open` already
+has, and the reason it has it.
+
+Worth knowing because the error names the *library path*, which sends you to check the vendor
+directory and the pin. Neither is wrong. The second call is.
+
+### A wash that reads as zero everywhere: PDFium's buffer is RGBA, not BGRA
+
+`progressive::RENDER_FLAGS` is `FPDF_ANNOT | FPDF_REVERSE_BYTE_ORDER`, and the second one is
+what decides the channel order of every pixel a probe reads. Written the other way round —
+`let (b, g, r) = (px[0], px[1], px[2])` — a check for a yellow highlight looked for
+`r > 180 && g > 150 && b < 170` against a pixel of (255, 230, 51) read as b=255, g=230, r=51,
+and counted **nothing**, on every fixture.
+
+The reason this is worth an entry rather than a shrug: **the failure is indistinguishable from
+the feature not working.** Three fixtures reported "0 wash after the mark", which reads as an
+annotation that was written and never drawn — and the next move from there is to go looking at
+the writer, the appearance stream and the renderer's annotation flag, none of which is the
+problem. What settled it in one step was dumping the *bounding box* of the matching pixels over
+the whole page rather than counting them inside an expected band: a count of zero says nothing
+about where to look, and a bounding box would have been empty for a real failure and present
+for this one.
+
+### A coverage figure over the union of several quads measures the line spacing
+
+A multi-line highlight is several rectangles. Asking "what fraction of the mark's area is
+washed" over their **bounding box** answers a question about the gaps between lines: measured on
+`links-cropped`, a correct two-line highlight covers **32%** of its own bounding box, and a
+correct forty-quad one on a rotated page covers 25%. Both look like a mark drawn somewhere else.
+
+Measure per quad. Two further corrections came out of doing that, and each is the same shape —
+a statistic that is right for one input and meaningless for another:
+
+- **Count wash *or* ink, not wash alone.** The wash multiplies, so the glyphs under it come out
+  dark rather than yellow: a tight box around a dense glyph is legitimately more ink than wash,
+  and a wash-only figure reads 2% for a mark that is exactly where it should be.
+- **Skip quads too small to hold a percentage, and say how many.** The worst quad on
+  `links-rotated` is a 7.9 × 0.97 pt punctuation glyph — 30 pixels at 2x, most of them the
+  antialiased edge of the glyph itself. A threshold that has to accommodate it is a threshold
+  that cannot fail. Counting and reporting them matters as much as skipping them: a page whose
+  every quad were skipped would otherwise pass by having nothing to check, which is why the
+  control asserts that at least one was measurable.
+
+### PDFKit reports an annotation's bounds rotated and renders the page unrotated
+
+Diagnosing a highlight on a `/Rotate 90` page with `PDFDocument`: `page.draw(with: .mediaBox)`
+draws the page in its **own** unrotated space, while `PDFAnnotation.bounds` answers in the
+page's **rotated** space. So the wash appears at one place in the rendered image and the
+annotation reports another, transposed — and the arithmetic to reconcile them is a rotation
+about a corner nobody has written down.
+
+Two rounds were spent concluding the writer was wrong. It was not: rendering the same file
+through PDFium, whose render *is* rotated, put the wash within 1.5 pt of where the mark was
+made, on both rotated fixtures.
+
+**The lesson is not about PDFKit.** It is that a cross-check run in a different coordinate
+convention than the thing under test cannot be read directly, and reading it directly produces
+a confident wrong conclusion. Cross-check in the space the feature is defined in, or convert
+explicitly and say so.
+
+### A mutation that survives every check because nothing reads the field
+
+`/QuadPoints` says where a highlight's rectangles are. `save.rs` also writes an `/AP` appearance
+stream that draws the wash from the same numbers — so with the appearance present, **no
+renderer reads `/QuadPoints` at all**. Reordering every quad's corners changed no pixel, passed
+the geometry round trip, and passed the ink check.
+
+That is not a redundant field. A reader that regenerates the appearance — one that ignores
+`/AP`, or any editor that re-renders after a change — uses those numbers, and PDFKit is measured
+to be one. The check is to **strip the `/AP` from the saved file and render it again**, which is
+`annot-probe --mode noap`: what appears is then the renderer's own wash, from `/QuadPoints`.
+
+Two details:
+
+- The strip must **count what it removed and refuse if that is nothing**, or the mode silently
+  becomes a second, slower copy of the mode it was added to complement.
+- The pixel evidence for the corner order is real but thin: PDFium's generated wash covers
+  28–36% of each quad for the conventional order (upper-left, upper-right, lower-left,
+  lower-right) and 21–24% for the corners rotated by one. A check standing on a seven-point
+  margin will one day pass for the wrong reason, so the order is asserted **on the bytes** —
+  read `/QuadPoints` back and check the relationships — and the pixel measurement is what
+  justifies which order is expected.
+
+### A control refused by a different guard than the one it was written for
+
+The mark writer refuses a page object that two page numbers share, because an annotation hangs
+off the object and would appear on both. The control written beside it — "a mark on a shared
+page *is* written when only one of the two numbers is kept" — never exercised that guard:
+keeping one of two shared numbers is a deletion, and `unshared` refuses it first, with a
+different message.
+
+The test failed, which is the lucky case. Had the fixture been one where both refusals produced
+the same outcome, it would have passed while proving nothing about the guard it named.
+
+The working control is a document with a shared page **and a spare**: keep every page, mark the
+spare, and the guard has to be scoped to *this mark's page* rather than to "this file contains
+a shared page anywhere". Written the loose way, a reader could not highlight a perfectly
+ordinary page because some other page in the file was malformed.
+
+### `--only "text: "` runs every `context:` mutation too
+
+`mutate_rust.py --only <s>` matches `s.lower() in name.lower()`. `"text: "` is a substring of
+`"context: "`, so a filter meant to select two mutations in `text.rs` selected six in
+`search.rs` as well.
+
+Harmless on its own — they all passed — but it cost two false diagnoses, because the run was
+concurrent with editing:
+
+- **Two mutation harnesses must not overlap.** The second one's control run compiles whatever
+  the first has in the tree at that instant, and reports the first's in-flight mutation as
+  *"the control run is not green"* with three unrelated tests named. That is indistinguishable
+  from a genuinely broken suite.
+- **Nor may a `cargo test` overlap one.** The same edit made a full-suite run go red in
+  `search.rs`, in a module the session had not touched, minutes after it had been green.
+
+The tell in both cases is that the failing tests are somewhere you have not been. Before
+believing it, check whether a harness is running: `git status` will not show it — the harness
+restores the file — and the failure is gone by the time you look.

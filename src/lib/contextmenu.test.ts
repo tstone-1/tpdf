@@ -55,6 +55,7 @@ function registry(open: Record<string, boolean> = {}): {
     make("edit.movePageDown", "Move page down"),
     make("edit.deletePage", "Delete page"),
     make("edit.copy", "Copy selection", "⌘C"),
+    make("edit.highlightSelection", "Highlight selection"),
     make("edit.selectAll", "Select all on page", "⌘A"),
     make("find.inSelection", "Find: in selection on or off", "⌥⌘S"),
     make("edit.clearSelection", "Clear selection", "Esc"),

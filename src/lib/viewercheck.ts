@@ -831,6 +831,12 @@ async function selectionChecks(
       "the page has no extractable text",
     );
     skipGranularity("the page has no extractable text");
+    // The mark pair too, and leaving them out is what the sweep caught: this
+    // block *returns*, so on a page with no text the two names were neither run
+    // nor skipped -- they simply did not exist, and `vector-heavy` and
+    // `vector-multi` reported 235 names against everything else's 237. A name
+    // that has vanished is the failure the identical-name-sets rule is for.
+    await markQuadChecks(root, viewer, false);
     return;
   }
 
@@ -863,6 +869,7 @@ async function selectionChecks(
   );
 
   granularityChecks(root, viewer, whole);
+  await markQuadChecks(root, viewer, ok && whole !== "");
 
   if (!ok || !whole) {
     skip(
@@ -1146,6 +1153,68 @@ function dragAfterClicks(
     pointer(root, "pointermove", at[0] + (dx * step) / 4, at[1]);
   }
   pointer(root, "pointerup", at[0] + dx, at[1]);
+}
+
+/**
+ * The rectangles a mark would be made from, and the one property they must have.
+ *
+ * A highlight is stored against the *page*, not against how the reader is
+ * holding it --- so the quads `selectionQuadsByPage` produces have to be the
+ * same numbers whichever way the view is rotated. They are built from
+ * `TextCache.peekUnturned` for exactly that reason, and the alternative anyone
+ * would reach for first --- the boxes the selection paints with, which is what
+ * `peek` answers --- turns with the view and would store a mark that moves the
+ * next time somebody presses ⌘R.
+ *
+ * **This is the only check that can catch that**, and it needs the rotation:
+ * with the view upright the two sources are identical, so a version built on
+ * the wrong one passes everything else in this file.
+ *
+ * The view is restored before returning. Every phase after this one inherits
+ * whatever it is left in, and `AGENTS.md` records a run where three later
+ * phases went red because one did not put the rotation back.
+ */
+async function markQuadChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  selected: boolean,
+): Promise<void> {
+  if (!selected) {
+    skip(
+      "a mark's rectangles come from the page's own text",
+      "nothing is selected, so there are no rectangles to take",
+    );
+    skip(
+      "and they do not move when the view is rotated",
+      "nothing is selected, so there are no rectangles to compare",
+    );
+    return;
+  }
+
+  key(root, "a", true);
+  await settle(() => viewer.idle);
+  const upright = viewer.selectionQuadsByPage();
+  check(
+    "a mark's rectangles come from the page's own text",
+    upright.length > 0 && upright.every((page) => page.quads.length % 4 === 0),
+    `${upright.length} page(s), ${upright.reduce((n, p) => n + p.quads.length / 4, 0)} quad(s)`,
+  );
+
+  const before = viewer.rotation;
+  viewer.rotateBy(1);
+  await settle(() => viewer.idle);
+  const turned = viewer.selectionQuadsByPage();
+  viewer.rotateBy(-1);
+  await settle(() => viewer.idle);
+
+  check(
+    "and they do not move when the view is rotated",
+    viewer.rotation === before &&
+      JSON.stringify(turned) === JSON.stringify(upright),
+    turned.length === upright.length
+      ? `${turned.length} page(s), first quad ${JSON.stringify(turned[0]?.quads.slice(0, 4))} against ${JSON.stringify(upright[0]?.quads.slice(0, 4))}`
+      : `${turned.length} page(s) rotated against ${upright.length} upright`,
+  );
 }
 
 /** Letters, digits, marks and the underscore --- the word class in `text.ts`. */
@@ -2890,6 +2959,12 @@ async function appCommandChecks(
     redoEdit: () => fired.push("redoEdit"),
     canUndo: () => canUndo,
     canRedo: () => canRedo,
+    // The mark half. `hasSelection` is read from the viewer rather than pinned,
+    // because the command's `enabled` guard turns on it -- a fixed `true` would
+    // make the guard untestable, and a fixed `false` would take the command out
+    // of the palette and make the probe below unrunnable.
+    highlightSelection: () => fired.push("highlightSelection"),
+    hasSelection: () => viewer.selectedText.length > 0,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
@@ -3357,6 +3432,19 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      // Needs a selection, like `find.inSelection` above, and for a sharper
+      // reason: its `enabled` guard is the only one in the application that
+      // reads the *viewer's* state rather than the shell's. A run with nothing
+      // selected does not fail here -- the command is simply not in the palette,
+      // and `runByTitle` would report it missing, which is why the selection is
+      // made in `from` rather than assumed from whatever the last phase left.
+      id: "edit.highlightSelection",
+      ...shell("highlightSelection"),
+      read: () => fired.join(","),
+      from: () => viewer.selectPage(),
+      unless: withText,
+    },
+    {
       // Palette-only as well, and the two are worth aiming at separately: they
       // are one action taking a sign, so a copy-and-paste that left both at -1
       // gives a reader a "move down" that moves up, which is not a wiring
@@ -3583,7 +3671,16 @@ async function appCommandChecks(
   // Commands that a document alone does not enable are declared rather than
   // subtracted, so the next one of them turns this red instead of being
   // absorbed by a count.
-  const NEEDS_MORE_THAN_A_DOCUMENT = ["app.installUpdate", "find.inSelection"];
+  //
+  // `edit.highlightSelection` joined the list on 2026-08-18 and turned this
+  // check red on the way, which is the arrangement working: it needs a
+  // selection, exactly as `find.inSelection` does, and a check that subtracted
+  // a count would have absorbed it in silence.
+  const NEEDS_MORE_THAN_A_DOCUMENT = [
+    "app.installUpdate",
+    "find.inSelection",
+    "edit.highlightSelection",
+  ];
 
   // And the other direction, declared for the same reason. This list was the
   // literal `file.open` until the updater landed, and the check went red ---

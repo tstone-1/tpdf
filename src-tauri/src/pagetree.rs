@@ -81,6 +81,136 @@ pub fn effective_rotation(doc: &Document, page: ObjectId) -> i64 {
         .unwrap_or(0)
 }
 
+/// A page's displayed size, its rotation, and where its own space starts.
+///
+/// "Displayed" is the page as the *document* says to show it --- `/Rotate`
+/// applied, laid out from the crop box --- and not as any reader is currently
+/// looking at it. A view rotation and the turns a reader has added live in the
+/// model, not here.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DisplayedPage {
+    /// Displayed width in points, after `/Rotate`.
+    pub width: f32,
+    /// Displayed height in points, after `/Rotate`.
+    pub height: f32,
+    /// Quarter turns clockwise the document asks for, 0 to 3.
+    pub turns: u8,
+    /// The lower-left corner of the box the page is displayed from.
+    ///
+    /// Zero for most documents. Not zero for one whose `/CropBox` is inset, and
+    /// then it is the difference between a rectangle landing on its text and
+    /// landing somewhere else entirely.
+    pub origin: (f32, f32),
+}
+
+/// The displayed page box: `/CropBox` where there is one, else `/MediaBox`.
+///
+/// **Reading `/MediaBox` alone was wrong, and the failure is silent.** PDFium
+/// lays a page out from its crop box, so the viewer's coordinates start at that
+/// box's corner --- while the media box's corner may be somewhere else. Every
+/// rectangle mapped through the wrong one is offset by the difference, on a page
+/// that looks entirely normal. Measured when `links.rs` had it wrong: a fixture
+/// with `/CropBox [50 50 545 742]` on `/MediaBox [0 0 595 842]` renders 495x692
+/// and put its character boxes on ink **0%** of the time, against 100% for the
+/// same page uncropped. One of the 43 PDFs on the machine this was written on
+/// carries an off-origin crop box on all ten pages.
+///
+/// §14.11.2 says the crop box is intersected with the media box, and that is
+/// done here rather than trusted: a producer may write a crop box larger than
+/// the sheet, and a page displayed bigger than its own paper is not something to
+/// map coordinates into.
+///
+/// **This lives here because there are three consumers and there were nearly
+/// three copies.** It was `links.rs`'s, duplicated in `annots.rs`; when the save
+/// path needed it in order to place a highlight, a third copy would have been
+/// the drift this module's own note is about. `links.rs` calls this now and
+/// `annots.rs` keeps its own --- deliberately, because
+/// `links::tests::both_scans_agree_about_a_rotated_page` compares the two
+/// answers on one document, and collapsing them would turn that test into one
+/// that cannot fail.
+pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
+    let box_of = |key: &[u8]| {
+        inherited(doc, page, key)
+            .and_then(|object| numbers_of(doc, &object, 4))
+            .filter(|values| values.iter().all(|value| value.is_finite()))
+            .map(|v| {
+                [
+                    v[0].min(v[2]),
+                    v[1].min(v[3]),
+                    v[0].max(v[2]),
+                    v[1].max(v[3]),
+                ]
+            })
+            .filter(|b| b[2] > b[0] && b[3] > b[1])
+    };
+
+    let media = box_of(b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0]);
+    let shown = match box_of(b"CropBox") {
+        Some(crop) => [
+            crop[0].max(media[0]),
+            crop[1].max(media[1]),
+            crop[2].min(media[2]),
+            crop[3].min(media[3]),
+        ],
+        None => media,
+    };
+    // An intersection can be empty if the two boxes do not overlap, which is a
+    // malformed document rather than a page of no size. The media box is the
+    // honest fallback: it is the sheet, and §14.11.2 makes the crop box the
+    // thing being questioned.
+    let shown = if shown[2] > shown[0] && shown[3] > shown[1] {
+        shown
+    } else {
+        media
+    };
+
+    let turns = (((effective_rotation(doc, page) / 90) % 4 + 4) % 4) as u8;
+    let (width, height) = (shown[2] - shown[0], shown[3] - shown[1]);
+    DisplayedPage {
+        width: if turns % 2 == 1 { height } else { width },
+        height: if turns % 2 == 1 { width } else { height },
+        turns,
+        origin: (shown[0], shown[1]),
+    }
+}
+
+/// `count` numbers out of an object that may be an array or a reference to one.
+///
+/// A short array, a non-numeric entry, or anything that is not an array at all
+/// is `None` rather than a partial answer: a `/MediaBox` of three numbers is not
+/// a box, and taking three of the four would place every rectangle on the page
+/// somewhere plausible and wrong.
+///
+/// `pub(crate)` for `links.rs`, which reads a `/Rect` with it. It came from
+/// there, and leaving a copy behind to avoid one shared helper would be the
+/// duplication this whole move was about.
+pub(crate) fn numbers_of(doc: &Document, object: &Object, count: usize) -> Option<Vec<f32>> {
+    let Object::Array(array) = resolved(doc, object) else {
+        return None;
+    };
+    if array.len() < count {
+        return None;
+    }
+    let values: Vec<f32> = array
+        .iter()
+        .take(count)
+        .filter_map(|item| resolved(doc, item).as_float().ok())
+        .collect();
+    (values.len() == count).then_some(values)
+}
+
+/// One step through a reference, or the object itself.
+///
+/// One step rather than a loop: a reference to a reference is not something a
+/// well-formed file produces, and following a chain is how a malformed one gets
+/// a walk to spin.
+fn resolved(doc: &Document, object: &Object) -> Object {
+    match object {
+        Object::Reference(id) => doc.get_object(*id).cloned().unwrap_or(Object::Null),
+        other => other.clone(),
+    }
+}
+
 /// The document's pages as object ids, in page-number order.
 ///
 /// `get_pages` answers a `BTreeMap` keyed by page number, so the order is the

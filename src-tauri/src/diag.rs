@@ -272,7 +272,12 @@ fn stamp_ms(ms: u64) -> String {
 }
 
 /// Days since 1970-01-01 to the calendar date, proleptic Gregorian.
-fn civil_from_days(days: u64) -> (u64, u64, u64) {
+///
+/// `pub(crate)` for [`crate::save::pdf_date`], which needs the same arithmetic
+/// to stamp an annotation. It is a dozen lines and it would have been copied;
+/// the table of known instants below --- a leap day among them --- is what pins
+/// it, and a second copy would be a second implementation with no table.
+pub(crate) fn civil_from_days(days: u64) -> (u64, u64, u64) {
     // Shifted so the era starts on 0000-03-01, which puts the leap day at the
     // end of the year and makes every month length regular.
     let shifted = days + 719_468;

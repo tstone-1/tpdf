@@ -46,7 +46,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use crate::docmodel::{Command, Doc, PageId, Refusal};
+use crate::docmodel::{Command, Doc, Mark, MarkId, MarkKind, PageId, Quad, Refusal};
 
 /// One page as the frontend sees it.
 ///
@@ -73,6 +73,52 @@ pub struct PageView {
     pub turns: u8,
 }
 
+/// One mark as the frontend sees it.
+///
+/// Field names are the Rust identifiers, as [`PageView`]'s are and for the same
+/// reason.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub struct MarkView {
+    /// The model's identity for this mark, sent back verbatim to remove it.
+    pub id: u64,
+    /// The page it is on, by [`PageView::id`] --- never a position.
+    pub page: u64,
+    /// Four numbers per quad: left, top, right, bottom, in display-space points
+    /// from the page's top-left corner.
+    ///
+    /// Flat rather than a struct per quad, which is what `text.rs` does with
+    /// character boxes and for the same reason: this crosses to the webview as
+    /// JSON and the overlay wants to iterate rather than to name fields.
+    pub quads: Vec<f32>,
+    /// Red, green and blue in 0..=1.
+    pub color: [f32; 3],
+    /// What the reader typed, which may be empty.
+    ///
+    /// **Attacker-controlled the moment a saved file is reopened**, so it is
+    /// treated exactly as `annots.rs` treats a body: it reaches the DOM as text
+    /// and nothing here may carry a URL. See `docs/THREAT-MODEL.md` T8.
+    pub note: String,
+}
+
+/// What the frontend asks for when a reader makes a mark.
+///
+/// A struct rather than a parameter list, and not only because clippy counts to
+/// seven: **`made` is deliberately not in here.** The timestamp is the
+/// application's, taken from its own clock at the moment the command arrives, so
+/// a caller cannot choose what a mark claims about when it was made.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct NewMark {
+    /// The page, by the identity a state reply gave it.
+    pub page: u64,
+    /// Four numbers per rectangle --- left, top, right, bottom --- in display
+    /// space.
+    pub quads: Vec<f32>,
+    /// Red, green and blue in 0..=1.
+    pub color: [f32; 3],
+    pub author: String,
+    pub note: String,
+}
+
 /// The whole edit state of one document, as one reply.
 ///
 /// Sent whole rather than as a delta on every edit. A delta is smaller and was
@@ -86,6 +132,12 @@ pub struct EditState {
     pub pages: Vec<PageView>,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// Every mark the reader has made, in page order.
+    ///
+    /// Whole rather than per page, for the reason the note above this struct
+    /// gives: the frontend holds a cache of one answer, and a per-page reply
+    /// would have it stitching several together with rules of its own.
+    pub marks: Vec<MarkView>,
     /// Whether anything differs from the file on disk.
     ///
     /// Read from the journal cursor rather than by comparing the working
@@ -209,6 +261,76 @@ impl Edits {
         )
     }
 
+    /// Puts a highlight on a page, over the rectangles the reader dragged across.
+    ///
+    /// `quads` are flat --- four numbers per rectangle, `left, top, right,
+    /// bottom` --- in the display space the frontend already holds every glyph
+    /// box in. **They are stored as given and mapped into the page's own space
+    /// only at the moment of writing**, by `save.rs`, which is where the crop
+    /// box and `/Rotate` that define the mapping are in hand. Two consequences
+    /// worth stating: the overlay draws exactly what the model holds, with no
+    /// conversion between the reader's drag and what they see; and a mark made
+    /// on a page whose geometry cannot be read is refused by the writer rather
+    /// than silently placed.
+    ///
+    /// `made` is the timestamp in PDF date form. It is passed in rather than
+    /// taken from a clock here for the reason `docmodel` gives: a model with a
+    /// clock in it needs the clock frozen to be tested.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; `quads` is not a multiple of four; the
+    /// mark covers no area; or the page does not exist or was deleted.
+    pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {
+        if want.quads.len() % 4 != 0 {
+            return Err(format!(
+                "a mark is four numbers per rectangle, and this has {}",
+                want.quads.len()
+            ));
+        }
+        let quads: Vec<Quad> = want
+            .quads
+            .chunks_exact(4)
+            .map(|q| Quad {
+                left: q[0],
+                top: q[1],
+                right: q[2],
+                bottom: q[3],
+            })
+            .collect();
+
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        model
+            .annotate(Mark {
+                kind: MarkKind::Highlight,
+                page: PageId::from_raw(want.page),
+                quads,
+                color: want.color,
+                author: want.author,
+                note: want.note,
+                made,
+            })
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
+    /// Takes one mark off the page it is on, addressed by identity.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the id names no mark, or one that has
+    /// already been removed --- two diagnoses, for the reason
+    /// [`delete`](Edits::delete) keeps two.
+    pub fn unannotate(&self, doc: u32, mark: u64) -> Result<EditState, String> {
+        self.command(
+            doc,
+            Command::Unannotate {
+                mark: MarkId::from_raw(mark),
+            },
+        )
+    }
+
     /// Applies a command and returns the state it produced.
     fn command(&self, doc: u32, cmd: Command) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
@@ -260,9 +382,14 @@ impl Edits {
     pub fn plan(&self, doc: u32) -> Result<Plan, String> {
         let docs = self.docs.lock().expect("edits lock");
         let model = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let pages = snapshot(model).pages;
         Ok(Plan {
             baseline: model.baseline(),
-            pages: snapshot(model).pages,
+            // Before `pages`, which the line below moves. Field order in a
+            // struct literal is evaluation order, so this reads the borrow while
+            // there is still one to read.
+            marks: planned_marks(model, &pages),
+            pages,
         })
     }
 
@@ -321,11 +448,42 @@ impl Edits {
             return Err("the pages are not in document order".into());
         }
 
+        let marks = planned_marks(model, &pages);
         Ok(Plan {
             baseline: model.baseline(),
             pages,
+            marks,
         })
     }
+}
+
+/// The marks that belong to `pages`, in page order, as the writer needs them.
+///
+/// Driven by `pages` rather than by the model's own order, which is what makes
+/// it correct for a subset: a mark whose page was not taken is simply never
+/// reached. Doing it the other way --- walking every mark and asking whether its
+/// page is in the list --- would give the same answer today and would need its
+/// own filter the moment a subset can repeat a page.
+fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
+    let working = model.working();
+    pages
+        .iter()
+        .flat_map(|view| {
+            let id = PageId::from_raw(view.id);
+            working.marks_on(id).iter().map(move |mark| {
+                let body = model.mark(*mark).expect("a live mark has a body");
+                PlannedMark {
+                    kind: body.kind,
+                    source: view.source,
+                    quads: body.quads.clone(),
+                    color: body.color,
+                    author: body.author.clone(),
+                    note: body.note.clone(),
+                    made: body.made.clone(),
+                }
+            })
+        })
+        .collect()
 }
 
 /// The working document as something that writes a file needs it.
@@ -341,6 +499,32 @@ pub struct Plan {
     pub baseline: u32,
     /// The kept pages, in reading order.
     pub pages: Vec<PageView>,
+    /// The marks to write, on the pages that are kept.
+    ///
+    /// A mark whose page is not in `pages` is **absent rather than carried with
+    /// a dangling reference**, which is what makes an extract of pages 1--3
+    /// write the highlights on those three pages and nothing else.
+    pub marks: Vec<PlannedMark>,
+}
+
+/// One mark as the writer needs it.
+///
+/// Distinct from [`MarkView`], which is the same mark as the *frontend* needs
+/// it, and the difference is the one that matters here: this names the page by
+/// its position in the **baseline file**, because that is what a writer walking
+/// the page tree has. A `MarkView`'s page id means nothing to `lopdf`.
+#[derive(Clone, PartialEq, Debug)]
+pub struct PlannedMark {
+    pub kind: MarkKind,
+    /// Which baseline page this goes on, zero-based.
+    pub source: u32,
+    /// Display space, as the model holds it. Mapped into the page's own space by
+    /// the writer --- see [`Edits::annotate`].
+    pub quads: Vec<Quad>,
+    pub color: [f32; 3],
+    pub author: String,
+    pub note: String,
+    pub made: String,
 }
 
 impl Plan {
@@ -353,7 +537,13 @@ impl Plan {
     /// approximating with `dirty`, which is `true` after a turn and a turn back.
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        self.pages.len() == self.baseline as usize
+        // A mark is a change the file does not have, so a plan carrying one is
+        // never the file. Written first because it is the cheap half and because
+        // leaving it out would let the print path hand over the original bytes
+        // for a document the reader has highlighted --- which prints, correctly
+        // and confusingly, without the highlights.
+        self.marks.is_empty()
+            && self.pages.len() == self.baseline as usize
             && self
                 .pages
                 .iter()
@@ -374,6 +564,9 @@ fn describe(why: Refusal) -> String {
         Refusal::AnchorIsTarget(_) => "a page cannot be moved after itself".into(),
         Refusal::LastPage(_) => "a document must keep at least one page".into(),
         Refusal::DegenerateCrop(_) => "that crop encloses no area".into(),
+        Refusal::NoSuchMark(_) => "no such mark".into(),
+        Refusal::MarkRemoved(_) => "that mark has already been removed".into(),
+        Refusal::EmptyMark => "that mark covers nothing".into(),
     }
 }
 
@@ -396,9 +589,29 @@ fn snapshot(model: &Doc) -> EditState {
             }
         })
         .collect();
+    let marks = working
+        .all_marks()
+        .into_iter()
+        .map(|(page, id)| {
+            let mark = model.mark(id).expect("a live mark has a body");
+            MarkView {
+                id: id.get(),
+                page: page.get(),
+                quads: mark
+                    .quads
+                    .iter()
+                    .flat_map(|q| [q.left, q.top, q.right, q.bottom])
+                    .collect(),
+                color: mark.color,
+                note: mark.note.clone(),
+            }
+        })
+        .collect();
+
     let (applied, _) = model.depth();
     EditState {
         pages,
+        marks,
         can_undo: model.can_undo(),
         can_redo: model.can_redo(),
         dirty: applied > 0,
@@ -954,5 +1167,100 @@ mod tests {
         assert_eq!(plan.pages, edits.state(7).expect("state").pages);
         assert_eq!(plan.pages[1].turns, 3);
         assert_eq!(plan.baseline, 3, "the file's pages, not the working ones");
+    }
+
+    /// A highlight over one line of the page with `page` as its id.
+    fn a_mark(page: u64) -> NewMark {
+        NewMark {
+            page,
+            quads: vec![72.0, 100.0, 300.0, 118.0],
+            color: [1.0, 0.9, 0.2],
+            author: "a reader".to_string(),
+            note: String::new(),
+        }
+    }
+
+    fn stamped() -> String {
+        "D:20260818120000Z".to_string()
+    }
+
+    #[test]
+    fn a_mark_is_carried_into_the_plan_for_the_page_it_is_on() {
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        edits
+            .annotate(7, a_mark(id), stamped())
+            .expect("the model takes the mark");
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(plan.marks.len(), 1);
+        // The *baseline* page, which is what a writer walking the page tree has.
+        // A plan naming the model's id would name nothing `lopdf` knows.
+        assert_eq!(plan.marks[0].source, 1);
+        assert_eq!(plan.marks[0].author, "a reader");
+    }
+
+    #[test]
+    fn a_subset_plan_carries_only_the_marks_on_the_pages_it_takes() {
+        let edits = opened();
+        let pages = edits.state(7).expect("state").pages;
+        edits
+            .annotate(7, a_mark(pages[0].id), stamped())
+            .expect("first");
+        edits
+            .annotate(7, a_mark(pages[2].id), stamped())
+            .expect("third");
+
+        let plan = edits.plan_subset(7, &[0]).expect("subset");
+        assert_eq!(plan.pages.len(), 1);
+        assert_eq!(
+            plan.marks.len(),
+            1,
+            "a mark on a page nobody extracted came along"
+        );
+        assert_eq!(plan.marks[0].source, 0);
+    }
+
+    #[test]
+    fn a_marks_reply_names_the_page_by_identity_and_the_plan_by_position() {
+        // The two vocabularies, on one mark. The frontend is handed the page's
+        // *id*, because that is what it sends back; the writer is handed the
+        // baseline *source*, because that is what a page tree is indexed by.
+        // The same number today, and the whole reason this layer exists is that
+        // they stop being the same the moment a page moves.
+        let edits = opened();
+        let pages = edits.state(7).expect("state").pages;
+        edits
+            .move_page(7, pages[2].id, None)
+            .expect("put the third page first");
+        let moved = edits.state(7).expect("state").pages;
+        assert_eq!(moved[0].source, 2);
+
+        let state = edits
+            .annotate(7, a_mark(moved[0].id), stamped())
+            .expect("mark the page that moved");
+        assert_eq!(state.marks[0].page, moved[0].id);
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(
+            plan.marks[0].source, 2,
+            "the writer was given a position rather than the page"
+        );
+    }
+
+    #[test]
+    fn quads_that_are_not_a_multiple_of_four_are_refused_before_the_model() {
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[0].id;
+        let mut ragged = a_mark(id);
+        ragged.quads.pop();
+        let why = edits
+            .annotate(7, ragged, stamped())
+            .expect_err("three numbers is not a rectangle");
+        assert!(why.contains("four numbers"), "{why}");
+        // And nothing was journalled: a refusal here must leave the document as
+        // it was, which the model guarantees for its own refusals and this one
+        // never reaches.
+        assert!(!edits.state(7).expect("state").dirty);
     }
 }
