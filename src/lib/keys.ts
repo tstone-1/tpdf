@@ -158,6 +158,16 @@ export const BINDINGS = {
     shift: true,
   },
   "nav.forward": { keys: ["]", "\u2018"], accel: true },
+  // ⌥⌘M and ⇧⌥⌘M, beside the link walk on the same modifier because they are
+  // the same gesture over a different set of things on the page. The macOS
+  // alternates are what Option makes of the letter --- µ and Â on a US layout.
+  "nav.nextMark": { keys: ["m", "\u00b5"], accel: true, alt: true },
+  "nav.previousMark": {
+    keys: ["M", "\u00c2"],
+    accel: true,
+    alt: true,
+    shift: true,
+  },
   // The page operations, on Shift plus the view-rotation chords. Same gesture,
   // different subject: ⌘R turns the view, ⇧⌘R turns the page in the document.
   "edit.rotatePageClockwise": { keys: ["r", "R"], accel: true, shift: true },
@@ -332,4 +342,38 @@ export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
   // for everyone whose layout is not the one it was written on.
   if (binding.code !== undefined && event.code === binding.code) return true;
   return binding.keys.includes(event.key);
+}
+
+/**
+ * Whether the key went to something a reader is typing into.
+ *
+ * Here rather than in one handler because **both** key handlers need it and
+ * they need it for opposite reasons. `appcommands.ts` guards ⌘Z and ⌘⇧Z alone,
+ * since every other binding it holds is a chord no text field claims and taking
+ * those from the find bar is what a reader wants. `viewer.ts` guards
+ * *everything*: its keys are `n`, `p`, Space, Home, End and the arrows, which a
+ * text field claims all of, and since 2026-08-18 there is a text field inside
+ * the viewer's own root --- the note on a mark. Two copies of this test would be
+ * two chances to disagree about what a text field is.
+ *
+ * Duck-typed rather than `instanceof HTMLElement`, so that the guard is
+ * exercised by the same tests that exercise everything else.
+ *
+ * Measured rather than assumed, because the guess was wrong: the test runner has
+ * no DOM at all, `globalThis.HTMLElement` is `undefined`, and
+ * `target instanceof HTMLElement` there **throws** ---
+ * `TypeError: Right-hand side of 'instanceof' is not an object`. So it does not
+ * quietly answer "not a text field"; it takes the whole handler down, and the
+ * only way to test the guard would be to stand up a DOM for it. Duck-typing
+ * costs three field reads and needs neither.
+ */
+export function inTextField(event: KeyboardEvent): boolean {
+  const target = event.target as {
+    tagName?: string;
+    isContentEditable?: boolean;
+  } | null;
+  if (!target) return false;
+  if (target.isContentEditable === true) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }

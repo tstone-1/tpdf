@@ -10,7 +10,7 @@ import {
   onPage,
   orderedLinks,
   refusalFor,
-  stepLink,
+  stepAlong,
   samePlace,
   turnedFor,
   type Link,
@@ -181,7 +181,7 @@ describe("orderedLinks", () => {
   });
 });
 
-describe("stepLink", () => {
+describe("stepAlong", () => {
   const page0 = [
     link({ id: 0, rect: [100, 100, 200, 120] }),
     link({ id: 1, rect: [100, 300, 200, 320] }),
@@ -191,42 +191,42 @@ describe("stepLink", () => {
   const at = (top: number) => ({ page: 0, top });
 
   it("walks forward from a focused link", () => {
-    expect(stepLink(ordered, page0[0] ?? null, at(0), 1)?.id).toBe(1);
-    expect(stepLink(ordered, page0[1] ?? null, at(0), 1)?.id).toBe(2);
+    expect(stepAlong(ordered, page0[0] ?? null, at(0), 1)?.id).toBe(1);
+    expect(stepAlong(ordered, page0[1] ?? null, at(0), 1)?.id).toBe(2);
   });
 
   it("walks backward from a focused link", () => {
-    expect(stepLink(ordered, page0[2] ?? null, at(0), -1)?.id).toBe(1);
+    expect(stepAlong(ordered, page0[2] ?? null, at(0), -1)?.id).toBe(1);
   });
 
   it("stops at each end rather than wrapping", () => {
-    expect(stepLink(ordered, page0[2] ?? null, at(0), 1)).toBeNull();
-    expect(stepLink(ordered, page0[0] ?? null, at(0), -1)).toBeNull();
+    expect(stepAlong(ordered, page0[2] ?? null, at(0), 1)).toBeNull();
+    expect(stepAlong(ordered, page0[0] ?? null, at(0), -1)).toBeNull();
   });
 
   it("starts from the viewport when nothing is focused", () => {
     // Not from the top of the document: a reader who has scrolled to page 400
     // and presses "next link" means the next one they can see.
-    expect(stepLink(ordered, null, at(250), 1)?.id).toBe(1);
-    expect(stepLink(ordered, null, at(0), 1)?.id).toBe(0);
+    expect(stepAlong(ordered, null, at(250), 1)?.id).toBe(1);
+    expect(stepAlong(ordered, null, at(0), 1)?.id).toBe(0);
   });
 
   it("goes back to the link before the viewport, not the one level with it", () => {
     // The control that says the two predicates differ. At exactly 300 the
     // middle link is neither ahead nor behind; treating it as behind would make
     // Previous land on the link Next just arrived at.
-    expect(stepLink(ordered, null, at(300), -1)?.id).toBe(0);
-    expect(stepLink(ordered, null, at(301), -1)?.id).toBe(1);
+    expect(stepAlong(ordered, null, at(300), -1)?.id).toBe(0);
+    expect(stepAlong(ordered, null, at(301), -1)?.id).toBe(1);
   });
 
   it("falls back to the viewport when the focused link is gone", () => {
     const stale = link({ id: 99, rect: [100, 100, 200, 120] });
-    expect(stepLink(ordered, stale, at(250), 1)?.id).toBe(1);
+    expect(stepAlong(ordered, stale, at(250), 1)?.id).toBe(1);
   });
 
   it("answers nothing for a document with no links", () => {
-    expect(stepLink([], null, at(0), 1)).toBeNull();
-    expect(stepLink([], null, at(0), -1)).toBeNull();
+    expect(stepAlong([], null, at(0), 1)).toBeNull();
+    expect(stepAlong([], null, at(0), -1)).toBeNull();
   });
 
   it("crosses pages in both directions", () => {
@@ -234,8 +234,8 @@ describe("stepLink", () => {
       link({ id: 0, page: 0, rect: [100, 700, 200, 720] }),
       link({ id: 1, page: 2, rect: [100, 100, 200, 120] }),
     ]);
-    expect(stepLink(across, null, { page: 1, top: 400 }, 1)?.id).toBe(1);
-    expect(stepLink(across, null, { page: 1, top: 400 }, -1)?.id).toBe(0);
+    expect(stepAlong(across, null, { page: 1, top: 400 }, 1)?.id).toBe(1);
+    expect(stepAlong(across, null, { page: 1, top: 400 }, -1)?.id).toBe(0);
   });
 });
 

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 332 entries
+The one thing this file does *not* carry in full is the trap list --- 335 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 332 of them and the full text
-was 93% of this file --- an instruction budget spent on the 322 traps that are not
+titles. Only the titles are here, because there are 335 of them and the full text
+was 93% of this file --- an instruction budget spent on the 334 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1104,6 +1104,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A size is learned once, so a page turned before it was seen keeps a transposed one (the quietest of the eleven, and the only one that does not correct itself)
 - A framework can abort your whole test binary, and 470 passing tests report nothing (a SIGABRT is not a red test; `cargo test` is the multi-threaded caller)
 - A synthetic right-click posted to the window server never reaches the web view (three ways to post one, all silent; the check belongs inside the page)
+- A key handler is only as safe as the newest element inside it (the correct reasoning was already written down two files away, and did not transfer)
 
 ### Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -1259,6 +1260,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
 - A draft release is invisible, and the tag beside it says the work shipped
 - A test that walks every prefix of a journal still could not see the snapshot rule (thoroughness is bounded by the constants a test happens to exceed; the harness's name cross-check is what turned a pass into a finding)
+- An event without the modifier fields a matcher tests reads as no match at all (four keys reported guarded were four leaks; the tidy result was the tell)
+- A probe copied from its neighbour inherits a starting point that may not apply (a working command measured as dead, and its sibling failed in the direction that looks like a pass)
 
 ### Windows and portability
 - The gates had never run on the platform where they fail

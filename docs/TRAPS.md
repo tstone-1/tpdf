@@ -9012,3 +9012,102 @@ float can be non-finite even where the encoding forbids non-finite literals**, a
 whose documented range is enforced by a doc comment is enforced by nothing. This repository
 already records *"a rule you wrote down is not a rule you enforce"*; this is that rule meeting
 a type conversion.
+
+---
+### A key handler is only as safe as the newest element inside it
+
+`viewer.ts` has handled the reader's keys since the viewer existed: `n` and `p` turn the
+page, Home and End reach the ends, Space and the arrows scroll, ⌘R turns the view, ⌘C
+copies the selection. On 2026-08-18 every one of them was still firing while the reader
+typed a note, because the note box added four days earlier is a `<textarea>` **inside the
+viewer's own root**, and a key delivered to it bubbles to the root handler exactly as a key
+pressed on the page does.
+
+So typing the word "annotation" into a note turned the page twice and jumped to the start of
+the document; the space bar scrolled the note out from under the box; and ⌘C wrote the page's
+selected text over what the reader had just copied out of the field.
+
+**The half that makes this worth an entry is that the codebase already held the correct
+reasoning, in a comment, two files away, and it did not transfer.** `appcommands.ts` guards
+⌘Z and ⌘⇧Z and nothing else, and says why:
+
+> The `inTextField` guard is on these two and on nothing else here, and the asymmetry is
+> deliberate rather than an oversight. Every other binding above is a chord no text field
+> claims, so taking it from the find bar is what a reader wants.
+
+That is right, and it is right *about the window handler*, whose bindings are all chords.
+The viewer's handler holds the opposite half — the bare letters and the navigation keys, which
+a text field claims all of. A rule stated with its reasoning still has to be re-derived for
+the next surface, because the reasoning is what varies.
+
+Two things generalise:
+
+- **The question is not "does this handler have a guard" but "what is the newest focusable
+  element under it".** A handler is written once and its subtree grows for years. The find
+  bar was outside this root, so for months there was genuinely nothing to guard against, and
+  the day that stopped being true nothing in the diff said so.
+- **It is invisible in every instrument short of typing.** No test failed, no lint fired, and
+  the two effects (the character appears *and* the page moves) read as one confusing bug
+  rather than as a handler running twice.
+
+The fix is one line at the top of the handler and a shared `inTextField` in `keys.ts` — one
+definition of what a text field is, because the two handlers need it for opposite reasons and
+two copies would be two chances to disagree.
+
+---
+### An event without the modifier fields a matcher tests reads as no match at all
+
+The probe written to measure the leak above dispatched `{ key: "n", target: {...} }` at the
+viewer's root and reported that `n`, `p`, Home and End were all safely ignored, while Space
+and the arrows leaked. That split is not a fact about the code; it is the probe's own bug, and
+it took the correct-looking result at face value for two rounds.
+
+`keys.ts`'s `matches` tests every modifier **in both directions**, which is deliberate and
+recorded in its own doc comment — a binding that does not ask for Shift must not match an event
+holding it, or ⇧⌘G would also fire find-next:
+
+```ts
+if (event.shiftKey !== (binding.shift ?? false)) return false;
+if (event.altKey !== (binding.alt ?? false)) return false;
+```
+
+An event object that simply omits those fields has `undefined !== false`, so **every**
+`matches` call returns false. The keys that appeared guarded were the ones reached through
+`matches`; the ones that leaked were the literal arms (`event.key === "ArrowDown"`) further
+down the chain, which read `key` and nothing else. Adding
+`shiftKey: false, altKey: false, metaKey: false, ctrlKey: false` turned four "guarded" keys
+into four leaks, ⌘R included.
+
+The general form: **a synthetic event is a partial object, and a matcher that tests a field
+in both directions reads an absent field as a mismatch.** A real `KeyboardEvent` always
+carries all four as booleans, so the production path never sees this and the harness always
+does. The tell was the *pattern* of the result rather than any single reading — a guard that
+happened to cover exactly the chorded keys and none of the literal ones is a suspiciously
+tidy answer, and tidy is what to distrust when the code contains no such distinction.
+
+---
+### A probe copied from its neighbour inherits a starting point that may not apply
+
+`nav.nextLink` and `nav.nextMark` are the same shape in `viewercheck.ts`'s command table:
+put the viewer somewhere the command can be seen to move it from, read a focus, run the
+command from the palette, read it again. The mark pair was written from the link pair and
+went red on its first run, reporting `-1 -> -1`: a working command, measured as dead.
+
+The two walks do not start from the same thing. A link walk starts from the **focused link**,
+so `viewer.clearLinkFocus()` is a complete reset and the reader's scroll position is
+irrelevant. A mark walk with no note open starts from **where the reader is looking** — that is
+the property `stepAlong` exists for, so that "next" on page 400 means the next one there. The
+previous probe in the table had left the reader below both marks the new probe plants near the
+top of page 1, so "next mark" correctly found nothing.
+
+Its sibling failed in the more misleading direction: `nav.previousMark` reported `-1 -> 4247`
+and would have looked like a pass under a weaker predicate. Its `from` walks forward twice to
+give Previous something to reach; both walks found nothing for the same reason, so the reading
+it took as "before" was the empty state, and the command then stepped *backwards* from the
+scroll position onto a mark that was genuinely there.
+
+The fix is one line — `viewer.goToStart()` in both `from`s — and the lesson is in what the two
+probes share on the page and not in the code: **when a probe's reset is copied, check what the
+original was resetting.** A reset that names the right subject for one command can be silent
+about the state the next one actually depends on, and the failure arrives as a defect report
+against working code.

@@ -62,7 +62,7 @@ const NAMES: Record<MarkKind, string> = {
 export class MarkPopup {
   private readonly host: HTMLElement;
   private readonly element: HTMLElement;
-  private readonly field: HTMLTextAreaElement;
+  private readonly input: HTMLTextAreaElement;
   private readonly opts: MarkPopupOptions;
   private shown: number | null = null;
   /** The header's word, and the button's, both of which name the kind. */
@@ -108,17 +108,17 @@ export class MarkPopup {
       this.opts.onClose();
     });
 
-    this.field = document.createElement("textarea");
-    this.field.setAttribute("aria-label", "Note");
-    this.field.placeholder = "Note";
-    this.field.rows = 3;
-    this.field.style.cssText =
+    this.input = document.createElement("textarea");
+    this.input.setAttribute("aria-label", "Note");
+    this.input.placeholder = "Note";
+    this.input.rows = 3;
+    this.input.style.cssText =
       "box-sizing:border-box;width:100%;resize:vertical;" +
       "background:transparent;color:inherit;font:inherit;" +
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "border-radius:5px;padding:0.3rem 0.4rem;";
 
-    this.element.append(this.header(), this.field, this.actions());
+    this.element.append(this.header(), this.input, this.actions());
     host.appendChild(this.element);
   }
 
@@ -132,9 +132,22 @@ export class MarkPopup {
     return this.element;
   }
 
+  /**
+   * The note field itself. For the check harness.
+   *
+   * The element rather than a `focused` boolean, because the two harnesses ask
+   * the question differently and neither can ask the other's way: `viewercheck`
+   * compares it with `document.activeElement` in a real webview, and the vitest
+   * fake DOM records `focus()` on the element instead. A getter answering one of
+   * those would leave the other unable to see the keyboard at all.
+   */
+  get field(): HTMLTextAreaElement {
+    return this.input;
+  }
+
   /** The note as the box now holds it. For the check harness. */
   get text(): string {
-    return this.field.value;
+    return this.input.value;
   }
 
   /**
@@ -156,10 +169,23 @@ export class MarkPopup {
     this.title.textContent = NAMES[mark.kind];
     this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;
     this.was = mark.note;
-    this.field.value = mark.note;
+    this.input.value = mark.note;
     this.element.style.display = "block";
     this.place(at);
-    if (focus) this.field.focus();
+    if (focus) this.input.focus();
+  }
+
+  /**
+   * Puts the keyboard in the note field.
+   *
+   * For the route that opens the box without taking focus --- the keyboard walk
+   * through marks, which leaves it on the page so that the next press steps
+   * again. Does nothing when the box is closed, so a stray Enter on a document
+   * with no note open cannot focus a hidden field.
+   */
+  focusField(): void {
+    if (this.shown === null) return;
+    this.input.focus();
   }
 
   /**
@@ -175,7 +201,7 @@ export class MarkPopup {
     if (commit) this.commit();
     this.shown = null;
     this.element.style.display = "none";
-    this.field.value = "";
+    this.input.value = "";
   }
 
   /** Moves the popup to a new anchor, without rebuilding it. See `popup.ts`. */
@@ -188,7 +214,7 @@ export class MarkPopup {
   private commit(): void {
     const id = this.shown;
     if (id === null) return;
-    const now = this.field.value;
+    const now = this.input.value;
     if (now === this.was) return;
     this.was = now;
     this.opts.onNote(id, now);

@@ -3146,6 +3146,15 @@ async function appCommandChecks(
     moved: (before: string, after: string) => boolean;
     /** Why this document cannot exercise it, or null. */
     unless?: () => string | null;
+    /**
+     * Puts back whatever `from` changed about the document.
+     *
+     * Only the two mark probes need it, and they need it because `from` puts
+     * marks on a document that has none: every probe after them would otherwise
+     * run against a page carrying two highlights nobody made, and so would every
+     * phase after this one.
+     */
+    then?: () => void;
   }
 
   // Half the corpus is one page, and two of it have no extractable text. A
@@ -3413,6 +3422,57 @@ async function appCommandChecks(
       unless: twoLinks,
     },
     {
+      // Marks put there by the probe, because no fixture carries one: these are
+      // the reader's own, and a corpus of files nobody has opened in tpdf has
+      // none by construction. That makes this the one probe pair with no
+      // `unless` --- it runs on all fourteen corpora.
+      id: "nav.nextMark",
+      from: () => {
+        // Back to the top, which the link probes above do not need and this
+        // does: a link walk starts from the focused link, and a mark walk with
+        // no note open starts from *where the reader is*. Left where the
+        // previous probe put them --- below the two marks this one plants near
+        // the top of page 1 --- "next mark" correctly finds nothing, and the
+        // probe read a working command as a dead one.
+        viewer.goToStart();
+        viewer.closeMark();
+        viewer.setMarks([
+          syntheticMark(viewer, 4246, "", 0.06),
+          syntheticMark(viewer, 4247, "", 0.2),
+        ]);
+      },
+      read: () => String(viewer.markOpen),
+      moved: (before, after) => before === "-1" && after !== "-1",
+      then: () => {
+        viewer.closeMark();
+        viewer.setMarks([]);
+      },
+    },
+    {
+      id: "nav.previousMark",
+      // Walked forward to the second mark first, so there is an earlier one to
+      // reach --- from the first mark Previous correctly does nothing, and a
+      // probe set up that way would report a working command as broken. The
+      // same shape as `nav.previousLink` above, for the same reason.
+      from: () => {
+        viewer.goToStart();
+        viewer.closeMark();
+        viewer.setMarks([
+          syntheticMark(viewer, 4246, "", 0.06),
+          syntheticMark(viewer, 4247, "", 0.2),
+        ]);
+        viewer.stepMark(1);
+        viewer.stepMark(1);
+      },
+      read: () => String(viewer.markOpen),
+      moved: (before, after) =>
+        before !== "-1" && after !== before && after !== "-1",
+      then: () => {
+        viewer.closeMark();
+        viewer.setMarks([]);
+      },
+    },
+    {
       id: "edit.selectAll",
       from: () => viewer.clearSelection(),
       read: selection,
@@ -3624,6 +3684,7 @@ async function appCommandChecks(
       why === "" && probe.moved(before, after),
       why === "" ? `"${title}": ${before} -> ${after}` : why,
     );
+    probe.then?.();
   }
 
   // Find-next and find-previous, once there is something to step through. The
@@ -3826,7 +3887,19 @@ async function appCommandChecks(
  * the first page is, whatever the fixture's size --- `links-cropped.pdf`'s
  * displayed page is a fraction of its media box.
  */
-function syntheticMark(viewer: Viewer, id: number, note: string): MarkView {
+function syntheticMark(
+  viewer: Viewer,
+  id: number,
+  note: string,
+  /**
+   * Where down the page the mark sits, as a fraction of its height.
+   *
+   * A parameter since the keyboard walk, which needs a *second* mark below the
+   * first: a walk over one mark cannot tell "next" from "the only one there is",
+   * and two at the same height cannot tell an order from a coincidence.
+   */
+  band = 0.06,
+): MarkView {
   const size = viewer.pageSize(0);
   return {
     id,
@@ -3841,9 +3914,9 @@ function syntheticMark(viewer: Viewer, id: number, note: string): MarkView {
     page: 1,
     quads: [
       size.width_pt * 0.15,
-      size.height_pt * 0.06,
+      size.height_pt * band,
       size.width_pt * 0.6,
-      size.height_pt * 0.11,
+      size.height_pt * (band + 0.05),
     ],
     color: [1, 0.9, 0.2],
     note,
@@ -3872,6 +3945,10 @@ const MARK_NOTE_CHECKS = [
   "pressing the same mark again leaves what was typed alone",
   "removing a mark from its note sends a removal and no note",
   "a mark that goes while its note is open takes the note with it",
+  "the keyboard walk opens a mark's note with no pointer at all",
+  "the walk leaves the keyboard on the page and Enter moves it in",
+  "the walk stops at the last mark rather than wrapping",
+  "a key typed into a note does not move the page under it",
 ];
 
 /**
@@ -4054,6 +4131,84 @@ async function markNoteChecks(
     MARK_NOTE_CHECKS[8] ?? "",
     edits.length === 0 && viewer.markOpen === -1,
     `sent [${edits.join(", ")}], open=${viewer.markOpen}`,
+  );
+
+  viewer.setMarks([]);
+  viewer.closeMark();
+
+  await markKeyboardChecks(root, viewer);
+}
+
+/**
+ * Reaching a mark without a pointer, and typing in the note once you are there.
+ *
+ * The two halves are one increment and each is the other's precondition. The
+ * walk is the only route to a mark that is not a press --- before it, a
+ * highlight's note could not be read, changed or taken off from the keyboard at
+ * all. The guard is what makes the box it lands in safe to type in: every key
+ * this viewer handles used to fire while the reader was typing, so "n" turned
+ * the page under the note and the space bar scrolled it away.
+ *
+ * In a real webview rather than only in vitest, because the thing being asserted
+ * is that a key **bubbles** from the field to the root handler and is refused
+ * there. The unit test dispatches on the root with a `target` of its own
+ * choosing, which is a statement about the handler; this is a statement about
+ * the DOM the handler is actually installed in.
+ */
+async function markKeyboardChecks(root: HTMLElement, viewer: Viewer): Promise<void> {
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+
+  const first = syntheticMark(viewer, 4244, "the first one", 0.06);
+  const second = syntheticMark(viewer, 4245, "the second one", 0.2);
+  viewer.setMarks([first, second]);
+  await frame();
+
+  const walked = viewer.stepMark(1);
+  check(
+    MARK_NOTE_CHECKS[9] ?? "",
+    walked && viewer.markOpen === first.id,
+    `stepped=${walked}, open=${viewer.markOpen}, wanted #${first.id}`,
+  );
+
+  const field = viewer.markNoteField;
+  const beforeEnter = document.activeElement === field;
+  key(root, "Enter");
+  check(
+    MARK_NOTE_CHECKS[10] ?? "",
+    !beforeEnter && document.activeElement === field,
+    `focused before Enter=${beforeEnter}, after=${document.activeElement === field}`,
+  );
+
+  // Back to the page, or the walk key below would go to the field the line
+  // above just focused --- which is the guard doing its job, and not what this
+  // check is about.
+  root.focus();
+  const toSecond = viewer.stepMark(1);
+  const past = viewer.stepMark(1);
+  check(
+    MARK_NOTE_CHECKS[11] ?? "",
+    toSecond && !past && viewer.markOpen === second.id,
+    `to the second=${toSecond}, past the end=${past}, open=${viewer.markOpen}`,
+  );
+
+  // The pair. A key from the field must not move the page and the same key from
+  // the page must move it: a guard tested only on its refusal is satisfied by a
+  // viewer that ignores every key.
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+  const start = viewer.offset;
+  field.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+  );
+  const typedInto = viewer.offset;
+  key(root, "ArrowDown");
+  const pressedOn = viewer.offset;
+  check(
+    MARK_NOTE_CHECKS[12] ?? "",
+    typedInto === start && pressedOn > start,
+    `offset ${start} -> ${typedInto} typing into the note, ` +
+      `-> ${pressedOn} pressing on the page`,
   );
 
   viewer.setMarks([]);

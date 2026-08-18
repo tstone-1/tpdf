@@ -183,6 +183,24 @@ describe("MarkPopup", () => {
     expect(sent).toEqual(["remove:7"]);
   });
 
+  it("puts the keyboard in the note, and does nothing when none is open", () => {
+    // For the keyboard walk, which opens the box without taking focus so that
+    // the next press of the walk key steps again rather than typing a letter.
+    // The guard is not decoration and is not reachable from the viewer either:
+    // the Enter arm there already tests `markOpen`, so a mutation of one of them
+    // is invisible through the other. This is where it can be seen.
+    const note = popup();
+    const field = note.field as unknown as { focused: boolean };
+
+    note.focusField();
+    expect(field.focused).toBe(false);
+
+    note.show(mark({ id: 7 }), anchor(), false);
+    expect(field.focused).toBe(false);
+    note.focusField();
+    expect(field.focused).toBe(true);
+  });
+
   it("asks to be closed rather than closing itself", () => {
     // Escape and the close button both report; what actually closes the popup is
     // the viewer, which also has to put the keyboard back on the page. A popup

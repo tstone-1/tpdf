@@ -55,6 +55,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the
   file on disk.
+- **Mark a selection** --- highlight, underline or strike out --- as a real PDF annotation,
+  not a rectangle drawn over the page, so Acrobat and Preview show it as what it is. Each
+  mark takes a note, and **Next mark** / **Previous mark** walk them from the keyboard:
+  the pointer is not the only way to reach one.
+- **Extract pages to a second file**, naming a range the way you would say it out loud.
+  It reads the document and writes elsewhere, so there is nothing to undo and the open
+  file is untouched. It refuses a reversed range rather than quietly correcting it.
 - **Save a copy.** The open file is never written in place. The copy is written to a
   temporary sibling and renamed, so an interrupted save leaves the original rather than
   half of a new file. An encrypted source is refused outright rather than silently saved
@@ -65,8 +72,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 ## Not built yet
 
-- The rest of the page operations: insert, extract, split, merge, crop
-- Annotations: highlight, ink, notes, shapes, stamps --- real PDF annotation objects
+- The rest of the page operations: insert, split, merge, crop
+- The annotations that are not about a text selection: ink, shapes, text boxes, stamps ---
+  each needs a way to *draw* rather than a way to select. Squiggly is the one text-selection
+  kind still missing.
+- Editing a comment that came out of a file. Your own marks are yours to change; a note
+  somebody else wrote is read-only, because the model knows nothing about it.
 - **True redaction** with an automatic post-save verification pass
 - Forms and visual signatures
 - In-place text editing
