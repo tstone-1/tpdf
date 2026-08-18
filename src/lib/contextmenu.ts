@@ -69,19 +69,26 @@ export const PAGE_MENU: Entry[] = [
  * What a right-click on the document surface offers.
  *
  * Copy first, because that is what a right-click on selected text is for
- * everywhere else, and highlighting straight after it: those are the two things
+ * everywhere else, and the three marks straight after it: those are the things
  * a reader does with a run of text they have just dragged across, and this menu
- * is the shortest route to the second, which has no chord. The find entry is
- * here rather than in a menu of its own because searching *within what you just
- * selected* is the one search option whose subject is the selection.
+ * is the shortest route to them, since none of the three has a chord. The find
+ * entry is here rather than in a menu of its own because searching *within what
+ * you just selected* is the one search option whose subject is the selection.
+ *
+ * All three rather than the highlight alone. A right-click menu earns its
+ * length by being the place a reader does not have to go looking, and offering
+ * one of three kinds here sends them to the menu bar for the other two --- which
+ * is the trip this menu exists to save.
  *
  * An entry whose command is not available right now is left out rather than
  * greyed, so with nothing selected this menu is Select all and Find --- the
- * highlight simply is not offered.
+ * marks simply are not offered.
  */
 export const SELECTION_MENU: Entry[] = [
   "edit.copy",
   "edit.highlightSelection",
+  "edit.underlineSelection",
+  "edit.strikeoutSelection",
   "edit.selectAll",
   SEPARATOR,
   "find.inSelection",

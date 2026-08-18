@@ -33,6 +33,7 @@
 import type { CommandRegistry } from "./commands";
 import { BINDINGS, label, matches, type BoundCommand } from "./keys";
 import { describeRange, parsePageRange } from "./pageranges";
+import type { MarkKind } from "./pages";
 import type { Tab } from "./sidebar";
 import type { Viewer } from "./viewer";
 import { MAX_ZOOM, MIN_ZOOM, parseZoomPercent, percentOf } from "./zoom";
@@ -131,12 +132,12 @@ export interface AppActions {
    * what a highlight becomes --- its id, whether it is accepted at all --- is
    * the journal's answer, replayed on undo.
    */
-  highlightSelection(): void;
+  markSelection(kind: MarkKind): void;
   /** Takes the mark whose note is open off the page it is on. */
   removeMark(): void;
   /** Whether a mark's note is open, which is what names the mark to remove. */
   hasOpenMark(): boolean;
-  /** Whether there is a selection to highlight. */
+  /** Whether there is a selection to mark. */
   hasSelection(): boolean;
   /** Ask for a name and write the working document to it. */
   saveCopy(): void;
@@ -408,7 +409,25 @@ export function registerAppCommands(
       id: "edit.highlightSelection",
       title: "Highlight selection",
       enabled: () => withDocument() && actions.hasSelection(),
-      run: () => actions.highlightSelection(),
+      run: () => actions.markSelection("highlight"),
+    },
+    {
+      // The same shape as the highlight above, and deliberately three entries
+      // rather than one command that asks which kind: a reader who wants a
+      // strikeout wants it in one press, and a palette that answered "Mark
+      // selection" and then asked again would cost two. The chords are left
+      // free for the same reason the highlight's is --- a chord for something
+      // that only ever applies to a selection teaches itself badly.
+      id: "edit.underlineSelection",
+      title: "Underline selection",
+      enabled: () => withDocument() && actions.hasSelection(),
+      run: () => actions.markSelection("underline"),
+    },
+    {
+      id: "edit.strikeoutSelection",
+      title: "Strike out selection",
+      enabled: () => withDocument() && actions.hasSelection(),
+      run: () => actions.markSelection("strikeout"),
     },
     {
       // Takes the mark whose note is open, because that is the one the reader
@@ -416,7 +435,11 @@ export function registerAppCommands(
       // is chosen with the pointer somewhere else entirely, and the open note
       // is the application's own record of which mark is being worked on.
       id: "edit.removeMark",
-      title: "Remove highlight",
+      // Not "Remove highlight", which was right while a highlight was the only
+      // mark there was. A menu item naming one of three kinds is wrong twice
+      // out of three times, and is chosen with the pointer somewhere else, so
+      // it cannot say which mark it means the way the note box can.
+      title: "Remove mark",
       enabled: () => withDocument() && actions.hasOpenMark(),
       run: () => actions.removeMark(),
     },

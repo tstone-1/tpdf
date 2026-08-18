@@ -8,6 +8,7 @@ import { installFakeDom, type FakeDom } from "./testdom";
 /** One of the reader's own marks, with the fields a test is not about filled in. */
 function mark(over: Partial<MarkView> & { id: number }): MarkView {
   return {
+    kind: "highlight",
     page: 1,
     quads: [72, 100, 300, 118],
     color: [1, 0.9, 0.2],
@@ -73,6 +74,48 @@ describe("MarkPopup", () => {
     }
     throw new Error(`no button says ${text}`);
   }
+
+  /** Every string the box shows, flattened out of its rows. */
+  function labels(note: MarkPopup): string[] {
+    const rows = note.node as unknown as {
+      children: { textContent?: string; children?: { textContent: string }[] }[];
+    };
+    const found: string[] = [];
+    for (const row of rows.children) {
+      for (const child of row.children ?? []) found.push(child.textContent);
+    }
+    return found;
+  }
+
+  it("names the kind of mark it is open on", () => {
+    // Both the header and the button, because both said "highlight" when a
+    // highlight was the only mark there was. A box that says Highlight over an
+    // underline is wrong in the one place the application knows which mark the
+    // reader means -- the Edit menu's item cannot, being chosen with the
+    // pointer somewhere else, which is why it says "Remove mark".
+    const note = popup();
+    for (const [kind, word] of [
+      ["highlight", "Highlight"],
+      ["underline", "Underline"],
+      ["strikeout", "Strikeout"],
+    ] as const) {
+      note.show(mark({ id: 7, kind }), anchor(), false);
+      expect(labels(note)).toContain(word);
+      expect(labels(note)).toContain(`Remove ${word.toLowerCase()}`);
+    }
+  });
+
+  it("relabels itself when a mark of another kind takes the box", () => {
+    // The control for the check above, and the one that fails if the labels are
+    // written once when the box is built: showing a highlight first and an
+    // underline second is exactly what a reader does, and a box built once
+    // would then say Highlight over the underline.
+    const note = popup();
+    note.show(mark({ id: 7, kind: "highlight" }), anchor(), false);
+    note.show(mark({ id: 8, kind: "strikeout" }), anchor(), false);
+    expect(labels(note)).toContain("Strikeout");
+    expect(labels(note)).not.toContain("Highlight");
+  });
 
   it("shows what the mark says", () => {
     const note = popup();

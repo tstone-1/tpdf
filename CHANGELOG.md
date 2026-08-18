@@ -19,6 +19,23 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### Underline and strike out
+
+- **Underline selection** and **Strike out selection**, beside Highlight. All
+  three are in the Edit menu, in the palette, and on a right-click over
+  selected text --- which is the shortest route to them, since none has a
+  keyboard chord.
+
+- They are written as real `/Underline` and `/StrikeOut` annotations, in red, so
+  Acrobat and Preview show them as what they are. The line is drawn in
+  proportion to the text it marks, so a strikeout across a heading is a line
+  rather than a hairline.
+
+- The note box names the mark it is open on, and its button says *Remove
+  underline* rather than *Remove highlight*. The Edit menu's item now says
+  **Remove mark**: it is chosen with the pointer somewhere else, so it cannot
+  know which one you mean.
+
 ### Fixed: comments and links on a page you rotated
 
 - **A comment or a link on a page you turned is now where you can see it.**

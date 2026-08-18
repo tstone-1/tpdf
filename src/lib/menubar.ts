@@ -115,8 +115,16 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.redo",
       SEPARATOR,
       "edit.copy",
+      SEPARATOR,
+      // The three marks together, then the removal, then the selection items.
+      // Grouped rather than listed in one run because "Remove mark" is the
+      // opposite of the three above it and reads as a fourth kind when it sits
+      // flush against them.
       "edit.highlightSelection",
+      "edit.underlineSelection",
+      "edit.strikeoutSelection",
       "edit.removeMark",
+      SEPARATOR,
       "edit.selectAll",
       "edit.clearSelection",
     ],

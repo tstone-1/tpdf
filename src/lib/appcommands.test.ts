@@ -73,7 +73,7 @@ function harness(
     // Default false, like the two pairs above: a document opens with nothing
     // selected, so the highlight command's withheld direction is the one a test
     // that says nothing about a selection exercises.
-    highlightSelection: () => fired.push("highlightSelection"),
+    markSelection: (kind) => fired.push(`markSelection:${kind}`),
     hasSelection: () => selected,
     // Default false, on the same reasoning: a document opens with no note open,
     // so the withheld direction is what a test that says nothing about a mark
@@ -498,7 +498,7 @@ describe("the window shortcuts for editing", () => {
       redoEdit: () => fired.push("redoEdit"),
       canUndo: () => journal.undo ?? false,
       canRedo: () => journal.redo ?? false,
-      highlightSelection: () => fired.push("highlightSelection"),
+      markSelection: (kind) => fired.push(`markSelection:${kind}`),
       hasSelection: () => false,
       removeMark: () => fired.push("removeMark"),
       hasOpenMark: () => false,
@@ -571,12 +571,24 @@ describe("Highlight selection", () => {
     // selection is the state every open starts in, so a command offered there
     // does nothing when chosen -- which is the failure a palette exists to
     // prevent.
-    const { registry: idle } = harness(true);
-    expect(idle.run("edit.highlightSelection")).toBe(false);
+    //
+    // **All three kinds, not the highlight alone.** They are three near-copies
+    // of one entry, which is exactly the shape where a guard gets dropped from
+    // the second and third without anything noticing --- and each carries a
+    // different argument, so a copy that kept the guard and forgot to change
+    // the argument gives a reader a Strike out that highlights.
+    for (const [id, kind] of [
+      ["edit.highlightSelection", "highlight"],
+      ["edit.underlineSelection", "underline"],
+      ["edit.strikeoutSelection", "strikeout"],
+    ] as const) {
+      const { registry: idle } = harness(true);
+      expect(idle.run(id), `${id} with nothing selected`).toBe(false);
 
-    const { registry, fired } = harness(true, {}, {}, true);
-    expect(registry.run("edit.highlightSelection")).toBe(true);
-    expect(fired).toEqual(["highlightSelection"]);
+      const { registry, fired } = harness(true, {}, {}, true);
+      expect(registry.run(id), `${id} with a selection`).toBe(true);
+      expect(fired).toEqual([`markSelection:${kind}`]);
+    }
   });
 
   it("is withheld with no document even when something is selected", () => {

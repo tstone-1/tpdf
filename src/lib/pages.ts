@@ -26,6 +26,16 @@ import type { Link } from "./links";
 import type { OutlineItem, Target } from "./outline";
 
 /**
+ * What kind of mark a reader made. The names are the wire format --- see
+ * `MarkKind` in `docmodel.rs`, which is where the set is closed.
+ *
+ * Here rather than in `edits.ts`, where the command that sends one lives, for
+ * the reason the note above {@link PageView} gives: this module must not import
+ * the module that talks to Tauri, and {@link MarkView} needs the type.
+ */
+export type MarkKind = "highlight" | "underline" | "strikeout";
+
+/**
  * One mark a reader made, as the backend reports it.
  *
  * Mirrors `edits::MarkView`, and lives here rather than in `edits.ts` for the
@@ -34,6 +44,14 @@ import type { OutlineItem, Target } from "./outline";
  */
 export interface MarkView {
   id: number;
+  /**
+   * Which of the three marks it is.
+   *
+   * A label rather than geometry: PDFium paints every mark inside the tile, so
+   * nothing here draws from this. What reads it is the note box, which has to
+   * name the thing a reader is about to remove.
+   */
+  kind: MarkKind;
   /** The page it is on, by {@link PageView.id} --- never a slot. */
   page: number;
   /**

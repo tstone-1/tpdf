@@ -5338,6 +5338,120 @@ sidebar's comment rows and the outline's destinations are page granularity and
 carry no rectangle; and nothing here touches how a *selection* behaves on a
 turned page, which goes through `caretFrom` and has its own checks.
 
+#### Underline and strike out --- done 2026-08-18
+
+The second and third things a reader can do to a run of text, and the first
+increment the model was explicitly built for: `MarkKind` had one variant and a
+doc comment saying that growing it is a change to `save.rs`, and `save.rs` had a
+`match` written as a `match` *so that* a new variant is a compile error there.
+Both did exactly that on the first build. Nothing had to be discovered.
+
+**One command, three kinds.** `annot_highlight` is now `annot_mark` and the kind
+is a field on `NewMark`, so a highlight, an underline and a strikeout travel one
+path, are refused by one set of preconditions and are written by one writer.
+Three commands would be three chances for the fourth kind to reach only two of
+them. The rename is a protocol change and is done rather than left to read
+wrongly.
+
+**The kind crosses the boundary in both directions**, which is new: it goes in
+on `NewMark` and comes back on `MarkView`, because the note box has to name the
+thing a reader is about to remove. `MarkKind` is `Serialize` and `Deserialize`
+with lowercase names, so an unknown kind is a deserialisation error at the
+boundary rather than a mark quietly written as something else.
+
+**What actually differs between the three is four things, and one predicate
+decides all four.** `is_wash` says whether a kind covers its quads or draws a
+line across them, and from it follow the geometry, the blend mode and both
+opacities. A wash multiplies with the words under it at 40%; a line is drawn
+over them at full strength, because a multiplied red line over black text is
+black --- a strikeout nobody can see. One mutation of that predicate reddens
+three tests, which is the shape a single decision should have.
+
+The rule is proportional to the marked text rather than PDFium's fixed 1 pt.
+Both are defensible for body text and only one survives a heading: a 1 pt
+strikeout across 36 pt type is a hairline, and a reader who cannot see the line
+they just drew draws it again. And it **stays inside the quad**, which is not a
+nicety --- the appearance stream's `/BBox` is the bounds of the quads, so an
+underline centred on the bottom edge loses its lower half in every reader and
+looks like a thinner line rather than like a defect.
+
+The two lines are red, not the wash's yellow, and that is measured rather than
+conventional: a 0.9 pt yellow rule on white paper is close to invisible, where
+the same yellow spread over a whole line of text is exactly right.
+
+**A new probe mode says the renderer honours our appearance**, which no
+file-level assertion can. `annot-probe --mode rule` renders before and after and
+counts pixels of the mark's own colour in the top, middle and bottom third of
+each quad:
+
+```
+Underline:  0 px in the top third,    0 in the middle, 1014 in the bottom
+StrikeOut:  0 px in the top third, 1014 in the middle,    0 in the bottom
+```
+
+Two assertions, not one: "a rule was drawn" is satisfied by either kind drawn
+wrongly, and only a band that must be **empty** separates them by pixels.
+Swapping the two offsets in `save.rs` reddens both, in the right direction each
+time. Its first run reported zero everywhere and read exactly like PDFium
+ignoring our `/AP`; it was the probe writing yellow while the classifier looked
+for red, and `docs/TRAPS.md` has why the fix was to derive the classifier from
+what the probe sent rather than to correct a constant.
+
+**Nine checks and twelve mutations, every check proved able to fail.** Four in
+`save.rs` --- the subtype, the opacity-and-blend pair, the line staying inside
+its quad, and where it sits, which is the only thing that tells an underline
+from a strikeout drawn in the wrong place. One in `edits.rs` for the kind
+reaching the plan and the reply, which is the only check that can see a boundary
+hardcoding a kind, since the file is then correct for whatever the mark claims
+to be. Two in `markpopup.test.ts`: one over all three kinds asserting both the
+header and the button, and a control beside it for a second mark of another kind
+taking the box over --- a box labelled once when it is built is right for the
+first mark and wrong from the second. One in `edits.test.ts` for the colours,
+asserted as a set of three so a table giving every kind the same colour cannot
+pass. And one more in `edits.rs` for the colour clamp, which is the finding
+below rather than part of the feature.
+
+More mutations than checks, deliberately, in the two places where the code is
+near-copies: three at the note box's labels, because writing them once at
+construction and writing the wrong one per mark are different defects with
+different symptoms, and three in `appcommands.ts`, where the three command
+entries differ by one string and a guard dropped from the second or third is
+invisible to a test that walks only the first.
+
+**And one check that already existed refused to let the menu bar be skipped.**
+*"gives every registered command a menu or a written reason"* went red the
+moment the two commands were registered, which is that arrangement working: a
+command reachable only from the palette is a decision, and this one makes it be
+written down rather than defaulted into.
+
+Three of the window sweep's probes now aim at the three kinds separately,
+carrying the argument in the expectation --- one action taking a parameter is
+the shape this file's own note about `movePage` warns about, and a copy that
+left all three passing `"highlight"` gives a reader a Strike out that
+highlights. The backend phase gained a check that drives each kind through
+`annot_mark` and reads the kind back off the state reply, compared as an ordered
+set so a `MarkKind` that forgot to serialise the variant cannot pass.
+
+**One finding that was not the subject.** Writing §T6.5 of the threat model meant
+saying what a caller *can* choose, and the colour is it: three floats that reach
+`/C` and the appearance stream's `rg` operator, with `Mark::color` documented as
+"in 0..=1" and nothing making it so. The sentence being drafted was that JSON
+cannot express a non-finite number, which is true and does not give the
+conclusion --- `1e40` is valid JSON and is `f32::INFINITY` by the time it is an
+`f32`, and `format!` writes that as `inf`, three letters in the middle of a
+content stream. tpdf would have written a file no reader can open. Measured in a
+throwaway crate rather than reasoned about, clamped at the boundary where a wire
+value becomes a model value, and the test asserts finiteness separately from the
+range because that is the property `format!` needs. Nothing user-visible
+changed, so it is not in the changelog; `docs/TRAPS.md` has the general form.
+
+**Not done:** the remaining markup kinds --- squiggly, and the ones that are not
+about a text selection at all (ink, shapes, text boxes, stamps), each of which
+needs a way to *draw* rather than a way to select. A colour a reader can choose,
+which is still the UI question the `MARK_COLORS` table's comment names rather
+than a missing constant. And a keyboard route to a mark, unchanged from the last
+increment: the pointer is still the only way to open one.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

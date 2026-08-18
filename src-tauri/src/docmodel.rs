@@ -236,10 +236,25 @@ pub struct NoteId(u32);
 /// the write path can turn it into an annotation Acrobat and Preview both
 /// render. Growing this enum is therefore a change to `save.rs` and not only to
 /// a list of names.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// **Serde-visible, and the names are the wire format.** The frontend chooses
+/// the kind, so this crosses the boundary in both directions --- in on
+/// `NewMark`, out on `MarkView` --- and the lowercase names are what a check
+/// harness and a saved session see. Renaming a variant is a protocol change.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MarkKind {
     /// A wash over text, `/Highlight`.
     Highlight,
+    /// A line under text, `/Underline`.
+    Underline,
+    /// A line through text, `/StrikeOut`.
+    ///
+    /// The PDF name is `/StrikeOut` with that capitalisation; the serde name is
+    /// `strikeout`, which is also the word the command and the menu use. Two
+    /// spellings of one thing, and the only place they meet is `save.rs`'s
+    /// `subtype`.
+    StrikeOut,
 }
 
 /// One mark a reader made, with everything a writer needs to put it in a file.

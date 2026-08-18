@@ -1642,6 +1642,71 @@ MUTATIONS = [
         "        _ => [w0 - top, h0 - left, w0 - bottom, h0 - right],",
         "a_mapped_back_rectangle_is_proper",
     ),
+    Mutation(
+        # Write an underline as a highlight. It draws correctly, because the
+        # appearance stream is ours and is unaffected -- and Acrobat, Preview
+        # and this application's own sidebar all report it as a highlight. The
+        # failure that looks like nothing is wrong.
+        "save: write an underline under the highlight's subtype",
+        "src/save.rs",
+        '        MarkKind::Underline => b"Underline",',
+        '        MarkKind::Underline => b"Highlight",',
+        "each_kind_writes_its_own_subtype",
+    ),
+    Mutation(
+        # Treat a line as a wash: it then fills its whole quad, multiplied, at
+        # 40%. One predicate deciding four things, which is why one mutation
+        # reddens three tests.
+        "save: draw the two line kinds as washes",
+        "src/save.rs",
+        "        MarkKind::Underline | MarkKind::StrikeOut => false,",
+        "        MarkKind::Underline | MarkKind::StrikeOut => true,",
+        "a_line_is_opaque_and_a_wash_is_not",
+    ),
+    Mutation(
+        # Centre the underline on the quad's bottom edge, which is the obvious
+        # reading of "under" and puts half the rule outside the `/BBox`. Every
+        # reader clips it, and the result looks like a thinner line rather than
+        # like a defect -- which is why the assertion is about the bound and not
+        # about how it looks.
+        "save: centre an underline on the edge it should sit on",
+        "src/save.rs",
+        "        MarkKind::Underline => (bottom, thickness),",
+        "        MarkKind::Underline => (bottom - thickness / 2.0, thickness),",
+        "a_line_stays_inside_the_quad_it_marks",
+    ),
+    Mutation(
+        # And a strikeout drawn at the bottom, which is an underline with the
+        # wrong subtype. Every check keyed on the subtype passes; only where the
+        # rule sits tells them apart.
+        "save: draw a strikeout where an underline goes",
+        "src/save.rs",
+        "        MarkKind::StrikeOut => (bottom + full / 2.0 - thickness / 2.0, thickness),",
+        "        MarkKind::StrikeOut => (bottom, thickness),",
+        "a_strikeout_crosses_the_text_and_an_underline_sits_under_it",
+    ),
+    Mutation(
+        # Take the colour off the wire as it arrives. JSON refuses `NaN` and
+        # `Infinity` as literals, which is what makes this look safe -- and
+        # `1e40` is valid JSON and is `f32::INFINITY` once it is an `f32`, which
+        # `format!` writes into a content stream as `inf`.
+        "edits: take a colour off the wire without bringing it into range",
+        "src/edits.rs",
+        "                    color: want.color.map(channel),",
+        "                    color: want.color,",
+        "a_colour_off_the_wire_is_brought_into_the_range_the_model_promises",
+    ),
+    Mutation(
+        # The boundary rather than the writer: ignore what the caller asked for.
+        # Every mark is then a highlight however it was chosen, and the file is
+        # correct for whatever the mark claims to be -- so `annot-probe` agrees
+        # with it and only a test that names the kind on both sides can see it.
+        "edits: write every mark as a highlight whatever was asked for",
+        "src/edits.rs",
+        "                    kind: want.kind,",
+        "                    kind: MarkKind::Highlight,",
+        "the_kind_the_caller_asked_for_reaches_the_plan_and_the_reply",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.

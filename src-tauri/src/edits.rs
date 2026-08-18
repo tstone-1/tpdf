@@ -81,6 +81,10 @@ pub struct PageView {
 pub struct MarkView {
     /// The model's identity for this mark, sent back verbatim to remove it.
     pub id: u64,
+    /// What kind of mark it is, so the reader can be told which one they are
+    /// about to remove. The overlay does not draw from it --- PDFium paints
+    /// every mark inside the tile --- so this is a label, not geometry.
+    pub kind: MarkKind,
     /// The page it is on, by [`PageView::id`] --- never a position.
     pub page: u64,
     /// Four numbers per quad: left, top, right, bottom, in display-space points
@@ -108,6 +112,13 @@ pub struct MarkView {
 /// a caller cannot choose what a mark claims about when it was made.
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct NewMark {
+    /// Which of the three marks this is.
+    ///
+    /// Chosen by the frontend, unlike `made`: a reader picks Highlight or
+    /// Underline and there is nothing for the application to decide. The set is
+    /// closed by the type, so an unknown name is a deserialisation error at the
+    /// boundary rather than a mark written as something else.
+    pub kind: MarkKind,
     /// The page, by the identity a state reply gave it.
     pub page: u64,
     /// Four numbers per rectangle --- left, top, right, bottom --- in display
@@ -117,6 +128,29 @@ pub struct NewMark {
     pub color: [f32; 3],
     pub author: String,
     pub note: String,
+}
+
+/// One colour channel from the wire, brought into the range `Mark` promises.
+///
+/// **`Mark::color` is documented as "in 0..=1" and nothing made it so**, which
+/// mattered more than it sounds: JSON has no `NaN` or `Infinity` literals, so
+/// serde refuses those, but `1e40` is perfectly good JSON and becomes
+/// `f32::INFINITY` on the way into an `f32`. `save.rs` writes each channel with
+/// `format!`, and `format!("{}", f32::INFINITY)` is `inf` --- three letters in
+/// the middle of a content stream, which is a syntax error. tpdf would have
+/// written a file no reader can parse and signed its name to it.
+///
+/// Clamped rather than refused. A colour a fraction outside the range is what a
+/// slider produces and is not an error; every PDF reader clamps `/C` anyway, so
+/// refusing would be stricter than the format. A non-finite value has no
+/// clamped meaning at all --- `f32::NAN.clamp(0.0, 1.0)` is `NaN` --- so it
+/// becomes zero, which is the only total answer.
+fn channel(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 /// The whole edit state of one document, as one reply.
@@ -304,10 +338,10 @@ impl Edits {
         model
             .annotate(
                 Mark {
-                    kind: MarkKind::Highlight,
+                    kind: want.kind,
                     page: PageId::from_raw(want.page),
                     quads,
-                    color: want.color,
+                    color: want.color.map(channel),
                     author: want.author,
                     made,
                 },
@@ -619,6 +653,7 @@ fn snapshot(model: &Doc) -> EditState {
             let mark = model.mark(id).expect("a live mark has a body");
             MarkView {
                 id: id.get(),
+                kind: mark.kind,
                 page: page.get(),
                 quads: mark
                     .quads
@@ -1194,7 +1229,14 @@ mod tests {
 
     /// A highlight over one line of the page with `page` as its id.
     fn a_mark(page: u64) -> NewMark {
+        of_kind(MarkKind::Highlight, page)
+    }
+
+    /// The same, of whichever kind. Separate so that the existing tests read as
+    /// they did and the ones about the kind name it.
+    fn of_kind(kind: MarkKind, page: u64) -> NewMark {
         NewMark {
+            kind,
             page,
             quads: vec![72.0, 100.0, 300.0, 118.0],
             color: [1.0, 0.9, 0.2],
@@ -1221,6 +1263,59 @@ mod tests {
         // A plan naming the model's id would name nothing `lopdf` knows.
         assert_eq!(plan.marks[0].source, 1);
         assert_eq!(plan.marks[0].author, "a reader");
+    }
+
+    #[test]
+    fn the_kind_the_caller_asked_for_reaches_the_plan_and_the_reply() {
+        // The one field a caller chooses that the model does not decide, and it
+        // crosses the boundary twice: in on `NewMark`, out on `MarkView`, and
+        // through the plan to the writer in between. All three kinds in one
+        // test rather than one each, so a `kind` hardcoded anywhere along the
+        // way cannot be satisfied by whichever one happens to be the default.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        for kind in [
+            MarkKind::Highlight,
+            MarkKind::Underline,
+            MarkKind::StrikeOut,
+        ] {
+            let state = edits
+                .annotate(7, of_kind(kind, id), stamped())
+                .expect("the model takes the mark");
+            let mark = state.marks.last().expect("a mark");
+            assert_eq!(mark.kind, kind, "the reply says {:?}", mark.kind);
+            let plan = edits.plan(7).expect("plan");
+            assert_eq!(
+                plan.marks.last().expect("a planned mark").kind,
+                kind,
+                "the plan says otherwise"
+            );
+        }
+    }
+
+    #[test]
+    fn a_colour_off_the_wire_is_brought_into_the_range_the_model_promises() {
+        // `Mark::color` says "in 0..=1" and nothing made it so. The value that
+        // matters is not a big number, it is a *non-finite* one: JSON refuses
+        // `NaN` and `Infinity` as literals, but `1e40` is valid JSON and is
+        // `f32::INFINITY` by the time it is an `f32`. `save.rs` writes each
+        // channel with `format!`, so that reaches the content stream as the
+        // three letters `inf`, which is a syntax error -- a file tpdf wrote,
+        // signed its name to, and no reader can open.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        let mut want = a_mark(id);
+        want.color = [f32::INFINITY, -2.0, 40.0];
+        edits
+            .annotate(7, want, stamped())
+            .expect("the mark is taken");
+
+        let plan = edits.plan(7).expect("plan");
+        let color = plan.marks[0].color;
+        assert_eq!(color, [0.0, 0.0, 1.0], "got {color:?}");
+        // And every channel is finite, which is the property `format!` needs
+        // and which a range check on its own does not state.
+        assert!(color.iter().all(|c| c.is_finite()), "{color:?}");
     }
 
     #[test]

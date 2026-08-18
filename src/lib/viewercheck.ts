@@ -2978,7 +2978,7 @@ async function appCommandChecks(
     // because the command's `enabled` guard turns on it -- a fixed `true` would
     // make the guard untestable, and a fixed `false` would take the command out
     // of the palette and make the probe below unrunnable.
-    highlightSelection: () => fired.push("highlightSelection"),
+    markSelection: (kind) => fired.push(`markSelection:${kind}`),
     hasSelection: () => viewer.selectedText.length > 0,
     // And the same for the other guard that reads the viewer: which mark to
     // remove *is* the open note, so pinning this true would take the only
@@ -3459,7 +3459,26 @@ async function appCommandChecks(
       // and `runByTitle` would report it missing, which is why the selection is
       // made in `from` rather than assumed from whatever the last phase left.
       id: "edit.highlightSelection",
-      ...shell("highlightSelection"),
+      ...shell("markSelection:highlight"),
+      read: () => fired.join(","),
+      from: () => viewer.selectPage(),
+      unless: withText,
+    },
+    {
+      // The two other kinds, aimed separately. One action taking an argument,
+      // which is the shape this file's own note about `movePage` warns about:
+      // a copy-and-paste that left all three passing "highlight" gives a reader
+      // a Strike out that highlights, and no single probe can see it. The
+      // `moved` expectation carries the argument, so each names its own.
+      id: "edit.underlineSelection",
+      ...shell("markSelection:underline"),
+      read: () => fired.join(","),
+      from: () => viewer.selectPage(),
+      unless: withText,
+    },
+    {
+      id: "edit.strikeoutSelection",
+      ...shell("markSelection:strikeout"),
       read: () => fired.join(","),
       from: () => viewer.selectPage(),
       unless: withText,
@@ -3719,6 +3738,8 @@ async function appCommandChecks(
     "app.installUpdate",
     "find.inSelection",
     "edit.highlightSelection",
+    "edit.underlineSelection",
+    "edit.strikeoutSelection",
     // Guarded on a note being open, which is how a reader names the mark they
     // mean. A document with no marks in it offers nothing to remove.
     "edit.removeMark",
@@ -3809,6 +3830,10 @@ function syntheticMark(viewer: Viewer, id: number, note: string): MarkView {
   const size = viewer.pageSize(0);
   return {
     id,
+    // A highlight, because the note box's behaviour is what this phase tests
+    // and every kind reaches it identically. What differs between the three is
+    // written by `save.rs` and read back by `annot-probe`.
+    kind: "highlight",
     // The *id* of the first page, which for an unedited document is 1 --- see
     // `pages.ts`. Sending 0 here would name no page and the mark would not be
     // drawn at all, which is the slot-for-identity confusion this type exists
@@ -7390,6 +7415,7 @@ async function drawnPastFirstPageCheck(
 /** What this phase reports, so a run that cannot start still prints the names. */
 const MARK_COMMAND_CHECKS = [
   "the model takes a highlight through the command",
+  "the model takes each kind of mark and reports it back",
   "the model takes a note through the command",
   "the model takes a mark off through the command",
   "a note on a mark that is gone is refused in the reader's words",
@@ -7444,9 +7470,10 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
     return;
   }
 
-  const made = await attempt("annot_highlight", {
+  const made = await attempt("annot_mark", {
     doc: doc.id,
     mark: {
+      kind: "highlight",
       page,
       quads: [72, 100, 300, 118],
       color: [1, 0.9, 0.2],
@@ -7469,13 +7496,45 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
     return;
   }
 
+  // Each kind through the same command, and read back off the state reply. The
+  // kind is the one field that crosses the boundary in both directions, so a
+  // name the model does not know is a deserialisation failure here rather than
+  // a mark quietly written as something else -- and a `MarkKind` that forgot to
+  // serialise the variant would report every mark as the same kind, which the
+  // set comparison below sees and a per-kind assertion would not.
+  const kinds = ["underline", "strikeout"] as const;
+  const back: string[] = [];
+  let kindsError = "";
+  for (const kind of kinds) {
+    const one = await attempt("annot_mark", {
+      doc: doc.id,
+      mark: {
+        kind,
+        page,
+        quads: [72, 140, 300, 158],
+        color: [0.85, 0.15, 0.15],
+        author: "",
+        note: "",
+      },
+    });
+    kindsError ||= one.error;
+    const last = one.state?.marks[one.state.marks.length - 1];
+    back.push(String(last?.kind ?? "none"));
+    if (last?.id !== undefined) await attempt("annot_remove", { doc: doc.id, mark: last.id });
+  }
+  check(
+    MARK_COMMAND_CHECKS[1] ?? "",
+    back.join(",") === kinds.join(","),
+    kindsError ? preview(kindsError) : `the model reported ${back.join(", ") || "nothing"}`,
+  );
+
   const noted = await attempt("annot_note", {
     doc: doc.id,
     mark,
     note: "typed through the command",
   });
   check(
-    MARK_COMMAND_CHECKS[1] ?? "",
+    MARK_COMMAND_CHECKS[2] ?? "",
     noted.state?.marks[0]?.note === "typed through the command",
     noted.error
       ? preview(noted.error)
@@ -7484,7 +7543,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
 
   const gone = await attempt("annot_remove", { doc: doc.id, mark });
   check(
-    MARK_COMMAND_CHECKS[2] ?? "",
+    MARK_COMMAND_CHECKS[3] ?? "",
     gone.state?.marks.length === 0,
     gone.error ? preview(gone.error) : `${gone.state?.marks.length} mark(s) left`,
   );
@@ -7495,7 +7554,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
     note: "after it went",
   });
   check(
-    MARK_COMMAND_CHECKS[3] ?? "",
+    MARK_COMMAND_CHECKS[4] ?? "",
     after.error.includes("already been removed"),
     after.error ? preview(after.error) : "it accepted a note on a mark that is gone",
   );
