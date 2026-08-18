@@ -311,8 +311,8 @@ pub fn main() {
     // the first page would be invisible to a check that only ever asks for the
     // first page.
     let page = u32::from(worker_doc.page_count > 1);
-    let worker_text = wait(|reply| workers.text(worker_doc.id, page, reply));
-    let native_text = wait(|reply| in_process.text(native_doc.id, page, reply));
+    let worker_text = wait(|reply| workers.text(worker_doc.id, page, None, reply));
+    let native_text = wait(|reply| in_process.text(native_doc.id, page, None, reply));
     match (&worker_text, &native_text) {
         (Ok(theirs), Ok(ours)) => {
             let same = theirs.codes == ours.codes
@@ -339,7 +339,7 @@ pub fn main() {
     // the same text, asking for a different one proves nothing, and this check
     // has to say so rather than looking like coverage.
     if page > 0 {
-        let first = wait(|reply| in_process.text(native_doc.id, 0, reply));
+        let first = wait(|reply| in_process.text(native_doc.id, 0, None, reply));
         let distinguishable = match (&first, &native_text) {
             (Ok(a), Ok(b)) => a.codes != b.codes,
             _ => false,
@@ -559,6 +559,7 @@ pub fn main() {
     let refused = wait(|reply| {
         workers.tile(
             TileRequest {
+                crop: None,
                 page: worker_doc.page_count as u32,
                 ..request(worker_doc.id, 21, at)
             },
@@ -705,7 +706,7 @@ pub fn main() {
     // first of those was exercised above.
     let second = pool_pids(&workers).first().copied();
     let death = kill_a_worker(second);
-    let again = wait(|reply| workers.text(worker_doc.id, page, reply));
+    let again = wait(|reply| workers.text(worker_doc.id, page, None, reply));
     let same = matches!(
         (&again, &worker_text),
         (Ok(new), Ok(old)) if new.codes == old.codes && new.boxes == old.boxes
@@ -1908,6 +1909,7 @@ fn clamp_side(pixels: f32) -> u16 {
 /// One tile request at the chosen placement.
 fn request(doc: u32, rid: u64, at: Placement) -> TileRequest {
     TileRequest {
+        crop: None,
         rid,
         doc,
         page: 0,

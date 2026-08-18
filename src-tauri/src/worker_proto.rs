@@ -50,6 +50,11 @@ pub enum Request {
         height: u16,
         /// Whether to PNG-encode in the worker rather than send raw pixels.
         png: bool,
+        /// The page's crop box as the reader's edits have it, or the file's own.
+        ///
+        /// Defaulted for the reason [`Request::Text`]'s is.
+        #[serde(default)]
+        crop: Option<[f32; 4]>,
     },
     /// Abandon a tile request, whether or not it has started.
     ///
@@ -58,7 +63,15 @@ pub enum Request {
     /// a queued withdrawal would arrive after the thing it withdraws.
     Withdraw { rid: u64 },
     /// Extract one page's characters and their positions.
-    Text { page: u32 },
+    Text {
+        page: u32,
+        /// The page's crop box as the reader's edits have it, or the file's own.
+        ///
+        /// Defaulted so that a request written before crops existed still parses
+        /// as the uncropped extraction it meant.
+        #[serde(default)]
+        crop: Option<[f32; 4]>,
+    },
     /// Find a query's occurrences on one page.
     Search {
         page: u32,
@@ -71,6 +84,23 @@ pub enum Request {
         /// break is found. Defaulted for the same reason `options` is.
         #[serde(default)]
         carry: Option<crate::search::Carry>,
+    },
+    /// The box one page's ink occupies, in the page's own space.
+    ///
+    /// Measured rather than read: see `crate::content`, which renders the page
+    /// small and finds the bounding box of everything that is not paper. Per
+    /// page and never document-wide --- it costs a render, and a reader crops
+    /// the page in front of them.
+    Content { page: u32 },
+    /// One page's displayed size under a crop box, or under the file's own.
+    ///
+    /// The frontend lays out from this, and it cannot compute it: the crop is in
+    /// the page's own space and the layout is in display space, and the turn
+    /// between them is the page's `/Rotate`, which the frontend never sees.
+    Geometry {
+        page: u32,
+        #[serde(default)]
+        crop: Option<[f32; 4]>,
     },
     /// Read the document's outline.
     Outline,
@@ -255,9 +285,16 @@ mod tests {
                 width: 1024,
                 height: 768,
                 png: false,
+                // A crop that is not the page's own, so the four numbers are
+                // carried rather than defaulted away by a serializer that
+                // skips `None`.
+                crop: Some([10.0, 20.0, 300.0, 400.0]),
             },
             Request::Withdraw { rid: 7 },
-            Request::Text { page: 0 },
+            Request::Text {
+                page: 0,
+                crop: None,
+            },
             Request::Search {
                 page: 1,
                 query: "quartz".into(),

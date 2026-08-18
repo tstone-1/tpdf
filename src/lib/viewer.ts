@@ -32,6 +32,13 @@
 import { AccessibleText } from "./a11y";
 import { inTextField, matches } from "./keys";
 import { CommentPopup } from "./commentpopup";
+import {
+  intoCrop,
+  outOfCrop,
+  pageGeometry,
+  uncropped,
+  type CropGeometry,
+} from "./crop";
 import { MarkPopup } from "./markpopup";
 import type { Anchor } from "./popup";
 import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
@@ -1296,6 +1303,12 @@ export class Viewer {
     const after = new PageMap(views);
     this.pages = after;
 
+    // Before either branch below, because a crop can change without the order
+    // changing --- which is the common case, since cropping one page moves no
+    // page --- and the early return would then leave the text cache holding an
+    // extraction measured under the box the reader just replaced.
+    void this.adoptCrops(after);
+
     if (before.sameOrder(after)) {
       // Every slot, not the ones that differ: `setPageTurns` returns early for a
       // page whose turn has not moved, so the comparison it would take to avoid
@@ -1733,6 +1746,11 @@ export class Viewer {
     return this.surfaceHost.style.cursor || "default";
   }
 
+  /** A slot's laid-out size in points, as displayed. For the check harness. */
+  pageSizeOf(slot: number): { width_pt: number; height_pt: number } {
+    return this.scroller.pageSize(slot);
+  }
+
   /** How many links the page knows about. For the check harness. */
   get linkCount(): number {
     return this.linkItems.length;
@@ -2009,10 +2027,40 @@ export class Viewer {
     };
   }
 
-  /** A rectangle in a page's display space, placed under every turn in force. */
+  /**
+   * Where a slot's crop sits inside the page the file describes, and its size.
+   *
+   * `uncropped` for a page nobody has cropped and for one whose geometry has not
+   * arrived yet --- the second is a real state, since the geometry is an IPC
+   * round trip, and the honest answer during it is the page as the file has it.
+   * A rectangle placed under the wrong one is out by the crop's offset for a
+   * frame, which is what the page's own tile epoch corrects.
+   */
+  private cropAt(page: number): CropGeometry {
+    const id = this.pages.idOf(page);
+    const known = id === undefined ? undefined : this.crops.get(id);
+    if (known) return known;
+    const size = this.scroller.pageSize(page);
+    return uncropped(size.width_pt, size.height_pt);
+  }
+
+  /**
+   * A rectangle from the file, placed under the crop and every turn in force.
+   *
+   * The crop first and the turn second, and the order is the whole of it: a
+   * rectangle arrives measured from the **file's** displayed corner, `intoCrop`
+   * moves it to the cropped page's corner, and only then is it turned --- by the
+   * *cropped* page's size, which is what `turnsOn` reports. Turning first would
+   * turn it in a box it is not in.
+   *
+   * Text is the one thing that does **not** come through here, and that is not
+   * an omission: `page_text` is answered by a worker that already applied the
+   * crop, so a character box is in the cropped page's space when it arrives.
+   * The asymmetry is real and is why the two are placed by different routes.
+   */
   private viewRectOn(page: number, rect: readonly [number, number, number, number]): Quad {
     const { turns, width_pt, height_pt } = this.turnsOn(page);
-    return viewRect(rect, turns, width_pt, height_pt);
+    return viewRect(intoCrop(rect, this.cropAt(page)), turns, width_pt, height_pt);
   }
 
   /**
@@ -2181,21 +2229,20 @@ export class Viewer {
     // which is exactly what had happened on the other side, where six call
     // sites turned by the view's rotation alone. One implementation also means
     // the window checks on a mark reach the primitive all three use.
-    const { turns, width_pt, height_pt } = this.turnsOn(slot);
+    // Through `viewRectOn`, which is where the crop is applied before the turn.
+    // A mark is stored in the file's display space --- see `crop.ts` on why --- so
+    // it needs exactly the same two steps a comment and a link need, and doing
+    // the turn here with `turnQuad` alone is how the mark subsystem drifted
+    // from the other two once already.
     const quads: Quad[] = [];
     for (let at = 0; at + 3 < mark.quads.length; at += 4) {
       quads.push(
-        turnQuad(
-          {
-            left: mark.quads[at] ?? 0,
-            top: mark.quads[at + 1] ?? 0,
-            right: mark.quads[at + 2] ?? 0,
-            bottom: mark.quads[at + 3] ?? 0,
-          },
-          turns,
-          width_pt,
-          height_pt,
-        ),
+        this.viewRectOn(slot, [
+          mark.quads[at] ?? 0,
+          mark.quads[at + 1] ?? 0,
+          mark.quads[at + 2] ?? 0,
+          mark.quads[at + 3] ?? 0,
+        ]),
       );
     }
     return { slot, quads };
@@ -2772,6 +2819,68 @@ export class Viewer {
   private marks: readonly MarkView[] = [];
 
   /**
+   * Each cropped page's geometry, by page **id**.
+   *
+   * By id and not by slot, because a page moves and its crop moves with it ---
+   * `docs/TRAPS.md` records state keyed by a slot belonging to whatever moves
+   * into that slot. Absent means the file's own box, which is what all but a
+   * cropped page has.
+   */
+  private readonly crops = new Map<number, CropGeometry>();
+
+  /**
+   * Learns each page's crop, and drops what was measured under the old one.
+   *
+   * The model answers with the crop **box**; laying a cropped page out needs its
+   * displayed size and where it sits inside the file's page, and neither can be
+   * computed here --- see `crop.ts`. So a page whose box changed costs one IPC
+   * round trip, and only a page whose box changed: a state reply arrives after
+   * every command, and a rotate must not re-ask for every page in the document.
+   *
+   * Asynchronous, and the frame in between is honest rather than hidden: until
+   * the geometry lands, `cropAt` answers with the file's own page and rectangles
+   * are placed as they were. The page's tile epoch is bumped when it lands,
+   * which is what redraws it.
+   */
+  private async adoptCrops(pages: PageMap): Promise<void> {
+    const live = new Set<number>();
+    for (let slot = 0; slot < pages.length; slot++) {
+      const view = pages.at(slot);
+      if (!view) continue;
+      live.add(view.id);
+      const want = view.crop;
+      const held = this.crops.get(view.id);
+      if (want === undefined) {
+        // Nothing to ask: the file's own page is what `cropAt` falls back to,
+        // so a cleared crop needs the entry gone rather than a round trip.
+        if (held) {
+          this.crops.delete(view.id);
+          this.text.setPageCrop(slot, undefined);
+          this.scroller.invalidatePage(slot);
+        }
+        continue;
+      }
+      this.text.setPageCrop(slot, want);
+      const at = await pageGeometry(this.opts.doc, view.source, want).catch(
+        () => null,
+      );
+      if (!at) continue;
+      this.crops.set(view.id, at);
+      this.scroller.notePageSize(slot, {
+        width_pt: at.width_pt,
+        height_pt: at.height_pt,
+      });
+      this.scroller.invalidatePage(slot);
+    }
+    // A page that has gone takes its geometry with it, or the map grows for the
+    // life of the document and a reused id would find a stale answer.
+    for (const id of [...this.crops.keys()]) {
+      if (!live.has(id)) this.crops.delete(id);
+    }
+    this.wake();
+  }
+
+  /**
    * Records the marks an edit state carried, and redraws.
    *
    * Called with every state, not only when the list changed: the comparison
@@ -2815,7 +2924,13 @@ export class Viewer {
         quad.right,
         quad.bottom,
       ]);
-      if (quads.length > 0) out.push({ page, quads });
+      // Out of the crop before it leaves, because the model holds one space and
+      // it is the file's. A mark made on a cropped page and stored in the
+      // cropped space would be written where the crop was rather than where the
+      // words are, the moment the reader changed the crop or took it off.
+      if (quads.length > 0) {
+        out.push({ page, quads: outOfCrop(quads, this.cropAt(page)) });
+      }
     }
     return out;
   }

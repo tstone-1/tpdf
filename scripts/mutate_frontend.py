@@ -645,10 +645,13 @@ MUTATIONS = [
         # Drop every turned view rather than the one page's. Correct and
         # wasteful, and invisible through `peek` --- only the accounting can see
         # it, which is why there is one.
+        # Re-aimed 2026-08-18: `setPageCrop` drops the same page's turned view,
+        # so the one-line anchor now matches twice. Widened to the two lines
+        # above it, which are `setPageTurns`'s and nothing else's.
         "text: clear the whole turned cache when one page is turned",
         "src/lib/text.ts",
-        "    this.turned.delete(page);",
-        "    this.turned.clear();",
+        "    else this.extra.set(page, next);\n    this.turned.delete(page);",
+        "    else this.extra.set(page, next);\n    this.turned.clear();",
         "drops only that page's turned view when its turn changes",
     ),
     Mutation(
@@ -2248,6 +2251,116 @@ MUTATIONS += [
     ),
 ]
 
+# --- cropping a page -----------------------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Move the origin and leave the far corner, which is the shape of a
+        # translation written for a point rather than a rectangle: every
+        # highlight then grows as the page is cropped.
+        "crop: move only a rectangle's origin into the crop",
+        "src/lib/crop.ts",
+        "    rect[2] - at.left,\n    rect[3] - at.top,",
+        "    rect[2],\n    rect[3],",
+        "moves a rectangle by the crop's corner, both edges of each axis",
+    ),
+    Mutation(
+        # Add where it should subtract. A crop then moves everything the wrong
+        # way by twice the offset, which on a small crop still looks like a
+        # rectangle on the page.
+        "crop: move rectangles the wrong way into the crop",
+        "src/lib/crop.ts",
+        "  return [\n    rect[0] - at.left,\n    rect[1] - at.top,",
+        "  return [\n    rect[0] + at.left,\n    rect[1] + at.top,",
+        "moves a rectangle by the crop's corner, both edges of each axis",
+    ),
+    Mutation(
+        # Use the horizontal offset for every coordinate. Right whenever the two
+        # happen to be equal, which is a crop inset by the same amount on the
+        # left as at the top -- and that is what a symmetric fixture looks like.
+        "crop: use one offset for both axes on the way out",
+        "src/lib/crop.ts",
+        "    moved.push((quads[index] ?? 0) + (index % 2 === 0 ? at.left : at.top));",
+        "    moved.push((quads[index] ?? 0) + at.left);",
+        "alternates the two offsets rather than applying one of them",
+    ),
+    Mutation(
+        # An uncropped page whose geometry says it starts somewhere. Everything
+        # on every ordinary document moves.
+        "crop: give an uncropped page a corner that is not the origin",
+        "src/lib/crop.ts",
+        "  return { width_pt, height_pt, left: 0, top: 0 };",
+        "  return { width_pt, height_pt, left: 1, top: 1 };",
+        "moves a rectangle nowhere on a page nobody cropped",
+    ),
+    Mutation(
+        # Place a mark without the crop, which is the drift the differential is
+        # written for: the comment subsystem and the mark subsystem then put one
+        # rectangle in two places.
+        "viewer: place a mark without applying the page's crop",
+        "src/lib/viewer.ts",
+        "    return viewRect(intoCrop(rect, this.cropAt(page)), turns, width_pt, height_pt);",
+        "    return viewRect(rect, turns, width_pt, height_pt);",
+        "places a comment and a mark at the same point, and not where they were",
+    ),
+    Mutation(
+        # Keep the geometry after the crop is cleared. Every rectangle on the
+        # page stays shifted, on a page that is no longer cropped -- the failure
+        # that looks least like the thing that caused it.
+        "viewer: keep a page's crop geometry after the crop is cleared",
+        "src/lib/viewer.ts",
+        "        if (held) {\n          this.crops.delete(view.id);",
+        "        if (held) {\n          void held;",
+        "takes the geometry back off when the crop is cleared",
+    ),
+    Mutation(
+        # Lay the cropped page out at the crop rectangle's own width and height
+        # rather than the size the backend reported. Identical on an unrotated
+        # page and transposed at every quarter turn.
+        "viewer: lay a cropped page out without asking how big it is",
+        "src/lib/viewer.ts",
+        "      this.scroller.notePageSize(slot, {\n        width_pt: at.width_pt,\n        height_pt: at.height_pt,\n      });",
+        "",
+        "lays the page out at the size the backend reported",
+    ),
+    Mutation(
+        # Apply one page's crop to every page. The document reads as though the
+        # reader cropped all of it, and on a uniform corpus that is invisible.
+        "viewer: answer every page with the crop of the one that has one",
+        "src/lib/viewer.ts",
+        "    const known = id === undefined ? undefined : this.crops.get(id);",
+        "    const known = [...this.crops.values()][0];",
+        "leaves an uncropped page alone",
+    ),
+    Mutation(
+        # Serve a page's characters from an extraction made under another crop
+        # box. They are not stale, they are in another space -- so the caret and
+        # every highlight land by the crop's offset.
+        "text: keep a page's characters when its crop changes",
+        "src/lib/text.ts",
+        "    if (crop === undefined) this.crops.delete(page);\n    else this.crops.set(page, crop);\n    this.forget(page);",
+        "    if (crop === undefined) this.crops.delete(page);\n    else this.crops.set(page, crop);",
+        "re-asks for a page whose crop changed, and sends the box",
+    ),
+    Mutation(
+        # Drop every page rather than the one whose crop moved, which is correct
+        # and re-extracts the whole visible document on every state reply.
+        "text: drop every page when one page's crop changes",
+        "src/lib/text.ts",
+        "    this.forget(page);\n  }\n\n  /** Drops one page's extraction, and everything derived from it. */",
+        "    for (const held of [...this.pages.keys()]) this.forget(held);\n  }\n\n  /** Drops one page's extraction, and everything derived from it. */",
+        "keeps its neighbours when one page's crop changes",
+    ),
+    Mutation(
+        # Extract without the crop the page carries. The boxes come back in the
+        # file's space while everything drawn over them is in the cropped one.
+        "text: extract a cropped page without its crop",
+        "src/lib/text.ts",
+        "      crop: this.crops.get(page) ?? null,",
+        "      crop: null,",
+        "re-asks for a page whose crop changed, and sends the box",
+    ),
+]
+
 TEST_FILES = [
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",
@@ -2305,6 +2418,9 @@ TEST_FILES = [
     # Added 2026-08-18 with the keyboard walk through marks, before writing the
     # mutations rather than after the guard fired for a seventh time.
     "src/lib/viewermarks.test.ts",
+    # Added 2026-08-18 with the crop, before writing the mutations.
+    "src/lib/crop.test.ts",
+    "src/lib/viewercrop.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

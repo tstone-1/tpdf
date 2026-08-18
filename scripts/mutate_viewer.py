@@ -635,6 +635,36 @@ MUTATIONS = [
         "viewer",
     ),
     Mutation(
+        # Fall back to the page's DISPLAYED rectangle for a page with no
+        # `/CropBox`, which is the defect this rule replaced: on a rotated page
+        # that is a box in the wrong space, and writing it back made a 612x792
+        # page report itself as 612x612. No unit test can see it -- it needs a
+        # loaded PDFium and that fixture.
+        #
+        # Aimed at the one check in that mode derived from the MEDIA box. Every
+        # other check there reads `crop_pt`, which is the rule under test, so
+        # this mutation corrupts their before and their after equally and it
+        # survived them all -- the trap about a check deriving its inputs from
+        # the thing it is testing, arriving in the probe written to catch this.
+        "crop: fall back to the displayed rectangle for a page with no crop box",
+        "src-tauri/src/progressive.rs",
+        "        let Some(crop) = crop else { return media };",
+        "        let Some(crop) = crop else {\n            return [0.0, 0.0, self.width_pt(), self.height_pt()];\n        };",
+        "the page is the size the file says, read by another library",
+        "crop-rotated",
+    ),
+    Mutation(
+        # Measure the content box on the page as the reader sees it turned rather
+        # than as the document has it. The crop then depends on which way the
+        # window was rotated when the command was pressed.
+        "crop: measure the content box through the reader's rotation",
+        "src-tauri/src/content.rs",
+        "        turns: 0,\n        x: 0,\n        y: 0,\n        width,\n        height,",
+        "        turns: 1,\n        x: 0,\n        y: 0,\n        width,\n        height,",
+        "cropping to the content box raises the ink density",
+        "crop-content",
+    ),
+    Mutation(
         # The guard the whole increment rests on, driven through a real webview
         # rather than through a fake target: the point is that a key **bubbles**
         # from the note field to the root handler and is refused there. The unit
@@ -778,6 +808,47 @@ RUNNERS = {
             PDFIUM_DIR,
             "--file",
             "testdata/encodings.pdf",
+        ],
+    },
+    # The rotated fixture, because that is the page the crop trap needs: with no
+    # `/CropBox` of its own, PDFium answers `FPDFPage_GetCropBox` with the
+    # *displayed* size, and writing that back shrinks the page.
+    "crop-rotated": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "crop-probe",
+        ],
+        "run": [
+            "src-tauri/target/release/examples/crop-probe",
+            "testdata/rotated-90.pdf",
+            "--lib",
+            PDFIUM_DIR,
+            "--mode",
+            "follows",
+        ],
+    },
+    "crop-content": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "crop-probe",
+        ],
+        "run": [
+            "src-tauri/target/release/examples/crop-probe",
+            "testdata/columns.pdf",
+            "--lib",
+            PDFIUM_DIR,
+            "--mode",
+            "ink",
         ],
     },
     "structure": {

@@ -19,6 +19,24 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### Crop a page to what is on it
+
+- **Crop page to content** trims the margins away so the text fills the window.
+  It measures where the ink actually is, so it works on a scan as well as on a
+  page of type --- on the fixtures here it roughly doubles to quadruples how much
+  of the screen is print. **Reset page crop** puts the file's own page back.
+  Both are in the Page menu and in the palette.
+
+- The crop is part of the document, so it is undoable, it travels with a page you
+  move, and it is written into a saved copy as a real `/CropBox` --- other readers
+  open the file cropped the way you left it.
+
+- Comments, links and your own highlights stay on the words they were on. So does
+  a highlight you make *while* the page is cropped, if you later change the crop
+  or take it off.
+
+- There is no crop-by-dragging yet.
+
 ### Reach your own marks from the keyboard
 
 - **Next mark** (⌥⌘M) and **Previous mark** (⇧⌥⌘M) walk the marks you have

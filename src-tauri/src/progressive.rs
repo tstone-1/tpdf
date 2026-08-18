@@ -167,6 +167,18 @@ pub struct RawDocument {
     form: Option<RawForm>,
     /// Loaded page handles, and the order they were loaded in for eviction.
     pages: RefCell<(HashMap<u32, FPDF_PAGE>, VecDeque<u32>)>,
+    /// Each page's `/CropBox` as the file states it, read before any override.
+    ///
+    /// **PDFium has no "put it back": `FPDFPage_SetCropBox` overwrites, and
+    /// `FPDFPage_GetCropBox` then answers with whatever was written.** So the
+    /// only moment the file's own box can be read is before the first override,
+    /// which is what [`RawDocument::page_cropped`] does on the load.
+    ///
+    /// It has to be remembered at all because **pages are cached** (see
+    /// [`PAGE_CACHE`]): a page handed to a request that cropped it is the same
+    /// handle the next request gets, so a crop set once is in force until
+    /// something sets it back.
+    original_crops: RefCell<HashMap<u32, [f32; 4]>>,
     /// Where to find the bytes again, for questions PDFium cannot answer.
     source: Source,
     /// Per-page character-mapping verdicts, computed at most once.
@@ -328,6 +340,7 @@ impl RawDocument {
             handle,
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
+            original_crops: RefCell::new(HashMap::new()),
             source: Source::Path(path.to_path_buf()),
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
@@ -363,6 +376,7 @@ impl RawDocument {
             handle,
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
+            original_crops: RefCell::new(HashMap::new()),
             source: Source::Bytes(bytes),
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
@@ -472,7 +486,12 @@ impl RawDocument {
     }
 
     /// Returns one page by zero-based index, loading it if it is not cached.
-    pub fn page(&self, index: u32) -> Result<RawPage<'_>, String> {
+    ///
+    /// **Private, and [`page`](Self::page) is the door.** A page handed straight
+    /// out of the cache carries whatever crop box the last caller set on it, so
+    /// this is only correct for a caller that then sets one --- which is exactly
+    /// the two that do.
+    fn load_page(&self, index: u32) -> Result<RawPage<'_>, String> {
         if let Some(&handle) = self.pages.borrow().0.get(&index) {
             return Ok(self.borrow_page(handle));
         }
@@ -508,6 +527,53 @@ impl RawDocument {
         }
 
         Ok(self.borrow_page(handle))
+    }
+
+    /// One page with the file's own crop box, whatever a previous caller set.
+    ///
+    /// The safe door, and it is the *default* one rather than the careful one on
+    /// purpose. Pages are cached (see [`PAGE_CACHE`]), so a crop set on a handle
+    /// stays set: a caller that simply took the cached page would see whichever
+    /// crop the **previous** request left --- a tile of page 3 rendered cropped
+    /// because a text extraction two seconds earlier asked for it that way.
+    /// Making that state unreachable beats writing down that callers must avoid
+    /// it, which `docs/TRAPS.md` records as a rule you wrote down and do not
+    /// enforce.
+    pub fn page(&self, index: u32) -> Result<RawPage<'_>, String> {
+        self.page_cropped(index, None)
+    }
+
+    /// One page with the reader's crop applied, or with the file's own restored.
+    ///
+    /// `to` is `[llx, lly, urx, ury]` in the page's own space, y upwards, the
+    /// same convention `/CropBox` uses. `None` restores the file's own box.
+    ///
+    /// Nothing here validates the rectangle: `docmodel::Rect::is_proper`
+    /// refused a degenerate one before it reached the model, and PDFium is not
+    /// this layer's place to re-litigate that. What it does refuse is a
+    /// non-finite corner, for the reason [`normalised`] gives --- a `NaN` in a
+    /// crop box poisons every measurement taken from the page.
+    pub fn page_cropped(&self, index: u32, to: Option<[f32; 4]>) -> Result<RawPage<'_>, String> {
+        let known = self.original_crops.borrow().contains_key(&index);
+        let mut page = self.load_page(index)?;
+        if !known {
+            // Read on the first load of this page and never again --- after an
+            // override there is nothing left to read.
+            self.original_crops
+                .borrow_mut()
+                .insert(index, page.crop_pt());
+        }
+        let want = match to {
+            Some(box_pt) if box_pt.iter().all(|value| value.is_finite()) => box_pt,
+            Some(_) => return Err(format!("page {index}: the crop box is not a number")),
+            None => *self
+                .original_crops
+                .borrow()
+                .get(&index)
+                .expect("recorded on the load above"),
+        };
+        page.set_crop_pt(want);
+        Ok(page)
     }
 
     /// Drops a cached page, closing it.
@@ -578,28 +644,31 @@ pub struct RawPage<'doc> {
     _document: std::marker::PhantomData<&'doc RawDocument>,
 }
 
-/// The lower-left corner of a crop box PDFium answered with, or (0, 0).
-///
 /// **Separated from the call so that something can test it.**
-/// [`RawPage::origin_pt`] needs a live page, which needs a document and a
-/// loaded PDFium --- so both rules below were reachable by no unit test, and a
-/// mutation deleting either survived in the function every character, link and
-/// comment position is measured from.
+/// [`RawPage::crop_pt`] needs a live page, which needs a document and a loaded
+/// PDFium --- so both rules below were reachable by no unit test, and a mutation
+/// deleting either survived in the function every character, link and comment
+/// position is measured from.
 ///
 /// Two rules, and they are the same pair `links.rs` applies to an annotation
 /// rectangle, for the same reasons. The box is **normalised**, because a
-/// producer may write either corner first. A **non-finite** value falls back to
-/// the origin, because it would otherwise poison every subtraction it reaches
-/// and turn a page of text into a page of `NaN` boxes.
+/// producer may write either corner first. A **non-finite** value is refused
+/// outright, because it would otherwise poison every subtraction it reaches and
+/// turn a page of text into a page of `NaN` boxes.
 ///
-/// `ok` false is PDFium declining to answer, and (0, 0) is the value that
-/// changes nothing: a page whose crop box cannot be read is treated exactly as
-/// it was before any of this existed.
-fn corner_of(ok: bool, box_pt: [f32; 4]) -> (f32, f32) {
+/// `ok` false is PDFium declining to answer, which is `None` for the same reason
+/// a malformed box is: the caller has a fallback and this does not have to guess
+/// one for it.
+fn normalised(ok: bool, box_pt: [f32; 4]) -> Option<[f32; 4]> {
     if !ok || !box_pt.iter().all(|value| value.is_finite()) {
-        return (0.0, 0.0);
+        return None;
     }
-    (box_pt[0].min(box_pt[2]), box_pt[1].min(box_pt[3]))
+    Some([
+        box_pt[0].min(box_pt[2]),
+        box_pt[1].min(box_pt[3]),
+        box_pt[0].max(box_pt[2]),
+        box_pt[1].max(box_pt[3]),
+    ])
 }
 
 impl RawPage<'_> {
@@ -634,6 +703,53 @@ impl RawPage<'_> {
     /// changes nothing --- a page whose crop box cannot be read is then treated
     /// exactly as it was before this existed.
     pub fn origin_pt(&self) -> (f32, f32) {
+        // Through `crop_pt` rather than reading `FPDFPage_GetCropBox` a second
+        // time. The two agreed on every fixture in the corpus and that was an
+        // accident: this one takes only the corner, and the fallback box whose
+        // *size* is in the wrong space happens to have the right corner. One
+        // rule means a page where they would differ cannot have two answers.
+        let box_pt = self.crop_pt();
+        (box_pt[0], box_pt[1])
+    }
+
+    /// The page's visible box in the page's **own** space, y upwards.
+    ///
+    /// `/CropBox` intersected with `/MediaBox`, which is what §14.11.2 says a
+    /// reader does and is the same rule `pagetree::displayed_page` applies to the
+    /// same two boxes through `lopdf`. Two libraries, one rule, stated in both
+    /// places: they must agree, or a rectangle is measured against one page and
+    /// drawn on another.
+    ///
+    /// **The fallback is the dangerous part of this function**, and it is the
+    /// last resort rather than the common path for a reason worth stating.
+    /// `FPDFPage_GetCropBox` returns *false* for a page with no `/CropBox` ---
+    /// correctly; there is none to report --- and the version of this that fell
+    /// back to `[0, 0, width_pt(), height_pt()]` was handing back the page's
+    /// **displayed** rectangle where a caller needed one in the page's own space.
+    ///
+    /// On an unrotated page those are the same four numbers, so thirteen of the
+    /// fourteen corpora could not tell. On `testdata/rotated-90.pdf` ---
+    /// `/MediaBox [0 0 612 792]`, `/Rotate 90` --- the sheet is 612 by 792 and
+    /// the displayed page is 792 by 612, and writing the second back through
+    /// `FPDFPage_SetCropBox`, which reads page space, made PDFium intersect the
+    /// two and report the page as **612x612**: a size it never had, on a document
+    /// nobody had cropped.
+    ///
+    /// That fallback was harmless for months because its only consumer was
+    /// [`origin_pt`](Self::origin_pt), which takes the *corner* --- and the
+    /// corner is `(0, 0)` in both frames. A fallback is in the coordinate system
+    /// of whoever wrote it, and the second consumer is where that stops being
+    /// invisible.
+    pub fn media_pt(&self) -> Option<[f32; 4]> {
+        let (mut l, mut b, mut r, mut t) = (0f32, 0f32, 0f32, 0f32);
+        let ok = unsafe {
+            self.bindings
+                .FPDFPage_GetMediaBox(self.handle, &mut l, &mut b, &mut r, &mut t)
+        };
+        normalised(ok != 0, [l, b, r, t])
+    }
+
+    pub fn crop_pt(&self) -> [f32; 4] {
         let (mut left, mut bottom, mut right, mut top) = (0f32, 0f32, 0f32, 0f32);
         // SAFETY: `self.handle` is non-null for the lifetime of `self`, and the
         // four out-parameters are live for the call.
@@ -646,7 +762,51 @@ impl RawPage<'_> {
                 &mut top,
             )
         };
-        corner_of(ok != 0, [left, bottom, right, top])
+        let crop = normalised(ok != 0, [left, bottom, right, top]);
+        let Some(media) = self.media_pt() else {
+            // No sheet to measure against. The displayed rectangle is the only
+            // number left and it is the wrong space on a rotated page --- see the
+            // note above --- so it is the last resort rather than a fallback.
+            return crop.unwrap_or([0.0, 0.0, self.width_pt(), self.height_pt()]);
+        };
+        let Some(crop) = crop else { return media };
+        let shown = [
+            crop[0].max(media[0]),
+            crop[1].max(media[1]),
+            crop[2].min(media[2]),
+            crop[3].min(media[3]),
+        ];
+        // An intersection can be empty where the two boxes do not overlap, which
+        // is a malformed document rather than a page of no size. The sheet is
+        // the honest answer, and it is the same one `pagetree::displayed_page`
+        // gives --- the two read different libraries and must agree, or a
+        // rectangle is placed against one page and drawn on another.
+        if shown[2] > shown[0] && shown[3] > shown[1] {
+            shown
+        } else {
+            media
+        }
+    }
+
+    /// Replaces the page's `/CropBox` for as long as this page stays loaded.
+    ///
+    /// **Not a document edit.** It changes the loaded page, so every PDFium
+    /// answer taken from it afterwards --- the size, the origin, the render, the
+    /// character boxes --- is in the cropped page's terms, which is the whole
+    /// mechanism. Nothing is written to the file; what the reader saves comes
+    /// from the model through `save.rs`, and the two are deliberately different
+    /// paths for the same number.
+    pub fn set_crop_pt(&mut self, box_pt: [f32; 4]) {
+        // SAFETY: `self.handle` is non-null for the lifetime of `self`.
+        unsafe {
+            self.bindings.FPDFPage_SetCropBox(
+                self.handle,
+                box_pt[0],
+                box_pt[1],
+                box_pt[2],
+                box_pt[3],
+            );
+        }
     }
 
     /// Quarter-turns clockwise the page is displayed rotated by: 0, 1, 2 or 3.
@@ -1158,11 +1318,17 @@ mod tests {
     /// every character on the page is shifted by the page's own size.
     #[test]
     fn a_crop_box_written_backwards_still_yields_its_lower_left() {
-        assert_eq!(corner_of(true, [545.0, 742.0, 50.0, 50.0]), (50.0, 50.0));
+        assert_eq!(
+            normalised(true, [545.0, 742.0, 50.0, 50.0]),
+            Some([50.0, 50.0, 545.0, 742.0])
+        );
         // The control: written the ordinary way round, the same box gives the
         // same answer. Without it this would pass for an implementation that
         // always returned the *smaller* pair by accident of the input order.
-        assert_eq!(corner_of(true, [50.0, 50.0, 545.0, 742.0]), (50.0, 50.0));
+        assert_eq!(
+            normalised(true, [50.0, 50.0, 545.0, 742.0]),
+            Some([50.0, 50.0, 545.0, 742.0])
+        );
     }
 
     /// A non-finite coordinate falls back to the origin rather than spreading.
@@ -1173,19 +1339,19 @@ mod tests {
     /// reads as "the text layer is empty".
     #[test]
     fn a_crop_box_with_a_non_finite_corner_is_refused() {
-        assert_eq!(corner_of(true, [f32::NAN, 50.0, 545.0, 742.0]), (0.0, 0.0));
+        assert_eq!(normalised(true, [f32::NAN, 50.0, 545.0, 742.0]), None);
+        assert_eq!(normalised(true, [50.0, f32::INFINITY, 545.0, 742.0]), None);
         assert_eq!(
-            corner_of(true, [50.0, f32::INFINITY, 545.0, 742.0]),
-            (0.0, 0.0)
-        );
-        assert_eq!(
-            corner_of(true, [50.0, 50.0, f32::NEG_INFINITY, 742.0]),
-            (0.0, 0.0)
+            normalised(true, [50.0, 50.0, f32::NEG_INFINITY, 742.0]),
+            None
         );
         // The control, and it is the one that matters: an ordinary box is *not*
-        // refused. A guard written as `return (0.0, 0.0)` unconditionally would
+        // refused. A guard written as an unconditional `return None` would
         // satisfy all three assertions above.
-        assert_eq!(corner_of(true, [50.0, 50.0, 545.0, 742.0]), (50.0, 50.0));
+        assert_eq!(
+            normalised(true, [50.0, 50.0, 545.0, 742.0]),
+            Some([50.0, 50.0, 545.0, 742.0])
+        );
     }
 
     /// PDFium declining to answer is (0, 0), the value that changes nothing.
@@ -1194,7 +1360,7 @@ mod tests {
     /// refused call reads uninitialised intent rather than a crop box.
     #[test]
     fn a_crop_box_pdfium_would_not_answer_for_is_the_origin() {
-        assert_eq!(corner_of(false, [50.0, 50.0, 545.0, 742.0]), (0.0, 0.0));
+        assert_eq!(normalised(false, [50.0, 50.0, 545.0, 742.0]), None);
     }
 
     /// Every code PDFium documents, and what a reader is told for it.

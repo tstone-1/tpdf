@@ -53,8 +53,8 @@ use lopdf::{Dictionary, Object, ObjectId};
 use crate::docmodel::MarkKind;
 use crate::edits::{Plan, PlannedMark};
 use crate::pagetree::{
-    agreed_turns, apply_turns, displayed_page, drop_outline, drop_pages, ordered_pages,
-    reorder_pages, DisplayedPage,
+    agreed_turns, apply_crops, apply_turns, displayed_page, drop_outline, drop_pages,
+    ordered_pages, reorder_pages, DisplayedPage,
 };
 use crate::print::MAX_DECODE;
 
@@ -174,6 +174,23 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
     // rotation written onto a page that is about to go is work thrown away. The
     // ids are unaffected --- the survivors are the same objects they were.
     apply_turns(&mut doc, &agreed_turns(&turns)?)?;
+
+    // After `write_marks` for the same reason `apply_turns` is: a mark's quads
+    // are in the display space the file had when it was opened, and cropping
+    // moves that space. Writing the crop first would place every highlight by
+    // the *new* origin while the reader made it against the old one.
+    //
+    // A page named twice by the plan is refused rather than cropped twice ---
+    // the two entries would be one object, so the second write would silently
+    // win for both positions. `agreed_turns` refuses the same shape for the same
+    // reason, and this reuses neither because the values it compares are four
+    // numbers rather than one.
+    let crops = agreed_crops(plan)?;
+    let crops: Vec<(lopdf::ObjectId, [f64; 4])> = crops
+        .into_iter()
+        .filter_map(|(source, box_pt)| Some((*pages.get(source as usize)?, box_pt)))
+        .collect();
+    apply_crops(&mut doc, &crops)?;
 
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes)
@@ -647,6 +664,43 @@ fn unshared(pages: &[lopdf::ObjectId], kept: &[u32], dropped: &[u32]) -> Result<
 }
 
 /// Writes `bytes` to `out` via a sibling temporary file and a rename.
+/// The crop each kept source page is to get, refusing two that disagree.
+///
+/// One entry per **source** page rather than per plan position, because a page
+/// object can appear in the order twice --- nothing in tpdf duplicates a page
+/// today, and `docmodel` states what would have to be proved first, but the
+/// writer must not be the thing that discovers it. Two positions naming one
+/// object with different boxes have no output that satisfies both, so this
+/// refuses rather than letting the later write win for both.
+///
+/// The same shape as `pagetree::agreed_turns` and deliberately not sharing its
+/// code: that one compares a `u8` and this compares four `f64`, and folding them
+/// together would mean a generic whose only two instantiations are these.
+fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
+    let mut order: Vec<u32> = Vec::new();
+    let mut chosen: std::collections::HashMap<u32, ([f64; 4], usize)> =
+        std::collections::HashMap::new();
+    for (at, page) in plan.pages.iter().enumerate() {
+        let Some(want) = page.crop else { continue };
+        match chosen.get(&page.source) {
+            None => {
+                chosen.insert(page.source, (want, at));
+                order.push(page.source);
+            }
+            Some(&(first, first_at)) if first != want => {
+                return Err(format!(
+                    "pages {} and {} are the same page in this file, so they cannot be cropped \
+                     differently. Crop them the same way, or leave both as they are.",
+                    first_at + 1,
+                    at + 1
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(order.into_iter().map(|s| (s, chosen[&s].0)).collect())
+}
+
 fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
     let partial = out.with_extension(PARTIAL);
     std::fs::write(&partial, bytes).map_err(|e| {
@@ -712,6 +766,7 @@ mod tests {
                     id: at as u64 + 1,
                     source: at as u32,
                     turns,
+                    crop: None,
                 })
                 .collect(),
             marks: Vec::new(),
@@ -731,6 +786,7 @@ mod tests {
                     id: u64::from(source) + 1,
                     source,
                     turns,
+                    crop: None,
                 })
                 .collect(),
             marks: Vec::new(),
@@ -844,6 +900,77 @@ mod tests {
         assert!(
             examined > 0,
             "no fixture was examined --- generate testdata/ (BUILD.md, Test fixtures)"
+        );
+    }
+
+    /// A plan over `n` pages, cropping the page at `at` to `box_pt`.
+    fn plan_cropping(n: usize, at: usize, box_pt: [f64; 4]) -> Plan {
+        let mut plan = plan_of(&vec![0u8; n]);
+        if let Some(page) = plan.pages.get_mut(at) {
+            page.crop = Some(box_pt);
+        }
+        plan
+    }
+
+    /// A crop in the plan reaches the written file, on that page and no other.
+    #[test]
+    fn a_crop_reaches_the_file_it_was_planned_for() {
+        let Some(path) = fixture("text.pdf") else {
+            println!("[SKIP] text.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("crop");
+        let count = page_count(&path);
+        assert!(count > 1, "this needs a second page to be the control");
+        let out = scratch.join("cropped.pdf");
+        let want = [72.0, 100.0, 400.0, 600.0];
+        write_copy(&path, &plan_cropping(count, 0, want), &out).expect("write");
+
+        let after = Document::load(&out).expect("load written");
+        let ids = ordered_pages(&after);
+        let read = |id| crate::pagetree::box_on(&after, id, b"CropBox").map(|b| b.map(f64::from));
+        assert_eq!(read(ids[0]), Some(want), "the cropped page");
+        // The control: every other page is as it was. Without it a write onto
+        // the shared `/Pages` node would satisfy the assertion above and crop
+        // the whole document.
+        for (at, id) in ids.iter().enumerate().skip(1) {
+            assert_eq!(read(*id), None, "page {at} was cropped too");
+        }
+    }
+
+    /// Two positions naming one page with different crops have no output.
+    ///
+    /// Nothing duplicates a page today, so this cannot arise from the model ---
+    /// it is the writer refusing to be the thing that discovers it, the same
+    /// shape `agreed_turns` refuses.
+    #[test]
+    fn one_page_cropped_two_ways_is_refused_and_cropped_one_way_is_not() {
+        let mut plan = plan_of(&[0, 0]);
+        plan.pages[1].source = 0;
+        plan.pages[0].crop = Some([0.0, 0.0, 100.0, 100.0]);
+        plan.pages[1].crop = Some([0.0, 0.0, 200.0, 200.0]);
+        let why = agreed_crops(&plan).expect_err("two crops for one page");
+        assert!(why.contains("cannot be cropped"), "{why}");
+
+        // The control: the same document with the same crop twice is one entry
+        // rather than a refusal, so this refuses a disagreement and not a
+        // repetition.
+        plan.pages[1].crop = plan.pages[0].crop;
+        assert_eq!(
+            agreed_crops(&plan).expect("one crop, twice"),
+            vec![(0, [0.0, 0.0, 100.0, 100.0])]
+        );
+    }
+
+    /// A plan with no crops asks the writer for nothing.
+    #[test]
+    fn a_plan_with_no_crop_writes_no_crop_box() {
+        // The emptiness control. Without it, a version returning every page
+        // unconditionally would pass the two tests above and write a `/CropBox`
+        // onto every page of every document tpdf saves.
+        assert_eq!(
+            agreed_crops(&plan_of(&[0, 0, 0])).expect("no crops"),
+            Vec::new()
         );
     }
 
@@ -1999,6 +2126,7 @@ mod tests {
                 id: 1,
                 source: 0,
                 turns: 0,
+                crop: None,
             }],
             marks: vec![PlannedMark {
                 kind,
@@ -2143,11 +2271,13 @@ mod tests {
                     id: 1,
                     source: 0,
                     turns: 0,
+                    crop: None,
                 },
                 PageView {
                     id: 2,
                     source: 1,
                     turns: 0,
+                    crop: None,
                 },
             ],
             marks: vec![PlannedMark {
@@ -2192,6 +2322,7 @@ mod tests {
                     id: u64::from(source) + 1,
                     source,
                     turns: 0,
+                    crop: None,
                 })
                 .collect(),
             marks: vec![PlannedMark {
@@ -2242,6 +2373,7 @@ mod tests {
                 id: 1,
                 source: 0,
                 turns: 0,
+                crop: None,
             }],
             marks: Vec::new(),
         };

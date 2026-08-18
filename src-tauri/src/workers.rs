@@ -1079,6 +1079,7 @@ impl Workers {
             let response = worker.call(&Request::Tile {
                 rid: request.rid,
                 page: request.page,
+                crop: request.crop,
                 scale: request.scale,
                 turns: request.turns,
                 invert: request.invert,
@@ -1431,8 +1432,8 @@ impl Engine for Workers {
         result
     }
 
-    fn text(&self, doc: u32, page: u32) -> Result<PageText, String> {
-        self.ask(doc, &Request::Text { page })
+    fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String> {
+        self.ask(doc, &Request::Text { page, crop })
     }
 
     fn search(
@@ -1452,6 +1453,19 @@ impl Engine for Workers {
                 carry: carry.cloned(),
             },
         )
+    }
+
+    fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String> {
+        self.ask(doc, &Request::Content { page })
+    }
+
+    fn geometry(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+    ) -> Result<crate::render::CropGeometry, String> {
+        self.ask(doc, &Request::Geometry { page, crop })
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
@@ -2070,6 +2084,7 @@ mod tests {
             rid: 1,
             doc: 0,
             page: 0,
+            crop: None,
             scale: 1.0,
             turns: 0,
             invert: false,

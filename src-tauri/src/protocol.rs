@@ -199,6 +199,33 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
         Some(raw) => return Err(format!("invert must be 1 or absent: {raw:?}")),
     };
 
+    // Four numbers or none. A partial crop is refused rather than completed
+    // from the page's own box: the four together are a rectangle, and three of
+    // them plus a default is a rectangle nobody asked for --- drawn plausibly,
+    // in the wrong place, which is this parser's whole subject.
+    let corners = ["cl", "cb", "cr", "ct"].map(|name| query.and_then(|q| param(q, name)));
+    let crop = if corners.iter().all(Option::is_none) {
+        None
+    } else {
+        let mut box_pt = [0f32; 4];
+        for (at, raw) in corners.iter().enumerate() {
+            let raw = raw.ok_or_else(|| {
+                "a crop box needs all four of cl, cb, cr and ct, or none of them".to_string()
+            })?;
+            let value: f32 = raw
+                .parse()
+                .map_err(|_| format!("crop corner is not a number: {raw:?}"))?;
+            if !value.is_finite() {
+                return Err(format!("crop corner is not finite: {raw:?}"));
+            }
+            box_pt[at] = value;
+        }
+        if box_pt[2] <= box_pt[0] || box_pt[3] <= box_pt[1] {
+            return Err(format!("crop box encloses nothing: {box_pt:?}"));
+        }
+        Some(box_pt)
+    };
+
     Ok(TileRequest {
         rid,
         doc: doc as u32,
@@ -210,6 +237,7 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
         y: y as i32,
         width: width as u16,
         height: height as u16,
+        crop,
         format,
     })
 }

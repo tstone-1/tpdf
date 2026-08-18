@@ -77,7 +77,15 @@ const MARK_COLORS: Record<MarkKind, [number, number, number]> = {
  * numbers, so a stale handle names a real document rather than nothing.
  */
 export class Edits {
-  private readonly doc: number;
+  /**
+   * The open document's handle.
+   *
+   * Readable because the two crop questions --- what is on this page, and how
+   * big is it under this box --- are asked of the *file* rather than of the
+   * model, so they go to the renderer with this handle rather than through any
+   * method here. See `crop.ts`.
+   */
+  readonly doc: number;
   private current: EditState;
   /** The translation the last answer implies, rebuilt with it. */
   private pageMap: PageMap;
@@ -160,6 +168,27 @@ export class Edits {
     if (id === undefined) return this.current;
     return this.adopt(
       await invoke<EditState>("page_rotate", { doc: this.doc, page: id, turns }),
+    );
+  }
+
+  /**
+   * Sets or clears the visible box of the page in slot `page`.
+   *
+   * Takes a slot and sends the id, as {@link rotate} does and for the same
+   * reason. `to` is `[llx, lly, urx, ury]` in the page's own space, y upwards,
+   * or `null` to put the file's own box back.
+   *
+   * **Absolute, never relative.** A second crop replaces the first rather than
+   * composing with it, so undoing one is `null` and not an inverse to compute.
+   */
+  async crop(
+    page: number,
+    to: readonly [number, number, number, number] | null,
+  ): Promise<EditState> {
+    const id = this.current.pages[page]?.id;
+    if (id === undefined) return this.current;
+    return this.adopt(
+      await invoke<EditState>("page_crop", { doc: this.doc, page: id, to }),
     );
   }
 

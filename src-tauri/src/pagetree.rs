@@ -103,6 +103,32 @@ pub struct DisplayedPage {
     pub origin: (f32, f32),
 }
 
+/// One of a page's boxes, inherited, normalised, and refused if it is degenerate.
+///
+/// `[llx, lly, urx, ury]`, corners in ascending order whichever way round the
+/// producer wrote them. `None` for a box that is absent, unreadable, non-finite
+/// or encloses nothing --- four ways of saying "there is no usable box here",
+/// which every caller wants to treat the same way.
+///
+/// Extracted from [`displayed_page`]'s own closure when [`apply_crops`] needed
+/// the media box: a second reader of the same four numbers is the drift this
+/// module's note is about, and it would disagree in exactly the case that makes
+/// the difference --- a box written corner-first.
+pub(crate) fn box_on(doc: &Document, page: ObjectId, key: &[u8]) -> Option<[f32; 4]> {
+    inherited(doc, page, key)
+        .and_then(|object| numbers_of(doc, &object, 4))
+        .filter(|values| values.iter().all(|value| value.is_finite()))
+        .map(|v| {
+            [
+                v[0].min(v[2]),
+                v[1].min(v[3]),
+                v[0].max(v[2]),
+                v[1].max(v[3]),
+            ]
+        })
+        .filter(|b| b[2] > b[0] && b[3] > b[1])
+}
+
 /// The displayed page box: `/CropBox` where there is one, else `/MediaBox`.
 ///
 /// **Reading `/MediaBox` alone was wrong, and the failure is silent.** PDFium
@@ -129,20 +155,7 @@ pub struct DisplayedPage {
 /// answers on one document, and collapsing them would turn that test into one
 /// that cannot fail.
 pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
-    let box_of = |key: &[u8]| {
-        inherited(doc, page, key)
-            .and_then(|object| numbers_of(doc, &object, 4))
-            .filter(|values| values.iter().all(|value| value.is_finite()))
-            .map(|v| {
-                [
-                    v[0].min(v[2]),
-                    v[1].min(v[3]),
-                    v[0].max(v[2]),
-                    v[1].max(v[3]),
-                ]
-            })
-            .filter(|b| b[2] > b[0] && b[3] > b[1])
-    };
+    let box_of = |key: &[u8]| box_on(doc, page, key);
 
     let media = box_of(b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0]);
     let shown = match box_of(b"CropBox") {
@@ -294,6 +307,58 @@ pub fn apply_turns(doc: &mut Document, turns: &[(ObjectId, u8)]) -> Result<(), S
             .and_then(Object::as_dict_mut)
             .map_err(|e| format!("page {id:?} is not a dictionary: {e}"))?
             .set("Rotate", composed);
+    }
+    Ok(())
+}
+
+/// Writes a `/CropBox` on each page that carries one in the plan.
+///
+/// `crops` is `(page object, [llx, lly, urx, ury])` in the page's own space,
+/// y upwards, which is the space `/CropBox` is defined in.
+///
+/// **Written on the page itself, never on an ancestor**, even where the page
+/// inherited its box from one. `/CropBox` is inheritable ([`INHERITABLE`]), so
+/// setting it on a `/Pages` node would crop every page hanging under it ---
+/// which for a document whose pages share one node is every page in the file,
+/// from a reader who cropped one.
+///
+/// **Intersected with the media box**, because §14.11.2 says a reader does that
+/// and a box outside the sheet otherwise produces a page that renders as nothing
+/// in tpdf and as the whole sheet in something else. The model already refused a
+/// degenerate rectangle (`docmodel::Rect::is_proper`); this refuses one the
+/// intersection empties, which is a different question and can only be asked
+/// here, where the media box is known.
+///
+/// # Errors
+///
+/// A page object that is not a dictionary, or a crop that shares no area with
+/// the page's media box.
+pub fn apply_crops(doc: &mut Document, crops: &[(ObjectId, [f64; 4])]) -> Result<(), String> {
+    for (id, want) in crops {
+        let media = box_on(doc, *id, b"MediaBox").map(|b| b.map(f64::from));
+        // The default US Letter sheet, which is what `displayed_page` falls back
+        // to and has to be the same number: a crop clamped against one sheet and
+        // displayed against another is the disagreement this whole module exists
+        // to prevent.
+        let media = media.unwrap_or([0.0, 0.0, 612.0, 792.0]);
+        let box_pt = [
+            want[0].max(media[0]),
+            want[1].max(media[1]),
+            want[2].min(media[2]),
+            want[3].min(media[3]),
+        ];
+        if box_pt[2] <= box_pt[0] || box_pt[3] <= box_pt[1] {
+            return Err(format!(
+                "page {id:?}: the crop {want:?} is outside the page {media:?}"
+            ));
+        }
+        doc.get_object_mut(*id)
+            .and_then(Object::as_dict_mut)
+            .map_err(|e| format!("page {id:?} is not a dictionary: {e}"))?
+            .set(
+                "CropBox",
+                Object::Array(box_pt.iter().map(|v| Object::Real(*v as f32)).collect()),
+            );
     }
     Ok(())
 }
@@ -604,6 +669,71 @@ mod tests {
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
         doc.trailer.set("Root", catalog);
         (doc, a, b)
+    }
+
+    /// {@link two_pages}, with a US Letter sheet on the shared parent.
+    ///
+    /// The media box is on the *parent* deliberately: `apply_crops` reads it
+    /// through `box_on`, which walks the inheritance, and a fixture stating it on
+    /// the page would pass for an implementation that did not walk at all.
+    fn two_pages_with_media(rotate: Option<i64>) -> (Document, ObjectId, ObjectId) {
+        let (mut doc, a, b) = two_pages(rotate);
+        let parent = doc
+            .get_object(a)
+            .and_then(Object::as_dict)
+            .and_then(|d| d.get(b"Parent"))
+            .and_then(Object::as_reference)
+            .expect("a parent");
+        doc.get_object_mut(parent)
+            .and_then(Object::as_dict_mut)
+            .expect("the page tree")
+            .set("MediaBox", vec![0.into(), 0.into(), 612.into(), 792.into()]);
+        (doc, a, b)
+    }
+
+    /// A crop is written on the page, never on the `/Pages` node it inherits
+    /// from.
+    ///
+    /// `/CropBox` is inheritable, so a crop set on an ancestor crops every page
+    /// under it --- which for a document whose pages share one node is the whole
+    /// file, from a reader who cropped one page.
+    #[test]
+    fn a_crop_lands_on_the_page_and_not_on_its_parent() {
+        let (mut doc, first, second) = two_pages_with_media(None);
+        apply_crops(&mut doc, &[(first, [10.0, 20.0, 300.0, 400.0])]).expect("crop");
+
+        assert_eq!(
+            box_on(&doc, first, b"CropBox"),
+            Some([10.0, 20.0, 300.0, 400.0])
+        );
+        // The control: the other page is untouched. Without it, a write onto the
+        // shared parent would satisfy the assertion above exactly.
+        assert_eq!(box_on(&doc, second, b"CropBox"), None);
+    }
+
+    /// A crop larger than the sheet is clamped to it, per §14.11.2.
+    #[test]
+    fn a_crop_outside_the_page_is_brought_back_onto_it() {
+        let (mut doc, page, _) = two_pages_with_media(None);
+        apply_crops(&mut doc, &[(page, [-50.0, -50.0, 10_000.0, 10_000.0])]).expect("crop");
+        assert_eq!(
+            box_on(&doc, page, b"CropBox"),
+            box_on(&doc, page, b"MediaBox")
+        );
+    }
+
+    /// A crop sharing no area with the sheet is refused rather than written.
+    ///
+    /// The model already refused a degenerate rectangle; this is the different
+    /// question only this layer can ask, because only this layer knows the sheet.
+    #[test]
+    fn a_crop_that_misses_the_page_is_refused() {
+        let (mut doc, page, _) = two_pages_with_media(None);
+        let why = apply_crops(&mut doc, &[(page, [5000.0, 5000.0, 6000.0, 6000.0])])
+            .expect_err("a crop off the sheet");
+        assert!(why.contains("outside the page"), "{why}");
+        // Refused *before* writing, so the page is as it was.
+        assert_eq!(box_on(&doc, page, b"CropBox"), None);
     }
 
     #[test]

@@ -102,6 +102,7 @@ fn main() {
 
     // ------------------------------------------------------------ the pixels
     let request = Request::Tile {
+        crop: None,
         rid: 1,
         page: 0,
         scale: 1.0,
@@ -185,6 +186,7 @@ fn main() {
     // the withdrawal arrives. The margin is the first tile's render time
     // (printed below) against three pipe writes, which is microseconds.
     let tile_at = |rid: u64| Request::Tile {
+        crop: None,
         rid,
         page: 0,
         scale: 1.0,
@@ -236,7 +238,10 @@ fn main() {
     );
 
     // ------------------------------------------------------- the other routes
-    let text = worker.call(&Request::Text { page: 0 });
+    let text = worker.call(&Request::Text {
+        page: 0,
+        crop: None,
+    });
     check(
         "text extraction crosses the boundary",
         matches!(&text, Ok(r) if r.ok && r.json.is_some()),

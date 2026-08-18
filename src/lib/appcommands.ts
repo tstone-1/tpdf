@@ -108,6 +108,15 @@ export interface AppActions {
   rotatePage(delta: number): void;
   deletePage(): void;
   /**
+   * Crop the page the reader is on to the box its ink occupies, or put the
+   * file's own box back.
+   *
+   * One action with two arguments rather than two actions, which is the shape
+   * `rotatePage` has and for the same reason: two entry points into one call is
+   * where the second one drifts.
+   */
+  cropPage(to: "content" | "reset"): void;
+  /**
    * Move the page the reader is on `delta` slots along, in the document.
    *
    * A signed step rather than a pair of commands, so that the two palette
@@ -442,6 +451,33 @@ export function registerAppCommands(
       title: "Remove mark",
       enabled: () => withDocument() && actions.hasOpenMark(),
       run: () => actions.removeMark(),
+    },
+    {
+      // **Crop to content**, and there is deliberately no crop-by-dragging: a
+      // rectangle a reader draws needs a drag mode this application does not
+      // have, since every gesture on a page today means select, open or follow.
+      // Measuring the ink answers the case a reader actually wants --- a scan,
+      // or an article whose margins are wider than its column --- without
+      // inventing one.
+      //
+      // Measured from a low-resolution render rather than from the page's
+      // objects, which is what makes it work on a scan at all: see `content.rs`,
+      // where a scanned page is one image object covering the sheet and the
+      // object union is therefore the sheet.
+      id: "edit.cropToContent",
+      title: "Crop page to content",
+      enabled: withDocument,
+      run: () => actions.cropPage("content"),
+    },
+    {
+      // Offered whether or not this page is cropped, like Undo and unlike
+      // "Remove mark": whether a crop is in force is a property of whichever
+      // page the reader has scrolled to, and a command that came and went as
+      // they scrolled would be worse than one that sometimes does nothing.
+      id: "edit.resetCrop",
+      title: "Reset page crop",
+      enabled: withDocument,
+      run: () => actions.cropPage("reset"),
     },
     {
       // **No keyboard binding, and that is the decision rather than an

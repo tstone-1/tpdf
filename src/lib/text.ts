@@ -236,6 +236,18 @@ export class TextCache {
    * re-sets, and the eviction scan takes keys from the front.
    */
   private readonly pages = new Map<number, PageText>();
+  /**
+   * Each page's crop box, sent with every extraction that has one.
+   *
+   * Held here rather than passed to {@link load}, because the cache's whole job
+   * is to answer without asking --- a caller that had to supply the crop could
+   * supply a stale one and be served a cached answer measured under a different
+   * box, which is the one thing the cache must not do.
+   */
+  private readonly crops = new Map<
+    number,
+    readonly [number, number, number, number]
+  >();
   private readonly pending = new Map<number, Promise<PageText | null>>();
   /** Characters across `pages`, maintained rather than recomputed. */
   private chars = 0;
@@ -294,6 +306,44 @@ export class TextCache {
     if ((this.extra.get(page) ?? 0) === next) return;
     if (next === 0) this.extra.delete(page);
     else this.extra.set(page, next);
+    this.turned.delete(page);
+  }
+
+  /**
+   * Records a page's crop box, dropping what was extracted under the old one.
+   *
+   * **Character boxes are measured from the displayed page's corner**, and a
+   * crop moves that corner, so an extraction made under a different box is not
+   * stale in the usual sense --- it is measured in another space. Dropped rather
+   * than translated: the backend re-extracts under the new box and the answer is
+   * then the renderer's own, which is what everything else here is built on.
+   *
+   * Drops **this page's** entry, the same scope {@link setPageTurns} uses and
+   * for the same reason: a crop is one page's, unlike a view rotation.
+   */
+  setPageCrop(
+    page: number,
+    crop: readonly [number, number, number, number] | undefined,
+  ): void {
+    const was = this.crops.get(page);
+    const same =
+      was === crop ||
+      (was !== undefined &&
+        crop !== undefined &&
+        was.every((value, at) => value === crop[at]));
+    if (same) return;
+    if (crop === undefined) this.crops.delete(page);
+    else this.crops.set(page, crop);
+    this.forget(page);
+  }
+
+  /** Drops one page's extraction, and everything derived from it. */
+  private forget(page: number): void {
+    const held = this.pages.get(page);
+    if (held) {
+      this.chars -= held.codes.length;
+      this.pages.delete(page);
+    }
     this.turned.delete(page);
   }
 
@@ -417,7 +467,11 @@ export class TextCache {
     const existing = this.pending.get(page);
     if (existing) return existing;
 
-    const request = invoke<PageText>("page_text", { doc: this.doc, page })
+    const request = invoke<PageText>("page_text", {
+      doc: this.doc,
+      page,
+      crop: this.crops.get(page) ?? null,
+    })
       .then((text) => {
         this.remember(page, text);
         // Turned on the way out rather than on the way in, so a rotation that
