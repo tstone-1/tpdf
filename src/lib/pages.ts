@@ -269,6 +269,69 @@ export function commentsIn(
 }
 
 /**
+ * The reader's own marks, in the order a keyboard walk should meet them.
+ *
+ * The other three translators here answer *where does this belong now*; this one
+ * also answers *which comes first*, and the two are the same question asked of a
+ * mark: a `MarkView` carries the page's **id**, so its position in the document
+ * is whatever slot that id is in today. A reader who moves page 9 to the front
+ * meets its highlights first, and nothing about the marks themselves changed.
+ *
+ * The rectangle is the union of the mark's quads in **display** space --- before
+ * any turn the reader or an edit added, which is the space `Place.top` is
+ * comparable in. See {@link stepAlong}, which does the comparing.
+ *
+ * Ordered by slot, then by the union's top edge, then by id. The last is not
+ * decoration: two marks can share a top edge exactly --- a reader marking the
+ * same line twice --- and without it which one is "next" would depend on the
+ * sort's stability rather than on a rule. Same argument as `orderLinks`.
+ */
+export function markWalk(
+  items: readonly MarkView[],
+  pages: PageMap,
+): { id: number; page: number; rect: [number, number, number, number] }[] {
+  const walk: { id: number; page: number; rect: [number, number, number, number] }[] =
+    [];
+  for (const mark of items) {
+    const slot = pages.slotOfId(mark.page);
+    if (slot === undefined) continue;
+    const rect = unionOf(mark.quads);
+    // A mark with no rectangles is nowhere, so it is not somewhere a walk can
+    // stop. The model does not make one; a saved file reopened might.
+    if (!rect) continue;
+    walk.push({ id: mark.id, page: slot, rect });
+  }
+  walk.sort((a, b) => {
+    if (a.page !== b.page) return a.page - b.page;
+    if (a.rect[1] !== b.rect[1]) return a.rect[1] - b.rect[1];
+    return a.id - b.id;
+  });
+  return walk;
+}
+
+/** The smallest rectangle covering every quad, or `null` if there are none. */
+function unionOf(
+  quads: readonly number[],
+): [number, number, number, number] | null {
+  let box: [number, number, number, number] | null = null;
+  for (let at = 0; at + 3 < quads.length; at += 4) {
+    const left = quads[at] ?? 0;
+    const top = quads[at + 1] ?? 0;
+    const right = quads[at + 2] ?? 0;
+    const bottom = quads[at + 3] ?? 0;
+    box = box
+      ? [
+          Math.min(box[0], left),
+          Math.min(box[1], top),
+          Math.max(box[2], right),
+          Math.max(box[3], bottom),
+        ]
+      : [left, top, right, bottom];
+  }
+  return box;
+}
+
+/**
  * The outline with every destination in slots, and the dead ones marked broken.
  *
  * The tree is kept whole: an entry whose page has gone is still a heading with

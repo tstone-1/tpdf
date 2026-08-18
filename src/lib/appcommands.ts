@@ -31,7 +31,7 @@
  */
 
 import type { CommandRegistry } from "./commands";
-import { BINDINGS, label, matches, type BoundCommand } from "./keys";
+import { BINDINGS, inTextField, label, matches, type BoundCommand } from "./keys";
 import { describeRange, parsePageRange } from "./pageranges";
 import type { MarkKind } from "./pages";
 import type { Tab } from "./sidebar";
@@ -604,6 +604,32 @@ export function registerAppCommands(
       },
     },
     {
+      // The only way to reach a mark of the reader's own without a pointer.
+      // Until this existed a highlight's note could not be read, changed or
+      // taken off from the keyboard at all --- the whole subsystem was reachable
+      // by one input device.
+      //
+      // `nav` rather than `edit`, and that is not filing: it *moves* the reader.
+      // Editing is what the note box and "Remove mark" then do, and both are
+      // already commands of their own.
+      id: "nav.nextMark",
+      title: "Next mark",
+      keys: label("nav.nextMark"),
+      enabled: withDocument,
+      run: () => {
+        actions.viewer()?.stepMark(1);
+      },
+    },
+    {
+      id: "nav.previousMark",
+      title: "Previous mark",
+      keys: label("nav.previousMark"),
+      enabled: withDocument,
+      run: () => {
+        actions.viewer()?.stepMark(-1);
+      },
+    },
+    {
       id: "nav.firstPage",
       title: "Go to start",
       keys: label("nav.firstPage"),
@@ -858,29 +884,4 @@ export function handleWindowKey(
     event.preventDefault();
     if (actions.canRedo()) actions.redoEdit();
   }
-}
-
-/**
- * Whether the key went to something a reader is typing into.
- *
- * Duck-typed rather than `instanceof HTMLElement`, so that the guard is
- * exercised by the same tests that exercise everything else here.
- *
- * Measured rather than assumed, because the guess was wrong: the test runner has
- * no DOM at all, `globalThis.HTMLElement` is `undefined`, and
- * `target instanceof HTMLElement` there **throws** ---
- * `TypeError: Right-hand side of 'instanceof' is not an object`. So it does not
- * quietly answer "not a text field"; it takes the whole handler down, and the
- * only way to test the guard would be to stand up a DOM for it. Duck-typing
- * costs three field reads and needs neither.
- */
-function inTextField(event: KeyboardEvent): boolean {
-  const target = event.target as {
-    tagName?: string;
-    isContentEditable?: boolean;
-  } | null;
-  if (!target) return false;
-  if (target.isContentEditable === true) return true;
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }

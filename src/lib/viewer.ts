@@ -30,7 +30,7 @@
  */
 
 import { AccessibleText } from "./a11y";
-import { matches } from "./keys";
+import { inTextField, matches } from "./keys";
 import { CommentPopup } from "./commentpopup";
 import { MarkPopup } from "./markpopup";
 import type { Anchor } from "./popup";
@@ -41,14 +41,14 @@ import {
   onPage as linksOnPage,
   orderedLinks,
   refusalFor,
-  stepLink,
+  stepAlong,
   turnedFor as linksTurnedFor,
   type Link,
   type Place,
 } from "./links";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
-import { PageMap, unedited, type MarkView, type PageView } from "./pages";
+import { markWalk, PageMap, unedited, type MarkView, type PageView } from "./pages";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import {
   PLAIN_SEARCH,
@@ -1540,6 +1540,22 @@ export class Viewer {
    * does not list them, and there is no label for them to disagree with.
    */
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    // Nothing below is meant for a reader who is typing, and since 2026-08-18
+    // there is a text field inside this root: the note on a mark. Before this
+    // guard, typing "n" into a note turned the page under the box, "p" turned it
+    // back, Home jumped to the start and the space bar scrolled --- and ⌘R
+    // rotated the view while ⌘C overwrote what the reader had just copied out of
+    // the field. All of it measured, none of it visible in `git status`, because
+    // this handler predates the only text field it can ever see.
+    //
+    // *Everything* rather than the literal keys alone. `appcommands.ts` guards
+    // ⌘Z and ⌘⇧Z only, and its reasoning is right for the window: the chords it
+    // holds are ones no text field claims, so taking them from the find bar is
+    // what a reader wants. This handler holds the opposite half --- `n`, `p`,
+    // Space, Home, End, the arrows --- plus ⌘A and ⌘C, which mean *this field*
+    // when a field has the keyboard.
+    if (inTextField(event)) return;
+
     const screen = this.viewportSize().height * PAGE_OVERLAP;
 
     if (matches("view.zoomIn", event)) {
@@ -1566,6 +1582,14 @@ export class Viewer {
       this.prevMatch();
     } else if (matches("find.next", event)) {
       this.nextMatch();
+    } else if (event.key === "Enter" && this.markNote.openId !== null) {
+      // Before the link arm, on the ladder Escape already uses here: the
+      // innermost thing wins, and a note the walk just opened is inside a link
+      // that was focused before it. This is how a reader who walked to a mark
+      // starts typing --- the walk deliberately left the keyboard on the page so
+      // that the next press would step again.
+      event.preventDefault();
+      this.markNote.focusField();
     } else if (event.key === "Enter" && this.focusedLink) {
       // Only with a link focused, so Enter is not swallowed on every other
       // document --- an unhandled key falls through to the window, and taking
@@ -1576,6 +1600,10 @@ export class Viewer {
       this.stepLink(1);
     } else if (matches("nav.previousLink", event)) {
       this.stepLink(-1);
+    } else if (matches("nav.nextMark", event)) {
+      this.stepMark(1);
+    } else if (matches("nav.previousMark", event)) {
+      this.stepMark(-1);
     } else if (matches("edit.clearSelection", event)) {
       // Escape, and the innermost thing it can dismiss goes first. A reader
       // with a note open, a link focused and a selection presses it three
@@ -1759,7 +1787,7 @@ export class Viewer {
       this.opts.onError?.("This document has no links.");
       return false;
     }
-    const next = stepLink(this.linkWalk, this.focusedLink, this.position, direction);
+    const next = stepAlong(this.linkWalk, this.focusedLink, this.position, direction);
     if (!next) {
       this.opts.onError?.(
         direction === 1 ? "No further links." : "No earlier links.",
@@ -2240,6 +2268,11 @@ export class Viewer {
     return this.markNote.text;
   }
 
+  /** The note editor's text field, so a harness can ask what has the keyboard. */
+  get markNoteField(): HTMLTextAreaElement {
+    return this.markNote.field;
+  }
+
   /** The note editor's element, so the check harness can look at it. */
   get markPopup(): HTMLElement {
     return this.markNote.node;
@@ -2248,16 +2281,93 @@ export class Viewer {
   /**
    * Opens the note on one of the reader's own marks.
    *
-   * Does not scroll to it, unlike {@link showComment}: every route in is a press
-   * on the mark itself, so it is on screen by construction. The day a panel
-   * lists these, that stops being true and this needs the same treatment.
+   * **It scrolls to the mark when the mark is off screen**, exactly as
+   * {@link showComment} does and for the same reason: a page being visible is
+   * not the mark being visible, and a note anchored below the window clamps
+   * itself into view and points at nothing. This did not, and said so --- "every
+   * route in is a press on the mark itself, so it is on screen by construction.
+   * The day a panel lists these, that stops being true and this needs the same
+   * treatment." {@link stepMark} is that day. A press is unaffected: a mark you
+   * can press is on screen, so the test below is false for it.
+   *
+   * `focus` moves the keyboard into the note field. True from a press, which is
+   * a reader reaching for a mark in order to type on it; false from the walk,
+   * where the reader is looking rather than writing --- and where taking the
+   * keyboard would strand them, since the guard at the top of {@link onKeyDown}
+   * means the next press of the walk key would go to the field and do nothing.
    */
-  showMark(id: number): void {
+  showMark(id: number, focus = true): void {
     const mark = this.marks.find((item) => item.id === id);
-    const at = mark ? this.anchorForMark(mark) : null;
-    if (!mark || !at) return;
-    this.markNote.show(mark, at, true);
+    if (!mark) return;
+    const where = this.anchorForMark(mark);
+    if (!where) return;
+    const height = this.viewportSize().height;
+    if (where.bottom < 0 || where.top > height) {
+      this.goToDestination(
+        this.pages.slotOfId(mark.page) ?? 0,
+        this.markTopPt(mark),
+      );
+    }
+    // Re-read after the scroll above, which moves it.
+    const at = this.anchorForMark(mark);
+    if (!at) return;
+    this.markNote.show(mark, at, focus);
     this.wake();
+  }
+
+  /**
+   * Points from the displayed page's top to a mark's topmost edge.
+   *
+   * The page's top for a mark with no rectangles, which is the honest reading of
+   * "somewhere on this page" --- and not `Math.min()` of nothing, which is
+   * `Infinity` and would scroll to the end of the document. The walk cannot
+   * produce such a mark, since `markWalk` drops it, and a press could not
+   * either, having nothing to hit. A saved file reopened is the case neither of
+   * those covers.
+   */
+  private markTopPt(mark: MarkView): number {
+    const placed = this.viewQuadsOf(mark);
+    if (!placed || placed.quads.length === 0) return 0;
+    return Math.max(0, Math.min(...placed.quads.map((quad) => quad.top)));
+  }
+
+  /**
+   * Moves the reader to the next mark of their own, or the previous one.
+   *
+   * The only way to reach a mark without a pointer. Until this existed the
+   * pointer was it: a highlight's note could not be read, edited or taken off
+   * from the keyboard at all, which `docs/PLAN.md` had recorded as outstanding
+   * through two increments.
+   *
+   * It **opens the note** rather than drawing a focus ring the way the link walk
+   * does, and the asymmetry is the point. A link is a thing you go *through*, so
+   * focusing it and following it are two steps; a mark is a thing you go *to*,
+   * and everything a reader can do with one --- read the note, change it, take
+   * the mark off --- is in the box. A ring would be a step that only ever
+   * precedes opening the box.
+   *
+   * The keyboard stays on the page, so repeated presses walk. Enter moves it
+   * into the note; see {@link onKeyDown}.
+   *
+   * Same two starting points and the same refusal to wrap as
+   * {@link stepAlong} --- it is the same function.
+   */
+  stepMark(direction: 1 | -1): boolean {
+    const walk = markWalk(this.marks, this.pages);
+    if (walk.length === 0) {
+      this.opts.onError?.("You have not marked anything in this document.");
+      return false;
+    }
+    const from = walk.find((item) => item.id === this.markNote.openId) ?? null;
+    const next = stepAlong(walk, from, this.position, direction);
+    if (!next) {
+      this.opts.onError?.(
+        direction === 1 ? "No further marks." : "No earlier marks.",
+      );
+      return false;
+    }
+    this.showMark(next.id, false);
+    return true;
   }
 
   /**

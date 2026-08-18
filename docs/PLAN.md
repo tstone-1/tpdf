@@ -5452,6 +5452,132 @@ which is still the UI question the `MARK_COLORS` table's comment names rather
 than a missing constant. And a keyboard route to a mark, unchanged from the last
 increment: the pointer is still the only way to open one.
 
+#### Reaching a mark from the keyboard --- done 2026-08-18
+
+Two increments in a row had ended by recording the same gap: *"a keyboard route
+to a mark, unchanged from the last increment: the pointer is still the only way
+to open one."* This is that route, and it turned out to have a prerequisite
+nobody had noticed --- the box it lands the reader in was not safe to type in.
+
+**A shipped defect, found by measuring rather than by reading.** Every key
+`viewer.ts` handles was firing while the reader typed a note: "n" turned the page
+under the box, "p" turned it back, Home jumped to the start of the document, the
+space bar and the arrows scrolled the note away, ⌘R turned the view and ⌘C wrote
+the page's selection over what the reader had just copied out of the field. The
+cause is one sentence long and is a property of the *tree* rather than of the
+handler: the note box is a `<textarea>` inside the viewer's own root, added four
+days earlier, and a key delivered to it bubbles to the root handler exactly as a
+key pressed on the page does. Nothing in that commit's diff said so.
+
+The correct reasoning was already in the repository, two files away, and did not
+transfer. `appcommands.ts` guards ⌘Z and ⌘⇧Z and nothing else, and explains that
+every other binding it holds is *"a chord no text field claims, so taking it from
+the find bar is what a reader wants"*. That is right about the window handler,
+whose bindings are all chords. The viewer's handler holds the opposite half ---
+the bare letters and the navigation keys --- and a rule stated with its reasoning
+still has to be re-derived for the next surface, because the reasoning is what
+varies. `docs/TRAPS.md` has the general form.
+
+`inTextField` moved from `appcommands.ts` into `keys.ts`, which is the module
+that owns what an event *is*, and the viewer's handler now returns on it before
+anything else. One definition, because the two handlers want it for opposite
+reasons and two copies of "what is a text field" would be two chances to
+disagree.
+
+**The walk itself is one function, shared with links.** `stepLink` became
+`stepAlong`, generic over an id and a place, and the reasoning is `comments.ts`'s
+about `hitTest`: a second copy of "the next one after the viewport, and it does
+not wrap" is a second thing to keep right, and a mutation of one of them survives
+the other's tests. What the two callers do *not* share is the list, and that is
+the half that genuinely differs --- `orderedLinks` bands lines across a page,
+`markWalk` resolves page **ids** to slots.
+
+That resolution is the increment's one real piece of arithmetic. A `MarkView`
+carries the page's id, so a mark's position in the document is whatever slot that
+id is in today: a reader who moves page 9 to the front meets its highlights
+first, and nothing about the marks changed. The mutation that reads `mark.page`
+as a position is invisible on an unedited document and exactly reverses the walk
+on an edited one.
+
+**The walk opens the note rather than drawing a focus ring, and the asymmetry
+with links is the point.** A link is a thing you go *through*, so focusing it and
+following it are two steps. A mark is a thing you go *to*, and everything a
+reader can do with one --- read the note, change it, take the mark off --- is in
+the box; a ring would be a step that only ever precedes opening it. It opens the
+box **without taking the keyboard**, which is not a nicety: with the guard above
+in place, a walk that focused the field would strand the reader on the first mark
+it reached, because the next press of the walk key would go to the field and be
+refused. `MarkPopup.show` already took a `focus` flag for a distinction it had
+never had two sides of. Enter moves the keyboard in, on the innermost-first
+ladder Escape already uses there.
+
+`showMark` also gained the three lines `showComment` has had since it was
+written, and its own doc comment had predicted the day: *"every route in is a
+press on the mark itself, so it is on screen by construction. The day a panel
+lists these, that stops being true and this needs the same treatment."* A press
+is unaffected --- a mark you can press is on screen, so the test is false for it.
+
+##### What the checks can and cannot say
+
+**Sixteen unit tests, four in `keys.test.ts`, one in `markpopup.test.ts`, and
+sixteen mutations, every check proved able to fail.** The guard's tests all come
+in pairs: a key delivered from a text field must do nothing **and** the same key
+delivered from the page must do the thing. A guard tested only on its refusal is
+satisfied by a viewer that ignores every key, which is why there are two
+mutations of that one line --- `if (false)` and `return` --- and they fail
+opposite halves of the same four tests.
+
+**Four checks in a real webview**, because the unit tests state something about
+the *handler* and the thing that actually has to be true is about the *DOM the
+handler is installed in*: vitest dispatches on the root with a target of its own
+choosing, and the webview check dispatches on the note field and lets it bubble.
+The same split runs through the Enter check --- focus is `document.activeElement`
+there and a recorded `focus()` call in the fake DOM here, so neither harness can
+stand in for the other.
+
+**Two probes drive the commands from the palette**, and they are the only pair in
+that table with no `unless`: no fixture carries a mark, because these are the
+reader's own and a corpus of files nobody has opened in tpdf has none by
+construction, so the probe plants two and puts them back afterwards.
+
+**Two findings from the run, and both were instruments rather than code.**
+
+The probe written to measure the leak reported that "n", "p", Home and End were
+already guarded while the arrows and the space bar leaked --- a tidy split that
+matched no distinction in the code, and was taken at face value for two rounds.
+`matches` tests every modifier in both directions, so an event object omitting
+`shiftKey` has `undefined !== false` and matches no chorded binding at all; the
+keys that looked guarded were the ones reached through `matches`, and the ones
+that leaked were the literal arms below it. Adding four booleans turned four
+"guarded" keys into four leaks, ⌘R among them.
+
+The `nav.nextMark` probe went red on its first run reporting `-1 -> -1` --- a
+working command measured as dead. It was written from `nav.nextLink` beside it,
+and a link walk starts from the focused link while a mark walk starts from where
+the reader is looking, so clearing the focus is a complete reset for one and
+silent about the state the other depends on. Its sibling failed in the direction
+that looks like a pass. `docs/TRAPS.md` has both.
+
+**One mutation survived and stayed survived until the check moved.**
+`focusField`'s `if (this.shown === null) return;` is unreachable from the viewer,
+whose Enter arm tests the same thing one level up --- two mechanisms with one
+limit, so a mutation of either is invisible through the other, and both traps are
+already in the index. The resolution was to test `focusField` where it *is*
+reachable, directly on `MarkPopup`, and to give the viewer's arm an observable
+that is not an absence: with no note open, Enter must still reach the **link**
+arm below it. "Nothing happened" is what a correct viewer and a broken one both
+look like there; a link that gets followed is what separates them.
+
+**Not done:** a panel that lists the reader's marks, which is the other thing
+`showMark`'s comment anticipated and is a UI decision rather than an engineering
+one --- a fifth sidebar tab, or rows in the comments panel, which today lists what
+`annots.rs` read out of the *file* and would then be listing two kinds of thing
+with two activation paths. The remaining markup kinds are unchanged from the last
+increment: squiggly, and the ones that are not about a text selection at all
+(ink, shapes, text boxes, stamps), each of which needs a way to draw rather than
+a way to select. And a colour a reader can choose, still the UI question the
+`MARK_COLORS` table's comment names.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

@@ -180,6 +180,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "nav.nextLink",
       "nav.previousLink",
+      SEPARATOR,
+      "nav.nextMark",
+      "nav.previousMark",
     ],
   },
   {

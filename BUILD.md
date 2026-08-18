@@ -1679,20 +1679,34 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 209 | 45 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 217 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 217 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 119 | 135 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 159 | 95 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 204 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 206 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 181 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 198 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 199 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 208 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 219 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 226 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 161 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 215 | 45 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 223 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 223 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 125 | 135 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 165 | 95 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 210 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 212 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 187 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 204 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 205 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 214 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 225 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 232 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 167 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+
+**Re-run 2026-08-18** with the keyboard route to a mark: **260** names on all fourteen,
+six more than the 254 below, and the rows above are that sweep's. Every corpus gained six
+*runs* and lost none --- the four for the walk and the guard need no selection and no corpus
+feature, since the marks are two the harness hands the viewer, and so do the two commands in
+the sweep every registered command gets. The two command probes are the only pair in that
+table with no `unless`: no fixture carries a mark, because these are the reader's own.
+
+Four of the six are in a real webview for a reason a unit test cannot cover. The guard that
+stops a key typed into a note from moving the page is about a key **bubbling** from the field
+to the root handler; vitest dispatches at the root with a target of its own choosing, which is
+a statement about the handler rather than about the tree it is installed in. Its control is in
+the same check --- the same key pressed on the page must still scroll --- because a guard
+tested only on its refusal is satisfied by a viewer that ignores everything.
 
 **Re-measured 2026-08-18** with the note on a mark, on all fourteen corpora: every one
 reports the same **254** names, and the rows above are that sweep's, pasted from what

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   accelerator,
   BINDINGS,
+  inTextField,
   label,
   setPrintedKeys,
   matches,
@@ -423,5 +424,37 @@ describe("accelerator", () => {
       "view.zoomIn",
       "view.zoomOut",
     ]);
+  });
+});
+
+describe("inTextField", () => {
+  /** An event carrying only the target, which is all this reads. */
+  const at = (target: unknown): KeyboardEvent =>
+    ({ target }) as unknown as KeyboardEvent;
+
+  it("names the three elements a reader types into", () => {
+    expect(inTextField(at({ tagName: "INPUT" }))).toBe(true);
+    expect(inTextField(at({ tagName: "TEXTAREA" }))).toBe(true);
+    expect(inTextField(at({ tagName: "SELECT" }))).toBe(true);
+  });
+
+  it("says no for the page itself", () => {
+    // The control. A guard that answered true for everything would satisfy the
+    // test above and silently take every key away from the viewer.
+    expect(inTextField(at({ tagName: "DIV" }))).toBe(false);
+    expect(inTextField(at({ tagName: "CANVAS" }))).toBe(false);
+  });
+
+  it("reads contenteditable, which is a text field with any tag at all", () => {
+    expect(inTextField(at({ tagName: "DIV", isContentEditable: true }))).toBe(true);
+    expect(inTextField(at({ tagName: "DIV", isContentEditable: false }))).toBe(false);
+  });
+
+  it("says no for an event with no target rather than throwing", () => {
+    // An event whose target has gone --- a key delivered as an element is
+    // removed. Answering "not a text field" is the safe half: the viewer acts,
+    // which is what it did before this guard existed.
+    expect(inTextField(at(null))).toBe(false);
+    expect(inTextField(at(undefined))).toBe(false);
   });
 });

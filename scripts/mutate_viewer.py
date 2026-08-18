@@ -634,6 +634,62 @@ MUTATIONS = [
         "a press on the reader's own mark opens its note",
         "viewer",
     ),
+    Mutation(
+        # The guard the whole increment rests on, driven through a real webview
+        # rather than through a fake target: the point is that a key **bubbles**
+        # from the note field to the root handler and is refused there. The unit
+        # test dispatches on the root with a target of its own choosing, which is
+        # a statement about the handler and not about the DOM it lives in.
+        "note keys: act on a key that went to the note box",
+        "src/lib/viewer.ts",
+        "    if (inTextField(event)) return;",
+        "    if (false) return;",
+        "a key typed into a note does not move the page under it",
+        "viewer",
+    ),
+    # The pair's other half --- refuse *every* key, so a deaf viewer cannot read as
+    # a working guard --- is deliberately not here, having been run once and
+    # measured as unmeasurable from this harness. Every key is how this harness
+    # drives the viewer, so the mutation switches off its own instrument: the run
+    # spent its whole 360 s bound and came back `[BROKEN] ... did not finish`
+    # rather than red. That is the runner's guard working (a timeout is not a
+    # survivor, and it said so), and it is the same shape as the trap about a
+    # defect that switches off a check's precondition, arrived at harness scale.
+    # `mutate_frontend.py` covers the direction, where the viewer is driven by
+    # method calls rather than by keys.
+    Mutation(
+        # Leave the keyboard on the page when Enter asks for the note. In a real
+        # webview this is `document.activeElement`, which the fake DOM cannot
+        # answer -- so the two harnesses assert the same fact through different
+        # instruments and neither can stand in for the other.
+        "note keys: ignore Enter with a note open",
+        "src/lib/markpopup.ts",
+        "  focusField(): void {\n    if (this.shown === null) return;\n    this.input.focus();",
+        "  focusField(): void {",
+        "the walk leaves the keyboard on the page and Enter moves it in",
+        "viewer",
+    ),
+    Mutation(
+        # Wrap the walk at the end. The reader is returned to the first mark and
+        # told nothing, which on a marked-up document reads as the key having
+        # skipped one.
+        "mark walk: wrap at the last mark rather than stopping",
+        "src/lib/viewer.ts",
+        "    if (!next) {\n      this.opts.onError?.(\n        direction === 1 ? \"No further marks.\" : \"No earlier marks.\",\n      );\n      return false;\n    }",
+        "    if (!next) {\n      this.showMark(walk[0]?.id ?? -1, false);\n      return true;\n    }",
+        "the walk stops at the last mark rather than wrapping",
+        "viewer",
+    ),
+    Mutation(
+        # Do not open a note at all when the walk arrives. The walk then moves the
+        # view and shows nothing, which is the whole of what it is for.
+        "mark walk: step without opening the note",
+        "src/lib/viewer.ts",
+        "    this.showMark(next.id, false);",
+        "    void next;",
+        "the keyboard walk opens a mark's note with no pointer at all",
+        "viewer",
+    ),
 ]
 
 MARKER = re.compile(r"^\[(OK|FAIL|SKIP)\]\s+")

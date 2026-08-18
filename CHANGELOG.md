@@ -19,6 +19,27 @@ have the binary.)
 
 ## [26.8.4] - Unreleased
 
+### Reach your own marks from the keyboard
+
+- **Next mark** (⌥⌘M) and **Previous mark** (⇧⌥⌘M) walk the marks you have
+  made, in the order they sit in the document, opening each one's note as they
+  arrive. They scroll to a mark that is off screen, they stop at either end
+  rather than wrapping round, and they say so when they do. Both are in the Go
+  menu and in the palette.
+
+- The keyboard stays on the page while you walk, so the next press steps again.
+  **Enter** moves it into the note to type.
+
+- Until now a pointer was the only way to reach a mark at all: a highlight's
+  note could not be read, changed or taken off without one.
+
+### Fixed: keys typed into a note no longer move the page
+
+- Typing a note that contained an "n" turned the page underneath it, "p" turned
+  it back, Home jumped to the start of the document, and the space bar scrolled
+  the note away. ⌘R turned the view and ⌘C wrote the page's selected text over
+  whatever you had just copied out of the note.
+
 ### Underline and strike out
 
 - **Underline selection** and **Strike out selection**, beside Highlight. All

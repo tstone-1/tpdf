@@ -692,8 +692,12 @@ MUTATIONS = [
         # element is a text field and is not an INPUT. Aimed at the field rather
         # than at the spelling, because the spelling is what makes the guard
         # testable here at all --- see the note on the function.
+        # Re-pathed 2026-08-18: `inTextField` moved to `keys.ts`, because the
+        # viewer's own handler needs it too and two copies of "what is a text
+        # field" would be two chances to disagree. The mutation is unchanged and
+        # so is the test it names --- Cmd-Z from the find bar.
         "keys: miss a contenteditable target",
-        "src/lib/appcommands.ts",
+        "src/lib/keys.ts",
         "  if (target.isContentEditable === true) return true;",
         "  if (false) return true;",
         "leaves Cmd-Z to the text field a reader is typing in",
@@ -1580,8 +1584,8 @@ MUTATIONS = [
         # steps over an edit nobody made, twice for every note they looked at.
         "marks: commit a note that nobody changed",
         "src/lib/markpopup.ts",
-        "    const now = this.field.value;\n    if (now === this.was) return;",
-        "    const now = this.field.value;",
+        "    const now = this.input.value;\n    if (now === this.was) return;",
+        "    const now = this.input.value;",
         "sends nothing for a note that was opened and not typed in",
     ),
     Mutation(
@@ -1612,7 +1616,7 @@ MUTATIONS = [
         # in --- typing anything then replaces what was there without warning.
         "marks: show the box empty rather than what the mark says",
         "src/lib/markpopup.ts",
-        "    this.field.value = mark.note;",
+        "    this.input.value = mark.note;",
         '    this.field.value = "";',
         "shows what the mark says",
     ),
@@ -1622,8 +1626,8 @@ MUTATIONS = [
         # no box, and the Edit menu offers to remove it.
         "marks: close the note from inside rather than asking",
         "src/lib/markpopup.ts",
-        "      this.opts.onClose();\n    });\n\n    this.field = document.createElement",
-        "      this.hide();\n    });\n\n    this.field = document.createElement",
+        "      this.opts.onClose();\n    });\n\n    this.input = document.createElement",
+        "      this.hide();\n    });\n\n    this.input = document.createElement",
         "asks to be closed rather than closing itself",
     ),
     # --- links.ts -----------------------------------------------------------
@@ -1773,8 +1777,8 @@ MUTATIONS = [
         # on the link Next just arrived at and the pair becomes a toggle.
         "links: treat a link level with the viewport as behind it",
         "src/lib/links.ts",
-        "  return link.rect[1] < at.top;",
-        "  return link.rect[1] <= at.top;",
+        "  return item.rect[1] < at.top;",
+        "  return item.rect[1] <= at.top;",
         "goes back to the link before the viewport, not the one level with it",
     ),
     Mutation(
@@ -2097,6 +2101,153 @@ MUTATIONS = [
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below
 #: must agree, or the second validates a list the first never runs.
+# --- the keyboard route to a mark ----------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Let every key through while the reader is typing. This is the shipped
+        # defect the increment fixed: before the guard, "n" turned the page under
+        # the note box, Home jumped to the start and the space bar scrolled it
+        # away. Aimed at the guard's *call*, not at `inTextField` itself --- a
+        # predicate everything agrees about and nothing consults is the trap this
+        # repository records as a guard only covered when a mutation removes its
+        # call.
+        "viewer: act on a key that went to the note box",
+        "src/lib/viewer.ts",
+        "    if (inTextField(event)) return;",
+        "    if (false) return;",
+        "scroll the page when they came from the page and not when they did not",
+    ),
+    Mutation(
+        # The other direction: refuse *every* key, which passes the refusal half
+        # of each pair above and fails its control. Without this, a guard that
+        # made the viewer deaf would be indistinguishable from one that works.
+        "viewer: refuse every key, whether or not it went to a field",
+        "src/lib/viewer.ts",
+        "    if (inTextField(event)) return;",
+        "    return;",
+        "scroll the page when they came from the page and not when they did not",
+    ),
+    Mutation(
+        # Throw on an event whose target has gone, rather than answering "no".
+        # The safe half is that the viewer acts, which is what it did before this
+        # guard existed; an exception takes the whole handler down.
+        "keys: assume every event has a target",
+        "src/lib/keys.ts",
+        "  if (!target) return false;",
+        "",
+        "says no for an event with no target rather than throwing",
+    ),
+    Mutation(
+        # Order marks by the id of the page they name rather than by the slot it
+        # is in. Identical on an unedited document, and the reverse of the right
+        # answer the moment a reader moves a page --- which is the whole reason
+        # this is a translation and not a sort.
+        "pages: walk marks by page id rather than by the slot it is in",
+        "src/lib/pages.ts",
+        "    walk.push({ id: mark.id, page: slot, rect });",
+        "    walk.push({ id: mark.id, page: mark.page, rect });",
+        "orders marks by the slot their page is in, not by its id",
+    ),
+    Mutation(
+        # Take the first rectangle instead of the union. A one-line highlight is
+        # unaffected; one across three lines takes its place in the walk from
+        # whichever line the model emitted first.
+        "pages: place a multi-line mark by its first rectangle",
+        "src/lib/pages.ts",
+        "    const rect = unionOf(mark.quads);",
+        "    const first = mark.quads.slice(0, 4);\n    const rect =\n      first.length === 4\n        ? ([first[0] ?? 0, first[1] ?? 0, first[2] ?? 0, first[3] ?? 0] as [\n            number,\n            number,\n            number,\n            number,\n          ])\n        : null;",
+        "takes the union of a mark's rectangles, not its first one",
+    ),
+    Mutation(
+        # Leave the order partial where two marks share a top edge --- a reader
+        # marking one line twice. Which is "next" then depends on the sort's
+        # stability rather than on a rule. The same mutation `orderedLinks` has.
+        "pages: leave the mark order partial for two marks on one line",
+        "src/lib/pages.ts",
+        "    if (a.rect[1] !== b.rect[1]) return a.rect[1] - b.rect[1];\n    return a.id - b.id;",
+        "    return a.rect[1] - b.rect[1];",
+        "is a total order for two marks with the same top edge",
+    ),
+    Mutation(
+        # Keep a mark whose page the reader deleted, at slot -1. It sorts to the
+        # front of the walk and opens a note anchored to nothing.
+        "pages: keep a mark whose page is gone",
+        "src/lib/pages.ts",
+        "    if (slot === undefined) continue;\n    const rect = unionOf(mark.quads);",
+        "    const rect = unionOf(mark.quads);",
+        "leaves out a mark whose page is gone",
+    ),
+    Mutation(
+        # Always start the walk at the top of the document rather than at where
+        # the reader is looking. The difference `stepAlong` exists for: on a
+        # 775-page document "next mark" would mean "the first one, again".
+        "viewer: start the mark walk at the document rather than at the reader",
+        "src/lib/viewer.ts",
+        "    const next = stepAlong(walk, from, this.position, direction);",
+        "    const next = stepAlong(walk, from, { page: 0, top: 0 }, direction);",
+        "starts from where the reader is looking, not from the first mark",
+    ),
+    Mutation(
+        # Take the keyboard into the note field on every route in, the walk
+        # included. The next press of the walk key then goes to the field, where
+        # the guard correctly refuses it --- so the reader reaches one mark and is
+        # stranded on it.
+        "viewer: take the keyboard into the note when the walk opens it",
+        "src/lib/viewer.ts",
+        "    this.showMark(next.id, false);",
+        "    this.showMark(next.id, true);",
+        "opens the next mark's note without taking the keyboard off the page",
+    ),
+    Mutation(
+        # Wrap at the end of the walk instead of stopping, and say nothing. The
+        # trap about a wrap being correct when there is nothing ahead.
+        "viewer: wrap the mark walk at the end",
+        "src/lib/viewer.ts",
+        "    if (!next) {\n      this.opts.onError?.(\n        direction === 1 ? \"No further marks.\" : \"No earlier marks.\",\n      );\n      return false;\n    }",
+        "    if (!next) {\n      this.showMark(walk[0]?.id ?? -1, false);\n      return true;\n    }",
+        "stops at each end rather than wrapping, and says so",
+    ),
+    Mutation(
+        # Say nothing on a document the reader has not marked. A key that does
+        # nothing and reports nothing is indistinguishable from a broken one.
+        "viewer: walk an unmarked document silently",
+        "src/lib/viewer.ts",
+        "      this.opts.onError?.(\"You have not marked anything in this document.\");",
+        "",
+        "says so on a document the reader has not marked",
+    ),
+    Mutation(
+        # Do not scroll to a mark that is off screen. Its note box then clamps
+        # itself into view and points at nothing --- the reason `showComment` has
+        # had these three lines since it was written.
+        "viewer: open a mark's note without scrolling to the mark",
+        "src/lib/viewer.ts",
+        "    if (where.bottom < 0 || where.top > height) {\n      this.goToDestination(\n        this.pages.slotOfId(mark.page) ?? 0,\n        this.markTopPt(mark),\n      );\n    }",
+        "",
+        "scrolls to a mark that is off screen",
+    ),
+    Mutation(
+        # Swallow Enter whether or not a note is open. Nothing visible happens ---
+        # the popup's own guard refuses the focus --- and the key never reaches
+        # the link arm below it, so a focused cross-reference stops working the
+        # moment the reader has marked anything.
+        "viewer: take Enter for the note whether or not a note is open",
+        "src/lib/viewer.ts",
+        "    } else if (event.key === \"Enter\" && this.markNote.openId !== null) {",
+        "    } else if (event.key === \"Enter\") {",
+        "still reaches the focused link when no note is open",
+    ),
+    Mutation(
+        # Focus the note field on Enter whether or not one is open, which focuses
+        # a `display:none` element and takes the arrow keys off the page.
+        "markpopup: focus the note field even when no note is open",
+        "src/lib/markpopup.ts",
+        "  focusField(): void {\n    if (this.shown === null) return;",
+        "  focusField(): void {",
+        "puts the keyboard in the note, and does nothing when none is open",
+    ),
+]
+
 TEST_FILES = [
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",
@@ -2151,6 +2302,9 @@ TEST_FILES = [
     # file first would have been the lesson of the four entries above; adding it
     # second is at least the guard proving itself again.
     "src/lib/markpopup.test.ts",
+    # Added 2026-08-18 with the keyboard walk through marks, before writing the
+    # mutations rather than after the guard fired for a seventh time.
+    "src/lib/viewermarks.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

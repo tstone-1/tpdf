@@ -165,11 +165,18 @@ function sameLine(a: Link, b: Link): boolean {
   return shorter > 0 && overlap >= shorter * SAME_LINE_OVERLAP;
 }
 
+/** The least a thing needs to be walked through: an identity and a place. */
+export interface Walkable {
+  id: number;
+  page: number;
+  rect: readonly [number, number, number, number];
+}
+
 /**
- * The next link in `direction`, from a focused one or from where the reader is.
+ * The next thing in `direction`, from a focused one or from where the reader is.
  *
  * Two starting points because they answer different questions and a reader uses
- * both without thinking about it. With a link already focused, "next" means the
+ * both without thinking about it. With one already focused, "next" means the
  * one after *it* --- so repeated presses walk the page. With none, it means the
  * first one after *the viewport*, so pressing it once after scrolling starts
  * where the reader is looking rather than back at the top of the document.
@@ -178,13 +185,21 @@ function sameLine(a: Link, b: Link): boolean {
  * surprise rather than a convenience, and this repository has a trap recording
  * that a wrap is correct when there is nothing ahead, which makes the check
  * unable to fire. `null` at either end is the caller's cue to say so.
+ *
+ * Generic over {@link Walkable} since 2026-08-18, when the reader's own marks
+ * became walkable too. One implementation rather than two, for the reason
+ * `comments.ts` gives about `hitTest`: a second copy of a rule is a second thing
+ * to keep right, and a mutation of one of them survives the other's tests. What
+ * the two callers do *not* share is the list --- `orderedLinks` bands lines,
+ * `markWalk` resolves page ids to slots --- and that is the half that genuinely
+ * differs.
  */
-export function stepLink(
-  ordered: readonly Link[],
-  from: Link | null,
+export function stepAlong<T extends Walkable>(
+  ordered: readonly T[],
+  from: T | null,
   at: Place,
   direction: 1 | -1,
-): Link | null {
+): T | null {
   if (ordered.length === 0) return null;
 
   if (from) {
@@ -209,16 +224,16 @@ export function stepLink(
   return null;
 }
 
-/** Whether a link starts after a place in the document. */
-function isAfter(link: Link, at: Place): boolean {
-  if (link.page !== at.page) return link.page > at.page;
-  return link.rect[1] > at.top;
+/** Whether something starts after a place in the document. */
+function isAfter(item: Walkable, at: Place): boolean {
+  if (item.page !== at.page) return item.page > at.page;
+  return item.rect[1] > at.top;
 }
 
-/** Whether a link starts before a place in the document. */
-function isBefore(link: Link, at: Place): boolean {
-  if (link.page !== at.page) return link.page < at.page;
-  return link.rect[1] < at.top;
+/** Whether something starts before a place in the document. */
+function isBefore(item: Walkable, at: Place): boolean {
+  if (item.page !== at.page) return item.page < at.page;
+  return item.rect[1] < at.top;
 }
 
 /**
