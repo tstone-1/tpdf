@@ -170,7 +170,7 @@ describe("a rectangle on a page an edit turned", () => {
       viewer.setPageTurns(0, turn);
       await settle();
 
-      viewer.setMarks([{ id: 3, page: 1, quads: [...RECT], color: [1, 1, 0], note: "" }]);
+      viewer.setMarks([{ id: 3, kind: "highlight", page: 1, quads: [...RECT], color: [1, 1, 0], note: "" }]);
       const marks = region(
         dom,
         viewer,
@@ -199,7 +199,7 @@ describe("a rectangle on a page an edit turned", () => {
       viewer.setPageTurns(0, turn);
       await settle();
 
-      viewer.setMarks([{ id: 3, page: 1, quads: [...RECT], color: [1, 1, 0], note: "" }]);
+      viewer.setMarks([{ id: 3, kind: "highlight", page: 1, quads: [...RECT], color: [1, 1, 0], note: "" }]);
       const marks = region(
         dom,
         viewer,
@@ -267,7 +267,7 @@ describe("what a turned page does to a place in it", () => {
       const dom = installFakeDom();
       const viewer = build(dom);
       viewer.setPageTurns(0, turn);
-      viewer.setMarks([{ id: 3, page: 1, quads: [...RECT], color: [1, 1, 0], note: "" }]);
+      viewer.setMarks([{ id: 3, kind: "highlight", page: 1, quads: [...RECT], color: [1, 1, 0], note: "" }]);
       const found = region(
         dom,
         viewer,

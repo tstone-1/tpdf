@@ -48,7 +48,7 @@
 use std::path::{Path, PathBuf};
 
 use tpdf_lib::annots::{self, Kind};
-use tpdf_lib::docmodel::Quad;
+use tpdf_lib::docmodel::{MarkKind, Quad};
 use tpdf_lib::edits::{Edits, NewMark};
 use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
 use tpdf_lib::save;
@@ -66,6 +66,25 @@ const NOTE: &str = "written by annot-probe";
 /// The colour written, and the one the pixel counts look for.
 const YELLOW: [f32; 3] = [1.0, 0.9, 0.2];
 
+/// The colour a line kind is written in, mirroring `edits.ts`'s `MARK_COLORS`.
+///
+/// **Not the wash's yellow, and the reason is what `--mode rule` measures.** A
+/// 0.9 pt yellow rule on white paper is close to invisible, which is why the
+/// application does not draw one --- and a probe that sent yellow anyway would
+/// be measuring a mark no reader will ever see. The first run of that mode did
+/// exactly that and reported zero rule pixels, which reads like a renderer
+/// ignoring our appearance stream rather than like a probe using the wrong
+/// colour.
+const RULE_RED: [f32; 3] = [0.85, 0.15, 0.15];
+
+/// The colour the probe writes for a kind.
+fn color_for(kind: MarkKind) -> [f32; 3] {
+    match kind {
+        MarkKind::Highlight => YELLOW,
+        MarkKind::Underline | MarkKind::StrikeOut => RULE_RED,
+    }
+}
+
 /// Smallest quad, in rendered pixels, whose coverage is worth a percentage.
 ///
 /// Below this a box is mostly the antialiased edge of its own glyph, and the
@@ -76,6 +95,8 @@ const MEASURABLE_PX: usize = 200;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Roundtrip,
+    /// Where a line kind's rule actually lands, in pixels.
+    Rule,
     Ink,
     NoAp,
     Legible,
@@ -85,6 +106,11 @@ enum Mode {
 struct Args {
     file: PathBuf,
     page: u32,
+    /// Which of the three marks to write. Every mode that writes one uses it,
+    /// so `--kind underline` re-runs the whole roundtrip against a line rather
+    /// than a wash --- the subtype, the appearance geometry and the opacity all
+    /// change, and nothing else does.
+    kind: MarkKind,
     mode: Mode,
     chars: usize,
     scale: f32,
@@ -118,6 +144,7 @@ fn run(args: &Args) -> Result<bool, String> {
 
     match args.mode {
         Mode::Roundtrip => roundtrip(args, &document),
+        Mode::Rule => rule(args, &document, bindings),
         Mode::Ink | Mode::NoAp => ink(args, &document, bindings),
         Mode::Legible => legible(args, &document, bindings),
         Mode::Refuse => refuse(args, &document),
@@ -215,12 +242,13 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
         .annotate(
             DOC,
             NewMark {
+                kind: args.kind,
                 page: id,
                 quads: quads
                     .iter()
                     .flat_map(|q| [q.left, q.top, q.right, q.bottom])
                     .collect(),
-                color: YELLOW,
+                color: color_for(args.kind),
                 author: "annot-probe".to_string(),
                 note: String::new(),
             },
@@ -315,7 +343,19 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
     }
     let mark = &found.items[0];
 
-    ok &= check("kind is /Highlight", mark.kind == Kind::Highlight);
+    // The reader's vocabulary against the writer's, which are two enums in two
+    // modules that meet only in the file. A wrong subtype draws correctly from
+    // our own `/AP` and is reported as the wrong kind by every other program,
+    // so this is the assertion no rendering check can stand in for.
+    let expected = match args.kind {
+        MarkKind::Highlight => Kind::Highlight,
+        MarkKind::Underline => Kind::Underline,
+        MarkKind::StrikeOut => Kind::StrikeOut,
+    };
+    ok &= check(
+        &format!("kind read back as {expected:?}"),
+        mark.kind == expected,
+    );
     ok &= check("page is the one marked", mark.page == args.page);
     ok &= check("author survived", mark.author == "annot-probe");
     ok &= check("note survived", mark.body == NOTE);
@@ -493,6 +533,149 @@ fn count(pixels: &[u8], width: u32, height: u32, band: [f32; 4], scale: f32) -> 
     (wash, ink)
 }
 
+/// Counts pixels of the line colour inside a display-space band.
+///
+/// A separate classifier from [`count`]'s, and it has to be: that one calls a
+/// pixel "wash" when it is yellow-ish and "ink" when it is dark, and a red rule
+/// at (217, 38, 38) is neither. Measured, not guessed --- the first draft reused
+/// `count` and reported zero rule pixels everywhere, which reads exactly like an
+/// appearance stream the renderer ignored.
+fn rule_pixels(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    band: [f32; 4],
+    scale: f32,
+    want: [f32; 3],
+) -> usize {
+    let target = want.map(|c| (c * 255.0) as i32);
+    let x0 = (band[0] * scale).floor().max(0.0) as u32;
+    let y0 = (band[1] * scale).floor().max(0.0) as u32;
+    let x1 = ((band[2] * scale).ceil() as u32).min(width);
+    let y1 = ((band[3] * scale).ceil() as u32).min(height);
+    let mut found = 0usize;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let at = ((y * width + x) * 4) as usize;
+            // RGBA -- see `count`, which records why reading this the other way
+            // round once reported no wash on a page that had one.
+            let (r, g, b) = (
+                pixels[at] as i32,
+                pixels[at + 1] as i32,
+                pixels[at + 2] as i32,
+            );
+            // Near the colour the probe asked for, rather than a hardcoded
+            // red: the classifier and the mark then cannot disagree, which is
+            // the whole of what went wrong the first time this ran.
+            if (r - target[0]).abs() < 40
+                && (g - target[1]).abs() < 40
+                && (b - target[2]).abs() < 40
+            {
+                found += 1;
+            }
+        }
+    }
+    found
+}
+
+/// A line kind draws its rule in the half of the quad its kind names.
+///
+/// **The check no file-level assertion can make.** `save.rs`'s tests prove the
+/// rectangle written into the appearance stream is inside the quad and at the
+/// right height, and `--mode roundtrip` proves the subtype survives a save and a
+/// reopen. Neither says the *renderer* honours our `/AP` rather than generating
+/// its own --- PDFium does generate appearances for markup annotations that have
+/// none, and a reader looking at the page sees whatever it decided.
+///
+/// So: render before and after, and ask where the new red pixels are. An
+/// underline's belong in the bottom half of the quad and nowhere in the top; a
+/// strikeout's cross the middle. The two assertions together are what tells the
+/// kinds apart --- "some red appeared" is satisfied by either one drawn wrongly.
+fn rule(
+    args: &Args,
+    document: &RawDocument,
+    bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    if !matches!(args.kind, MarkKind::Underline | MarkKind::StrikeOut) {
+        return Err(
+            "--mode rule is for a line kind: pass --kind underline or --kind strikeout.              A highlight fills its quad, which is what --mode legible measures."
+                .to_string(),
+        );
+    }
+    let (out, quads) = mark_and_save(args, document)?;
+
+    let (before, bw, bh) = render(bindings, &args.file, args.page, args.scale)?;
+    let (after, aw, ah) = render(bindings, &out, args.page, args.scale)?;
+    if args.keep.is_none() {
+        let _ = std::fs::remove_file(&out);
+    }
+    if (bw, bh) != (aw, ah) {
+        return Err(format!(
+            "the copy renders {aw}x{ah} where the source renders {bw}x{bh}, so no              pixel comparison between them means anything"
+        ));
+    }
+
+    let (mut top, mut bottom, mut middle, mut before_any) = (0usize, 0usize, 0usize, 0usize);
+    for quad in &quads {
+        let full = quad.bottom - quad.top;
+        // Thirds of the quad, in display space. The middle band is where a
+        // strikeout goes and the bottom where an underline does; the top is the
+        // control, since neither may draw there.
+        let bands = [
+            [quad.left, quad.top, quad.right, quad.top + full / 3.0],
+            [
+                quad.left,
+                quad.top + full / 3.0,
+                quad.right,
+                quad.top + 2.0 * full / 3.0,
+            ],
+            [
+                quad.left,
+                quad.top + 2.0 * full / 3.0,
+                quad.right,
+                quad.bottom,
+            ],
+        ];
+        let want = color_for(args.kind);
+        top += rule_pixels(&after, aw, ah, bands[0], args.scale, want);
+        middle += rule_pixels(&after, aw, ah, bands[1], args.scale, want);
+        bottom += rule_pixels(&after, aw, ah, bands[2], args.scale, want);
+        before_any += rule_pixels(&before, bw, bh, bands[0], args.scale, want)
+            + rule_pixels(&before, bw, bh, bands[1], args.scale, want)
+            + rule_pixels(&before, bw, bh, bands[2], args.scale, want);
+    }
+
+    println!(
+        "{:?}: {top} px in the top third, {middle} in the middle, {bottom} in the bottom",
+        args.kind
+    );
+
+    let mut ok = true;
+    ok &= check(
+        "the source page has no rule where the mark went (the control)",
+        before_any == 0,
+    );
+    ok &= check("the renderer drew a rule at all", top + middle + bottom > 0);
+    let (wanted, forbidden, where_) = match args.kind {
+        MarkKind::Underline => (bottom, top, "bottom"),
+        MarkKind::StrikeOut => (middle, bottom, "middle"),
+        MarkKind::Highlight => unreachable!("refused above"),
+    };
+    ok &= check(
+        &format!("most of the rule is in the {where_} third ({wanted} px)"),
+        wanted * 2 > top + middle + bottom,
+    );
+    // The discrimination, and the reason this is two assertions rather than
+    // one: an underline drawn across the middle satisfies "there is a rule" and
+    // "it is inside the quad", and only a band that must be *empty* separates
+    // the two kinds by pixels.
+    ok &= check(
+        &format!("nothing was drawn in the band this kind must leave alone ({forbidden} px)"),
+        forbidden == 0,
+    );
+    Ok(ok)
+}
+
 /// The wash is where the words are, and the source page is the control.
 fn ink(
     args: &Args,
@@ -647,6 +830,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
     let empty = edits.annotate(
         DOC,
         NewMark {
+            kind: MarkKind::Highlight,
             page: id,
             quads: vec![10.0, 10.0, 10.0, 40.0],
             color: YELLOW,
@@ -663,6 +847,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
     let ragged = edits.annotate(
         DOC,
         NewMark {
+            kind: MarkKind::Highlight,
             page: id,
             quads: vec![10.0, 10.0, 40.0],
             color: YELLOW,
@@ -687,6 +872,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
     let real = edits.annotate(
         DOC,
         NewMark {
+            kind: MarkKind::Highlight,
             page: id,
             quads: vec![10.0, 10.0, 200.0, 40.0],
             color: YELLOW,
@@ -717,6 +903,7 @@ fn parse_args() -> Result<Args, String> {
     let mut parsed = Args {
         file: PathBuf::from(file),
         page: 0,
+        kind: MarkKind::Highlight,
         mode: Mode::Roundtrip,
         chars: DEFAULT_CHARS,
         scale: 2.0,
@@ -731,10 +918,19 @@ fn parse_args() -> Result<Args, String> {
             "--chars" => parsed.chars = value.parse().map_err(|_| "--chars wants a number")?,
             "--scale" => parsed.scale = value.parse().map_err(|_| "--scale wants a number")?,
             "--lib" => parsed.library = PathBuf::from(value),
+            "--kind" => {
+                parsed.kind = match value.as_str() {
+                    "highlight" => MarkKind::Highlight,
+                    "underline" => MarkKind::Underline,
+                    "strikeout" => MarkKind::StrikeOut,
+                    other => return Err(format!("unknown kind {other}")),
+                }
+            }
             "--out" => parsed.keep = Some(PathBuf::from(value)),
             "--mode" => {
                 parsed.mode = match value.as_str() {
                     "roundtrip" => Mode::Roundtrip,
+                    "rule" => Mode::Rule,
                     "ink" => Mode::Ink,
                     "noap" => Mode::NoAp,
                     "legible" => Mode::Legible,

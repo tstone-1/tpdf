@@ -16,7 +16,13 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-import { PageMap, unedited, type MarkView, type PageView } from "./pages";
+import {
+  PageMap,
+  unedited,
+  type MarkKind,
+  type MarkView,
+  type PageView,
+} from "./pages";
 
 // Re-exported because this is the module a reader of the edit state comes to
 // first, and the declaration lives in `pages.ts` so that the modules which only
@@ -44,13 +50,24 @@ export const NOTHING_OPEN: EditState = {
 };
 
 /**
- * The wash a highlight is written in, as red, green and blue in 0..=1.
+ * The colour each kind is written in, as red, green and blue in 0..=1.
  *
- * One colour, because there is one command. A palette of them is a UI question
- * --- where the swatches live, what a reader picks before or after marking ---
- * and answering it with a constant here would be answering it invisibly.
+ * One colour per kind, because there is one command per kind. A *palette* is a
+ * different question --- where the swatches live, whether a reader picks before
+ * or after marking --- and answering it with a constant here would be answering
+ * it invisibly.
+ *
+ * The two lines are red rather than the wash's yellow, and not by convention
+ * alone: a yellow rule 1.3 pt thick on white paper is close to invisible, where
+ * the same yellow spread over a whole line of text is exactly right. The wash
+ * is drawn multiplied at 40% and the lines opaque, so what reads well as one
+ * cannot be assumed to read well as the other.
  */
-const HIGHLIGHT_COLOR: [number, number, number] = [1, 0.9, 0.2];
+const MARK_COLORS: Record<MarkKind, [number, number, number]> = {
+  highlight: [1, 0.9, 0.2],
+  underline: [0.85, 0.15, 0.15],
+  strikeout: [0.85, 0.15, 0.15],
+};
 
 /**
  * The edit state of one open document, and the commands that change it.
@@ -196,7 +213,7 @@ export class Edits {
   }
 
   /**
-   * Highlights `quads` on the page in slot `page`.
+   * Marks `quads` on the page in slot `page`, with a mark of `kind`.
    *
    * The quads are display-space rectangles --- see {@link MarkView} --- and they
    * must come from the page's *own* text rather than from the view's, which is
@@ -206,14 +223,19 @@ export class Edits {
    * Takes a slot and sends the id, as {@link rotate} does. What it does not do
    * is decide whether the mark is acceptable: a mark covering nothing is refused
    * by the model, and predicting that here would be a second copy of the rule.
+   *
+   * **One method for all three kinds**, matching the one command behind it. The
+   * three differ in a subtype, a colour and how the appearance is drawn, all of
+   * which the writer decides; nothing on this side of the boundary changes with
+   * the kind except which constant is read.
    */
-  async highlight(page: number, quads: number[], note = ""): Promise<EditState> {
+  async mark(kind: MarkKind, page: number, quads: number[], note = ""): Promise<EditState> {
     const id = this.current.pages[page]?.id;
     if (id === undefined) return this.current;
     return this.adopt(
-      await invoke<EditState>("annot_highlight", {
+      await invoke<EditState>("annot_mark", {
         doc: this.doc,
-        mark: { page: id, quads, color: HIGHLIGHT_COLOR, author: "", note },
+        mark: { kind, page: id, quads, color: MARK_COLORS[kind], author: "", note },
       }),
     );
   }

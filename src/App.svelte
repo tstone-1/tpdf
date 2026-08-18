@@ -30,7 +30,13 @@
   import type { Comments } from "./lib/comments";
   import { noticeFor as linkNotice, type Link, type Links } from "./lib/links";
   import type { Outline } from "./lib/outline";
-  import { commentsIn, linksIn, NO_PAGES, outlineIn } from "./lib/pages";
+  import {
+    commentsIn,
+    linksIn,
+    NO_PAGES,
+    outlineIn,
+    type MarkKind,
+  } from "./lib/pages";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import {
     clampPlace,
@@ -174,7 +180,7 @@
     redoEdit: () => void applyEdit((e) => e.redo()),
     canUndo: () => edits?.state.can_undo ?? false,
     canRedo: () => edits?.state.can_redo ?? false,
-    highlightSelection: () => void highlightSelection(),
+    markSelection: (kind) => void markSelection(kind),
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
@@ -197,7 +203,7 @@
   }
 
   /**
-   * Highlights the selected text, as an annotation on the document.
+   * Marks the selected text, as an annotation on the document.
    *
    * The *rectangles* come from the viewer and everything else comes from the
    * model: whether the mark is accepted, what its identity is, and what undo
@@ -209,11 +215,16 @@
    * order, so undo takes them off one page at a time --- which is the honest
    * behaviour rather than a pleasant one, and the alternative is a journal
    * entry that groups commands, which the model does not have.
+   *
+   * **One function for all three kinds**, taking the kind rather than three
+   * near-copies of the loop above. The per-page split, the ordering and the
+   * refusal are the same for a highlight, an underline and a strikeout; only
+   * the subtype the writer puts in the file differs.
    */
-  async function highlightSelection(): Promise<void> {
+  async function markSelection(kind: MarkKind): Promise<void> {
     const marks = viewer?.selectionQuadsByPage() ?? [];
     for (const { page, quads } of marks) {
-      await applyEdit((e) => e.highlight(page, quads));
+      await applyEdit((e) => e.mark(kind, page, quads));
     }
   }
 

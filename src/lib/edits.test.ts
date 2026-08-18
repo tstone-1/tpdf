@@ -48,6 +48,7 @@ function state(
 function mark(id: number, page: number): MarkView {
   return {
     id,
+    kind: "highlight",
     page,
     quads: [72, 100, 300, 118],
     color: [1, 0.9, 0.2],
@@ -306,10 +307,11 @@ describe("Edits", () => {
     await edits.refresh();
 
     core.invoke.mockResolvedValueOnce(state(3, {}, [mark(1, 3)]));
-    const after = await edits.highlight(2, [10, 20, 30, 40], "a note");
-    expect(core.invoke).toHaveBeenLastCalledWith("annot_highlight", {
+    const after = await edits.mark("highlight", 2, [10, 20, 30, 40], "a note");
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_mark", {
       doc: 9,
       mark: {
+        kind: "highlight",
         page: 3,
         quads: [10, 20, 30, 40],
         color: [1, 0.9, 0.2],
@@ -321,13 +323,35 @@ describe("Edits", () => {
     expect(edits.state.marks[0]?.id).toBe(1);
   });
 
+  it("sends each kind with its own colour", async () => {
+    // The colour is the one thing this side of the boundary decides, and the
+    // two lines are deliberately not the wash's yellow: a 1.3 pt yellow rule on
+    // white paper is close to invisible where the same yellow over a whole line
+    // of text is right. Asserted as a set of three rather than one at a time,
+    // so a table that gave every kind the same colour cannot pass.
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    const sent: Record<string, [number, number, number]> = {};
+    for (const kind of ["highlight", "underline", "strikeout"] as const) {
+      core.invoke.mockResolvedValueOnce(state(3, {}, []));
+      await edits.mark(kind, 2, [10, 20, 30, 40]);
+      const call = core.invoke.mock.lastCall as [string, { mark: { color: [number, number, number] } }];
+      sent[kind] = call[1].mark.color;
+    }
+    expect(sent.highlight).toEqual([1, 0.9, 0.2]);
+    expect(sent.underline).not.toEqual(sent.highlight);
+    expect(sent.strikeout).toEqual(sent.underline);
+  });
+
   it("does not send a mark for a slot the model has never mentioned", async () => {
     core.invoke.mockResolvedValueOnce(state(2));
     const edits = new Edits(9);
     await edits.refresh();
     core.invoke.mockClear();
 
-    await edits.highlight(7, [10, 20, 30, 40]);
+    await edits.mark("highlight", 7, [10, 20, 30, 40]);
     expect(core.invoke).not.toHaveBeenCalled();
   });
 

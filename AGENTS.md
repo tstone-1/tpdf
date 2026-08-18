@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 328 entries
+The one thing this file does *not* carry in full is the trap list --- 332 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -944,7 +944,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 328 of them and the full text
+titles. Only the titles are here, because there are 332 of them and the full text
 was 93% of this file --- an instruction budget spent on the 322 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1077,6 +1077,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A shortcut can produce the right answer and lose the report
 - An empty answer from a whole-document scan cannot say whether it looked
 - A cited instance can be half right, and the wrong half is the one doing the work
+- JSON refuses `NaN`, which is what made an unchecked `f32` look safe (`1e40` is valid JSON and is `inf` by the time it is an `f32`; `format!` then writes `inf` into a content stream)
 - A mutation that survives every check because nothing reads the field (the appearance stream draws the wash, so `/QuadPoints` is read by nobody until it is removed)
 - A panel that lists a hidden comment must not let the page open it
 - `/F` is a bit field, and the flag every real link sets is not the one you are testing
@@ -1197,6 +1198,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A caller that validates first cannot reach the guard beneath it (the test passed, and so did the mutation that deleted the guard)
 - A coverage figure over the union of several quads measures the line spacing (and two more statistics that were right for one input and meaningless for another)
 - A control refused by a different guard than the one it was written for (it failed, which was the lucky case)
+- A probe that writes one colour cannot measure a mark drawn in another (a zero reading that reads as the renderer ignoring our appearance stream; derive the classifier from the value sent, do not correct the constant)
 - A single-entry cache is evicted by the grid scan that was about to test it (two mutations of one key both survived; sweeping the page is what destroyed the evidence, and only turning back caught the writing end)
 - Removing the second copy is what made the differential unable to fail (8 red before the deduplication and 2 after; a comparison between subsystems that share an implementation is true by construction, and nothing goes red at the moment it stops testing anything)
 
@@ -1245,6 +1247,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mutation aimed at one branch when the fixture only reaches the other
 - A delivery counter cannot say WHICH delivery, and the guard was satisfied by the event it excluded (the control that proved the first fix's reasoning wrong, and was then deleted for asserting the race)
 - A snapshot taken after the first mutation restores the mutation, and verifies itself clean
+- A `|` in the data split my own mutation in half, and the run reported a pass (a fourth mechanism for a mutation that never landed --- the delimiter inside the payload, which quoting cannot fix)
+- Three near-copies of a command made an existing mutation's anchor ambiguous (a gate written for code that is gone, firing for code that was duplicated --- and the anchor is the lesser half of the fix)
 - `--only "text: "` runs every `context:` mutation too (a substring filter, and two false diagnoses from harnesses overlapping each other and a test run)
 - A rewritten line leaves a mutation aimed at nothing, and only the harness says so
 - A stream split done for the failing direction leaves the passing one where it was

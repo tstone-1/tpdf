@@ -661,6 +661,10 @@ and reach no worker --- the T6.2 shape exactly, and the commands that write are 
   frontend --- the same property `annots.rs` keeps on the way *in*, where `Kind` is an enum of
   our own literals rather than the document's `/Subtype` string.
 
+  ⚠ **The second half of that stopped being true later the same day** (§T6.5): the frontend
+  now names the kind, because a reader chooses between three. What it has *not* stopped being
+  is the property that matters --- read the amendment rather than this bullet.
+
 **A mark's note is attacker-controlled the moment a saved file is reopened**, which is the
 one genuinely new surface. The reader types it, tpdf writes it, and `annots.rs` reads it back
 out of a file that may by then have been edited by anything --- so it is treated exactly as a
@@ -677,10 +681,37 @@ becomes *somebody else's* string is unchanged: it goes into `/Contents`, and com
 through `annots.rs` into the comment panel and the comment popup, which have treated a body
 that way since they were written.
 
+#### T6.5 — The frontend names the mark's kind, added 2026-08-18
+
+**A reader can now choose Highlight, Underline or Strike out, so the kind travels on the
+wire** --- `MarkKind` is a field on `edits::NewMark`. T6.3's bullet said the frontend cannot
+choose the subtype; that is now the wrong sentence for the right property, and the property
+survives intact.
+
+**What the frontend chooses is a variant, not a string.** `MarkKind` is a Rust enum with
+three variants and serde names, so an unknown name is a *deserialisation failure at the
+command boundary* --- the command never runs. The `/Subtype` bytes are still literals in
+`save.rs`'s `match`, reachable only by naming one of the three, and that `match` is still
+what makes a fourth variant a compile error rather than a mark written as something else. So
+the closed set moved from "one variant, nothing to choose" to "three variants, chosen by
+name", and at no point is a caller's string written into the file.
+
+**The colour is the field a caller does choose freely**, and it did before this too: three
+floats that reach `/C` and the appearance stream's `rg` operator. They are clamped by
+nothing, which is worth stating rather than discovering --- a value outside 0..=1 is a
+malformed colour in a file tpdf wrote. It is not an escape: `format!` writes a number, PDF
+readers clamp, and the surrounding operators are ours. Bounding it is a correctness question
+rather than a security one, and it is not done.
+
+**No new authority.** The command is the renamed `annot_highlight` --- one path for all three
+kinds rather than three commands, which is a smaller surface and not a larger one. It still
+takes a document handle, a page identity and a list of numbers, still mutates a `HashMap` in
+the app process, and still opens no file, writes none and reaches no worker.
+
 #### T6.4 — A note on a mark, and taking one off, added 2026-08-18
 
-**`annot_note` and `annot_remove` add no authority either**, for the same reason `annot_highlight`
-does not: both take a document handle and an identity, both mutate a `HashMap` in the app
+**`annot_note` and `annot_remove` add no authority either**, for the same reason `annot_mark`
+(called `annot_highlight` when this was written) does not: both take a document handle and an identity, both mutate a `HashMap` in the app
 process, and neither opens a file, writes one or reaches a worker. `annot_note` additionally
 takes a string, which is the reader's own and is not interpreted by anything on the way in ---
 `save.rs` encodes it as a PDF text string when a copy is written, and that encoding is the

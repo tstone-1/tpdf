@@ -357,7 +357,10 @@ fn mark_dictionary(
         "C",
         Object::Array(mark.color.iter().map(|c| Object::Real(*c)).collect()),
     );
-    dictionary.set("CA", Object::Real(WASH_ALPHA));
+    dictionary.set(
+        "CA",
+        Object::Real(if is_wash(mark.kind) { WASH_ALPHA } else { 1.0 }),
+    );
     dictionary.set("F", Object::Integer(4));
     dictionary.set("P", Object::Reference(page));
     dictionary.set("AP", {
@@ -383,6 +386,59 @@ fn mark_dictionary(
 fn subtype(kind: MarkKind) -> &'static [u8] {
     match kind {
         MarkKind::Highlight => b"Highlight",
+        MarkKind::Underline => b"Underline",
+        // `/StrikeOut`, with that capitalisation. The variant is `StrikeOut`
+        // and the serde name is `strikeout`; this is the only place all three
+        // spellings meet, which is why it is a `match` and not a `to_lowercase`.
+        MarkKind::StrikeOut => b"StrikeOut",
+    }
+}
+
+/// Whether a kind covers its quads or draws a line across them.
+///
+/// The whole of what separates the three, and it decides four things at once:
+/// the geometry drawn, the blend mode, both opacities. A wash has to multiply
+/// with the text under it or it hides the words it marks; a line is drawn on
+/// top and must be opaque, since a 40% red line reads as a smudge.
+fn is_wash(kind: MarkKind) -> bool {
+    match kind {
+        MarkKind::Highlight => true,
+        MarkKind::Underline | MarkKind::StrikeOut => false,
+    }
+}
+
+/// A line's thickness as a fraction of the marked text's height.
+///
+/// Proportional rather than PDFium's fixed 1 pt. Both are defensible for body
+/// text and only one survives a heading: a 1 pt strikeout across 36 pt type is
+/// a hairline, and a reader who cannot see the line they just drew tries again.
+/// No floor is needed --- a quad with no area is dropped by [`user_quads`]
+/// before this is reached.
+const LINE_FRACTION: f64 = 0.07;
+
+/// A line's own rectangle inside a quad: `(bottom, height)` in the page's space.
+///
+/// **It stays inside the quad**, which is not a nicety. The appearance stream's
+/// `/BBox` is the bounds of every quad, so anything drawn outside is clipped ---
+/// an underline centred on the quad's bottom edge would lose its lower half in
+/// every reader, and look like a thinner line rather than like a bug.
+///
+/// So an underline sits *on* the bottom edge and a strikeout is centred on the
+/// middle. Both are expressed here rather than as an offset the caller applies,
+/// because the two need different arithmetic and an offset that had to be
+/// `LINE_FRACTION / 2.0` for one of them is a coincidence waiting to be tidied
+/// into a defect.
+fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
+    let full = top - bottom;
+    let thickness = full * LINE_FRACTION;
+    match kind {
+        // Not reached: a wash fills its quad and `appearance_stream` branches
+        // before asking. Answered rather than `unreachable!()`, so that a fourth
+        // kind added without reading this is a wrong-looking mark rather than a
+        // panic in front of a reader.
+        MarkKind::Highlight => (bottom, full),
+        MarkKind::Underline => (bottom, thickness),
+        MarkKind::StrikeOut => (bottom + full / 2.0 - thickness / 2.0, thickness),
     }
 }
 
@@ -460,9 +516,20 @@ fn appearance_stream(
     quads: &[[f64; 4]],
     rect: [f64; 4],
 ) -> ObjectId {
+    let wash = is_wash(mark.kind);
     let mut state = Dictionary::new();
     state.set("Type", Object::Name(b"ExtGState".to_vec()));
-    state.set("BM", Object::Name(b"Multiply".to_vec()));
+    // Multiply for a wash so the words show through it, Normal for a line so
+    // the line is the colour it says it is. A multiplied red line over black
+    // text is black, which is a strikeout nobody can see.
+    state.set(
+        "BM",
+        Object::Name(if wash {
+            b"Multiply".to_vec()
+        } else {
+            b"Normal".to_vec()
+        }),
+    );
     state.set("CA", Object::Real(1.0));
     state.set("ca", Object::Real(1.0));
     let state = doc.add_object(state);
@@ -477,13 +544,15 @@ fn appearance_stream(
         mark.color[0], mark.color[1], mark.color[2]
     );
     for quad in quads {
-        content.push_str(&format!(
-            "{} {} {} {} re f\n",
-            quad[0],
-            quad[1],
-            quad[2] - quad[0],
-            quad[3] - quad[1]
-        ));
+        let (x, width) = (quad[0], quad[2] - quad[0]);
+        // The same `re f` for all three kinds --- what changes is how tall the
+        // rectangle is and where it sits. A wash is the whole quad.
+        let (y, height) = if wash {
+            (quad[1], quad[3] - quad[1])
+        } else {
+            line_rect(mark.kind, quad[1], quad[3])
+        };
+        content.push_str(&format!("{x} {y} {width} {height} re f\n"));
     }
 
     let mut dictionary = Dictionary::new();
@@ -1920,6 +1989,10 @@ mod tests {
 
     /// A plan for a one-page document carrying one highlight.
     fn plan_with_mark(quads: Vec<crate::docmodel::Quad>) -> Plan {
+        plan_of_kind(MarkKind::Highlight, quads)
+    }
+
+    fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         Plan {
             baseline: 1,
             pages: vec![PageView {
@@ -1928,7 +2001,7 @@ mod tests {
                 turns: 0,
             }],
             marks: vec![PlannedMark {
-                kind: MarkKind::Highlight,
+                kind,
                 source: 0,
                 quads,
                 color: [1.0, 0.9, 0.2],
@@ -2211,5 +2284,210 @@ mod tests {
         let why = write_copy(&source, &plan_with_mark(one_quad()), &out)
             .expect_err("an encrypted source must still be refused");
         assert!(why.contains("encrypted"), "{why}");
+    }
+
+    /// The written annotation for a mark of `kind`, reopened from the file.
+    fn written_mark(kind: MarkKind, scratch: &Scratch) -> Dictionary {
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+        write_copy(&source, &plan_of_kind(kind, one_quad()), &out).expect("save");
+        let doc = Document::load(&out).expect("reopen");
+        // The one annotation on the page, followed rather than searched for:
+        // the fixture is written with none, so anything found here is ours.
+        let page = ordered_pages(&doc)[0];
+        let entry = doc
+            .get_object(page)
+            .and_then(Object::as_dict)
+            .expect("a page dictionary")
+            .get(b"Annots")
+            .cloned()
+            .expect("the page has an /Annots");
+        let array = match entry {
+            Object::Array(array) => array,
+            Object::Reference(at) => doc
+                .get_object(at)
+                .and_then(Object::as_array)
+                .expect("an /Annots reference points at an array")
+                .clone(),
+            other => panic!("/Annots is neither an array nor a reference: {other:?}"),
+        };
+        assert_eq!(array.len(), 1, "the fixture starts with no annotations");
+        let Object::Reference(id) = array[0] else {
+            panic!("the mark is not an indirect object")
+        };
+        doc.get_object(id)
+            .and_then(Object::as_dict)
+            .expect("the mark is a dictionary")
+            .clone()
+    }
+
+    /// The blend mode the appearance stream's graphics state sets.
+    ///
+    /// In the `/ExtGState` the stream's `/Resources` names, not in the content
+    /// -- which is where the first version of the test beside this looked, and
+    /// why it wrote an assertion with an `||` in it that passed for the wrong
+    /// reason. The content only ever says `/GS0 gs`.
+    fn blend_of(kind: MarkKind, scratch: &Scratch) -> String {
+        let (doc, stream) = written_appearance(kind, scratch);
+        let states = stream
+            .dict
+            .get(b"Resources")
+            .and_then(Object::as_dict)
+            .and_then(|r| r.get(b"ExtGState"))
+            .and_then(Object::as_dict)
+            .expect("the appearance names an /ExtGState");
+        let state = match states.get(b"GS0").expect("GS0") {
+            Object::Reference(id) => doc
+                .get_object(*id)
+                .and_then(Object::as_dict)
+                .expect("GS0 points at a dictionary")
+                .clone(),
+            Object::Dictionary(inline) => inline.clone(),
+            other => panic!("GS0 is {other:?}"),
+        };
+        String::from_utf8(
+            state
+                .get(b"BM")
+                .and_then(Object::as_name)
+                .expect("the state sets a blend mode")
+                .to_vec(),
+        )
+        .expect("a blend mode is a name")
+    }
+
+    /// The appearance stream's content for a written mark.
+    fn appearance_of(kind: MarkKind, scratch: &Scratch) -> String {
+        let (_, stream) = written_appearance(kind, scratch);
+        String::from_utf8(
+            stream
+                .decompressed_content()
+                .unwrap_or(stream.content.clone()),
+        )
+        .expect("the appearance stream is text")
+    }
+
+    /// The reopened document and the one form XObject a written mark adds.
+    fn written_appearance(kind: MarkKind, scratch: &Scratch) -> (Document, lopdf::Stream) {
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+        write_copy(&source, &plan_of_kind(kind, one_quad()), &out).expect("save");
+        let doc = Document::load(&out).expect("reopen");
+        // Every form XObject in the file, of which the fixture has none.
+        let stream = doc
+            .objects
+            .values()
+            .find_map(|object| match object {
+                Object::Stream(stream)
+                    if stream.dict.get(b"Subtype").and_then(Object::as_name).ok()
+                        == Some(b"Form".as_slice()) =>
+                {
+                    Some(stream.clone())
+                }
+                _ => None,
+            })
+            .expect("the mark has an appearance stream");
+        (doc, stream)
+    }
+
+    #[test]
+    fn each_kind_writes_its_own_subtype() {
+        // The one thing every other reader keys on. A wrong subtype produces a
+        // mark that draws correctly from our own `/AP` and is reported as the
+        // wrong kind by Acrobat, Preview and the sidebar -- which is the failure
+        // that looks like nothing is wrong.
+        for (kind, expected) in [
+            (MarkKind::Highlight, "Highlight"),
+            (MarkKind::Underline, "Underline"),
+            (MarkKind::StrikeOut, "StrikeOut"),
+        ] {
+            let scratch = Scratch::new("annots-subtype");
+            let written = written_mark(kind, &scratch);
+            assert_eq!(
+                written.get(b"Subtype").and_then(Object::as_name).ok(),
+                Some(expected.as_bytes()),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_is_opaque_and_a_wash_is_not() {
+        // Two dictionary entries and one stream entry, all deciding the same
+        // thing: a wash multiplies with the words under it at 40%, a line is
+        // drawn over them at full strength. A multiplied red line over black
+        // text is black, which is a strikeout nobody can see.
+        for (kind, alpha, blend) in [
+            (MarkKind::Highlight, WASH_ALPHA, "Multiply"),
+            (MarkKind::Underline, 1.0, "Normal"),
+            (MarkKind::StrikeOut, 1.0, "Normal"),
+        ] {
+            let scratch = Scratch::new("annots-alpha");
+            let written = written_mark(kind, &scratch);
+            let got = written
+                .get(b"CA")
+                .and_then(Object::as_float)
+                .unwrap_or_else(|_| panic!("{kind:?} has no /CA"));
+            assert!((got - alpha).abs() < 1e-6, "{kind:?}: /CA is {got}");
+            assert_eq!(blend_of(kind, &scratch), blend, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_line_stays_inside_the_quad_it_marks() {
+        // The `/BBox` is the bounds of the quads, so anything drawn outside is
+        // clipped -- an underline centred on the bottom edge would lose its
+        // lower half in every reader and look like a thinner line rather than
+        // like a defect. The quad is 100..118 from the page top on a 792 pt
+        // page, so in the page's own space it runs 674..692.
+        for kind in [MarkKind::Underline, MarkKind::StrikeOut] {
+            let scratch = Scratch::new("annots-inside");
+            let content = appearance_of(kind, &scratch);
+            let rect: Vec<f64> = content
+                .lines()
+                .find(|line| line.ends_with("re f"))
+                .expect("the appearance draws a rectangle")
+                .split_whitespace()
+                .take(4)
+                .map(|n| n.parse().expect("a number"))
+                .collect();
+            let (bottom, height) = (rect[1], rect[3]);
+            assert!(
+                bottom >= 674.0 - 1e-6 && bottom + height <= 692.0 + 1e-6,
+                "{kind:?}: the line runs {bottom}..{} outside 674..692",
+                bottom + height
+            );
+            // And it is a line rather than the wash: a quad 18 pt tall gives a
+            // rule about 1.3 pt thick, so anything over a quarter of the quad
+            // is the fill this is meant to be distinguishable from.
+            assert!(height < 18.0 / 4.0, "{kind:?}: {height} pt is not a line");
+        }
+    }
+
+    #[test]
+    fn a_strikeout_crosses_the_text_and_an_underline_sits_under_it() {
+        // The discrimination the test above cannot make: both kinds draw a thin
+        // rule inside the quad, and only where it sits tells them apart. A
+        // strikeout drawn at the bottom is an underline with the wrong subtype,
+        // which every check keyed on the subtype would pass.
+        let scratch = Scratch::new("annots-where");
+        let bottom_of = |kind| {
+            appearance_of(kind, &scratch)
+                .lines()
+                .find(|line| line.ends_with("re f"))
+                .and_then(|line| line.split_whitespace().nth(1).map(str::to_string))
+                .expect("a rectangle")
+                .parse::<f64>()
+                .expect("a number")
+        };
+        let under = bottom_of(MarkKind::Underline);
+        let through = bottom_of(MarkKind::StrikeOut);
+        // The quad is 674..692, so its middle is 683.
+        assert!((under - 674.0).abs() < 1e-6, "underline sits at {under}");
+        assert!(
+            (through - 683.0).abs() < 1.0,
+            "strikeout sits at {through}, not near the middle"
+        );
     }
 }

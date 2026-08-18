@@ -489,7 +489,15 @@ async fn page_move(
     edits.move_page(doc, page, after)
 }
 
-/// Puts a highlight on a page, over the rectangles a reader dragged across.
+/// Puts a mark on a page, over the rectangles a reader dragged across.
+///
+/// **One command for all three kinds rather than three commands.** The kind is
+/// a field on [`edits::NewMark`], so a highlight, an underline and a strikeout
+/// travel one path, are refused by one set of preconditions and are written by
+/// one writer. Three commands would be three chances for the fourth kind to
+/// reach only two of them. It was called `annot_highlight` while there was only
+/// one kind; the name is part of the wire format, so renaming it is a protocol
+/// change and is done here rather than left to read wrongly.
 ///
 /// The page is named by identity, as [`page_rotate`] names it, and for the
 /// sharper version of the same reason: a mark is placed by *coordinates*, so a
@@ -505,7 +513,7 @@ async fn page_move(
 /// right in [`page_rotate`]: a lock, a journal push and a page walk. The
 /// coordinate mapping and the writing happen at save time, not here.
 #[tauri::command]
-async fn annot_highlight(
+async fn annot_mark(
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
     mark: edits::NewMark,
@@ -1680,7 +1688,7 @@ pub fn run() {
             page_rotate,
             page_delete,
             page_move,
-            annot_highlight,
+            annot_mark,
             annot_remove,
             annot_note,
             edit_undo,

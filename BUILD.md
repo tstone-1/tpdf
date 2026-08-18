@@ -158,7 +158,20 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 #              mode.  3/3
 #   legible    the glyphs survive the wash. Removing `/Multiply` leaves 0 of
 #              2,744 ink pixels on `text-base14`.  2/2
+#   rule       where a line kind's rule actually lands, in rendered pixels. The
+#              check no file-level assertion can make: PDFium generates its own
+#              appearance for a markup annotation that has none, so this is what
+#              says it honours ours. Two assertions, and the second is what
+#              tells the kinds apart -- an underline puts every pixel in the
+#              bottom third of the quad and NONE in the middle, a strikeout the
+#              other way round. Refuses `--kind highlight`, which fills its quad
+#              and is what `--mode legible` measures.  4/4 per kind
 #   refuse     the refusals, with a control proving a real mark is still taken.
+#
+# `--kind highlight|underline|strikeout` chooses what to write, and every mode
+# that writes a mark takes it: `--mode roundtrip --kind strikeout` re-runs the
+# whole file check against a `/StrikeOut`, whose subtype, appearance geometry
+# and opacity all differ and whose quads do not.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode roundtrip
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
@@ -179,6 +192,14 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode legible
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode refuse
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind underline
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind strikeout
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode rule --kind underline
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode rule --kind strikeout
 
 # `--out PATH` keeps the marked copy instead of removing it, for opening in
 # Preview or Acrobat by hand. Worth doing once per release: the probe proves the
@@ -1658,29 +1679,37 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 206 | 45 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 214 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 214 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 118 | 133 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 158 | 93 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 201 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 203 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 178 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 195 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 196 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 205 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 216 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 223 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 158 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 209 | 45 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 217 | 37 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 217 | 37 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 119 | 135 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 159 | 95 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 204 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 206 | 48 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 181 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 198 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 199 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 208 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 219 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 226 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 161 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
 **Re-measured 2026-08-18** with the note on a mark, on all fourteen corpora: every one
-reports the same **251** names, and the rows above are that sweep's, pasted from what
+reports the same **254** names, and the rows above are that sweep's, pasted from what
 `viewer_sweep.py` prints. Fourteen names on top of the 237 the morning's highlight work
 left: **nine** for the note box, **four** for the three mark commands driven against the real
 backend, and **one** for `edit.removeMark` in the sweep every registered command gets.
 
-**Re-run 2026-08-18** after the page-turn placement fix, and every one of the twenty-eight
-numbers above came back **byte-identical**, diffed rather than eyeballed. That is the honest
+**Re-run 2026-08-18** with underline and strike out: **254** names on all fourteen, three
+more than the 251 below. Two are the new commands in the sweep that every registered command
+gets --- aimed separately, carrying the kind in the expectation, since one action taking a
+parameter is where a copy-and-paste gives a reader a Strike out that highlights. The third
+drives each kind through `annot_mark` against the real backend and reads the kind back off
+the state reply. Every corpus gained three *runs*: they need no selection and no corpus
+feature, because the mark is one the harness hands the viewer.
+
+**Re-run earlier the same day** after the page-turn placement fix, and every one of the
+twenty-eight numbers then came back **byte-identical**, diffed rather than eyeballed. That is the honest
 result and it is worth stating rather than quietly re-pasting the same table: the defect it
 fixed --- a comment or a link on a page an edit had turned, drawn in one place and found in
 another --- needs a page turn and an annotation *at the same time*, and no fixture in this

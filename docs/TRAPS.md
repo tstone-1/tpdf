@@ -8877,3 +8877,138 @@ prove, in the direction of proving less**, and nothing goes red at the moment it
 the suite that was passing goes on passing. If a check compares two implementations, merging
 them is a reason to re-run the mutation that check was written for, not a tidy-up to do
 afterwards.
+
+### A probe that writes one colour cannot measure a mark drawn in another
+
+`annot-probe --mode rule` renders a page before and after an underline is written and asks
+where the new pixels are. Its first run:
+
+```
+Underline: 0 px in the top third, 0 in the middle, 0 in the bottom
+[FAIL] the renderer drew a rule at all
+```
+
+Which reads, unambiguously, as PDFium ignoring our `/AP` and generating its own appearance
+for `/Underline` — a real risk, a plausible diagnosis, and wrong. The appearance stream was
+in the file and correct:
+
+```
+/GS0 gs 1 0.9 0.2 rg
+60.32 717.07 253.33 0.918 re f
+```
+
+**`1 0.9 0.2` is yellow.** The probe writes one colour for every mark it makes, because for
+its first year every mark it made was a highlight; the pixel classifier written beside the new
+mode looked for red, because red is what the application sends for a line. Two constants, in
+two places, that had never had to agree before.
+
+The fix is not to correct the constant. It is to **derive the classifier from the value the
+probe actually sent** — `rule_pixels` takes the target colour and matches near it, so the
+instrument and the input cannot disagree by construction. Correcting the constant leaves the
+next person free to change one of them.
+
+Two things worth carrying:
+
+- **A measurement that comes back zero has two explanations and only one of them is about the
+  code under test.** The other is the instrument, and it is the cheaper one to rule out: the
+  written file was one `zlib.decompress` away and settled it in a minute, against a diagnosis
+  that would have sent somebody into PDFium's appearance-generation code.
+- **A probe grows a second subject long after its constants were written.** Every constant in
+  it that was "the colour" or "the size" is now an assumption about one subject, and nothing
+  says which ones. Worth a sweep when a probe gains a mode rather than a fix per surprise.
+
+### A `|` in the data split my own mutation in half, and the run reported a pass
+
+Four mutations proved by hand in one shell loop, each written as `old|new` and split with
+`${m%%|*}` and `${m##*|}`. Three landed. The fourth was:
+
+```
+MarkKind::Underline | MarkKind::StrikeOut => false,
+```
+
+which contains the delimiter, so `old` became `MarkKind::Underline ` — three matches in the
+file — and the edit was refused. The loop printed the refusal and then **ran the tests
+anyway**, on an unmutated tree, and reported `514 passed`. Read quickly, that is a mutation
+that survived; read carefully, it is a mutation that never happened.
+
+This repository already has three entries on mutations that never landed, and the mechanism is
+new each time: `perl -pi` eating `$a`, `\Q…\E` not stopping interpolation, `grep -cF` counting
+lines. This one is the delimiter appearing in the payload, which no amount of quoting fixes
+because the split happens before quoting is relevant.
+
+The habits that catch it, in order of cost:
+
+- **Assert the edit landed before reading the result.** The loop did print `AssertionError: 3`
+  and it scrolled past under three `[OK]` lines; a `continue` on failure would have said so
+  once, loudly, instead of producing a fourth result that looks like the other three.
+- **Prefer the harness to the loop.** `mutate_rust.py` takes the pair as two Python strings and
+  has no delimiter at all, which is why the same mutation registered there works. The one-off
+  loop exists to prove a mutation *before* registering it, and it is the least careful
+  instrument in the repository.
+
+### Three near-copies of a command made an existing mutation's anchor ambiguous
+
+Adding Underline and Strike out beside Highlight in `appcommands.ts` produced three entries
+differing in an id, a title and one string argument. The `anchors` gate went red:
+
+```
+appcommands: offer the highlight with nothing selected
+anchor occurs 3x in src/lib/appcommands.ts, expected 1.
+```
+
+The gate exists for a mutation aimed at code that is *gone*; here it fired for code that had
+been **duplicated**, which is the more interesting signal and was not what it was written for.
+An ambiguous anchor is a reliable tell that a near-copy has just been made, and a near-copy is
+exactly where a guard gets dropped without anything noticing.
+
+Widening the anchor to include the id line is half the fix and the less important half. The
+other half is that the *test* the mutation names walked one command, so the copies it
+provoked were covered by nothing — this repository's *"a check bound to one caller covers only
+that caller"* arriving through a gate rather than through a defect. The test now loops over all
+three, and a second mutation aimed at the third entry is what says so.
+
+There is a third mutation beside those two, and it is the one the ambiguity did *not* point
+at: the entries differ by a string argument, so a copy that kept the guard and forgot to change
+`"highlight"` to `"underline"` gives a reader a Strike out that highlights, with every check
+that asks whether the command ran passing.
+
+### JSON refuses `NaN`, which is what made an unchecked `f32` look safe
+
+`Mark::color` is documented as *"Red, green and blue in 0..=1, as `/C` takes them"*, and
+nothing made it so. The value arrives from the webview as three JSON numbers, `save.rs` writes
+each with `format!`, and the appearance stream is a content stream — so a channel that is not
+a number in the PDF sense is a **syntax error in a file tpdf wrote and signed its name to**.
+
+The reason it reads as safe is that the obvious hostile inputs are already refused. JSON has no
+`NaN` and no `Infinity` literal, and serde says so:
+
+```
+serde_json::from_str::<f32>("NaN")  -> Err
+```
+
+But `1e40` is perfectly good JSON, and the cast to `f32` is where it goes wrong:
+
+```
+1e40 as f32 = inf -> formatted "inf"
+```
+
+Three letters in the middle of a content stream. Measured in a throwaway crate in under a
+minute, which is the whole argument for measuring: *"JSON cannot express infinity"* is true,
+and the conclusion drawn from it — that an `f32` off the wire is finite — does not follow.
+
+The fix is a clamp at the boundary where a wire value becomes a model value, and the shape of
+it is worth copying:
+
+- **Clamped, not refused.** A colour a fraction outside the range is what a slider produces,
+  and every PDF reader clamps `/C` anyway; refusing would be stricter than the format.
+- **A non-finite value has no clamped meaning**, so it is not clamped: `f32::NAN.clamp(0.0,
+  1.0)` is `NaN`, and `f32::INFINITY.clamp(0.0, 1.0)` is 1.0 only by luck of the ordering. It
+  becomes zero, which is the only total answer.
+- **The test asserts finiteness separately from the range**, because that is the property
+  `format!` actually needs and a range assertion on its own does not state it.
+
+Generalises past colours: **any numeric field crossing a JSON boundary into a fixed-width
+float can be non-finite even where the encoding forbids non-finite literals**, and any field
+whose documented range is enforced by a doc comment is enforced by nothing. This repository
+already records *"a rule you wrote down is not a rule you enforce"*; this is that rule meeting
+a type conversion.

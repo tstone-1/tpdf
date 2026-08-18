@@ -32,7 +32,7 @@
  * next command deletes.
  */
 
-import type { MarkView } from "./pages";
+import type { MarkKind, MarkView } from "./pages";
 import { place, POPUP_WIDTH, type Anchor } from "./popup";
 
 /** What the popup does on the reader's behalf. The viewer supplies all three. */
@@ -46,22 +46,46 @@ export interface MarkPopupOptions {
 }
 
 /** The note editor for one mark the reader made. */
+/**
+ * The word a reader sees for each kind.
+ *
+ * Ours, in their language, not the file's --- the same posture `comments.ts`
+ * takes with `labelFor`. "Strikeout" rather than the PDF's `/StrikeOut`, which
+ * is a name in a file and not a word anybody says.
+ */
+const NAMES: Record<MarkKind, string> = {
+  highlight: "Highlight",
+  underline: "Underline",
+  strikeout: "Strikeout",
+};
+
 export class MarkPopup {
   private readonly host: HTMLElement;
   private readonly element: HTMLElement;
   private readonly field: HTMLTextAreaElement;
   private readonly opts: MarkPopupOptions;
   private shown: number | null = null;
+  /** The header's word, and the button's, both of which name the kind. */
+  private readonly title: HTMLElement;
+  private readonly remove: HTMLButtonElement;
   /** What the field held when it was last filled, so a no-op sends nothing. */
   private was = "";
 
   constructor(host: HTMLElement, opts: MarkPopupOptions) {
     this.host = host;
     this.opts = opts;
+    // Built here rather than in `header` and `actions`, which run once each in
+    // the constructor: `show` has to rewrite both when a mark of another kind
+    // takes the box over, and it can only do that if it holds them.
+    this.title = document.createElement("strong");
+    this.remove = document.createElement("button");
 
     this.element = document.createElement("div");
     this.element.setAttribute("role", "dialog");
-    this.element.setAttribute("aria-label", "Highlight");
+    // Not the kind. The label names the *dialog*, and a screen reader announces
+    // it when the box opens; a name that changed per mark would read as three
+    // different dialogs, and the kind is the first thing inside it anyway.
+    this.element.setAttribute("aria-label", "Mark note");
     this.element.tabIndex = -1;
     this.element.style.cssText =
       "position:absolute;display:none;z-index:5;box-sizing:border-box;" +
@@ -126,6 +150,11 @@ export class MarkPopup {
     // note has to be committed before this one takes the box over.
     if (this.shown !== null && this.shown !== mark.id) this.commit();
     this.shown = mark.id;
+    // Both labels follow the mark, because the box is the one place that knows
+    // which mark a reader means --- the Edit menu's item says "Remove mark",
+    // since it is chosen with the pointer somewhere else entirely and cannot.
+    this.title.textContent = NAMES[mark.kind];
+    this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;
     this.was = mark.note;
     this.field.value = mark.note;
     this.element.style.display = "block";
@@ -171,8 +200,7 @@ export class MarkPopup {
     row.style.cssText =
       "display:flex;gap:0.5rem;align-items:baseline;margin-bottom:0.35rem;";
 
-    const kind = document.createElement("strong");
-    kind.textContent = "Highlight";
+    const kind = this.title;
     kind.style.cssText = "flex:1;min-width:0;";
 
     const close = document.createElement("button");
@@ -199,9 +227,8 @@ export class MarkPopup {
     const row = document.createElement("div");
     row.style.cssText = "display:flex;justify-content:flex-end;margin-top:0.4rem;";
 
-    const remove = document.createElement("button");
+    const remove = this.remove;
     remove.type = "button";
-    remove.textContent = "Remove highlight";
     remove.style.cssText =
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "border-radius:5px;background:none;color:inherit;font:inherit;" +

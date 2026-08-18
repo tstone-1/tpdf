@@ -1900,8 +1900,8 @@ MUTATIONS = [
         # took that slot, at the coordinates of the words it was made from.
         "edits: send a mark's slot rather than its page id",
         "src/lib/edits.ts",
-        "        mark: { page: id, quads, color: HIGHLIGHT_COLOR, author: \"\", note },",
-        "        mark: { page, quads, color: HIGHLIGHT_COLOR, author: \"\", note },",
+        "        mark: { kind, page: id, quads, color: MARK_COLORS[kind], author: \"\", note },",
+        "        mark: { kind, page, quads, color: MARK_COLORS[kind], author: \"\", note },",
         "sends the page's id rather than its slot when a mark is made",
     ),
     Mutation(
@@ -1922,8 +1922,34 @@ MUTATIONS = [
         # pressing a button the application offered them.
         "appcommands: offer the highlight with nothing selected",
         "src/lib/appcommands.ts",
+        "      id: \"edit.highlightSelection\",\n      title: \"Highlight selection\",\n"
         "      enabled: () => withDocument() && actions.hasSelection(),",
+        "      id: \"edit.highlightSelection\",\n      title: \"Highlight selection\",\n"
         "      enabled: withDocument,",
+        "is withheld with nothing selected, and offered once there is",
+    ),
+    Mutation(
+        # The same guard on the *third* entry, because the three are near-copies
+        # and a check bound to one caller covers only that caller -- which is a
+        # trap this repository has already paid for. The two mutations together
+        # say the test walks all three rather than stopping at the first.
+        "appcommands: offer the strikeout with nothing selected",
+        "src/lib/appcommands.ts",
+        "      id: \"edit.strikeoutSelection\",\n      title: \"Strike out selection\",\n"
+        "      enabled: () => withDocument() && actions.hasSelection(),",
+        "      id: \"edit.strikeoutSelection\",\n      title: \"Strike out selection\",\n"
+        "      enabled: withDocument,",
+        "is withheld with nothing selected, and offered once there is",
+    ),
+    Mutation(
+        # And the argument rather than the guard: three entries differing only
+        # in a string, which is the copy-and-paste this file's `movePage` note
+        # is about. A reader who chooses Underline gets a highlight, and every
+        # check that asks whether the command ran passes.
+        "appcommands: run the underline as a highlight",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.markSelection(\"underline\"),",
+        "      run: () => actions.markSelection(\"highlight\"),",
         "is withheld with nothing selected, and offered once there is",
     ),
     Mutation(
@@ -1953,6 +1979,46 @@ MUTATIONS = [
         "      turns: this.scroller.effectiveTurns(page),",
         "      turns: this.turns,",
         "puts the rectangle somewhere else once the page is turned",
+    ),
+    Mutation(
+        # The header's word, which named a highlight when a highlight was the
+        # only mark there was.
+        "markpopup: call every mark a highlight",
+        "src/lib/markpopup.ts",
+        "    this.title.textContent = NAMES[mark.kind];",
+        "    this.title.textContent = NAMES.highlight;",
+        "names the kind of mark it is open on",
+    ),
+    Mutation(
+        # The button rather than the header. Two labels, two mutations: a box
+        # that names the mark correctly and offers "Remove highlight" under it
+        # is the half a single assertion on the header would miss.
+        "markpopup: offer to remove a highlight whatever is open",
+        "src/lib/markpopup.ts",
+        '    this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;',
+        '    this.remove.textContent = "Remove highlight";',
+        "names the kind of mark it is open on",
+    ),
+    Mutation(
+        # Write the labels once, when the box is built, rather than when a mark
+        # takes it over. Correct for the first mark opened and wrong for every
+        # one after it, which is the state a reader is in within two clicks.
+        "markpopup: label the box once rather than per mark",
+        "src/lib/markpopup.ts",
+        "    this.title.textContent = NAMES[mark.kind];\n"
+        "    this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;",
+        "",
+        "relabels itself when a mark of another kind takes the box",
+    ),
+    Mutation(
+        # One colour for all three kinds, which is what the table replaced. A
+        # 1.3 pt yellow rule on white paper is close to invisible, so a reader
+        # presses Underline and nothing appears to happen.
+        "edits: give every kind the wash's colour",
+        "src/lib/edits.ts",
+        "  underline: [0.85, 0.15, 0.15],",
+        "  underline: [1, 0.9, 0.2],",
+        "sends each kind with its own colour",
     ),
     Mutation(
         # And the other direction, which the control cannot see: a rectangle
