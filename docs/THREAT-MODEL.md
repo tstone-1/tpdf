@@ -743,6 +743,51 @@ choice worth stating: the content stream `save.rs` writes is built from numbers,
 string from the document or from the reader in it. Nothing about a mark's appearance depends
 on text anyone typed.
 
+#### T6.6 — Cropping a page, added 2026-08-18
+
+**The model command is the T6.2 shape, and two commands beside it are not.** `page_crop`
+takes a document handle, a page identity and four numbers, and mutates a `HashMap` in the
+app process --- it opens no file, writes none and reaches no worker, exactly as
+`page_rotate` and `annot_mark` do. `page_content_box` and `page_geometry` **do reach a
+worker**: the first renders the page to find where its ink is, the second loads it to report
+what size a crop makes it. That is the first pair of commands added since the viewer's own
+that parse a document, and it is worth saying plainly rather than folding into the sentence
+above.
+
+What they add is nothing. Both take the document handle the frontend already has and a page
+position in the file it already knows; neither takes a path, and the parse happens in the
+same sandboxed worker that renders every tile a reader has already caused. A caller able to
+reach them can already reach the tile protocol, which renders any page of the same document
+on demand. The marginal authority is a render nobody asked for --- a denial of service on
+the render thread, which residual risk 7 bounds the same way it bounds `spike_exit`.
+
+**A crop is four numbers off the wire, and they are checked in three places for three
+different reasons.** `docmodel::Rect::is_proper` refuses a rectangle enclosing no area,
+including any corner that is not a number, so a `NaN` cannot reach the model. `protocol.rs`
+refuses a tile URL carrying **three** of the four corners rather than completing the
+rectangle from the page --- three numbers plus a default is a rectangle nobody asked for,
+drawn plausibly and in the wrong place, which is what that parser exists to prevent --- and
+refuses a non-finite or degenerate one before a render is allocated for it. `pagetree`
+refuses a crop that shares no area with the sheet, which is a different question and can only
+be asked where the media box is known.
+
+**The save path gains one mutation of the object graph**, and it is narrower than the others
+on this surface. `apply_crops` writes `/CropBox` on the **page object** and never on an
+ancestor: the box is inheritable, so a write onto a `/Pages` node crops every page hanging
+under it, which for a document whose pages share one node is the whole file from a reader who
+cropped one page. It intersects with `/MediaBox` per §14.11.2 rather than trusting the value,
+and a crop the intersection empties is refused rather than written --- a page that renders as
+nothing is not an outcome a reader asked for.
+
+**Residual, and it is a §T5 shape rather than a §T6 one: a crop hides, it does not remove.**
+Everything outside the box is still in the file, still extractable, still searchable in any
+reader --- and tpdf's own search still finds it, because a crop moves character *boxes* and
+not character *indices*. That is what `/CropBox` means and it is the right behaviour for a
+crop. It is listed because it is the second operation on this surface where a reader could
+plausibly believe otherwise, after deleting a page (risk 15), and because "crop" is a word
+that sounds like removal in a way "rotate" and "move" do not. The operation that makes hidden
+mean gone is `docs/PLAN.md` §6, and it is not built.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -1265,6 +1310,15 @@ which is what makes it evidence rather than a milestone.
     as risk 14 and is listed separately because deleting is the first operation where a
     reader could plausibly believe otherwise: `docs/PLAN.md` §6 is where "removed" comes to
     mean removed, and it is not built.
+
+16. **A cropped page hides content and does not remove it** (§T6.6), added 2026-08-18.
+    Everything outside the crop box is still in the saved file, still extractable, and still
+    found by tpdf's own search --- a crop moves character boxes, not character indices. That
+    is what `/CropBox` means, and it is the right behaviour for a crop. It is listed
+    separately from risks 14 and 15 because "crop" is a word that sounds like removal in a
+    way "rotate" and "move" do not, and because it is now the *second* operation a reader
+    could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
+    built.
 
 ## 8. How to re-verify any of this
 
