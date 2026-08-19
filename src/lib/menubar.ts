@@ -124,6 +124,16 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.highlightSelection",
       "edit.underlineSelection",
       "edit.strikeoutSelection",
+      // With the three marks rather than above them, because to the model it is
+      // a fourth kind and removal applies to it identically. It sits last of
+      // the four because it is the one that needs no selection --- the three
+      // above are greyed on an untouched page and this one is not, so a reader
+      // scanning a live item finds it at the end of a dimmed run.
+      "edit.addComment",
+      // After the comment, because the two are the pair a reader places
+      // themselves rather than marks text with, and before the removal for the
+      // reason stated above it.
+      "edit.drawBox",
       "edit.removeMark",
       SEPARATOR,
       "edit.selectAll",

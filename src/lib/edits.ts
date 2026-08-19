@@ -67,6 +67,17 @@ const MARK_COLORS: Record<MarkKind, [number, number, number]> = {
   highlight: [1, 0.9, 0.2],
   underline: [0.85, 0.15, 0.15],
   strikeout: [0.85, 0.15, 0.15],
+  // The wash's yellow rather than the lines' red, and for the opposite reason
+  // to both: this colour is not ink over words at all, it is the fill of an
+  // icon sitting on the paper beside them. Yellow is what every reader draws a
+  // comment bubble in, so a file opened in Acrobat looks like the file that was
+  // saved --- `/C` is what Acrobat colours its own icon with.
+  note: [1, 0.9, 0.2],
+  // The lines' red, not the bubble's yellow, because a box is a line: its ink
+  // is a stroke and it is drawn opaque and on top. A yellow box on white paper
+  // is nearly invisible, which is the same reason the underline and the
+  // strikeout above are not the wash's colour either.
+  square: [0.85, 0.15, 0.15],
 };
 
 /**

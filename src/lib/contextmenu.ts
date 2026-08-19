@@ -66,6 +66,30 @@ export const PAGE_MENU: Entry[] = [
 ];
 
 /**
+ * What a right-click on one of the reader's own marks offers.
+ *
+ * A right-click on a highlight used to offer {@link SELECTION_MENU} --- copy,
+ * the three marks, find --- which is a menu about the *selection*, and on a
+ * mark there usually is not one. So the only way to take a mark off was to
+ * left-press it, wait for its note box, and choose Remove mark from a menu the
+ * reader had to know was elsewhere. Reported from use.
+ *
+ * **One entry, and that is the whole of what a mark can be asked to do.** The
+ * kind cannot be changed --- there is no command for it --- and the note is
+ * edited in the box that opens with this menu rather than through an item here.
+ * A menu padded out with the selection commands would be the menu this replaced.
+ *
+ * **How it knows which mark.** It does not address one: `App.svelte` opens the
+ * mark's note first and then shows this, so `edit.removeMark` acts on the mark
+ * whose note is open, exactly as it does from the palette and the menu bar.
+ * That is the arrangement the page strip already uses --- a right-click on a
+ * thumbnail navigates to that page and then offers the page operations --- and
+ * it is the reason there is still no second way to name a mark, which
+ * `edit.removeMark`'s own note in `appcommands.ts` argues against at length.
+ */
+export const MARK_MENU: Entry[] = ["edit.removeMark"];
+
+/**
  * What a right-click on the document surface offers.
  *
  * Copy first, because that is what a right-click on selected text is for
@@ -85,6 +109,17 @@ export const PAGE_MENU: Entry[] = [
  * marks simply are not offered.
  */
 export const SELECTION_MENU: Entry[] = [
+  // First, and the only entry here that does not need a selection --- so on
+  // white paper with nothing selected this menu is Add comment, Select all and
+  // Find. That is deliberate: dropping a comment is the one thing a reader
+  // wants from a right-click on an empty part of the page, and before it
+  // existed such a click produced a menu offering nothing that applied.
+  "edit.addComment",
+  // Beside the comment, because the two are the pair that need no selection ---
+  // so a right-click on white paper offers both of the things a reader can do
+  // to blank space. It is also the only route to the tool a reader will find
+  // without being told, since it has no chord and the menu bar is macOS-only.
+  "edit.drawBox",
   "edit.copy",
   "edit.highlightSelection",
   "edit.underlineSelection",
@@ -95,6 +130,24 @@ export const SELECTION_MENU: Entry[] = [
   SEPARATOR,
   "edit.clearSelection",
 ];
+
+/**
+ * Which menu a right-click on the document surface gets.
+ *
+ * A function rather than an `if` in `App.svelte`, because that file has no
+ * tests and the window harness builds its own DOM without a toolbar or a
+ * context-menu host --- so a rule written there is reachable by nothing, which
+ * is the shape this repository's traps call for a seam rather than a harness.
+ * What stays untested is only that the handler asks the viewer and passes the
+ * answer along.
+ *
+ * The mark wins when there is one. A reader who right-clicks a highlight is
+ * asking about that highlight, and a selection they made earlier is not what
+ * the pointer is on.
+ */
+export function menuForSurface(markUnderPointer: number | null): Entry[] {
+  return markUnderPointer === null ? SELECTION_MENU : MARK_MENU;
+}
 
 /** Where a menu was asked for, in client coordinates. */
 export interface At {
@@ -119,14 +172,29 @@ export class ContextMenu {
   private readonly root: HTMLElement;
   private rows: Row[] = [];
   private at = -1;
+  /** Where the open menu was asked for, for {@link onRun}. */
+  private openedAt: At | null = null;
   private open_ = false;
   /** Run after a command is chosen, so a caller can restore focus. */
-  private readonly onRun: (id: string) => void;
+  /**
+   * Run after a command is chosen, with where the menu was opened.
+   *
+   * The point is here because the menu is the only thing that knows it, and one
+   * command needs it: `edit.addComment` places a bubble, and *where* is exactly
+   * what a right-click contributes over the palette. Passing it is the same
+   * arrangement the page strip uses --- a right-click establishes what the
+   * command acts on --- stated as an argument rather than left in application
+   * state that a later palette invocation could read stale.
+   *
+   * Every other command ignores it. A menu opened by the keyboard, if one ever
+   * is, would pass `null` and get the palette's behaviour, which is right.
+   */
+  private readonly onRun: (id: string, at: At | null) => void;
 
   constructor(
     private readonly host: HTMLElement,
     private readonly registry: CommandRegistry,
-    onRun: (id: string) => void,
+    onRun: (id: string, at: At | null) => void,
   ) {
     this.onRun = onRun;
     this.root = document.createElement("div");
@@ -139,7 +207,17 @@ export class ContextMenu {
     this.root.style.cssText =
       "position:fixed;z-index:60;min-width:14rem;padding:0.25rem 0;display:none;" +
       "border-radius:8px;background:Canvas;color:CanvasText;" +
-      "box-shadow:0 8px 32px rgba(0,0,0,0.32);" +
+      // A hairline ring and a short shadow, not a long dark one. This was
+      // `0 8px 32px rgba(0,0,0,0.32)` --- heavier than the comment popups' at
+      // `0 6px 24px / 0.25` while being the smallest and shortest-lived surface
+      // in the application, and reported from use on Windows as "VERY dark and
+      // large and shadowy". A context menu is not elevated the way the palette
+      // is; it is attached to the thing under the pointer, and what makes it
+      // read as a menu at that elevation is the ring rather than the shadow.
+      // The ring is `currentColor`-derived, as the page strip's selection is,
+      // so it follows both themes without a second literal to keep in step.
+      "box-shadow:0 4px 12px rgba(0,0,0,0.16)," +
+      "0 0 0 1px color-mix(in srgb, currentColor 15%, transparent);" +
       "font:13px/1.5 system-ui,-apple-system,sans-serif;";
     this.host.appendChild(this.root);
     // On the host rather than on each row: a pointer routinely leaves the row
@@ -201,6 +279,7 @@ export class ContextMenu {
 
     this.rows = rows;
     this.open_ = true;
+    this.openedAt = at;
     this.root.style.display = "block";
     this.place(at);
     this.highlight(-1);
@@ -214,6 +293,9 @@ export class ContextMenu {
     this.rows = [];
     this.at = -1;
     this.open_ = false;
+    // Cleared with everything else, so a command run from the palette after a
+    // menu has been dismissed cannot read where that menu once was.
+    this.openedAt = null;
   }
 
   /**
@@ -248,9 +330,13 @@ export class ContextMenu {
   /** Runs the row at `index` and closes. */
   choose(index: number): void {
     const row = this.rows[index];
+    const opened = this.openedAt;
     this.close();
     if (!row) return;
-    this.onRun(row.command.id);
+    // Read before `close`, which clears it --- and `close` runs first above so
+    // that a command opening something of its own does not fight a menu that is
+    // still on screen.
+    this.onRun(row.command.id, opened);
   }
 
   /** Drops the element. The menu is gone with its host, but say so. */

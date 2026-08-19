@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   handleWindowKey,
+  togglePalette,
   registerAppCommands,
   type AppActions,
 } from "./appcommands";
@@ -76,6 +77,11 @@ function harness(
     // selected, so the highlight command's withheld direction is the one a test
     // that says nothing about a selection exercises.
     markSelection: (kind) => fired.push(`markSelection:${kind}`),
+    // Records whether a point came with it, because that is the whole
+    // difference between the two routes into a comment and the thing a test
+    // about the palette needs to be able to see.
+    addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
+    drawBox: () => fired.push("drawBox"),
     hasSelection: () => selected,
     // Default false, on the same reasoning: a document opens with no note open,
     // so the withheld direction is what a test that says nothing about a mark
@@ -462,6 +468,98 @@ describe("Undo and Redo", () => {
 });
 
 /**
+ * The palette's own chord, and the toolbar route that shares its code.
+ *
+ * ⌘K lived outside the bindings table until the toolbar grew a button for it,
+ * matched by a hand-written `(metaKey || ctrlKey) && key === "k"`. That is the
+ * spelling this table exists to replace, and the tests below are what say the
+ * replacement is not merely tidier.
+ */
+describe("opening the palette", () => {
+  function fakePalette() {
+    const events: string[] = [];
+    let open = false;
+    return {
+      events,
+      handle: {
+        get isOpen() {
+          return open;
+        },
+        open: () => {
+          open = true;
+          events.push("open");
+        },
+        close: () => {
+          open = false;
+          events.push("close");
+        },
+        askFor: () => {},
+      },
+    };
+  }
+
+  function pressK(modifiers: { shift?: boolean; alt?: boolean } = {}) {
+    const { events, handle } = fakePalette();
+    let refreshed = 0;
+    const event = {
+      key: modifiers.shift === true ? "K" : "k",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: modifiers.shift ?? false,
+      altKey: modifiers.alt ?? false,
+      defaultPrevented: false,
+      target: null,
+      preventDefault: () => {},
+    } as unknown as KeyboardEvent;
+    handleWindowKey(event, {
+      actions: {} as unknown as AppActions,
+      palette: () => handle as never,
+      hasDocument: () => false,
+      refreshRecents: () => {
+        refreshed++;
+      },
+    });
+    return { events, refreshed };
+  }
+
+  it("opens on Cmd-K and closes on the next one", () => {
+    const { events, handle } = fakePalette();
+    const deps = { palette: () => handle as never, refreshRecents: () => {} };
+    togglePalette(deps);
+    togglePalette(deps);
+    expect(events).toEqual(["open", "close"]);
+  });
+
+  it("refreshes the recent list when it opens and not when it closes", () => {
+    // The reason the toolbar button goes through `togglePalette` rather than
+    // calling `open()` itself: a second copy would be a second place to forget
+    // this, and a stale recents list looks exactly like a correct one.
+    const { handle } = fakePalette();
+    let refreshed = 0;
+    const deps = {
+      palette: () => handle as never,
+      refreshRecents: () => {
+        refreshed++;
+      },
+    };
+    togglePalette(deps);
+    expect(refreshed).toBe(1);
+    togglePalette(deps);
+    expect(refreshed).toBe(1);
+  });
+
+  it("does not open on Shift-Cmd-K or Option-Cmd-K", () => {
+    // Both of these opened it before the chord moved into the bindings table:
+    // the hand-written test read `metaKey` and the letter and nothing else, so
+    // every chord built on ⌘K was ⌘K. `matches` tests Shift and Option in both
+    // directions, which is the whole reason ⌥⌘G could stop being find-next.
+    expect(pressK().events).toEqual(["open"]);
+    expect(pressK({ shift: true }).events).toEqual([]);
+    expect(pressK({ alt: true }).events).toEqual([]);
+  });
+});
+
+/**
  * The window shortcuts for the page operations.
  *
  * Driven with a plain object rather than a real `KeyboardEvent`, which is what
@@ -475,7 +573,7 @@ describe("Undo and Redo", () => {
 describe("the window shortcuts for editing", () => {
   function press(
     key: string,
-    modifiers: { shift?: boolean; alt?: boolean } = {},
+    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean } = {},
     target: { tagName?: string; isContentEditable?: boolean } | null = null,
     journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
     dirty = true,
@@ -488,6 +586,11 @@ describe("the window shortcuts for editing", () => {
       ctrlKey: false,
       shiftKey: modifiers.shift ?? false,
       altKey: modifiers.alt ?? false,
+      // What the surface leaves behind when it has already claimed the chord.
+      // `false` rather than absent so that the guard reading it is exercised in
+      // both directions --- an undefined field is falsy, so a harness that never
+      // set it would pass whether the guard existed or not.
+      defaultPrevented: modifiers.handled ?? false,
       target,
       preventDefault: () => {
         prevented++;
@@ -512,7 +615,19 @@ describe("the window shortcuts for editing", () => {
     // and the point of this block is the one the palette does not cover.
     const fired: string[] = [];
     const actions: AppActions = {
-      viewer: () => ({}) as never,
+      // Two real methods rather than `{}`, because ⌘A and ⌘C are the only
+      // window chords that reach *through* `viewer()` instead of an action of
+      // their own --- an empty object would make them throw, and a throw here
+      // reads as a broken handler rather than a harness that was never told
+      // about them.
+      viewer: () =>
+        ({
+          selectPage: () => fired.push("selectPage"),
+          copySelection: () => {
+            fired.push("copySelection");
+            return Promise.resolve();
+          },
+        }) as never,
       pageCount: () => 3,
       openDocument: () => fired.push("openDocument"),
       reloadDocument: () => fired.push("reloadDocument"),
@@ -537,6 +652,8 @@ describe("the window shortcuts for editing", () => {
       canUndo: () => journal.undo ?? false,
       canRedo: () => journal.redo ?? false,
       markSelection: (kind) => fired.push(`markSelection:${kind}`),
+      addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
+      drawBox: () => fired.push("drawBox"),
       hasSelection: () => false,
       removeMark: () => fired.push("removeMark"),
       hasOpenMark: () => false,
@@ -547,6 +664,46 @@ describe("the window shortcuts for editing", () => {
     };
     return { fired, actions };
   }
+
+  it("selects the page on Cmd-A and copies on Cmd-C from the chrome", () => {
+    // The defect these two arms were added for: a reader clicks the document's
+    // name in the toolbar, presses ⌘A, and the web view selects the toolbar
+    // --- the Open button, the find toggles and the field's contents --- because
+    // the event never reaches the viewer's own handler. Reported from use.
+    expect(press("a").fired).toEqual(["selectPage"]);
+    expect(press("c").fired).toEqual(["copySelection"]);
+  });
+
+  it("claims both chords, so the web view never sees them", () => {
+    // Separate from the assertion above on purpose. Reaching the action and
+    // taking the key from the web view are two things, and it is the second one
+    // that stops the toolbar being selected: an arm that ran `selectPage` and
+    // let the default through would select the page *and* the chrome.
+    expect(press("a").prevented).toBe(1);
+    expect(press("c").prevented).toBe(1);
+  });
+
+  it("leaves both to the surface when the surface has already taken them", () => {
+    // The viewer's own handler matches ⌘A and ⌘C and prevents the default. The
+    // event still bubbles to the window, so without this guard both would run
+    // twice --- harmless for select-all and two clipboard writes for copy.
+    expect(press("a", { handled: true }).fired).toEqual([]);
+    expect(press("c", { handled: true }).fired).toEqual([]);
+  });
+
+  it("leaves both to the find field when the find field has them", () => {
+    // `menubar.ts` gives the reason these two carry no menu accelerator: inside
+    // a text field ⌘A means *this field*. Taking it there would stop a reader
+    // replacing a query they had half typed.
+    const field = { tagName: "INPUT" };
+    expect(press("a", {}, field).fired).toEqual([]);
+    expect(press("c", {}, field).fired).toEqual([]);
+    // And the key is not claimed either, which is the half that matters: a
+    // prevented default here would leave the field unable to select its own
+    // text at all.
+    expect(press("a", {}, field).prevented).toBe(0);
+    expect(press("c", {}, field).prevented).toBe(0);
+  });
 
   it("turns the page on Shift-Cmd-R and the other way on Shift-Cmd-L", () => {
     expect(press("R", { shift: true }).fired).toEqual(["rotatePage:1"]);

@@ -255,6 +255,49 @@ pub enum MarkKind {
     /// spellings of one thing, and the only place they meet is `save.rs`'s
     /// `subtype`.
     StrikeOut,
+    /// A comment anchored to a point, `/Text`.
+    ///
+    /// **The odd one out, and every difference follows from one fact: it does
+    /// not mark text.** The other three are text-markup annotations --- they
+    /// take their shape from a selection, carry `/QuadPoints`, and mean nothing
+    /// without words underneath. This one is a bubble a reader drops on the
+    /// page, so its single quad is the icon's own box rather than anything the
+    /// document said, it writes no `/QuadPoints` at all, and it needs no
+    /// selection to exist.
+    ///
+    /// It reuses the rest of the machinery deliberately. A comment has a page, a
+    /// rectangle, a colour, an author, a date and a note that can be edited
+    /// afterwards --- which is exactly [`Mark`], so removal, notes, undo, the
+    /// id table and the whole state reply come free. A parallel type would have
+    /// duplicated all of it to express one absent field.
+    ///
+    /// The serde name is `note` and the PDF name is `/Text`. That is the same
+    /// two-spelling situation as `StrikeOut` above, in the other direction, and
+    /// it is deliberate: to a reader this is a comment or a note, and `/Text` is
+    /// a name that would suggest text on the page to anyone who has not read the
+    /// specification.
+    Note,
+    /// A rectangle a reader drew, `/Square`.
+    ///
+    /// **The second kind the document did not place**, and the second half of
+    /// the split `Note` opened. Both take their rectangle from the reader rather
+    /// than from a selection, so neither carries `/QuadPoints` --- but they part
+    /// company immediately afterwards, and the two questions this file used to
+    /// answer with one predicate are now genuinely two. A comment needs *no*
+    /// appearance stream, because every reader synthesises its own icon; a box
+    /// needs one, because no reader synthesises a rectangle, and a `/Square`
+    /// with no `/AP` is an annotation Acrobat draws as nothing at all.
+    ///
+    /// Its ink is a **stroke**, which is the first in this enum. A filled box
+    /// would cover whatever it was drawn around, and covering things is the one
+    /// job a box does not have.
+    ///
+    /// The serde name is `square`, the PDF name is `/Square`, and the word a
+    /// reader sees is **Box** --- a third spelling, and the reason is that a
+    /// rectangle dragged round a figure is almost never square. `/Square` is the
+    /// specification's name for the family that includes `/Circle`, not a claim
+    /// about the proportions.
+    Square,
 }
 
 /// One mark a reader made, with everything a writer needs to put it in a file.

@@ -117,6 +117,19 @@ export const BINDINGS = {
   // find toggles on the same modifier.
   "find.regex": { keys: ["r", "®"], accel: true, alt: true },
   "find.inSelection": { keys: ["s", "ß"], accel: true, alt: true },
+  // Not a command --- the palette is what *lists* commands, so it has no row of
+  // its own --- and in this table anyway, which it was not until the toolbar
+  // grew a button for it. The button has to show the chord it stands for, and
+  // the only honest way to show a chord is to render it from the same entry the
+  // handler matches. Written by hand it would be the drift this table exists to
+  // prevent, one increment after the file's own comment said ⌘K was the one
+  // chord that could not drift because nothing rendered it.
+  //
+  // It also fixes a smaller thing on the way in. The hand-written test it
+  // replaces was `(metaKey || ctrlKey) && key === "k"`, which tests neither
+  // Shift nor Option, so ⇧⌘K and ⌥⌘K opened the palette too --- the same
+  // both-directions bug the note on `Binding.alt` describes.
+  "app.palette": { keys: ["k", "K"], accel: true },
   "view.zoomIn": { keys: ["+", "="], accel: true, shown: "+" },
   "view.zoomOut": { keys: ["-"], accel: true, shown: "−" },
   // ⌘0 for fit-width was here first and stays, which is why the other two are
@@ -220,8 +233,62 @@ export function render(binding: Binding): string {
   // every menu on this platform does: ⌘O, but `n` for the unmodified key.
   const key =
     binding.shown ?? (modified && first.length === 1 ? first.toUpperCase() : first);
+  if (!MAC) {
+    // Windows order and Windows spelling: Ctrl, Alt, Shift, joined by `+`. Not
+    // a cosmetic difference --- this function renders every shortcut a reader
+    // is ever shown, in the palette, in both right-click menus and in the
+    // toolbar's tooltips, and until this branch existed all of them read
+    // ⌘ ⌥ ⇧ on Windows. A reader there was being taught a chord their
+    // keyboard does not have, which is worse than being taught none: reported
+    // from use as ⌘C and ⌘A in a Windows context menu.
+    //
+    // `Binding.accel` has said "⌘ on macOS, Ctrl elsewhere" since it was
+    // written. The data model knew; only the renderer did not.
+    const parts = [];
+    if (binding.accel) parts.push("Ctrl");
+    if (binding.alt) parts.push("Alt");
+    if (binding.shift) parts.push("Shift");
+    parts.push(key);
+    return parts.join("+");
+  }
   // macOS order, which is Control, Option, Shift, Command, then the key.
   return `${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}${binding.accel ? "⌘" : ""}${key}`;
+}
+
+/**
+ * Whether to spell chords the way macOS does.
+ *
+ * Read from the web view rather than asked of Rust, unlike {@link PRINTED} next
+ * door, and the difference is what each answer is *for*. What a key prints is a
+ * property of the reader's keyboard layout that no web API reports reliably ---
+ * `keylayout.rs` has the account. Which glyphs a platform spells its modifiers
+ * with is not a question about this machine's configuration, and asking across
+ * the boundary would make it asynchronous: every label rendered before the reply
+ * lands would be wrong and would need re-rendering, which is exactly the flicker
+ * `relabelCommands` exists to absorb for the one answer that genuinely has to be
+ * awaited.
+ *
+ * Mutable so both spellings can be tested from either machine. A rule with one
+ * branch reachable is a rule with an untestable half, and this file already
+ * carries the lesson --- see the note on {@link render} about an ordering that
+ * could not go red because no binding exercised it.
+ */
+let MAC = detectMac();
+
+/** What the web view says it is running on. */
+function detectMac(): boolean {
+  const agent = globalThis.navigator?.userAgent ?? "";
+  return /Mac|iPhone|iPad/.test(agent);
+}
+
+/**
+ * Forces the modifier spelling, for tests.
+ *
+ * Pass nothing to go back to what the web view says, so a test that sets it
+ * cannot decide what the rest of the file sees.
+ */
+export function setMacSpelling(mac?: boolean): void {
+  MAC = mac ?? detectMac();
 }
 
 /**

@@ -665,8 +665,9 @@ and reach no worker --- the T6.2 shape exactly, and the commands that write are 
   our own literals rather than the document's `/Subtype` string.
 
   ⚠ **The second half of that stopped being true later the same day** (§T6.5): the frontend
-  now names the kind, because a reader chooses between three. What it has *not* stopped being
-  is the property that matters --- read the amendment rather than this bullet.
+  now names the kind, because a reader chooses between several. What it has *not* stopped
+  being is the property that matters --- read the amendment rather than this bullet, which
+  names the current set rather than counting it.
 
 **A mark's note is attacker-controlled the moment a saved file is reopened**, which is the
 one genuinely new surface. The reader types it, tpdf writes it, and `annots.rs` reads it back
@@ -692,12 +693,21 @@ choose the subtype; that is now the wrong sentence for the right property, and t
 survives intact.
 
 **What the frontend chooses is a variant, not a string.** `MarkKind` is a Rust enum with
-three variants and serde names, so an unknown name is a *deserialisation failure at the
-command boundary* --- the command never runs. The `/Subtype` bytes are still literals in
-`save.rs`'s `match`, reachable only by naming one of the three, and that `match` is still
-what makes a fourth variant a compile error rather than a mark written as something else. So
-the closed set moved from "one variant, nothing to choose" to "three variants, chosen by
-name", and at no point is a caller's string written into the file.
+serde names, so an unknown name is a *deserialisation failure at the command boundary* --- the
+command never runs. The `/Subtype` bytes are still literals in `save.rs`'s `match`, reachable
+only by naming one of them, and that `match` is still what makes a new variant a compile error
+rather than a mark written as something else. So the closed set moved from "one variant,
+nothing to choose" to "a closed set, chosen by name", and at no point is a caller's string
+written into the file.
+
+**Five variants as of 2026-08-19, and the sentence above deliberately no longer counts them.**
+It said "three" until a comment bubble and a box were added, and the number was never the
+property --- a count in prose goes stale the next time the set grows, which is the failure this
+repository already records about its own trap tally. The two new kinds are the ones a reader
+*places* rather than selects, which changes nothing here: both are still variants named on the
+wire, both map to a `/Subtype` literal through the same `match`, and the box additionally
+carries an appearance stream built entirely from numbers of ours. Ask `MarkKind` in
+`docmodel.rs` for the current set.
 
 **The colour is the field a caller does choose freely**, and it did before this too: three
 floats that reach `/C` and the appearance stream's `rg` operator. They are clamped by

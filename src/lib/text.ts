@@ -155,6 +155,31 @@ export function turnQuad(quad: Quad, turns: number, width: number, height: numbe
   }
 }
 
+/**
+ * Undoes {@link turnQuad}: a quad in the turned page, back in the page's own.
+ *
+ * `width`/`height` are the **turned** page's size --- the one the quad is
+ * measured in --- which is the opposite convention to `turnQuad`'s and is what
+ * makes the pair compose to the identity. A quarter turn swaps the page's
+ * sides, so the caller that turned a 612x792 page by one and got a 792x612 one
+ * passes 792 and 612 back here.
+ *
+ * It exists because every rectangle in this application travels one way ---
+ * from the file, through the crop, through the turn, onto the screen --- and a
+ * reader who *draws* one travels the other. There is no third direction, and a
+ * second hand-written inverse at the one call site that needs it is how the two
+ * would come to disagree at a quarter turn only, which no unrotated corpus can
+ * see.
+ */
+export function unturnQuad(
+  quad: Quad,
+  turns: number,
+  width: number,
+  height: number,
+): Quad {
+  return turnQuad(quad, -turns, width, height);
+}
+
 /** A position between two characters, which is what a caret is. */
 export interface Caret {
   page: number;

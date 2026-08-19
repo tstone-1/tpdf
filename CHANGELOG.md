@@ -17,7 +17,38 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.5] - Unreleased
+## [26.8.5] - 2026-08-19
+
+### Draw a box on a page
+
+- **Draw a box...** arms the pointer; the next drag on a page draws a red
+  rectangle where you dragged. It is in the right-click menu on a page, in the
+  Edit menu and in the palette. Like every other mark it takes a note, it is
+  removable, and Undo puts it back.
+
+- It is the first mark you place by drawing rather than by selecting text, so it
+  is also the first that can go anywhere --- round a figure, a table, a signature
+  block, a stamp somebody else left.
+
+- The tool is armed for **one** box. After you draw it the pointer goes back to
+  selecting text, so you can never be left in a drawing mode without noticing. A
+  press that does not travel draws nothing and keeps the tool armed, and Escape
+  drops it.
+
+- The box is saved as a real `/Square` annotation with its own appearance, so
+  Acrobat and Preview draw the same rectangle in the same place. It is an
+  outline, not a fill: whatever you drew it around stays readable.
+
+- A drag that runs off the edge of the page is trimmed to the page.
+
+### Fixed: on a rotated or cropped page, a comment landed in the wrong place
+
+- **Add comment** placed the bubble using the page as it appears on screen rather
+  than as the file describes it. On an ordinary upright page those are the same
+  thing, which is why it went unnoticed; on a page the file rotates, or one you
+  had cropped, the bubble went somewhere else.
+
+- Introduced in 26.8.4 and fixed before it reached any release.
 
 ### Save
 

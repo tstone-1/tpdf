@@ -142,6 +142,31 @@ export interface AppActions {
    * the journal's answer, replayed on undo.
    */
   markSelection(kind: MarkKind): void;
+  /**
+   * Drops a comment on the page, at a point or wherever the shell decides.
+   *
+   * Separate from {@link markSelection} rather than a fourth kind passed to it,
+   * even though the model *does* treat it as a fourth kind. The two take
+   * different things --- one takes a selection, this takes a point --- and a
+   * `markSelection("note")` would silently make a comment the size of whatever
+   * happened to be selected, which is the shape of mistake a type should make
+   * unsayable rather than a comment warn about.
+   *
+   * The point is `null` from the palette and the menu bar, which have no
+   * pointer. Where that lands is the viewer's answer; see `commentAt`.
+   */
+  addComment(at: { clientX: number; clientY: number } | null): void;
+  /**
+   * Arms the box tool: the reader's next drag on a page draws one.
+   *
+   * **Arms rather than draws**, which is why it takes no rectangle and why it
+   * is not `markSelection("square")`. The other three take a selection and this
+   * one takes a gesture the reader has not made yet --- so unlike every command
+   * beside it, running this changes nothing about the document and everything
+   * about what the next press means. See `Viewer.armDraw` for why a mode is
+   * unavoidable here and why it is one-shot.
+   */
+  drawBox(): void;
   /** Takes the mark whose note is open off the page it is on. */
   removeMark(): void;
   /** Whether a mark's note is open, which is what names the mark to remove. */
@@ -419,6 +444,43 @@ export function registerAppCommands(
       // nothing and no explanation. It is offered in the palette, in the Edit
       // menu, and in the right-click menu over a selection, which is where a
       // reader who has just dragged across a line is already looking.
+      // **The only mark command with no `hasSelection` guard**, because a
+      // comment is not made *of* a selection --- it is dropped on the page. It
+      // is offered on any open document, which is also what makes it reachable
+      // from the palette and the menu bar, where there is no pointer and
+      // therefore no place a selection-shaped command could act.
+      //
+      // "Add comment" rather than "Add note": the note is the *text* inside it,
+      // and every mark has one of those. `markpopup.ts` uses the same word for
+      // the same reason.
+      id: "edit.addComment",
+      title: "Add comment",
+      enabled: withDocument,
+      run: () => actions.addComment(null),
+    },
+    {
+      // **"Draw a box" rather than "Box selection"**, and the verb is the whole
+      // difference: the three below act on what is already selected, and this
+      // one asks the reader to do something next. The ellipsis says so in the
+      // way the platform's own menus do --- `runMenuCommand` uses one for a
+      // command that opens the palette to ask for a value, and this is the same
+      // promise about a different kind of asking.
+      //
+      // No `hasSelection` guard, for the comment's reason above: a box is not
+      // made *of* a selection. It is offered on any open document, which is
+      // also what makes it reachable from the palette and the menu bar, where
+      // there is no pointer at all --- arming from there is exactly as useful,
+      // since the gesture comes afterwards either way.
+      //
+      // No chord. A one-shot mode a reader can enter by accident and then not
+      // recognise is worse than one they have to ask for, and every letter that
+      // would suit is taken by navigation.
+      id: "edit.drawBox",
+      title: "Draw a box...",
+      enabled: withDocument,
+      run: () => actions.drawBox(),
+    },
+    {
       id: "edit.highlightSelection",
       title: "Highlight selection",
       enabled: () => withDocument() && actions.hasSelection(),
@@ -457,12 +519,14 @@ export function registerAppCommands(
       run: () => actions.removeMark(),
     },
     {
-      // **Crop to content**, and there is deliberately no crop-by-dragging: a
-      // rectangle a reader draws needs a drag mode this application does not
-      // have, since every gesture on a page today means select, open or follow.
-      // Measuring the ink answers the case a reader actually wants --- a scan,
-      // or an article whose margins are wider than its column --- without
-      // inventing one.
+      // **Crop to content**, and there is still no crop-by-dragging --- but the
+      // reason has changed and is worth correcting rather than leaving. It used
+      // to be that a rectangle a reader draws needs a drag mode this
+      // application did not have; `drag.ts` and `edit.drawBox` are that mode
+      // now, so what is missing is only a second caller of it. Measuring the
+      // ink remains the better answer for the case a reader actually wants --- a
+      // scan, or an article whose margins are wider than its column --- which is
+      // why it is still the one that exists.
       //
       // Measured from a low-resolution render rather than from the page's
       // objects, which is what makes it work on a scan at all: see `content.rs`,
@@ -836,12 +900,43 @@ export interface WindowKeyDeps {
 }
 
 /**
+ * Opens the palette, or closes an open one.
+ *
+ * Extracted from ⌘K's arm in {@link handleWindowKey} so the toolbar's palette
+ * button reaches the same code rather than a second copy of it. That button is
+ * not a convenience: `menu.rs` puts the native menu bar behind
+ * `#[cfg(target_os = "macos")]` on purpose, so on Windows the palette is the
+ * only route to most of this application's commands, and it was advertised
+ * nowhere on screen --- a reader had to already know ⌘K to find anything. A
+ * second implementation here would be a second place to forget the recents
+ * refresh, which is the disagreement `keys.ts` exists to make impossible for
+ * labels and this exists to make impossible for one command.
+ */
+export function togglePalette(
+  deps: Pick<WindowKeyDeps, "palette" | "refreshRecents">,
+): void {
+  const palette = deps.palette();
+  // Toggling rather than reopening: Cmd-K on an open palette is a request
+  // to get rid of it, not to clear the query someone is halfway through.
+  if (palette?.isOpen) palette.close();
+  else {
+    palette?.open();
+    // Opened first and refreshed behind it. The list only changes when a
+    // document is opened, so it is almost always already right, and blocking
+    // a keystroke on a file read to cover the case where it is not would
+    // make every use of the palette pay for it.
+    deps.refreshRecents();
+  }
+}
+
+/**
  * The shortcuts that belong to the window rather than to the surface.
  *
  * Matched through `keys.ts`, which is where the palette's labels come from
- * too --- see the note there. ⌘K is the one chord not in that table: it opens
- * the palette rather than being listed in it, so there is no label for it to
- * disagree with.
+ * too --- see the note there, and note that ⌘K is now in that table as well.
+ * It was the one exception, on the reasoning that the palette is not a row in
+ * itself so no label could disagree with it; the toolbar button added for
+ * Windows renders a label for it, which ended the exception.
  */
 export function handleWindowKey(
   event: KeyboardEvent,
@@ -851,19 +946,9 @@ export function handleWindowKey(
   const { actions } = deps;
   const title = deps.hasDocument();
 
-  if ((event.metaKey || event.ctrlKey) && event.key === "k") {
+  if (matches("app.palette", event)) {
     event.preventDefault();
-    // Toggling rather than reopening: Cmd-K on an open palette is a request
-    // to get rid of it, not to clear the query someone is halfway through.
-    if (palette?.isOpen) palette.close();
-    else {
-      palette?.open();
-      // Opened first and refreshed behind it. The list only changes when a
-      // document is opened, so it is almost always already right, and blocking
-      // a keystroke on a file read to cover the case where it is not would
-      // make every use of the palette pay for it.
-      deps.refreshRecents();
-    }
+    togglePalette(deps);
   } else if (matches("nav.goToPage", event) && title) {
     // Straight into the palette's argument mode. The shortcut and the palette
     // row reach the same code, which is the point of `askFor` -- a second way
@@ -931,6 +1016,42 @@ export function handleWindowKey(
   } else if (matches("file.saveCopy", event) && title) {
     event.preventDefault();
     actions.saveCopy();
+  } else if (
+    matches("edit.selectAll", event) &&
+    title &&
+    !inTextField(event) &&
+    !event.defaultPrevented
+  ) {
+    // ⌘A and ⌘C belong to the surface while the surface has the keyboard: its
+    // own handler matches both and prevents the default, which is what
+    // `defaultPrevented` reads here. This is the first arm in this function that
+    // needs such a guard --- every other chord above is one the viewer does not
+    // claim, so the two lists have never overlapped before.
+    //
+    // What the viewer's handler cannot see is a reader whose focus is in the
+    // chrome. Click the document's name in the toolbar and the event never
+    // reaches the viewer's root at all, so before this arm ⌘A fell through to
+    // the web view, whose select-all takes the *toolbar* --- the Open button,
+    // every find toggle, and the find field's contents. Reported from use on
+    // Windows, where there is no menu bar to claim the chord first.
+    //
+    // Guarded on the field for the reason `NO_ACCELERATOR` in `menubar.ts`
+    // gives: inside the find bar ⌘A means *this field*, and taking it there
+    // would stop a reader replacing a query they had half typed.
+    event.preventDefault();
+    actions.viewer()?.selectPage();
+  } else if (
+    matches("edit.copy", event) &&
+    title &&
+    !inTextField(event) &&
+    !event.defaultPrevented
+  ) {
+    // The same defect as ⌘A above and the same three guards. Left out of a fix
+    // for select-all alone it would be the quieter half: ⌘A on the chrome did
+    // something visibly wrong, ⌘C there did nothing at all, which reads as a
+    // copy that silently failed.
+    event.preventDefault();
+    void actions.viewer()?.copySelection();
   } else if (matches("edit.undo", event) && title && !inTextField(event)) {
     // The `inTextField` guard is on these two and on nothing else here, and the
     // asymmetry is deliberate rather than an oversight. Every other binding

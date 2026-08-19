@@ -225,19 +225,20 @@ jobs:
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag
           a thumbnail in the page strip, or use the command palette. Text you
-          drag across can be highlighted, underlined or struck out, as real
-          annotations any PDF reader shows, and each one takes a note.
-          Everything is undoable, and the result is printed or written out with
-          *Save a copy*. The open file is never modified in place.
+          drag across can be highlighted, underlined or struck out; you can
+          leave a comment anywhere on a page, and draw a box round anything on
+          one. All of them are real annotations any PDF reader shows, and each
+          takes a note. Everything is undoable, and the result is printed,
+          written back into the file you opened with *Save*, or written out to
+          a new file with *Save a copy*.
 
-          **What it is not, yet.** Annotations you draw rather than select —
-          ink, shapes, text boxes, stamps — inserting pages, true redaction,
-          forms and text editing are not built. See the roadmap in
-          `docs/PLAN.md`.
+          **What it is not, yet.** Ink, text boxes and stamps, inserting pages,
+          true redaction, forms and text editing are not built. See the roadmap
+          in `docs/PLAN.md`.
 
           **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
           the `-setup.exe` if you prefer an installer that asks fewer
-          questions — they install the same four files.
+          questions — either one installs the same application.
 
           **Updating.** From this release on, tpdf checks for a newer version
           once per launch and offers it in the toolbar; nothing is downloaded

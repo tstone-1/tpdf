@@ -22,6 +22,7 @@ import {
   textOf,
   turnedView,
   turnQuad,
+  unturnQuad,
   wordAt,
   type PageText,
 } from "./text";
@@ -271,6 +272,43 @@ describe("turnQuad", () => {
     expect(turnQuad(box, -1, page.width, page.height)).toEqual(
       turnQuad(box, 3, page.width, page.height),
     );
+  });
+});
+
+describe("unturnQuad", () => {
+  const page = { width: 100, height: 200 };
+  const box = { left: 10, top: 20, right: 30, bottom: 60 };
+
+  it("undoes a turn at every angle", () => {
+    // Round-tripped rather than compared against a table of expected numbers:
+    // a table here would be a second statement of the same arithmetic, and it
+    // would agree with a wrong `turnQuad` as readily as with a right one.
+    for (const turns of [0, 1, 2, 3, -1, 5]) {
+      const sideways = ((((turns % 4) + 4) % 4) & 1) === 1;
+      const [width, height] = sideways
+        ? [page.height, page.width]
+        : [page.width, page.height];
+      const there = turnQuad(box, turns, page.width, page.height);
+      expect(unturnQuad(there, turns, width, height)).toEqual(box);
+    }
+  });
+
+  it("is not the same thing as turning again", () => {
+    // The check above passes for a quarter turn under *either* implementation
+    // if you only ever try 0 and 2, where a turn is its own inverse. This is
+    // the assertion that separates them.
+    const there = turnQuad(box, 1, page.width, page.height);
+    expect(unturnQuad(there, 1, page.height, page.width)).not.toEqual(
+      turnQuad(there, 1, page.height, page.width),
+    );
+  });
+
+  it("takes the turned page's own size, not the original's", () => {
+    // Stated as a failing case rather than as a comment: passing the untuned
+    // page's dimensions to a quarter turn is the mistake the doc comment warns
+    // about, and it produces a plausible rectangle somewhere else on the page.
+    const there = turnQuad(box, 1, page.width, page.height);
+    expect(unturnQuad(there, 1, page.width, page.height)).not.toEqual(box);
   });
 });
 

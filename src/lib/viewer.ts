@@ -39,6 +39,42 @@ import {
   uncropped,
   type CropGeometry,
 } from "./crop";
+import {
+  boxQuad,
+  ICON_SIZE,
+  iconQuad,
+  isIcon,
+  isOutline,
+  isWash,
+  markBand,
+  OUTLINE_WIDTH,
+} from "./markband";
+import { PointerDrag, type DragPoint } from "./drag";
+
+/**
+ * A point on screen, as every event that carries one reports it.
+ *
+ * Structural rather than `PointerEvent`, so a `contextmenu` MouseEvent and a
+ * synthetic point from the check harness are the same thing to the hit tests.
+ * Nothing that takes one reads any other field.
+ */
+/**
+ * A point on a page, in that page's laid-out space, in points.
+ *
+ * Deliberately not {@link ScreenPoint}, which is in client coordinates: the two
+ * are the same shape with different field names for exactly that reason, since
+ * a value that means one and is used as the other is a rectangle in the wrong
+ * place rather than a type error.
+ */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface ScreenPoint {
+  clientX: number;
+  clientY: number;
+}
 import { MarkPopup } from "./markpopup";
 import type { Anchor } from "./popup";
 import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
@@ -55,7 +91,14 @@ import {
 } from "./links";
 import { Lifetime } from "./lifetime";
 import { DESTINATION_MARGIN_PT } from "./outline";
-import { markWalk, PageMap, unedited, type MarkView, type PageView } from "./pages";
+import {
+  markWalk,
+  PageMap,
+  unedited,
+  type MarkKind,
+  type MarkView,
+  type PageView,
+} from "./pages";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import {
   PLAIN_SEARCH,
@@ -74,6 +117,7 @@ import {
   runsFor,
   TextCache,
   turnQuad,
+  unturnQuad,
   wordAt,
   type Caret,
   type PageText,
@@ -259,6 +303,20 @@ export interface ViewerOptions {
   /** Called when the reader asked to take one of their own marks off the page. */
   onMarkRemove?: (mark: number) => void;
   /**
+   * Called when the reader finished drawing a mark, with the page it is on.
+   *
+   * `page` is the page's **id**, not its slot, and `quads` is in the file's
+   * display space --- the same pair a `mark` command takes, because that is what
+   * the caller does with it. Doing the translation here rather than at the
+   * caller is the point: the slot, the crop and the two rotations are all the
+   * viewer's, and a caller that had to undo them would be a second copy of
+   * {@link fileRectOn}.
+   *
+   * Optional, so a viewer with no model behind it can still be driven. A drag
+   * then draws its preview and commits nothing, which is what the harness does.
+   */
+  onDrawn?: (kind: MarkKind, page: number, quads: number[]) => void;
+  /**
    * Called after a jump that Back can undo, so a caller can re-enable a button.
    *
    * Separate from `onPosition`, which fires every frame: this fires only when
@@ -307,18 +365,101 @@ const COPY_CHUNK = 16;
  * read at a glance and next to a highlight of the other colour.
  */
 /**
- * The wash a highlight is drawn in while the document is open.
+ * How opaque a mark's ink is on the overlay, by whether it is a wash or a line.
  *
- * **Two renderers draw this mark, and they must agree.** This is the overlay's,
- * painted over a tile with `multiply`; the other is the appearance stream
- * `save.rs` writes, drawn by PDFium once the file has been saved and reopened.
- * The colour is the one `edits.ts` sends the model (`1, 0.9, 0.2`), written here
- * as the same values with the alpha the overlay needs on top of a tile --- and
- * `annot-probe --mode ink` is what says the saved file's wash lands where this
- * one did. `docs/PLAN.md` §10 question 8 is this decision.
+ * **Two renderers draw these marks and they must agree.** This is the overlay's,
+ * painted over a tile; the other is the appearance stream `save.rs` writes,
+ * drawn by PDFium once the file has been saved and reopened. `annot-probe`
+ * (`--mode ink` for the wash, `--mode rule` for a line) is what says the saved
+ * file's ink lands where this one did. `docs/PLAN.md` §10 question 8 is this
+ * decision.
+ *
+ * **The alphas differ from the file's and the colours no longer do.** This was
+ * `const MARK_FILL = "rgba(255, 230, 51, 0.85)"` --- the highlight's colour
+ * written out a second time, with a comment saying it was `edits.ts`'s
+ * `1, 0.9, 0.2`. The overlay now reads {@link MarkView.color}, which is the
+ * value that actually went to the model and into the file, so there is one
+ * statement of it rather than two that agree today. Measured before the change
+ * rather than assumed: `Math.round(0.9 * 255)` is 230, so a highlight is drawn
+ * in exactly the pixels the literal named, and a line comes out at
+ * `217, 38, 38`, which is the red `annot_probe` measures for a rule.
+ *
+ * The *alpha* stays ours, because it is a fact about painting over a tile rather
+ * than about the mark: the file's wash is 40% and needs to be stronger here. A
+ * line is opaque in both, for the reason `is_wash` gives --- a translucent line
+ * reads as a smudge.
  */
-const MARK_FILL = "rgba(255, 230, 51, 0.85)";
+const WASH_ALPHA = 0.85;
+const LINE_ALPHA = 1;
+
+/**
+ * Draws a comment's icon in the box a mark gives it.
+ *
+ * **Ours only until the file is saved.** Every reader synthesises its own icon
+ * for a `/Text` annotation --- which is why `save.rs` writes no appearance
+ * stream for one --- so this is what a reader sees while they are working, and
+ * Acrobat's or Preview's bubble is what they see afterwards. The two will not
+ * be the same picture. They are in the same place and the same size, which is
+ * what `ICON_SIZE` is for, and that is the property worth having: a comment
+ * must not move when the file is saved.
+ *
+ * A rounded box with a tail, outlined in a darker shade of its own fill so it
+ * stays visible on yellow paper and on a dark inverted page alike. Drawn with
+ * the canvas's own primitives rather than an image, because an icon that needs
+ * a resource is an icon that can fail to load.
+ */
+function drawBubble(
+  ctx: CanvasRenderingContext2D,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): void {
+  // The tail hangs below the box, so the body takes the upper three quarters
+  // and the point sits on the bottom edge of the rectangle the mark owns. That
+  // keeps everything drawn inside the quad, which is the same discipline
+  // `markBand` follows for a line and for the same reason: the saved `/Rect` is
+  // what other readers clip their own icon to.
+  const body = height * 0.78;
+  const radius = Math.min(width, body) * 0.28;
+  const fill = ctx.fillStyle;
+
+  ctx.beginPath();
+  ctx.roundRect(left, top, width, body, radius);
+  ctx.moveTo(left + width * 0.28, top + body);
+  ctx.lineTo(left + width * 0.3, top + height);
+  ctx.lineTo(left + width * 0.52, top + body);
+  ctx.closePath();
+  ctx.fill();
+
+  // The outline, and it is not decoration: the fill is the mark's own colour,
+  // which on a yellow-ish page or under a highlight is close to invisible. A
+  // stroke at 55% of the fill against black gives an edge in every combination
+  // without introducing a second colour to keep in step with `MARK_COLORS`.
+  ctx.save();
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.06);
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = fill;
+}
+
+/** A mark's colour as the canvas wants it, from the value the model holds. */
+function markInk(color: readonly [number, number, number], wash: boolean): string {
+  const [r, g, b] = color.map((v) => Math.round(v * 255));
+  return `rgba(${r}, ${g}, ${b}, ${wash ? WASH_ALPHA : LINE_ALPHA})`;
+}
 const SELECTION_FILL = "rgba(80, 140, 255, 0.35)";
+/**
+ * The dashed rectangle a drag draws before it is committed.
+ *
+ * The selection's blue rather than the mark's red: a preview is the
+ * application's own feedback about a gesture in progress, in the colour
+ * everything else about a gesture in progress uses, and drawing it in the
+ * mark's colour would make a half-drawn box indistinguishable from a made one
+ * at a glance.
+ */
+const PREVIEW_STROKE = "rgba(80, 140, 255, 0.95)";
 const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
 const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
 
@@ -493,6 +634,40 @@ export class Viewer {
   private readonly popup: CommentPopup;
   private readonly markNote: MarkPopup;
 
+  /**
+   * The tool a reader armed, or `null` when a press means what it always did.
+   *
+   * **A mode, in an application whose stated principle is contextual actions
+   * rather than modes** (`docs/PLAN.md` §8), so it is worth saying why there is
+   * no alternative. Every existing gesture on a page reads a point and acts on
+   * what is under it; drawing reads two points and acts on the paper between
+   * them, and nothing in a press can distinguish "select this text" from "draw
+   * a box here" without being told first.
+   *
+   * What the principle *does* decide is that it is **one-shot**: armed by a
+   * command, spent by one rectangle, and dropped by Escape or by the document
+   * closing. A reader can never be stuck in it and never has to find the way
+   * out, which is the failure the principle is actually about. A tool that
+   * stays armed is the obvious next step and is a decision, not an oversight.
+   */
+  private drawKind: MarkKind | null = null;
+  /**
+   * The rectangle being dragged, in the slot's laid-out space.
+   *
+   * Held rather than recomputed from the drag, because the overlay paints it
+   * once a frame and the drag reports client coordinates --- which mean
+   * something different after a scroll. Both corners are stored on the page, so
+   * a preview follows the page rather than the window.
+   */
+  private drawing: { slot: number; from: Point; to: Point } | null = null;
+  /**
+   * The box's drag, which owns its own listener pair.
+   *
+   * Constructed once, in the constructor, because it registers nothing until
+   * {@link PointerDrag.start} takes a press --- an idle one costs a field.
+   */
+  private readonly drawDrag: PointerDrag;
+
   private readonly life = new Lifetime();
   /**
    * Wake scheduled for a request whose backoff has not elapsed.
@@ -653,6 +828,58 @@ export class Viewer {
       "background:color-mix(in srgb, Highlight 12%, transparent);";
     root.appendChild(this.ring);
 
+    // The box's drag. Its three callbacks are the whole of the gesture; the
+    // arithmetic they call is in `markband.ts`, which the file's writer mirrors.
+    this.drawDrag = new PointerDrag(root, {
+      begin: (at: DragPoint) => {
+        if (!this.drawKind) return false;
+        const { page, x, y } = this.pageAndPoint(at);
+        this.drawing = { slot: page, from: { x, y }, to: { x, y } };
+        this.wake();
+        return true;
+      },
+      move: (at: DragPoint) => {
+        const live = this.drawing;
+        if (!live) return;
+        // The page is the one the drag *started* on and is deliberately not
+        // re-read here. A box spanning two pages is not a thing a PDF can hold
+        // --- an annotation belongs to one page --- so a drag that wanders onto
+        // the next one is clamped to the first rather than silently moving.
+        const { x, y } = this.pageAndPoint(at);
+        live.to = { x, y };
+        this.wake();
+      },
+      end: (_at: DragPoint, committed: boolean) => {
+        const live = this.drawing;
+        const kind = this.drawKind;
+        this.drawing = null;
+        this.wake();
+        if (!committed || !live || !kind) {
+          // Cancelled. The tool goes with it, because Escape means "stop", and
+          // `cancelDraw` has already cleared it --- this is the browser's own
+          // `pointercancel` arriving by the same door.
+          this.drawKind = null;
+          this.showCursor();
+          return;
+        }
+        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));
+        const id = quad ? this.pages.idOf(live.slot) : undefined;
+        if (!quad || id === undefined) {
+          // **A click rather than a drag, and the tool stays armed.** Silent,
+          // because nothing went wrong --- `boxQuad` refuses a rectangle too
+          // small to be one and the reader simply tries again. Spending the
+          // tool here would make a slipped click cost them the command as well,
+          // and there is nothing on screen to say why.
+          return;
+        }
+        // Spent, and cleared *before* the callback so that an `onDrawn` which
+        // arms it again is not undone by this line.
+        this.drawKind = null;
+        this.showCursor();
+        this.opts.onDrawn?.(kind, id, this.fileRectOn(live.slot, quad));
+      },
+    });
+
     root.addEventListener("wheel", this.onWheel, { passive: false });
     root.addEventListener("keydown", this.onKeyDown);
     root.addEventListener("pointerdown", this.onSelectStart);
@@ -701,6 +928,11 @@ export class Viewer {
     // be left in the middle of one.
     this.track.removeEventListener("pointermove", this.onTrackPointerMove);
     this.track.removeEventListener("pointerup", this.onTrackPointerUp);
+    // And the box's, which owns its own listener pair rather than the two
+    // above. `dispose` ends a live drag without committing it, which is the
+    // right answer for a document being closed mid-gesture: the model it would
+    // have sent the box to is going away with it.
+    this.drawDrag.dispose();
     this.scroller.destroy();
     this.root.replaceChildren();
   }
@@ -1117,6 +1349,26 @@ export class Viewer {
   /** What the scroller composited into, for a check that must read pixels. */
   get compositedSurface(): HTMLCanvasElement | null {
     return this.scroller.compositedSurface;
+  }
+
+  /**
+   * The overlay canvas, so a window check can read what a mark actually looks
+   * like.
+   *
+   * **This exists because there was no check on the overlay at all, and the
+   * defect that fact allowed was reported by a reader.** Every mark was filled
+   * across its whole quad in one colour, so an underline and a strikeout both
+   * appeared as a highlight while the document was open --- and the saved file
+   * was correct the whole time, which made it the worse shape of wrong: the mark
+   * changed under the reader when they saved and reopened it. `annot-probe`
+   * measures the *file's* pixels and can say nothing about these.
+   *
+   * Separate from {@link compositedSurface}, which is the tile surface: the
+   * marks are drawn on a canvas above it, and reading the wrong one would report
+   * the page rather than what is over it.
+   */
+  get overlaySurface(): HTMLCanvasElement {
+    return this.overlay;
   }
 
   /**
@@ -1622,7 +1874,22 @@ export class Viewer {
       // with a note open, a link focused and a selection presses it three
       // times, which is the order every application uses --- dismissing them
       // together would lose two things they were not asking about.
-      if (this.popup.openId !== null) this.closeComment();
+      //
+      // **An armed tool goes first, and that ordering is defensive rather than
+      // load-bearing --- which is worth saying, because the comment here first
+      // claimed the opposite.** It said a note open alongside an armed tool
+      // would otherwise take the first Escape. That state cannot arise:
+      // `armDraw` closes both boxes, and a press with a tool armed is
+      // intercepted before anything can open one. A mutation written to swap
+      // these two survived, and it survived because there is no reachable input
+      // that tells them apart.
+      //
+      // Kept in this order anyway. It costs a comparison, it is the order that
+      // stays correct if a later change *does* make the two co-exist, and the
+      // alternative is a reader stuck in a mode --- which is the one failure the
+      // one-shot design exists to rule out.
+      if (this.drawKind !== null || this.drawing) this.cancelDraw();
+      else if (this.popup.openId !== null) this.closeComment();
       else if (this.focusedLink) this.clearLinkFocus();
       else this.clearSelection();
     } else if (matches("nav.nextPage", event)) {
@@ -2064,6 +2331,49 @@ export class Viewer {
   }
 
   /**
+   * The size a slot is laid out at: its crop, under both turns.
+   *
+   * What a reader sees and what a rectangle they draw has to be clamped into.
+   * `scroller.pageSize` is the cropped page *before* the turn, which is the
+   * convention `viewRect` wants and the wrong one for anything measured on
+   * screen --- a quarter turn swaps the sides, so clamping against it puts a
+   * mark dropped near the bottom of a landscape page somewhere in the middle.
+   */
+  private laidSize(slot: number): { width: number; height: number } {
+    const size = displayedSize(
+      this.scroller.pageSize(slot),
+      this.scroller.effectiveTurns(slot),
+    );
+    return { width: size.width_pt, height: size.height_pt };
+  }
+
+  /**
+   * A rectangle in a slot's laid-out space, back in the file's display space.
+   *
+   * **The inverse of {@link viewRectOn}, and the only thing that travels this
+   * way.** Everything else in the application goes from the file, through the
+   * crop, through the turn, onto the screen; a reader who *drops* a comment or
+   * *drags* a box starts at the far end and the two steps have to be undone in
+   * the opposite order. The model holds one space and it is the file's --- see
+   * `crop.ts` --- so a mark stored in the laid-out space would move the moment
+   * the reader turned the page or changed the crop.
+   *
+   * It is one function for the reason `viewRectOn` is: the failure is a
+   * plausible rectangle somewhere else on the page, it only appears on a page
+   * that is cropped or turned, and no unrotated corpus can see it.
+   */
+  private fileRectOn(slot: number, quad: Quad): [number, number, number, number] {
+    const { turns } = this.turnsOn(slot);
+    const laid = this.laidSize(slot);
+    const back = unturnQuad(quad, turns, laid.width, laid.height);
+    const moved = outOfCrop(
+      [back.left, back.top, back.right, back.bottom],
+      this.cropAt(slot),
+    );
+    return [moved[0] ?? 0, moved[1] ?? 0, moved[2] ?? 0, moved[3] ?? 0];
+  }
+
+  /**
    * Where a rectangle on a page is on screen, in the root's coordinates.
    *
    * One implementation for a comment's note and a link's focus ring, which had
@@ -2140,7 +2450,7 @@ export class Viewer {
    * additionally refuses a page whose text has not been extracted: a mark is not
    * text and must be clickable on a scanned page, which has none.
    */
-  private pageAndPoint(event: PointerEvent): { page: number; x: number; y: number } {
+  private pageAndPoint(event: ScreenPoint): { page: number; x: number; y: number } {
     const bounds = this.root.getBoundingClientRect();
     const docY = event.clientY - bounds.top + this.scrollTop;
     const page = this.scroller.pageAt(docY);
@@ -2186,7 +2496,7 @@ export class Viewer {
     const over = this.linkUnder(event) !== null;
     if (over === this.overLink) return;
     this.overLink = over;
-    this.surfaceHost.style.cursor = over ? "pointer" : "";
+    this.showCursor();
   };
 
   /**
@@ -2260,7 +2570,7 @@ export class Viewer {
    * a small rectangle and the "smallest wins" rule for overlapping ones are the
    * ones comments and links already use.
    */
-  private markUnder(event: PointerEvent): MarkView | null {
+  private markUnder(event: ScreenPoint): MarkView | null {
     if (this.marks.length === 0) return null;
     const { page, x, y } = this.pageAndPoint(event);
     const here: { page: number; rect: [number, number, number, number]; mark: MarkView }[] =
@@ -2303,6 +2613,143 @@ export class Viewer {
       right: origin.left + box.right * this.zoom,
       bottom: origin.top + box.bottom * this.zoom - this.scrollTop,
     };
+  }
+
+  /**
+   * The id of the reader's own mark at a point on screen, or `null`.
+   *
+   * The public half of {@link markUnder}, which the press path has used since
+   * marks existed. It is here because a right-click on a highlight offered a
+   * menu about the *selection* --- copy, mark, find --- and nothing about the
+   * mark under the pointer, so there was no way to take a mark off without
+   * first left-pressing it to open its note. Reported from use.
+   *
+   * Both this and {@link pageAndPoint} beneath it take a structural point
+   * rather than a `PointerEvent`, because a `contextmenu` event is a
+   * `MouseEvent` and neither ever read anything but the two client
+   * coordinates. Widening the parameter accepts strictly more than before, so
+   * no existing caller changes behaviour.
+   */
+  markAt(point: ScreenPoint): number | null {
+    return this.markUnder(point)?.id ?? null;
+  }
+
+  /**
+   * Where a new comment would go, as the page and the one quad it needs.
+   *
+   * **One rule with two entry points, rather than two rules.** A right-click
+   * names a point and the palette does not, and the temptation is to answer
+   * those separately --- which would be two statements of where a comment is
+   * allowed to land, drifting the first time one of them is adjusted. So the
+   * point is optional and its absence has an answer: the top-left of whatever
+   * of the current page is actually on screen, inset by the icon's own size.
+   *
+   * The inset is what makes the answer usable rather than merely defined. A
+   * comment placed hard against the corner of the visible area sits under the
+   * page's own margin, and one placed at the page's top-left when the reader
+   * has scrolled halfway down lands somewhere they cannot see --- which reads
+   * as a command that did nothing.
+   *
+   * **Built in the laid-out space and converted at the end.** `pageAndPoint`
+   * answers where a pointer is on the page *as it is displayed*, and the model
+   * holds the file's space; this took the first for the second, so on a page
+   * that is turned or cropped the comment landed somewhere else entirely. It
+   * clamped against the un-turned size as well, which is the same mistake a
+   * second time. The clamp belongs in the laid-out space --- that is the
+   * rectangle the reader can see --- and {@link fileRectOn} is the one step
+   * back, shared with the box.
+   */
+  commentAt(point: ScreenPoint | null): { page: number; quads: number[] } | null {
+    const slot = point ? this.pageAndPoint(point).page : this.currentPage();
+    let x: number;
+    let y: number;
+    if (point) {
+      const at = this.pageAndPoint(point);
+      x = at.x;
+      y = at.y;
+    } else {
+      const origin = this.scroller.pageOrigin(slot);
+      x = ICON_SIZE;
+      y = Math.max(0, (this.scrollTop - origin.top) / this.zoom) + ICON_SIZE;
+    }
+    const quad = iconQuad(x, y, this.laidSize(slot));
+    return { page: slot, quads: this.fileRectOn(slot, quad) };
+  }
+
+  /**
+   * Arms the box tool: the next drag on a page draws one.
+   *
+   * Takes the kind rather than being `armBox()`, because the next tool that
+   * needs a drag --- an ellipse, a text box --- differs from this one in the
+   * subtype it writes and in nothing else, and a second method would be a
+   * second copy of the whole gesture.
+   *
+   * Arming closes an open note. A reader who is typing in one and then chooses
+   * a drawing tool has finished with the note, and leaving it open would put a
+   * box over the paper *and* commit whatever was in the field on the next press
+   * anywhere.
+   */
+  armDraw(kind: MarkKind): void {
+    if (this.markNote.openId !== null) this.closeMark();
+    if (this.popup.openId !== null) this.closeComment();
+    this.drawKind = kind;
+    this.showCursor();
+    this.wake();
+  }
+
+  /**
+   * Drops the armed tool and any drag in progress.
+   *
+   * Safe with nothing armed, which is what lets Escape call it without asking
+   * first. {@link PointerDrag.cancel} reports the drag as not committed, so a
+   * box half-drawn when Escape is pressed is not written.
+   */
+  cancelDraw(): void {
+    this.drawDrag.cancel();
+    this.drawKind = null;
+    this.drawing = null;
+    this.showCursor();
+    this.wake();
+  }
+
+  /** The armed tool, or `null`. For the menu's enablement and the harness. */
+  get drawArmed(): MarkKind | null {
+    return this.drawKind;
+  }
+
+  /** The rectangle being dragged, in the page's laid-out space. For the harness. */
+  get drawPreview(): { slot: number; from: Point; to: Point } | null {
+    return this.drawing;
+  }
+
+  /**
+   * Puts the right pointer over the surface.
+   *
+   * One place, because there are now two things that change it and they are not
+   * ordered: a crosshair while a tool is armed, a hand over a link, the
+   * platform's own otherwise. Written as a single assignment rather than two
+   * handlers each clearing the other, which is how a cursor gets stuck.
+   */
+  private showCursor(): void {
+    this.surfaceHost.style.cursor = this.drawKind
+      ? "crosshair"
+      : this.overLink
+        ? "pointer"
+        : "";
+  }
+
+  /**
+   * Where one of the reader's own marks is on screen, or `null`.
+   *
+   * The viewer's own placement, not a second computation: it is what the note
+   * box hangs off, so it already carries the crop and both rotations. A window
+   * check sampling {@link overlaySurface} needs exactly this rectangle and
+   * deriving it independently would be a second implementation of the same
+   * turn, which is the drift this repository has a trap about.
+   */
+  markAnchor(id: number): Anchor | null {
+    const mark = this.marks.find((item) => item.id === id);
+    return mark ? this.anchorForMark(mark) : null;
   }
 
   /** The mark whose note is open, or -1. For the check harness and the menu. */
@@ -2536,6 +2983,16 @@ export class Viewer {
     // The scrollbar is inside the root and has its own drag.
     if (this.track.contains(event.target as Node)) return;
     this.root.focus();
+
+    // **Before every hit test below**, and that ordering is the mode. A press
+    // with a tool armed means "start here" whatever is under it --- a reader
+    // drawing a box around a highlighted paragraph must not have the press
+    // swallowed by the highlight's note, and one drawing around a
+    // cross-reference must not be sent to another page.
+    if (this.drawDrag.start(event)) {
+      event.preventDefault();
+      return;
+    }
 
     // A press on a mark opens its note and starts no selection. Before the
     // click counter, deliberately: a double-click on a note is two requests to
@@ -2946,16 +3403,23 @@ export class Viewer {
     // Multiply keeps the glyphs legible underneath, which a flat fill over the
     // tile would not: the text is already painted into the pixels.
     ctx.globalCompositeOperation = "multiply";
-    // Marks first, and **the order does not change the pixels** --- which is
-    // worth stating because the obvious reading of it is wrong. Under
-    // `multiply` each layer contributes a factor that does not depend on what
-    // is underneath, even with alpha: painting A then B and B then A both leave
-    // `dst * ((1-a) + a*A) * ((1-b) + b*B)`. So this is a reading order, not a
-    // z-order, and a search hit is legible over a highlighted line either way.
-    // The day one of the three stops multiplying, that stops being true.
+    // Marks first, and **the order no longer fails to matter**. It used to:
+    // under `multiply` each layer contributes a factor independent of what is
+    // underneath, even with alpha, so painting A then B and B then A both leave
+    // `dst * ((1-a) + a*A) * ((1-b) + b*B)` --- a reading order rather than a
+    // z-order. The comment here ended "the day one of the three stops
+    // multiplying, that stops being true", and that day arrived: an underline
+    // and a strikeout are opaque lines drawn `source-over`, because a
+    // translucent line reads as a smudge --- `is_wash` in `save.rs` decides the
+    // same thing the same way for the file. So this is a z-order now for line
+    // kinds, and marks go first deliberately: a search hit and a selection are
+    // washes, and a reader dragging across a struck-out line has to see the
+    // selection over it rather than under it.
     this.paintMarks(ctx, dpr);
     this.paintMatches(ctx, dpr);
     this.paintSelection(ctx, dpr);
+    // Last, and over everything: it is the thing the reader's hand is on.
+    this.paintDrawing(ctx, dpr);
     ctx.globalCompositeOperation = "source-over";
   }
 
@@ -2970,23 +3434,84 @@ export class Viewer {
    */
   private paintMarks(ctx: CanvasRenderingContext2D, dpr: number): void {
     if (this.marks.length === 0) return;
-    ctx.fillStyle = MARK_FILL;
 
     const visible = new Set(this.scroller.visiblePages());
     for (const mark of this.marks) {
       const placed = this.viewQuadsOf(mark);
       if (!placed || !visible.has(placed.slot)) continue;
 
+      // The kind decides the ink and the blend, exactly as `is_wash` decides
+      // both for the saved file. Set per mark rather than once for the loop:
+      // a document can carry all three, and hoisting this out was how every
+      // mark came to be drawn as a highlight in the first place.
+      const wash = isWash(mark.kind);
+      ctx.fillStyle = markInk(mark.color, wash);
+      ctx.globalCompositeOperation = wash ? "multiply" : "source-over";
+
       const origin = this.scroller.pageOrigin(placed.slot);
       for (const quad of placed.quads) {
-        ctx.fillRect(
-          (origin.left + quad.left * this.zoom) * dpr,
-          (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,
-          (quad.right - quad.left) * this.zoom * dpr,
-          (quad.bottom - quad.top) * this.zoom * dpr,
-        );
+        const band = markBand(mark.kind, quad);
+        const left = (origin.left + band.left * this.zoom) * dpr;
+        const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr;
+        const width = (band.right - band.left) * this.zoom * dpr;
+        const height = (band.bottom - band.top) * this.zoom * dpr;
+        if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);
+        else if (isOutline(mark.kind)) {
+          // Stroked, not filled, which is the whole of what a box is --- and
+          // the same decision `save.rs` makes with `re S` for the file. A
+          // filled box hides what it was drawn around, which is the one thing
+          // it exists not to do.
+          //
+          // The stroke straddles the path, so half of it falls outside the
+          // rectangle. That is correct here and wrong in the file, where the
+          // appearance stream's `/BBox` would clip it --- see `outline_path`,
+          // which insets for exactly that reason and which the overlay must not
+          // copy, or the two would draw the box at two different sizes.
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
+          ctx.strokeRect(left, top, width, height);
+        } else ctx.fillRect(left, top, width, height);
       }
     }
+    // Put back what the caller set, because the two below still rely on it.
+    ctx.globalCompositeOperation = "multiply";
+  }
+
+  /**
+   * The box being dragged, as a dashed outline.
+   *
+   * **Dashed, where the committed mark is solid**, so the two are never
+   * confused: a preview is not yet a mark, and a reader who lets go expects
+   * something to change. Drawn from the two page-space corners rather than from
+   * the pointer's client position, so it stays on the paper when the view
+   * scrolls under a held pointer.
+   *
+   * Refuses nothing. `boxQuad`'s minimum applies when the drag *ends*; showing
+   * a reader the rectangle they are dragging, however small, is what tells them
+   * the tool is armed and working.
+   */
+  private paintDrawing(ctx: CanvasRenderingContext2D, dpr: number): void {
+    const live = this.drawing;
+    if (!live) return;
+    const origin = this.scroller.pageOrigin(live.slot);
+    const left = Math.min(live.from.x, live.to.x);
+    const top = Math.min(live.from.y, live.to.y);
+    const right = Math.max(live.from.x, live.to.x);
+    const bottom = Math.max(live.from.y, live.to.y);
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = PREVIEW_STROKE;
+    ctx.lineWidth = Math.max(1, OUTLINE_WIDTH * this.zoom * dpr);
+    ctx.setLineDash([6 * dpr, 4 * dpr]);
+    ctx.strokeRect(
+      (origin.left + left * this.zoom) * dpr,
+      (origin.top + top * this.zoom - this.scrollTop) * dpr,
+      (right - left) * this.zoom * dpr,
+      (bottom - top) * this.zoom * dpr,
+    );
+    // Put back, or every later stroke on this context is dashed --- the mark
+    // outlines above are painted on the same canvas on the next frame.
+    ctx.setLineDash([]);
   }
 
   private paintSelection(ctx: CanvasRenderingContext2D, dpr: number): void {

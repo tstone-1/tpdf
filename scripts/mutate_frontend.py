@@ -34,6 +34,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from live_output import stream_results  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -73,6 +76,296 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation(
+        # Report the box in the space the reader is looking at rather than the
+        # file's. Identical on an unrotated, uncropped page -- which is thirteen
+        # of the fourteen corpora -- and a rectangle somewhere else entirely on
+        # the fourteenth.
+        "viewer: report a drawn box in the laid-out space, not the file's",
+        "src/lib/viewer.ts",
+        "    return [moved[0] ?? 0, moved[1] ?? 0, moved[2] ?? 0, moved[3] ?? 0];",
+        "    return [quad.left, quad.top, quad.right, quad.bottom];",
+        "puts a box drawn at the screen's top-left in the corner the turn implies",
+    ),
+    Mutation(
+        # Undo the turn with the page's un-turned dimensions, which is the
+        # mistake `unturnQuad`'s doc comment warns about: a plausible rectangle
+        # in the wrong place, with the right proportions.
+        "viewer: unturn a drawn box against the wrong pair of dimensions",
+        "src/lib/viewer.ts",
+        "    const back = unturnQuad(quad, turns, laid.width, laid.height);",
+        "    const back = unturnQuad(quad, turns, laid.height, laid.width);",
+        "stays inside the page at every turn",
+    ),
+    Mutation(
+        # Clamp against the page as the file describes it rather than as it is
+        # laid out. Passes at half turns, where the sides do not swap.
+        "viewer: clamp a drawn box against the un-turned page",
+        "src/lib/viewer.ts",
+        "      this.scroller.effectiveTurns(slot),\n    );",
+        "      0,\n    );",
+        "stays inside the page at every turn",
+    ),
+    Mutation(
+        # Spend the tool even when the box was refused. A slipped click then
+        # costs the reader the command as well, with nothing on screen saying
+        # why -- the shape this was written as first, and the test found it.
+        "viewer: spend the box tool on a click that drew nothing",
+        "src/lib/viewer.ts",
+        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));",
+        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));\n        this.drawKind = null;",
+        "refuses a click, and keeps the tool armed",
+    ),
+    Mutation(
+        # Leave the tool armed after a box is drawn. A reader who wanted one box
+        # gets a second on their next press, which is a mode they cannot see and
+        # did not ask to stay in.
+        "viewer: keep the box tool armed after a box is drawn",
+        "src/lib/viewer.ts",
+        "        this.drawKind = null;\n        this.showCursor();\n        this.opts.onDrawn?.(kind, id, this.fileRectOn(live.slot, quad));",
+        "        this.showCursor();\n        this.opts.onDrawn?.(kind, id, this.fileRectOn(live.slot, quad));",
+        "is spent by one box",
+    ),
+    Mutation(
+        # Send the slot rather than the page's id. Works on every document until
+        # a page is deleted or moved, and then marks land on the wrong page.
+        "viewer: send a drawn box to the slot rather than to the page's id",
+        "src/lib/viewer.ts",
+        "        const id = quad ? this.pages.idOf(live.slot) : undefined;",
+        "        const id = quad ? live.slot : undefined;",
+        "carries the armed kind and the page's id",
+    ),
+    Mutation(
+        # Take the press after the hit tests rather than before them. A box
+        # drawn across a highlight is then swallowed by the highlight's note,
+        # and one across a link jumps to another page.
+        "viewer: hit-test the page before letting the box tool have the press",
+        "src/lib/viewer.ts",
+        "    if (this.drawDrag.start(event)) {\n      event.preventDefault();\n      return;\n    }",
+        "",
+        "goes to the drag when a tool is armed and not when one is not",
+    ),
+    Mutation(
+        # Commit a cancelled drag. Escape then draws the box the reader was
+        # trying not to draw -- the same defect as `drag.ts`'s own cancel
+        # mutation, one layer up, where the box actually reaches the model.
+        "viewer: draw the box even when the drag was cancelled",
+        "src/lib/viewer.ts",
+        "        if (!committed || !live || !kind) {",
+        "        if (!live || !kind) {",
+        "is dropped by Escape mid-drag, without committing the box",
+    ),
+    Mutation(
+        # Re-read the page under the pointer on every move. A drag that wanders
+        # onto the next page then silently moves the box to it, and the corner
+        # it started from is measured on a page it is no longer on.
+        # Named for the two-page test rather than the scroll one: the scroll
+        # test asserts the *starting* corner, which this mutation leaves alone.
+        # It was aimed at the wrong check first and the harness said so.
+        "viewer: follow the pointer onto another page mid-drag",
+        "src/lib/viewer.ts",
+        "        const { x, y } = this.pageAndPoint(at);\n        live.to = { x, y };",
+        "        const at2 = this.pageAndPoint(at);\n        live.slot = at2.page;\n        live.to = { x: at2.x, y: at2.y };",
+        "keeps the box on the page it started from",
+    ),
+    Mutation(
+        # Build the box by subtracting in arrival order. Correct for a drag down
+        # and to the right, inside out for the other three -- and an inside-out
+        # rectangle does not draw, which reads as a tool that only works one way.
+        # Named for `markband.test.ts`'s check, which is deliberately *not*
+        # called the same thing as `viewerdraw.test.ts`'s: it was, and two tests
+        # sharing a name made this harness's two failure counts disagree by one
+        # and report that it could not read its own output. That guard is right
+        # and cannot know the cause.
+        "markband: build a box from the corners in the order they arrived",
+        "src/lib/markband.ts",
+        "    left: clampX(Math.min(from.x, to.x)),",
+        "    left: clampX(from.x),",
+        "normalises the corners whichever way the drag went",
+    ),
+    Mutation(
+        # Drop the clamp that keeps a drawn box on the page, exactly as the
+        # comment's was dropped above. A drag off the edge writes a /Rect past
+        # the page box, which `save.rs` maps without complaint.
+        "markband: let a drawn box run off the edge of the page",
+        "src/lib/markband.ts",
+        "  const clampX = (v: number): number => Math.max(0, Math.min(v, page.width));",
+        "  const clampX = (v: number): number => v;",
+        "stays inside the page at every turn",
+    ),
+    Mutation(
+        # Accept a rectangle of any size. A click then writes an annotation
+        # nothing draws and nobody can find again to remove.
+        # Aimed at the tall-and-thin check, not at the click: a click is zero
+        # in *both* dimensions, so the height guard below catches it whatever
+        # this one does. Only a box that is wide enough and too narrow can say
+        # which of the two fired.
+        "markband: accept a box with no size",
+        "src/lib/markband.ts",
+        "  if (quad.right - quad.left < MIN_BOX) return null;",
+        "",
+        "refuses a box that is tall and thin",
+    ),
+    Mutation(
+        # The other dimension. Together they say the bound is on *both* sides,
+        # which one of them alone does not.
+        "markband: accept a box with no height",
+        "src/lib/markband.ts",
+        "  if (quad.bottom - quad.top < MIN_BOX) return null;",
+        "",
+        "refuses a box that is wide and flat",
+    ),
+    Mutation(
+        # Fill a box rather than outlining it, on the overlay. The saved file is
+        # still right, so a reader sees a solid block until they save and reopen
+        # -- which is exactly the shape of the underline defect this repository
+        # already paid for once.
+        "markband: draw a box as a filled rectangle, as every mark used to be",
+        "src/lib/markband.ts",
+        '  return kind === "square";',
+        "  return false;",
+        "says a box is drawn as an outline and the others are not",
+    ),
+    Mutation(
+        # Leave the move listener registered after the drag ends. The pointer
+        # goes on being tracked with the button up, which reads as a viewer that
+        # has become sticky rather than as a missing line -- and is exactly the
+        # failure that made a sixth hand-rolled listener pair worth refusing.
+        "drag: keep following the pointer after the button comes up",
+        "src/lib/drag.ts",
+        '    this.host.removeEventListener("pointermove", this.onMove);',
+        "",
+        "takes its listeners off and releases the capture",
+    ),
+    Mutation(
+        # Never release the capture. Every later pointer event on the page goes
+        # to this element whatever it is over, and nothing about the drag itself
+        # looks wrong.
+        "drag: hold the pointer capture after the drag is over",
+        "src/lib/drag.ts",
+        "      this.host.releasePointerCapture(live.pointerId);",
+        "      void live;",
+        "takes its listeners off and releases the capture",
+    ),
+    Mutation(
+        # Report a cancel as a commit. An Escape, or a touch that turned into a
+        # scroll, then draws the box the reader was trying not to draw.
+        "drag: treat a cancelled drag as a released one",
+        "src/lib/drag.ts",
+        "  private readonly onCancel = (event: PointerEvent): void => {\n    this.finish(event, false);",
+        "  private readonly onCancel = (event: PointerEvent): void => {\n    this.finish(event, true);",
+        "reports a browser cancel as not committed",
+    ),
+    Mutation(
+        # Let a second pointer replace the live drag instead of being refused.
+        # A second finger then ends the first drag at its own starting point,
+        # committing a rectangle nobody drew.
+        "drag: let a second press take over the live drag",
+        "src/lib/drag.ts",
+        "    if (this.live) return false;\n    const at = { clientX: event.clientX, clientY: event.clientY };",
+        "    const at = { clientX: event.clientX, clientY: event.clientY };",
+        "refuses a second press rather than replacing the live drag",
+    ),
+    Mutation(
+        # Accept a refused begin anyway. The listeners and the capture are taken
+        # for a press the caller said was not theirs -- a press on no page, or a
+        # tool that is not armed -- so the surface stops receiving what it wanted.
+        "drag: register the drag even when the target refused it",
+        "src/lib/drag.ts",
+        "    if (!this.target.begin(at)) return false;",
+        "    this.target.begin(at);",
+        "registers nothing when the target refuses",
+    ),
+    Mutation(
+        # Tell the target before tearing down rather than after. A target that
+        # starts another drag from its own `end` -- a one-shot tool that re-arms
+        # -- then finds a half-registered one in the way.
+        # Written first as an insertion, which *duplicated* the call rather than
+        # moving it -- so `end` ran twice, the second run overwrote what the
+        # first had recorded, and the check written for this stayed green while
+        # three unrelated ones went red. A mutation that lands as something
+        # other than what it says is the trap index's "three ways a mutation
+        # lies to you"; the anchor below is the whole tail so the move is a move.
+        "drag: tell the target before the drag is torn down",
+        "src/lib/drag.ts",
+        "    this.live = null;\n    this.host.removeEventListener(\"pointermove\", this.onMove);\n    this.host.removeEventListener(\"pointerup\", this.onUp);\n    this.host.removeEventListener(\"pointercancel\", this.onCancel);\n    try {\n      this.host.releasePointerCapture(live.pointerId);\n    } catch {\n      // Never captured.\n    }\n    this.target.end(at, committed);",
+        "    this.target.end(at, committed);\n    this.live = null;\n    this.host.removeEventListener(\"pointermove\", this.onMove);\n    this.host.removeEventListener(\"pointerup\", this.onUp);\n    this.host.removeEventListener(\"pointercancel\", this.onCancel);\n    try {\n      this.host.releasePointerCapture(live.pointerId);\n    } catch {\n      // Never captured.\n    }",
+        "is already torn down by the time the target is told",
+    ),
+    Mutation(
+        # Take any pointer's release, not the one that started the drag. A
+        # second finger lifting ends a drag the first one is still doing.
+        "drag: end the drag on any pointer's release",
+        "src/lib/drag.ts",
+        "    if (event && event.pointerId !== live.pointerId) return;",
+        "    if (event && false) return;",
+        "ignores its release, so the drag stays live",
+    ),
+    Mutation(
+        # Cancel from the point the drag started rather than the last one seen.
+        # Invisible until a caller uses the point a cancel reports, which the
+        # box preview does.
+        "drag: cancel at the starting point rather than the last point seen",
+        "src/lib/drag.ts",
+        "    live.at = { clientX: event.clientX, clientY: event.clientY };",
+        "",
+        "cancels at the last point seen, since a cancel has no point of its own",
+    ),
+    Mutation(
+        # Drop the clamp that keeps a comment's icon on the page. `save.rs` maps
+        # quads and does not police them, so an unclamped drop near the edge
+        # writes a /Rect running past the page box -- which other readers clip,
+        # half-draw, or place wherever they like.
+        "markband: let a comment's icon hang off the edge of the page",
+        "src/lib/markband.ts",
+        "  const left = Math.max(0, Math.min(x, page.width - ICON_SIZE));",
+        "  const left = x;",
+        "keeps a comment dropped at the far edge inside the page",
+    ),
+    Mutation(
+        # Treat a comment as a wash. It would then be drawn multiplied into the
+        # paper rather than as an opaque bubble sitting on it -- and `save.rs`
+        # branches on the same question, so the file would get /CA 0.4 too.
+        "markband: count a comment as a wash",
+        "src/lib/markband.ts",
+        '  return kind === "highlight";',
+        '  return kind === "highlight" || kind === "note";',
+        "is not a wash, so the two questions do not collapse",
+    ),
+    Mutation(
+        # The defect exactly as it shipped, restored. `paintMarks` filled the
+        # whole quad in one colour for every kind, so while a document was open
+        # an underline and a strikeout both looked like a highlight --- and the
+        # saved file was right the whole time, which meant the mark changed
+        # under the reader when they saved and reopened it. Reported from use.
+        "markband: draw an underline as a wash, as the overlay used to",
+        "src/lib/markband.ts",
+        "      return { ...quad, top: quad.bottom - thickness };",
+        "      return quad;",
+        "sits an underline on the bottom edge",
+    ),
+    Mutation(
+        # The subtler half. Both line kinds still draw a line, and both draw it
+        # in the same place -- which is the mistake `save.rs` warns about in
+        # `line_rect`: a strikeout drawn at the bottom is an underline with the
+        # wrong subtype, and nothing about it looks broken.
+        "markband: draw a strikeout where an underline goes",
+        "src/lib/markband.ts",
+        "        top: quad.top + height / 2 - thickness / 2,",
+        "        top: quad.bottom - thickness,",
+        "centres a strikeout on the text",
+    ),
+    Mutation(
+        # A fixed thickness rather than a fraction of the text. Right for body
+        # text and a hairline across a heading, which is `LINE_FRACTION`'s whole
+        # reason -- and the fixture that catches it has to be the 36 pt line,
+        # since a 12 pt one at 7% is under a point either way.
+        "markband: fix the line thickness instead of scaling it with the text",
+        "src/lib/markband.ts",
+        "  const thickness = height * LINE_FRACTION;",
+        "  const thickness = 1;",
+        "scales the line with the text rather than fixing it",
+    ),
     Mutation(
         # Render the declared character even when the platform has said what the
         # key prints. The palette then advertises Cmd-backslash while the menu
@@ -2461,6 +2754,15 @@ TEST_FILES = [
     # Added 2026-08-18 with the crop, before writing the mutations.
     "src/lib/crop.test.ts",
     "src/lib/viewercrop.test.ts",
+    # Added 2026-08-19 with the mark bands, before writing the mutations. The
+    # rule it covers shipped wrong --- every kind drawn as a highlight while the
+    # document was open --- so the point of the entries below is that the exact
+    # shipped shape is one of them.
+    "src/lib/markband.test.ts",
+    # Added 2026-08-19 with the drag primitive and the box, before the
+    # mutations. Ninth entry, ninth time in that order.
+    "src/lib/drag.test.ts",
+    "src/lib/viewerdraw.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
@@ -2513,6 +2815,13 @@ def all_test_names() -> set[str]:
 
 
 def main() -> int:
+    # Before anything prints. A redirected run is block-buffered otherwise, and
+    # this harness takes the better part of an hour: on 2026-08-19 a full run's
+    # output sat at three lines for forty minutes and its verdict was lost
+    # entirely when the run was interrupted, which is the exact ambiguity
+    # `live_output` exists to remove. The three window harnesses had the fix and
+    # the three mutation harnesses did not.
+    stream_results()
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", action="store_true")
     # Same flag, same meaning as `mutate_viewer.py`'s. Added when the page

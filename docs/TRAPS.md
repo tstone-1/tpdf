@@ -3564,6 +3564,24 @@ certainly the occluded-window suspension this file warns about for that script. 
 file, so the natural move is to keep waiting. The process table is what settled it --- **a child
 holding 0.00 CPU is the tell**, and it is worth checking before extending a timeout.
 
+**Three scripts still had the hazard a year later, and one of them cost a verdict.**
+The fix reached `viewer_check.py`, `open_check.py` and `session_check.py` and stopped
+there; `mutate_frontend.py`, `mutate_rust.py` and `mutate_viewer.py` never got the line.
+On 2026-08-19 a full frontend run --- 276 mutations, about fifty minutes --- sat at **three
+lines** for its whole duration under `> file 2>&1`, so there was no way to tell a run in
+progress from one that had died at its third mutation. An earlier attempt the same day,
+piped through a filter and wrapped in `timeout`, produced **nothing at all**: the timeout
+killed it, the buffer went with the process, and the only evidence that fifty minutes had
+been spent was the wall clock.
+
+That is the same failure from the other end. The first time it was a run that looked dead
+and was fine; this time it was a run that looked fine and was dead. All three harnesses
+call `stream_results()` now.
+
+The general lesson is not about buffering. **A fix applied to the scripts that had the
+symptom leaves the ones that merely have the defect**, and nothing distinguishes them until
+somebody redirects the next one.
+
 ### A `DataWriter` closes the stream it was created over, so a helper that returns the stream returns a closed one
 
 WinRT has no "load a PDF from a byte slice" entry point: everything goes through
@@ -9345,3 +9363,437 @@ the real `STD_ERROR_HANDLE` out from under every other test in the binary.
 **The three tests are Windows-only and their first real run is CI.** They cannot be mutation
 proved from a Mac, which is the same gap `scripts/check_windows.py` exists for and does not
 close: a type-check is not a test, and a wrong *value* passes it.
+### A mutation that inserts rather than moves runs the code twice, and the second run overwrites the first
+
+`drag.ts` tears a drag down --- clears its state, removes its two listeners,
+releases the capture --- and only then tells the target it is over. That ordering
+is deliberate: a target whose `end` starts another drag must not find a
+half-registered one in its way. The mutation written to prove it was an
+insertion, anchored on the first line of the teardown and prepending the call.
+
+That does not move the call. It **adds** one, and the original stays at the
+bottom of the function. So `end` ran twice: once with the drag still live, once
+after the teardown. The check written for this recorded what it saw from inside
+`end` --- and the second call overwrote the first's recording with the correct
+values, so it passed. Three unrelated checks went red instead, because a target
+told twice records two endings.
+
+The harness reported it exactly right: *"3 red, but NOT the expected one"*. A
+mutation that lands as something other than what its name says is the family
+`AGENTS.md` records under *three ways a mutation lies to you*, and this is a
+fourth mechanism for it --- not an edit that failed to apply, but one that applied
+and meant something else.
+
+**The fix is to anchor the whole tail**, so the replacement is the same lines in
+a different order and nothing is duplicated. The general rule: when a mutation is
+a **reordering**, its `before` has to span every line being reordered. An anchor
+on the first line alone can only ever insert.
+
+### An escape sequence written into a mutation table through a shell never arrives as an escape
+
+Every multi-line anchor in `scripts/mutate_*.py` is a Python source literal
+holding a backslash followed by `n`, two characters. Writing one from a shell
+heredoc failed four times in one session, in three different ways, and each
+failure produced a *different* wrong outcome:
+
+  * a doubled backslash inside a quoted heredoc arrived as a real newline, so the
+    mutation table became a Python file with an unterminated string literal ---
+    caught, at least, by `python -c "import ast; ast.parse(...)"`.
+  * a backtick inside a quoted heredoc was treated as command substitution, so
+    `bash` reported *"unexpected EOF while looking for matching"* and refused the
+    whole command. Nothing was written and nothing said which line was at fault.
+    Quoting the heredoc delimiter did not prevent it, which is the surprising
+    half: something between here and `bash` is expanding the string first.
+  * the same doubled backslash in an argument to a small edit helper produced a
+    pattern that matched zero times, which the helper refused --- and the refusal
+    scrolled past while the next command in the chain built and ran happily
+    against the unmutated tree, printing a header that said `MUTATED`.
+
+The third is the dangerous one and is the trap this repository already records
+about a verification chained after a failed edit. The other two are loud.
+
+**Build the characters in the script, never in the command:**
+
+```python
+NL = chr(92) + "n"     # the two source characters a Python literal needs
+anchor = "    const x = 1;" + NL + "    const y = 2;"
+```
+
+`chr(92)` cannot be eaten by any layer between here and the interpreter. The same
+applies to a backtick, `chr(96)`. And for a whole file rather than a fragment,
+prefer the editor over a heredoc: the test file that finally landed in this
+increment was written with an editor tool after three shell attempts, and the
+shell was never going to work.
+
+### A difference assertion is satisfied by any difference, including the one the defect produces
+
+The box's coordinate inverse was first checked like this: draw the same screen
+rectangle on an unturned page and on a quarter-turned one, and assert the two
+answers differ. The reasoning was that a viewer reporting *laid-out* coordinates
+--- the defect --- would report the same four numbers for both.
+
+It would not. A 600x800 page turned a quarter lays out 800 wide, so it is fitted
+at a different zoom, so the same client drag is a different number of points on
+it. The defect produces two different answers too, and the check passed under it.
+The mutation said so: caught by two other tests in the same file, not by the one
+written for it.
+
+**A difference is not a measurement unless the operands make it one** --- which
+this repository already records about benchmarks, arriving here in a coordinate
+test. The repair is to assert something only the correct answer can satisfy. Here
+that is the **corner**: the same screen drag near the top-left is a different
+corner of the *sheet* at each turn, walking round it as top-left, bottom-left,
+bottom-right, top-right. A viewer that skips the inverse reports the top-left
+four times, whatever the zoom does.
+
+The same asymmetry bit the size checks a few lines above. `MIN_BOX` is in
+**points**, a drag is in **client pixels**, and the zoom sits between them --- so a
+test that drags `MIN_BOX - 1` pixels is really a test of whatever zoom the
+fixture happened to pick. Those moved to a press with no movement at all, and the
+bound itself is tested in one unit, on both sides, in `markband.test.ts`.
+
+### A probe reading one edge of a box cannot see a mutation that clips the other three
+
+`save.rs` insets a box's stroke path by half the stroke width, because a stroke
+straddles its path and the appearance stream's `/BBox` clips whatever falls
+outside. `annot-probe --mode outline` was given a thickness reading to prove it:
+one pixel column at the box's horizontal centre, over the top quarter of it.
+
+The mutation written for it --- `let inset = 0.0;` --- changed nothing the probe
+could see. 5 px before, 5 px after. The reason is that `outline_path` computes
+the size from the constant and the origin from the variable:
+
+```rust
+[quad[0] + inset, quad[1] + inset,
+ (quad[2] - quad[0]) - OUTLINE_WIDTH, (quad[3] - quad[1]) - OUTLINE_WIDTH]
+```
+
+so zeroing `inset` moves the origin back to the corner while leaving the
+rectangle a stroke-width smaller. Two edges are then clipped in half and the
+other two sit a stroke-width *inside* where they belong. The probe was reading
+one of the two that had moved inward.
+
+Two things came out of it. The probe now reads **both** the top and the bottom
+edge and reports the thinner --- a defect that clips one edge is not less of a
+defect than one that clips four. And the honest mutation, which removes the inset
+from the path entirely, halves the reading from 6 px to 3 and takes a fifth of
+the frame's ink with it.
+
+Also worth keeping: the first write-up of this said pixels could *not* see the
+inset at all, on the argument that a `/BBox` clip leaves no ink outside the quad
+and therefore nothing to count. True, and beside the point --- it removes ink from
+inside. One run settled it, which is the standing rule about a claim regarding
+runtime behaviour belonging in an experiment rather than in a document.
+
+### One predicate answering three questions is right until a second kind makes them disagree
+
+`save.rs` had `is_note`, and it decided three things: whether to write `/Name` and
+`/Open`, whether to skip `/QuadPoints`, and whether to write an appearance stream
+at all. That was correct, and it was correct only because the comment bubble was
+the one kind for which all three answers happened to coincide.
+
+A box splits them. It also skips `/QuadPoints` --- `/Square` is not a text-markup
+subtype --- and it very much needs an `/AP`, because nothing synthesises a
+rectangle and a `/Square` with no appearance is an annotation Acrobat draws as
+nothing. So the three questions are now `is_note`, `is_text_markup` and
+`ink(kind) == Ink::None`, and each has one caller.
+
+The test moved with them, and that is the part worth reading. It used to assert
+"the comment has no quads **and** no `/AP`" as one block; a box makes those two
+lines disagree about the same kind, which is what turns one assertion into two.
+Before the box existed no test could have told which of the three properties it
+was checking, because one predicate answered for all of them.
+
+The same increment replaced `is_wash` and `is_note` with a single exhaustive
+`ink(kind) -> Ink` returning `Wash`, `Line`, `Outline` or `None`. Three booleans
+for five kinds is where copies of a distinction begin to drift, and the value the
+writer actually needs is one: it decides the geometry, the blend mode and both
+opacities together, and those four have never been independent.
+
+### An Escape ordering that no reachable input can distinguish
+
+The viewer's Escape ladder dismisses the innermost thing first: an armed drawing
+tool, then an open comment, then a focused link, then the selection. The comment
+beside it said the tool had to go first or a reader with a note open would need
+two presses to leave the mode --- and a mutation that swapped the first two
+survived, because that state cannot arise. `armDraw` closes both note boxes, and
+a press with a tool armed is intercepted before anything can open one.
+
+So the ordering is defensive rather than load-bearing, and the comment claiming
+otherwise was the defect. It has been corrected in place and the mutation
+removed, since a mutation nothing can kill is a permanent red line that trains
+the reader to skip the report.
+
+The ordering itself stays. It costs one comparison, it is the order that remains
+correct if a later change does make the two co-exist, and the failure it guards
+against --- a reader stuck in a mode they cannot see --- is the one thing the
+one-shot design exists to rule out. Read alongside *an unreachable guard is worth
+keeping if the type can carry it instead*: same conclusion, different reason. The
+type cannot carry this one, so the comment has to carry it honestly instead.
+### The sweep shelled out to `pkill`, which is not a program on Windows
+
+`viewer_sweep.py` kills any leftover tpdf before each corpus, because a leftover
+window occludes the next one and WebKit suspends an occluded page. That line was
+`subprocess.run(["pkill", ...], check=False)`, and `check=False` swallows a
+non-zero exit --- not a `FileNotFoundError`. So on Windows the sweep died on its
+first corpus with a traceback, having printed no table and no verdict, and the
+shell reported **exit 0** because the traceback goes to stderr.
+
+The Windows leftover is also worse than an occlusion, and that is what sent the
+first run looking in the wrong place. `tauri-plugin-single-instance` makes a
+second process forward its argv to the first and exit, so a stray `tauri dev`
+from earlier in the session swallowed the launch entirely: `viewer_check.py`
+printed one line --- *"the app process could not be read at all (0 samples, 0
+modules seen)"* --- which reads as a broken module probe rather than as an app
+that never started. Three stray debug processes were holding it.
+
+`taskkill /F /IM tpdf.exe` on Windows, `pkill -f` elsewhere, and the whole thing
+wrapped in `except OSError` so a machine with neither tool degrades to a slow run
+rather than no run.
+
+**And it was in two files.** `mutate_viewer.py` carried the identical line for
+the identical reason --- its own comment says a leftover window is what made a
+mutation run hang for fourteen minutes at 0% CPU --- and died the same way, before
+its first mutation, with the same exit 0. Both are fixed; the second was found
+only by running it, an hour after the first, which is the argument for running
+every harness on the platform rather than reading them. The locale-codec entry
+below is the same story: one `text=True` fixed, a second found in the other file
+by looking for it once the first was known.
+
+Read alongside *single-instance turns a stray process into a launch that succeeds
+and does nothing*, which is the same mechanism seen from the application's side.
+
+### `subprocess.run(text=True)` decodes with the locale codec, and the multilingual corpus is the one that breaks it
+
+Six corpora into a thirteen-corpus sweep, on `multilingual.pdf` --- CJK, Arabic,
+a decomposed accent and a code point above the BMP --- the run died with:
+
+```text
+UnicodeDecodeError: 'charmap' codec can't decode byte 0x81 ... cp1252.py
+TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'
+```
+
+The first line is the cause and the second is what the reader sees, because the
+decode raised inside `subprocess`'s own reader thread. That left `result.stdout`
+as `None`, so the failure surfaced on the next line as an arithmetic error
+between a None and a string, mentioning no encoding at all.
+
+`text=True` means "decode", not "decode as UTF-8": the codec is
+`locale.getpreferredencoding()`, which is **cp1252** on this machine. Pass
+`encoding="utf-8", errors="replace"` explicitly. `mutate_frontend.py` already
+carried the same fix for vitest's output and its own comment says why; this is
+the second script in the repository to need it, and the first one's lesson had
+not been generalised.
+
+Worth noting which corpus found it. Twelve of the thirteen are Latin text and
+would never have produced a byte cp1252 refuses, so this is a defect that only
+the fixture written to hold non-Latin text can reach --- and it sat in a script
+that had presumably run cleanly on macOS for months, where the preferred encoding
+is UTF-8.
+
+### There was no check on the overlay at all, and that is why a reader found the underline defect
+
+Every mark tpdf draws is drawn twice: once by `paintMarks` onto the overlay
+canvas while the document is open, and once by PDFium from the appearance stream
+`save.rs` writes, after the file has been saved and reopened. `annot-probe`
+measures the second in pixels --- `--mode ink` for a wash, `--mode rule` for a
+line, `--mode outline` for a frame --- and until 2026-08-19 **nothing measured
+the first**.
+
+So when `paintMarks` filled every mark across its whole quad in one colour, the
+saved file stayed correct and only the screen was wrong. A reader chose "Underline
+selection" from the right-click menu and got a yellow wash. The mark then changed
+under them when they saved and reopened, which is a worse failure than either
+half alone: neither renderer could be trusted from what the other one showed.
+
+`overlayInkChecks` closes it. Two readings per kind --- the fraction of the mark's
+own rectangle carrying ink, and the fraction of its inner half --- which
+discriminate all five without knowing anything about where a band sits:
+
+| kind | rectangle | middle |
+|---|---|---|
+| highlight | high | high |
+| underline | low | **empty** |
+| strikeout | low | **full** |
+| square | low | **empty**, with ink on the edges |
+| note | moderate | drawn |
+
+Underline against strikeout is the pair the shipped defect got wrong, and the two
+centres are what tell them apart. Square against underline is the pair the
+rectangle fraction cannot separate --- 8% against 11%, far too close to assert ---
+and the left edge is what does: both leave the centre clear, and only the box has
+a side.
+
+**Two of the five checks failed on a correct painter before the observable was
+right, and in both cases the bound was not the problem.** It sampled the inner *half* of the rectangle and
+wanted most of it inked; a rule is 7% of the quad's height, so inside a box half
+that height it covers about 14% of the area, and the reading came back 17%. The
+repair was to change the observable rather than the threshold --- at the dead
+centre a rule reads full and an underline reads empty, which is the whole
+discrimination in one number. A bound loosened to accommodate 17% would have
+admitted a painter drawing almost anything through the middle.
+
+The box failed next, on the reading meant to separate it from an underline: the
+fraction of its left edge that carries ink. A stroke is 1.5 points wide inside a
+sample five per cent of the mark's width, so a correct box reads **7%** --- and
+the only repair available on that observable is a threshold two per cent above an
+underline's zero, which is a check held together by the zoom the fixture happened
+to pick. The robust form of the same question is a **count**: an underline has
+ink on one of its four sides, a rule through the centre on two, a frame on four.
+No bound, no dependence on the stroke's width in device pixels, and the same
+discrimination.
+
+Both repairs are the same move --- change what is measured rather than how much of
+it is demanded --- and both were available only because the check had a failing
+case in front of it. A first draft written to pass would have chosen neither.
+
+**Every reading is relative to the anchor the viewer supplies**, not to a
+rectangle the check computes. That is what makes the phase work on `rotated-90`,
+where an underline is drawn down the side of the screen: anything keyed on "the
+bottom band" would sample the wrong strip there, and skipping rotated corpora
+would skip the one that most needs checking. It is also the drift rule this
+repository states about a second implementation of the same turn.
+
+The control comes first and is not decoration: "the middle is empty" means
+nothing unless an untouched overlay reads as empty too, and a canvas the harness
+never cleared would read as inked everywhere and pass three of the five by
+accident.
+### A feature can be inert in the application while three layers of tests pass
+
+The box tool was finished, mutation-proved and green everywhere, and it did
+nothing. `onDrawn` was added to `ViewerOptions`, `Viewer` fired it at the end of
+every committed drag, and the object literal in `App.svelte` that constructs the
+viewer never gained the key. Arming worked, the dashed preview followed the
+pointer, and letting go reached no model.
+
+**Nothing could see it, and the three things that might have are worth naming:**
+
+  * `viewerdraw.test.ts` constructs its own viewer and supplies its own
+    `onDrawn`, so it covers the viewer's half completely --- including that the
+    callback fires with the right page id and the right quad.
+  * `viewer_check.py` drives `edit.drawBox` from the palette in a real window and
+    reads a recorder, so it covers the command's half.
+  * `appcommands.test.ts` sweeps every registered command and asserts it reaches
+    an action, which `drawBox` did.
+
+The seam between them is one object literal in a `.svelte` file that no unit test
+imports and no harness constructs. **Every callback on `ViewerOptions` is
+optional by design** --- the check harness builds a viewer with none of them ---
+so a missing key is not a type error either. There was no layer at which this
+could fail.
+
+The immediate cause was a batched edit whose first pattern did not match: the
+helper refused the whole batch, and the re-application afterwards covered only
+the part that had been diagnosed. That is the trap about a verification chained
+after a failed edit, and it is the reason the *class* is worth a gate rather than
+a resolution to be careful.
+
+`scripts/check_viewer_wiring.py` diffs the declared callbacks against the wired
+ones, both directions, refusing an empty scan on either side. Proved by mutation
+in four directions before being trusted --- dropping the wiring, renaming a wired
+key, an exemption naming nothing (a `[WARN]`, because an allowlist that stops
+applying rots into a blanket permission), and the control.
+
+**It found a second one on its first run.** `onNavigate` exists so a Back and
+Forward affordance can be re-enabled after a jump, and nothing consumes it: both
+commands are guarded on `withDocument` alone, so neither greys when there is
+nowhere to go. It is the one entry in the exemption table, with that written
+down, and wiring it is the same piece of work as making them grey. A spot fix for
+`onDrawn` would have left it exactly as it was.
+
+The general shape, worth carrying to any two modules joined by an optional
+interface: **the layer that composes is the layer nothing tests**, because each
+side is testable alone and the composition is a literal rather than a function.
+Where the composition can be enumerated from the type, enumerate it.
+### A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work
+
+Every probe runner in `mutate_viewer.py` named its binary as
+`src-tauri/target/release/examples/crop-probe`, and on Windows that raises
+`FileNotFoundError: [WinError 2] The system cannot find the file specified` for a
+file that is plainly there. `CreateProcess` will not resolve a relative path
+written with forward slashes, and it wants the extension. All five probe runners
+had been dead on this platform from the day they were written.
+
+**What makes it invisible is that `cwd=ROOT` is set on the same call.** The fixture
+paths, the `--lib vendor/pdfium/bin`, every other member of the argv list resolves
+correctly against it --- only the executable is resolved by a different rule, so
+reading the list tells you nothing is wrong with it. `BUILD.md` records exactly this
+against `viewer_check.py`'s app path, and it arrived here anyway, in a harness
+written afterwards.
+
+The failure shape is the reassuring one: the run dies on the **first baseline it
+reaches**, before any mutation, so nothing is ever reported as SURVIVED and the
+summary a reader is looking for simply never appears.
+
+**And I hid it from myself for one round.** The run was backgrounded as `nohup
+python ... > "$TMPDIR/log" 2>&1; echo "exit=$?" >> "$TMPDIR/log"`, so the traceback
+went into that file while the harness's captured output held three lines and **exit
+0** --- the exit code of the `echo`. A wrapper that appends its own status to the log
+it is diverting reports on itself, not on the job. Let the job's exit code be the
+command's, or read the log before believing the code.
+
+`probe_exe()` builds the path from `ROOT` and appends `.exe` on Windows.
+
+### The gate guarding the anchors reads the file differently from the harness that uses them
+
+`scripts/gates.py`'s `anchors` gate asserts that every mutation's search string
+occurs exactly once in the file it names --- every anchor in every table, green.
+`mutate_viewer.py`
+then refused its own first mutation with *"its anchor appears 0 times"*, in the same
+file, on the same tree, in the same minute.
+
+Both are right about what they read. The gate reads with `Path.read_text()`, whose
+universal-newline translation turns a CRLF checkout into "\n" before counting, so a
+multi-line anchor written with "\n" matches. The harness reads **bytes** and decodes
+UTF-8, which does not translate, so on Windows every multi-line anchor in its table
+matches zero times. `mutate_frontend.py` and `mutate_rust.py` were given the
+normalisation on 2026-07-30 and this harness was not.
+
+**The gate is the more forgiving reader, and that is the direction that hurts.** It
+is green precisely where the harness is dead, and it was written to be the early
+warning for this class --- an anchor that has drifted, a killed harness's leftover
+edit. It cannot warn about a difference it does not share.
+
+Two habits fall out. **A guard and the thing it guards must read their subject the
+same way**, or the guard is describing a different file. And when two readers of one
+file disagree about whether a string is present, the answer is a property of **how
+each one reads**, not of the file --- neither reading is the mistake, the pair is.
+
+Found only because the run stopped before it, on the trap above; both were fixed the
+same day, and only then could this table run here at all. The fix normalises "\r\n" to
+"\n" for matching and puts the file's own convention back, so the mutation stays the
+only difference on disk.
+### A guard that answers by refusing the whole run turns two blocked mutations into 178
+
+`mutate_rust.py` validates every mutation's `expect` against libtest's own list
+before it starts, because a mutation naming a test that does not exist cannot go
+red and reports SURVIVED --- which reads as a gap in the suite rather than as a
+broken mutation. The guard is good and it has fired usefully four times.
+
+On Windows it refused the entire table. `menu.rs` and `keylayout.rs` are macOS-only
+(a menu bar and Carbon), so `cargo test` never compiles them, the two tests they
+name genuinely do not exist here, and the guard said so precisely --- naming both
+mutations, quoting both test names, giving the right reason --- and returned 1
+before running any of the other 176.
+
+**The refusal was correct and total, and those are different properties.** Two
+mutations could not run; 178 did not. A guard whose only vocabulary is "refuse the
+run" cannot express "this row is not applicable here", so every local fault it
+finds becomes a global one --- and the more accurate its diagnosis, the more
+convincing the wrong outcome looks.
+
+**Nothing said so for two days**, because the table had not been run on Windows
+since `menu::` was added on 2026-08-17. `BUILD.md` still carried *"Both run on
+Windows as of 2026-07-30 --- 22/22 and 75/75"*, which was true when measured and
+had quietly expired: a dated measurement is evidence about a date, and a table that
+grows can leave the platform it was measured on behind.
+
+The fix is a declared scope, not an inferred one. `Mutation.only_on` is set on
+those two, they print `[SKIP] ... macos only, and this is windows`, and the count
+rides on the final verdict so a partial run cannot read as a whole one. **A
+mutation with no `only_on` still refuses**, which is the property that had to
+survive: skipping on a name the harness merely failed to see is exactly how a
+mutation stops being able to fail. Proved by control before the fix was trusted ---
+pointing a non-scoped mutation at a test that does not exist still refuses and
+exits 1, and a selection consisting only of out-of-platform mutations refuses too
+rather than reporting a vacuous pass.
