@@ -2607,13 +2607,19 @@ starts at 0 and increments within the month.
    it as a `Source=` outright. The 2026-08-02 local `26.7.0` MSI has it too, at 137,728. So
    the earlier list was read off a build tree, and both readings were honest.
 
-   Two things follow, and the first is the one that costs time. **Read a payload count off a
-   released artifact, never off a local build** --- `gh release download <tag> --pattern
-   '*.msi'` and extract that, which needs no Windows and takes a minute. And the mechanism is
-   **open**: `crate-type` includes `cdylib`, the workflow adds only `--config
-   .../tauri.updater.conf.json` and bundles from the same `target/release/bundle`, so nothing
-   in the configuration explains the difference. A fresh checkout on a runner is the obvious
-   suspect and has not been tested.
+   **The runner and this desktop disagree about the same commit, which is the sharpest form
+   of it.** `26.8.5-rc1` was built by CI from `5e0bb20`; its MSI holds **three** files, and
+   the MSI this machine built from that same commit holds four. So the difference is the
+   build environment and not the version, the configuration or the tag. The Windows leg's log
+   never mentions `tpdf_lib` at all, so the runner's `target/release/` did not have the
+   `cdylib` at bundle time; whether it was never built there or never harvested is still
+   **open**, and it does not affect the shipped application, which links the `rlib` and never
+   loads the DLL.
+
+   What follows operationally: **read a payload count off a released artifact, never off a
+   local build.** `gh release download <tag> --pattern '*.msi'` and extract that --- it needs
+   no Windows, takes a minute, and works on a draft, so a rehearsal tag can answer it before
+   the real one is cut.
 
    Its absence is not a defect on its face, since the binary links the `rlib` and does not
    load it --- but it is one more reason the installed app has to be *run* on Windows and not
