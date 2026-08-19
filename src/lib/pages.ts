@@ -33,7 +33,12 @@ import type { OutlineItem, Target } from "./outline";
  * the reason the note above {@link PageView} gives: this module must not import
  * the module that talks to Tauri, and {@link MarkView} needs the type.
  */
-export type MarkKind = "highlight" | "underline" | "strikeout";
+export type MarkKind =
+  | "highlight"
+  | "underline"
+  | "strikeout"
+  | "note"
+  | "square";
 
 /**
  * One mark a reader made, as the backend reports it.
@@ -47,8 +52,14 @@ export interface MarkView {
   /**
    * Which of the three marks it is.
    *
-   * A label rather than geometry: PDFium paints every mark inside the tile, so
-   * nothing here draws from this. What reads it is the note box, which has to
+   * **Read by the overlay, and this said the opposite.** It read "a label rather
+   * than geometry: PDFium paints every mark inside the tile, so nothing here
+   * draws from this" --- true of the file's own comment annotations, and wrong
+   * about the reader's marks, which the overlay paints itself. Nothing did draw
+   * from it, and that was the defect rather than the design: every kind was
+   * filled over its whole quad in one colour, so an underline and a strikeout
+   * both looked like a highlight until the file was saved and reopened.
+   * `markband.ts` is what the overlay asks now. The note box reads it too, to
    * name the thing a reader is about to remove.
    */
   kind: MarkKind;

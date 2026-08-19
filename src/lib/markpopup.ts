@@ -57,6 +57,15 @@ const NAMES: Record<MarkKind, string> = {
   highlight: "Highlight",
   underline: "Underline",
   strikeout: "Strikeout",
+  // "Comment", never "Note". The note is the *text*, and every mark has one ---
+  // a box headed "Note" beside a field holding the note would be naming the
+  // field rather than the thing being removed.
+  note: "Comment",
+  // "Box", never "Square". The PDF subtype is `/Square` and the serde name is
+  // `square`, and neither is what a reader would call the rectangle they just
+  // dragged round a figure --- one that is actually square is the rare case.
+  // The third spelling, and the same arrangement as `note` above.
+  square: "Box",
 };
 
 export class MarkPopup {

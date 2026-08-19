@@ -206,6 +206,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a markup-parsing sink appeared in the frontend (THREAT-MODEL T8)",
         ),
         (
+            "wiring",
+            [sys.executable, str(REPO / "scripts" / "check_viewer_wiring.py")],
+            "a viewer callback is declared and not wired in App.svelte",
+        ),
+        (
             "check",
             [npm(), "run", "check"],
             "svelte-check or tsc found a type error",

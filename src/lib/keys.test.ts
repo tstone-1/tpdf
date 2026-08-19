@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   accelerator,
   BINDINGS,
   inTextField,
   label,
+  setMacSpelling,
   setPrintedKeys,
   matches,
   render,
@@ -54,6 +55,15 @@ const GERMAN: Record<string, string> = {
 };
 
 describe("label", () => {
+  // Pinned, and restored after each. Every assertion in this block was written
+  // as a claim about a chord and was really a claim about the machine running
+  // it: `render` had one spelling, so the tests passed on any platform and
+  // could not have caught it shipping ⌘ to Windows. Module state, so the
+  // restore matters for the same reason `setPrintedKeys`'s does below --- the
+  // first test to run must not decide what the rest of the file sees.
+  beforeEach(() => setMacSpelling(true));
+  afterEach(() => setMacSpelling());
+
   it("renders the modifiers the binding actually declares", () => {
     expect(label("file.open")).toBe("⌘O");
     // Shift before Command, which is the platform's order.
@@ -253,11 +263,61 @@ describe("the binding table", () => {
   });
 });
 
+/**
+ * The other spelling, which is the one that shipped wrong.
+ *
+ * Windows read ⌘ ⌥ ⇧ in the palette, in both right-click menus and in the
+ * toolbar's tooltips, because {@link render} had a single macOS branch and every
+ * test above pinned nothing --- so they passed on a Windows machine while
+ * asserting Mac glyphs, which is the writer-agreeing-with-its-own-reader shape
+ * one level up. Reported from use: a context menu offering "⌘C" on a keyboard
+ * with no Command key.
+ */
+describe("labelling a chord where the accelerator is Ctrl", () => {
+  beforeEach(() => setMacSpelling(false));
+  afterEach(() => setMacSpelling());
+
+  it("spells the accelerator Ctrl and joins with a plus", () => {
+    expect(label("file.open")).toBe("Ctrl+O");
+    expect(label("edit.copy")).toBe("Ctrl+C");
+    expect(label("edit.selectAll")).toBe("Ctrl+A");
+  });
+
+  it("orders the modifiers the way this platform writes them", () => {
+    // Ctrl, Alt, Shift --- not the macOS order with the accelerator last. The
+    // pair is the assertion: one spelling with the right parts in the wrong
+    // order is still a chord nobody can read off a Windows keyboard.
+    expect(label("find.previous")).toBe("Ctrl+Shift+G");
+    expect(label("nav.goToPage")).toBe("Ctrl+Alt+G");
+  });
+
+  it("leaves a chord with no accelerator alone", () => {
+    // The control. A rule that prefixed "Ctrl+" unconditionally would satisfy
+    // every assertion above, and these are the bindings that say it does not:
+    // Escape carries no modifier at all, and `n` is a bare letter.
+    expect(label("edit.clearSelection")).toBe("Esc");
+    expect(label("nav.nextPage")).toBe("n");
+  });
+
+  it("still names the key this keyboard prints in that position", () => {
+    // The two mechanisms are independent and both have to survive the other.
+    // ⌘\ is the binding that exists because `\` cannot be typed on a German
+    // keyboard; on Windows it has to come out as Ctrl+# there, which is neither
+    // spelling on its own.
+    setPrintedKeys({ Backslash: "#" });
+    expect(label("view.toggleSidebar")).toBe("Ctrl+#");
+    setPrintedKeys({});
+    expect(label("view.toggleSidebar")).toBe("Ctrl+\\");
+  });
+});
+
 describe("labelling a key by what the keyboard prints on it", () => {
   // Module state, so every test here puts it back. Without this the first one
   // to run decides what the rest of the file sees, which is the kind of order
   // dependence that shows up as one test failing only in a full run.
   afterEach(() => setPrintedKeys({}));
+  beforeEach(() => setMacSpelling(true));
+  afterEach(() => setMacSpelling());
 
   it("names the key this keyboard shows, once the platform has said", () => {
     // The whole point of asking macOS. `Backslash` prints `#` on a German

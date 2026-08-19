@@ -52,7 +52,7 @@ import {
 } from "./reading";
 import { TextCache, type PageText } from "./text";
 import type { EditState } from "./edits";
-import type { MarkView } from "./pages";
+import type { MarkKind, MarkView } from "./pages";
 import { Sidebar } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor, type Thumbnails } from "./thumbnails";
@@ -548,6 +548,10 @@ async function run(path: string): Promise<void> {
   await geometryChecks(viewer, doc, seen);
   // Before the print and the release, because it leaves a journal entry on the
   // open document: a highlight made, noted and taken off again.
+  // After every phase that drives the surface and before the backend ones:
+  // it paints marks of its own on the overlay and clears them again, so it
+  // must not run while another phase is looking at what is drawn.
+  await overlayInkChecks(viewer);
   await markCommandChecks(doc);
   await cropCommandChecks(doc);
   await printChecks(path, doc);
@@ -2951,6 +2955,8 @@ async function appCommandChecks(
     toggleSearchOption: (which) => fired.push(`toggleSearchOption:${which}`),
     toggleSearchScope: () => fired.push("toggleSearchScope"),
     toggleSidebar: () => fired.push("toggleSidebar"),
+    addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
+    drawBox: () => fired.push("drawBox"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
     toggleInvert: () => fired.push("toggleInvert"),
     // Recorded like the rest, though neither command is driven here --- both are
@@ -3535,6 +3541,28 @@ async function appCommandChecks(
       unless: withText,
     },
     {
+      // No `from` and no `unless`, which is the whole of what separates it from
+      // the three above: a comment is dropped on the page rather than made out
+      // of a selection, so it needs no text and there is no corpus on which it
+      // is inapplicable. The recorded value carries `here` --- the palette
+      // passes no point --- which is what says the palette route reached the
+      // no-pointer branch rather than a stale one.
+      id: "edit.addComment",
+      ...shell("addComment:here"),
+      read: () => fired.join(","),
+    },
+    {
+      // Reaches the action, which *arms* the tool rather than drawing anything
+      // --- so this says the command is registered and wired and nothing about
+      // the gesture. The drag itself is covered by `drag.test.ts` and by the
+      // pointer phase below, which is the right split: what a real window adds
+      // here is that the command exists in the palette at all, and that is
+      // exactly what the shell probe reads.
+      id: "edit.drawBox",
+      ...shell("drawBox"),
+      read: () => fired.join(","),
+    },
+    {
       // The two other kinds, aimed separately. One action taking an argument,
       // which is the shape this file's own note about `movePage` warns about:
       // a copy-and-paste that left all three passing "highlight" gives a reader
@@ -3830,6 +3858,14 @@ async function appCommandChecks(
     // Guarded on a note being open, which is how a reader names the mark they
     // mean. A document with no marks in it offers nothing to remove.
     "edit.removeMark",
+    // Guarded on the document being edited, which an untouched one is not. It
+    // joined this list late: the guard landed with "Save over the file the
+    // reader opened" and turned this check red, and the red went unread because
+    // nothing runs this harness automatically --- it needs a real window, so it
+    // is not a gate. The check itself behaved exactly as its comment above
+    // promises; `file.saveCopy` is deliberately not here, because a copy of an
+    // unedited document is a file a reader wants.
+    "file.save",
   ];
 
   // And the other direction, declared for the same reason. This list was the
@@ -7593,6 +7629,230 @@ async function drawnPastFirstPageCheck(
   );
 }
 
+/** The names this phase reports, so a run that cannot start still prints them. */
+const OVERLAY_INK_CHECKS = [
+  "an untouched page has nothing on the overlay",
+  "a highlight fills its quad",
+  "an underline leaves the middle of its quad clear",
+  "a strikeout crosses the middle of its quad",
+  "a box is a frame with its middle clear",
+  "a comment draws inside its own icon box",
+  "the five kinds do not all look the same",
+];
+
+/**
+ * What the reader actually sees, in overlay pixels.
+ *
+ * **This phase exists because there was no check on the overlay at all, and a
+ * reader found the defect that fact allowed.** `paintMarks` filled every mark
+ * across its whole quad in one colour, so while a document was open an
+ * underline and a strikeout both appeared as a highlight --- and the *saved
+ * file* was correct throughout, which is the worse shape of wrong: nothing
+ * could be seen until the file was saved and reopened, at which point the mark
+ * changed under the reader.
+ *
+ * `annot-probe --mode ink|rule|outline` measures the file's pixels and can say
+ * nothing about these. The two renderers have to agree, and until now only one
+ * of them was measured.
+ *
+ * **Every reading is relative to the mark's own anchor**, which the viewer
+ * supplies. That is what makes the phase rotation- and crop-independent: a
+ * corpus at `/Rotate 90` draws an underline down the side of the screen, so
+ * anything keyed on "the bottom band" would be measuring the wrong strip there,
+ * and a fixture that skipped rotated corpora would skip the one that most needs
+ * this.
+ */
+async function overlayInkChecks(viewer: Viewer): Promise<void> {
+  const canvas = viewer.overlaySurface;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    for (const name of OVERLAY_INK_CHECKS) {
+      skip(name, "the overlay has no 2d context to read");
+    }
+    return;
+  }
+
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+
+  const dpr = window.devicePixelRatio || 1;
+
+  /** The fraction of a device-pixel box that carries any of our ink. */
+  const inked = (
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+  ): number | null => {
+    const x0 = Math.max(0, Math.round(left * dpr));
+    const y0 = Math.max(0, Math.round(top * dpr));
+    const x1 = Math.min(canvas.width, Math.round(right * dpr));
+    const y1 = Math.min(canvas.height, Math.round(bottom * dpr));
+    if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+    const { data } = ctx.getImageData(x0, y0, x1 - x0, y1 - y0);
+    let hit = 0;
+    for (let at = 3; at < data.length; at += 4) {
+      // The alpha channel, not the colour: the overlay is transparent where
+      // nothing was painted, and every kind is painted in some colour. Keying
+      // on a particular colour would make this a check on `MARK_COLORS`, which
+      // is a different question and one a unit test already answers.
+      if ((data[at] ?? 0) > 8) hit++;
+    }
+    return hit / (data.length / 4);
+  };
+
+  /** Paints one mark alone and reads its own rectangle back. */
+  const paint = async (
+    kind: MarkKind,
+  ): Promise<{ whole: number; core: number; edges: number } | null> => {
+    const size = viewer.pageSize(0);
+    const quad =
+      kind === "note"
+        ? [size.width_pt * 0.2, size.height_pt * 0.08, size.width_pt * 0.2 + 20, size.height_pt * 0.08 + 20]
+        : [size.width_pt * 0.15, size.height_pt * 0.08, size.width_pt * 0.6, size.height_pt * 0.12];
+    viewer.setMarks([
+      { id: 7777, kind, page: 1, quads: quad, color: [0.85, 0.15, 0.15], note: "" },
+    ]);
+    await frame();
+    await frame();
+    const at = viewer.markAnchor(7777);
+    if (!at) return null;
+    const width = at.right - at.left;
+    const height = at.bottom - at.top;
+    if (width < 20 || height < 12) return null;
+    const whole = inked(at.left, at.top, at.right, at.bottom);
+    // **A small box at the dead centre, not the inner half.** The inner half was
+    // the first draft and it made the strikeout check fail on a correct
+    // painter: a rule is 7% of the quad's height, so inside a box half the
+    // quad's height it covers 14% of the area, and the reading came back 17%
+    // where the check wanted "most of it". The bound was not too tight --- the
+    // *observable* was the wrong one. At the centre a rule reads full and an
+    // underline reads empty, which is the discrimination in one number.
+    const core = inked(
+      at.left + width * 0.4,
+      at.top + height * 0.45,
+      at.right - width * 0.4,
+      at.bottom - height * 0.45,
+    );
+    // **How many of the four sides carry ink**, rather than how much one of
+    // them does. The first draft measured the left edge as a fraction and
+    // wanted most of it: a stroke is 1.5 points wide inside a sample five per
+    // cent of the mark's width, so a correct box reads 7%, and the only repair
+    // available would have been a threshold two per cent above an underline's
+    // zero. A count is the robust form of the same question --- an underline has
+    // one side, a rule through the middle has two, a frame has four --- and it
+    // needs no bound that depends on the zoom the fixture happened to pick.
+    const along = (
+      left: number,
+      top: number,
+      right: number,
+      bottom: number,
+    ): boolean => (inked(left, top, right, bottom) ?? 0) > 0.02;
+    const thickX = Math.max(3, width * 0.06);
+    const thickY = Math.max(3, height * 0.15);
+    const edges = [
+      // Left and right, sampled across the middle tenth of the height, where a
+      // rule through the centre crosses them and an underline does not.
+      along(at.left, at.top + height * 0.45, at.left + thickX, at.bottom - height * 0.45),
+      along(at.right - thickX, at.top + height * 0.45, at.right, at.bottom - height * 0.45),
+      // Top and bottom, across the middle fifth of the width.
+      along(at.left + width * 0.4, at.top, at.right - width * 0.4, at.top + thickY),
+      along(at.left + width * 0.4, at.bottom - thickY, at.right - width * 0.4, at.bottom),
+    ].filter(Boolean).length;
+    return whole === null || core === null ? null : { whole, core, edges };
+  };
+
+  // The control, and it comes first for the reason every control here does: a
+  // reading of "nothing is inked" means nothing unless an empty overlay reads
+  // that way too, and a canvas this harness never cleared would read as inked
+  // everywhere and pass three of the checks below by accident.
+  viewer.setMarks([]);
+  await frame();
+  await frame();
+  const empty = inked(0, 0, canvas.width / dpr, canvas.height / dpr);
+  check(
+    OVERLAY_INK_CHECKS[0] ?? "",
+    empty !== null && empty < 0.001,
+    empty === null ? "the overlay is too small to sample" : `${(empty * 100).toFixed(2)}% inked`,
+  );
+
+  type Reading = { whole: number; core: number; edges: number };
+  const read: Record<string, Reading> = {};
+  const wanted: [MarkKind, string, (r: Reading) => boolean][] = [
+    // A wash covers its quad, so every reading is high.
+    ["highlight", OVERLAY_INK_CHECKS[1] ?? "", (r) => r.whole > 0.8 && r.core > 0.8],
+    // A rule at the bottom edge: a thin band, nothing at the centre and nothing
+    // on the side. This is the exact reading the shipped defect got wrong --- it
+    // drew the whole quad, so all three came back full.
+    [
+      "underline",
+      OVERLAY_INK_CHECKS[2] ?? "",
+      (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 1,
+    ],
+    // The same thin band, through the one place an underline must not be. The
+    // two together say the kinds are told apart, which neither says alone.
+    [
+      "strikeout",
+      OVERLAY_INK_CHECKS[3] ?? "",
+      (r) => r.whole < 0.3 && r.core > 0.8 && r.edges === 2,
+    ],
+    // A frame: a side where an underline has none, and a clear centre where a
+    // filled box would have ink. Those are the two kinds it has to be told from,
+    // and it takes both readings to do it.
+    [
+      "square",
+      OVERLAY_INK_CHECKS[4] ?? "",
+      (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 4,
+    ],
+    // A bubble drawn inside a 20-point box. Loose on purpose: what shape it
+    // should be is a drawing decision, and what a check can say is that
+    // something of ours is there, at the centre, and it is not the whole
+    // rectangle --- which a `fillRect` fallback would be.
+    [
+      "note",
+      OVERLAY_INK_CHECKS[5] ?? "",
+      (r) => r.whole > 0.2 && r.whole < 0.95 && r.core > 0.5,
+    ],
+  ];
+
+  for (const [kind, name, holds] of wanted) {
+    const got = await paint(kind);
+    if (!got) {
+      skip(name, "the mark's rectangle is off screen or too small to sample");
+      continue;
+    }
+    read[kind] = got;
+    check(
+      name,
+      holds(got),
+      `${(got.whole * 100).toFixed(0)}% of the rectangle, ` +
+        `${(got.core * 100).toFixed(0)}% of its centre, ` +
+        `ink on ${got.edges} of its 4 sides`,
+    );
+  }
+
+  // The discrimination itself, in one line. Every check above is a bound, and a
+  // painter that drew one shape for everything could in principle satisfy a
+  // subset of them; this says the five readings are five readings.
+  const shapes = new Set(
+    Object.values(read).map(
+      (r) => `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}`,
+    ),
+  );
+  if (Object.keys(read).length < wanted.length) {
+    skip(OVERLAY_INK_CHECKS[6] ?? "", "not every kind could be sampled");
+  } else {
+    check(
+      OVERLAY_INK_CHECKS[6] ?? "",
+      shapes.size === wanted.length,
+      `${shapes.size} distinct readings from ${wanted.length} kinds`,
+    );
+  }
+
+  viewer.setMarks([]);
+  await frame();
+}
+
 /** What this phase reports, so a run that cannot start still prints the names. */
 const MARK_COMMAND_CHECKS = [
   "the model takes a highlight through the command",
@@ -7812,7 +8072,14 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
   // a mark quietly written as something else -- and a `MarkKind` that forgot to
   // serialise the variant would report every mark as the same kind, which the
   // set comparison below sees and a per-kind assertion would not.
-  const kinds = ["underline", "strikeout"] as const;
+  // All four beside the highlight the block above already made, so the set
+  // comparison covers every variant the model can be sent. The two the reader
+  // *places* rather than selects are here for the same reason as the two it
+  // selects: `MarkKind` is closed at the boundary, so a name the model does not
+  // know is a deserialisation failure rather than a mark written as something
+  // else --- and it is exactly the kinds added last that a `#[serde(rename)]`
+  // slip would reach.
+  const kinds = ["underline", "strikeout", "note", "square"] as const;
   const back: string[] = [];
   let kindsError = "";
   for (const kind of kinds) {

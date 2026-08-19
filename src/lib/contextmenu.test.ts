@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandRegistry, type Command } from "./commands";
 import {
   ContextMenu,
+  MARK_MENU,
+  menuForSurface,
   PAGE_MENU,
   SELECTION_MENU,
   SEPARATOR,
@@ -61,6 +63,9 @@ function registry(open: Record<string, boolean> = {}): {
     make("edit.selectAll", "Select all on page", "⌘A"),
     make("find.inSelection", "Find: in selection on or off", "⌥⌘S"),
     make("edit.clearSelection", "Clear selection", "Esc"),
+    make("edit.removeMark", "Remove mark"),
+    make("edit.addComment", "Add comment"),
+    make("edit.drawBox", "Draw a box..."),
   );
   return { commands, fired };
 }
@@ -93,7 +98,7 @@ describe("the surface lists", () => {
     // short and looks perfectly normal.
     const { commands } = registry();
     const known = new Set(commands.all().map((command) => command.id));
-    for (const list of [PAGE_MENU, SELECTION_MENU]) {
+    for (const list of [PAGE_MENU, SELECTION_MENU, MARK_MENU]) {
       expect(ids(list).filter((id) => !known.has(id))).toEqual([]);
     }
   });
@@ -101,6 +106,10 @@ describe("the surface lists", () => {
   it("are not empty", () => {
     expect(ids(PAGE_MENU).length).toBeGreaterThan(3);
     expect(ids(SELECTION_MENU).length).toBeGreaterThan(2);
+    // One entry, and asserted rather than left out of this sweep: a list that
+    // is exempt from the emptiness check is a list that can quietly become
+    // empty. What a mark can be asked to do is exactly this, for now.
+    expect(ids(MARK_MENU).length).toBeGreaterThan(0);
   });
 
   it("offer no command that takes a value", () => {
@@ -108,9 +117,34 @@ describe("the surface lists", () => {
     // right for a menu bar and strange for a menu that appeared because the
     // reader pointed at one specific thing.
     const { commands } = registry();
-    for (const id of [...ids(PAGE_MENU), ...ids(SELECTION_MENU)]) {
+    for (const id of [...ids(PAGE_MENU), ...ids(SELECTION_MENU), ...ids(MARK_MENU)]) {
       expect(commands.find(id)?.argument, id).toBeUndefined();
     }
+  });
+});
+
+describe("which menu a right-click on the page gets", () => {
+  it("offers the mark's menu when the pointer is on a mark", () => {
+    expect(menuForSurface(7)).toBe(MARK_MENU);
+  });
+
+  it("offers the selection's menu when it is not", () => {
+    expect(menuForSurface(null)).toBe(SELECTION_MENU);
+  });
+
+  it("treats mark 0 as a mark", () => {
+    // The one that would go wrong written as a truthiness test. Mark ids come
+    // from the model and there is nothing stopping the first one being 0, at
+    // which point a right-click on it silently offers the selection menu ---
+    // the exact defect this replaced, back again for one mark in the document.
+    expect(menuForSurface(0)).toBe(MARK_MENU);
+  });
+
+  it("gives the two cases different menus", () => {
+    // The discrimination itself. A rule returning one list for both satisfies
+    // neither of the first two on its own, and this says so in one assertion
+    // that cannot be passed by a constant.
+    expect(menuForSurface(1)).not.toBe(menuForSurface(null));
   });
 });
 

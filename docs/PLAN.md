@@ -5742,8 +5742,9 @@ deep and the probe framework's settle is a frame-loop wait, so their wiring is
 covered by `appcommands.test.ts`'s sweep over every registered command instead.
 
 **Not done:** a crop a reader drags, which is the gesture question above and
-needs a drag mode; cropping several pages at once, which is a selection question
-rather than a new mechanism; and `insert`, `split` and `merge`, unchanged --- the
+needed a drag mode --- `drag.ts` is that mode as of 2026-08-19, so this now needs
+only a second caller of it and the same `fileRectOn` the box uses; cropping
+several pages at once, which is a selection question rather than a new mechanism; and `insert`, `split` and `merge`, unchanged --- the
 first two need a page the model creates, and `docmodel`'s note has the
 id-allocator property that would have to be proved first.
 
@@ -5843,6 +5844,188 @@ at all. Also
 unchanged: nothing warns the reader that the file changed on disk *before* they
 try to save --- the page-count check catches the case it can, at the moment of
 saving, and §5's identity-plus-mtime watch is not here.
+
+#### A rectangle a reader draws --- done 2026-08-19
+
+The first mark whose shape the reader chooses by dragging rather than by
+selecting, and the increment is two things: a drag primitive, and the smallest
+mark that can use one.
+
+**The primitive came first because the plan already said it would.** Four
+separate *Not done* notes above name the same blocker in almost the same words
+--- a crop a reader drags "needs a drag mode", and ink, shapes, text boxes and
+stamps "each of which needs a way to draw rather than a way to select". One
+mechanism unblocks five features, which is why it beat building any one of them.
+
+`drag.ts` is that mechanism and it imports nothing. It captures a pointer, adds a
+`pointermove` and a `pointerup` listener, reports two client coordinates and a
+verdict, and takes both listeners away again. Every question about pages, points,
+zoom or rotation belongs to the caller. `viewer.ts` already had two drags written
+out longhand --- the text selection and the scrollbar thumb --- each hand-rolling
+the same four steps, and a third copy was the one to refuse: the trap index
+carries *two copies of a distinction drift, and a mutation of one survives*, and
+a drag that forgets a `removeEventListener` goes on tracking a pointer with the
+button up, which reads as a viewer that has become sticky rather than as a
+missing line.
+
+**Cancelling is a first-class outcome**, not an error. `end` takes a `committed`
+flag rather than the caller reading some other state, because a drag ends three
+ways --- the button comes up, the browser takes the pointer away, or something
+asks it to stop --- and only the first means *do it*. Handing back a rectangle
+with no way to say which happened is how an Escape ends up drawing a box.
+
+**A box, not ink, and the reason is the model.** `NewMark.quads` is four numbers
+per rectangle. A drag produces exactly one rectangle, so a `/Square` costs a
+`MarkKind` variant and a stroked path, and removal, notes, undo, the id table and
+the whole state reply come free the way the comment bubble's did. `/Ink` does not
+fit: `/InkList` is a list of point lists, so it widens the wire struct, and doing
+that on the same commit as a new gesture gives a failure two places to be.
+
+##### Three things a box does that no mark before it did
+
+- **Its ink is a stroke.** `re S` rather than `re f`, with `RG` beside `rg`
+  because one does not imply the other and a path stroked after only `rg` comes
+  out black. A filled box hides whatever it was drawn around, which is the one
+  job a box does not have.
+- **It carries no `/QuadPoints` and needs an `/AP`.** Those two used to be one
+  question. `is_note` decided the icon name, the absent quads *and* the absent
+  appearance, and that was correct only because the comment was the one kind for
+  which all three answers coincided. A box skips the quads --- `/Square` is not a
+  text-markup subtype --- and very much needs an appearance, because nothing
+  synthesises a rectangle and a `/Square` with no `/AP` is an annotation Acrobat
+  draws as nothing. Three predicates now, one caller each.
+- **Its path is inset by half the stroke width.** A stroke straddles its path, so
+  a rectangle stroked on the quad's own edge puts half of every side outside the
+  appearance stream's `/BBox`, which clips. The result is hairline edges, which
+  looks like a thin border rather than like a bug. Measured: dropping the inset
+  costs a fifth of the frame's ink and halves each edge from 6 px to 3.
+
+`is_wash` and `is_note` were replaced by one exhaustive `ink(kind) -> Ink`
+returning `Wash`, `Line`, `Outline` or `None`. Three booleans for five kinds is
+where copies of a distinction begin to drift, and what the writer needs is one
+value: it decides the geometry, the blend mode and both opacities together, and
+those four have never been independent.
+
+##### A mode, in an application whose principle is that there are none
+
+§8 says *contextual actions, not modes*, and drawing is the case where there is
+no alternative: every existing gesture reads a point and acts on what is under
+it, and nothing in a press can distinguish "select this text" from "draw a box
+here" without being told first. What the principle decides instead is that the
+tool is **one-shot** --- armed by a command, spent by one rectangle, dropped by
+Escape or by the document closing. A reader can never be stuck in it and never
+has to find the way out, which is the failure the principle is actually about.
+
+Two consequences the tests found rather than the design:
+
+- **A click keeps the tool armed.** It was written the other way round, on the
+  reasoning that the tool is spent whichever way the drag ends. A press that
+  draws nothing is not a mistake worth punishing, and spending the tool there
+  costs the reader the command with nothing on screen saying why.
+- **Escape drops the tool before it dismisses anything else**, and that ordering
+  is defensive rather than load-bearing. A mutation swapping the two survived,
+  because `armDraw` closes both note boxes and a press with a tool armed is
+  intercepted before one can open --- so no reachable input tells them apart. The
+  comment claiming otherwise was the defect and has been corrected; the ordering
+  stays for the change that does make them co-exist.
+
+##### The coordinate inverse, and the defect it found
+
+Everything in this application travels one way: from the file, through the crop,
+through the turn, onto the screen. A reader who *draws* travels the other, and
+`fileRectOn` is the one step back --- `unturnQuad` plus `outOfCrop`, composed
+once.
+
+Writing it exposed a defect in the comment bubble shipped the day before.
+`commentAt` took `pageAndPoint`'s answer --- the page's **laid-out** space --- and
+handed it to the model, which holds the file's; it also clamped against the
+un-turned page size. On an unrotated, uncropped page the two are the same four
+numbers, which is thirteen of the fourteen corpora and every check that had run.
+Both are fixed, and the clamp now happens in the laid-out space, because that is
+the rectangle the reader can see.
+
+The test that proves it is the corner, not the numbers. The first version drew
+the same screen rectangle on an unturned page and a quarter-turned one and
+asserted the answers differed --- which the defect also satisfies, because the
+turned page lays out 800 wide against 600 and is therefore fitted at a different
+zoom. The mutation said so. What only the correct answer can satisfy is that the
+same drag near the screen's top-left walks round the *sheet*: top-left,
+bottom-left, bottom-right, top-right.
+
+##### Evidence
+
+`annot-probe --mode outline` is the end-to-end half, and it measures the one
+thing every file-level assertion is blind to: a stroked box and a solid block of
+colour satisfy the subtype, the rectangle, the absent quads and the presence of
+an `/AP` equally. Three readings on the rendered page --- the source as control,
+the whole quad, and the middle inset well clear of the stroke --- plus the
+thinner of the two horizontal edges' thickness in pixels. On `text-base14.pdf`:
+10,545 px in the quad, **0 inside it**, 5 px of an expected 6 on the thinner
+edge. Filling the box instead puts 3,556 px in the middle; removing the inset
+takes the edge to 3.
+
+It renders at 4x rather than the default 2x and says so. At 2x a full stroke is
+3 px against a clipped 1.5, which antialiasing swallows; refusing instead would
+make the documented invocation red at its own default.
+
+**The box shipped inert, and finding that is the increment's most useful result.**
+`onDrawn` was added to `ViewerOptions`, the viewer fired it, and the object
+literal in `App.svelte` never gained the key --- so the tool armed, drew its
+preview and reached no model. Three layers of tests passed over it:
+`viewerdraw.test.ts` supplies its own callback, the window harness drives a
+recorder, and `appcommands.test.ts` only asks that the command reach an action.
+None of them looks at the literal that joins the viewer to the application,
+because it lives in a `.svelte` file no unit test imports and no harness
+constructs --- and every callback is optional by design, so a missing key is not
+a type error either.
+
+`scripts/check_viewer_wiring.py` is the sixteenth gate and it diffs the two sets
+both ways. It found a **second** unwired callback on its first run: `onNavigate`,
+which exists so a Back and Forward affordance can be re-enabled after a jump, and
+which nothing consumes because both commands are guarded on `withDocument` alone
+and neither greys when there is nowhere to go. That is the argument for a set
+diff over a spot fix, in one run.
+
+**And the overlay is measured now, which it never was.** Every mark is drawn
+twice --- by `paintMarks` while the document is open, and by PDFium from the
+appearance stream after it is saved --- and only the second had ever been read in
+pixels. That asymmetry is exactly how the underline defect reached a reader two
+days earlier: the file was right and the screen was wrong, so neither renderer
+could be trusted from what the other showed. `overlayInkChecks` reads the overlay
+canvas back and reports three numbers per kind --- the fraction of the mark's own
+rectangle inked, the fraction of a small box at its dead centre, and how many of
+its four sides carry ink --- which separate all five without knowing where any
+band sits, and therefore work on a page at `/Rotate 90` where an underline is
+drawn down the side of the screen.
+
+Two of those checks failed on a correct painter before the observable was right,
+and neither was a bound that needed loosening. `docs/TRAPS.md` has both.
+
+Beside it: 16/16 gates, 557 Rust tests, 899 frontend tests across 44 files, and
+the window harness at 0 failures with `edit.drawBox runs from the palette` among
+its names. **32 mutations** were written for this increment --- 6 in Rust, 22 in the
+frontend unit harness, 4 in the window harness --- and every one is caught by the
+check named for it.
+
+Four of them had to be repaired after the run said what they actually did, and
+those four are the increment's real yield. One inserted where it meant to move,
+so the code ran twice and the second run overwrote what the first recorded. One
+named a check whose twin in another file shared its name, which made the
+harness's two failure counts disagree by one. One was aimed at the wrong guard:
+a click is zero in both dimensions, so the height bound catches it whatever the
+width bound does. And one was aimed at an ordering that no reachable input can
+distinguish --- that one was removed and the comment claiming the ordering
+mattered was corrected, which is the finding.
+
+**Not done:** ink, which is the next consumer and needs the wire struct widened
+to a list of point lists; an ellipse, which is `/Circle` and the same rectangle
+with a different subtype; a crop a reader drags, which now needs only a second
+caller of the primitive; a tool that stays armed for several boxes; and a colour
+a reader can choose, still the UI question `MARK_COLORS` names. The two existing
+drags in `viewer.ts` were **not** converted onto the primitive --- the scrollbar's
+would be mechanical and the selection's owns a granularity state machine, and
+converting either on the commit that introduced the primitive gives a regression
+two places to hide.
 
 ### Phase 3 — Redaction
 

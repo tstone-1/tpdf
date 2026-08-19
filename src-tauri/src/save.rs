@@ -368,7 +368,27 @@ fn write_marks(
         }
 
         let rect = bounds(&quads);
-        let appearance = appearance_stream(doc, mark, &quads, rect);
+        // **A comment gets no appearance stream from us, and that is not a gap.**
+        // Every reader synthesises the icon for a `/Text` annotation --- the
+        // specification describes `/Name` as choosing one and readers are
+        // expected to draw it --- and they draw their own house style at their
+        // own size whatever we write. Supplying one would mean shipping a
+        // hand-drawn speech bubble that looks foreign in Acrobat and in Preview,
+        // and `--mode noap` already measures that PDFium renders these without
+        // one: the note icon it generates fills 637 of the 756 pixels in its
+        // rectangle.
+        //
+        // The three markup kinds are the opposite case and keep theirs: a
+        // reader that declines to synthesise a highlight shows nothing at all,
+        // which is why `appearance_stream` exists. **A box is on that side of
+        // the line, not the comment's**, and it is the reason this asks `ink`
+        // rather than `is_note`: nothing synthesises a rectangle, so a
+        // `/Square` with no `/AP` is an annotation Acrobat draws as nothing.
+        let appearance = if ink(mark.kind) == Ink::None {
+            None
+        } else {
+            Some(appearance_stream(doc, mark, &quads, rect))
+        };
         let dictionary = mark_dictionary(mark, page, &quads, rect, appearance);
         let annotation = doc.add_object(dictionary);
         attach(doc, page, annotation)?;
@@ -431,13 +451,23 @@ fn mark_dictionary(
     page: ObjectId,
     quads: &[[f64; 4]],
     rect: [f64; 4],
-    appearance: ObjectId,
+    appearance: Option<ObjectId>,
 ) -> Dictionary {
+    let note = is_note(mark.kind);
     let mut dictionary = Dictionary::new();
     dictionary.set("Type", Object::Name(b"Annot".to_vec()));
     dictionary.set("Subtype", Object::Name(subtype(mark.kind).to_vec()));
     dictionary.set("Rect", numbers(rect));
-    dictionary.set("QuadPoints", quad_points(quads));
+    // **`/QuadPoints` is a text-markup key**, and neither of the two kinds a
+    // reader places themselves may carry one --- see [`is_text_markup`], which
+    // is the question this used to ask as "is it a comment" because the comment
+    // was then the only kind it was true of. Writing quads on a `/Square` is the
+    // kind of thing most readers ignore and one day something does not, and it
+    // would also be a lie: the quad there is the mark's own box, not a run of
+    // words it covers.
+    if is_text_markup(mark.kind) {
+        dictionary.set("QuadPoints", quad_points(quads));
+    }
     dictionary.set(
         "C",
         Object::Array(mark.color.iter().map(|c| Object::Real(*c)).collect()),
@@ -448,11 +478,23 @@ fn mark_dictionary(
     );
     dictionary.set("F", Object::Integer(4));
     dictionary.set("P", Object::Reference(page));
-    dictionary.set("AP", {
-        let mut ap = Dictionary::new();
-        ap.set("N", Object::Reference(appearance));
-        Object::Dictionary(ap)
-    });
+    if note {
+        // The icon a reader sees. `/Comment` is the speech bubble in every
+        // reader that draws these; `/Note` is the folded page, which is the
+        // name a reader would guess from our own serde spelling and the wrong
+        // picture for the thing this command makes.
+        dictionary.set("Name", Object::Name(b"Comment".to_vec()));
+        // Closed. A file whose comments all spring open on load buries the page
+        // under popups, and every reader offers its own way to open one.
+        dictionary.set("Open", Object::Boolean(false));
+    }
+    if let Some(appearance) = appearance {
+        dictionary.set("AP", {
+            let mut ap = Dictionary::new();
+            ap.set("N", Object::Reference(appearance));
+            Object::Dictionary(ap)
+        });
+    }
     // Written as PDFDocEncoded literals. Both are the reader's own text rather
     // than a document's, so the encoding question `annots.rs` answers on the way
     // in does not arise on the way out --- but a non-ASCII author would be
@@ -476,20 +518,90 @@ fn subtype(kind: MarkKind) -> &'static [u8] {
         // and the serde name is `strikeout`; this is the only place all three
         // spellings meet, which is why it is a `match` and not a `to_lowercase`.
         MarkKind::StrikeOut => b"StrikeOut",
+        // `/Text`, which is a comment bubble and not text on the page. The
+        // reader's word for it is "comment", the serde name is `note`, and this
+        // is the third spelling --- the same arrangement as `StrikeOut` above,
+        // and the reason both are a `match` rather than a `to_lowercase`.
+        MarkKind::Note => b"Text",
+        // `/Square`, which is a rectangle and is not necessarily square: the
+        // specification uses that name for the family holding `/Circle` too.
+        // The word a reader sees is "box"; the third spelling once again.
+        MarkKind::Square => b"Square",
     }
 }
 
-/// Whether a kind covers its quads or draws a line across them.
+/// How a kind's ink is laid down.
 ///
-/// The whole of what separates the three, and it decides four things at once:
-/// the geometry drawn, the blend mode, both opacities. A wash has to multiply
-/// with the text under it or it hides the words it marks; a line is drawn on
-/// top and must be opaque, since a 40% red line reads as a smudge.
-fn is_wash(kind: MarkKind) -> bool {
+/// **One question with one exhaustive `match`.** This started as two booleans
+/// and the box would have made it three, which is where copies of a distinction
+/// begin to drift --- the trap index has that under its own title, and it is the
+/// same argument `markband.ts` makes for being one function. What the writer
+/// needs is a single value that decides the geometry, the blend mode and both
+/// opacities together, because those four have never been independent.
+///
+/// `markband.ts` mirrors this across the language boundary for the overlay.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ink {
+    /// The whole quad, multiplied, so the words underneath stay readable.
+    Wash,
+    /// A band inside the quad, opaque and on top --- see [`line_rect`]. A
+    /// translucent line reads as a smudge, and multiplied red over black text
+    /// is black.
+    Line,
+    /// The quad's edge, opaque, leaving whatever is inside it visible. Which is
+    /// the entire point of a box: it says "this", it does not cover it.
+    Outline,
+    /// None of ours. The reader draws its own, which for `/Text` is the only
+    /// way the icon can look like that reader's other comments.
+    None,
+}
+
+/// Which of the four a kind uses.
+///
+/// A `match` for [`subtype`]'s reason: adding a [`MarkKind`] has to be a compile
+/// error here rather than a mark that silently draws as a highlight.
+fn ink(kind: MarkKind) -> Ink {
     match kind {
-        MarkKind::Highlight => true,
-        MarkKind::Underline | MarkKind::StrikeOut => false,
+        MarkKind::Highlight => Ink::Wash,
+        MarkKind::Underline | MarkKind::StrikeOut => Ink::Line,
+        MarkKind::Square => Ink::Outline,
+        MarkKind::Note => Ink::None,
     }
+}
+
+/// Whether a kind is a comment bubble.
+///
+/// Narrower than it looks, and deliberately so. It used to answer three
+/// questions at once --- whether to write `/Name` and `/Open`, whether to skip
+/// `/QuadPoints`, and whether to write an appearance stream --- because the
+/// comment was the only kind for which all three answers happened to coincide.
+/// The box separated them: it also skips `/QuadPoints` and it very much needs an
+/// appearance stream. So this now answers only the first, [`is_text_markup`]
+/// answers the second and [`Ink::None`] the third.
+fn is_note(kind: MarkKind) -> bool {
+    matches!(kind, MarkKind::Note)
+}
+
+/// Whether a kind is a text-markup annotation, and therefore carries quads.
+///
+/// PDF 32000-1 lists `/QuadPoints` on `/Highlight`, `/Underline`, `/Squiggly`
+/// and `/StrikeOut` and on no other subtype. The two kinds a reader places
+/// themselves are positioned by `/Rect` alone, and writing quads on one would be
+/// a lie as well as an unlisted key: the quad there is the mark's own box rather
+/// than a run of words it covers.
+fn is_text_markup(kind: MarkKind) -> bool {
+    matches!(
+        kind,
+        MarkKind::Highlight | MarkKind::Underline | MarkKind::StrikeOut
+    )
+}
+
+/// Whether a kind covers its quads rather than drawing inside or around them.
+///
+/// Derived from [`ink`] rather than matching again, so that a kind can never be
+/// a wash here and something else there. It decides the blend mode and `/CA`.
+fn is_wash(kind: MarkKind) -> bool {
+    ink(kind) == Ink::Wash
 }
 
 /// A line's thickness as a fraction of the marked text's height.
@@ -524,7 +636,54 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         MarkKind::Highlight => (bottom, full),
         MarkKind::Underline => (bottom, thickness),
         MarkKind::StrikeOut => (bottom + full / 2.0 - thickness / 2.0, thickness),
+        // Not reached either, and one step further out than the highlight
+        // above: a comment has no appearance stream of ours at all, so nothing
+        // asks where its line goes. Answered with the whole quad for the same
+        // reason.
+        MarkKind::Note => (bottom, full),
+        // Not reached, and for a third reason: a box has an appearance stream,
+        // it is drawn by `outline_path` rather than by a filled rectangle, and
+        // it has no band inside its quad to describe. The whole quad again.
+        MarkKind::Square => (bottom, full),
     }
+}
+
+/// How thick a box's outline is, in points.
+///
+/// **Fixed, where [`LINE_FRACTION`] is proportional**, and the reason the two
+/// differ is worth stating because the obvious move is to make them agree. A
+/// line through text scales with the text because the *text* decides how big
+/// that mark is; nothing decides how big a box is except the reader, so a
+/// border that grew with the rectangle would draw a box round a figure four
+/// times heavier than one round a word. `markband.ts` holds the same number.
+///
+/// Public because `annot-probe --mode outline` measures the stroke it draws and
+/// has to know how thick to expect it. A second copy of the number in the probe
+/// would agree with a wrong value here as readily as with a right one.
+pub const OUTLINE_WIDTH: f64 = 1.5;
+
+/// A box's path inside its quad: `[x, y, width, height]` in the page's space.
+///
+/// **Inset by half the stroke width**, which is the same trap [`line_rect`] is
+/// written around and it bites harder here. A stroke straddles its path, so a
+/// rectangle stroked exactly on the quad's edge puts half of every side outside
+/// the appearance stream's `/BBox`, and a `/BBox` clips. The result is a box
+/// with hairline edges rather than a missing one --- it looks like a thin
+/// border, not like a bug, which is why it is arithmetic here rather than a
+/// comment somewhere.
+///
+/// A quad thinner than the stroke is not special-cased: the inset then crosses
+/// over and the rectangle is drawn inside out, which PDF renders as nothing.
+/// [`crate::docmodel`] refuses an empty mark and the frontend refuses a box
+/// under four points, so reaching this needs a caller that has bypassed both.
+fn outline_path(quad: [f64; 4]) -> [f64; 4] {
+    let inset = OUTLINE_WIDTH / 2.0;
+    [
+        quad[0] + inset,
+        quad[1] + inset,
+        (quad[2] - quad[0]) - OUTLINE_WIDTH,
+        (quad[3] - quad[1]) - OUTLINE_WIDTH,
+    ]
 }
 
 /// `/QuadPoints`: four corners per quad, upper-left, upper-right, lower-left,
@@ -601,15 +760,15 @@ fn appearance_stream(
     quads: &[[f64; 4]],
     rect: [f64; 4],
 ) -> ObjectId {
-    let wash = is_wash(mark.kind);
+    let style = ink(mark.kind);
     let mut state = Dictionary::new();
     state.set("Type", Object::Name(b"ExtGState".to_vec()));
-    // Multiply for a wash so the words show through it, Normal for a line so
-    // the line is the colour it says it is. A multiplied red line over black
+    // Multiply for a wash so the words show through it, Normal for anything
+    // opaque so it is the colour it says it is. A multiplied red line over black
     // text is black, which is a strikeout nobody can see.
     state.set(
         "BM",
-        Object::Name(if wash {
+        Object::Name(if style == Ink::Wash {
             b"Multiply".to_vec()
         } else {
             b"Normal".to_vec()
@@ -624,20 +783,43 @@ fn appearance_stream(
     let mut resources = Dictionary::new();
     resources.set("ExtGState", Object::Dictionary(states));
 
+    // `rg` sets the *fill* colour and `RG` the stroke's, and one operator does
+    // not imply the other: a path stroked after only `rg` comes out black,
+    // which on a red box looks like a colour that was ignored rather than one
+    // that was never set. Both are written, in one colour, so the two can never
+    // disagree.
     let mut content = format!(
-        "/GS0 gs {} {} {} rg\n",
-        mark.color[0], mark.color[1], mark.color[2]
+        "/GS0 gs {r} {g} {b} rg {r} {g} {b} RG {OUTLINE_WIDTH} w\n",
+        r = mark.color[0],
+        g = mark.color[1],
+        b = mark.color[2],
     );
     for quad in quads {
-        let (x, width) = (quad[0], quad[2] - quad[0]);
-        // The same `re f` for all three kinds --- what changes is how tall the
-        // rectangle is and where it sits. A wash is the whole quad.
-        let (y, height) = if wash {
-            (quad[1], quad[3] - quad[1])
-        } else {
-            line_rect(mark.kind, quad[1], quad[3])
-        };
-        content.push_str(&format!("{x} {y} {width} {height} re f\n"));
+        match style {
+            // The whole quad, filled.
+            Ink::Wash => {
+                let (x, y) = (quad[0], quad[1]);
+                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
+                content.push_str(&format!("{x} {y} {width} {height} re f\n"));
+            }
+            // A band inside it, filled. Same operator, different rectangle.
+            Ink::Line => {
+                let (x, width) = (quad[0], quad[2] - quad[0]);
+                let (y, height) = line_rect(mark.kind, quad[1], quad[3]);
+                content.push_str(&format!("{x} {y} {width} {height} re f\n"));
+            }
+            // Its edge, stroked. `re S` rather than `re f`, and the path is
+            // inset so the stroke lands inside the /BBox -- see `outline_path`.
+            Ink::Outline => {
+                let [x, y, width, height] = outline_path(*quad);
+                content.push_str(&format!("{x} {y} {width} {height} re S\n"));
+            }
+            // Nothing. Unreachable, because the caller does not build an
+            // appearance stream for a kind that has none; written out rather
+            // than caught by a wildcard so that a kind added later is a compile
+            // error here as well as everywhere else.
+            Ink::None => {}
+        }
     }
 
     let mut dictionary = Dictionary::new();
@@ -2724,6 +2906,99 @@ mod tests {
     }
 
     #[test]
+    fn a_box_is_stroked_on_a_path_inset_by_half_its_own_width() {
+        // **Two assertions about one line of the content stream, and neither is
+        // sufficient alone.** `re S` says the box is a frame; the inset says the
+        // frame is all there. A stroke straddles its path, so a rectangle
+        // stroked on the quad's own edge puts half of every side outside the
+        // appearance stream's `/BBox`, which clips. The result is a box with
+        // hairline edges --- it looks like a thin border rather than like a bug,
+        // and `annot-probe --mode outline` measures the same thing in pixels.
+        let scratch = Scratch::new("annots-box-stroke");
+        let content = appearance_of(MarkKind::Square, &scratch);
+
+        assert!(
+            content.contains(" re S"),
+            "a box is stroked, not filled: {content}"
+        );
+        assert!(
+            !content.contains(" re f"),
+            "a filled box hides what it was drawn around: {content}"
+        );
+        // The stroke colour as well as the fill colour, because `rg` does not
+        // imply `RG` and a path stroked after only `rg` comes out black.
+        assert!(
+            content.contains(" RG"),
+            "a stroke needs its own colour operator: {content}"
+        );
+
+        // The quad is 72..300 by 100..118 in display space, so 228 by 18 in
+        // page space whichever way up it is; the path is that less one stroke
+        // width, anchored half a width in. Written as numbers rather than
+        // derived from `outline_path`, so the test cannot agree with a wrong
+        // implementation of the arithmetic it is checking.
+        // Named `half` rather than `inset`: `let inset = OUTLINE_WIDTH / 2.0;`
+        // here is a superstring of the same line in `outline_path`, and the
+        // mutation anchored on that one then matched twice.
+        let half = OUTLINE_WIDTH / 2.0;
+        let path = content
+            .lines()
+            .find(|line| line.ends_with(" re S"))
+            .expect("a stroked rectangle");
+        let numbers: Vec<f64> = path
+            .split_whitespace()
+            .take(4)
+            .map(|n| n.parse().expect("a number"))
+            .collect();
+        assert!((numbers[0] - (72.0 + half)).abs() < 1e-3, "x: {path}");
+        assert!(
+            (numbers[2] - (228.0 - OUTLINE_WIDTH)).abs() < 1e-3,
+            "width: {path}"
+        );
+        assert!(
+            (numbers[3] - (18.0 - OUTLINE_WIDTH)).abs() < 1e-3,
+            "height: {path}"
+        );
+        // The y is the *lower* edge in page space, which is not 100: the quad
+        // arrives in display space and `user_quads` maps it. Asserted through
+        // the height above and the round trip in `annot-probe` rather than
+        // restated here, because a number copied out of a failing run is a
+        // second implementation of the mapping and agrees with any of them.
+        assert!(numbers[1] > 0.0, "the path starts on the page: {path}");
+
+        // And the width the reader will see, stated once so the stroke cannot
+        // silently become a hairline.
+        assert!(
+            content.contains(&format!("{OUTLINE_WIDTH} w")),
+            "the stroke names its width: {content}"
+        );
+    }
+
+    #[test]
+    fn only_a_box_is_stroked() {
+        // The control for the test above. "Contains `re S`" is satisfied by a
+        // writer that stroked *everything*, which would turn every highlight
+        // into an outline of itself -- and that is a change no assertion about
+        // the box alone can see.
+        for kind in [
+            MarkKind::Highlight,
+            MarkKind::Underline,
+            MarkKind::StrikeOut,
+        ] {
+            let scratch = Scratch::new("annots-not-stroked");
+            let content = appearance_of(kind, &scratch);
+            assert!(
+                content.contains(" re f"),
+                "{kind:?} fills its rectangle: {content}"
+            );
+            assert!(
+                !content.contains(" re S"),
+                "{kind:?} is not an outline: {content}"
+            );
+        }
+    }
+
+    #[test]
     fn each_kind_writes_its_own_subtype() {
         // The one thing every other reader keys on. A wrong subtype produces a
         // mark that draws correctly from our own `/AP` and is reported as the
@@ -2733,6 +3008,8 @@ mod tests {
             (MarkKind::Highlight, "Highlight"),
             (MarkKind::Underline, "Underline"),
             (MarkKind::StrikeOut, "StrikeOut"),
+            (MarkKind::Note, "Text"),
+            (MarkKind::Square, "Square"),
         ] {
             let scratch = Scratch::new("annots-subtype");
             let written = written_mark(kind, &scratch);
@@ -2745,6 +3022,89 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_carries_no_text_markup_keys_and_the_others_do() {
+        // Two absence assertions and their control, in one test because apart
+        // they are worth much less: "the comment has no /QuadPoints" is
+        // satisfied by a writer that stopped emitting them for everything, and
+        // this repository has the entry about an absence assertion that could
+        // not fail. The three markup kinds in the same loop are what make the
+        // two `is_none` lines mean something.
+        //
+        // `/QuadPoints` is listed by PDF 32000-1 on the text-markup subtypes
+        // and on no other; a comment is positioned by `/Rect`. `/AP` is ours to
+        // write for a markup kind and the reader's to synthesise for a comment
+        // icon --- see the note at the call site.
+        for kind in [
+            MarkKind::Highlight,
+            MarkKind::Underline,
+            MarkKind::StrikeOut,
+        ] {
+            let scratch = Scratch::new("annots-markup-keys");
+            let written = written_mark(kind, &scratch);
+            assert!(
+                written.get(b"QuadPoints").is_ok(),
+                "{kind:?} should carry /QuadPoints"
+            );
+            assert!(written.get(b"AP").is_ok(), "{kind:?} should carry an /AP");
+            assert!(
+                written.get(b"Name").is_err(),
+                "{kind:?} should carry no icon name"
+            );
+        }
+
+        // **A box is the other kind with no quads, and it separates two things
+        // this test used to assert together.** Until the box existed, "not a
+        // markup kind" and "no appearance stream of ours" were true of exactly
+        // the same one variant, so a single predicate satisfied both and no
+        // test could tell which of them it was checking. A box carries no
+        // `/QuadPoints` *and* needs an `/AP`, so the two assertions below now
+        // disagree about it --- which is what makes them two assertions.
+        let scratch = Scratch::new("annots-box-keys");
+        let written = written_mark(MarkKind::Square, &scratch);
+        assert!(
+            written.get(b"QuadPoints").is_err(),
+            "a box is not a text-markup annotation and must not carry /QuadPoints"
+        );
+        assert!(
+            written.get(b"AP").is_ok(),
+            "nothing synthesises a rectangle, so a box needs its own appearance"
+        );
+        assert!(
+            written.get(b"Name").is_err(),
+            "an icon name belongs to a comment, not to a box"
+        );
+        assert!(written.get(b"Open").is_err(), "a box has no popup to open");
+
+        let scratch = Scratch::new("annots-comment-keys");
+        let written = written_mark(MarkKind::Note, &scratch);
+        assert!(
+            written.get(b"QuadPoints").is_err(),
+            "a comment must not carry /QuadPoints"
+        );
+        assert!(
+            written.get(b"AP").is_err(),
+            "a comment leaves its icon to the reader"
+        );
+        assert_eq!(
+            written.get(b"Name").and_then(Object::as_name).ok(),
+            Some(b"Comment".as_slice()),
+            "a comment names the speech-bubble icon"
+        );
+        assert_eq!(
+            written.get(b"Open").and_then(Object::as_bool).ok(),
+            Some(false),
+            "a comment opens closed"
+        );
+        // And the keys it shares with every other mark, so that "carries fewer
+        // keys" cannot be satisfied by a dictionary that lost the rest of them.
+        assert!(written.get(b"Rect").is_ok(), "a comment needs a rectangle");
+        assert!(
+            written.get(b"Contents").is_ok(),
+            "a comment needs what it says"
+        );
+    }
+
+    #[test]
     fn a_line_is_opaque_and_a_wash_is_not() {
         // Two dictionary entries and one stream entry, all deciding the same
         // thing: a wash multiplies with the words under it at 40%, a line is
@@ -2754,6 +3114,10 @@ mod tests {
             (MarkKind::Highlight, WASH_ALPHA, "Multiply"),
             (MarkKind::Underline, 1.0, "Normal"),
             (MarkKind::StrikeOut, 1.0, "Normal"),
+            // A box is opaque for the same reason a line is, and it matters
+            // more: a translucent frame over a figure reads as a printing
+            // artifact rather than as something a reader drew.
+            (MarkKind::Square, 1.0, "Normal"),
         ] {
             let scratch = Scratch::new("annots-alpha");
             let written = written_mark(kind, &scratch);

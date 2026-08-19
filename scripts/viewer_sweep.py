@@ -204,6 +204,33 @@ def classify() -> tuple[list[str], list[str], list[str]]:
     return corpora, excluded, missing
 
 
+def _kill_leftovers() -> None:
+    """Kills any tpdf still running, on whichever platform this is.
+
+    **This was `pkill` unconditionally, and on Windows that is not a program.**
+    `subprocess.run(..., check=False)` swallows a non-zero exit and not a
+    `FileNotFoundError`, so the sweep died on its first corpus with a traceback
+    --- and the shell reported exit 0, because the traceback goes to stderr. A
+    harness that dies while looking like one that ran is the failure this
+    repository has an entry about. This one was at least loud: it printed a
+    traceback and no table.
+
+    Failure is ignored on purpose. "There was nothing to kill" is the ordinary
+    case, and both tools report it with a non-zero exit.
+    """
+    if sys.platform == "win32":
+        command = ["taskkill", "/F", "/IM", "tpdf.exe"]
+    else:
+        command = ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"]
+    try:
+        subprocess.run(command, check=False, capture_output=True)
+    except OSError:
+        # No such tool on this machine. A leftover is a slow run or a swallowed
+        # launch rather than a wrong answer, and both are visible in the check
+        # output, so this is not worth refusing over.
+        pass
+
+
 def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
     """One fixture through the harness, returning what the table needs.
 
@@ -215,14 +242,15 @@ def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
     where to look.
     """
     began = time.monotonic()
-    subprocess.run(
-        ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"],
-        check=False,
-        capture_output=True,
-    )
     # A leftover window occludes the next one, WebKit suspends an occluded
     # page, and the run then produces nothing while using no CPU. TPDF_RAISE
     # covers the other half, a window with nowhere visible to go.
+    #
+    # On Windows the leftover is worse than an occlusion:
+    # `tauri-plugin-single-instance` makes a new process forward its argv to the
+    # old one and exit, so the run reports one line and no checks at all.
+    # Measured on 2026-08-19, against three stray `tauri dev` processes.
+    _kill_leftovers()
     result = subprocess.run(
         [
             sys.executable,
@@ -235,9 +263,22 @@ def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        # **Explicit, because `text=True` alone uses the locale codec** --- which
+        # is cp1252 on Windows, and `multilingual.pdf` is the corpus whose whole
+        # point is text that is not Latin. The decode raised inside subprocess's
+        # own reader thread, which left `stdout` as None, so the failure arrived
+        # as `TypeError: unsupported operand type(s) for +` on the line below
+        # and said nothing about an encoding. Six corpora had already passed.
+        #
+        # `errors="replace"` rather than "strict": this text is read by
+        # `CHECK-NAMES-JSON` and a few regexes, and a mangled glyph in a check's
+        # detail line is worth less than a run that dies. Same decision, for the
+        # same reason, that `mutate_frontend.py` records for vitest's output.
+        encoding="utf-8",
+        errors="replace",
         env={**os.environ, "TPDF_RAISE": "1"},
     )
-    out = result.stdout + result.stderr
+    out = (result.stdout or "") + (result.stderr or "")
     summary = SUMMARY.search(out)
 
     roll = NAMES_JSON.search(out)

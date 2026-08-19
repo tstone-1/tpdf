@@ -52,6 +52,7 @@ use tpdf_lib::docmodel::{MarkKind, Quad};
 use tpdf_lib::edits::{Edits, NewMark};
 use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
 use tpdf_lib::save;
+use tpdf_lib::save::OUTLINE_WIDTH;
 use tpdf_lib::text;
 
 /// The document handle every mode opens under. One document, so any number does.
@@ -82,6 +83,15 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
     match kind {
         MarkKind::Highlight => YELLOW,
         MarkKind::Underline | MarkKind::StrikeOut => RULE_RED,
+        // The wash's yellow, matching `MARK_COLORS` in `edits.ts`: `/C` is what
+        // a reader colours its own comment icon with, so this is the colour the
+        // bubble comes out in everywhere else.
+        MarkKind::Note => YELLOW,
+        // The lines' red, matching `MARK_COLORS` in `edits.ts`. A box's ink is
+        // a stroke, and `--mode outline` classifies pixels by the colour it
+        // asked for --- so a yellow box on white paper would be measured as an
+        // absence, which is the mistake `RULE_RED`'s own comment records.
+        MarkKind::Square => RULE_RED,
     }
 }
 
@@ -97,6 +107,8 @@ enum Mode {
     Roundtrip,
     /// Where a line kind's rule actually lands, in pixels.
     Rule,
+    /// That a box is a frame and not a filled rectangle, in pixels.
+    Outline,
     Ink,
     NoAp,
     Legible,
@@ -145,6 +157,7 @@ fn run(args: &Args) -> Result<bool, String> {
     match args.mode {
         Mode::Roundtrip => roundtrip(args, &document),
         Mode::Rule => rule(args, &document, bindings),
+        Mode::Outline => outline(args, &document, bindings),
         Mode::Ink | Mode::NoAp => ink(args, &document, bindings),
         Mode::Legible => legible(args, &document, bindings),
         Mode::Refuse => refuse(args, &document),
@@ -220,6 +233,24 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
     }
 
     let quads = quads_for(&extracted, 0, args.chars);
+    // **One rectangle for a box**, which is what the application sends: a box
+    // comes from a drag, and a drag produces one. The other kinds come from a
+    // text selection, which legitimately produces one quad per line, and
+    // collapsing those would be measuring a mark tpdf never makes. Done here
+    // rather than in the caller so that every mode sees the same shape --- the
+    // round trip's quad count and the outline's emptiness band would otherwise
+    // be reading two different marks.
+    let quads = if matches!(args.kind, MarkKind::Square) {
+        let box_ = union(&quads);
+        vec![Quad {
+            left: box_[0],
+            top: box_[1],
+            right: box_[2],
+            bottom: box_[3],
+        }]
+    } else {
+        quads
+    };
     if quads.is_empty() {
         return Err(format!(
             "the first {} characters of page {} have no drawable boxes",
@@ -351,6 +382,16 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
         MarkKind::Highlight => Kind::Highlight,
         MarkKind::Underline => Kind::Underline,
         MarkKind::StrikeOut => Kind::StrikeOut,
+        // The one pair whose two names differ. `MarkKind::Note` is what a
+        // reader calls it and `Kind::Text` is what the file calls it, so this
+        // arm is the round trip that says `save.rs` wrote `/Text` and
+        // `annots.rs` read it back as the same thing --- the two enums meeting
+        // in the file, which is exactly what this block exists to check.
+        MarkKind::Note => Kind::Text,
+        // The one pair whose two names agree, and it earns an arm by saying so:
+        // `/Square` is what the writer emits and what the reader reads, and the
+        // word "box" a reader actually sees is in neither enum.
+        MarkKind::Square => Kind::Square,
     };
     ok &= check(
         &format!("kind read back as {expected:?}"),
@@ -378,7 +419,23 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
         agrees,
     );
 
-    ok &= quad_points_are_in_reading_order(&out, quads.len());
+    // **A comment expects none, and that is asserted rather than skipped.**
+    // `/QuadPoints` is a text-markup key and `/Text` is not a markup subtype, so
+    // the right number here is zero --- and passing zero puts it through the
+    // same counting check the other kinds use rather than stepping around it.
+    // Skipping would have been the reassuring branch: a writer that stopped
+    // emitting quads for *everything* looks identical to one that correctly
+    // omits them here, which is why the three markup kinds keep asserting a
+    // real count in the same run.
+    // A box expects none for the same reason by a different route: it is not a
+    // markup subtype either, and `is_text_markup` in `save.rs` is the single
+    // predicate both of them go through.
+    let expected_quads = if matches!(args.kind, MarkKind::Note | MarkKind::Square) {
+        0
+    } else {
+        quads.len()
+    };
+    ok &= quad_points_are_in_reading_order(&out, expected_quads);
     if args.keep.is_none() {
         let _ = std::fs::remove_file(&out);
     }
@@ -598,7 +655,7 @@ fn rule(
 ) -> Result<bool, String> {
     if !matches!(args.kind, MarkKind::Underline | MarkKind::StrikeOut) {
         return Err(
-            "--mode rule is for a line kind: pass --kind underline or --kind strikeout.              A highlight fills its quad, which is what --mode legible measures."
+            "--mode rule is for a line kind: pass --kind underline or --kind strikeout.              A highlight fills its quad, which is what --mode legible measures; a note              draws no ink of ours at all, since the reader synthesises its icon; and a box              draws on all four edges, which is what --mode outline measures."
                 .to_string(),
         );
     }
@@ -660,6 +717,17 @@ fn rule(
         MarkKind::Underline => (bottom, top, "bottom"),
         MarkKind::StrikeOut => (middle, bottom, "middle"),
         MarkKind::Highlight => unreachable!("refused above"),
+        // Refused above with the highlight, and for a stronger reason: a
+        // highlight draws a rule nowhere because it is a wash, and a comment
+        // draws no ink of ours at all --- `save.rs` writes it no appearance
+        // stream, so what appears on the page is the reader's own icon. There
+        // is nothing here for a band measurement to be about.
+        MarkKind::Note => unreachable!("refused above"),
+        // Refused above, and a third distinct reason: a box draws ink in all
+        // three bands, because its ink is on its edges rather than in a band
+        // inside it. Thirds of the quad cannot discriminate anything about it,
+        // which is what `--mode outline` exists for.
+        MarkKind::Square => unreachable!("refused above"),
     };
     ok &= check(
         &format!("most of the rule is in the {where_} third ({wanted} px)"),
@@ -672,6 +740,143 @@ fn rule(
     ok &= check(
         &format!("nothing was drawn in the band this kind must leave alone ({forbidden} px)"),
         forbidden == 0,
+    );
+    Ok(ok)
+}
+
+/// A box is a frame: ink on its edges and nothing inside it.
+///
+/// **The one measurement that separates `re S` from `re f`.** Everything a file
+/// assertion can say about a `/Square` --- the subtype, the rectangle, the
+/// absence of `/QuadPoints`, that an `/AP` exists at all --- is satisfied
+/// equally by a stroked box and a solid block of colour, and the solid block is
+/// what a one-character slip in the content stream produces. It is also the
+/// exact failure a reader would report, because a filled box hides the figure it
+/// was drawn around.
+///
+/// Three readings, and the middle one is the assertion:
+///
+///  * the source page, in the same rectangle, as the control;
+///  * the frame --- the whole quad --- which must have ink;
+///  * the middle, inset well clear of the stroke, which must have none.
+///
+/// The inset is 25% of each side rather than a fixed number of points, so it
+/// scales with whatever quad the fixture's text produced, and at any plausible
+/// size it clears a 1.5 pt stroke by a wide margin.
+fn outline(
+    args: &Args,
+    document: &RawDocument,
+    bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    if !matches!(args.kind, MarkKind::Square) {
+        return Err(
+            "--mode outline is for a box: pass --kind square. The other kinds fill              something, which is what --mode legible and --mode rule measure."
+                .to_string(),
+        );
+    }
+    let (out, quads) = mark_and_save(args, document)?;
+    // One rectangle, which is what the application sends and what `mark_and_save`
+    // collapses a multi-line run into for this kind. Asserted rather than
+    // assumed: several boxes would put a stroke through the middle band and the
+    // emptiness check below would fail for a reason that is not a defect.
+    if quads.len() != 1 {
+        return Err(format!(
+            "a box is one rectangle and this run made {}; --mode outline cannot              read a mark with several",
+            quads.len()
+        ));
+    }
+
+    // **Raised rather than refused**, and it prints what it used. The thickness
+    // reading below distinguishes a full stroke from a clipped one by a factor
+    // of two, and at the default scale of 2 that is 3 px against 1.5 -- a
+    // difference antialiasing swallows. At 4 it is 6 against 3. Refusing would
+    // make the documented invocation red at its own default, which is the trap
+    // about a control that cannot discriminate being reported as a failure.
+    let scale = args.scale.max(4.0);
+    if scale != args.scale {
+        println!("     rendering at {scale}x rather than {}x: a stroke {OUTLINE_WIDTH} pt thick needs pixels to be measured in", args.scale);
+    }
+    let (before, bw, bh) = render(bindings, &args.file, args.page, scale)?;
+    let (after, aw, ah) = render(bindings, &out, args.page, scale)?;
+    if args.keep.is_none() {
+        let _ = std::fs::remove_file(&out);
+    }
+    if (bw, bh) != (aw, ah) {
+        return Err(format!(
+            "the copy renders {aw}x{ah} where the source renders {bw}x{bh}, so no              pixel comparison between them means anything"
+        ));
+    }
+
+    let quad = union(&quads);
+    let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
+    let whole = [quad[0], quad[1], quad[2], quad[3]];
+    let inside = [
+        quad[0] + width / 4.0,
+        quad[1] + height / 4.0,
+        quad[2] - width / 4.0,
+        quad[3] - height / 4.0,
+    ];
+    // One column, at the box's horizontal centre, over the top quarter and the
+    // bottom quarter. `rule_pixels` floors and ceils its bounds, so a band this
+    // narrow is exactly one pixel wide, and each edge's stroke is the only ink
+    // in its quarter.
+    //
+    // **Both edges, and the reading is the thinner of the two.** One was not
+    // enough, and finding that out is the only reason this is two: the mutation
+    // written to prove the check --- dropping `outline_path`'s inset --- left
+    // the path's *size* reduced while removing only its origin shift, so it
+    // clipped the bottom and left edges and moved the top and right ones
+    // *inward*. A probe reading the top alone saw no change at all and reported
+    // a pass. A defect that clips one edge is not less of a defect than one
+    // that clips four.
+    let centre = (quad[0] + quad[2]) / 2.0;
+    let edges = [
+        [centre, quad[1], centre + 0.01, quad[1] + height / 4.0],
+        [centre, quad[3] - height / 4.0, centre + 0.01, quad[3]],
+    ];
+
+    let want = color_for(args.kind);
+    let frame = rule_pixels(&after, aw, ah, whole, scale, want);
+    let middle = rule_pixels(&after, aw, ah, inside, scale, want);
+    let thick = edges
+        .iter()
+        .map(|band| rule_pixels(&after, aw, ah, *band, scale, want))
+        .min()
+        .unwrap_or(0);
+    let control = rule_pixels(&before, bw, bh, whole, scale, want);
+    println!(
+        "box {width:.1}x{height:.1} pt: {frame} px in the whole quad, {middle} inside it,          {thick} px on its thinner edge, {control} on the source page"
+    );
+
+    let mut ok = true;
+    ok &= check(
+        "the source page has no box where the mark went (the control)",
+        control == 0,
+    );
+    ok &= check(
+        &format!("the renderer drew the box at all ({frame} px)"),
+        frame > 0,
+    );
+    // The discrimination. A filled box satisfies the check above exactly as a
+    // stroked one does, and this is the only reading that tells them apart.
+    ok &= check(
+        &format!("the middle of the box is empty ({middle} px)"),
+        middle == 0,
+    );
+    // **That the stroke is not clipped in half**, which is what `outline_path`'s
+    // inset is for. Measured rather than reasoned about: this was first written
+    // up as something pixels could not see, on the argument that a /BBox clip
+    // leaves no ink outside the quad and so nothing to count. True, and beside
+    // the point -- it removes ink from *inside*, and dropping the inset costs
+    // about a fifth of the frame and half the top edge's thickness. The first
+    // account was wrong, and one run said so.
+    //
+    // 0.7 rather than 1.0 because the classifier's tolerance drops the faintest
+    // antialiased row at each end of the run. A clipped stroke is at half.
+    let expected = OUTLINE_WIDTH as f32 * scale;
+    ok &= check(
+        &format!("every edge is its full {OUTLINE_WIDTH} pt, not clipped by the /BBox (thinnest {thick} px of an expected {expected:.1})"),
+        thick as f32 >= expected * 0.7,
     );
     Ok(ok)
 }
@@ -923,6 +1128,14 @@ fn parse_args() -> Result<Args, String> {
                     "highlight" => MarkKind::Highlight,
                     "underline" => MarkKind::Underline,
                     "strikeout" => MarkKind::StrikeOut,
+                    // The serde name, which is what the frontend sends and what
+                    // a saved session holds. `/Text` is the file's spelling and
+                    // is deliberately not accepted here --- one name per thing
+                    // at each boundary.
+                    "note" => MarkKind::Note,
+                    // The serde name again. `/Square` is the file's spelling and
+                    // "box" is the reader's, and neither is accepted here.
+                    "square" => MarkKind::Square,
                     other => return Err(format!("unknown kind {other}")),
                 }
             }
@@ -931,6 +1144,7 @@ fn parse_args() -> Result<Args, String> {
                 parsed.mode = match value.as_str() {
                     "roundtrip" => Mode::Roundtrip,
                     "rule" => Mode::Rule,
+                    "outline" => Mode::Outline,
                     "ink" => Mode::Ink,
                     "noap" => Mode::NoAp,
                     "legible" => Mode::Legible,

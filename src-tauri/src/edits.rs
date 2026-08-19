@@ -127,7 +127,7 @@ pub struct MarkView {
 /// a caller cannot choose what a mark claims about when it was made.
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct NewMark {
-    /// Which of the three marks this is.
+    /// Which kind of mark this is.
     ///
     /// Chosen by the frontend, unlike `made`: a reader picks Highlight or
     /// Underline and there is nothing for the application to decide. The set is

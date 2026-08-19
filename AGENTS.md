@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 341 entries
+The one thing this file does *not* carry in full is the trap list --- 354 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -625,16 +625,16 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently fifteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+Currently sixteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
 workflow-parity check, a mutation-anchor check, a corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
-`cargo build --locked --bins --examples`, a webview-sink check, `npm run check`,
-`npm run test`, `npm run build`, and a third-party-notices check. Two of them are
+`cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check,
+`npm run check`, `npm run test`, `npm run build`, and a third-party-notices check. Two of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
 
-**All fifteen can be green on a Mac while the Windows tree does not compile**, and that is not
+**All sixteen can be green on a Mac while the Windows tree does not compile**, and that is not
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
@@ -648,7 +648,10 @@ Its honest limit is that a type-check is not a test --- a wrong *value* passes i
 
 **`anchors` exists because two different failures are invisible in `git status`, and both
 happened on 2026-08-16.** It asserts that every mutation's search string occurs exactly once in
-the file it names, across all three tables --- 289 of them.
+the file it names, across all three tables. How many that is is the gate's own output
+(513 on 2026-08-19) and deliberately not a number here: this sentence said 289 for two
+weeks after the tables grew past it, which is the failure the trap count above already
+has a `grep -c` for.
 
 Zero means one of two things and the gate deliberately does not guess which, because they need
 different fixes. Either **a killed harness left its edit in the tree**: the harnesses mutate
@@ -722,6 +725,28 @@ adds where a title misleads on its own. It refuses an empty scan on either side 
 duplicate on either side, since two bullets covering one title can hide a third going
 missing. Proved by removing a bullet, adding one naming nothing, duplicating one, and by
 disabling the parenthetical rule inside the checker; all four red.
+
+**`wiring` exists because the box shipped inert and three layers of tests said otherwise.**
+`Viewer` reports what it cannot decide through optional callbacks on `ViewerOptions`;
+`App.svelte` supplies them in one object literal. `onDrawn` was added to the interface, the
+viewer fired it, and that literal never gained the key — so the tool armed, drew its preview,
+and reached no model. Every callback is optional by design, because the check harness builds
+a viewer with none of them, so a missing key is not a type error either.
+
+The three layers that passed are the point. `viewerdraw.test.ts` constructs its own viewer
+and supplies its own `onDrawn`, covering the viewer's half. `viewer_check.py`'s command probe
+drives a recorder, covering the command's half. `appcommands.test.ts` sweeps every registered
+command for an action, which `drawBox` had. None of them looks at the literal that joins the
+two, because it lives in a `.svelte` file no unit test imports and no harness constructs.
+
+The gate diffs the declared callbacks against the wired ones, both ways, and refuses an empty
+scan on either side. It found a **second** one on its first run — `onNavigate`, which exists so
+a Back and Forward affordance can be re-enabled after a jump and which nothing consumes,
+because both commands are guarded on `withDocument` alone and neither greys when there is
+nowhere to go. That is now the one entry in its exemption table, with the reason, and wiring
+it is the same piece of work as making them grey. Proved by mutation in four directions:
+dropping the wiring, renaming a wired key, an exemption naming nothing (a `[WARN]`, not a
+failure), and the control.
 
 **`sinks` enforces `docs/THREAT-MODEL.md` T8**, which until 2026-08-02 was the one mitigation
 in that document held by convention rather than by a line. Document text --- outline titles,
@@ -958,8 +983,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 341 of them and the full text
-was 93% of this file --- an instruction budget spent on the 340 traps that are not
+titles. Only the titles are here, because there are 354 of them and the full text
+was 93% of this file --- an instruction budget spent on the 350 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1098,6 +1123,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mutation that survives every check because nothing reads the field (the appearance stream draws the wash, so `/QuadPoints` is read by nobody until it is removed)
 - A panel that lists a hidden comment must not let the page open it
 - `/F` is a bit field, and the flag every real link sets is not the one you are testing
+- One predicate answering three questions is right until a second kind makes them disagree (no test could have said which of the three it was checking)
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1134,6 +1160,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Two counts from two commits are not a platform difference
 - A baseline that skips the expensive step leaves its noise in the answer
 - A difference is only a measurement when the operands make it one
+- A difference assertion is satisfied by any difference, including the one the defect produces (the two pages lay out at different zooms, so the wrong answer differs too)
+- A probe reading one edge of a box cannot see a mutation that clips the other three (and the write-up first said pixels could not see it at all, which one run disproved)
 - A check on the sign of a noisy quantity fires only when the noise falls one way
 - A mean cannot test a claim about a minimum
 - A frame-rate pass means nothing without a coverage number beside it
@@ -1146,6 +1174,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 
 ### Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration
+- There was no check on the overlay at all, and that is why a reader found the underline defect (two renderers draw every mark and only one of them was measured)
+- A feature can be inert in the application while three layers of tests pass (the layer that composes is the layer nothing tests; the gate written for it found a second one on its first run)
 - A control that is easier than the check certifies nothing
 - An OCR engine's bounding box is a detection, not a measurement
 - A property that holds by construction cannot test the thing it resembles
@@ -1183,6 +1213,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test whose failure is a hang reports a pass and a timeout in one breath
 - A check that cannot run is not a check, and a locked screen is enough to stop one
 - An unreachable guard is worth keeping if the type can carry it instead
+- An Escape ordering that no reachable input can distinguish (the surviving mutation was right and the comment claiming the ordering mattered was the defect)
 - A label rendered only from real ids cannot be tested on a combination none of them uses
 - A post-destroy guard that returns early leaks what it declined to take
 - A print check that counts pages cannot see a blank page
@@ -1279,8 +1310,13 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A draft release is invisible, and the tag beside it says the work shipped
 - A test that walks every prefix of a journal still could not see the snapshot rule (thoroughness is bounded by the constants a test happens to exceed; the harness's name cross-check is what turned a pass into a finding)
 - Two tests sharing a name make a mutation harness's two counts disagree (the guard was right about the symptom and cannot know the cause)
+- A mutation that inserts rather than moves runs the code twice, and the second run overwrites the first (a fourth mechanism for a lying mutation: the edit landed and meant something else)
+- The sweep shelled out to `pkill`, which is not a program on Windows (it died on its first corpus and reported exit 0; the stray process it failed to kill made the app launch and do nothing)
+- `subprocess.run(text=True)` decodes with the locale codec, and the multilingual corpus is the one that breaks it (the decode raised in a reader thread, so the error names a TypeError and no encoding)
+- An escape sequence written into a mutation table through a shell never arrives as an escape (three failure shapes, and the quiet one printed MUTATED over an unmutated tree)
 - An event without the modifier fields a matcher tests reads as no match at all (four keys reported guarded were four leaks; the tidy result was the tell)
 - A probe copied from its neighbour inherits a starting point that may not apply (a working command measured as dead, and its sibling failed in the direction that looks like a pass)
+- The gate guarding the anchors reads the file differently from the harness that uses them (green on every anchor in the tree precisely where the harness could match none of the multi-line ones)
 
 ### Windows and portability
 - The gates had never run on the platform where they fail
@@ -1331,6 +1367,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A gate that refuses on a precondition of running is red on every machine that is not running (the gate demanded fixtures the repository had already written down as deliberately absent)
 - Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong (the second was wrong too; `gh release view <tag>` cannot tell them apart, and `gh api .../releases` answers 200 with `[]`)
 - `$?` read in the same word as a command substitution is the substitution's status (all three controls agreed, which is the tell)
+- A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work (five probe runners dead on Windows since the day they were written; the wrapper's own `echo` supplied the exit 0 that hid it)
+- A guard that answers by refusing the whole run turns two blocked mutations into 178 (the diagnosis was exactly right and the outcome exactly wrong; a dated measurement in `BUILD.md` had quietly expired)
 
 ### Fixtures
 - The test fixtures are generated, not committed

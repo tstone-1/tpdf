@@ -7,17 +7,19 @@
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
+  import type { ScreenPoint } from "./lib/viewer";
   import {
     handleWindowKey,
     registerAppCommands,
     relabelCommands,
+    togglePalette,
     type AppActions,
   } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
   import {
     ContextMenu,
+    menuForSurface,
     PAGE_MENU,
-    SELECTION_MENU,
   } from "./lib/contextmenu";
   import { contentBox } from "./lib/crop";
   import { Edits, type EditState } from "./lib/edits";
@@ -183,6 +185,8 @@
     canUndo: () => edits?.state.can_undo ?? false,
     canRedo: () => edits?.state.can_redo ?? false,
     markSelection: (kind) => void markSelection(kind),
+    addComment: (at) => void addComment(at),
+    drawBox: () => viewer?.armDraw("square"),
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
@@ -230,6 +234,63 @@
     for (const { page, quads } of marks) {
       await applyEdit((e) => e.mark(kind, page, quads));
     }
+  }
+
+  /**
+   * Drops a comment on the page and opens its note ready to be typed in.
+   *
+   * **The one thing here that is not `markSelection`'s shape**, and the
+   * difference is the whole of what a comment is: the other three take their
+   * geometry from a selection, so they can make several marks at once --- one
+   * per page a selection crosses --- and refuse when there is no selection.
+   * This one takes a *point* and always makes exactly one, because a comment is
+   * something a reader puts somewhere rather than something they apply to words.
+   *
+   * The note opens straight after, with the keyboard in it. A bubble a reader
+   * has to find and click before they can say anything is a bubble that gets
+   * dropped and abandoned --- and the box is also the only thing on screen that
+   * tells them the comment is theirs to type in rather than the document's.
+   */
+  async function addComment(at: ScreenPoint | null): Promise<void> {
+    const where = viewer?.commentAt(at);
+    if (!where) return;
+    // Which ids existed before, so the one that appears can be identified by
+    // difference rather than by guessing. "The last mark in the list" and "the
+    // highest id" are both inferences about how the model numbers and orders
+    // things, and neither is written down anywhere as a promise --- a set
+    // difference needs no promise at all.
+    const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
+    await applyEdit((e) => e.mark("note", where.page, where.quads));
+    const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
+    // Absent if the model refused --- an empty quad, a page that is gone. The
+    // refusal has already been shown by `applyEdit`, so there is nothing to say
+    // here beyond not opening a note on a mark that was never made.
+    if (made) viewer?.showMark(made.id);
+  }
+
+  /**
+   * Records a mark the reader drew, and opens its note.
+   *
+   * The same shape as {@link addComment} above once the gesture is over: make
+   * it, find it by set difference, open the box. Written out rather than shared
+   * with that function, because the two differ in the one line that matters ---
+   * where the geometry comes from --- and a helper taking a callback would hide
+   * exactly the distinction the two exist to draw.
+   *
+   * The note opens for the comment's reason: a mark a reader cannot immediately
+   * say anything about is one they draw and abandon, and the box is also the
+   * only thing on screen saying the rectangle is theirs rather than the
+   * document's.
+   */
+  async function drawn(
+    kind: MarkKind,
+    page: number,
+    quads: number[],
+  ): Promise<void> {
+    const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
+    await applyEdit((e) => e.mark(kind, page, quads));
+    const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
+    if (made) viewer?.showMark(made.id);
   }
 
   /**
@@ -930,6 +991,21 @@
    * The routing is `appcommands.ts`'s, for the reason the registration above
    * gives: ⌘K was unreachable by any check while it lived in this file.
    */
+  /**
+   * The toolbar's route into the palette.
+   *
+   * Through `togglePalette` rather than `palette?.open()`, so the button and ⌘K
+   * are one implementation --- opening without the recents refresh beside it is
+   * exactly the kind of half-copy that leaves the button's list stale while the
+   * chord's is current, with nothing to say so.
+   */
+  function openPaletteFromToolbar() {
+    togglePalette({
+      palette: () => palette,
+      refreshRecents: () => void refreshRecents(),
+    });
+  }
+
   function onWindowKey(event: KeyboardEvent) {
     // First, and it has to be: Escape closes the menu rather than the find bar,
     // and the arrows walk its rows rather than scrolling the document under it.
@@ -987,7 +1063,17 @@
       // of the page strip would otherwise be clipped by that panel's scroll
       // box. Runs a chosen command through the registry, exactly as the palette
       // and the menu bar do.
-      contextMenu = new ContextMenu(document.body, commands, (id) => {
+      contextMenu = new ContextMenu(document.body, commands, (id, at) => {
+        // One command reads where the menu was opened, because *where* is the
+        // whole of what a right-click adds over the palette. It is routed
+        // rather than run through the registry for the same reason the strip's
+        // right-click navigates first: the point has to reach the placement,
+        // and a command signature that carried one would put a pointer
+        // coordinate into every route that has no pointer.
+        if (id === "edit.addComment" && at) {
+          void addComment({ clientX: at.x, clientY: at.y });
+          return;
+        }
         commands.run(id);
       });
       // Any press outside the menu dismisses it, on the way down rather than on
@@ -1013,7 +1099,23 @@
           ".surface",
         );
         if (onSurface) {
-          openContextMenu(SELECTION_MENU, { x: event.clientX, y: event.clientY });
+          const at = { x: event.clientX, y: event.clientY };
+          // A mark under the pointer wins, because a right-click on a highlight
+          // is a request to do something to *that highlight* --- the same
+          // argument `contextmenu.ts` makes for the page strip. Before this it
+          // offered the selection menu, so the only route to taking a mark off
+          // was to left-press it for its note box first.
+          //
+          // The note is opened rather than the mark being passed to the menu,
+          // and that is deliberate: it is how every other route names the mark
+          // it means, so `edit.removeMark` needs no second way to be told which
+          // one. The strip does the same thing by navigating to the page.
+          const own = viewer?.markAt(event) ?? null;
+          // Without the keyboard: the menu is what the reader is about to arrow
+          // through, and `showMark`'s default puts the caret in the note's text
+          // field, which would eat every key the menu needs.
+          if (own !== null) viewer?.showMark(own, false);
+          openContextMenu(menuForSurface(own), at);
         }
       });
 
@@ -1367,6 +1469,12 @@
         // undo steps over it and the document is dirty until it is saved.
         onMarkNote: (mark, note) => void applyEdit((e) => e.renote(mark, note)),
         onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),
+        // A box the reader finished drawing. The page id and the quad are
+        // already in the file's space --- `Viewer.fileRectOn` does that, because
+        // the crop and both rotations are the viewer's and nothing here could
+        // undo them --- so this is the same one-line journal entry a highlight
+        // is, and undo steps over it identically.
+        onDrawn: (kind, page, quads) => void drawn(kind, page, quads),
         onStatus: (next) => {
           status = next;
           // Here rather than in a `$derived`, because this is the only moment
@@ -1579,6 +1687,38 @@
 
 <main>
   <header>
+    <!--
+      Leftmost, and first in the tab order, because between them these two are
+      the whole of this application's mouse-reachable command surface on
+      Windows. `menu.rs` puts the native menu bar behind
+      `#[cfg(target_os = "macos")]` deliberately --- a menu bar there costs the
+      reader no window, and on Windows it would be chrome inside the window,
+      which is the ribbon this application exists to not be. The consequence
+      went unnoticed until it was reported from use: of 54 commands, the
+      toolbar and the two right-click menus reach about 19, the palette reaches
+      all of them, and nothing on screen said the palette existed. A reader who
+      did not already know ⌘K could not open the sidebar at all.
+
+      Drawn in the toolbar's own idiom --- a small flat glyph like the find
+      toggles, not a raised button --- for the reason the zoom readout is: a row
+      of buttons drawn as buttons is the ribbon again.
+    -->
+    <button
+      class="chord"
+      title="All commands ({label('app.palette')})"
+      aria-label="All commands"
+      onclick={openPaletteFromToolbar}>≡</button
+    >
+    {#if title}
+      <button
+        class="chord"
+        class:on={sidebarShown}
+        aria-pressed={sidebarShown}
+        title="Sidebar ({label('view.toggleSidebar')})"
+        aria-label="Toggle sidebar"
+        onclick={toggleSidebar}>▤</button
+      >
+    {/if}
     <button onclick={pickAndOpen} disabled={opening}>Open</button>
     <span class="title">{title}</span>
     <!--
@@ -1740,9 +1880,67 @@
     border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
     flex: none;
   }
+  /* The chrome is not a document, and the web view treats it as one by default.
+     Dragging across the toolbar highlighted the button faces, and ⌘A with the
+     keyboard anywhere outside the page selected every label in the bar together
+     with the find field's contents --- reported from use as "the app behaves
+     like a browser", which is exactly what it was doing. `appcommands.ts` holds
+     the other half: ⌘A now reaches the page's own selection instead of falling
+     through to the web view's select-all.
+
+     The page is untouched by this. Its selection is drawn on a canvas overlay
+     and copied out of extracted text, so it is not the web view's selection at
+     all and cannot be widened by a rule here.
+
+     Prefixed as well as not: unprefixed `user-select` is Safari 17.4 and later,
+     and WKWebView's version follows the OS. A macOS old enough to want the
+     prefix is not one this can be tested on from here, and the prefix costs a
+     line. */
+  header,
+  .panel,
+  .empty {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* The one element in the chrome whose text a reader edits. Not belt and
+     braces: a field under a `user-select: none` ancestor cannot have its own
+     contents selected with the mouse, so without this the fix would take
+     double-click-to-select-a-word out of the find bar. */
+  .find {
+    -webkit-user-select: text;
+    user-select: text;
+  }
   button {
     font: inherit;
     padding: 0.2rem 0.8rem;
+  }
+  /* The two commands that are a route rather than an action, drawn in the
+     toolbar's own idiom --- flat, like the find toggles and the zoom readout,
+     rather than raised like Open. `.toggle` is deliberately not reused: these
+     two sit left of the title and are not part of the find group, and sharing a
+     class would mean a change aimed at the find toggles moved these as well. */
+  .chord {
+    font: inherit;
+    font-size: 1.05em;
+    line-height: 1;
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: 0.6;
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    flex: none;
+    cursor: default;
+  }
+  .chord:hover {
+    opacity: 1;
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+  }
+  /* Same drawn pressed state as `.toggle.on`, and for the same reason: a
+     native `:active`-like colour disappears under a dark appearance. */
+  .chord.on {
+    opacity: 1;
+    box-shadow: inset 0 0 0 2px currentColor;
   }
   /* Flex items shrink by default, so without a shrink discipline here the
      header has no fixed shape: whichever element appears last steals width from

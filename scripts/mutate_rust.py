@@ -48,8 +48,14 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from live_output import stream_results  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "src-tauri"
+
+#: Which platform this is, in the vocabulary `Mutation.only_on` uses.
+HERE = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "linux"
 
 #: Only these modules' tests are run, so an unrelated failure elsewhere cannot be
 #: read as a mutation being caught. libtest takes several filters and ORs them,
@@ -103,6 +109,23 @@ class Mutation:
     before: str
     after: str
     expect: str
+    #: The one platform this mutation can run on, or None for all of them.
+    #:
+    #: `menu.rs` and `keylayout.rs` are macOS-only, so on Windows `cargo test`
+    #: never compiles them and the tests they name do not exist. The guard below
+    #: reports that correctly -- "it cannot go red, so this mutation would report
+    #: SURVIVED" -- and then refuses the whole run over it, which is the right
+    #: answer for an unknown name and the wrong one for an absent platform. It
+    #: blocked every mutation in this table on Windows from the day `menu::` was
+    #: added until 2026-08-19, and nothing said so, because the whole table had
+    #: not been run there since.
+    #:
+    #: **Declared, never inferred.** A mutation with no `only_on` still refuses
+    #: the run when its test cannot be found -- which is the case the guard was
+    #: written for and the one that must stay loud. Skipping on a name the
+    #: harness merely failed to see is how a mutation quietly stops being able
+    #: to fail.
+    only_on: str | None = None
 
 
 MUTATIONS = [
@@ -115,6 +138,7 @@ MUTATIONS = [
         "const ACTION_DISPLAY: u16 = 3;",
         "const ACTION_DISPLAY: u16 = 300;",
         "every_position_answers_with_a_single_visible_glyph",
+        only_on="macos",
     ),
     Mutation(
         # Rename the tag the frontend writes. Nothing in either language reads
@@ -126,6 +150,7 @@ MUTATIONS = [
         '#[serde(tag = "kind", rename_all = "lowercase")]',
         '#[serde(tag = "type", rename_all = "lowercase")]',
         "a_separator_and_a_command_are_told_apart_by_their_tag",
+        only_on="macos",
     ),
     Mutation(
         # Report the selection's length as the file's. `write_copy` compares the
@@ -1696,10 +1721,12 @@ MUTATIONS = [
         # Treat a line as a wash: it then fills its whole quad, multiplied, at
         # 40%. One predicate deciding four things, which is why one mutation
         # reddens three tests.
+        # Re-aimed when `is_wash` and `is_note` were replaced by one `ink`
+        # question: the arm it named said `=> false` and now says `=> Ink::Line`.
         "save: draw the two line kinds as washes",
         "src/save.rs",
-        "        MarkKind::Underline | MarkKind::StrikeOut => false,",
-        "        MarkKind::Underline | MarkKind::StrikeOut => true,",
+        "        MarkKind::Underline | MarkKind::StrikeOut => Ink::Line,",
+        "        MarkKind::Underline | MarkKind::StrikeOut => Ink::Wash,",
         "a_line_is_opaque_and_a_wash_is_not",
     ),
     Mutation(
@@ -1901,10 +1928,80 @@ MUTATIONS += [
         "                crop: None,",
         "a_crop_reaches_the_reply_and_the_plan_and_clearing_it_removes_it",
     ),
+    Mutation(
+        # Fill the box instead of stroking it. Every file-level assertion about a
+        # /Square -- subtype, rectangle, no quads, an /AP exists -- is satisfied
+        # equally by a solid block of colour, and a solid block hides the figure
+        # the box was drawn around.
+        "save: fill a box rather than stroking its edge",
+        "src/save.rs",
+        'content.push_str(&format!("{x} {y} {width} {height} re S',
+        'content.push_str(&format!("{x} {y} {width} {height} re f',
+        "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
+    ),
+    Mutation(
+        # Stroke every kind. The check written for the box passes unchanged --
+        # which is what its control is for.
+        # Anchored on the wash's arm rather than on `re f`, which occurs twice:
+        # the anchor gate requires exactly one occurrence, and a mutation that
+        # could land in either of two places is one nobody can reason about.
+        "save: stroke a wash rather than filling it",
+        "src/save.rs",
+        '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re f',
+        '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re S',
+        "only_a_box_is_stroked",
+    ),
+    Mutation(
+        # Stroke on the quad's own edge. Half of every side falls outside the
+        # appearance stream's /BBox, which clips it -- so the box comes out with
+        # hairline edges, which looks like a thin border and not like a bug.
+        "save: stroke a box on its edge rather than inset by half the stroke",
+        "src/save.rs",
+        "    let inset = OUTLINE_WIDTH / 2.0;",
+        "    let inset = 0.0;",
+        "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
+    ),
+    Mutation(
+        # Never set the stroke colour. `rg` sets the fill's and does not imply
+        # `RG`, so the box comes out black -- which reads as a colour that was
+        # ignored rather than one that was never set.
+        "save: set only the fill colour, so the stroke comes out black",
+        "src/save.rs",
+        "{r} {g} {b} rg {r} {g} {b} RG {OUTLINE_WIDTH} w",
+        "{r} {g} {b} rg {OUTLINE_WIDTH} w",
+        "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
+    ),
+    Mutation(
+        # Write /QuadPoints on every kind, as the writer did before a mark
+        # existed that must not carry them. Most readers ignore an unlisted key
+        # and one day something does not.
+        "save: write text-markup quads on a box and a comment too",
+        "src/save.rs",
+        "    if is_text_markup(mark.kind) {",
+        "    if true {",
+        "a_comment_carries_no_text_markup_keys_and_the_others_do",
+    ),
+    Mutation(
+        # Give a box no appearance stream, as a comment correctly gets none.
+        # Nothing synthesises a rectangle, so the annotation is in the file,
+        # findable, removable -- and invisible.
+        "save: leave a box's appearance to the reader, as a comment's is",
+        "src/save.rs",
+        "        let appearance = if ink(mark.kind) == Ink::None {",
+        "        let appearance = if !is_text_markup(mark.kind) {",
+        "a_comment_carries_no_text_markup_keys_and_the_others_do",
+    ),
 ]
 
 
 def main() -> int:
+    # Before anything prints. A redirected run is block-buffered otherwise, and
+    # this harness takes the better part of an hour: on 2026-08-19 a full run's
+    # output sat at three lines for forty minutes and its verdict was lost
+    # entirely when the run was interrupted, which is the exact ambiguity
+    # `live_output` exists to remove. The three window harnesses had the fix and
+    # the three mutation harnesses did not.
+    stream_results()
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", action="store_true")
     # Same flag, same meaning as `mutate_viewer.py`'s. Added when the page
@@ -1917,13 +2014,26 @@ def main() -> int:
     )
     args = parser.parse_args()
     chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
+    # Mutations for another platform. `--list` still shows them, marked: the
+    # table is the same everywhere and what differs is which rows this machine
+    # can execute, so a listing that silently dropped them would make two
+    # machines look like they disagree about the table.
+    elsewhere = [m for m in chosen if m.only_on and m.only_on != HERE]
 
     if args.list:
         for mutation in chosen:
-            print(f"{mutation.name}  ->  expects: {mutation.expect}")
+            aside = f"   [{mutation.only_on} only]" if mutation in elsewhere else ""
+            print(f"{mutation.name}  ->  expects: {mutation.expect}{aside}")
         return 0
     if not chosen:
         print(f"[FAIL] no mutation matches {args.only!r}")
+        return 1
+
+    for mutation in elsewhere:
+        print(f"[SKIP] {mutation.name}: {mutation.only_on} only, and this is {HERE}")
+    chosen = [m for m in chosen if m not in elsewhere]
+    if not chosen:
+        print(f"[FAIL] every mutation matching {args.only!r} is for another platform")
         return 1
 
     print("--- control: the suite must be green before anything is broken", flush=True)
@@ -2036,10 +2146,14 @@ def main() -> int:
                 problems += 1
 
     print()
+    # The skip count rides on the verdict rather than sitting in a line above it.
+    # A run that could not execute part of its own table must not read, three
+    # scrollbacks later, like one that executed all of it.
+    aside = f", {len(elsewhere)} skipped as not runnable on {HERE}" if elsewhere else ""
     print(
-        f"[OK] all {len(chosen)} mutations caught by the test named for them"
+        f"[OK] all {len(chosen)} mutations caught by the test named for them{aside}"
         if problems == 0
-        else f"[FAIL] {problems} of {len(chosen)} mutations were not caught as described"
+        else f"[FAIL] {problems} of {len(chosen)} mutations were not caught as described{aside}"
     )
     return 0 if problems == 0 else 1
 

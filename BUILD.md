@@ -166,12 +166,28 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 #              bottom third of the quad and NONE in the middle, a strikeout the
 #              other way round. Refuses `--kind highlight`, which fills its quad
 #              and is what `--mode legible` measures.  4/4 per kind
+#   outline    that a box is a frame and not a filled rectangle, in pixels. The
+#              one measurement no file-level assertion can make: a stroked box
+#              and a solid block of colour satisfy the subtype, the rectangle,
+#              the absent quads and the presence of an /AP equally, and a solid
+#              block hides the figure the box was drawn around. Three readings
+#              -- the source page as control, the whole quad, the middle inset
+#              clear of the stroke -- plus the thinner of the two horizontal
+#              edges' thickness, which is what says the stroke was not clipped
+#              in half by the /BBox. Renders at 4x whatever --scale says, and
+#              prints that it did: at 2x a full stroke is 3 px against a
+#              clipped 1.5 and antialiasing swallows the difference. Refuses
+#              every kind but square.  4/4
 #   refuse     the refusals, with a control proving a real mark is still taken.
 #
-# `--kind highlight|underline|strikeout` chooses what to write, and every mode
-# that writes a mark takes it: `--mode roundtrip --kind strikeout` re-runs the
-# whole file check against a `/StrikeOut`, whose subtype, appearance geometry
-# and opacity all differ and whose quads do not.
+# `--kind highlight|underline|strikeout|note|square` chooses what to write, and
+# every mode that writes a mark takes it: `--mode roundtrip --kind strikeout`
+# re-runs the whole file check against a `/StrikeOut`, whose subtype, appearance
+# geometry and opacity all differ and whose quads do not. The last two are the
+# kinds a reader places rather than selects, and they are what makes the quad
+# count a real assertion rather than a formality: both expect ZERO, in the same
+# run where the three markup kinds expect one, so a writer that stopped emitting
+# quads for everything is not mistaken for one that correctly omits them.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode roundtrip
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
@@ -200,6 +216,12 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode rule --kind underline
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode rule --kind strikeout
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind note
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind square
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode outline --kind square
 
 # `--out PATH` keeps the marked copy instead of removing it, for opening in
 # Preview or Acrobat by hand. Worth doing once per release: the probe proves the
@@ -1627,6 +1649,29 @@ rather than transcribed.
 > these rotation checks. Every `testdata/*.pdf` is now either a window corpus with a stated
 > purpose or excluded with a stated reason, and a fixture matching neither fails the gate.
 
+**The sweep runs on Windows as of 2026-08-19, and did not before.** Two things had to be
+fixed, and both are recorded in `docs/TRAPS.md`. It shelled out to `pkill` unconditionally,
+which is not a program here: `check=False` swallows a non-zero exit and not a
+`FileNotFoundError`, so it died on its first corpus with a traceback and **exit 0**. And
+`subprocess.run(text=True)` decodes with the locale codec, which is cp1252 on this machine
+— six corpora in, `multilingual.pdf` produced a byte it refuses, the decode raised inside
+subprocess's own reader thread, and the failure arrived as a `TypeError` between a `None`
+and a string with no mention of an encoding.
+
+Two further things are worth knowing before running it here. A stray `tauri dev` makes
+`tauri-plugin-single-instance` forward the launch and exit, so the check reports one line
+about the module scan and nothing else — kill leftovers first, which the sweep now does.
+And `text-heavy.pdf` is a real document rather than a generated fixture, so a machine that
+does not have it cannot run the full sweep at all; `--only` over the other thirteen is the
+honest substitute, and the sweep says which corpora it is missing rather than skipping them
+quietly.
+
+Measured here on 2026-08-19: thirteen corpora, **276 check names each**, diffed as sets by
+the sweep rather than inferred from the totals agreeing, and **no failing check on any of
+them**. 629 s in total, of which `vector-multi` is 341 s and `vector-heavy` 145 s; every
+other corpus is under 40 s. The ran/skipped splits are the sweep's own output and differ
+from the macOS table above only by the checks added since it was taken.
+
 **Every row below was measured on macOS on 2026-08-17**, and printed by the script rather than
 transcribed --- the table is the sweep's own output, pasted. Zero failures
 anywhere, and **all fourteen corpora report the same 234 check names** --- diffed as sets by
@@ -2341,7 +2386,9 @@ starts at 0 and increments within the month.
    green gate list on this platform says nothing about any `#[cfg(windows)]` line, because
    the compiler never parses one: `print_win.rs`, `examples/print_probe.rs`,
    `examples/win_sandbox_probe.rs` and the Windows halves of `worker*.rs` are all outside
-   what 15/15 covers. Cutting `26.8.3` proved the gap rather than predicted it --- the
+   what the gate list covers --- the two figures below are 15/15 because that is what the run
+   was at the time; it is 16/16 since 2026-08-19, and the gap is the same one whatever the
+   count. Cutting `26.8.3` proved the gap rather than predicted it --- the
    page-move work changed `print::Pages::Only` from `Vec<u32>` to `Vec<PagePlan>` and missed
    the one Windows-only caller, and sixteen commits went by at 15/15 before a rehearsal tag
    turned both runner legs red. That leg reported *four* failures, since clippy, test and
@@ -2469,7 +2516,24 @@ starts at 0 and increments within the month.
    go red reports SURVIVED and reads as a gap in the tests. `--list` prints the pairs without
    running anything.
 
-   **Both run on Windows as of 2026-07-30 --- 22/22 and 75/75 --- and neither did before.**
+   **All three run on Windows as of 2026-08-19. Two did as of 2026-07-30 --- 22/22 and
+   75/75 --- and neither did before that.** Read the first sentence as dated too: it is the
+   second one that expired without anything going red, because `mutate_rust.py`'s table grew
+   two macOS-only mutations on 2026-08-17 and the guard that validates test names then
+   refused the whole run here. The three defects behind 2026-08-19 are each in
+   `docs/TRAPS.md`, and the shape they share is worth more than any of them: **a harness that
+   has never run on a platform produces no failures there, and neither does one that passes.**
+
+   `mutate_viewer.py` had never completed a run on Windows at all, for two independent
+   reasons that had to be fixed in order. Its five probe runners named their binaries as
+   relative forward-slash paths, which `CreateProcess` refuses --- so the run died on the
+   first baseline it reached, before any mutation, with a `FileNotFoundError` naming nothing
+   in this repository. Underneath that, it read bytes without normalising newlines, so on a
+   CRLF checkout every multi-line anchor in its table matched **zero** times; the `anchors`
+   gate could not warn, because it reads with `read_text()` and that translation makes the
+   same anchors match. Both fixed, and the whole table then ran here for the first time:
+   **59/59 caught, 0 survived, 0 unreadable**, about an hour including the nine baselines.
+
    `mutate_rust.py` had never started here at all: it read each target with `read_text()`,
    whose locale codec on Windows is cp1252, and `search.rs` holds characters whose UTF-8
    encoding contains the byte `0x81`, which cp1252 leaves undefined, so it raised
@@ -2480,6 +2544,20 @@ starts at 0 and increments within the month.
    front-end harness from three failures to twelve, because the discarded `read_text` had
    been quietly translating line endings for the anchors that span lines --- the trap of that
    name has it, and it is also a correction to what an earlier entry prescribed.
+
+   **`mutate_rust.py` then stopped running here again, and the guard that stopped it was
+   right.** `menu.rs` and `keylayout.rs` are macOS-only, so `cargo test` never compiles them
+   and the two mutations aimed at them name tests that do not exist on Windows --- which the
+   name validation reports exactly, and then refuses the whole table over. Correct and total
+   are different properties: two mutations could not run, and 178 did not. `Mutation.only_on`
+   declares the scope, those two print `[SKIP] ... macos only, and this is windows`, and the
+   count rides on the final verdict so a partial run cannot read as a whole one. **A mutation
+   with no `only_on` still refuses**, which is the property that had to survive; both
+   directions were proved by control before the fix was trusted. Measured here on 2026-08-19:
+   **all 176 caught by the test named for them, 2 skipped**, about ninety minutes.
+
+   So a Windows run of that table reports 176 and a macOS run reports 178, and the two rows
+   the difference names are printed rather than absent. Do not "fix" the 176 into a 178.
 
 8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
@@ -2520,12 +2598,26 @@ starts at 0 and increments within the month.
    The middle row is certain rather than inferred: the committed notices file is 469,298
    bytes over 9,197 lines, and 469,298 + 9,197 = 478,495 exactly --- the Windows runner
    checks out with CRLF, so the shipped copy carries one extra byte per line. The other two
-   are identified by size and elimination. **Whether `tpdf_lib.dll` ever shipped is not
-   settled here**: this is the first extraction taken from a released artifact rather than a
-   local build, so it may have been dropped, or the earlier list may have been read off the
-   build directory, where the `cdylib` does exist. Its absence is not a defect on its face,
-   since the binary links the `rlib` and does not load it --- but it is one more reason the
-   installed app has to be *run* on Windows and not only unpacked.
+   are identified by size and elimination.
+
+   **Settled 2026-08-19, and the answer is that a local MSI is not the MSI people get.** The
+   released `26.8.4` payload is **three** files, `tpdf_lib.dll` not among them; a local `npm
+   run tauri build` of `26.8.5` on this desktop produced **four**, the extra one being
+   `tpdf_lib.dll` at 456,704 bytes, and the generated `target/release/wix/x64/main.wxs` names
+   it as a `Source=` outright. The 2026-08-02 local `26.7.0` MSI has it too, at 137,728. So
+   the earlier list was read off a build tree, and both readings were honest.
+
+   Two things follow, and the first is the one that costs time. **Read a payload count off a
+   released artifact, never off a local build** --- `gh release download <tag> --pattern
+   '*.msi'` and extract that, which needs no Windows and takes a minute. And the mechanism is
+   **open**: `crate-type` includes `cdylib`, the workflow adds only `--config
+   .../tauri.updater.conf.json` and bundles from the same `target/release/bundle`, so nothing
+   in the configuration explains the difference. A fresh checkout on a runner is the obvious
+   suspect and has not been tested.
+
+   Its absence is not a defect on its face, since the binary links the `rlib` and does not
+   load it --- but it is one more reason the installed app has to be *run* on Windows and not
+   only unpacked.
 
    **This does not need Windows**, which is why it happened at all. An MSI is an OLE
    compound file with a cabinet inside it, and both are readable anywhere:

@@ -83,6 +83,14 @@ def main() -> int:
             if not target.exists():
                 problems.append(f"{path}: {mutation.name} -- {mutation.path} does not exist")
                 continue
+            # `read_text` translates newlines, so a CRLF checkout is counted as
+            # if it were LF -- which is what every anchor in every table is
+            # written with. That must stay the SAME convention the harnesses
+            # match under, and for a while it was not: they read bytes, and
+            # `mutate_viewer.py` had no normalisation, so this gate was green on
+            # 289 anchors while that harness could match none of the multi-line
+            # ones. A guard reading its subject differently from the thing it
+            # guards is measuring a different file. See `docs/TRAPS.md`.
             found = target.read_text(encoding="utf-8").count(mutation.before)
             if found == 1:
                 intact += 1

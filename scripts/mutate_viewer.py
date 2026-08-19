@@ -55,6 +55,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from live_output import stream_results  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 WINDOWS = sys.platform == "win32"
 
@@ -122,6 +125,52 @@ class Mutation:
 
 
 MUTATIONS = [
+    Mutation(
+        # The shipped defect exactly: every mark filled across its whole quad,
+        # so an underline and a strikeout both look like a highlight while the
+        # document is open. The saved file stays correct, which is what made it
+        # invisible to `annot-probe` and to every gate.
+        "viewer: draw every mark across its whole quad, as the overlay used to",
+        "src/lib/viewer.ts",
+        "        const band = markBand(mark.kind, quad);",
+        "        const band = quad;",
+        "an underline leaves the middle of its quad clear",
+        runner="viewer",
+    ),
+    Mutation(
+        # Fill the box rather than stroking it, on the overlay. The file is
+        # still right, so a reader sees a solid block until they save and
+        # reopen -- the same shape of wrong as the mutation above.
+        "viewer: fill a box on the overlay rather than stroking it",
+        "src/lib/viewer.ts",
+        "          ctx.strokeRect(left, top, width, height);",
+        "          ctx.fillRect(left, top, width, height);",
+        "a box is a frame with its middle clear",
+        runner="viewer",
+    ),
+    Mutation(
+        # Draw a comment as a plain rectangle. Its /Rect is right and its icon
+        # is the reader's, so the saved file is unaffected and only the screen
+        # shows a red block where a bubble belongs.
+        "viewer: draw a comment as a plain rectangle rather than a bubble",
+        "src/lib/viewer.ts",
+        "        if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);",
+        "        if (isIcon(mark.kind)) ctx.fillRect(left, top, width, height);",
+        "a comment draws inside its own icon box",
+        runner="viewer",
+    ),
+    Mutation(
+        # Never clear the overlay between frames. Marks accumulate, so a page
+        # the reader has scrolled past keeps its ink -- and the control is the
+        # only check that can see it, since every other reading is taken inside
+        # a mark's own rectangle where there is ink either way.
+        "viewer: leave the overlay uncleared between frames",
+        "src/lib/viewer.ts",
+        "    ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);",
+        "",
+        "an untouched page has nothing on the overlay",
+        runner="viewer",
+    ),
     Mutation(
         # Let the web view's own menu through. That is the state the application
         # shipped in and the reason this exists: right-clicking a page offered
@@ -257,15 +306,21 @@ MUTATIONS = [
     Mutation(
         "Cmd-K reaches no arm at all",
         "src/lib/appcommands.ts",
-        '  if ((event.metaKey || event.ctrlKey) && event.key === "k") {',
+        '  if (matches("app.palette", event)) {',
         "  if (false) {",
         "Cmd-K opens the palette",
     ),
+    # Re-aimed at `keys.ts` when the chord moved into the bindings table. The
+    # expectation is unchanged and the file had to change with it: the arm no
+    # longer states the modifier, so "needs no modifier" is not something that
+    # line can be made to say any more. Dropping `accel` from the binding is now
+    # the only way to spell this mutation, which is the table doing its job --- a
+    # chord has one statement of its modifiers, so there is one place to break.
     Mutation(
         "Cmd-K needs no modifier",
-        "src/lib/appcommands.ts",
-        '  if ((event.metaKey || event.ctrlKey) && event.key === "k") {',
-        '  if (event.key === "k") {',
+        "src/lib/keys.ts",
+        '  "app.palette": { keys: ["k", "K"], accel: true },',
+        '  "app.palette": { keys: ["k", "K"] },',
         "a bare k does not open the palette",
     ),
     Mutation(
@@ -748,6 +803,27 @@ def npm() -> str:
 #: since that is the only artifact the viewer runner can drive; on Windows the
 #: executable is the artifact, and naming a bundle type there is either wrong
 #: (`app` does not exist) or a WiX run per mutation for nothing.
+
+def probe_exe(name: str) -> str:
+    """The built path of an example binary, in the form `CreateProcess` accepts.
+
+    Windows refuses a **relative forward-slash** path and wants the extension, so
+    a bare `src-tauri/target/release/examples/<name>` raises `FileNotFoundError:
+    [WinError 2] The system cannot find the file specified` for a file that is
+    plainly there --- from inside `subprocess`, naming nothing in this repository,
+    which reads as a missing build rather than as a wrong name.
+
+    `BUILD.md` records exactly this against `viewer_check.py`'s app path. It
+    arrived here anyway, in a harness written afterwards, because `cwd=ROOT` makes
+    every *data* path in the same argv list work and only the executable is
+    resolved differently. All five probe runners were dead on this platform from
+    the day they were written; the run stopped on the first baseline it reached,
+    so nothing was ever reported as SURVIVED.
+    """
+    path = ROOT / "src-tauri" / "target" / "release" / "examples" / name
+    return f"{path}.exe" if WINDOWS else str(path)
+
+
 APP_BUILD = (
     [npm(), "run", "tauri", "build", "--", "--no-bundle"]
     if WINDOWS
@@ -785,7 +861,7 @@ RUNNERS = {
             "search-probe",
         ],
         "run": [
-            "src-tauri/target/release/examples/search-probe",
+            probe_exe("search-probe"),
             "--lib",
             PDFIUM_DIR,
             "--file",
@@ -803,7 +879,7 @@ RUNNERS = {
             "search-probe",
         ],
         "run": [
-            "src-tauri/target/release/examples/search-probe",
+            probe_exe("search-probe"),
             "--lib",
             PDFIUM_DIR,
             "--file",
@@ -824,7 +900,7 @@ RUNNERS = {
             "crop-probe",
         ],
         "run": [
-            "src-tauri/target/release/examples/crop-probe",
+            probe_exe("crop-probe"),
             "testdata/rotated-90.pdf",
             "--lib",
             PDFIUM_DIR,
@@ -843,7 +919,7 @@ RUNNERS = {
             "crop-probe",
         ],
         "run": [
-            "src-tauri/target/release/examples/crop-probe",
+            probe_exe("crop-probe"),
             "testdata/columns.pdf",
             "--lib",
             PDFIUM_DIR,
@@ -862,7 +938,7 @@ RUNNERS = {
             "structure-probe",
         ],
         "run": [
-            "src-tauri/target/release/examples/structure-probe",
+            probe_exe("structure-probe"),
             "--library",
             PDFIUM_DIR,
             "--file",
@@ -899,6 +975,28 @@ def run_probe(runner: str) -> tuple[list[str], str, str]:
     return lines, done.stdout, done.stderr
 
 
+def _kill_leftovers() -> None:
+    """Kills any tpdf still running, on whichever platform this is.
+
+    **This was `pkill` unconditionally, and on Windows that is not a program.**
+    `check=False` swallows a non-zero exit and not a `FileNotFoundError`, so the
+    run died before its first mutation with a traceback and exit 0.
+    `viewer_sweep.py` carried the same line and the same defect; the trap entry
+    is under that file's name.
+
+    Failure is ignored on purpose: "there was nothing to kill" is the ordinary
+    case and both tools report it with a non-zero exit.
+    """
+    if sys.platform == "win32":
+        command = ["taskkill", "/F", "/IM", "tpdf.exe"]
+    else:
+        command = ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"]
+    try:
+        subprocess.run(command, check=False, capture_output=True)
+    except OSError:
+        pass
+
+
 def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     """Runs the viewer check. Returns its result lines, its stdout, and its stderr.
 
@@ -918,17 +1016,15 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     # which is what an occluded window looks like --- WebKit suspends the page,
     # nothing runs, and there is nothing to time out because no bound was passed.
     #
-    #  - `pkill` first, because a leftover window occludes the next one.
+    #  - a leftover kill first, because a stray window occludes the next one ---
+    #    and on Windows it is worse than an occlusion, since single-instance
+    #    makes the new process forward its argv to the old one and exit.
     #  - `TPDF_RAISE`, which covers the other half: a window with nowhere visible
     #    to go.
     #  - `--timeout`, so that a hang is a bounded failure. A harness whose worst
     #    case is an unbounded wait cannot report anything at all, and this one is
     #    run unattended by design.
-    subprocess.run(
-        ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"],
-        check=False,
-        capture_output=True,
-    )
+    _kill_leftovers()
     done = subprocess.run(
         [
             sys.executable,
@@ -941,11 +1037,17 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        # Explicit, not just `errors`: `text=True` decodes with the locale
+        # codec, which is cp1252 on Windows, and the multilingual corpus holds
+        # bytes it refuses. The same line in `viewer_sweep.py` killed a
+        # thirteen-corpus run six corpora in --- see the trap of that name.
+        encoding="utf-8",
         errors="replace",
         env={**os.environ, "TPDF_RAISE": "1"},
     )
-    lines = [line for line in done.stdout.splitlines() if MARKER.match(line)]
-    return lines, done.stdout, done.stderr
+    out = done.stdout or ""
+    lines = [line for line in out.splitlines() if MARKER.match(line)]
+    return lines, out, done.stderr or ""
 
 
 def execute(runner: str) -> tuple[list[str], str, str]:
@@ -988,6 +1090,13 @@ def caught(failures: set[str], expect: str) -> bool:
 
 
 def main() -> int:
+    # Before anything prints. A redirected run is block-buffered otherwise, and
+    # this harness takes the better part of an hour: on 2026-08-19 a full run's
+    # output sat at three lines for forty minutes and its verdict was lost
+    # entirely when the run was interrupted, which is the exact ambiguity
+    # `live_output` exists to remove. The three window harnesses had the fix and
+    # the three mutation harnesses did not.
+    stream_results()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print the pairs and stop")
     parser.add_argument("--only", default="", help="run mutations whose name contains this")
@@ -1077,14 +1186,29 @@ def main() -> int:
         path = ROOT / m.path
         original = path.read_bytes()
         digest = hashlib.sha256(original).hexdigest()
-        source = original.decode("utf-8")
+        # Every anchor in the table above is written with "\n", and a Windows
+        # checkout is CRLF -- so a multi-line anchor matches ZERO times here and
+        # the mutation is reported as unreadable, which reads as drift in the
+        # source. `mutate_frontend.py` and `mutate_rust.py` were given this on
+        # 2026-07-30 and this harness was not; the probe-path defect above stopped
+        # every Windows run before its first mutation, so nothing said so. The
+        # `anchors` gate cannot see it either: it reads with `read_text`, whose
+        # universal-newline translation makes every anchor match. Normalise for
+        # matching, put the file's own convention back, and leave the mutation as
+        # the only difference on disk.
+        raw = original.decode("utf-8")
+        crlf = "\r\n" in raw
+        source = raw.replace("\r\n", "\n") if crlf else raw
         if source.count(m.before) != 1:
             print(f"[FAIL] {m.name}: its anchor appears {source.count(m.before)} times")
             unreadable.append(m.name)
             continue
 
         started = time.monotonic()
-        path.write_bytes(source.replace(m.before, m.after).encode("utf-8"))
+        mutated = source.replace(m.before, m.after)
+        if crlf:
+            mutated = mutated.replace("\n", "\r\n")
+        path.write_bytes(mutated.encode("utf-8"))
         try:
             built, err = build(m.runner)
             if not built:
