@@ -32,6 +32,23 @@ have the binary.)
   reader on 26.8.4 came to file a bug that 26.8.5 had already fixed --- there was
   no way to tell which of the two was running.
 
+### When a save is refused, you can act on it
+
+- A refusal because the file changed now arrives with the two things you can do
+  about it: **Save a copy...** and **Reload from disk**. The copy comes first,
+  because it is the one that keeps your edits.
+
+- **Save a copy now works when the file changed**, and until now it did not.
+  Being refused a save told you to save your edits under another name, and
+  saving under another name was refused by the same check --- so there was
+  nowhere at all to put your work. The copy is written from the newer file and
+  says so, rather than quietly claiming to be something it is not. A file whose
+  *page count* changed is still refused, by both.
+
+- **Reload no longer discards unsaved edits without a word.** With edits
+  outstanding it says what reloading costs and offers to save a copy first.
+  On an unedited document it just reloads, as before.
+
 ### Recent documents on the taskbar
 
 - Right-clicking tpdf's taskbar icon now lists the documents you opened. Every

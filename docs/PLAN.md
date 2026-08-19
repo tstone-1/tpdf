@@ -1128,13 +1128,32 @@ of its tests, so nothing refused to start --- a module whose tests are invisible
 harness *and* unaimed-at is silent in both directions, where the five earlier instances of
 this list being forgotten were all loud.
 
-**What is not done, and it is the expensive half.** §5 asks for "reload, save-as, or
-explicit reconciliation" and what exists is a *refusal that names two of the three in
-words*. There is no Reload button on that message, no side-by-side, and no rebase of the
-journal onto the changed file --- which is the same rebasing this section already records
-as absent for an ordinary save. A reader whose file changed keeps their edits and has to
-act on them by hand. That is a floor rather than the feature: it makes silent corruption
-impossible, and leaves recovery manual.
+**Two of the three exist as actions since 2026-08-19.** The refusal carries `changed` as a
+field --- for the reason `SaveFailure::reopen` is one --- and `src/lib/recovery.ts` turns
+that into the buttons the window shows: Save a copy first, Reload second, and *nothing* for
+a refusal that is not about the file changing, where a Reload beside it would discard the
+reader's work in exchange for nothing. Reload itself no longer spends an edited journal
+without a word.
+
+**And Save a copy was closed until then, which made the whole message a dead end.**
+`write_copy` calls the same `planned_bytes`, so the fallback the in-place refusal names was
+refused by the same guard one function down, and a reader whose file changed could put their
+edits nowhere. `OnChange` is the fix: `Refuse` in place, `Proceed` for a copy, which is the
+asymmetry `stage_in_place`'s own comment already argued for and had applied to a missing
+fingerprint only. The copy reports `changed` so the reader is told what it was built from.
+A changed file that also changed *shape* is still refused by the page-count guard, whichever
+path asks. `docs/TRAPS.md` has the entry, including why a passing test encoded the dead end.
+
+**What is not done, and it is the expensive half.** §5's third option, *explicit
+reconciliation*, does not exist: there is no side-by-side, and no rebase of the journal onto
+the changed file --- the same rebasing this section already records as absent for an
+ordinary save. A reader can now put their edits somewhere and start again from what is on
+disk; what they cannot do is carry those edits across. Applying them by hand is the move,
+and it is a real cost on a document with many of them.
+
+That is still a floor rather than the feature. What the floor is worth is precise: silent
+corruption is impossible, and every route out of the refusal is reachable from the message
+that states it.
 
 **Also not done: this is a change detector, not a security boundary.** SHA-256 is used
 because it was already in the dependency graph --- declaring it added no package --- and

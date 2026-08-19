@@ -77,6 +77,56 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Offer a reload for every refusal. "A document must keep at least one
+        # page" then arrives with a button that discards the reader's work in
+        # exchange for nothing, which is the shape this whole module exists to
+        # avoid: an offer is only safe where it is the answer.
+        "recovery: offer a reload whatever the refusal was",
+        "src/lib/recovery.ts",
+        "  if (!failure.changed || failure.reopen) {",
+        "  if (failure.reopen) {",
+        "offers nothing for a refusal that is not about the file changing",
+    ),
+    Mutation(
+        # Offer buttons on a refusal the window has already acted on. `App.svelte`
+        # reopens the file itself when `reopen` is set, so Reload reloads what is
+        # on screen and Save a copy copies a freshly-opened, unedited document --
+        # and a reader presses them, because they are the ones that sound safe.
+        "recovery: offer buttons after the window has already reopened the file",
+        "src/lib/recovery.ts",
+        "  if (!failure.changed || failure.reopen) {",
+        "  if (!failure.changed) {",
+        "offers nothing once the document is closed, because the window reopened it",
+    ),
+    Mutation(
+        # Put the destructive one first. Both buttons are present either way, so
+        # a check on the set cannot see this; the reader reaching for the nearest
+        # button is what can.
+        "recovery: lead with the offer that spends the journal",
+        "src/lib/recovery.ts",
+        '    offers: ["saveCopy", "reload"],\n  };\n}\n\n/**\n * What to say after a copy',
+        '    offers: ["reload", "saveCopy"],\n  };\n}\n\n/**\n * What to say after a copy',
+        "warns before discarding unsaved edits, and offers the copy first",
+    ),
+    Mutation(
+        # Reload without a word, which is what it did until this landed. The
+        # command was written before there was anything to lose.
+        "recovery: reload an edited document without warning",
+        "src/lib/recovery.ts",
+        "  if (!dirty) return null;",
+        "  return null;\n  // eslint-disable-next-line",
+        "warns before discarding unsaved edits, and offers the copy first",
+    ),
+    Mutation(
+        # Write a copy from a changed source and say nothing, so a file built
+        # from a document the reader is not looking at reads as one that is.
+        "recovery: write a copy from a changed source silently",
+        "src/lib/recovery.ts",
+        "  if (!copied.changed) return null;",
+        "  return null;",
+        "says the copy came from a newer file, and does not call it an error",
+    ),
+    Mutation(
         # Answer "am I up to date" without saying which version that is. The
         # reader presses the command *because* they want the number, and an
         # answer that omits it is the silence this replaced wearing a sentence.
@@ -2713,6 +2763,11 @@ TEST_FILES = [
     "src/lib/textcache.test.ts",
     "src/lib/results.test.ts",
     "src/lib/recents.test.ts",
+    # Added 2026-08-19 with the recovery rules, in the same edit as the
+    # mutations rather than after them. A test file absent from this list makes
+    # every mutation aimed at it report SURVIVED, and the guard that refuses an
+    # unknown test name cannot help: the name resolves, it just never runs.
+    "src/lib/recovery.test.ts",
     "src/lib/zoom.test.ts",
     "src/lib/reading.test.ts",
     "src/lib/a11y.test.ts",

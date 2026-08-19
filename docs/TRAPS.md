@@ -10132,3 +10132,90 @@ other test**, and the ones it breaks are the ones that never mention it. Env
 vars, the current directory, the locale and a process-wide logger are all this
 shape. And the tell to look for is not a failure --- it is a **skip count that
 moved**.
+
+### A refusal that names a fallback has to keep the fallback open, and this one closed it
+
+`stage_in_place` refuses a save when tpdf cannot tell whether the file is still
+the file, and its comment states the rule that makes the refusal safe:
+
+> So the fallback the message names has to keep working, or the refusal strands
+> the reader.
+
+It was written for a *missing fingerprint*, and it holds there: `write_copy`
+tolerates that case on purpose. Then the changed-file check landed and refused
+inside `planned_bytes`, which is the function **both** save paths call. So:
+
+  * Save over the file → refused, message says *"save them under another name"*.
+  * Save a copy → refused, by the same guard, one function down.
+
+A reader whose file changed underneath them could put their edits nowhere at
+all. The message pointed at a door and the same commit locked it.
+
+**Nothing went red, and nothing could have.** There was a test named
+`a_copy_is_refused_when_the_source_changed_under_it`, it passed, and its doc
+comment argued for the behaviour: *"the copy would be as wrong as the in-place
+save -- it just would not destroy anything on its way."* That reasoning is
+correct about the copy's *contents* and silent about the reader having nowhere
+to go, which is the question the rule was about. A test can encode a dead end
+perfectly.
+
+The fix is the asymmetry the file already believed in, applied to the second
+case: an `OnChange` parameter, `Refuse` for the in-place path and `Proceed` for
+the copy, because a copy writes a new file and leaves the original exactly as it
+is. The copy reports `changed` so the reader is told which document it was built
+from --- silence there would be the worst of the three outcomes. What still
+refuses is a file whose *shape* changed, caught by the page-count guard
+whichever path asks.
+
+Two general forms, and the second is the one that generalises furthest:
+
+  * **When you add a guard to a shared function, check every caller against the
+    advice the other callers give.** The guard was correct in isolation and
+    wrong in company.
+  * **A rule written in a comment is enforced by nobody.** This one was stated
+    in the file it governs, three lines above the code that violated it, and
+    survived a full review because the reader of that comment was the person who
+    had just written the violation. `docs/TRAPS.md` already carries *A rule you
+    wrote down is not a rule you enforce*; this is that, with the rule and the
+    breach in the same function.
+
+### A message set before the operation that clears the message area is a message nobody sees
+
+`save_document`'s `after_close` refusals are the ones a reader can do least
+about: the document is closed, the journal is spent, and nothing was written.
+`App.svelte` set the message and then reopened the file so the reader had
+something to look at:
+
+```js
+say(prompt.message, prompt.offers);
+if (!failure.reopen) return;
+openDoc = -1;
+await openPath(path, false, place);
+```
+
+`openPath` begins with `say(null)`. So on exactly the path where the message
+matters most, it was displayed for **zero frames**. Every other refusal in that
+function returns before the reopen and shows correctly, which is why the code
+reads as fine: the working cases and the broken one are the same two lines.
+
+It had been that way since `save_document` shipped. What made it visible was
+adding a *second* consumer of the same message --- buttons --- and asking where
+they would appear.
+
+**The fix is ordering, not a flag**: say it *after* the reopen, and only if the
+reopen had nothing of its own to report, since a file that also failed to reopen
+is the more urgent fact and is already on screen.
+
+The general form: **an operation that resets the surface a message lives on is a
+delete of that message**, and it does not look like one at the call site. Before
+writing `notify(...)` above an `await`, ask what the awaited thing does to the
+place the notification went. The tell is a shared surface --- one `error` string,
+one status bar, one toast slot --- being written by both the reporter and the
+thing it is reporting about.
+
+A second lesson sits underneath it and is the one worth carrying: **the producer
+of a message should state the fact and let the caller own the advice.** The
+backend's text ends *"open the file again to see what is there now"*, and the
+window opens it again automatically --- so the instruction is addressed to
+somebody who has already had it carried out for them. Same shape as the refusal
+that told a reader to save edits that were already gone, one layer up.

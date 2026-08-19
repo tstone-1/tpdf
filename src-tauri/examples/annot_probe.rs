@@ -309,7 +309,7 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
             args.page
         ))
     });
-    save::write_copy(&args.file, &plan, &out)?;
+    save::write_copy(&args.file, &plan, &out).map_err(|why| why.message)?;
     if args.mode == Mode::NoAp {
         strip_appearances(&out)?;
     }
