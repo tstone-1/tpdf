@@ -183,7 +183,14 @@ export function updateLabel(state: UpdateState): string | null {
     case "checking":
     case "current":
       // None of these are worth a word in a document viewer's header. A reader
-      // who asked explicitly gets the answer from the palette instead.
+      // who asked explicitly gets the answer from {@link updateNotice} instead,
+      // which is what the palette command sets.
+      //
+      // That sentence was a promise with nothing behind it until 2026-08-19:
+      // it said the palette answered, and "Check for updates" landed on
+      // `current`, which returns null here, so pressing it did visibly nothing.
+      // A comment describing a mechanism that does not exist reads exactly like
+      // one describing a mechanism that does.
       return null;
     case "available":
       return `Update to ${state.version}`;
@@ -195,5 +202,39 @@ export function updateLabel(state: UpdateState): string | null {
       return `Update ready — restart to finish`;
     case "failed":
       return null;
+  }
+}
+
+/**
+ * What to tell a reader who asked, in so many words.
+ *
+ * Separate from {@link updateLabel} because the two answer different questions.
+ * That one decides what the header shows on its own initiative, where silence is
+ * the right answer for every state but three --- an element arriving unbidden
+ * moves what somebody is aiming at. This one answers a question that was asked,
+ * where silence is never the right answer: a command that appears to do nothing
+ * is indistinguishable from one that is broken.
+ *
+ * `version` is the running version rather than anything the updater reports, so
+ * the answer to "which one am I on" does not depend on a network call having
+ * succeeded --- which is the case a reader is most likely to be asking in.
+ */
+export function updateNotice(state: UpdateState, version: string): string {
+  switch (state.kind) {
+    case "idle":
+    case "checking":
+      return `tpdf ${version} --- checking for updates`;
+    case "current":
+      return `tpdf ${version} is the latest version`;
+    case "available":
+      return `tpdf ${version} --- version ${state.version} is available`;
+    case "downloading":
+      return `Downloading version ${state.version}`;
+    case "ready":
+      return `Version ${state.version} is ready --- restart to finish`;
+    case "failed":
+      // The version still leads, because the reader asked two questions with one
+      // press and only one of them failed.
+      return `tpdf ${version} --- could not check for updates: ${state.message}`;
   }
 }

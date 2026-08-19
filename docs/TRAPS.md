@@ -9797,3 +9797,338 @@ mutation stops being able to fail. Proved by control before the fix was trusted 
 pointing a non-scoped mutation at a test that does not exist still refuses and
 exits 1, and a selection consisting only of out-of-platform mutations refuses too
 rather than reporting a vacuous pass.
+### A checklist step nothing can perform, and a comment promising a mechanism that does not exist
+
+Two shapes of the same defect, found together on 2026-08-19 because a reader hit
+the Windows no-console bug and could not tell which version they were running.
+
+**`BUILD.md`'s release checklist, step 12, has said since the updater landed:
+"quit, reopen, and Help/About or the palette reports the new version".** There was
+no Help menu, no About, and no command that reports a version. The step could
+never have been carried out, by anybody, from the day it was written. Nothing can
+go red for a checklist: no runner runs it, no gate covers it, and a step that has
+never been executed reads exactly like one that keeps passing --- which is this
+repository's oldest lesson arriving in the document that schedules the checks
+rather than in the checks.
+
+**`update.ts` carried the matching half in a code comment**: `updateLabel` returns
+null for `current`, and the comment beside it explained that "a reader who asked
+explicitly gets the answer from the palette instead". The palette command existed.
+Pressing it when you were up to date did visibly nothing, because the state it
+lands on is exactly the one the header stays silent about. The comment described a
+mechanism, the mechanism was absent, and prose describing something that does not
+exist is indistinguishable from prose describing something that does.
+
+What the pair have in common is worth more than either: **a claim written in a
+document or a comment has no failing case.** The repository already enforces this
+for gates, for mutations and for the trap index --- each of those has something
+that goes red. A sentence does not, so the useful habit is to ask of any
+present-tense claim in prose *what would fail if this stopped being true*, and if
+the answer is nothing, either build the thing or write the claim as a wish.
+
+The fix here is the version display: an `app_version` command reading
+`CARGO_PKG_VERSION`, an "About tpdf" command that needs no network, the version in
+the empty state, and `updateNotice`, which answers in **every** state so that a
+command can never appear to do nothing. And the check with a failing case is
+`the_version_files_agree_with_the_crate`, which compares `Cargo.toml`,
+`tauri.conf.json` and `package.json` at build time --- `BUILD.md` step 2 has listed
+those four files since the first release and nothing had ever compared them, which
+mattered much less while no reader was shown the number.
+### A guard that reads the whole file does not belong on the path a reader waits on
+
+The external-modification check needs a digest of the file as it was at open, so
+the obvious place to take one is the open. Measured on this desktop before that
+was written down as the design: **452 ms cold and 156 ms warm for the 337 MB scan
+fixture**, 3.8 ms for a 3 MB drawing, 0.1 ms for a small text page.
+
+Priority 1 in this project is a cold start under 300 ms. The synchronous version
+spent more than the whole budget on precisely the documents a reader most wants
+opened promptly --- and spent it **invisibly**, because a slow open on a huge scan
+reads as a huge scan. There is no error, no warning, and nothing in the timeline
+that says a new check was added; the regression would have been indistinguishable
+from the file being big.
+
+The fix is that `Edits::open` takes the path rather than the fingerprint, starts a
+thread, and returns. The cell is a `OnceLock` and `Edits::plan` waits on it ---
+reached only by a save or a print, both of which are about to read the whole file
+anyway, so the wait is paid where it is already being paid.
+
+Two things had to be right rather than assumed, and both are the kind that fail
+quietly:
+
+  * **The wait is outside the `docs` mutex.** Waiting inside it would hold the
+    lock for as long as the hash takes and block every other edit command on the
+    file being read --- which presents as the application hanging, not as a slow
+    save.
+  * **A document opened with no path settles the cell immediately.** A cell that
+    nobody ever sets leaves every later `plan` waiting for ever. That control is a
+    test, and it is worth noticing that its failure mode is a **hang** --- the
+    shape this repository reads worst, since a hang and a pass both produce no red
+    line. `docs/TRAPS.md` already carries two entries on that and this is a third
+    place it would have applied.
+
+The general form: **before putting a check on a path somebody waits on, measure it
+against the largest input the project claims to serve.** A check whose cost scales
+with the document is a different object from one that does not, and the difference
+does not show up on the fixtures that are 888 bytes.
+
+### A check that defers to a cheaper one it supersedes cannot be tested, and refuses what it should forgive
+
+`fingerprint.rs` compares three things against what a file was when the reader
+opened it: length, modification time, and a SHA-256 of every byte. The deep
+check was written the obvious way --- do the cheap comparison first, then the
+expensive one:
+
+```rust
+pub fn agrees_with(&self, path: &Path) -> Result<(), String> {
+    self.agrees_shallowly(path)?;   // length and mtime
+    let now = Fingerprint::of(path)?;
+    if now.digest != self.digest { return Err(changed(path, "...")); }
+    Ok(())
+}
+```
+
+That reads as thoroughness --- fail fast on the cheap evidence, and only pay for
+the digest when you have to. It is two defects, and neither is visible in the
+code.
+
+**The digest comparison was proved by nothing.** Deleting the three lines that
+compare digests left **all seven** of the module's tests green, including the
+two named for it: `a_rewrite_of_the_same_length_is_caught_by_the_digest_and_not_by_the_length`
+and `a_file_larger_than_one_chunk_hashes_every_chunk`. Both rewrite a file and
+assert the refusal contains `"changed on disk"` --- and a rewrite moves the
+mtime, so `agrees_shallowly` refused first with *"it was modified"*, which
+contains those same words. This is *An outcome two mechanisms can produce cannot
+test either one* arriving through an ordering rather than through a shared
+message: the two branches were distinguishable in principle and the assertions
+did not distinguish them, so the cheap check stood in for the expensive one and
+the test could not tell.
+
+**And it refused saves it should have allowed.** An mtime is wrong in both
+directions: `cp -p` and `rsync --times` preserve it across a rewrite, and a
+backup tool, a sync client or a bare `touch` moves it without changing a byte.
+Deferring to it when the bytes are already in hand means refusing a save whose
+file is byte-for-byte what the reader opened --- a false refusal at the one
+moment a reader least wants an argument, and one that sends them to *Save a
+copy* over a backup having run.
+
+**The fix is not a cleverer assertion.** It is that the deep check stops
+consulting the timestamp at all: length (cheap, conclusive when it differs) and
+then the digest, which is the answer. The shallow check keeps the mtime, because
+it has nothing better --- it exists for the moment between staging and the
+rename, where a third full read is the wrong cost. The two now answer different
+questions rather than one wrapping the other, which is what makes each testable.
+
+The mutation is the evidence: *stop comparing the digest* was **0 red** before
+the change and **2 red** after, with no new test written for it.
+
+The general form, and it is not about timestamps: **when a strong check is
+implemented as a weak check plus a strong one, the weak one masks the strong
+one --- in the tests and in production both.** Ask what the cheap comparison is
+*evidence of*. If the expensive one supersedes it rather than extending it, the
+cheap one belongs on the path that cannot afford the expensive one, and nowhere
+else.
+
+### A guard's last look should compare against the moment of the first look, not the moment of the open
+
+The corollary of the entry above, in the caller rather than the callee, and it
+is the half that survives fixing the other one.
+
+`save_document` splits a save in two: stage the bytes into a sibling file, close
+the document (a `rename` over a mapped file succeeds on macOS and leaves the
+worker serving the old inode), then commit. The window between staging and the
+rename is real, so there is a second, cheap check immediately before the rename
+--- and it was comparing against the fingerprint taken at **open**.
+
+That undoes the fix above completely. A `touch` between opening and saving is
+forgiven by the deep check, which reads the bytes and finds them identical --- and
+then refused by the shallow check twenty milliseconds later, because it is still
+comparing a timestamp against a value from an hour ago. Worse than a plain false
+refusal: it arrives **after the document has been closed**, so the reader is told
+their file changed at the one point where the answer is "reopen and start again".
+
+The fix is that `agrees_with` returns the fingerprint it took, `stage_in_place`
+carries it out in a `Staged { path, verified }`, and the last look compares
+against **that**. The window the shallow check covers is then the window it was
+written for.
+
+Two smaller things fell out, both worth having:
+
+  * **`Staged::verified` is not an `Option`.** It could have been --- the plan's
+    fingerprint is optional --- and then the caller's last look would have had a
+    `None` arm, which can only be written as *skip the check*. Making it
+    unsayable is what stops a refusal several lines earlier being undone by a
+    later `if let`.
+  * **The mutation table's anchors moved.** Three of them, silently, because the
+    refactor rewrote the lines they name. One became **ambiguous** rather than
+    absent: `let planned = planned_bytes(source, plan)?;` now appeared in both
+    save paths. Distinct bindings are the fix; a longer anchor is the workaround.
+
+### One refusal message, two moments, and it told the reader to do something they no longer could
+
+`fingerprint.rs` worded its refusal once, which is normally the right instinct:
+
+```rust
+fn changed(path: &Path, how: &str) -> String {
+    format!("{} changed on disk since you opened it --- {how}. \
+             Your edits are still here: save them under another name, \
+             or open the file again to start from what is on disk now.", path.display())
+}
+```
+
+The advice is good, and it is true at the check it was written for --- the deep
+comparison runs before the parse, with the document open and the journal intact.
+
+It is false at the other one. `save_document` stages, **closes the document**,
+and then takes a last cheap look before the rename. That look calls the same
+comparison and appends its own tail, so the reader gets:
+
+> report.pdf changed on disk since you opened it --- its length went from 4096
+> to 5120. **Your edits are still here: save them under another name**, or open
+> the file again to start from what is on disk now. --- nothing was written, and
+> **the document has been closed**
+
+Two clauses of one sentence contradicting each other, at the moment a reader is
+least able to work out which half to believe. And the frontend makes it worse
+rather than better: on a `reopen` failure `App.svelte` reopens the file
+immediately, so by the time the message is read the model it refers to is gone.
+
+**The fix is to split the fact from the advice**, not to reword either. The
+comparison returns the bare fact; the deep check appends the way-out that is
+true where *it* runs; the pre-rename check appends its own, which says the
+document is closed and the edits are gone. Each call site supplies the sentence
+whose truth it is in a position to know.
+
+Both directions are held by a mutation, because a split like this collapses
+back the moment somebody tidies two near-identical strings into one: putting the
+advice into the fact reddens the pre-rename test, and removing it from the deep
+check reddens the deep one.
+
+The general form: **wording a message once is right only while every caller is
+at a moment where it is true.** A shared message is a shared claim about program
+state, and the second caller is where that claim quietly stops holding. The tell
+is a caller that has to *append* to the message it was given --- if the ending
+needs adjusting, the beginning probably does too.
+
+### A wait built on a program the machine does not have returns instantly, and every check after it reads as a pass
+
+Waiting for the viewer sweep to finish, on Windows, with:
+
+```bash
+until ! pgrep -f "viewer_sweep" >/dev/null 2>&1; do sleep 25; done
+tail -30 sweep.log
+```
+
+`pgrep` **is not a program on this machine.** Git Bash ships no procps, so the
+shell reports "command not found", the exit status is non-zero, `!` turns that
+into true, and the loop's condition is satisfied on its first evaluation. The
+wait returned in well under a second, and the `tail` after it printed two of
+thirteen corpora as though that were the whole run.
+
+**The failure is silent in the direction that looks like success.** There is no
+error --- stderr went to `/dev/null`, which is exactly what a working `pgrep`
+would produce for a process that is gone. The output afterwards is a real, green,
+partial result, and a partial run of a sweep whose corpora are independent looks
+identical to a complete one until you count the rows.
+
+This repository already carries *The sweep shelled out to `pkill`, which is not a
+program on Windows*, and the same absence bit the **waiter** rather than the
+sweep this time. That is the part worth keeping: the lesson was recorded about
+the code under test, and it applies just as well to the instrument watching it.
+
+Two habits close it:
+
+  * **Wait on the job's own output, not on a process table.** The sweep prints
+    a summary line when it is done; `until grep -qE '^\[(OK|FAIL)\] +(no failing
+    checks|[0-9]+ corpus)' sweep.log` cannot be satisfied by a missing program.
+  * **A wait whose condition is "a command failed" needs the command to exist.**
+    `command -v pgrep` answers in one call. On this box: it does not.
+
+The general form is the one this file keeps arriving at from new directions:
+**a check that cannot fail and a check that passes are the same output.** Here
+it was a *wait* that could not wait, and what it certified was two corpora out
+of thirteen.
+
+### Two runs failing different checks is variance; the same check twice is a defect
+
+`viewer_sweep.py` went red on `vector-multi` twice in a row, on a tree carrying a
+day's worth of changes. The reflex reading --- a red run after a change is a
+regression from that change --- is wrong here, and the discriminator is cheap.
+
+The two runs failed **different** checks:
+
+  * *the page already rendered is not rendered twice*, at 11 borrows against 4 draws
+  * *covers the first screen*, timed out at sharp=0.0%
+
+Four runs of that one corpus took **351 s, 496 s, 386 s** on one build and
+**384 s** on another. A 41% spread on identical code, and the same binary that
+failed at 496 s passed at 386 s.
+
+`vector-multi.pdf` is twelve A0 pages and exists *because* it is the only fixture
+where a thumbnail render is slow enough to collide with the viewer. Both failing
+checks observe that collision. A corpus built to sit on a race will sometimes
+land on the other side of it.
+
+**The discriminator, and it costs nothing: does the *same* check fail twice?**
+One check failing repeatedly is a defect with a name. Two different checks
+failing is the schedule moving. Reading only the verdict --- red, red --- loses
+exactly the information that separates them.
+
+**The control is a `git worktree`, not a `git stash`.** `git worktree add <dir>
+HEAD` gives a clean checkout of the unmodified tree to build and run against,
+while the working tree with a day's uncommitted work in it is never touched.
+`git stash` would have put all of it on a stack for the duration, and this
+repository already carries an entry about what a mass `git checkout` does to
+uncommitted work in files nobody was thinking about.
+
+One caveat on the control itself: a fresh worktree has no `vendor/pdfium` and no
+`testdata/`, both gitignored. Copy in the library and the one fixture the run
+needs, or the control fails to start and that reads as a broken checkout rather
+than a missing prerequisite.
+
+### A test that changes the working directory silences every other test that reads a relative path
+
+`recentdocs.rs` needed to prove that a relative path is made absolute before the
+shell sees it. The obvious way to get a relative path is to stand in its
+directory:
+
+```rust
+let restore = std::env::current_dir().expect("cwd");
+std::env::set_current_dir(&directory).expect("enter the scratch directory");
+let wide = shell_path(Path::new(&name));
+std::env::set_current_dir(restore).expect("restore cwd");
+```
+
+Careful, symmetric, restores what it changed --- and wrong, because the working
+directory is **process-global** and `cargo test` runs tests on several threads.
+For the width of that window every other test in the crate has a different cwd.
+
+`save.rs` resolves its fixtures with `Path::new("../testdata").join(name)`, a
+relative path, and dozens of tests use it. So during the window they take one of
+two branches:
+
+  * `Document::load` on a file that is suddenly not there --- a panic, exit 101.
+  * `path.exists().then_some(path)` returns `None`, the test prints
+    **`[SKIP] rotated.pdf: fixture not generated`** and **passes**.
+
+The second is the one that matters. A test that stops running looks exactly like
+a test that ran, and the run is still green.
+
+**It cost one unexplained exit 101 in four runs, and three clean hand-runs
+afterwards said nothing was wrong** --- which is what a race of a few
+milliseconds looks like from the outside. What settled it was not more runs: it
+was `grep set_current_dir`, then *widening the window on purpose*. Planting a
+throwaway test that moves the cwd and sleeps 400 ms produced **exit 101, five
+failures and four `[SKIP]` lines** on the first try. Removing it restored 581
+passed, 0 skipped.
+
+**The fix is to never change the cwd**, not to restore it more carefully: build
+the relative path against the directory the tests already run in. `target/` is
+gitignored, so a run killed mid-test leaves nothing in `git status` to mistake
+for real work.
+
+The general form: **process-global state in one test is a mutation of every
+other test**, and the ones it breaks are the ones that never mention it. Env
+vars, the current directory, the locale and a process-wide logger are all this
+shape. And the tell to look for is not a failure --- it is a **skip count that
+moved**.

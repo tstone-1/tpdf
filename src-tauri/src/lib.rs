@@ -14,6 +14,7 @@ pub mod diag;
 pub mod docmodel;
 pub mod edits;
 pub mod encoding;
+pub mod fingerprint;
 pub mod invert;
 #[cfg(target_os = "macos")]
 pub mod keylayout;
@@ -34,6 +35,7 @@ pub mod print_win;
 pub mod progressive;
 mod protocol;
 mod queue;
+pub mod recentdocs;
 pub mod render;
 /// Windows containment, which is what `worker_child`'s `sandbox_init` is on the
 /// other platform. Gated because job objects, integrity levels and attribute
@@ -157,6 +159,26 @@ fn lazy_geometry() -> bool {
 #[tauri::command]
 fn launch_open_event() -> &'static str {
     launch::OPEN_EVENT
+}
+
+/// The running version, so that a reader can find out which one they have.
+///
+/// **Nothing in the application said this until 2026-08-19, and the cost was a
+/// bug report rather than a missing nicety.** A Windows reader on `26.8.4` hit
+/// the defect where an app started with no console could open no document, and
+/// could not tell whether the release that fixes it was the one they were
+/// running --- so a two-second question became a report, a reproduction and a
+/// bisect. `BUILD.md`'s release checklist has told anyone applying an update to
+/// "confirm the new version in-app" since the updater landed, which means that
+/// step was never performable and nothing said so.
+///
+/// It comes from `CARGO_PKG_VERSION` rather than from a constant of our own, so
+/// it is `src-tauri/Cargo.toml` --- one of the four files a version bump has to
+/// move together --- and cannot drift from what was built. Baked in at compile
+/// time, so this reads nothing and can fail in no way.
+#[tauri::command]
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 /// Hands over documents that arrived from outside, and starts listening.
@@ -371,6 +393,9 @@ async fn open_document(
     path: String,
 ) -> Result<DocumentInfo, String> {
     let wanted = PathBuf::from(&path);
+    // Kept because `wanted` is moved into the open below, and the fingerprint
+    // is taken after it.
+    let fingerprinting = wanted.clone();
     // The receiver comes out of the lock before anything is awaited, and it has
     // to: the guard is not `Send`, so holding one across the wait below would
     // not compile.
@@ -401,7 +426,24 @@ async fn open_document(
             info.page_count
         )
     })?;
-    edits.open(info.id, pages);
+    // The path, not the fingerprint: `edits` starts the hash on a thread and the
+    // open does not wait for it. That is a measurement rather than caution ---
+    // 452 ms cold for the 337 MB scan fixture, against a 300 ms cold-start
+    // priority --- and the wait is moved to `Edits::plan`, which only a save or a
+    // print reaches and which is about to read the whole file regardless.
+    //
+    // A hash that cannot be taken is recorded as "none" rather than as an error.
+    // The document opens and can be read; what it cannot do is be saved over,
+    // because a save with no fingerprint is refused. Fail closed, and lose the
+    // smaller thing: Save a copy still works, and the original is not at risk.
+    edits.open(info.id, pages, Some(fingerprinting));
+
+    // After the open succeeded, so a file that failed to parse is not filed as a
+    // document the reader had. Every route in reaches here -- a drop on the
+    // window, a double-click in Explorer, a path in argv, the single-instance
+    // forward and the panel -- which is why it is here rather than in the dialog
+    // handler, where four of the five would have missed it.
+    recentdocs::note_opened(Path::new(&path));
     Ok(info)
 }
 
@@ -720,6 +762,18 @@ async fn save_document(
     }
     let plan = edits.plan(doc).map_err(SaveFailure::refused)?;
 
+    // The file has to still be the file. Everything below rewrites the object
+    // graph the plan was made against, and a `source` that something else has
+    // written to since is a different graph -- the reader's edits would be
+    // replayed onto pages they were never made on, and the write is atomic, so
+    // the result is a confidently wrong file rather than a visibly broken one.
+    //
+    // The check itself lives in `save.rs`, on the plan, where `write_copy` and
+    // `stage_in_place` both reach it and where a test can drive it -- a guard
+    // written inline in a command has no failing case, which `docs/TRAPS.md`
+    // records twice over. Nothing is read here: what the second look below needs
+    // comes back from the staging, which is the moment it should be comparing
+    // against rather than the moment the reader opened the file.
     let staging = source.clone();
     let staged = tauri::async_runtime::spawn_blocking(move || {
         save::stage_in_place(Path::new(&staging), &plan)
@@ -741,11 +795,23 @@ async fn save_document(
     service.close(doc, reply);
     let closed = await_reply("save_document", rx).await;
 
+    // One more look before the rename, closing the window the split above opens.
+    // What it compares and why it compares against staging rather than against
+    // the open is on the function, where a test can reach it.
+    //
+    // `after_close`, and this is worth stating because the comment here said the
+    // opposite until 2026-08-19 while the code did what it does now. Nothing has
+    // been renamed, so it is tempting to call this a refusal that costs nothing
+    // --- but the close two statements up has already happened, so the reader's
+    // model and their journal are gone. `refused` would tell them their document
+    // is still open when it is not, which is the one thing that flag decides.
+    save::verify_before_commit(&staged, Path::new(&source)).map_err(SaveFailure::after_close)?;
+
     // Attempted whether or not the close was acknowledged. The model is gone
     // either way, so the reader is reopening either way, and a rename that the
     // mapping really did block reports that itself --- which is a better message
     // than one this end guesses from a close reply.
-    save::commit_in_place(&staged, Path::new(&source)).map_err(|why| {
+    save::commit_in_place(&staged.path, Path::new(&source)).map_err(|why| {
         SaveFailure::after_close(match closed {
             Ok(()) => why,
             Err(also) => format!("{why} --- and the document did not close cleanly: {also}"),
@@ -776,6 +842,11 @@ async fn save_copy(
     // a `State` handle into a `spawn_blocking` closure would need it to outlive
     // the command.
     let plan = edits.plan(doc)?;
+    // A copy is built from the source too, so a source that changed produces the
+    // same wrong document -- the difference is only that the original survives it.
+    // Checked with the same guard and refused in the same words; the reader's way
+    // out here is to open the file again, since Save a copy IS the fallback the
+    // in-place refusal points at.
     tauri::async_runtime::spawn_blocking(move || {
         save::write_copy(Path::new(&source), &plan, Path::new(&path))
     })
@@ -1885,6 +1956,7 @@ pub fn run() {
             document_links,
             document_mapping,
             launch_open_event,
+            app_version,
             take_launch_paths,
             session_load,
             session_remember,
@@ -1948,9 +2020,45 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        await_reply, env_list, env_or, parse_setting, reply_channel, spike_env, with_session,
-        WEBVIEW_ALIVE,
+        app_version, await_reply, env_list, env_or, parse_setting, reply_channel, spike_env,
+        with_session, WEBVIEW_ALIVE,
     };
+
+    /// The four files a version bump has to move together, checked at build time.
+    ///
+    /// `BUILD.md` step 2 lists them and nothing enforced the list: `package.json`,
+    /// `package-lock.json`, `Cargo.toml` and `tauri.conf.json` were kept in step by
+    /// hand, and a bump that moved three of them produced an installer whose
+    /// filename, whose `Cargo.lock` and whose reported version could disagree with
+    /// no gate going red. The application now *reports* its version to a reader,
+    /// which turns a silent inconsistency into a wrong answer given confidently.
+    ///
+    /// Two of the four are reachable from here through `include_str!`, so they are
+    /// compared for real rather than described. `package-lock.json` is not: it is
+    /// two copies of the same string in one file, `npm version` writes both, and
+    /// pulling a 400 kB lockfile into the binary to check it is the wrong trade.
+    #[test]
+    fn the_version_files_agree_with_the_crate() {
+        let cargo = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            app_version(),
+            cargo,
+            "the command must report the crate's own version"
+        );
+
+        for (label, source) in [
+            ("tauri.conf.json", include_str!("../tauri.conf.json")),
+            ("package.json", include_str!("../../package.json")),
+        ] {
+            let parsed: serde_json::Value =
+                serde_json::from_str(source).unwrap_or_else(|e| panic!("{label} is not JSON: {e}"));
+            let found = parsed
+                .get("version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| panic!("{label} has no string `version`"));
+            assert_eq!(found, cargo, "{label} disagrees with Cargo.toml");
+        }
+    }
     use crate::{session, startup};
     use std::cell::RefCell;
     use tauri::async_runtime::block_on;

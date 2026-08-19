@@ -67,6 +67,7 @@ use lopdf::{Dictionary, Object, ObjectId};
 
 use crate::docmodel::MarkKind;
 use crate::edits::{Plan, PlannedMark};
+use crate::fingerprint::Fingerprint;
 use crate::pagetree::{
     agreed_turns, apply_crops, apply_turns, displayed_page, drop_outline, drop_pages,
     ordered_pages, reorder_pages, DisplayedPage,
@@ -80,6 +81,40 @@ use crate::print::MAX_DECODE;
 /// one.
 const PARTIAL: &str = "tpdf-partial";
 
+/// The bytes of a working document, and what the file was when they were built.
+///
+/// `verified` is `None` only where the plan carried no fingerprint, which
+/// [`write_copy`] tolerates and [`stage_in_place`] refuses --- so the two fields
+/// are not independent, and which of the two paths you are on decides.
+struct Planned {
+    bytes: Vec<u8>,
+    verified: Option<Fingerprint>,
+}
+
+/// A staged save: the file to rename, and what the source was when it was built.
+///
+/// `verified` is not an `Option`, and that is the point of the type. The caller
+/// takes its last look before the rename through this field, and an `Option`
+/// there would give that look a `None` arm --- which could only be written as
+/// "skip the check", i.e. the one save that most needs it proceeding unchecked.
+/// A missing fingerprint is already refused by [`stage_in_place`] several lines
+/// above; making it unsayable here is what stops that refusal being undone by a
+/// later `if let`.
+///
+/// It is the fingerprint taken **during** staging, not the one taken at open.
+/// That is the whole reason this struct exists rather than a bare path: the
+/// caller's last look before the rename should ask whether anything moved since
+/// the file was read and rewritten, not whether anything moved since the reader
+/// opened it an hour ago. The second question refuses a `touch` that the deep
+/// check already forgave.
+#[derive(Debug)]
+pub struct Staged {
+    /// The sibling temporary file, which nothing has renamed yet.
+    pub path: PathBuf,
+    /// The source as it was when its bytes were read.
+    pub verified: Fingerprint,
+}
+
 /// Writes the pages `plan` keeps, each with its own turn, from `source` to `out`.
 ///
 /// # Errors
@@ -92,8 +127,13 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
             "tpdf cannot save over the document it is reading --- choose another name".into(),
         );
     }
-    let bytes = planned_bytes(source, plan)?;
-    write_atomically(out, &bytes)
+    // Named differently from `stage_in_place`'s, deliberately. The two calls are
+    // otherwise character-for-character identical, which made one mutation's
+    // anchor ambiguous the moment this line gained a binding --- and an ambiguous
+    // anchor is refused, so the mutation stops being able to fail. Distinct names
+    // are the fix; a longer anchor is only the workaround.
+    let copy = planned_bytes(source, plan)?;
+    write_atomically(out, &copy.bytes)
 }
 
 /// Writes the working document beside `source`, ready to be put in its place.
@@ -119,9 +159,74 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
 ///
 /// Everything [`planned_bytes`] refuses, and a temporary file that cannot be
 /// written. The temporary file is removed on the failing path that created one.
-pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<PathBuf, String> {
-    let bytes = planned_bytes(source, plan)?;
-    stage(source, &bytes)
+pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, String> {
+    // Refused here and tolerated by `write_copy`, which is the one place the two
+    // paths differ on purpose. A fingerprint that could not be taken means tpdf
+    // cannot tell whether this file is still the file -- and the two operations
+    // have different stakes: writing a copy risks a bad new file beside an intact
+    // original, writing in place risks the original. So the fallback the message
+    // names has to keep working, or the refusal strands the reader.
+    if plan.opened_as.is_none() {
+        return Err(
+            "tpdf could not record what this file looked like when it was opened, \
+                    so it cannot tell whether saving over it is safe --- use Save a copy"
+                .into(),
+        );
+    }
+    let planned = planned_bytes(source, plan)?;
+    // Refused rather than unwrapped. It cannot fire --- `planned_bytes` derives
+    // this from the same `plan.opened_as` the guard above just proved present ---
+    // but the two are eight lines and one function call apart, and the failure a
+    // panic would replace is a *refused save*, which is the outcome every other
+    // branch here already produces. A guard that turns an internal inconsistency
+    // into the safe answer costs three lines and is not the unreachable guard the
+    // repository has a rule about deleting.
+    let verified = planned.verified.ok_or_else(|| {
+        "tpdf could not confirm what this file was when it read it --- use Save a copy".to_string()
+    })?;
+    let path = stage(source, &planned.bytes)?;
+    Ok(Staged { path, verified })
+}
+
+/// The last look before the rename, and the cleanup when it refuses.
+///
+/// Split out of `save_document` rather than written inline there for the reason
+/// the other two guards are: a check inside a Tauri command has no failing case
+/// a test can reach, and `docs/TRAPS.md` records that costing real defects twice
+/// over. The comment in `lib.rs` cited that rule for the deep check while this
+/// one sat inline three lines below it.
+///
+/// Only length and modification time, and only against what [`stage_in_place`]
+/// read. Staging rewrites the whole document and closing it is a round trip to
+/// the worker, so a window exists; a third full read to narrow one measured in
+/// milliseconds is the wrong trade, and the timestamp is the best evidence
+/// available at that price.
+///
+/// The staged file is removed before returning, because nothing else will: the
+/// caller is past the point where it tracks temporary files, and a refusal that
+/// leaves one behind puts a file the reader never named beside their document.
+///
+/// # Errors
+///
+/// `source` changed since staging read it, or its metadata cannot be read. The
+/// message says that nothing was written, which is the fact the reader needs ---
+/// their document is closed either way, and the two outcomes are otherwise
+/// indistinguishable from where they are sitting.
+pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), String> {
+    if let Err(why) = staged.verified.agrees_shallowly(source) {
+        let _ = std::fs::remove_file(&staged.path);
+        // Its own advice, not `agrees_with`'s. That one says the reader's edits
+        // are still here and to save them under another name, which was true
+        // where it is written and is false here: the close two statements up in
+        // `save_document` has already spent the journal. The two sentences used
+        // to arrive in one message, contradicting each other.
+        return Err(format!(
+            "{why} --- nothing was written, so the file on disk is untouched. \
+             Your document has been closed and the edits you had made are gone; \
+             open the file again to see what is there now."
+        ));
+    }
+    Ok(())
 }
 
 /// Puts a file [`stage_in_place`] wrote where `source` is.
@@ -148,10 +253,25 @@ pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
 /// the file does not have; two of its pages are one object and disagree about
 /// the turn or the crop, or one of them is dropped without the other; or a mark
 /// maps to nothing.
-fn planned_bytes(source: &Path, plan: &Plan) -> Result<Vec<u8>, String> {
+fn planned_bytes(source: &Path, plan: &Plan) -> Result<Planned, String> {
     if plan.pages.is_empty() {
         return Err("a document must keep at least one page".into());
     }
+
+    // Before the parse, and before anything is written anywhere. Every operation
+    // below rewrites the object graph this plan was made against, so a `source`
+    // that changed since the reader opened it is a different graph and the edits
+    // no longer name what they were made on.
+    //
+    // This is the general form of the page-count refusal below it, which shipped
+    // first and catches exactly one shape of the same problem: a file whose page
+    // count changed. Everything that keeps the count -- a re-export over the top,
+    // a sync client landing a newer copy, a signing tool rewriting in place --
+    // was invisible to it. See `docs/PLAN.md` §5 and `fingerprint.rs`.
+    let verified = match &plan.opened_as {
+        Some(opened_as) => Some(opened_as.agrees_with(source)?),
+        None => None,
+    };
 
     let mut doc = Document::load_with_options(
         source,
@@ -264,7 +384,7 @@ fn planned_bytes(source: &Path, plan: &Plan) -> Result<Vec<u8>, String> {
     doc.save_to(&mut bytes)
         .map_err(|e| format!("could not serialise the document: {e}"))?;
 
-    Ok(bytes)
+    Ok(Planned { bytes, verified })
 }
 
 /// A PDF date string for an instant, in UTC.
@@ -1022,8 +1142,24 @@ mod tests {
     /// The ids are the model's own numbering --- one per baseline page, from 1 ---
     /// and nothing here reads them: a plan is addressed by `source`, and the id
     /// travels only so that this is the shape the model really produces.
+    /// [`plan_of`], fingerprinted against a real file.
+    ///
+    /// Every in-place test needs one: `stage_in_place` refuses a plan with no
+    /// fingerprint, which is the point of that refusal and is why three existing
+    /// tests went red the moment it was added. They are the ones that exercise
+    /// the path where the reader's own file is at stake.
+    fn plan_opened_as(turns: &[u8], source: &Path) -> Plan {
+        Plan {
+            opened_as: Some(
+                crate::fingerprint::Fingerprint::of(source).expect("fingerprint the fixture"),
+            ),
+            ..plan_of(turns)
+        }
+    }
+
     fn plan_of(turns: &[u8]) -> Plan {
         Plan {
+            opened_as: None,
             baseline: turns.len() as u32,
             pages: turns
                 .iter()
@@ -1045,6 +1181,7 @@ mod tests {
     /// come out, which need not be the order the file has them.
     fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         Plan {
+            opened_as: None,
             baseline,
             pages: kept
                 .iter()
@@ -2234,15 +2371,241 @@ mod tests {
         std::fs::copy(&path, &open).expect("copy fixture");
         let before = std::fs::read(&open).expect("read");
 
-        let staged = stage_in_place(&open, &plan_of(&[1, 0, 0, 0])).expect("stage");
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
 
-        assert!(staged.exists(), "the staged file is written");
-        assert_ne!(staged, open, "and it is not the source");
+        assert!(staged.path.exists(), "the staged file is written");
+        assert_ne!(staged.path, open, "and it is not the source");
         assert_eq!(
             std::fs::read(&open).expect("read"),
             before,
             "the document the reader has is untouched until the commit"
         );
+    }
+
+    /// A file that changed under the open document is not saved over.
+    ///
+    /// The general form of the page-count refusal, and this test is built so that
+    /// the page-count guard **cannot** be what fires: the modification appends
+    /// bytes after `%%EOF`, which every parser here ignores, so the document still
+    /// has exactly the pages the plan names. Before the fingerprint, this staged
+    /// happily and the reader's edits were written onto a graph parsed from
+    /// somebody else's bytes.
+    #[test]
+    fn a_save_in_place_is_refused_when_the_file_changed_under_it() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("changed");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        // Taken while the file is what the reader opened, exactly as `open_document`
+        // takes it.
+        let plan = plan_opened_as(&[1, 0, 0, 0], &open);
+
+        // Somebody else writes to it. Appended rather than rewritten so the page
+        // count is untouched -- if this test passed because the count changed it
+        // would be testing the guard that already existed.
+        let mut bytes = std::fs::read(&open).expect("read");
+        assert_eq!(
+            page_count(&open),
+            4,
+            "the fixture has the pages the plan names"
+        );
+        bytes.extend_from_slice(
+            b"
+% written by something else
+",
+        );
+        std::fs::write(&open, &bytes).expect("rewrite");
+        assert_eq!(
+            page_count(&open),
+            4,
+            "and still has them afterwards, so the page-count guard cannot fire"
+        );
+
+        let why = stage_in_place(&open, &plan).expect_err("must refuse");
+        assert!(why.contains("changed on disk"), "{why}");
+        // The message has to leave the reader somewhere to go: their edits are
+        // still in the journal, and Save a copy is the way to keep them.
+        assert!(why.contains("another name"), "{why}");
+        assert!(
+            !open.with_extension(PARTIAL).exists(),
+            "and nothing is staged beside the document"
+        );
+    }
+
+    /// The control for the test above, and it is not the same fixture untouched.
+    ///
+    /// A guard that refused every save would pass that test and protect nothing.
+    /// What this asserts is that the *same* plan, against a file nobody wrote to,
+    /// stages -- so the refusal is about the change rather than about the check
+    /// existing.
+    #[test]
+    fn an_unchanged_file_still_stages() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("unchanged");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        let plan = plan_opened_as(&[1, 0, 0, 0], &open);
+        let staged = stage_in_place(&open, &plan).expect("must stage");
+        assert!(staged.path.exists());
+    }
+
+    /// No fingerprint means no save in place, and the message names the way out.
+    ///
+    /// Fail closed. "Could not look" and "looked, and it was fine" are different
+    /// facts, and a save path that treats them alike writes over a file it has no
+    /// evidence about. The way out has to keep working, which the next test
+    /// asserts -- a refusal pointing at a fallback that is also refused is a
+    /// dead end wearing a helpful sentence.
+    #[test]
+    fn a_save_in_place_with_no_fingerprint_is_refused_and_points_at_save_a_copy() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("noprint");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        let why = stage_in_place(&open, &plan_of(&[1, 0, 0, 0])).expect_err("must refuse");
+        assert!(why.contains("could not record"), "{why}");
+        assert!(why.contains("Save a copy"), "{why}");
+        // The message is one a reader reads, so it has to be one sentence rather
+        // than one that happens to contain the right words. This assertion is
+        // here because it was not: a lost `\` continuation left a run of 21
+        // spaces mid-sentence, and both assertions above passed over it --- they
+        // check the ends and the defect was in the middle.
+        assert!(
+            !why.contains("  "),
+            "run of spaces in a reader-facing message: {why}"
+        );
+    }
+
+    /// The last look before the rename refuses a file that moved under the save.
+    ///
+    /// This guard lived inline in `save_document` until 2026-08-19, where no test
+    /// could reach it --- which is the shape `docs/TRAPS.md` records twice and
+    /// which `lib.rs`'s own comment cited about the guard three lines above it.
+    #[test]
+    fn the_last_look_before_the_rename_refuses_a_source_that_moved() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("last-look");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
+        assert!(staged.path.exists(), "there is something to lose");
+
+        // Something else writes while the document is being closed. Longer, so
+        // the length is what answers -- the timestamp would too, and a test that
+        // cannot say which mechanism refused is one this module has already been
+        // caught writing.
+        let mut bytes = std::fs::read(&open).expect("read");
+        bytes.extend_from_slice(
+            b"
+% written by something else
+",
+        );
+        std::fs::write(&open, &bytes).expect("rewrite");
+
+        let why = verify_before_commit(&staged, &open).expect_err("must refuse");
+        assert!(why.contains("length"), "{why}");
+        assert!(why.contains("nothing was written"), "{why}");
+        // And it must not carry the advice that belongs to the check before it.
+        // The document is closed by the time a reader reads this, so telling
+        // them their edits are still here and to save them under another name is
+        // an instruction they cannot follow --- and it used to arrive in the same
+        // sentence as "the document has been closed".
+        assert!(!why.contains("still here"), "{why}");
+        assert!(!why.contains("another name"), "{why}");
+        assert!(why.contains("open the file again"), "{why}");
+        // The staged file goes with the refusal. Nothing else is tracking it by
+        // this point, so leaving it puts a file the reader never named beside
+        // their document.
+        assert!(!staged.path.exists(), "and the staged file is cleaned up");
+        // And the reader's file is exactly what the other writer left.
+        assert_eq!(std::fs::read(&open).expect("read"), bytes);
+    }
+
+    /// The control, and it is the half that says the guard is not simply strict.
+    #[test]
+    fn the_last_look_lets_an_untouched_source_through() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("last-look-ok");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
+        assert_eq!(verify_before_commit(&staged, &open), Ok(()));
+        assert!(
+            staged.path.exists(),
+            "and leaves the staged file to be committed"
+        );
+    }
+
+    /// A copy is written even with no fingerprint, because it risks nothing.
+    ///
+    /// The asymmetry is deliberate and is the whole reason `stage_in_place` has a
+    /// refusal `planned_bytes` does not: a copy that turns out to be built from
+    /// changed bytes is a bad new file beside an intact original, and a save in
+    /// place is the original. This is also what keeps the refusal above honest.
+    #[test]
+    fn a_copy_is_written_even_when_no_fingerprint_was_taken() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("copy-noprint");
+        let open = scratch.join("open.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        write_copy(&open, &plan_of(&[1, 0, 0, 0]), &out).expect("a copy needs no fingerprint");
+        assert!(out.exists());
+    }
+
+    /// A copy IS refused when there is a fingerprint and the source changed.
+    ///
+    /// The other half of the asymmetry: tolerating a missing fingerprint is not
+    /// the same as ignoring one that disagrees. The edits were planned against
+    /// the old graph either way, so the copy would be as wrong as the in-place
+    /// save -- it just would not destroy anything on its way.
+    #[test]
+    fn a_copy_is_refused_when_the_source_changed_under_it() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("copy-changed");
+        let open = scratch.join("open.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        let plan = plan_opened_as(&[1, 0, 0, 0], &open);
+        let mut bytes = std::fs::read(&open).expect("read");
+        bytes.extend_from_slice(
+            b"
+% written by something else
+",
+        );
+        std::fs::write(&open, &bytes).expect("rewrite");
+
+        let why = write_copy(&open, &plan, &out).expect_err("must refuse");
+        assert!(why.contains("changed on disk"), "{why}");
+        assert!(!out.exists(), "and writes nothing");
     }
 
     /// Committing is what makes the file the reader opened the edited one.
@@ -2266,10 +2629,10 @@ mod tests {
             .map(|id| effective_rotation(&before, *id).rem_euclid(360))
             .collect();
 
-        let staged = stage_in_place(&open, &plan_of(&[1, 0, 0, 0])).expect("stage");
-        commit_in_place(&staged, &open).expect("commit");
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
+        commit_in_place(&staged.path, &open).expect("commit");
 
-        assert!(!staged.exists(), "nothing of the staged file survives");
+        assert!(!staged.path.exists(), "nothing of the staged file survives");
         let after = Document::load(&open).expect("load the file the reader opened");
         let now: Vec<i64> = ordered_pages(&after)
             .iter()
@@ -2302,7 +2665,8 @@ mod tests {
         let before = std::fs::read(&open).expect("read");
         let count = page_count(&open);
 
-        let why = stage_in_place(&open, &plan_of(&vec![0u8; count + 1])).expect_err("must refuse");
+        let why = stage_in_place(&open, &plan_opened_as(&vec![0u8; count + 1], &open))
+            .expect_err("must refuse");
         assert!(why.contains("changed since it was opened"), "{why}");
         assert!(
             !open.with_extension(PARTIAL).exists(),
@@ -2316,8 +2680,9 @@ mod tests {
 
         // The control: the same document with a plan that matches does stage,
         // so the refusal is about the mismatch rather than about this fixture.
-        let staged = stage_in_place(&open, &plan_of(&vec![0u8; count])).expect("stage");
-        assert!(staged.exists());
+        let staged =
+            stage_in_place(&open, &plan_opened_as(&vec![0u8; count], &open)).expect("stage");
+        assert!(staged.path.exists());
     }
 
     #[test]
@@ -2503,6 +2868,7 @@ mod tests {
 
     fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         Plan {
+            opened_as: None,
             baseline: 1,
             pages: vec![PageView {
                 id: 1,
@@ -2647,6 +3013,7 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
 
         let plan = Plan {
+            opened_as: None,
             baseline: 2,
             pages: vec![
                 PageView {
@@ -2698,6 +3065,7 @@ mod tests {
         std::fs::write(&source, shared_page_and_a_spare()).expect("write fixture");
 
         let plan = Plan {
+            opened_as: None,
             baseline: 3,
             pages: (0..3)
                 .map(|source| PageView {
@@ -2750,6 +3118,7 @@ mod tests {
         // prints a highlighted document and gets an unhighlighted one -- with
         // nothing failing, because the file it printed is a perfectly good file.
         let plain = Plan {
+            opened_as: None,
             baseline: 1,
             pages: vec![PageView {
                 id: 1,

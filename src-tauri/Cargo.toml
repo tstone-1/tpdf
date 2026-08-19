@@ -4,7 +4,14 @@ version = "26.8.5"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
-rust-version = "1.85"
+# 1.86 for `OnceLock::wait`, which `edits.rs` uses to let an open return before
+# the document's fingerprint has been hashed. Raised from 1.85 on 2026-08-19,
+# and clippy is what noticed: `incompatible_msrv` compares this line against
+# the APIs actually called, so the claim cannot drift from the code. Nothing
+# builds against the minimum in practice --- `rust-toolchain.toml` pins 1.97.1
+# and the `toolchain` gate asserts it --- which is exactly why the claim needs
+# something checking it rather than somebody remembering.
+rust-version = "1.86"
 # The benchmark bins make `cargo run` ambiguous, and `tauri dev` shells out to a
 # bare `cargo run`.
 default-run = "tpdf"
@@ -22,6 +29,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Already in the graph twice over (rustls via the updater, and tauri's own
+# stack), so declaring it adds no package -- checked with `cargo tree`, which
+# is the standing rule for anything the licensing constraint touches.
+# MIT OR Apache-2.0.
+sha2 = "0.10"
 
 # PDF rendering and text extraction. Settled 2026-07-27 by spikes 0.1, 0.3 and 0.5:
 # it renders, extracts and sandboxes correctly, and is not usable for redaction

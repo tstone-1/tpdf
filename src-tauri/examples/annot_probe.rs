@@ -259,7 +259,7 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
     }
 
     let edits = Edits::default();
-    edits.open(DOC, document.page_count());
+    edits.open(DOC, document.page_count(), None);
     let state = edits
         .state(DOC)
         .map_err(|e| format!("no edit state: {e}"))?;
@@ -1026,7 +1026,7 @@ fn legible(
 /// The refusals that are not defensive.
 fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
     let edits = Edits::default();
-    edits.open(DOC, document.page_count());
+    edits.open(DOC, document.page_count(), None);
     let state = edits.state(DOC).map_err(|e| format!("no state: {e}"))?;
     let id = state.pages.first().ok_or("the document has no pages")?.id;
 

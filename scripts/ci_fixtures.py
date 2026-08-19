@@ -24,10 +24,20 @@ exactly one place. Adding a fixture here reaches every workflow at once.
 WHAT THIS DELIBERATELY DOES NOT GENERATE, so the gap is stated rather than
 discovered:
 
-  * anything from `make_text_pdf.py` (text-heavy, outline-hostile,
-    hostile-filters) --- it needs fonttools and embeds a *system* font, which
-    differs per runner and would make fixture-dependent assertions depend on the
-    image.
+  * anything from `make_text_pdf.py` (text-base14, text-truetype, text-cid,
+    text-marked) --- it needs fonttools and embeds a *system* font, which differs
+    per runner and would make fixture-dependent assertions depend on the image.
+  * `outline-hostile.pdf` from `make_outline_pdf.py`, which needs fonttools for
+    the same reason. Note `outline-simple.pdf` comes from the same script.
+  * `text-heavy.pdf`, which **no script writes**: it is a real document, supplied
+    by hand, and `BUILD.md` says so. A runner cannot have it and neither can a
+    fresh checkout.
+
+    Those three lines read "anything from `make_text_pdf.py` (text-heavy,
+    outline-hostile, hostile-filters)" until 2026-08-19, and that script writes
+    none of the three. The reading it invited is the expensive one: that
+    `text-heavy.pdf` is generatable and merely excluded here, when in fact
+    nothing anywhere can produce it.
   * `hostile-*.pdf` from `make_hostile_pdf.py` --- it shells out to qpdf, which
     is not installed on a hosted runner.
   * `incr-scan-5p.pdf` --- `make_incremental_pdf.py` writes ~550 MB on purpose

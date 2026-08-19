@@ -77,6 +77,16 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Answer "am I up to date" without saying which version that is. The
+        # reader presses the command *because* they want the number, and an
+        # answer that omits it is the silence this replaced wearing a sentence.
+        "update: answer the current check without naming the running version",
+        "src/lib/update.ts",
+        "      return `tpdf ${version} is the latest version`;",
+        '      return "Up to date";',
+        "says the running version is the latest, rather than saying nothing",
+    ),
+    Mutation(
         # Report the box in the space the reader is looking at rather than the
         # file's. Identical on an unrotated, uncropped page -- which is thirteen
         # of the fourteen corpora -- and a rectangle somewhere else entirely on
@@ -2715,6 +2725,15 @@ TEST_FILES = [
     "src/lib/edits.test.ts",
     "src/lib/scroller.test.ts",
     "src/lib/appcommands.test.ts",
+    # Added 2026-08-19 with the version display. `update.ts` had been covered by
+    # no mutation since it was written, so its suite had never been here --- and
+    # the sixth time this list has been forgotten is the sixth time the refusal
+    # is what said so rather than the mutation reporting SURVIVED. Worth reading
+    # as a pattern rather than as six accidents: a new module's suite reaches
+    # this list only when somebody writes a mutation for it, which is a step
+    # later than writing the tests, so the gap is the normal case and not the
+    # careless one.
+    "src/lib/update.test.ts",
     # Added 2026-08-17 with the page strip's reset. `thumbnails.ts` had been
     # covered by no mutation, so its suite had never been in this list --- and
     # the mutation written for the move increment named a test the harness
