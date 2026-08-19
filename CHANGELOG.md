@@ -38,6 +38,19 @@ have the binary.)
 - **Save a copy** is unchanged, and still refuses to write over the open
   document: that is what Save is for.
 
+### Fixed: on Windows, an installed tpdf could not open any document at all
+
+- However it was started --- the Start menu, a desktop icon, a double-clicked
+  PDF, or the exe from a PowerShell prompt --- 26.8.4 on Windows showed **"this
+  process has no stderr to share"** and opened nothing at all.
+
+- It was not caught because the automated checks here read the app's own output,
+  which on Windows means handing it a stderr it would not otherwise have. The
+  checks therefore created the one condition under which it works.
+
+- Reported by a reader on their first Windows install, on the day 26.8.4 shipped.
+  macOS was never affected.
+
 ## [26.8.4] - 2026-08-18
 
 ### Crop a page to what is on it

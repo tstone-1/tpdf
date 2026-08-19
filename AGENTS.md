@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 340 entries
+The one thing this file does *not* carry in full is the trap list --- 341 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -864,6 +864,20 @@ because everything before it must succeed before it runs even once.** All three 
 matches an `-rcN` suffix on purpose so a rehearsal is possible; a failed run publishes
 nothing, since `release` needs `gates` and the release is created as a **draft**.
 
+> ⚠ **Every Windows measurement below was taken from a process the harness gave a stderr to,
+> and on 2026-08-19 that turned out to hide a defect that made the installed application
+> unable to open any document at all --- by any route.** `viewer_check.py`, `open_check.py`
+> and `session_check.py` all launch with `stderr=subprocess.PIPE`, because the transcript
+> they read *is* the app's output; Python implements that with `STARTF_USESTDHANDLES`, so the
+> app always had a valid stderr. A GUI-subsystem binary started by a person has none, and the
+> worker spawn treated that as an error and refused. A terminal does not help --- measured, by
+> the reporter, against the first explanation recorded here, which said it would.
+>
+> So the results below are true of the binary **and** of an instrument that supplies a
+> precondition no user supplies. No automated check here can reach that case, because any
+> harness that captures output has by that act created a stdout and a stderr. Nothing has
+> been re-measured from Explorer. The trap index has the entry.
+
 **Windows runs the viewer, and is contained.** On 2026-07-29 a Windows build opened documents
 and passed `viewer_check.py` on four corpora --- **86 check names** on each, which was the
 invariant *then*, with ran/skipped splits inside the ranges `BUILD.md` records; re-run on
@@ -944,8 +958,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 340 of them and the full text
-was 93% of this file --- an instruction budget spent on the 339 traps that are not
+titles. Only the titles are here, because there are 341 of them and the full text
+was 93% of this file --- an instruction budget spent on the 340 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1310,6 +1324,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An interpolated status label is two columns narrower when it passes
 - A green gate list can sit beside a distributable that cannot be built
 - A bundled app that finds its library in the dev tree proves nothing about the bundle
+- A GUI process has no stderr, and every Windows check launched the app from a shell (the installed build could open no document at all, and no harness could reach the case)
 - Moving a binary out of the installer moves it out of the gate that links it
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 - A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it (15/15 green for sixteen commits while an example did not compile; one type error reads as four broken gates)

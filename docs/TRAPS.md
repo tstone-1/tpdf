@@ -9290,3 +9290,58 @@ no way to spell the write without one. `lib.rs`'s `save_document` is the only ca
 holds the order. A mutation that puts the save in place during the staging is in
 `scripts/mutate_rust.py`, and it is caught by the test that asserts the source is untouched
 until the commit.
+### A GUI process has no stderr, and every Windows check launched the app from a shell
+
+Reported 2026-08-19, on the first install of tpdf on Windows: dragging a PDF into the window
+put *"this process has no stderr to share"* in the corner and opened nothing. Not a document
+that failed --- **no document could be opened at all**, by any route: drag, double-click,
+⌘O, the recent list.
+
+The message is ours, from `sandbox_win.rs`. A contained worker is spawned with
+`STARTF_USESTDHANDLES`, which makes the child take **all three** standard handles from the
+parent's `STARTUPINFO`, so the parent has to supply a stderr; it supplied its own, via
+`GetStdHandle(STD_ERROR_HANDLE)`, and treated a null answer as an error.
+
+**A null answer is the normal case for the shipped application.** `main.rs` carries
+`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` --- which is correct and
+must stay, since without it every launch flashes a console window --- and a GUI-subsystem
+process gets no console, so it has no standard handles. `GetStdHandle` returns null, the
+spawn refused, and since the viewer's own render path goes through a worker, the application
+could not open a file.
+
+**Why nothing caught it, and this is the durable half --- and the first answer written here
+was wrong.** The obvious explanation is that the harnesses launch the exe from a shell and a
+shell has a console. That was recorded, offered to the reporter as a control, and
+**falsified in about a minute**: `./tpdf.exe` from a PowerShell prompt in the install
+directory failed identically. A GUI-subsystem process is not attached to the console of
+whatever started it, so a terminal buys nothing.
+
+The real reason is one keyword argument. `scripts/viewer_check.py` starts the application
+with `subprocess.Popen(..., stdout=subprocess.PIPE, stderr=subprocess.PIPE)`, because the
+check's whole transcript is what the app prints. Python implements that on Windows by
+setting `STARTF_USESTDHANDLES` and handing the child pipe handles --- so **the harness
+creates the stderr whose absence is the bug**, for no reason connected to what it is
+checking. `open_check.py` and `session_check.py` do the same, for the same reason.
+
+So the harnesses were not unlucky, and they were not merely running in a different
+environment: **the instrument's own reading mechanism supplied the missing precondition.**
+That is a sharper thing than "checks run differently from users", and it generalises badly ---
+any harness that captures a program's output has, by that act, given it a valid stdout and
+stderr, and can never observe what the program does without them. Nothing in this repository
+can reach the case; a person double-clicking the installer is the only instrument that has.
+
+Read alongside the entry about a bundled app that finds its library in the dev tree. Same
+family, one layer up: what a check runs *inside* is part of what it is checking, and the
+difference is invisible in every artifact the check produces.
+
+**The fix is a fallback, not a refusal.** A parent with no stderr hands the child a write
+handle to `NUL`, opened once and never closed, so the child always has three valid handles.
+The cost is real and is the right trade: a worker's dying message is discarded when there is
+no console to receive it, where before the application refused to start. And the decision
+moved out of the FFI call into `stderr_for(inherited)`, a seam that takes the handle as an
+argument --- inline it was reachable by no test, since exercising it would have meant changing
+the real `STD_ERROR_HANDLE` out from under every other test in the binary.
+
+**The three tests are Windows-only and their first real run is CI.** They cannot be mutation
+proved from a Mac, which is the same gap `scripts/check_windows.py` exists for and does not
+close: a type-check is not a test, and a wrong *value* passes it.

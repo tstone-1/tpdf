@@ -44,6 +44,7 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::Mutex;
 
+use windows_sys::Win32::Foundation::GENERIC_WRITE;
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT,
     INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -53,6 +54,9 @@ use windows_sys::Win32::Security::{
     GetSidSubAuthorityCount, GetTokenInformation, SecurityImpersonation, SetTokenInformation,
     TokenIntegrityLevel, TokenPrimary, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
     TOKEN_ALL_ACCESS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
 use windows_sys::Win32::System::JobObjects::{
@@ -632,7 +636,7 @@ pub struct Stdio {
 }
 
 impl Stdio {
-    /// Two pipe ends plus this process's own stderr.
+    /// Two pipe ends plus somewhere for the child's stderr to go.
     ///
     /// stderr is shared rather than piped for the reason `worker_child.rs` gives
     /// at length: a worker that dies silently is the hardest failure here to
@@ -640,21 +644,100 @@ impl Stdio {
     /// a child dies. Sharing the console means the message lands wherever the
     /// app's own messages land.
     ///
+    /// **A parent with no stderr is the normal case, not a failure**, and this
+    /// returned `Err` for it until 2026-08-19 --- which broke every installed
+    /// Windows build completely. `main.rs` sets `windows_subsystem = "windows"`
+    /// in release, so an app started from Explorer or the Start menu has no
+    /// console and `GetStdHandle` answers null; the spawn then failed, and since
+    /// every document is opened through a worker, no document could be opened at
+    /// all. Started from a terminal the same binary inherits that terminal's
+    /// handles and works perfectly, which is why every Windows check ever run
+    /// here passed: they all launch the exe from a shell. See `docs/TRAPS.md`.
+    ///
+    /// So a missing stderr falls back to [`null_device`]. The child always gets
+    /// three valid handles --- which is what `STARTF_USESTDHANDLES` wants --- and
+    /// a worker's epitaph is written to a console when there is one and
+    /// discarded when there is not. Discarding it is a real loss and the right
+    /// trade: the alternative was refusing to start.
+    ///
     /// # Errors
     ///
-    /// `GetStdHandle` failing, which it does when there is no stderr at all.
+    /// Opening `NUL` failing, on a parent that has no stderr of its own.
     pub fn with_inherited_stderr(stdin: HANDLE, stdout: HANDLE) -> Result<Self, String> {
         // SAFETY: a documented constant; the call takes no pointers.
-        let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
-        if stderr.is_null() || stderr == INVALID_HANDLE_VALUE {
-            return Err("this process has no stderr to share".into());
-        }
+        let inherited = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
         Ok(Self {
             stdin,
             stdout,
-            stderr,
+            stderr: stderr_for(inherited)?,
         })
     }
+}
+
+/// Where a child's stderr goes, given whatever this process has for its own.
+///
+/// A seam, and it is here rather than inline for the reason `docs/TRAPS.md`
+/// records about a guard written beside an FFI call: the decision this makes is
+/// the one that broke every installed Windows build, and inline it was reachable
+/// by no test at all --- the only way to exercise it would have been to change
+/// this process's real `STD_ERROR_HANDLE` out from under every other test in the
+/// binary. Taking the handle as an argument makes the null case a value.
+///
+/// # Errors
+///
+/// Opening `NUL`, on the null case only.
+fn stderr_for(inherited: HANDLE) -> Result<HANDLE, String> {
+    if inherited.is_null() || inherited == INVALID_HANDLE_VALUE {
+        return null_device();
+    }
+    Ok(inherited)
+}
+
+/// A write handle to `NUL`, opened once and kept for the life of the process.
+///
+/// One handle rather than one per spawn, and never closed, so that its lifetime
+/// is exactly the lifetime of the thing it stands in for: this process's own
+/// stderr, which nothing closes either. A per-spawn handle would need an owner in
+/// [`Stdio`], which owns none of the other two.
+///
+/// Not inheritable here. Nothing in this module is --- `Marked` sets the flag
+/// around the one `CreateProcess` that needs it and clears it after, which is the
+/// whole point of that type, and a handle left permanently inheritable is
+/// authority every later spawn would hand over.
+///
+/// # Errors
+///
+/// `CreateFileW` on `NUL` failing, which would mean a Windows install with no
+/// null device.
+fn null_device() -> Result<HANDLE, String> {
+    static NUL: Mutex<usize> = Mutex::new(0);
+    let mut held = NUL.lock().unwrap_or_else(|e| e.into_inner());
+    if *held != 0 {
+        return Ok(*held as HANDLE);
+    }
+    let name: Vec<u16> = OsStr::new("NUL").encode_wide().chain(Some(0)).collect();
+    // SAFETY: `name` is a null-terminated wide string that outlives the call;
+    // the two null pointers are the documented "default security" and "no
+    // template" arguments.
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "could not open NUL for the child: {}",
+            last_error()
+        ));
+    }
+    *held = handle as usize;
+    Ok(handle)
 }
 
 /// Handles marked inheritable for a spawn that has not finished, and by how many.
@@ -1077,8 +1160,75 @@ pub fn describe_exit(code: u32) -> String {
 #[cfg(test)]
 mod tests {
     use windows_sys::Win32::Foundation::GetHandleInformation;
+    use windows_sys::Win32::Storage::FileSystem::WriteFile;
 
     use super::*;
+
+    /// A parent with no stderr still gets a child three valid handles.
+    ///
+    /// **This is the check that was missing when every installed Windows build
+    /// could not open a document.** `main.rs` sets `windows_subsystem =
+    /// "windows"` in release, so an app started from Explorer has no console and
+    /// `GetStdHandle(STD_ERROR_HANDLE)` answers null; this decision returned an
+    /// error for that, the spawn failed, and since every document goes through a
+    /// worker, nothing opened. Started from a shell the same binary inherits that
+    /// shell's handles, which is how every Windows check here has ever run.
+    ///
+    /// Written to rather than merely inspected: a non-null value is not evidence
+    /// of a usable handle, and "the child has somewhere to write" is the claim.
+    #[test]
+    fn a_parent_with_no_console_gives_the_child_a_stderr_it_can_write_to() {
+        let stderr = stderr_for(std::ptr::null_mut()).expect("a stand-in for stderr");
+        assert!(!stderr.is_null());
+        assert_ne!(stderr, INVALID_HANDLE_VALUE);
+
+        let bytes = b"epitaph";
+        let mut written: u32 = 0;
+        // SAFETY: the buffer and the out-parameter outlive the call; the overlapped
+        // pointer is null, which is the synchronous form.
+        let ok = unsafe {
+            WriteFile(
+                stderr,
+                bytes.as_ptr(),
+                bytes.len() as u32,
+                &raw mut written,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(ok, 0, "WriteFile to NUL failed: {}", last_error());
+        assert_eq!(written as usize, bytes.len());
+    }
+
+    /// The same handle every time, because it is never closed.
+    ///
+    /// One per spawn would leak one per worker, and the pool spawns freely. The
+    /// control is the first assertion: a fresh handle each call would still be
+    /// non-null and still writable, so equality is the only thing that separates
+    /// the two implementations.
+    #[test]
+    fn the_stand_in_stderr_is_opened_once_and_shared() {
+        let first = null_device().expect("NUL");
+        let second = null_device().expect("NUL again");
+        assert_eq!(first, second);
+    }
+
+    /// A parent that *has* stderr hands over its own, unchanged.
+    ///
+    /// The other direction, and the one that would be lost by a fix that always
+    /// reached for `NUL`: a worker's dying message has to land where the app's own
+    /// messages land whenever there is anywhere for it to land at all. Uses a real
+    /// handle rather than an arbitrary non-null value, since the decision tests
+    /// two specific sentinels.
+    #[test]
+    fn a_parent_with_a_console_shares_its_own_stderr() {
+        // SAFETY: a documented constant; the call takes no pointers.
+        let mine = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+        if mine.is_null() || mine == INVALID_HANDLE_VALUE {
+            println!("[SKIP] this test binary has no stderr of its own");
+            return;
+        }
+        assert_eq!(stderr_for(mine).expect("shared"), mine);
+    }
 
     /// A job can be created and carries the limits asked for.
     ///
