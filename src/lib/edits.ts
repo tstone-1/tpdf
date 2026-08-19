@@ -31,6 +31,19 @@ import {
 export type { MarkView, PageView };
 
 /** Mirrors `edits::EditState`. */
+/**
+ * What `save_copy` and `extract_pages` report about the file they wrote.
+ *
+ * A copy is written even from a source that changed under the reader, because
+ * refusing it closes the only door the in-place refusal points at --- see
+ * `save.rs`'s `OnChange`. So the copy exists, and this is how it says which
+ * document it was built from. `recovery.ts` turns it into a sentence.
+ */
+export interface Copied {
+  /** The source changed on disk since it was opened, and this was written anyway. */
+  changed: boolean;
+}
+
 export interface EditState {
   pages: PageView[];
   marks: MarkView[];
@@ -338,8 +351,8 @@ export class Edits {
    * reporting it as clean would be a claim that the *open* file matches what is
    * on disk, which it does not.
    */
-  async saveCopy(source: string, path: string): Promise<void> {
-    await invoke<void>("save_copy", { doc: this.doc, source, path });
+  async saveCopy(source: string, path: string): Promise<Copied> {
+    return await invoke<Copied>("save_copy", { doc: this.doc, source, path });
   }
 
   /**
@@ -358,8 +371,8 @@ export class Edits {
     source: string,
     path: string,
     slots: number[],
-  ): Promise<void> {
-    await invoke<void>("extract_pages", {
+  ): Promise<Copied> {
+    return await invoke<Copied>("extract_pages", {
       doc: this.doc,
       source,
       path,

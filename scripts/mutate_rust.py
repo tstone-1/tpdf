@@ -152,8 +152,8 @@ MUTATIONS = [
         # this is that mutation.
         "save: stop asking whether the file changed under the document",
         "src/save.rs",
-        "        Some(opened_as) => Some(opened_as.agrees_with(source)?),",
-        "        Some(_) => None,",
+        "            Some(opened_as.agrees_with(source).map_err(Refusal::changed)?)",
+        "            Fingerprint::of(source).ok()",
         "a_save_in_place_is_refused_when_the_file_changed_under_it",
     ),
     Mutation(
@@ -165,6 +165,37 @@ MUTATIONS = [
         "    if plan.opened_as.is_none() {",
         "    if false {",
         "a_save_in_place_with_no_fingerprint_is_refused_and_points_at_save_a_copy",
+    ),
+    Mutation(
+        # Refuse the copy too, which is what it did until 2026-08-19 and which
+        # closed the only door the in-place refusal points at. The reader is told
+        # to save their edits under another name and Save a copy is refused by
+        # the same guard one function down.
+        "save: refuse a copy from a source that changed, stranding the reader",
+        "src/save.rs",
+        "    let copy = planned_bytes(source, plan, OnChange::Proceed)?;",
+        "    let copy = planned_bytes(source, plan, OnChange::Refuse)?;",
+        "a_copy_is_written_when_the_source_changed_and_reports_it",
+    ),
+    Mutation(
+        # And the other direction, which is the dangerous one: let a save in
+        # place proceed over a file that changed, because a copy may. The
+        # asymmetry is the whole design and a single word carries it.
+        "save: let a save in place tolerate a changed file, as a copy does",
+        "src/save.rs",
+        "    let planned = planned_bytes(source, plan, OnChange::Refuse)?;",
+        "    let planned = planned_bytes(source, plan, OnChange::Proceed)?;",
+        "a_save_in_place_is_refused_when_the_file_changed_under_it",
+    ),
+    Mutation(
+        # Report every copy as unchanged, so a copy built from a document the
+        # reader is not looking at reads as one that is. The file is written
+        # either way, which is what makes this invisible without the flag.
+        "save: report a copy from a changed source as unchanged",
+        "src/save.rs",
+        "                changed = true;",
+        "                changed = false;",
+        "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(
         # Hand the shell the path as it arrived. A relative one is then filed
@@ -696,8 +727,8 @@ MUTATIONS = [
         # file next to the reader's document under a name they never chose.
         "save: stage a save in place before its guards have run",
         "src/save.rs",
-        "    let planned = planned_bytes(source, plan)?;",
-        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan)?;\n    let _ = early;",
+        "    let planned = planned_bytes(source, plan, OnChange::Refuse)?;",
+        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan, OnChange::Refuse)?;\n    let _ = early;",
         "a_refused_save_in_place_stages_nothing",
     ),
     Mutation(

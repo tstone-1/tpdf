@@ -700,6 +700,13 @@ struct SaveFailure {
     message: String,
     /// Whether the caller must open the document again.
     reopen: bool,
+    /// Whether the file changed on disk since the reader opened it.
+    ///
+    /// A field for the reason `reopen` is one, and `save::Refusal` carries the
+    /// argument in full: it is what lets the window offer Reload for this
+    /// refusal and withhold it for the ones where reloading would discard the
+    /// reader's work in exchange for nothing.
+    changed: bool,
 }
 
 impl SaveFailure {
@@ -708,6 +715,7 @@ impl SaveFailure {
         Self {
             message: message.into(),
             reopen: false,
+            changed: false,
         }
     }
 
@@ -716,6 +724,30 @@ impl SaveFailure {
         Self {
             message: message.into(),
             reopen: true,
+            changed: false,
+        }
+    }
+
+    /// A refusal `save.rs` produced, carrying its own reason forward.
+    ///
+    /// The two above take a bare message and are for refusals this file states
+    /// itself. These two exist so that `changed` is *carried* rather than
+    /// re-derived: deciding it again at this end would mean asking the same
+    /// question twice and, worse, matching on the message to answer it.
+    fn refused_by(why: save::Refusal) -> Self {
+        Self {
+            message: why.message,
+            reopen: false,
+            changed: why.changed,
+        }
+    }
+
+    /// The same, for a refusal that arrives after the document is closed.
+    fn after_close_by(why: save::Refusal) -> Self {
+        Self {
+            message: why.message,
+            reopen: true,
+            changed: why.changed,
         }
     }
 }
@@ -780,7 +812,7 @@ async fn save_document(
     })
     .await
     .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
-    .map_err(SaveFailure::refused)?;
+    .map_err(SaveFailure::refused_by)?;
 
     // Past this line every failure is an `after_close`: the reader's document is
     // being taken apart, and the honest thing to report is that they have to
@@ -805,7 +837,7 @@ async fn save_document(
     // --- but the close two statements up has already happened, so the reader's
     // model and their journal are gone. `refused` would tell them their document
     // is still open when it is not, which is the one thing that flag decides.
-    save::verify_before_commit(&staged, Path::new(&source)).map_err(SaveFailure::after_close)?;
+    save::verify_before_commit(&staged, Path::new(&source)).map_err(SaveFailure::after_close_by)?;
 
     // Attempted whether or not the close was acknowledged. The model is gone
     // either way, so the reader is reopening either way, and a rename that the
@@ -836,22 +868,31 @@ async fn save_copy(
     doc: u32,
     source: String,
     path: String,
-) -> Result<(), String> {
+) -> Result<save::Copied, String> {
     // Read out of the model *before* the move onto the pool. The state is behind
     // a mutex that is not held across an await anywhere in this file, and taking
     // a `State` handle into a `spawn_blocking` closure would need it to outlive
     // the command.
     let plan = edits.plan(doc)?;
-    // A copy is built from the source too, so a source that changed produces the
-    // same wrong document -- the difference is only that the original survives it.
-    // Checked with the same guard and refused in the same words; the reader's way
-    // out here is to open the file again, since Save a copy IS the fallback the
-    // in-place refusal points at.
+    // **A copy is written even from a source that changed**, and this comment
+    // said the opposite until 2026-08-19: it described the copy as refused "in
+    // the same words" and named opening the file again as the way out. That was
+    // a dead end wearing a helpful sentence. Save a copy IS the fallback the
+    // in-place refusal points at, and reopening is exactly what spends the edits
+    // the copy exists to keep -- so a reader whose file changed had nowhere at
+    // all to put their work.
+    //
+    // What comes back says whether the source had changed, because a copy built
+    // from a document that is no longer the one on screen is a fact the reader
+    // has to be told rather than a failure. `save.rs`'s `OnChange` carries the
+    // argument, including what still refuses: a changed file that also changed
+    // shape is caught by the page-count guard whichever path asks.
     tauri::async_runtime::spawn_blocking(move || {
         save::write_copy(Path::new(&source), &plan, Path::new(&path))
     })
     .await
     .map_err(|e| format!("the save did not run: {e}"))?
+    .map_err(|why| why.message)
 }
 
 /// Writes a subset of the working document's pages to a new file.
@@ -878,13 +919,17 @@ async fn extract_pages(
     source: String,
     path: String,
     slots: Vec<u32>,
-) -> Result<(), String> {
+) -> Result<save::Copied, String> {
     let plan = edits.plan_subset(doc, &slots)?;
+    // Same outcome as `save_copy` and for the same reason: an extract is a copy
+    // of some of the pages, so it is written from a changed source too, and the
+    // reader is told the same way.
     tauri::async_runtime::spawn_blocking(move || {
         save::write_copy(Path::new(&source), &plan, Path::new(&path))
     })
     .await
     .map_err(|e| format!("the extract did not run: {e}"))?
+    .map_err(|why| why.message)
 }
 
 /// What this keyboard prints on the keys a shortcut can name by position.

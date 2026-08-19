@@ -23,6 +23,12 @@
   } from "./lib/contextmenu";
   import { contentBox } from "./lib/crop";
   import { Edits, type EditState } from "./lib/edits";
+  import {
+    afterCopy,
+    afterFailedSave,
+    beforeReload,
+    type Offer,
+  } from "./lib/recovery";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
@@ -60,6 +66,14 @@
   let sidebarHost = $state<HTMLDivElement | null>(null);
   let title = $state("");
   let error = $state<string | null>(null);
+  /**
+   * What the reader can press about {@link error}, in the order shown.
+   *
+   * Cleared everywhere `error` is, and set only from `recovery.ts` --- the rules
+   * that decide these are in that module because nothing renders this component,
+   * so a decision written here is one no check can reach.
+   */
+  let offers = $state<Offer[]>([]);
   let opening = $state(false);
   /**
    * The open document's page edits, or null when there is none.
@@ -351,7 +365,7 @@
     if (source === undefined) return;
     const box = await contentBox(edits.doc, source).catch(() => null);
     if (!box) {
-      error = "There is nothing on this page to crop to.";
+      say("There is nothing on this page to crop to.");
       return;
     }
     await applyEdit((e) => e.crop(at, box));
@@ -428,7 +442,7 @@
       // Shown rather than logged. A refusal here is about the document --- a page
       // that is gone, a handle that is not open --- and a rotate command that
       // silently does nothing reads as a broken application.
-      error = String(e);
+      say(String(e));
     }
   }
 
@@ -499,14 +513,41 @@
     try {
       await edits.save(path);
     } catch (e) {
-      const failure = e as { message?: string; reopen?: boolean };
-      error = failure.message ?? String(e);
-      if (!failure.reopen) return;
+      const failure = e as {
+        message?: string;
+        reopen?: boolean;
+        changed?: boolean;
+      };
+      // The message and the buttons come from one call, so they cannot disagree
+      // about what happened. A refusal that names Save a copy now arrives with
+      // Save a copy beside it -- which it did not until 2026-08-19, and worse,
+      // Save a copy was refused by the same guard, so the advice named a door
+      // that was locked.
+      const prompt = afterFailedSave({
+        message: failure.message ?? String(e),
+        reopen: failure.reopen,
+        changed: failure.changed,
+      });
+      if (!failure.reopen) {
+        say(prompt.message, prompt.offers);
+        return;
+      }
       // The document is closed and the file is the one it always was. Reopening
       // is what gives the reader something to look at; their unsaved commands
       // are gone with the model, which is what the message says.
       openDoc = -1;
       await openPath(path, false, place);
+      // **After the reopen, and that ordering is the whole of it.** `openPath`
+      // clears the message area on its way in, so saying this before the reopen
+      // showed it for zero frames: the one refusal a reader can do nothing about
+      // -- their document closed, their edits spent -- was the one they were
+      // never told about. It has been that way since `save_document` landed, and
+      // the fingerprint work is what made the path reachable often enough to
+      // notice.
+      //
+      // Only when the reopen had nothing of its own to report. A file that also
+      // failed to reopen is the more urgent fact, and it is already on screen.
+      if (!error) say(prompt.message, prompt.offers);
       return;
     }
     openDoc = -1;
@@ -539,9 +580,13 @@
       // not. A failure is not silent --- `save.rs` refuses an encrypted
       // document, a file that changed under the open one and a write over the
       // source, and each of those is something the reader has to act on.
-      await edits.saveCopy(openPathName, chosen);
+      // Not silent when the source had changed. The file is written and is the
+      // best tpdf can produce, and which document it was built from is the one
+      // thing a reader cannot be left to discover for themselves.
+      const said = afterCopy(await edits.saveCopy(openPathName, chosen));
+      if (said) say(said);
     } catch (e) {
-      error = String(e);
+      say(String(e));
     }
   }
 
@@ -570,7 +615,7 @@
       if (!chosen) return;
       await edits.extractPages(openPathName, chosen, slots);
     } catch (e) {
-      error = String(e);
+      say(String(e));
     }
   }
 
@@ -693,7 +738,7 @@
       // Shown, not swallowed. A menu that failed to build is invisible by
       // definition: the bar simply keeps the platform's default, which is
       // exactly what it looked like before any of this existed.
-      error = String(e);
+      say(String(e));
     }
   }
 
@@ -782,7 +827,7 @@
       // Shown, unlike a failed place write. This one the reader is standing
       // there waiting for: a print command that silently does nothing reads as
       // a broken application, and on Windows it *will* fail, by design.
-      error = String(e);
+      say(String(e));
     }
   }
 
@@ -857,9 +902,49 @@
    * refuses because the app has not noticed yet is worse than one that always
    * does what it says.
    */
+  /**
+   * Shows a message, and the buttons that go with it.
+   *
+   * One function because the two are one fact. Setting `error` and `offers`
+   * separately is a pair that drifts, and the way it drifts is a stale Reload
+   * button surviving next to an unrelated message --- which is a button that
+   * discards the reader's work, offered for a reason that has gone. `say(null)`
+   * clears both.
+   */
+  function say(message: string | null, next: Offer[] = []) {
+    error = message;
+    offers = message === null ? [] : next;
+  }
+
   function reloadDocument() {
     const path = openPathName;
     if (!path) return;
+    // Reload reopens the file, which closes the document and spends the journal.
+    // On an unedited document that costs nothing; on an edited one it is the
+    // reader's work, and until 2026-08-19 it went without a word -- the command
+    // was written before there was anything to lose, and nothing revisited it
+    // when there was. The second press is what confirms: `reloadAnyway` is the
+    // offer this prompt carries.
+    const prompt = beforeReload(dirty);
+    if (prompt) {
+      say(prompt.message, prompt.offers);
+      return;
+    }
+    reloadAnyway();
+  }
+
+  /**
+   * Reloads whatever {@link reloadDocument} was about to, warning or not.
+   *
+   * Separate so that the Reload button on a warning does not have to re-enter
+   * the guard that produced the warning --- a confirmation that asks the same
+   * question again is a loop, and this is the one place where "the reader has
+   * already been told" is true.
+   */
+  function reloadAnyway() {
+    const path = openPathName;
+    if (!path) return;
+    say(null);
     void openPath(path, false, currentPlace());
   }
 
@@ -1331,7 +1416,7 @@
     resuming = false,
     override: Place | null = null,
   ) {
-    error = null;
+    say(null);
     notice = null;
     opening = true;
     /**
@@ -1566,7 +1651,7 @@
         // command the reader typed and is waiting on --- a copy that could not
         // read every page it spans, or a clipboard that refused the write.
         onError: (message) => {
-          error = message;
+          say(message);
         },
         // The one message here nobody asked for. It fires while someone is
         // reading, because a process outside the application shortened the file
@@ -1575,7 +1660,7 @@
         // painted stay painted; what this adds is the reason the rest never
         // arrive.
         onGone: (message) => {
-          error = message;
+          say(message);
         },
       });
       // Before the first paint, so the reader sees their page rather than page
@@ -1881,7 +1966,32 @@
   </header>
 
   {#if error}
-    <pre class="error">{error}</pre>
+    <div class="problem" data-testid="problem">
+      <pre class="error">{error}</pre>
+      <!--
+        The buttons a message carries, and never more than the message earns:
+        `recovery.ts` decides which appear, because a Reload offered beside the
+        wrong message discards the reader's work for a reason that has gone.
+        Rendered from the list rather than written twice, so the order the rules
+        return is the order they appear in -- Save a copy leads, and that is not
+        cosmetic, since the one beside it is the one that spends the journal.
+      -->
+      {#if offers.length > 0}
+        <div class="offers">
+          {#each offers as offer (offer)}
+            {#if offer === "saveCopy"}
+              <button data-testid="offer-saveCopy" onclick={() => void saveCopy()}
+                >Save a copy…</button
+              >
+            {:else}
+              <button data-testid="offer-reload" onclick={() => reloadAnyway()}
+                >Reload from disk</button
+              >
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if title}

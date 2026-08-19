@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 362 entries
+The one thing this file does *not* carry in full is the trap list --- 364 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -983,8 +983,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 362 of them and the full text
-was 93% of this file --- an instruction budget spent on the 356 traps that are not
+titles. Only the titles are here, because there are 364 of them and the full text
+was 93% of this file --- an instruction budget spent on the 358 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1171,6 +1171,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A wait built on a program the machine does not have returns instantly, and every check after it reads as a pass (`pgrep` is absent here, so `until ! pgrep ...` was satisfied on its first evaluation and certified 2 corpora out of 13)
 - Two runs failing different checks is variance; the same check twice is a defect (a 41% spread in runtime on identical code, and the control is a `git worktree`, not a `git stash`)
 - A test that changes the working directory silences every other test that reads a relative path (the tell is a skip count that moved, not a failure; widening the window on purpose is what proved it)
+- A refusal that names a fallback has to keep the fallback open, and this one closed it (a passing test encoded the dead end, and its doc comment argued for it)
+- A message set before the operation that clears the message area is a message nobody sees (the working cases and the broken one are the same two lines; and the producer should state the fact, not the advice)
 - A frame-rate pass means nothing without a coverage number beside it
 - Interleaving controls for drift, not for what the last variant left behind
 - Three similarity metrics in a row, each unable to see its own failure

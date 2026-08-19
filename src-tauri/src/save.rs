@@ -81,6 +81,92 @@ use crate::print::MAX_DECODE;
 /// one.
 const PARTIAL: &str = "tpdf-partial";
 
+/// Why a save was refused, and whether the file having changed is the reason.
+///
+/// **`changed` is a field rather than a wording**, for exactly the reason
+/// `SaveFailure::reopen` in `lib.rs` is one: a caller that decided by matching
+/// on the message would be parsing a string this end is free to reword, and the
+/// message here is deliberately reworded whenever a reader is served badly by
+/// it. See `docs/TRAPS.md` on the two-moments message, which is this same file
+/// getting that wrong within the week.
+///
+/// What it buys is one decision the window cannot otherwise make safely.
+/// Reloading throws away every edit in the journal, so offering it is right for
+/// *this* refusal --- the file underneath is a different file, and there is
+/// nothing else the reader can do with their edits but write them elsewhere ---
+/// and wrong for "a document must keep at least one page", where reloading would
+/// discard the reader's work in exchange for nothing at all.
+///
+/// Every other refusal reaches this through `From<String>`, which is what keeps
+/// the `?` in the middle of `planned_bytes` unchanged: the flag is set at the
+/// one call site that knows, and defaults to false everywhere else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// What to tell the reader.
+    pub message: String,
+    /// The source changed on disk since the reader opened it.
+    pub changed: bool,
+}
+
+impl Refusal {
+    /// A refusal because the file is not the file that was opened.
+    #[must_use]
+    pub fn changed(message: impl Into<String>) -> Refusal {
+        Refusal {
+            message: message.into(),
+            changed: true,
+        }
+    }
+}
+
+impl From<String> for Refusal {
+    fn from(message: String) -> Refusal {
+        Refusal {
+            message,
+            changed: false,
+        }
+    }
+}
+
+impl From<&str> for Refusal {
+    fn from(message: &str) -> Refusal {
+        Refusal::from(message.to_string())
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// What a source that changed under the reader means for the operation.
+///
+/// The two save paths answer this differently and always have --- `stage_in_place`
+/// refuses what `write_copy` tolerates --- and until 2026-08-19 that was true of a
+/// missing fingerprint and **not** of a changed file, which stranded the reader in
+/// the exact way the comment in `stage_in_place` warns about. A save in place was
+/// refused with a message naming Save a copy, and Save a copy was refused by the
+/// same guard one function down. The escape hatch was closed and the message
+/// pointed at it anyway.
+///
+/// The asymmetry is the same one, for the same reason. A copy writes a new file
+/// and leaves the original exactly as it is, so the worst case is a file the
+/// reader can look at and delete. Writing in place spends the original, and there
+/// is no looking at it afterwards.
+///
+/// What still protects the copy is everything else `planned_bytes` checks: the
+/// page count against the plan's baseline, every page the plan names existing,
+/// and the shared-page refusals. A changed file that also changed shape is
+/// refused by those, whichever value this carries.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OnChange {
+    /// Refuse, because what is at stake is the reader's only copy.
+    Refuse,
+    /// Write it, and say so. `changed` on the result is how the reader is told.
+    Proceed,
+}
+
 /// The bytes of a working document, and what the file was when they were built.
 ///
 /// `verified` is `None` only where the plan carried no fingerprint, which
@@ -89,6 +175,24 @@ const PARTIAL: &str = "tpdf-partial";
 struct Planned {
     bytes: Vec<u8>,
     verified: Option<Fingerprint>,
+    /// The source had changed since it was opened, and `OnChange::Proceed` let
+    /// it through. Always false under `OnChange::Refuse`, which returns an error
+    /// instead of setting this.
+    changed: bool,
+}
+
+/// A copy that was written, and whether its source had changed underneath.
+///
+/// `changed` is a fact the reader has to be told rather than a failure: the file
+/// is on disk and is the best tpdf can produce, and it was built from a document
+/// that is no longer the one they opened. Silence here would be the worst of the
+/// three options --- a copy that is quietly built from different pages reads as a
+/// copy that is right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Copied {
+    /// The source changed since it was opened, and the copy was written anyway.
+    pub changed: bool,
 }
 
 /// A staged save: the file to rename, and what the source was when it was built.
@@ -121,7 +225,7 @@ pub struct Staged {
 ///
 /// Everything [`planned_bytes`] refuses; `out` is the source; or the write
 /// fails. The temporary file is removed on every failing path that created one.
-pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> {
+pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<Copied, Refusal> {
     if same_file(source, out) {
         return Err(
             "tpdf cannot save over the document it is reading --- choose another name".into(),
@@ -132,8 +236,11 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
     // anchor ambiguous the moment this line gained a binding --- and an ambiguous
     // anchor is refused, so the mutation stops being able to fail. Distinct names
     // are the fix; a longer anchor is only the workaround.
-    let copy = planned_bytes(source, plan)?;
-    write_atomically(out, &copy.bytes)
+    let copy = planned_bytes(source, plan, OnChange::Proceed)?;
+    write_atomically(out, &copy.bytes)?;
+    Ok(Copied {
+        changed: copy.changed,
+    })
 }
 
 /// Writes the working document beside `source`, ready to be put in its place.
@@ -159,7 +266,7 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
 ///
 /// Everything [`planned_bytes`] refuses, and a temporary file that cannot be
 /// written. The temporary file is removed on the failing path that created one.
-pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, String> {
+pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, Refusal> {
     // Refused here and tolerated by `write_copy`, which is the one place the two
     // paths differ on purpose. A fingerprint that could not be taken means tpdf
     // cannot tell whether this file is still the file -- and the two operations
@@ -173,7 +280,7 @@ pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, String> {
                 .into(),
         );
     }
-    let planned = planned_bytes(source, plan)?;
+    let planned = planned_bytes(source, plan, OnChange::Refuse)?;
     // Refused rather than unwrapped. It cannot fire --- `planned_bytes` derives
     // this from the same `plan.opened_as` the guard above just proved present ---
     // but the two are eight lines and one function call apart, and the failure a
@@ -209,10 +316,10 @@ pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, String> {
 /// # Errors
 ///
 /// `source` changed since staging read it, or its metadata cannot be read. The
-/// message says that nothing was written, which is the fact the reader needs ---
-/// their document is closed either way, and the two outcomes are otherwise
-/// indistinguishable from where they are sitting.
-pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), String> {
+/// message says that nothing was written and that the document is closed, which
+/// are the two facts the reader needs --- and stops there. What to *do* is the
+/// caller's, because the caller is the only one that knows what it did next.
+pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), Refusal> {
     if let Err(why) = staged.verified.agrees_shallowly(source) {
         let _ = std::fs::remove_file(&staged.path);
         // Its own advice, not `agrees_with`'s. That one says the reader's edits
@@ -220,11 +327,17 @@ pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), String
         // where it is written and is false here: the close two statements up in
         // `save_document` has already spent the journal. The two sentences used
         // to arrive in one message, contradicting each other.
-        return Err(format!(
+        // The fact, and no instruction. It ended "open the file again to see what
+        // is there now" until 2026-08-19, and `save_document`'s caller reopens
+        // the file by itself on every `after_close` --- so the advice was
+        // addressed to somebody it had already been carried out for. Same shape
+        // as the two-moments message this file was caught on the same week, one
+        // layer up: the producer states what happened, and the caller, which is
+        // the only one that knows what it did next, owns what to do about it.
+        return Err(Refusal::changed(format!(
             "{why} --- nothing was written, so the file on disk is untouched. \
-             Your document has been closed and the edits you had made are gone; \
-             open the file again to see what is there now."
-        ));
+             Your document has been closed and the edits you had made are gone."
+        )));
     }
     Ok(())
 }
@@ -253,7 +366,7 @@ pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
 /// the file does not have; two of its pages are one object and disagree about
 /// the turn or the crop, or one of them is dropped without the other; or a mark
 /// maps to nothing.
-fn planned_bytes(source: &Path, plan: &Plan) -> Result<Planned, String> {
+fn planned_bytes(source: &Path, plan: &Plan, on_change: OnChange) -> Result<Planned, Refusal> {
     if plan.pages.is_empty() {
         return Err("a document must keep at least one page".into());
     }
@@ -268,9 +381,23 @@ fn planned_bytes(source: &Path, plan: &Plan) -> Result<Planned, String> {
     // count changed. Everything that keeps the count -- a re-export over the top,
     // a sync client landing a newer copy, a signing tool rewriting in place --
     // was invisible to it. See `docs/PLAN.md` §5 and `fingerprint.rs`.
-    let verified = match &plan.opened_as {
-        Some(opened_as) => Some(opened_as.agrees_with(source)?),
-        None => None,
+    let mut changed = false;
+    let verified = match (&plan.opened_as, on_change) {
+        (Some(opened_as), OnChange::Refuse) => {
+            Some(opened_as.agrees_with(source).map_err(Refusal::changed)?)
+        }
+        // Written anyway, and recorded. `verified` stays `None` because there is
+        // nothing verified about it -- which is also what stops this result being
+        // committed in place by a caller that changed its mind, since
+        // `stage_in_place` refuses a `None`.
+        (Some(opened_as), OnChange::Proceed) => match opened_as.agrees_with(source) {
+            Ok(now) => Some(now),
+            Err(_) => {
+                changed = true;
+                None
+            }
+        },
+        (None, _) => None,
     };
 
     let mut doc = Document::load_with_options(
@@ -295,12 +422,18 @@ fn planned_bytes(source: &Path, plan: &Plan) -> Result<Planned, String> {
 
     let pages = ordered_pages(&doc);
     if pages.len() != plan.baseline as usize {
-        return Err(format!(
+        // `Refusal::changed`, and it is not a formality: this refusal says the
+        // file changed, and it is the one that fires when a changed file also
+        // changed shape --- which is precisely the case `OnChange::Proceed` does
+        // *not* wave through, so a copy lands here rather than being written
+        // from pages the plan cannot name. A reader who reaches it needs the
+        // same Reload the fingerprint refusal offers.
+        return Err(Refusal::changed(format!(
             "the document on disk has {} page(s) and the edits were made against {} --- it has \
              changed since it was opened, so reopen it before saving",
             pages.len(),
             plan.baseline
-        ));
+        )));
     }
 
     // Whether the reader moved anything. Read here, off the plan, because after
@@ -318,9 +451,9 @@ fn planned_bytes(source: &Path, plan: &Plan) -> Result<Planned, String> {
     // by position rather than by anything either of them stores.
     let kept: Vec<u32> = plan.pages.iter().map(|page| page.source + 1).collect();
     if let Some(past) = kept.iter().find(|&&number| number as usize > pages.len()) {
-        return Err(format!(
+        return Err(Refusal::changed(format!(
             "the edits name page {past}, which this document does not have"
-        ));
+        )));
     }
 
     let turns: Vec<(lopdf::ObjectId, u8)> = plan
@@ -384,7 +517,11 @@ fn planned_bytes(source: &Path, plan: &Plan) -> Result<Planned, String> {
     doc.save_to(&mut bytes)
         .map_err(|e| format!("could not serialise the document: {e}"))?;
 
-    Ok(Planned { bytes, verified })
+    Ok(Planned {
+        bytes,
+        verified,
+        changed,
+    })
 }
 
 /// A PDF date string for an instant, in UTC.
@@ -1599,11 +1736,11 @@ mod tests {
 
         let why = write_copy(&source, &plan_of(&[1, 2]), &out).expect_err("must refuse");
         assert!(
-            why.contains("same page"),
+            why.message.contains("same page"),
             "the message says why rather than naming an internal id: {why}"
         );
         assert!(
-            why.contains('1') && why.contains('2'),
+            why.message.contains('1') && why.message.contains('2'),
             "and names the two pages the reader can see: {why}"
         );
         assert!(
@@ -1795,7 +1932,7 @@ mod tests {
 
         let why = write_copy(&source, &keeping(2, &[(0, 0)]), &out).expect_err("must refuse");
         assert!(
-            why.contains("same page") && why.contains("on its own"),
+            why.message.contains("same page") && why.message.contains("on its own"),
             "the message says what cannot be done and what can: {why}"
         );
         assert!(!out.exists(), "and nothing was written");
@@ -2216,7 +2353,7 @@ mod tests {
         // reachable from a frontend sending something the model never produced,
         // which is exactly the argument for not trusting the number.
         let why = write_copy(&path, &keeping(4, &[(0, 0), (9, 0)]), &out).expect_err("must refuse");
-        assert!(why.contains("does not have"), "{why}");
+        assert!(why.message.contains("does not have"), "{why}");
         assert!(!out.exists());
     }
 
@@ -2229,7 +2366,7 @@ mod tests {
 
         let why = write_copy(&source, &plan_of(&[0]), &out).expect_err("must refuse");
         assert!(
-            why.contains("encrypted"),
+            why.message.contains("encrypted"),
             "the message names the reason: {why}"
         );
         assert!(
@@ -2298,7 +2435,7 @@ mod tests {
 
         let why =
             write_copy(&path, &plan_of(&vec![0u8; count + 1]), &out).expect_err("must refuse");
-        assert!(why.contains("changed since it was opened"), "{why}");
+        assert!(why.message.contains("changed since it was opened"), "{why}");
         assert!(!out.exists());
 
         // And the matching plan is accepted, so the refusal is about the
@@ -2313,7 +2450,7 @@ mod tests {
         let out = scratch.join("out.pdf");
         let why = write_copy(Path::new("../testdata/rotated.pdf"), &plan_of(&[]), &out)
             .expect_err("must refuse");
-        assert!(why.contains("at least one page"), "{why}");
+        assert!(why.message.contains("at least one page"), "{why}");
     }
 
     /// A **copy** is never the source, and that is what this refuses.
@@ -2336,7 +2473,7 @@ mod tests {
         let before = std::fs::read(&copy).expect("read");
 
         let why = write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &copy).expect_err("must refuse");
-        assert!(why.contains("save over"), "{why}");
+        assert!(why.message.contains("save over"), "{why}");
         assert_eq!(
             std::fs::read(&copy).expect("read"),
             before,
@@ -2426,10 +2563,10 @@ mod tests {
         );
 
         let why = stage_in_place(&open, &plan).expect_err("must refuse");
-        assert!(why.contains("changed on disk"), "{why}");
+        assert!(why.message.contains("changed on disk"), "{why}");
         // The message has to leave the reader somewhere to go: their edits are
         // still in the journal, and Save a copy is the way to keep them.
-        assert!(why.contains("another name"), "{why}");
+        assert!(why.message.contains("another name"), "{why}");
         assert!(
             !open.with_extension(PARTIAL).exists(),
             "and nothing is staged beside the document"
@@ -2475,15 +2612,15 @@ mod tests {
         std::fs::copy(&path, &open).expect("copy fixture");
 
         let why = stage_in_place(&open, &plan_of(&[1, 0, 0, 0])).expect_err("must refuse");
-        assert!(why.contains("could not record"), "{why}");
-        assert!(why.contains("Save a copy"), "{why}");
+        assert!(why.message.contains("could not record"), "{why}");
+        assert!(why.message.contains("Save a copy"), "{why}");
         // The message is one a reader reads, so it has to be one sentence rather
         // than one that happens to contain the right words. This assertion is
         // here because it was not: a lost `\` continuation left a run of 21
         // spaces mid-sentence, and both assertions above passed over it --- they
         // check the ends and the defect was in the middle.
         assert!(
-            !why.contains("  "),
+            !why.message.contains("  "),
             "run of spaces in a reader-facing message: {why}"
         );
     }
@@ -2519,16 +2656,23 @@ mod tests {
         std::fs::write(&open, &bytes).expect("rewrite");
 
         let why = verify_before_commit(&staged, &open).expect_err("must refuse");
-        assert!(why.contains("length"), "{why}");
-        assert!(why.contains("nothing was written"), "{why}");
+        assert!(why.message.contains("length"), "{why}");
+        assert!(why.message.contains("nothing was written"), "{why}");
         // And it must not carry the advice that belongs to the check before it.
         // The document is closed by the time a reader reads this, so telling
         // them their edits are still here and to save them under another name is
         // an instruction they cannot follow --- and it used to arrive in the same
         // sentence as "the document has been closed".
-        assert!(!why.contains("still here"), "{why}");
-        assert!(!why.contains("another name"), "{why}");
-        assert!(why.contains("open the file again"), "{why}");
+        assert!(!why.message.contains("still here"), "{why}");
+        assert!(!why.message.contains("another name"), "{why}");
+        assert!(why.message.contains("has been closed"), "{why}");
+        // And **no instruction at all**. `save_document`'s caller reopens the
+        // file itself on every `after_close`, so "open the file again" is advice
+        // addressed to somebody it has already been carried out for --- which is
+        // the two-moments failure this module was caught on, one layer up.
+        assert!(!why.message.contains("open the file"), "{why}");
+        // The flag, not the wording, is what the window reads.
+        assert!(why.changed, "{why}");
         // The staged file goes with the refusal. Nothing else is tracking it by
         // this point, so leaving it puts a file the reader never named beside
         // their document.
@@ -2577,14 +2721,22 @@ mod tests {
         assert!(out.exists());
     }
 
-    /// A copy IS refused when there is a fingerprint and the source changed.
+    /// A copy IS written when the source changed, and says that it was.
     ///
-    /// The other half of the asymmetry: tolerating a missing fingerprint is not
-    /// the same as ignoring one that disagrees. The edits were planned against
-    /// the old graph either way, so the copy would be as wrong as the in-place
-    /// save -- it just would not destroy anything on its way.
+    /// **This test asserted the opposite until 2026-08-19, and the assertion was
+    /// the defect.** Refusing here closed the only door the in-place refusal
+    /// points at: a reader whose file changed was told to save their edits under
+    /// another name, and Save a copy was refused by the same guard one function
+    /// down. `stage_in_place`'s own comment states the rule that was being broken
+    /// --- "the fallback the message names has to keep working, or the refusal
+    /// strands the reader" --- and it had been applied to a missing fingerprint
+    /// and not to a changed file.
+    ///
+    /// The copy is not claimed to be correct, and `changed` is how it says so.
+    /// What still refuses is a file whose *shape* changed, which the page-count
+    /// guard catches whichever path asks.
     #[test]
-    fn a_copy_is_refused_when_the_source_changed_under_it() {
+    fn a_copy_is_written_when_the_source_changed_and_reports_it() {
         let Some(path) = fixture("rotated.pdf") else {
             println!("[SKIP] rotated.pdf not generated");
             return;
@@ -2603,8 +2755,68 @@ mod tests {
         );
         std::fs::write(&open, &bytes).expect("rewrite");
 
+        let copied = write_copy(&open, &plan, &out).expect("a copy risks nothing");
+        assert!(copied.changed, "and it says the source had changed");
+        assert!(out.exists(), "and the reader's edits are somewhere");
+        // Still a real document rather than a placeholder, which is the half a
+        // boolean cannot say.
+        assert_eq!(page_count(&out), 4);
+    }
+
+    /// And the same source, unchanged, reports `changed: false`.
+    ///
+    /// The control. Without it the flag above is satisfied by a `changed` that is
+    /// always true, which would put a warning on every copy a reader ever writes
+    /// and teach them to ignore it.
+    #[test]
+    fn a_copy_from_an_untouched_source_does_not_claim_it_changed() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("copy-unchanged");
+        let open = scratch.join("open.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        let copied = write_copy(&open, &plan_opened_as(&[1, 0, 0, 0], &open), &out)
+            .expect("an untouched source copies");
+        assert!(!copied.changed);
+        assert!(out.exists());
+    }
+
+    /// A changed file whose page count also changed is still refused.
+    ///
+    /// The bound on the tolerance above, and the reason it is not simply "ignore
+    /// the fingerprint for copies": the plan names pages by position, so a file
+    /// that gained or lost one would have the edits land on pages nobody chose.
+    /// That refusal carries `changed` too, so the window offers the same way out.
+    #[test]
+    fn a_copy_is_refused_when_the_changed_source_has_a_different_page_count() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("copy-reshaped");
+        let open = scratch.join("open.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+        let plan = plan_opened_as(&[1, 0, 0, 0], &open);
+
+        // A different document entirely, at the same path.
+        let Some(other) = fixture("outline-simple.pdf") else {
+            println!("[SKIP] outline-simple.pdf not generated");
+            return;
+        };
+        std::fs::copy(&other, &open).expect("replace the source");
+        assert_ne!(
+            page_count(&open),
+            4,
+            "the fixture really is a different shape"
+        );
+
         let why = write_copy(&open, &plan, &out).expect_err("must refuse");
-        assert!(why.contains("changed on disk"), "{why}");
+        assert!(why.changed, "and it is offered as a change: {why}");
         assert!(!out.exists(), "and writes nothing");
     }
 
@@ -2667,7 +2879,7 @@ mod tests {
 
         let why = stage_in_place(&open, &plan_opened_as(&vec![0u8; count + 1], &open))
             .expect_err("must refuse");
-        assert!(why.contains("changed since it was opened"), "{why}");
+        assert!(why.message.contains("changed since it was opened"), "{why}");
         assert!(
             !open.with_extension(PARTIAL).exists(),
             "no partial file is left beside the document"
@@ -3041,7 +3253,7 @@ mod tests {
         };
         let why = write_copy(&source, &plan, &out).expect_err("a shared page must be refused");
         assert!(
-            why.contains("same page object"),
+            why.message.contains("same page object"),
             "the refusal does not say why: {why}"
         );
         assert!(!out.exists(), "a refused save left a file behind");
@@ -3108,7 +3320,7 @@ mod tests {
         }];
         let why = write_copy(&source, &plan_with_mark(flat), &out)
             .expect_err("a mark covering nothing must be refused");
-        assert!(why.contains("no area"), "{why}");
+        assert!(why.message.contains("no area"), "{why}");
     }
 
     #[test]
@@ -3166,7 +3378,7 @@ mod tests {
         std::fs::write(&source, encrypted_document()).expect("write fixture");
         let why = write_copy(&source, &plan_with_mark(one_quad()), &out)
             .expect_err("an encrypted source must still be refused");
-        assert!(why.contains("encrypted"), "{why}");
+        assert!(why.message.contains("encrypted"), "{why}");
     }
 
     /// The written annotation for a mark of `kind`, reopened from the file.
