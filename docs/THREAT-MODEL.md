@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- three of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- four of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -81,9 +81,9 @@ Four principals, each trusting only what is below it in the table.
 since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
 `core:default`, `dialog:allow-open`, `dialog:allow-save` and `updater:default`, and the two
 dialog permissions open panels and write nothing. But it can issue `save_copy`,
-`extract_pages` and `print_document`, and all three write a file at the process's authority
-with a path the caller chose. So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for three specific writes; the flat version reads as the stronger claim, and a reader
+`save_document`, `extract_pages` and `print_document`, and all four write a file at the
+process's authority with a path the caller chose. So the accurate statement is that the
+webview cannot touch the filesystem *itself* and can ask for four specific writes; the flat version reads as the stronger claim, and a reader
 who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why
 neither path checks its argument against the document actually open.
 
@@ -564,7 +564,10 @@ The only thing it adds is a `slots` argument, which `plan_subset` refuses when i
 out of range, repeated or descending --- so the worst a bad selection produces is a refusal,
 not a wider write. **The count of commands that write a file is three now**, not two: the
 boundary table's §3 row says "two", and it is corrected in the same commit; a number in a
-summary row is exactly the thing that stops agreeing with the section beneath it.
+summary row is exactly the thing that stops agreeing with the section beneath it. (It is
+**four** as of 2026-08-19, when `save_document` landed --- see §T6.7. The sentence is left as
+it was written rather than silently re-pointed, because what it is about is a count in a
+summary going stale, and re-pointing it every time would erase its own evidence.)
 
 **What bounds that is the same thing that bounds `spike_exit`, and no more.** The CSP is
 `default-src 'self'` with no `'unsafe-inline'`, so the only script that runs is the one that
@@ -787,6 +790,50 @@ crop. It is listed because it is the second operation on this surface where a re
 plausibly believe otherwise, after deleting a page (risk 15), and because "crop" is a word
 that sounds like removal in a way "rotate" and "move" do not. The operation that makes hidden
 mean gone is `docs/PLAN.md` §6, and it is not built.
+
+#### T6.7 — Saving over the open document, added 2026-08-19
+
+**No new authority, and one new verb.** `save_document` takes a document handle and a
+source path and writes the working document over that path. Its authority is `save_copy`'s
+--- the process's, which is the reader's --- and the path is the frontend's in exactly the
+same way, unchecked against the document the render service actually opened. So the §T6.1
+statement stands unchanged and now covers four commands rather than three.
+
+**What is new is that this one replaces a file rather than creating one.** `save_copy`
+refuses the source outright; this is the command that is *for* the source. A caller able to
+reach it can therefore overwrite any PDF the reader can write, without a panel and without a
+prompt, and the marginal difference from `save_copy` is that a file already there is gone
+rather than a second file appearing beside it. The bound is the same and no stronger:
+`default-src 'self'` with no `'unsafe-inline'`, residual risk 7, and the fact that a caller
+who can reach this can already reach `open_document` and the print path.
+
+**One check narrows what a wrong path can do, and it is a correctness check rather than a
+security one.** The page count of the file named has to match the plan's baseline, so
+pointing this at an unrelated document is refused unless that document happens to have the
+same number of pages --- at which point the reader's edits are applied to it and written.
+That is not a guarantee and is not offered as one; it is the same absence §T6.1 records, and
+if the source path is ever checked against the open document, this is the command where it
+matters most.
+
+**The document is closed before the file is replaced, and that is a correctness property
+with a security-shaped tell.** A `rename` over a memory-mapped file succeeds on macOS and
+leaves the worker serving the inode that is no longer at that path --- measured, and in
+`docs/TRAPS.md`. Nothing about that is exploitable; what it is, is a reader looking at a
+document that disagrees with their own file while everything reports success, which is the
+§T5 false-assurance shape pointed at the save rather than at a redaction. Windows refuses
+the rename instead, so the order is what makes the two platforms agree.
+
+**Two refusals, distinguished on the wire, which is unusual enough to state.**
+`SaveFailure` carries `reopen`: false means nothing was touched and the reader still has
+their document, true means it is closed whatever became of the file. The reason it is a
+field rather than a wording is the T8 reason one level down --- a frontend that decided by
+matching on message text would be parsing a string the backend is free to reword.
+
+**The write is atomic and is still a serialisation, not a sanitation.** Everything §T6.1
+says about that applies here and is more consequential: a copy carrying forward an
+unreachable object leaves the original untouched beside it, and this one does not. Saving
+over a document does not remove a prior incremental revision, garbage-collect anything, or
+make hidden content gone. `docs/PLAN.md` §6 is the operation that does, and it is not built.
 
 ### T7 — Distribution and update
 

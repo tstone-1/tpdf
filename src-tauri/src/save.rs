@@ -31,15 +31,30 @@
 //!    they were applied to. Compared against the *baseline* rather than against
 //!    the plan's length, which is what makes it survive a deletion --- a plan of
 //!    three pages for a five-page file is what deleting two of them looks like.
-//!  - Writing **over the source**. The baseline the model replays against is the
-//!    file on disk; replacing it would leave every journalled command describing
-//!    a document that is gone. Saving in place is a different operation with its
-//!    own rebase, and §5 has it.
+//!  - Writing **over the source**. A copy is never the file it was copied from,
+//!    and a reader who types the open document's own name into the panel means
+//!    Save rather than Save a copy. Saving in place is the operation below, and
+//!    it is not this one with a different destination.
 //!
 //! **The write is atomic**: the bytes go to a sibling temporary file and are
 //! renamed over the destination, so an interrupted save leaves either the old
 //! file or the new one. A partially written PDF is the worst of the three
 //! outcomes --- it opens, and it is missing pages.
+//!
+//! **Save, in place, is that write split in two.** [`stage_in_place`] does
+//! everything up to and including the temporary file; [`commit_in_place`] does
+//! the rename. Between them the caller closes the document, and that is not
+//! tidiness: a `rename` over a memory-mapped file succeeds on macOS and leaves
+//! the mapping serving the inode that is no longer there, so a worker would
+//! render the document as it was before the save for as long as it stayed open.
+//! Windows refuses the rename instead. One order is correct on both.
+//!
+//! What the caller does *not* get back is a rebase in §5's full sense. The
+//! journal is spent rather than compacted, and the document is reopened from the
+//! file that was just written --- which is the same answer for a save that
+//! succeeded, and is why a save that fails after the close costs the reader
+//! their unsaved commands. Carrying a journal across a reopen is what §5 calls
+//! rebasing, and nothing here does it.
 //!
 //! The page-tree surgery itself is `pagetree.rs`, shared with the print path,
 //! which needs every one of the same operations for the same reasons.
@@ -69,20 +84,73 @@ const PARTIAL: &str = "tpdf-partial";
 ///
 /// # Errors
 ///
-/// The source cannot be read or parsed; it is encrypted; it has a different
-/// number of pages than the plan's baseline; the plan is empty or names a page
-/// the file does not have; two of its pages are one object and disagree about
-/// the turn, or one of them is dropped without the other; `out` is the source;
-/// or the write fails.
-/// The temporary file is removed on every failing path that created one.
+/// Everything [`planned_bytes`] refuses; `out` is the source; or the write
+/// fails. The temporary file is removed on every failing path that created one.
 pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> {
-    if plan.pages.is_empty() {
-        return Err("a document must keep at least one page".into());
-    }
     if same_file(source, out) {
         return Err(
             "tpdf cannot save over the document it is reading --- choose another name".into(),
         );
+    }
+    let bytes = planned_bytes(source, plan)?;
+    write_atomically(out, &bytes)
+}
+
+/// Writes the working document beside `source`, ready to be put in its place.
+///
+/// The first half of saving over the open file, and the half that can still be
+/// refused for free: every guard [`planned_bytes`] states runs here, before
+/// anything the reader has is disturbed. What comes back is the path of the
+/// sibling temporary file, which nothing has renamed yet.
+///
+/// **The split exists because the document has to be closed in between.** A
+/// `rename` over a file some process has memory-mapped succeeds on macOS and
+/// leaves the mapping serving the inode that is no longer at that path ---
+/// measured, and the reason it is worth splitting a function over: the reader's
+/// worker would go on rendering the document as it was before the save,
+/// indefinitely and without anything looking wrong. Windows refuses the rename
+/// outright while a section is open, so the two platforms fail differently and
+/// only one of them fails visibly.
+///
+/// So the caller stages, closes the document, and only then commits. See
+/// `lib.rs`'s `save_document`, which is the only caller and holds the ordering.
+///
+/// # Errors
+///
+/// Everything [`planned_bytes`] refuses, and a temporary file that cannot be
+/// written. The temporary file is removed on the failing path that created one.
+pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<PathBuf, String> {
+    let bytes = planned_bytes(source, plan)?;
+    stage(source, &bytes)
+}
+
+/// Puts a file [`stage_in_place`] wrote where `source` is.
+///
+/// The second half, and the only step that is not reversible: after it the file
+/// the reader opened holds the edits they made, and the journal that describes
+/// them is spent. `staged` is removed if the rename fails, so a refused save
+/// leaves the directory as it found it.
+pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
+    commit(staged, source)
+}
+
+/// The bytes of the working document, ready to be written somewhere.
+///
+/// Everything both save paths share: the parse, the three refusals, the page
+/// tree, the marks, the turns and the crops. Neither path names a destination
+/// here --- a copy and a save in place differ in where the bytes go and in what
+/// has to happen around the write, never in what is written.
+///
+/// # Errors
+///
+/// The plan is empty; `source` cannot be read or parsed; it is encrypted; it has
+/// a different number of pages than the plan's baseline; the plan names a page
+/// the file does not have; two of its pages are one object and disagree about
+/// the turn or the crop, or one of them is dropped without the other; or a mark
+/// maps to nothing.
+fn planned_bytes(source: &Path, plan: &Plan) -> Result<Vec<u8>, String> {
+    if plan.pages.is_empty() {
+        return Err("a document must keep at least one page".into());
     }
 
     let mut doc = Document::load_with_options(
@@ -196,7 +264,7 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<(), String> 
     doc.save_to(&mut bytes)
         .map_err(|e| format!("could not serialise the document: {e}"))?;
 
-    write_atomically(out, &bytes)
+    Ok(bytes)
 }
 
 /// A PDF date string for an instant, in UTC.
@@ -702,6 +770,17 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
 }
 
 fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
+    let staged = stage(out, bytes)?;
+    commit(&staged, out)
+}
+
+/// Writes `bytes` to the sibling temporary file for `out`, and names it.
+///
+/// One definition of where the partial file goes, read by both save paths ---
+/// the in-place one stages and commits with the document's close between them,
+/// and a second copy of `with_extension(PARTIAL)` is how the two halves would
+/// come to disagree about which file the other meant.
+fn stage(out: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
     let partial = out.with_extension(PARTIAL);
     std::fs::write(&partial, bytes).map_err(|e| {
         // Nothing to remove: the failure is the write itself, and a file that
@@ -709,8 +788,13 @@ fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = std::fs::remove_file(&partial);
         format!("could not write {partial:?}: {e}")
     })?;
-    std::fs::rename(&partial, out).map_err(|e| {
-        let _ = std::fs::remove_file(&partial);
+    Ok(partial)
+}
+
+/// Renames a staged file over `out`, removing it if that fails.
+fn commit(staged: &Path, out: &Path) -> Result<(), String> {
+    std::fs::rename(staged, out).map_err(|e| {
+        let _ = std::fs::remove_file(staged);
         format!("could not put {out:?} in place: {e}")
     })
 }
@@ -1913,6 +1997,14 @@ mod tests {
         assert!(why.contains("at least one page"), "{why}");
     }
 
+    /// A **copy** is never the source, and that is what this refuses.
+    ///
+    /// Saving in place is a real operation now --- [`stage_in_place`] and
+    /// [`commit_in_place`] below --- so what makes this refusal right is no
+    /// longer "tpdf does not do that". It is that `write_copy` writes and
+    /// renames in one step, with no room between them for the close that an
+    /// in-place save needs, so letting the source through here would replace a
+    /// mapped file and leave the reader's worker serving the document that was.
     #[test]
     fn saving_over_the_open_document_is_refused() {
         let Some(path) = fixture("rotated.pdf") else {
@@ -1936,6 +2028,114 @@ mod tests {
         // same file --- a comparison of the strings would let this through.
         let indirect = scratch.join(".").join("copy.pdf");
         assert!(write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &indirect).is_err());
+    }
+
+    /// Staging writes the whole document and changes nothing the reader has.
+    ///
+    /// This is the property the `reopen: false` half of `lib.rs`'s
+    /// `SaveFailure` rests on: everything expensive and everything refusable
+    /// happens while the source is still the source, so a save that fails here
+    /// has cost the reader nothing.
+    ///
+    /// It is also the **control** for the test below it. "The file holds the
+    /// edits after a commit" is satisfied by an implementation that wrote them
+    /// during the staging, and the two tests together are what separate the
+    /// steps: here the source must be untouched, there it must not be.
+    #[test]
+    fn staging_a_save_in_place_writes_beside_the_source_and_leaves_it_alone() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("stage");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+        let before = std::fs::read(&open).expect("read");
+
+        let staged = stage_in_place(&open, &plan_of(&[1, 0, 0, 0])).expect("stage");
+
+        assert!(staged.exists(), "the staged file is written");
+        assert_ne!(staged, open, "and it is not the source");
+        assert_eq!(
+            std::fs::read(&open).expect("read"),
+            before,
+            "the document the reader has is untouched until the commit"
+        );
+    }
+
+    /// Committing is what makes the file the reader opened the edited one.
+    ///
+    /// Read back through a second parse rather than by comparing bytes: the
+    /// question is whether another reader of this file sees the turn, and a
+    /// byte comparison would pass for a file that merely differs.
+    #[test]
+    fn committing_a_staged_save_puts_the_edits_in_the_file_the_reader_opened() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("commit");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+
+        let before = Document::load(&open).expect("load source");
+        let was: Vec<i64> = ordered_pages(&before)
+            .iter()
+            .map(|id| effective_rotation(&before, *id).rem_euclid(360))
+            .collect();
+
+        let staged = stage_in_place(&open, &plan_of(&[1, 0, 0, 0])).expect("stage");
+        commit_in_place(&staged, &open).expect("commit");
+
+        assert!(!staged.exists(), "nothing of the staged file survives");
+        let after = Document::load(&open).expect("load the file the reader opened");
+        let now: Vec<i64> = ordered_pages(&after)
+            .iter()
+            .map(|id| effective_rotation(&after, *id).rem_euclid(360))
+            .collect();
+        assert_eq!(
+            now[0],
+            (was[0] + 90).rem_euclid(360),
+            "the page the reader turned is turned in their own file"
+        );
+        assert_eq!(&now[1..], &was[1..], "and nothing else moved");
+    }
+
+    /// A refusal on the way to a save in place leaves no trace beside the file.
+    ///
+    /// The page-count mismatch stands in for every guard `planned_bytes` states:
+    /// they all run before a byte is written. What is asserted is the *absence*
+    /// of the partial file, because a staged file nobody commits is a `.pdf`'s
+    /// worth of bytes sitting next to the reader's document with a name they
+    /// never chose.
+    #[test]
+    fn a_refused_save_in_place_stages_nothing() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("refused");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+        let before = std::fs::read(&open).expect("read");
+        let count = page_count(&open);
+
+        let why = stage_in_place(&open, &plan_of(&vec![0u8; count + 1])).expect_err("must refuse");
+        assert!(why.contains("changed since it was opened"), "{why}");
+        assert!(
+            !open.with_extension(PARTIAL).exists(),
+            "no partial file is left beside the document"
+        );
+        assert_eq!(
+            std::fs::read(&open).expect("read"),
+            before,
+            "and the document is untouched"
+        );
+
+        // The control: the same document with a plan that matches does stage,
+        // so the refusal is about the mismatch rather than about this fixture.
+        let staged = stage_in_place(&open, &plan_of(&vec![0u8; count])).expect("stage");
+        assert!(staged.exists());
     }
 
     #[test]

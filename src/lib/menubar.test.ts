@@ -215,6 +215,7 @@ describe("buildMenu", () => {
       "separator",
       "command",
       "command",
+      "command",
       "separator",
       "command",
     ]);

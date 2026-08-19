@@ -102,6 +102,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.open",
       "file.reload",
       SEPARATOR,
+      "file.save",
       "file.saveCopy",
       "file.extractPages",
       SEPARATOR,

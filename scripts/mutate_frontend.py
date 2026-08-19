@@ -664,6 +664,46 @@ MUTATIONS = [
         "rotate the page with the sign the reader asked for",
     ),
     Mutation(
+        # Offer Save on any open document. Pressing it on one nobody edited
+        # rewrites every object id in the file, which is a change to a document
+        # the reader did not change.
+        "commands: offer Save whenever a document is open",
+        "src/lib/appcommands.ts",
+        "      enabled: () => actions.viewer() !== null && actions.isDirty(),",
+        "      enabled: withDocument,",
+        "offer Save only once there is something to save",
+    ),
+    Mutation(
+        # Drop the document half of Save's guard and keep the dirty half. The
+        # command then survives the document being closed, because `dirty` is a
+        # variable and nothing clears it.
+        "commands: guard Save on the journal alone",
+        "src/lib/appcommands.ts",
+        "      enabled: () => actions.viewer() !== null && actions.isDirty(),",
+        "      enabled: () => actions.isDirty(),",
+        "withholds Save with no document, however dirty the model claims to be",
+    ),
+    Mutation(
+        # Let the chord through with nothing to save. The reader who presses
+        # Cmd-S by reflex on an untouched document gets the backend's refusal
+        # as an error message.
+        "commands: reach the save action on Cmd-S with nothing to save",
+        "src/lib/appcommands.ts",
+        "    if (actions.isDirty()) actions.saveDocument();",
+        "    actions.saveDocument();",
+        "does nothing on Cmd-S with nothing to save",
+    ),
+    Mutation(
+        # Route a save in place through the copy path. That path refuses the
+        # source outright, so Save could never write anything -- and the reader
+        # is told their document changed under them.
+        "edits: send a save in place to the copy command",
+        "src/lib/edits.ts",
+        '    await invoke<void>("save_document", { doc: this.doc, source });',
+        '    await invoke<void>("save_copy", { doc: this.doc, source });',
+        "names the open document and no destination when it saves in place",
+    ),
+    Mutation(
         # Offer Undo with an empty journal. The palette then teaches a reader
         # that the command does nothing.
         "commands: offer Undo whenever a document is open",

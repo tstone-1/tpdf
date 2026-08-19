@@ -2988,6 +2988,13 @@ async function appCommandChecks(
     // interesting thing about the command out of the check.
     removeMark: () => fired.push("removeMark"),
     hasOpenMark: () => viewer.markOpen >= 0,
+    // Recorded rather than driven, like the update pair: `file.save` is in
+    // `undriven` below, because a ⌘S here would write the corpus fixture that
+    // every other check in the run is reading. False so the command stays out
+    // of the palette, which is the only direction this harness can assert ---
+    // the other is `appcommands.test.ts`'s.
+    saveDocument: () => fired.push("saveDocument"),
+    isDirty: () => false,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
@@ -3638,6 +3645,14 @@ async function appCommandChecks(
     // `appcommands.test.ts` instead: that it reaches its own action and no
     // other, is withheld with no document, and ranks first for its own name.
     "file.reload": "it reopens the document, discarding the state later checks read",
+    // Driving it would write the working document over `testdata/<corpus>.pdf`
+    // --- the file this run and every other run of this harness is reading ---
+    // and then reopen it, which `file.reload` above already rules out on its
+    // own. Copying the fixture first would make the phase a statement about a
+    // document no other check has seen. Its wiring is covered by
+    // `appcommands.test.ts`, the write itself by `save.rs`'s tests, and the
+    // ordering the two halves need by the mutations named there.
+    "file.save": "it would write over the corpus fixture the run is reading",
     // Driving either would reach the network from a check that is otherwise
     // entirely offline, and the install one would replace the running binary
     // mid-run. Their wiring is covered by `appcommands.test.ts` and their

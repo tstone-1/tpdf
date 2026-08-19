@@ -302,6 +302,24 @@ export class Edits {
   }
 
   /**
+   * Writes the working document over the file it was opened from.
+   *
+   * **This object is spent when it returns.** The backend closes the document
+   * as part of the save --- every object identity in the file has changed, so
+   * the baseline the journal replays against is gone --- and the caller opens
+   * the path again. Nothing is adopted because there is no state to adopt: the
+   * next state comes from the reopened document, not from this one.
+   *
+   * A rejection carries `{ message, reopen }` rather than a string, and the
+   * second field is the one to act on: `reopen: false` means nothing was
+   * touched and the reader still has their document, `reopen: true` means it is
+   * closed whatever became of the file. See `lib.rs`'s `SaveFailure`.
+   */
+  async save(source: string): Promise<void> {
+    await invoke<void>("save_document", { doc: this.doc, source });
+  }
+
+  /**
    * Writes the working document to `path`.
    *
    * Does not clear {@link dirty}. The journal is still the journal --- a copy

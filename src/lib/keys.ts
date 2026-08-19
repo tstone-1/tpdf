@@ -180,9 +180,13 @@ export const BINDINGS = {
   // one place here where matching the convention beats any other argument.
   "edit.undo": { keys: ["z", "Z"], accel: true },
   "edit.redo": { keys: ["z", "Z"], accel: true, shift: true },
-  // ⇧⌘S is Save As everywhere, and this is Save As under a name that says what
-  // it does: the open document is not replaced, so calling it "Save" would
-  // promise an in-place write that tpdf deliberately does not do yet.
+  // ⌘S and ⇧⌘S, the pair every application on both platforms uses, and they
+  // mean here what they mean everywhere: the first replaces the open file, the
+  // second writes a second one. The name "Save a copy" rather than "Save as"
+  // is the one departure --- tpdf goes on reading the file it opened, so a
+  // reader who picked "Save as" and then kept editing would be editing the
+  // document they thought they had left behind.
+  "file.save": { keys: ["s"], accel: true },
   "file.saveCopy": { keys: ["s", "S"], accel: true, shift: true },
   "edit.selectAll": { keys: ["a"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },

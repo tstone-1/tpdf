@@ -462,6 +462,37 @@ MUTATIONS = [
         "saving_over_the_open_document_is_refused",
     ),
     Mutation(
+        # Put the save in place during the staging, which is the shape the write
+        # had before it was split. The document is then replaced while a worker
+        # still has it mapped --- which succeeds, and leaves that worker serving
+        # the file that used to be there.
+        "save: put a save in place during the staging rather than after the close",
+        "src/save.rs",
+        "    stage(source, &bytes)\n}",
+        "    write_atomically(source, &bytes).map(|()| source.with_extension(PARTIAL))\n}",
+        "staging_a_save_in_place_writes_beside_the_source_and_leaves_it_alone",
+    ),
+    Mutation(
+        # Report the commit as done without renaming anything. The reader is told
+        # their document was saved, the file on disk is the one they opened, and
+        # the staged copy of their work sits beside it under a name nothing reads.
+        "save: report a commit that never renamed anything",
+        "src/save.rs",
+        "    commit(staged, source)\n}",
+        "    let _ = (staged, source);\n    Ok(())\n}",
+        "committing_a_staged_save_puts_the_edits_in_the_file_the_reader_opened",
+    ),
+    Mutation(
+        # Stage before the guards run, which is the ordering the `reopen: false`
+        # half of `SaveFailure` rests on. Every refusal then leaves a partial
+        # file next to the reader's document under a name they never chose.
+        "save: stage a save in place before its guards have run",
+        "src/save.rs",
+        "    let bytes = planned_bytes(source, plan)?;\n    stage(source, &bytes)\n}",
+        "    let early = stage(source, b\"\")?;\n    let bytes = planned_bytes(source, plan)?;\n    let _ = early;\n    stage(source, &bytes)\n}",
+        "a_refused_save_in_place_stages_nothing",
+    ),
+    Mutation(
         # Compare the paths as strings. Two spellings of one file then read as
         # two files, and the guard above passes while the file is overwritten.
         "save: two spellings of one path are two files",

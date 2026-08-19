@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 339 entries
+The one thing this file does *not* carry in full is the trap list --- 340 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -528,7 +528,7 @@ Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) --- the
 capability list in `src-tauri/capabilities/default.json` names `dialog:allow-open` and, since
 2026-08-16, `dialog:allow-save`; that second one opens a panel and writes nothing, and what
-actually writes is `save_copy`, whose authority `docs/THREAT-MODEL.md` §T6.1 states; on Windows only,
+actually writes is `save_copy` and, since 2026-08-19, `save_document`, whose authority `docs/THREAT-MODEL.md` §T6.1 states; on Windows only,
 `tauri-plugin-single-instance` (Apache-2.0 OR MIT), which is what gives that platform the
 document handover macOS gets from `RunEvent::Opened`; and `tauri-plugin-updater` (MIT OR
 Apache-2.0), which is the largest single addition the tree has taken --- **48 crates,
@@ -944,8 +944,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 339 of them and the full text
-was 93% of this file --- an instruction budget spent on the 338 traps that are not
+titles. Only the titles are here, because there are 340 of them and the full text
+was 93% of this file --- an instruction budget spent on the 339 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1053,6 +1053,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A per-page invalidation counter is not the same as a generation
 - State keyed by a slot belongs to whatever moves into that slot (three honest answers, and the third is right for exactly one of the ten things on the list)
 - A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
+- A rename over a mapped file succeeds, and the mapping goes on serving the file that is gone (the reassuring outcome is the dangerous one, and the other platform is the one that says so)
 - A pool that replaces a dead worker with the same bytes faults again, forever
 - A diagnosis placed after a liveness check inherits that check's race
 - A valid in-place rewrite is served silently, and a length check cannot see it
