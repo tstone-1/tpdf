@@ -42,11 +42,40 @@
 //! the id-allocator property that would need proving first.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 
 use crate::docmodel::{Command, Doc, Mark, MarkId, MarkKind, PageId, Quad, Rect, Refusal};
+use crate::fingerprint::Fingerprint;
+
+/// One open document: the edit model, and what its file looked like at open.
+///
+/// One value rather than two maps, and that is the whole reason it exists. The
+/// fingerprint answers the same question `Doc`'s baseline does --- *what was
+/// this file when the reader started editing it* --- so a document that has one
+/// and not the other is a state nothing should be able to reach. Two maps keyed
+/// the same way can drift; a struct cannot.
+struct Open {
+    model: Doc,
+    /// What the file looked like at open, once the hash has been computed.
+    ///
+    /// **Behind a `OnceLock` because hashing is not free on the documents this
+    /// project exists for.** Measured on this machine: 452 ms cold and 156 ms
+    /// warm for the 337 MB scan fixture, against 3.8 ms for a 3 MB drawing and
+    /// 0.1 ms for a small text page. Priority 1 is a cold start under 300 ms, so
+    /// putting a full read in front of every open would spend more than the whole
+    /// budget on exactly the files a reader most needs opened promptly.
+    ///
+    /// So it is computed on a thread and the open returns without it. Everything
+    /// that needs it waits --- `Edits::plan`, which is only reached by a save or a
+    /// print, both of which are about to read the whole file anyway. The inner
+    /// `Option` is `None` when the fingerprint could not be taken at all; the
+    /// `OnceLock` being unset means it is still being computed, and those are
+    /// different states that must not be collapsed.
+    opened_as: Arc<OnceLock<Option<Fingerprint>>>,
+}
 
 /// One page as the frontend sees it.
 ///
@@ -205,7 +234,7 @@ pub struct EditState {
 /// state reply it already has, so a render does not come through here.
 #[derive(Default)]
 pub struct Edits {
-    docs: Mutex<HashMap<u32, Doc>>,
+    docs: Mutex<HashMap<u32, Open>>,
 }
 
 impl Edits {
@@ -215,11 +244,72 @@ impl Edits {
     /// render service reuses document numbers, so an id can legitimately name a
     /// different file than it did, and keeping the old journal would apply one
     /// document's edits to another.
-    pub fn open(&self, doc: u32, pages: u32) {
+    pub fn open(&self, doc: u32, pages: u32, source: Option<PathBuf>) {
+        let opened_as: Arc<OnceLock<Option<Fingerprint>>> = Arc::new(OnceLock::new());
+        match source {
+            Some(path) => {
+                let cell = Arc::clone(&opened_as);
+                // Detached on purpose: nothing joins it, and the only reader
+                // blocks on the cell rather than on the thread. A handle would
+                // have to be stored, kept alive across a close, and reasoned
+                // about when a document is dropped mid-hash.
+                std::thread::spawn(move || {
+                    let taken = match Fingerprint::of(&path) {
+                        Ok(print) => Some(print),
+                        Err(why) => {
+                            eprintln!(
+                                "[WARN] {} could not be fingerprinted, so Save is refused for it: {why}",
+                                path.display()
+                            );
+                            None
+                        }
+                    };
+                    // A failed `set` means the document was closed and reopened
+                    // under the same handle while this ran. The new open has its
+                    // own cell, so there is nothing to correct.
+                    let _ = cell.set(taken);
+                });
+            }
+            // No path to fingerprint: settle immediately rather than leaving a
+            // reader of the cell waiting for a thread that was never started.
+            None => {
+                let _ = opened_as.set(None);
+            }
+        }
+        self.docs.lock().expect("edits lock").insert(
+            doc,
+            Open {
+                model: Doc::open(pages),
+                opened_as,
+            },
+        );
+    }
+
+    /// What the file looked like when this document was opened.
+    ///
+    /// `None` for a document with no model, and `Some(None)` for one whose
+    /// fingerprint could not be taken --- which a save must treat as a refusal
+    /// rather than as permission. The two are different facts and collapsing
+    /// them is how "could not look" becomes "looked, and it was fine".
+    #[must_use]
+    pub fn opened_as(&self, doc: u32) -> Option<Option<Fingerprint>> {
+        let pending = self.pending(doc)?;
+        // Waited on with no lock held --- see `pending`.
+        Some(pending.wait().clone())
+    }
+
+    /// The cell holding a document's fingerprint, without waiting for it.
+    ///
+    /// Separated so that every caller waits **outside** the `docs` mutex. Waiting
+    /// inside it would hold the lock for as long as the hash takes --- 452 ms on
+    /// the 337 MB fixture --- and block every other edit command on the file
+    /// being read, which is the shape of a hang rather than of a slow save.
+    fn pending(&self, doc: u32) -> Option<Arc<OnceLock<Option<Fingerprint>>>> {
         self.docs
             .lock()
             .expect("edits lock")
-            .insert(doc, Doc::open(pages));
+            .get(&doc)
+            .map(|open| Arc::clone(&open.opened_as))
     }
 
     /// Drops a document's model. Silent if there is none.
@@ -244,7 +334,8 @@ impl Edits {
     /// The handle names no open document.
     pub fn state(&self, doc: u32) -> Result<EditState, String> {
         let docs = self.docs.lock().expect("edits lock");
-        let model = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &open.model;
         Ok(snapshot(model))
     }
 
@@ -382,7 +473,7 @@ impl Edits {
             .collect();
 
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model
             .annotate(
                 Mark {
@@ -429,7 +520,7 @@ impl Edits {
     /// already been removed.
     pub fn renote(&self, doc: u32, mark: u64, note: String) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model
             .renote(MarkId::from_raw(mark), note)
             .map_err(describe)?;
@@ -439,7 +530,7 @@ impl Edits {
     /// Applies a command and returns the state it produced.
     fn command(&self, doc: u32, cmd: Command) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model.apply(cmd).map_err(describe)?;
         Ok(snapshot(model))
     }
@@ -456,7 +547,7 @@ impl Edits {
     /// The handle names no open document.
     pub fn undo(&self, doc: u32) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model.undo();
         Ok(snapshot(model))
     }
@@ -468,7 +559,7 @@ impl Edits {
     /// The handle names no open document.
     pub fn redo(&self, doc: u32) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model.redo();
         Ok(snapshot(model))
     }
@@ -485,11 +576,18 @@ impl Edits {
     ///
     /// The handle names no open document.
     pub fn plan(&self, doc: u32) -> Result<Plan, String> {
+        // Resolved before the lock is taken. Hashing a large document takes
+        // hundreds of milliseconds, and holding `docs` across that would block
+        // every other edit command on the file being read --- see `Open::opened_as`
+        // for the measurement and for why it is not on the open path either.
+        let opened_as = self.opened_as(doc).ok_or_else(|| unknown(doc))?;
         let docs = self.docs.lock().expect("edits lock");
-        let model = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &open.model;
         let pages = snapshot(model).pages;
         Ok(Plan {
             baseline: model.baseline(),
+            opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
             // struct literal is evaluation order, so this reads the borrow while
             // there is still one to read.
@@ -525,8 +623,14 @@ impl Edits {
     /// rather than left to `write_copy` --- it refuses an empty plan too, but a
     /// message about a plan is not a message about what the reader typed.
     pub fn plan_subset(&self, doc: u32, slots: &[u32]) -> Result<Plan, String> {
+        // Resolved before the lock is taken. Hashing a large document takes
+        // hundreds of milliseconds, and holding `docs` across that would block
+        // every other edit command on the file being read --- see `Open::opened_as`
+        // for the measurement and for why it is not on the open path either.
+        let opened_as = self.opened_as(doc).ok_or_else(|| unknown(doc))?;
         let docs = self.docs.lock().expect("edits lock");
-        let model = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &open.model;
         let all = snapshot(model).pages;
 
         if slots.is_empty() {
@@ -556,6 +660,7 @@ impl Edits {
         let marks = planned_marks(model, &pages);
         Ok(Plan {
             baseline: model.baseline(),
+            opened_as: opened_as.clone(),
             pages,
             marks,
         })
@@ -602,6 +707,15 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
 pub struct Plan {
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
+    /// What that file looked like, so a writer can tell it has not been replaced.
+    ///
+    /// Beside `baseline` because it is the same kind of fact and has the same
+    /// lifetime: both describe the file the plan was made against, and a plan
+    /// carrying one without the other could check the shape of a document while
+    /// missing that every byte of it changed. `None` when the fingerprint could
+    /// not be taken --- see `fingerprint.rs` on why that is refused for a save in
+    /// place and tolerated for a copy.
+    pub opened_as: Option<Fingerprint>,
     /// The kept pages, in reading order.
     pub pages: Vec<PageView>,
     /// The marks to write, on the pages that are kept.
@@ -727,12 +841,52 @@ fn snapshot(model: &Doc) -> EditState {
 
 #[cfg(test)]
 mod tests {
+
+    /// A plan waits for the fingerprint the open started, rather than racing it.
+    ///
+    /// The open deliberately returns before the hash is done --- it costs 452 ms
+    /// on the 337 MB fixture and the cold-start budget is 300 ms --- so the whole
+    /// design rests on the wait being somewhere. If `plan` did not wait, a save
+    /// issued promptly after an open would see no fingerprint and refuse with
+    /// "could not record", which reads as a broken file rather than as a race.
+    #[test]
+    fn a_plan_carries_the_fingerprint_the_open_started() {
+        let dir = std::env::temp_dir().join(format!("tpdf-edits-fp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let file = dir.join("source.bin");
+        std::fs::write(&file, b"some bytes").expect("write");
+
+        let edits = Edits::default();
+        edits.open(1, 2, Some(file.clone()));
+        let plan = edits.plan(1).expect("plan");
+        assert!(
+            plan.opened_as.is_some(),
+            "the plan must carry what the file was, not race the thread that read it"
+        );
+        assert_eq!(plan.opened_as.expect("some").len, 10);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A document opened with no path settles immediately rather than hanging.
+    ///
+    /// The control for the test above, and it is the one that would fail as a
+    /// **hang** rather than as a red test: nothing starts a thread here, so a cell
+    /// nobody sets would leave every later `plan` waiting for ever. `docs/TRAPS.md`
+    /// has that shape twice --- a check whose failure mode is a wait cannot fail.
+    #[test]
+    fn a_document_with_no_path_plans_with_no_fingerprint_and_does_not_wait() {
+        let edits = Edits::default();
+        edits.open(1, 2, None);
+        let plan = edits.plan(1).expect("plan");
+        assert!(plan.opened_as.is_none());
+    }
     use super::*;
 
     /// A three-page document with a model, and its handle.
     fn opened() -> Edits {
         let edits = Edits::default();
-        edits.open(7, 3);
+        edits.open(7, 3, None);
         edits
     }
 
@@ -1011,7 +1165,7 @@ mod tests {
     #[test]
     fn the_last_page_cannot_be_deleted() {
         let edits = Edits::default();
-        edits.open(3, 1);
+        edits.open(3, 1, None);
         let only = edits.state(3).expect("open").pages[0].id;
         let why = edits.delete(3, only).expect_err("must refuse");
         assert_eq!(why, "a document must keep at least one page");
@@ -1244,7 +1398,7 @@ mod tests {
         edits.rotate(7, first, 2).expect("rotate");
         // The render service reuses document numbers, so this is a real sequence
         // and not a contrived one.
-        edits.open(7, 5);
+        edits.open(7, 5, None);
         let state = edits.state(7).expect("reopened");
         assert_eq!(state.pages.len(), 5, "the new document's page count");
         assert!(state.pages.iter().all(|page| page.turns == 0));
@@ -1255,7 +1409,7 @@ mod tests {
     #[test]
     fn two_documents_keep_their_own_journals() {
         let edits = opened();
-        edits.open(8, 2);
+        edits.open(8, 2, None);
         let a = edits.state(7).expect("a").pages[0].id;
         edits.rotate(7, a, 1).expect("rotate a");
 

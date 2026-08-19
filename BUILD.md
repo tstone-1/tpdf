@@ -1666,9 +1666,24 @@ does not have it cannot run the full sweep at all; `--only` over the other thirt
 honest substitute, and the sweep says which corpora it is missing rather than skipping them
 quietly.
 
-Measured here on 2026-08-19: thirteen corpora, **276 check names each**, diffed as sets by
-the sweep rather than inferred from the totals agreeing, and **no failing check on any of
-them**. 629 s in total, of which `vector-multi` is 341 s and `vector-heavy` 145 s; every
+**`vector-multi` is timing-variable on this machine, and a single red run there is not a
+finding.** Measured 2026-08-19 across four runs of the same corpus: **351 s, 496 s, 386 s**
+on one build and **384 s** on another --- a 41% spread on identical code. Two of those runs
+failed, and they failed **different checks** (`the page already rendered is not rendered
+twice`, reporting 11 borrows against 4 draws; and `covers the first screen`, timing out at
+sharp=0.0%). Both are checks whose observable is a race between the thumbnail strip and the
+viewer, on the only fixture where a thumbnail is slow enough for that race to be real ---
+which is precisely what the corpus is *for*.
+
+So: **re-run it before treating a red vector-multi as a regression, and check whether the
+same check fails twice.** Two different checks failing is variance; one check failing
+repeatedly is a defect. The control that settled it was a `git worktree` at `HEAD` built and
+run against the same fixture --- cheap, and it leaves the working tree untouched, which
+`git stash` does not.
+
+Measured here on 2026-08-19: thirteen corpora, **276 check names each** (277 once
+`app.about` became a driven probe), diffed as sets by the sweep rather than inferred from
+the totals agreeing, and **no failing check on any of them**. 629 s in total, of which `vector-multi` is 341 s and `vector-heavy` 145 s; every
 other corpus is under 40 s. The ran/skipped splits are the sweep's own output and differ
 from the macOS table above only by the checks added since it was taken.
 
@@ -2516,6 +2531,14 @@ starts at 0 and increments within the month.
    go red reports SURVIVED and reads as a gap in the tests. `--list` prints the pairs without
    running anything.
 
+   **A module absent from `FILTERS` is only half the failure, and the loud half.** The
+   guard refuses a run whose mutation names a test it cannot see, which is what caught that
+   list being forgotten five times. It cannot catch the sixth shape: a module in neither
+   `FILTERS` **nor** the mutation table. `fingerprint.rs` was that on 2026-08-19 --- nothing
+   refused to start, because nothing was aimed at it, and its central comparison turned out
+   to be provable by nothing. When a module lands, add it to `FILTERS` *and* write a
+   mutation, and do not wait for the guard to ask.
+
    **All three run on Windows as of 2026-08-19. Two did as of 2026-07-30 --- 22/22 and
    75/75 --- and neither did before that.** Read the first sentence as dated too: it is the
    second one that expired without anything going red, because `mutate_rust.py`'s table grew
@@ -2812,7 +2835,13 @@ starts at 0 and increments within the month.
     # With the PREVIOUS release installed in /Applications, launched normally:
     #   1. the toolbar offers "Update to <new version>" within a second or two
     #   2. clicking it shows progress, then "Update ready — restart to finish"
-    #   3. quit, reopen, and Help/About or the palette reports the new version
+    #   3. quit, reopen, and "About tpdf" -- palette or the tpdf menu -- reports
+    #      the new version
+    #
+    # That third line named a Help/About that did not exist until 2026-08-19, so
+    # this step could never have been carried out. See the trap; the short of it
+    # is that a checklist has no failing case, and one nobody has executed reads
+    # exactly like one that keeps passing.
     curl -s https://github.com/tstone-1/tpdf/releases/latest/download/latest.json | head -20
     ```
 

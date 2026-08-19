@@ -2963,6 +2963,7 @@ async function appCommandChecks(
     // in `undriven` above. A recorder rather than a throw, so that the day one
     // of them *is* driven the failure is a missing entry in `fired` rather than
     // an exception from a helper nobody was looking at.
+    about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
     applyUpdate: () => fired.push("applyUpdate"),
     // False both, so the install command's `enabled` guard is exercised in the
@@ -3231,6 +3232,13 @@ async function appCommandChecks(
   let wentTo = -1;
   const probes: Probe[] = [
     { id: "file.open", ...shell("openDocument"), read: () => fired.join(",") },
+    // Driven rather than excused. Its two neighbours in the tpdf menu cannot be
+    // -- one reaches the network, the other replaces the running binary -- and
+    // this one asks nothing and replaces nothing, so an exclusion would have
+    // been a habit rather than a reason. The comment beside NEEDS_NO_DOCUMENT
+    // said "the sweep drives it" for a day while nothing did, which is the same
+    // empty promise `update.ts`'s own comment was making about this command.
+    { id: "app.about", ...shell("about"), read: () => fired.join(",") },
     {
       id: "file.print",
       ...shell("printDocument"),
@@ -3875,7 +3883,17 @@ async function appCommandChecks(
   // how a reader gets a document at all, and checking for updates has nothing
   // to do with documents. Installing one is NOT here: it is guarded on a check
   // having found something, so it belongs above.
-  const NEEDS_NO_DOCUMENT = ["file.open", "app.checkForUpdates"];
+  // `app.about` belongs here rather than in the skip table above: it asks the
+  // network nothing and replaces no binary, so unlike its two neighbours it can
+  // actually be driven, and the sweep drives it.
+  //
+  // **In the registry's own ranking order, not alphabetical and not the order
+  // they were written.** The comparison below is an ordered `join()` rather than
+  // a set difference, so a correct list in the wrong order is red --- which is
+  // what `app.about` did on the day it was added, reporting all three commands
+  // present and the check failing anyway. Worth reading the message rather than
+  // the verdict there: the two lists differ by a swap, not by a member.
+  const NEEDS_NO_DOCUMENT = ["file.open", "app.about", "app.checkForUpdates"];
 
   viewer.clearSelection();
   // And the mark the removal probe made, for the same reason the selection is

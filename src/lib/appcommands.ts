@@ -83,6 +83,8 @@ export interface AppActions {
   showTab(tab: Tab): void;
   /** Invert the page colours, and remember it. */
   toggleInvert(): void;
+  /** Say which version this is, without asking the network anything. */
+  about(): void;
   /** Ask the update endpoint whether there is a newer tpdf. */
   checkForUpdates(): void;
   /** Download and apply the update the last check found. */
@@ -233,6 +235,20 @@ export function registerAppCommands(
       title: "Reload from disk",
       enabled: withDocument,
       run: () => actions.reloadDocument(),
+    },
+    {
+      // Always enabled and asking nothing of the network, which is the whole
+      // difference from the command below it. "Which version am I running" is a
+      // question a reader has *because* something is wrong, and an answer that
+      // needs a working endpoint is no answer in exactly that case.
+      //
+      // It exists because nothing in the application answered it at all until
+      // 2026-08-19, and the cost was a bug report: a reader on `26.8.4` hit the
+      // Windows defect where an app with no console could open no document, and
+      // could not tell whether the release fixing it was the one they had.
+      id: "app.about",
+      title: "About tpdf",
+      run: () => actions.about(),
     },
     {
       // No binding, same reasoning as the two above: a command nobody presses

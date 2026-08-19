@@ -17,6 +17,81 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.6] - Unreleased
+
+### Which version am I running
+
+- **About tpdf** says so, from the palette and from the tpdf menu. It asks the
+  network nothing, which is the point: the reason to want the number is usually
+  that something is wrong, and an answer that needs a working connection is no
+  answer exactly then.
+
+- The version is also on the empty window, under "Open a PDF, or drop one here".
+
+- Until now nothing in the application reported a version at all. That is how a
+  reader on 26.8.4 came to file a bug that 26.8.5 had already fixed --- there was
+  no way to tell which of the two was running.
+
+### Recent documents on the taskbar
+
+- Right-clicking tpdf's taskbar icon now lists the documents you opened. Every
+  way of opening one counts: dropping a file on the window, double-clicking in
+  Explorer, a path on the command line, and the Open panel.
+
+- It showed nothing before, and the reason was not a broken setting: nothing had
+  ever told Windows a document was opened. tpdf's own recent list --- the one in
+  the command palette --- is a separate thing that the operating system never
+  sees, so having one never meant having the other.
+
+- **Needs an installed tpdf.** The Windows jump list hangs off the Start Menu
+  shortcut the installer writes, so a copy run straight out of a build directory
+  will still show nothing.
+
+- Not on macOS yet. The equivalent is the Dock icon's Recent Documents, and it
+  has to be done on the main thread, which the open path does not currently
+  guarantee.
+
+### tpdf will not save over a file that changed while you had it open
+
+- If another program writes to the file you are reading --- a colleague replacing
+  it, a sync client landing a newer copy, a tool re-exporting over the top ---
+  saving is refused, and your edits stay exactly where they are. Save them under
+  another name, or open the file again to start from what is on disk now.
+
+- Until now the only thing checked was whether the **number of pages** had
+  changed. Anything that kept the page count went through: your edits were
+  written onto a document they were never made on, and the result was a file that
+  opened perfectly well and was wrong.
+
+- **Save a copy** is checked too, for the same reason --- the difference is only
+  that it cannot destroy the original.
+
+- What is checked is the file's length, its modification time, and a hash of
+  every byte, recorded when you opened it and compared again the moment before
+  anything is written.
+
+- If tpdf could not record what the file looked like when it opened, it refuses
+  to save over it and says so. **Save a copy** still works in that case.
+
+- The message you get says what is actually true at the moment you get it. There
+  are two: one before anything is touched, which says your edits are still here
+  and to save them under another name, and one from the moment just before the
+  file is replaced, which says the document has been closed. Until now both said
+  the first thing, so a refusal at the second point told you to save edits that
+  were already gone --- in the same sentence as telling you the document was
+  closed.
+
+- A file whose timestamp moved but whose contents did not still saves. A backup
+  tool, a sync client or a `touch` all do that, and the file in front of you is
+  byte for byte the one you opened --- so being sent away from your own save over
+  it would be a false alarm at the worst possible moment.
+
+### Fixed: "Check for updates" appeared to do nothing when you were up to date
+
+- It reported a newer version when there was one and said nothing at all when
+  there was not, which is indistinguishable from a command that did not run. It
+  now answers in every case, and names the running version while it does.
+
 ## [26.8.5] - 2026-08-19
 
 ### Draw a box on a page

@@ -52,7 +52,7 @@
   import { runOpenCheckIfRequested } from "./lib/opencheck";
   import { Serial } from "./lib/serial";
   import { DegradedLabel } from "./lib/degraded";
-  import { Updates, updateLabel, type UpdateState } from "./lib/update";
+  import { Updates, updateLabel, updateNotice, type UpdateState } from "./lib/update";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
   import { describeFit, percentOf } from "./lib/zoom";
 
@@ -172,7 +172,14 @@
     toggleSidebar: () => toggleSidebar(),
     showTab: (tab) => showTab(tab),
     toggleInvert: () => toggleInvert(),
-    checkForUpdates: () => void updates.check(),
+    about: () => {
+      notice = `tpdf ${appVersion}`;
+    },
+    // Wrapped rather than passed straight through, because a check that lands on
+    // `current` shows nothing in the header by design -- so before this, pressing
+    // "Check for updates" and being up to date was indistinguishable from a
+    // command that did not run.
+    checkForUpdates: () => void checkAndSay(),
     applyUpdate: () => void updates.install(),
     updateAvailable: () => updates.state.kind === "available",
     updateReady: () => updates.state.kind === "ready",
@@ -576,6 +583,25 @@
    * §T9.
    */
   let updateState = $state<UpdateState>({ kind: "idle" });
+
+  /**
+   * The running version, read once from the backend at boot.
+   *
+   * Empty until that lands, which is why every reader of it below tolerates the
+   * empty string rather than asserting. It is one `invoke` during setup and
+   * nothing waits on it.
+   */
+  let appVersion = $state("");
+
+  /**
+   * The answer to a question the reader asked, or null.
+   *
+   * Distinct from `status`, which reports what the document is doing and is
+   * present the whole time a document is open. This is set only by a command --
+   * "About tpdf", "Check for updates" -- and cleared when a document opens, so
+   * it is never something that arrived on its own. See `updateNotice`.
+   */
+  let notice = $state<string | null>(null);
   const updates = new Updates(
     {
       check: async () => {
@@ -1176,6 +1202,11 @@
       // documents opened while it is already running. And the listener is
       // registered *before* the queue is drained, because a path delivered
       // between the two would be emitted to nobody.
+      // Read once, and nothing waits on it: every reader tolerates the empty
+      // string it starts as. It is baked into the binary at compile time from
+      // `CARGO_PKG_VERSION`, so this call can fail in no interesting way.
+      appVersion = await invoke<string>("app_version");
+
       const openEvent = await invoke<string>("launch_open_event");
       await listen<string>(openEvent, (event) => void openPath(event.payload));
       const handed = await invoke<string[]>("take_launch_paths");
@@ -1263,6 +1294,18 @@
    * double-click waits for the first open, which is why the body no longer waits
    * on `firstPaint()` --- see the outline note at the end of it.
    */
+  /**
+   * Checks, then says what was found -- including "nothing", which is the point.
+   *
+   * The launch check deliberately does not come through here: an answer nobody
+   * asked for is exactly the element-arriving-on-its-own that the header's own
+   * silence is designed to avoid.
+   */
+  async function checkAndSay(): Promise<void> {
+    notice = updateNotice({ kind: "checking" }, appVersion);
+    notice = updateNotice(await updates.check(), appVersion);
+  }
+
   function openPath(
     path: string,
     resuming = false,
@@ -1289,6 +1332,7 @@
     override: Place | null = null,
   ) {
     error = null;
+    notice = null;
     opening = true;
     /**
      * Whether this body has already torn the outgoing document down.
@@ -1756,6 +1800,9 @@
       at. `updateLabel` returns null for idle, checking, current and failed, so
       on an ordinary launch nothing is added to the row at all.
     -->
+    {#if notice}
+      <span class="notice" data-testid="notice">{notice}</span>
+    {/if}
     {#if updateLabel(updateState)}
       <button
         class="update"
@@ -1843,7 +1890,17 @@
       <div class="surface" bind:this={surface}></div>
     </div>
   {:else}
-    <div class="empty"><p>Open a PDF, or drop one here.</p></div>
+    <div class="empty">
+      <p>Open a PDF, or drop one here.</p>
+      <!--
+        The version, where there is room for it and nothing to cover. A reader
+        asking "which one am I on" is usually asking because something is wrong,
+        and an empty window is the state they are most often in when they ask.
+        The palette's "About tpdf" answers the same question with a document
+        open; this costs no chrome at all.
+      -->
+      {#if appVersion}<p class="version" data-testid="version">tpdf {appVersion}</p>{/if}
+    </div>
   {/if}
 </main>
 

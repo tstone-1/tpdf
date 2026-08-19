@@ -1020,7 +1020,7 @@ Nothing is wired to the viewer yet. The seam for that is `Page::source`: a viewp
 indexes `Working::order()`, which yields a `PageId`, whose `source` is the baseline page to
 ask a worker for, with `extra_turns` composed on top of the page's own `/Rotate`.
 
-### External modification
+### External modification --- built 2026-08-19
 
 The first draft keyed recovery on a file hash and had no story for live races. If another
 process replaces the file while tpdf holds unsaved commands, saving would overwrite it or
@@ -1028,6 +1028,152 @@ replay commands against a different object graph. Required: retain file identity
 size, mtime and baseline digest; recheck immediately before save; write to a temporary
 file and atomically replace; on a changed baseline, require reload, save-as, or explicit
 reconciliation.
+
+**Until this landed there was exactly one guard: the page count.** `save.rs` compared the
+plan's baseline against the file it was about to rewrite, which catches a file that gained
+or lost pages and nothing else. Every modification that keeps the count was invisible ---
+a colleague re-exporting the same report over the top, a sync client landing a newer copy,
+a signing tool rewriting in place. The reader's edits then replayed onto a graph they were
+never made against, and because the write is atomic the result was a confidently wrong
+file rather than a visibly broken one. That went from theoretical to live in `26.8.5`,
+which shipped Save in place; before it the worst case was a bad copy beside an intact
+original.
+
+`fingerprint.rs` holds what the file was at open --- length, modification time, and a
+SHA-256 of every byte, streamed in 64 KiB chunks so the 550 MB incremental fixture is
+never held in memory. It rides on `Plan` beside `baseline`, because it is the same kind of
+fact with the same lifetime, and a plan carrying one without the other could check a
+document's shape while missing that every byte of it changed.
+
+**The hash is not on the open path, and that is a measurement rather than caution.** Taken
+synchronously at open it costs, on this machine: **452 ms cold and 156 ms warm for the
+337 MB scan fixture**, 3.8 ms for a 3 MB drawing, 0.1 ms for a small text page. Priority 1
+is a cold start under 300 ms, so the sync version spent more than the entire budget on
+exactly the documents a reader most needs opened promptly --- and it spent it invisibly,
+since nothing about a slow open looks like a new check. So `Edits::open` takes the *path*,
+starts a thread, and returns; the cell is a `OnceLock` and everything that needs the answer
+waits on it. The only waiter is `Edits::plan`, reached by a save or a print, both of which
+are about to read the whole file anyway.
+
+Two things that had to be got right rather than assumed. The wait happens **outside** the
+`docs` mutex, or a save on a large file would hold the lock for half a second and block
+every other edit command --- a hang rather than a slow save. And a document opened with no
+path **settles the cell immediately** rather than leaving it unset, because a cell nobody
+sets makes every later `plan` wait for ever; that control is a test, and it is the one whose
+failure mode would have been a hang rather than a red line.
+
+Three checks, and they are deliberately not the same check:
+
+- **`planned_bytes`, before the parse.** Full comparison, digest included. Shared by
+  `write_copy` and `stage_in_place`, so a copy is refused for the same reason a save is:
+  the edits were planned against the old graph either way. Nothing has been disturbed at
+  this point, so the refusal costs one read and the reader keeps every command.
+- **`stage_in_place`, additionally, on a missing fingerprint.** Fail closed. "Could not
+  look" and "looked, and it was fine" are different facts, and collapsing them writes over
+  a file there is no evidence about. `write_copy` deliberately tolerates it, which is what
+  keeps the fallback the refusal names reachable --- a refusal pointing at a door that is
+  also locked is a dead end wearing a helpful sentence.
+- **Before the rename, length and mtime only.** The window the staging split opens is real:
+  staging reads and writes the whole document and closing it is a round trip to the worker,
+  so the check made before all that describes a moment that has passed. A third full read
+  to narrow a window measured in milliseconds is the wrong trade. It compares against what
+  **staging** read, handed back in `Staged { path, verified }`, not against what the reader
+  opened --- see below.
+
+**An mtime is a hint, and the deep check does not consult it.** That was not the first
+design and the correction is worth the paragraph, because the first design was the obvious
+one: `agrees_with` called `agrees_shallowly` and then compared digests. Two defects, one
+visible only by mutation.
+
+The digest comparison was **proved by nothing** --- deleting it left all seven of the
+module's tests green, including the two named for it, because a rewrite moves the mtime and
+the shallow refusal says *"it was modified"*, which the assertions could not tell from the
+digest's message. And it produced a **false refusal**: `cp -p` preserves an mtime across a
+rewrite, while a backup tool, a sync client or a bare `touch` moves one without changing a
+byte, so a file byte-for-byte identical to what the reader opened was refused.
+
+So the deep check compares length and then the digest, and the timestamp has no vote where
+the bytes are in hand. The shallow check keeps the mtime because it has nothing better. The
+mutation is the evidence: *stop comparing the digest* was 0 red before and 2 red after, with
+no new assertion written for it.
+
+The same reasoning is why the pre-rename look compares against staging's fingerprint rather
+than the open's. Comparing against the open would refuse a `touch` the deep check had just
+examined and forgiven --- and would do it **after the document is closed**, which is the
+worst moment there is. `agrees_with` therefore returns what it read, and `Staged::verified`
+is a `Fingerprint` rather than an `Option<Fingerprint>`: an `Option` there would give that
+last look a `None` arm, and the only thing a `None` arm can mean is *skip the check*.
+
+Both guards are proved by mutation rather than by their own tests: `fingerprint.rs`'s unit
+tests show the comparison works and say nothing about whether anything asks it, so the two
+mutations in `mutate_rust.py` remove the **call** and the **fail-closed branch**. Each
+reddens the test named for it.
+
+The third check moved out of `save_document` and into `save::verify_before_commit` on the
+same day, for the same reason: it was written inline in a Tauri command, where no test can
+reach it --- and `lib.rs`'s comment cited that very rule about the guard three lines above
+it while this one sat below. Two tests and two mutations now cover the refusal and the
+staged-file cleanup.
+
+**Its call site is still not covered, and that is a different claim from the guard being
+covered.** Deleting the `verify_before_commit(...)` line from `save_document` reddens
+nothing: the tests call the function directly, because the command around it needs a Tauri
+runtime. That is *A guard is only covered when a mutation removes the CALL*, and the honest
+statement is that the guard cannot be wrong while nothing proves it is still wired. The
+other two guards do not have this gap --- both are reached through `stage_in_place`, which
+tests drive.
+
+`fingerprint::` itself carries five more, and the module needed them: no mutation named one
+of its tests, so nothing refused to start --- a module whose tests are invisible to the
+harness *and* unaimed-at is silent in both directions, where the five earlier instances of
+this list being forgotten were all loud.
+
+**What is not done, and it is the expensive half.** §5 asks for "reload, save-as, or
+explicit reconciliation" and what exists is a *refusal that names two of the three in
+words*. There is no Reload button on that message, no side-by-side, and no rebase of the
+journal onto the changed file --- which is the same rebasing this section already records
+as absent for an ordinary save. A reader whose file changed keeps their edits and has to
+act on them by hand. That is a floor rather than the feature: it makes silent corruption
+impossible, and leaves recovery manual.
+
+**Also not done: this is a change detector, not a security boundary.** SHA-256 is used
+because it was already in the dependency graph --- declaring it added no package --- and
+not because a crafted collision is in the threat model. An adversary who can write to the
+reader's file at the moment they save has better things to do.
+
+---
+
+### Recent documents in the shell --- built 2026-08-19 (Windows)
+
+Reported by a reader: right-clicking tpdf's taskbar icon showed nothing. The cause was not
+a broken registration --- `tauri.conf.json` declares the `pdf` association and the installer
+writes it --- but that **nothing had ever called `SHAddToRecentDocs`**. tpdf's own recent
+list, `src/lib/recents.ts`, is a separate thing the OS never sees, and having one had never
+implied having the other.
+
+`recentdocs.rs` is one call, made once per successful open, after the document exists.
+Deliberately not in the dialog handler: `IFileOpenDialog` would file it by itself, and four
+of the five routes in --- a drop on the window, a double-click in Explorer, a path in argv,
+the single-instance forward --- do not go through a dialog.
+
+**The conversion is a seam, and it had to be.** The FFI call returns nothing and what it did
+is a Jump List a person looks at, so `shell_path` is a separate function four tests read the
+output of: absolute, NUL-terminated UTF-16, no `\\?\` verbatim prefix, and `None` for a file
+that cannot be resolved. The first draft tested a *copy* of that logic living in the test
+module, which is the writer agreeing with its own reader --- every assertion passed and no
+change to the real code could have moved one.
+
+**And it is verified from outside the process**, which unit tests structurally cannot do:
+`SHAddToRecentDocs` writes `%APPDATA%\Microsoft\Windows\Recent\<name>.lnk`, and a sweep
+run produced one per corpus it opened, each resolving to the real fixture. The module docs
+carry the two commands.
+
+**macOS is not built, and the reason is a constraint rather than a schedule.** The
+counterpart is `NSDocumentController`'s `noteNewRecentDocumentURL:`, which fills the Dock
+icon's Recent Documents and *File ▸ Open Recent*. It is AppKit and must run on the main
+thread, which `open_document` --- an async command --- does not guarantee; it needs a
+`run_on_main_thread` hop. Calling AppKit off the main thread is undefined rather than
+merely wrong, and this machine cannot run it once to find out.
 
 ---
 

@@ -299,7 +299,7 @@ mod tests {
     /// A four-page document with a model, and its handle.
     fn modelled() -> crate::edits::Edits {
         let edits = crate::edits::Edits::default();
-        edits.open(1, 4);
+        edits.open(1, 4, None);
         edits
     }
 

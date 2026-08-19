@@ -23,6 +23,7 @@ import {
   percentOfDownload,
   Updates,
   updateLabel,
+  updateNotice,
   type DownloadEvent,
   type UpdateHandle,
   type UpdaterApi,
@@ -227,5 +228,50 @@ describe("updateLabel", () => {
       "Downloading update",
     );
     expect(updateLabel({ kind: "downloading", version: "1", percent: 40 })).toContain("40%");
+  });
+});
+
+describe("updateNotice", () => {
+  // The state the whole function exists for. `updateLabel` returns null here by
+  // design, so before this a reader who pressed "Check for updates" and was
+  // already up to date saw nothing at all -- indistinguishable from a command
+  // that did not run.
+  it("says the running version is the latest, rather than saying nothing", () => {
+    const said = updateNotice({ kind: "current" }, "26.8.5");
+    expect(said).toContain("26.8.5");
+    expect(said).toContain("latest");
+  });
+
+  it("names the running version even when the check could not be made", () => {
+    // Two questions, one press, and only one of them failed. A reader offline is
+    // exactly the reader who needs to know which version they are on.
+    const said = updateNotice({ kind: "failed", message: "no network" }, "26.8.5");
+    expect(said).toContain("26.8.5");
+    expect(said).toContain("no network");
+  });
+
+  it("names both versions when there is an update, so they can be told apart", () => {
+    const said = updateNotice({ kind: "available", version: "26.9.0" }, "26.8.5");
+    expect(said).toContain("26.8.5");
+    expect(said).toContain("26.9.0");
+  });
+
+  // Every state answers. A `null` anywhere here would put back the silence this
+  // replaced, and a switch that grew an eighth state would fail to compile
+  // rather than fall through -- but nothing checks that the ANSWER is useful,
+  // which is what this does.
+  it("answers in every state, and never with an empty string", () => {
+    const states = [
+      { kind: "idle" },
+      { kind: "checking" },
+      { kind: "current" },
+      { kind: "available", version: "1" },
+      { kind: "downloading", version: "1", percent: null },
+      { kind: "ready", version: "1" },
+      { kind: "failed", message: "x" },
+    ] as const;
+    for (const state of states) {
+      expect(updateNotice(state, "26.8.5").length).toBeGreaterThan(0);
+    }
   });
 });

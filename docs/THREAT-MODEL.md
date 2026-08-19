@@ -817,13 +817,39 @@ rather than a second file appearing beside it. The bound is the same and no stro
 `default-src 'self'` with no `'unsafe-inline'`, residual risk 7, and the fact that a caller
 who can reach this can already reach `open_document` and the print path.
 
-**One check narrows what a wrong path can do, and it is a correctness check rather than a
-security one.** The page count of the file named has to match the plan's baseline, so
-pointing this at an unrelated document is refused unless that document happens to have the
-same number of pages --- at which point the reader's edits are applied to it and written.
-That is not a guarantee and is not offered as one; it is the same absence §T6.1 records, and
-if the source path is ever checked against the open document, this is the command where it
-matters most.
+**Two checks narrow what a wrong path can do, and both are correctness checks rather than
+security ones.** The page count of the file named has to match the plan's baseline, and
+since 2026-08-19 its **length, modification time and SHA-256 have to match what was recorded
+when the document was opened** --- `fingerprint.rs`, and `docs/PLAN.md` §5. Pointing this at
+an unrelated document is now refused unless that document is byte-identical to the one the
+reader opened, which is a considerably narrower gap than "happens to have the same number of
+pages".
+
+**That is a real narrowing and it is still not a guarantee, and the difference is worth
+being exact about.** It is not a check that the path names the open document; it is a check
+that the file at that path is unchanged since *some* document was opened, and the two
+coincide only because the frontend passes the path it opened. A caller free to choose the
+path could pass a *different* file it had first arranged to be fingerprinted. So the absence
+§T6.1 records is unchanged --- the source path is still the frontend's, unchecked against
+what the render service opened --- and this remains the command where checking it would
+matter most. What the fingerprint removes is the accident, not the adversary.
+
+**Fail closed, which is the part that is a security property rather than a correctness
+one.** A fingerprint that could not be taken refuses the save rather than permitting it, so
+"could not look" never reads as "looked, and it was fine". `save_copy` deliberately does
+not, because a copy risks a bad new file beside an intact original and the refusal above
+names Save a copy as the way out.
+
+**The modification time is deliberately not part of the deep comparison, and that narrows
+what this paragraph may claim.** A file whose mtime moved and whose bytes did not is
+*accepted*: `cp -p` preserves a timestamp across a rewrite and a `touch` moves one without
+changing a byte, so the timestamp is evidence about neither. The digest is the comparison,
+and the sentence above should be read as length-and-contents rather than as three
+independent locks --- an attacker was never going to be stopped by a timestamp, and a
+reader whose backup tool ran was being stopped by one. The mtime is still compared in the
+one place nothing better is affordable: the look between staging and the rename, which
+compares against what **staging** read rather than against what was opened, so that window
+is milliseconds rather than the whole session.
 
 **The document is closed before the file is replaced, and that is a correctness property
 with a security-shaped tell.** A `rename` over a memory-mapped file succeeds on macOS and

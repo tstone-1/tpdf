@@ -97,6 +97,22 @@ FILTERS = [
     # Added 2026-08-17 with the keyboard-layout lookup, macOS-only for the
     # same reason `menu::` is: Carbon does not exist on Windows.
     "keylayout::",
+    # Added 2026-08-19 with the version display. `lib.rs`'s own root test module
+    # had never been selected by anything here, so the test asserting the four
+    # version files agree could not go red -- and the guard said so before the
+    # mutation aimed at it could report SURVIVED. Fifth time; the list is the
+    # thing this harness most reliably forgets, and the guard is the thing that
+    # most reliably catches it.
+    "tests::",
+    # Added 2026-08-19 with the external-modification check. Sixth time, and this
+    # one was found by looking rather than by the guard: no mutation named a
+    # `fingerprint::` test, so nothing refused to start --- a module whose tests
+    # are invisible AND unaimed-at is silent in both directions.
+    "fingerprint::",
+    # Added 2026-08-19 with the Jump List. Written at the same time as the
+    # mutations rather than after them, which is the whole lesson of the five
+    # times this list was forgotten and the sixth time it was not even noticed.
+    "recentdocs::",
 ]
 
 
@@ -130,6 +146,173 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        # Remove the CALL, not the guard. `fingerprint.rs`'s own tests prove the
+        # comparison works and say nothing about whether anything asks it --- the
+        # trap is "a guard is only covered when a mutation removes the call", and
+        # this is that mutation.
+        "save: stop asking whether the file changed under the document",
+        "src/save.rs",
+        "        Some(opened_as) => Some(opened_as.agrees_with(source)?),",
+        "        Some(_) => None,",
+        "a_save_in_place_is_refused_when_the_file_changed_under_it",
+    ),
+    Mutation(
+        # Fail open instead of closed: treat "we could not look" as permission.
+        # The reader's file is what is at stake, and the fallback the message
+        # names has to stay reachable, which is a second test's job.
+        "save: let a save in place proceed with no fingerprint at all",
+        "src/save.rs",
+        "    if plan.opened_as.is_none() {",
+        "    if false {",
+        "a_save_in_place_with_no_fingerprint_is_refused_and_points_at_save_a_copy",
+    ),
+    Mutation(
+        # Hand the shell the path as it arrived. A relative one is then filed
+        # against the shell's current directory rather than ours, so the Jump
+        # List entry names a file that is somewhere else or nowhere.
+        "recentdocs: file the path as given rather than resolving it",
+        "src/recentdocs.rs",
+        "    let absolute = std::fs::canonicalize(path).ok()?;",
+        "    let absolute = path.to_path_buf();",
+        "a_relative_path_is_made_absolute_rather_than_passed_through",
+    ),
+    Mutation(
+        # Leave the verbatim prefix on. The shell does not understand `\\?\`, so
+        # the entry shows the prefix in its label and does not open when clicked
+        # --- which looks like the feature working, from a distance.
+        "recentdocs: leave the verbatim prefix on the path the shell is given",
+        "src/recentdocs.rs",
+        '    let text = text.strip_prefix(r"\\\\?\\").unwrap_or(&text);',
+        "    let text = &text[..];",
+        "a_path_the_shell_is_given_is_absolute_nul_terminated_and_not_verbatim",
+    ),
+    Mutation(
+        # Drop the terminator. `SHARD_PATHW` says the pointer is a NUL-terminated
+        # wide string, so without one the shell reads past the buffer -- which is
+        # a garbage entry on a good day.
+        "recentdocs: hand the shell a string with no terminator",
+        "src/recentdocs.rs",
+        "            .chain(std::iter::once(0))",
+        "            .chain(std::iter::empty())",
+        "a_path_the_shell_is_given_is_absolute_nul_terminated_and_not_verbatim",
+    ),
+    Mutation(
+        # File a document that is not there. The reader gets a Jump List entry
+        # that opens nothing, which is worse than the absence this module fixes.
+        "recentdocs: file a path that could not be resolved",
+        "src/recentdocs.rs",
+        "    let absolute = std::fs::canonicalize(path).ok()?;",
+        "    let absolute = std::fs::canonicalize(path).unwrap_or(path.to_path_buf());",
+        "a_file_that_is_not_there_is_not_filed",
+    ),
+    Mutation(
+        # Collapse the split back: put the way-out sentence into the bare fact,
+        # which is where it lived until 2026-08-19. The pre-rename refusal then
+        # tells a reader their edits are still here and to save them under
+        # another name, two clauses before telling them the document is closed.
+        "fingerprint: give the bare fact the advice that belongs to the deep check",
+        "src/fingerprint.rs",
+        '        "{} changed on disk since you opened it --- {how}",',
+        '        "{} changed on disk since you opened it --- {how}. Your edits are still here: save them under another name.",',
+        "the_last_look_before_the_rename_refuses_a_source_that_moved",
+    ),
+    Mutation(
+        # And the other direction: drop the advice from the deep check, leaving a
+        # reader stopped mid-save with a diagnosis and nowhere to go.
+        "fingerprint: refuse the deep check with no way out",
+        "src/fingerprint.rs",
+        '            .map_err(|fact| format!("{fact}. {WAY_OUT}"))',
+        "            .map_err(|fact| fact)",
+        "the_deep_check_tells_the_reader_what_they_can_still_do",
+    ),
+    Mutation(
+        # Let the last look pass whatever it sees. This is the guard covering the
+        # window the staging split opens -- between the deep check and the rename
+        # the document is read, rewritten and closed, and nothing else is looking.
+        "save: let the last look before the rename agree with anything",
+        "src/save.rs",
+        "    if let Err(why) = staged.verified.agrees_shallowly(source) {",
+        "    if let Err(why) = Ok::<(), String>(()) {",
+        "the_last_look_before_the_rename_refuses_a_source_that_moved",
+    ),
+    Mutation(
+        # Refuse, and leave the staged file behind. Nothing else is tracking it by
+        # then, so it stays beside the reader's document under a name they never
+        # chose and never sees a reader again.
+        "save: leave the staged file behind when the last look refuses",
+        "src/save.rs",
+        "        let _ = std::fs::remove_file(&staged.path);",
+        "        let _ = &staged.path;",
+        "the_last_look_before_the_rename_refuses_a_source_that_moved",
+    ),
+    Mutation(
+        # The comparison the whole module exists for. It was proved by nothing
+        # until 2026-08-19: both tests named for the digest passed with this line
+        # deleted, because `agrees_with` called `agrees_shallowly` first and the
+        # mtime branch produced a message they could not tell apart. The fix was
+        # to stop deferring to the timestamp, not to write a cleverer assertion.
+        "fingerprint: stop comparing the digest",
+        "src/fingerprint.rs",
+        "        if now.digest != self.digest {",
+        "        if false {",
+        "a_rewrite_of_the_same_length_is_caught_by_the_digest_and_not_by_the_length",
+    ),
+    Mutation(
+        # Hash the first chunk and stop. A digest of the first 64 KiB agrees with
+        # itself perfectly and is blind to every byte after it, which on a PDF is
+        # nearly the whole document -- the header and the first objects rarely
+        # move.
+        "fingerprint: hash only the first chunk of the file",
+        "src/fingerprint.rs",
+        "            hasher.update(&buffer[..read]);",
+        "            hasher.update(&buffer[..read]);\n            break;",
+        "a_file_larger_than_one_chunk_hashes_every_chunk",
+    ),
+    Mutation(
+        # Put the deference back: make the deep check consult the timestamp it
+        # deliberately ignores. This is the false refusal, not a missing one --
+        # the file is byte-for-byte what the reader opened and the save is
+        # refused anyway, because something touched it.
+        "fingerprint: let the deep check defer to the modification time",
+        "src/fingerprint.rs",
+        "        self.len_agrees(path)?;",
+        "        self.agrees_shallowly(path)?;",
+        "a_file_whose_timestamp_moved_but_whose_bytes_did_not_still_saves",
+    ),
+    Mutation(
+        # The cheap half. A length that changed is conclusive and costs no read,
+        # and it is the only thing standing between a 337 MB file and a full hash
+        # on the common failure.
+        "fingerprint: stop comparing the length",
+        "src/fingerprint.rs",
+        "        if meta.len() != self.len {",
+        "        if false {",
+        "a_file_that_grew_is_refused_without_reading_it",
+    ),
+    Mutation(
+        # The shallow check's only real content. Removing it leaves a guard that
+        # compares a length it was already given and calls that a check -- and
+        # this is the guard standing between staging and the rename, where
+        # nothing else is looking.
+        "fingerprint: forget the modification time in the shallow check",
+        "src/fingerprint.rs",
+        "        if now.is_some() && self.modified_ns.is_some() && now != self.modified_ns {",
+        "        if false {",
+        "a_file_whose_timestamp_moved_but_whose_bytes_did_not_still_saves",
+    ),
+    Mutation(
+        # Report a version of our own rather than the crate's. This is the whole
+        # failure mode the version display can have: a confident wrong answer,
+        # which is worse than the nothing it replaced, because a reader acts on
+        # it. Nothing else in the build compares these files -- `BUILD.md` lists
+        # the four and lists them only.
+        "version: report a hardcoded version rather than the crate's",
+        "src/lib.rs",
+        '    env!("CARGO_PKG_VERSION")',
+        '    "26.0.0"',
+        "the_version_files_agree_with_the_crate",
+    ),
+    Mutation(
         # Ask the layout for an action it does not define. A status other than
         # zero is the only thing standing between a garbage buffer and a label,
         # and the buffer is uninitialised on that path.
@@ -160,8 +343,8 @@ MUTATIONS = [
         # invisible when the numbers happen to agree.
         "edits: give a subset plan the selection's length as its baseline",
         "src/edits.rs",
-        "        Ok(Plan {\n            baseline: model.baseline(),\n            pages,\n            marks,\n        })",
-        "        Ok(Plan {\n            baseline: pages.len() as u32,\n            pages,\n            marks,\n        })",
+        "            baseline: model.baseline(),\n            opened_as: opened_as.clone(),\n            pages,\n            marks,",
+        "            baseline: pages.len() as u32,\n            opened_as: opened_as.clone(),\n            pages,\n            marks,",
         "a_subset_plan_names_the_pages_asked_for_and_keeps_the_file_s_baseline",
     ),
     Mutation(
@@ -493,8 +676,8 @@ MUTATIONS = [
         # the file that used to be there.
         "save: put a save in place during the staging rather than after the close",
         "src/save.rs",
-        "    stage(source, &bytes)\n}",
-        "    write_atomically(source, &bytes).map(|()| source.with_extension(PARTIAL))\n}",
+        "    let path = stage(source, &planned.bytes)?;",
+        "    let path = write_atomically(source, &planned.bytes)\n        .map(|()| source.with_extension(PARTIAL))?;",
         "staging_a_save_in_place_writes_beside_the_source_and_leaves_it_alone",
     ),
     Mutation(
@@ -513,8 +696,8 @@ MUTATIONS = [
         # file next to the reader's document under a name they never chose.
         "save: stage a save in place before its guards have run",
         "src/save.rs",
-        "    let bytes = planned_bytes(source, plan)?;\n    stage(source, &bytes)\n}",
-        "    let early = stage(source, b\"\")?;\n    let bytes = planned_bytes(source, plan)?;\n    let _ = early;\n    stage(source, &bytes)\n}",
+        "    let planned = planned_bytes(source, plan)?;",
+        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan)?;\n    let _ = early;",
         "a_refused_save_in_place_stages_nothing",
     ),
     Mutation(
@@ -559,8 +742,8 @@ MUTATIONS = [
         # service reuses document numbers, so this is a real sequence.
         "edits: keep the model already under a reopened handle",
         "src/edits.rs",
-        "            .insert(doc, Doc::open(pages));",
-        "            .entry(doc).or_insert_with(|| Doc::open(pages));",
+        "        self.docs.lock().expect(\"edits lock\").insert(\n            doc,\n            Open {",
+        "        self.docs.lock().expect(\"edits lock\").entry(doc).or_insert(\n            Open {",
         "reopening_under_a_reused_handle_does_not_inherit_the_previous_journal",
     ),
     Mutation(

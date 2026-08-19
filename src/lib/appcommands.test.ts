@@ -56,6 +56,7 @@ function harness(
     toggleSidebar: () => fired.push("toggleSidebar"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
     toggleInvert: () => fired.push("toggleInvert"),
+    about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
     applyUpdate: () => fired.push("applyUpdate"),
     // Default false, so a test that says nothing about updates exercises the
@@ -223,9 +224,16 @@ describe("the commands a document is needed for", () => {
     // no network has no document open either, and asking again is their only
     // route back. Installing an update is *not* here: it is guarded on having
     // found one, which the default harness has not.
+    //
+    // `app.about` joined on 2026-08-19 and turned this red on the way, which is
+    // the arrangement working exactly as the paragraph above describes. It earns
+    // the claim more plainly than either of the others: it reads a string the
+    // binary was compiled with, so there is nothing for a document to be needed
+    // for -- and the reader most likely to ask which version they are running is
+    // the one looking at an empty window because a document would not open.
     const { registry } = harness(false);
     const offered = registry.search("").map((ranked) => ranked.command.id);
-    expect(offered).toEqual(["file.open", "app.checkForUpdates"]);
+    expect(offered).toEqual(["file.open", "app.about", "app.checkForUpdates"]);
   });
 
   it("offers the rest once one is open", () => {
@@ -639,6 +647,7 @@ describe("the window shortcuts for editing", () => {
       toggleSidebar: () => fired.push("toggleSidebar"),
       showTab: (tab) => fired.push(`showTab:${tab}`),
       toggleInvert: () => fired.push("toggleInvert"),
+      about: () => fired.push("about"),
       checkForUpdates: () => fired.push("checkForUpdates"),
       applyUpdate: () => fired.push("applyUpdate"),
       updateAvailable: () => false,
