@@ -17,6 +17,27 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.5] - Unreleased
+
+### Save
+
+- **Save** (⌘S) writes your edits into the file you opened. Until now the only
+  way to keep a highlight, a turned page or a deletion was **Save a copy**, which
+  leaves you reading the file you started with --- so every edit had to be saved
+  somewhere else and then found again.
+
+- It is offered only when there is something to save, and the document is
+  reopened afterwards, at the page you were on. A save cannot be undone: the
+  journal describes a file that has been replaced, so Undo starts again from
+  what you just saved.
+
+- A save that cannot be done leaves your document exactly as it was --- an
+  encrypted file, a file that changed on disk under you, a page that cannot be
+  written. Nothing is touched until every one of those has been checked.
+
+- **Save a copy** is unchanged, and still refuses to write over the open
+  document: that is what Save is for.
+
 ## [26.8.4] - 2026-08-18
 
 ### Crop a page to what is on it

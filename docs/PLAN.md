@@ -5747,6 +5747,103 @@ rather than a new mechanism; and `insert`, `split` and `merge`, unchanged --- th
 first two need a page the model creates, and `docmodel`'s note has the
 id-allocator property that would have to be proved first.
 
+#### Saving over the file the reader opened --- done 2026-08-19
+
+Everything before this increment wrote a document *somewhere else*. A reader
+could turn a page, delete one, rearrange them, crop one and highlight a line, and
+the only way to keep any of it was **Save a copy** --- which leaves them reading
+the file they started with, so the copy has to be found again and reopened before
+the next edit. `save.rs` had said since it was written that saving in place is a
+different operation with its own rebase and that §5 has it. This is it.
+
+**The experiment came first, and it is what split a function in two.** The
+question was whether the document has to be closed before the file is replaced,
+and the tempting answer is that it does not: `rename` is atomic and POSIX keeps a
+mapped inode alive. Measured, on this machine, with a `MAP_SHARED` mapping open
+across the rename:
+
+```text
+[before] mapping head: b'OLDOLD'
+[rename] ok
+[after ] mapping head: b'OLDOLD'   <- the mapping, after the rename
+[after ] path reads  : b'NEWNEW'   <- the same path, read fresh
+```
+
+So the rename succeeds and the worker goes on serving the document that is no
+longer at that path --- not for a moment, but for as long as it stays open. That
+is the worst of the three possible outcomes: a crash is loud and a refusal is
+loud, and this is a reader scrolling a document that disagrees with their own file
+while everything looks right. Windows fails the other way and refuses the rename
+outright while a section is open, so the two platforms are wrong differently and
+only one of them says so.
+
+**One order is right on both, and it is what the code now enforces by shape.**
+`save.rs`'s single write became `stage_in_place` and `commit_in_place`, and
+`lib.rs`'s `save_document` is the only thing that holds them together: stage,
+close, commit. Every guard `planned_bytes` states --- an encrypted document, a
+file whose page count no longer matches the baseline, a plan that names a page
+that is not there --- runs during the staging, which is the half where nothing
+the reader has is disturbed.
+
+**Two failures, not one, and they cross the IPC boundary as a field.**
+`SaveFailure` carries `reopen`. False means nothing happened: the reader still
+has their document and the message is all there is to do. True means the document
+is closed whatever became of the file, and the caller has to open it again. That
+distinction is the same one `docmodel.rs` draws between `NoSuchPage` and
+`PageDeleted`, for the same reason: a caller can act on it. Packing it into the
+message text instead would have the frontend matching on wording.
+
+**The reopen is the rebase, and it is deliberately not §5's.** §5 describes a
+rebase that keeps the journal: new baseline, regenerated stable-ID mapping,
+compacted journal. Nothing here does that. The journal is *spent* --- the file now
+says what it said --- so the document is closed and opened again from the path,
+which is the correct answer for a save that succeeded and is the whole cost of one
+that fails after the close: the reader's unsaved commands go with the model.
+Carrying a journal across a reopen is a piece of work of its own, and the failure
+it would protect against is a rename that fails in a directory that has just been
+written to.
+
+**The place has to be expressed in slots, and that is the one argument here that
+could quietly have been wrong.** `currentPlace` maps a viewport slot back to the
+*baseline* page it came from, because a `Place` names a page of the file and the
+file is the baseline. After a save in place the file's pages **are** the reader's
+order, so the mapping would send them to whichever page used to be there --- on a
+document with a deletion in it, off by the deletion. One caller passes
+`inFile: false`, and it is the only one.
+
+**A note the reader is typing is not in the model yet.** `markpopup.ts` commits
+when its box closes, and closing it journals a `renote` that is an IPC round trip
+away from landing. So the save closes the box and waits for the edit in flight
+before it reads the plan --- otherwise the file gets the highlight with an empty
+note while the box on screen shows the words. This is a property of the code
+rather than something observed: `applyEdit` is asynchronous and twenty callers
+fire it without awaiting, which is why the promise is recorded rather than the
+call made to wait.
+
+**Seven mutations, all caught.** Three in Rust --- put the save in place during
+the staging rather than after the close, report a commit that never renamed
+anything, stage before the guards have run --- and four in the frontend, covering
+both directions of Save's guard, the ⌘S chord with nothing to save, and a save in
+place routed to the copy command.
+
+**Not driven by the window harness, and classified as such.** A ⌘S there would
+write the working document over `testdata/<corpus>.pdf`, which is the file that
+run and every other run is reading; copying the fixture first would make the phase
+a statement about a document no other check has seen. It sits in `viewercheck.ts`'s
+`undriven` table with that reason, which is the rule the trap index states about a
+command left out of the sweep.
+
+**Not done:** an incremental save. §5 measures the append at **8.2x faster** than
+the rewrite on a 337 MB scan, and describes the mode classification that would
+choose between them. This increment writes the full rewrite every time --- correct
+on every document, including the encrypted ones it refuses, and 239 ms rather than
+29 ms on the largest fixture here. There is no save-mode classification, and
+nothing preserves a signature's trust, which §5 says plainly cannot be preserved
+at all. Also
+unchanged: nothing warns the reader that the file changed on disk *before* they
+try to save --- the page-count check catches the case it can, at the moment of
+saving, and §5's identity-plus-mtime watch is not here.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

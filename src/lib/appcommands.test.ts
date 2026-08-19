@@ -36,6 +36,7 @@ function harness(
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
   markOpen = false,
+  dirty = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -81,6 +82,11 @@ function harness(
     // exercises.
     removeMark: () => fired.push("removeMark"),
     hasOpenMark: () => markOpen,
+    // Default false, on the reasoning the journal pair above states: a document
+    // opens with nothing to save, so a test that says nothing about edits
+    // exercises the direction where Save is withheld.
+    saveDocument: () => fired.push("saveDocument"),
+    isDirty: () => dirty,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
   };
@@ -247,10 +253,10 @@ describe("every registered command", () => {
       "find.previous",
     ];
     // Built with an update on offer, a journal in both directions, a live
-    // selection and an open note, because otherwise `app.installUpdate`,
-    // `edit.undo`, `edit.redo`, `edit.highlightSelection` and `edit.removeMark`
-    // are correctly disabled and this sweep would read a working guard as a
-    // no-op command. The sweep asks "does every
+    // selection, an open note and unsaved changes, because otherwise
+    // `app.installUpdate`, `edit.undo`, `edit.redo`, `edit.highlightSelection`,
+    // `edit.removeMark` and `file.save` are correctly disabled and this sweep
+    // would read a working guard as a no-op command. The sweep asks "does every
     // command reach an action", which presumes each is in a state where it is
     // allowed to run; the guards themselves are asserted above, in both
     // directions.
@@ -258,6 +264,7 @@ describe("every registered command", () => {
       true,
       { available: true },
       { undo: true, redo: true },
+      true,
       true,
       true,
     );
@@ -368,6 +375,31 @@ describe("the page operations", () => {
     expect(command?.argument?.problem("1-2")).toBeNull();
   });
 
+  it("offer Save only once there is something to save", () => {
+    // Both halves, for the reason the journal pair states: the palette filters
+    // on `enabled`, and a keybinding reaches `run` without consulting the list,
+    // so a guard that only hid the row would leave ⌘S rewriting every object id
+    // in a file the reader has not changed.
+    const clean = harness();
+    expect(clean.registry.run("file.save")).toBe(false);
+    expect(clean.registry.all().find((c) => c.id === "file.save")?.enabled?.()).toBe(false);
+    expect(clean.fired).toEqual([]);
+
+    const edited = harness(true, {}, {}, false, false, true);
+    expect(edited.registry.run("file.save")).toBe(true);
+    expect(edited.fired).toEqual(["saveDocument"]);
+  });
+
+  it("withholds Save with no document, however dirty the model claims to be", () => {
+    // The two guards are separate questions and this is the one that is easy to
+    // drop: `dirty` survives a document being closed in any implementation that
+    // reads it off a variable, so a guard on `dirty` alone would offer Save with
+    // nothing open.
+    const { registry, fired } = harness(false, {}, {}, false, false, true);
+    expect(registry.run("file.save")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+
   it("offer a copy of any open document, edited or not", () => {
     // Deliberately not guarded on the journal. Saving an unedited copy is how a
     // reader gets a file out of a downloads folder, and a command that appears
@@ -446,8 +478,9 @@ describe("the window shortcuts for editing", () => {
     modifiers: { shift?: boolean; alt?: boolean } = {},
     target: { tagName?: string; isContentEditable?: boolean } | null = null,
     journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
+    dirty = true,
   ) {
-    const { fired, actions } = keyHarness(journal);
+    const { fired, actions } = keyHarness(journal, dirty);
     let prevented = 0;
     const event = {
       key,
@@ -469,7 +502,10 @@ describe("the window shortcuts for editing", () => {
     return { fired, prevented };
   }
 
-  function keyHarness(journal: { undo?: boolean; redo?: boolean }) {
+  function keyHarness(
+    journal: { undo?: boolean; redo?: boolean },
+    dirty = false,
+  ) {
     // Its own recorders rather than the palette harness's. The two routes are
     // separate mechanisms --- a command can be registered correctly and bound to
     // nothing, which is the disagreement `keys.ts` exists to make impossible ---
@@ -504,6 +540,8 @@ describe("the window shortcuts for editing", () => {
       hasSelection: () => false,
       removeMark: () => fired.push("removeMark"),
       hasOpenMark: () => false,
+      saveDocument: () => fired.push("saveDocument"),
+      isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     };
@@ -522,8 +560,23 @@ describe("the window shortcuts for editing", () => {
     expect(press("l").fired).toEqual([]);
   });
 
-  it("saves a copy on Shift-Cmd-S", () => {
+  it("saves on Cmd-S and saves a copy on Shift-Cmd-S", () => {
+    // The pair together, because the failure they guard against is that one
+    // chord reaches the other's action --- and ⌘S reaching "save a copy" would
+    // put a file dialog in front of a reader who asked for nothing of the kind,
+    // while ⇧⌘S reaching Save would replace the file they meant to keep.
+    expect(press("s").fired).toEqual(["saveDocument"]);
     expect(press("S", { shift: true }).fired).toEqual(["saveCopy"]);
+  });
+
+  it("does nothing on Cmd-S with nothing to save", () => {
+    // Silent rather than a refusal from the backend: ⌘S is the chord a reader
+    // presses by reflex on a document they have not touched.
+    const { fired, prevented } = press("s", {}, null, undefined, false);
+    expect(fired).toEqual([]);
+    // The key is still claimed --- letting it through would hand ⌘S to the web
+    // view, whose own answer to it is a browser save dialog.
+    expect(prevented).toBe(1);
   });
 
   it("undoes on Cmd-Z and redoes on Shift-Cmd-Z", () => {

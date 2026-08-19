@@ -639,6 +639,120 @@ async fn edit_state(
     edits.state(doc)
 }
 
+/// Why a save did not happen, and whether the reader still has their document.
+///
+/// **Two refusals, not one**, for the reason `docmodel.rs` gives about its own
+/// pair: they need different answers from the caller. A save refused *before*
+/// anything was taken apart --- an encrypted document, a file that changed
+/// underneath, a plan that cannot be written --- has disturbed nothing, and the
+/// reader carries on reading. A save that failed *after* the document was
+/// closed has no document to carry on with, and the caller has to open the file
+/// again; the edits are gone, because the journal went with the close.
+///
+/// Serialized rather than a bare string, so that distinction crosses the IPC
+/// boundary as a field the frontend can branch on. A message a human reads and
+/// a fact a program acts on are different things, and packing the second into
+/// the first is how a frontend comes to match on wording.
+#[derive(serde::Serialize)]
+struct SaveFailure {
+    message: String,
+    /// Whether the caller must open the document again.
+    reopen: bool,
+}
+
+impl SaveFailure {
+    /// Nothing was touched: no file written, no document closed.
+    fn refused(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            reopen: false,
+        }
+    }
+
+    /// The document is closed, whatever became of the file.
+    fn after_close(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            reopen: true,
+        }
+    }
+}
+
+/// Writes the working document over the file the reader opened.
+///
+/// **Three steps, in an order that is the whole of the design.** The bytes are
+/// staged beside the source; the document is closed; the staged file is renamed
+/// over the source. Staging first is what lets every refusal `save.rs` states
+/// arrive while the reader still has their document. Closing before the rename
+/// is not a tidiness: a `rename` over a memory-mapped file succeeds on macOS and
+/// leaves the mapping serving the inode that is no longer at that path, so the
+/// worker would go on rendering the document as it was before the save --- and
+/// Windows refuses the rename outright while a section is open. One order is
+/// right on both platforms, and neither platform's failure is loud.
+///
+/// **The caller reopens.** Nothing here rebuilds the document, because every
+/// object identity in the file has just changed --- `docs/PLAN.md` §5 --- so the
+/// baseline the journal replays against is gone and the model is closed with it.
+/// A reopen from the same path is the rebase, and it is the frontend's because
+/// the frontend is what knows where the reader was looking.
+///
+/// On the blocking pool for the parse and the serialisation, for the reason
+/// [`save_copy`] gives. The close and the rename are not: one is a channel
+/// round trip and the other is a rename in a directory that has just been
+/// written to.
+#[tauri::command]
+async fn save_document(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    source: String,
+) -> Result<(), SaveFailure> {
+    // Read rather than assumed from the command being offered at all. The
+    // palette withholds Save on a document with nothing to save, and that guard
+    // is a frontend that may be a reply behind; this one is the model's own
+    // answer. Writing a clean document would still produce a correct file, but
+    // it would rewrite every object id in a file the reader did not change.
+    let state = edits.state(doc).map_err(SaveFailure::refused)?;
+    if !state.dirty {
+        return Err(SaveFailure::refused(
+            "there is nothing to save --- this document has no unsaved changes",
+        ));
+    }
+    let plan = edits.plan(doc).map_err(SaveFailure::refused)?;
+
+    let staging = source.clone();
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        save::stage_in_place(Path::new(&staging), &plan)
+    })
+    .await
+    .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
+    .map_err(SaveFailure::refused)?;
+
+    // Past this line every failure is an `after_close`: the reader's document is
+    // being taken apart, and the honest thing to report is that they have to
+    // open the file again rather than a message that reads like a refusal.
+    //
+    // The model first, for the reason `close_document` gives --- document
+    // numbers are reused, and a journal left under a handle the service is free
+    // to hand to another file is one document's edits applied to another's
+    // pages.
+    edits.close(doc);
+    let (reply, rx) = reply_channel();
+    service.close(doc, reply);
+    let closed = await_reply("save_document", rx).await;
+
+    // Attempted whether or not the close was acknowledged. The model is gone
+    // either way, so the reader is reopening either way, and a rename that the
+    // mapping really did block reports that itself --- which is a better message
+    // than one this end guesses from a close reply.
+    save::commit_in_place(&staged, Path::new(&source)).map_err(|why| {
+        SaveFailure::after_close(match closed {
+            Ok(()) => why,
+            Err(also) => format!("{why} --- and the document did not close cleanly: {also}"),
+        })
+    })
+}
+
 /// Writes the working document to a new file.
 ///
 /// `source` comes from the frontend, which is what [`print_document`] does and
@@ -1757,6 +1871,7 @@ pub fn run() {
             edit_undo,
             edit_redo,
             edit_state,
+            save_document,
             save_copy,
             extract_pages,
             keyboard_positions,

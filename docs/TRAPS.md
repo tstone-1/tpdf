@@ -9250,3 +9250,43 @@ where the runner tolerates it: any tool that keys on the name alone silently mer
 And a harness whose two counts disagree should be believed about the disagreement and not
 about its cause — the message names the symptom correctly and says nothing about duplicate
 names, because it cannot know.
+### A rename over a mapped file succeeds, and the mapping goes on serving the file that is gone
+
+Saving over the document a reader has open means replacing a file that a worker process has
+memory-mapped, and the question of whether the document has to be closed first has an
+answer that reads as reassuring and is the dangerous one.
+
+Measured on this machine, with a `MAP_SHARED` mapping held across the rename:
+
+```text
+[before] mapping head: b'OLDOLD'
+[rename] ok
+[after ] mapping head: b'OLDOLD'   <- the mapping, after the rename
+[after ] path reads  : b'NEWNEW'   <- the same path, read fresh
+[after ] fd reads    : b'OLDOLD'   <- and the descriptor with it
+```
+
+Nothing fails. `rename` replaces a directory entry, not an inode, so the old inode stays
+alive for as long as anything holds it, and the mapping keeps serving it. There is no
+SIGBUS --- that is the *truncation* case, which has its own entry above --- and no error
+anywhere for a caller to notice.
+
+**So the failure is a reader scrolling a document that disagrees with their own file, with
+everything looking right.** The save reports success, the file on disk holds the edits, and
+every tile, every text extraction and every search answer still comes from the document as
+it was before the save, until it happens to be reopened. A crash is loud and a refusal is
+loud; this is neither.
+
+**Windows fails the other way, and that asymmetry is the argument for one order rather than
+two.** A file with an open section mapping cannot be replaced there, so the rename is
+refused outright --- visibly, immediately, and on the platform where nobody would have gone
+looking. Closing the document before the rename is correct on both, and it is not a Windows
+workaround: it is what macOS needs too, and macOS is the platform that will not tell you.
+
+What the code does with that is close the *shape* rather than remember the rule.
+`save.rs`'s single atomic write is two functions --- `stage_in_place` writes the sibling
+temporary file, `commit_in_place` renames it --- so there is a place for the close to go and
+no way to spell the write without one. `lib.rs`'s `save_document` is the only caller and
+holds the order. A mutation that puts the save in place during the staging is in
+`scripts/mutate_rust.py`, and it is caught by the test that asserts the source is untouched
+until the commit.

@@ -279,6 +279,23 @@ describe("Edits", () => {
     }
   });
 
+  it("names the open document and no destination when it saves in place", async () => {
+    // The absence of a `path` is the whole of it. A save in place that carried
+    // one would be `save_copy` under another name, and the backend would take
+    // whatever it was given --- which on a mistyped call is a second file
+    // written while the reader is told their document was saved.
+    core.invoke.mockResolvedValueOnce(state(2, { 0: 1 }));
+    const edits = new Edits(5);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(undefined);
+    await edits.save("/in.pdf");
+    expect(core.invoke).toHaveBeenLastCalledWith("save_document", {
+      doc: 5,
+      source: "/in.pdf",
+    });
+  });
+
   it("does not clear dirty when a copy is written", async () => {
     // The journal is still the journal. Reporting the document as clean after a
     // copy would claim the *open* file matches what is on disk, which it does

@@ -148,6 +148,10 @@ export interface AppActions {
   hasOpenMark(): boolean;
   /** Whether there is a selection to mark. */
   hasSelection(): boolean;
+  /** Write the working document over the file it was opened from. */
+  saveDocument(): void;
+  /** Whether anything differs from the file on disk. */
+  isDirty(): boolean;
   /** Ask for a name and write the working document to it. */
   saveCopy(): void;
   /** Ask for a name and write the pages at `slots` to it, as a second file. */
@@ -534,6 +538,18 @@ export function registerAppCommands(
       run: () => actions.redoEdit(),
     },
     {
+      // Guarded on there being something to save, for the reason `edit.undo`
+      // is guarded on there being something to undo. It is the opposite of the
+      // guard on `file.saveCopy` below, and deliberately: a copy of an unedited
+      // document is a file a reader wants, and rewriting the open file to say
+      // exactly what it already says is not.
+      id: "file.save",
+      title: "Save",
+      keys: label("file.save"),
+      enabled: () => actions.viewer() !== null && actions.isDirty(),
+      run: () => actions.saveDocument(),
+    },
+    {
       // Offered on any open document, not only an edited one. Saving an
       // unedited copy is a thing readers do --- it is how you get a file out of
       // a downloads folder --- and a command that appears only after an edit is
@@ -904,6 +920,14 @@ export function handleWindowKey(
   } else if (matches("edit.rotatePageCounterClockwise", event) && title) {
     event.preventDefault();
     actions.rotatePage(-1);
+  } else if (matches("file.save", event) && title) {
+    // Guarded on there being something to save, exactly as ⌘Z is guarded on
+    // there being something to undo. ⌘S is the chord readers press by reflex on
+    // a document they have not touched, and the backend answers that with a
+    // refusal --- correctly, since it is what a stale frontend deserves --- but
+    // a message about nothing having happened is not what a reflex wants back.
+    event.preventDefault();
+    if (actions.isDirty()) actions.saveDocument();
   } else if (matches("file.saveCopy", event) && title) {
     event.preventDefault();
     actions.saveCopy();

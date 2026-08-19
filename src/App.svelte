@@ -186,6 +186,8 @@
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
+    saveDocument: () => void saveDocument(),
+    isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
     extractPages: (slots) => void extractPages(slots),
   };
@@ -311,7 +313,24 @@
    * where the *next* state is computed --- it is handed one, and its whole job
    * is to redraw what differs.
    */
-  async function applyEdit(
+  /**
+   * The edit that has been asked for and not yet answered.
+   *
+   * Recorded because one caller has to wait for it and the twenty that fire
+   * `void applyEdit(...)` must not: {@link saveDocument} writes the model's own
+   * answer to disk, and a note the reader typed a moment ago is a `renote` still
+   * in flight. Saving over it would put a highlight in the file with an empty
+   * note while the box on screen shows the words. Every other caller is a
+   * redraw, and a redraw that waits for the last one is a slower redraw.
+   */
+  let pendingEdit: Promise<void> = Promise.resolve();
+
+  function applyEdit(run: (edits: Edits) => Promise<EditState>): Promise<void> {
+    pendingEdit = runEdit(run);
+    return pendingEdit;
+  }
+
+  async function runEdit(
     run: (edits: Edits) => Promise<EditState>,
   ): Promise<void> {
     const model = edits;
@@ -377,6 +396,53 @@
         items: outlineIn(rawOutline.items, pages),
       });
     }
+  }
+
+  /**
+   * Writes the working document over the file the reader opened, and reopens it.
+   *
+   * **Four steps, and the first two are why this is not one `await`.** The note
+   * a reader is typing commits when its box closes, so the box is closed first;
+   * the edit that closing it journals may still be in flight, so
+   * {@link pendingEdit} is waited for. Only then does the model hold what the
+   * reader is looking at. Skipping either leaves a highlight in the file with an
+   * empty note.
+   *
+   * **The reopen is the rebase.** `save_document` closes the document as part of
+   * the save --- `docs/PLAN.md` §5 --- so there is nothing left to keep: every
+   * object identity in the file has changed and the journal is spent. Opening
+   * the path again is what gives the reader a document, and `openDoc` is cleared
+   * first so the open does not try to release a handle the save already
+   * released.
+   *
+   * **The place is expressed in slots**, which is the one argument here that
+   * could quietly be wrong --- see {@link currentPlace}. Captured before the
+   * save rather than after, because the viewer is torn down by the reopen.
+   *
+   * A failure that says `reopen` is one the document did not survive; anything
+   * else left the reader exactly as they were, and is only a message.
+   */
+  async function saveDocument(): Promise<void> {
+    if (!edits || !openPathName || !viewer) return;
+    viewer.closeMark();
+    await pendingEdit;
+    const path = openPathName;
+    const place = currentPlace(false);
+    try {
+      await edits.save(path);
+    } catch (e) {
+      const failure = e as { message?: string; reopen?: boolean };
+      error = failure.message ?? String(e);
+      if (!failure.reopen) return;
+      // The document is closed and the file is the one it always was. Reopening
+      // is what gives the reader something to look at; their unsaved commands
+      // are gone with the model, which is what the message says.
+      openDoc = -1;
+      await openPath(path, false, place);
+      return;
+    }
+    openDoc = -1;
+    await openPath(path, false, place);
   }
 
   /**
@@ -649,7 +715,7 @@
    * "the reader's place", and the two would disagree the first time a field was
    * added to `Place`.
    */
-  function currentPlace(): Place | null {
+  function currentPlace(inFile = true): Place | null {
     if (!viewer || !openPathName) return null;
     const where = viewer.position;
     return {
@@ -661,7 +727,12 @@
       // a slot by `restore`, which is the same number on a document that has
       // just been opened and is where a session that carried edits would have to
       // translate instead.
-      page: edits?.map.sourceOf(where.page) ?? where.page,
+      // `inFile` is false for exactly one caller, and it is not a nuance: after
+      // a save in place the file's pages **are** the reader's order, so the
+      // translation below --- which asks which baseline page a slot came from ---
+      // would send them to whichever page used to be there. On a document with a
+      // deletion in it the two answers differ by the deletion.
+      page: inFile ? (edits?.map.sourceOf(where.page) ?? where.page) : where.page,
       top_pt: where.top,
       zoom: viewer.currentZoom,
       fit: viewer.fitMode,
