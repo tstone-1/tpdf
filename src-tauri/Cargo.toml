@@ -209,6 +209,10 @@ name = "annot-probe"
 path = "examples/annot_probe.rs"
 
 [[example]]
+name = "helvetica-probe"
+path = "examples/helvetica_probe.rs"
+
+[[example]]
 name = "crop-probe"
 path = "examples/crop_probe.rs"
 

@@ -155,6 +155,24 @@ pub struct MarkView {
     /// treated exactly as `annots.rs` treats a body: it reaches the DOM as text
     /// and nothing here may carry a URL. See `docs/THREAT-MODEL.md` T8.
     pub note: String,
+    /// The note broken into the lines a text box will be drawn in, empty for
+    /// every other kind.
+    ///
+    /// **Computed here rather than in the overlay, and that is the whole point
+    /// of the field.** The webview can measure text --- `ctx.measureText` --- but
+    /// it would be measuring whatever font the system resolved, and the file is
+    /// set in Helvetica by `textbox.rs`'s own metrics. Two measurements of two
+    /// fonts break lines in different places, so a reader would see three lines
+    /// on screen and get four in the saved file, with no way to tell which was
+    /// right.
+    ///
+    /// So there is one layout, in one language, and the overlay draws the lines
+    /// it is handed. It is the same argument `OUTLINE_WIDTH` makes for being one
+    /// number, applied to an algorithm instead of a constant.
+    ///
+    /// Attacker-controlled exactly as [`MarkView::note`] is, and it reaches the
+    /// DOM the same way: as text, through a canvas, never as markup.
+    pub lines: Vec<String>,
 }
 
 /// What the frontend asks for when a reader makes a mark.
@@ -625,16 +643,42 @@ impl Edits {
     /// what crosses this boundary is the text, and the [`Command`] is built on
     /// the far side of the lock.
     ///
+    /// **A text box refuses text Helvetica cannot write**, which no other kind
+    /// does, because for every other kind the note is metadata: an unwritable
+    /// character in a highlight's note goes into `/Contents` as UTF-16 and is
+    /// read back perfectly. A text box's note is drawn on the page in a
+    /// `/WinAnsiEncoding` font, and what a font cannot encode it draws as
+    /// something else.
+    ///
+    /// Refusing is the unfriendly answer and the honest one. The alternative is
+    /// to write what can be encoded and substitute the rest, which looks correct
+    /// in tpdf --- the overlay draws with a system font that has the glyphs --- and
+    /// is wrong in every reader that opens the file, including this one after a
+    /// reopen. A reader told "no" can paste it into a comment instead; a reader
+    /// not told loses the words silently.
+    ///
     /// # Errors
     ///
     /// The handle names no open document; the id names no mark, or one that has
-    /// already been removed.
+    /// already been removed; the mark is a text box and the note holds a
+    /// character `/WinAnsiEncoding` has no byte for.
     pub fn renote(&self, doc: u32, mark: u64, note: String) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
-        model
-            .renote(MarkId::from_raw(mark), note)
-            .map_err(describe)?;
+        let id = MarkId::from_raw(mark);
+        // Read before the write, and only for the kind it applies to. A mark
+        // that does not exist falls through to `model.renote`, which is the one
+        // place that answers "that mark has already been removed" -- deciding it
+        // here as well would be a second copy of that message.
+        if model.mark(id).is_some_and(|m| m.kind == MarkKind::TextBox)
+            && !crate::textbox::encodable(&note)
+        {
+            return Err(
+                "a text box is written in Helvetica, which cannot draw every character in that text"
+                    .to_string(),
+            );
+        }
+        model.renote(id, note).map_err(describe)?;
         Ok(snapshot(model))
     }
 
@@ -989,6 +1033,19 @@ fn snapshot(model: &Doc) -> EditState {
                 // overlay painting a recoloured mark in its first colour.
                 color: model.color_of(id),
                 note: model.note_of(id).to_string(),
+                // Wrapped to the mark's own rectangle, so the overlay's line
+                // breaks are the file's. Empty for every kind that is not a text
+                // box --- there is nothing to lay out, and sending the note
+                // twice for a highlight would be a second copy of a string the
+                // frontend already has.
+                lines: if mark.kind == MarkKind::TextBox {
+                    let width = model.quads_of(id).first().map_or(0.0, |q| {
+                        f64::from(q.right - q.left) - crate::textbox::INSET * 2.0
+                    });
+                    crate::textbox::wrap(model.note_of(id), crate::textbox::SIZE, width.max(1.0))
+                } else {
+                    Vec::new()
+                },
             }
         })
         .collect();

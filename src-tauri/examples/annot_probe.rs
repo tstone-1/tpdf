@@ -128,6 +128,11 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         // The box's red, for the box's reason: an ellipse's ink is a stroke and
         // `--mode outline` classifies pixels by the colour it asked for.
         MarkKind::Ellipse => RULE_RED,
+        // The rules' red, and here it is the colour of the *words* rather than
+        // of a stroke -- `/DA` carries it as a fill. Black would read better on
+        // a page and would make every ink measurement in these modes unable to
+        // tell the mark's pixels from the document's own text.
+        MarkKind::TextBox => RULE_RED,
     }
 }
 
@@ -136,6 +141,16 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
 /// Below this a box is mostly the antialiased edge of its own glyph, and the
 /// figure says more about the renderer's smoothing than about where the mark
 /// went. Quads under it are counted and named in the output.
+/// The size `save.rs` sets a text box's words at.
+///
+/// A second copy of that constant, which is what the probe's own note about
+/// `OUTLINE_WIDTH` argues against -- but this one cannot be shared: it is
+/// private to `save.rs`, and making it public so a probe can predict a width
+/// would let the probe agree with a wrong value as readily as with a right one.
+/// The width prediction is checked against PDFKit's ink either way, so a drift
+/// between the two shows up as a failed comparison rather than as agreement.
+const TEXT_SIZE: f64 = 11.0;
+
 const MEASURABLE_PX: usize = 200;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -741,6 +756,10 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
         // whatever the subtype says. Every other program would call it a
         // rectangle.
         MarkKind::Ellipse => Kind::Circle,
+        // Two names that differ, and the reason to spell it out is that the
+        // reader's word is a third: `/FreeText` in the file, `textbox` on the
+        // wire, "Text box" in the note header.
+        MarkKind::TextBox => Kind::FreeText,
     };
     ok &= check(
         &format!("kind read back as {expected:?}"),
@@ -786,7 +805,7 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
     // unlisted key claiming a run of words the mark does not cover.
     let expected_quads = if matches!(
         args.kind,
-        MarkKind::Note | MarkKind::Square | MarkKind::Ink | MarkKind::Ellipse
+        MarkKind::Note | MarkKind::Square | MarkKind::Ink | MarkKind::Ellipse | MarkKind::TextBox
     ) {
         0
     } else {
@@ -1298,12 +1317,52 @@ fn preview_pdfkit(args: &Args, document: &RawDocument, out: &Path) -> Result<boo
         (box_[2] - box_[0]).max(box_[3] - box_[1]),
         (them[2] - them[0]).max(them[3] - them[1]),
     );
-    ok &= check(
-        &format!(
-            "and draws across the rectangle rather than into a corner of it              ({drew:.1} pt of {spans:.1})"
-        ),
-        drew >= spans * 0.8,
-    );
+    if args.kind == MarkKind::TextBox {
+        // **A text box is the one kind whose ink is not supposed to span its
+        // rectangle**, and the check above reported a failure on a mark that was
+        // drawn perfectly: one short line of type is as wide as its words and no
+        // wider. Every other kind's ink is derived from the rectangle, so
+        // "reaches most of it" is the right question for all of them and the
+        // wrong one for this.
+        //
+        // What replaces it is a stronger reading, not a weaker one. The width of
+        // the drawn text is predictable -- `textbox::advance` is what the wrap
+        // arithmetic uses -- so this asserts PDFKit laid the line down at the
+        // width our own metrics said it would. **That is the Helvetica widths
+        // table checked through a second, independent renderer**: `helvetica-probe`
+        // measures it through PDFium, and the two engines share no code with each
+        // other or with the table.
+        //
+        // One-sided and generous for `helvetica-probe`'s reason: measured ink runs
+        // from the first glyph's left edge to the last one's right, and an
+        // advance includes the trailing side bearing, so ink is expected to come
+        // in under. The 15% floor is what separates "the line was drawn" from
+        // "half of it was clipped".
+        // `box_` is the ink PDFKit actually laid down; `them` is the rectangle
+        // it reports for the annotation, which is ours and says nothing about
+        // the words. Written with `them` first, which compared a 253 pt
+        // rectangle against a 109 pt line and failed -- a check reading the
+        // wrong one of two rectangles that are both right there.
+        let predicted = tpdf_lib::textbox::advance(NOTE, TEXT_SIZE);
+        let across = box_[2] - box_[0];
+        ok &= check(
+            &format!(
+                "the line is as wide as its own words say it should be              ({across:.1} pt drawn, {predicted:.1} pt predicted)"
+            ),
+            // The upper slack is rasterisation, not metrics: the ink box is
+            // measured in whole pixels and antialiasing spills a fraction of a
+            // point past the outermost glyph, so a correct line reads about half
+            // a point over. Measured at 110.0 against 109.4.
+            across <= predicted + 2.0 && across >= predicted * 0.85,
+        );
+    } else {
+        ok &= check(
+            &format!(
+                "and draws across the rectangle rather than into a corner of it              ({drew:.1} pt of {spans:.1})"
+            ),
+            drew >= spans * 0.8,
+        );
+    }
 
     if turns % 4 == 0 {
         // **Against the rectangle PDFKit reports, not the one we wrote**, and
@@ -1734,6 +1793,12 @@ fn rule(
         // one of them, so thirds discriminate nothing. `--mode outline` is
         // where it is measured, and it takes this kind.
         MarkKind::Ellipse => unreachable!("refused above"),
+        // Refused above, and for a reason none of the others has: a text box's
+        // ink is wherever its words fall, which depends on how many there are.
+        // A one-line box puts everything in the top third and a four-line box
+        // fills all three -- so thirds do not describe this kind at all, rather
+        // than describing it too coarsely. `--mode text` measures it.
+        MarkKind::TextBox => unreachable!("refused above"),
     };
     ok &= check(
         &format!("most of the rule is in the {where_} third ({wanted} px)"),
@@ -2403,6 +2468,9 @@ fn parse_args() -> Result<Args, String> {
                     // The serde name, the PDF name and the reader's word, all
                     // three the same for once.
                     "squiggly" => MarkKind::Squiggly,
+                    // The serde name. `/FreeText` is the file's and "text box"
+                    // is the reader's; neither is accepted here.
+                    "textbox" => MarkKind::TextBox,
                     // The serde name a fourth time. `/Circle` is the file's
                     // spelling and "ellipse" is both the reader's word and the
                     // serde name, which makes this the one kind where the name

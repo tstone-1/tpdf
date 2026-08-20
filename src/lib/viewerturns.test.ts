@@ -178,6 +178,7 @@ describe("a rectangle on a page an edit turned", () => {
         strokes: [],
         color: [1, 1, 0],
         note: "",
+        lines: [],
       }]);
       const marks = region(
         dom,
@@ -215,6 +216,7 @@ describe("a rectangle on a page an edit turned", () => {
         strokes: [],
         color: [1, 1, 0],
         note: "",
+        lines: [],
       }]);
       const marks = region(
         dom,
@@ -291,6 +293,7 @@ describe("what a turned page does to a place in it", () => {
         strokes: [],
         color: [1, 1, 0],
         note: "",
+        lines: [],
       }]);
       const found = region(
         dom,

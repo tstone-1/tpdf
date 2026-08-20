@@ -493,6 +493,38 @@ pub enum MarkKind {
     /// and is wrong for a reader in exactly the way `/Square` is: one that is
     /// actually circular is the rare case.
     Ellipse,
+    /// A box of the reader's own words, `/FreeText`.
+    ///
+    /// **The first kind whose note is not metadata but the mark itself.** Every
+    /// other kind has a note *about* something drawn: take the note away and the
+    /// highlight, the box, the drawing are all still there. Take a text box's
+    /// away and there is nothing left --- the words are what is on the page.
+    ///
+    /// That is one property with three consequences, and they are the whole of
+    /// why this kind is more than a new subtype:
+    ///
+    /// - **Editing the note changes the appearance.** [`Command::Renote`]
+    ///   already rebuilds [`Working`] and `save.rs` already builds its plan from
+    ///   the model on every save, so this needs no new machinery --- but it is
+    ///   the first kind for which that mattered, and a design that had cached an
+    ///   appearance per mark at creation would break here.
+    /// - **The writer has to lay text out**, which needs the width of every
+    ///   glyph. `textbox.rs` is that, and it is the only place in this
+    ///   repository that measures text.
+    /// - **What a reader types can be unwritable.** Helvetica with
+    ///   `/WinAnsiEncoding` covers Latin-1 and nothing else, so a pasted line of
+    ///   Greek is refused rather than written as substituted glyphs --- see
+    ///   `textbox::encodable`.
+    ///
+    /// It is placed by a drag, exactly as [`MarkKind::Square`] and
+    /// [`MarkKind::Ellipse`] are, and carries no `/QuadPoints` for their reason:
+    /// its rectangle is the reader's, not a run of words.
+    ///
+    /// The serde name is `textbox`, the PDF name is `/FreeText`, and the word a
+    /// reader sees is **Text box**. Three spellings again, and `/FreeText` is
+    /// the one that had to go: "free" there means unattached to a text
+    /// selection, which is a distinction only the specification makes.
+    TextBox,
     /// A line a reader drew freehand, `/Ink`.
     ///
     /// **The first kind whose shape is not a rectangle**, and the reason it is a

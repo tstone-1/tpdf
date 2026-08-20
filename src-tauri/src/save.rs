@@ -63,7 +63,7 @@ use std::path::{Path, PathBuf};
 
 use lopdf::Document;
 
-use lopdf::{Dictionary, Object, ObjectId};
+use lopdf::{dictionary, Dictionary, Object, ObjectId};
 
 use crate::docmodel::MarkKind;
 use crate::edits::{Plan, PlannedMark};
@@ -73,6 +73,7 @@ use crate::pagetree::{
     ordered_pages, reorder_pages, DisplayedPage,
 };
 use crate::print::MAX_DECODE;
+use crate::textbox;
 
 /// Extension of the file the bytes are written to before the rename.
 ///
@@ -811,6 +812,31 @@ fn mark_dictionary(
         // under popups, and every reader offers its own way to open one.
         dictionary.set("Open", Object::Boolean(false));
     }
+    if mark.kind == MarkKind::TextBox {
+        // **`/DA` is required on a `/FreeText` and on nothing else.** It is the
+        // appearance a reader falls back to when it regenerates the annotation
+        // itself -- which Acrobat does whenever the text is edited in *its* UI,
+        // and which it cannot do at all without this. An `/AP` alone is enough
+        // to *display* the mark and leaves it uneditable everywhere but here.
+        //
+        // The font name and size have to match the appearance stream's, or a
+        // reader that regenerates redraws the same words at a different size.
+        // Both come from the same two constants, so they cannot drift.
+        //
+        // The colour is the text's, written as `rg` because `/DA` describes a
+        // fill. `/C` above is the annotation's *background* for this subtype
+        // rather than its ink, which is why the two are not the same operator
+        // and why a text box is the one kind whose `/C` a reader does not see as
+        // the mark's colour.
+        let [r, g, b] = mark.color;
+        dictionary.set(
+            "DA",
+            Object::string_literal(format!(
+                "/{TEXT_FONT} {size} Tf {r} {g} {b} rg",
+                size = textbox::SIZE
+            )),
+        );
+    }
     if let Some(appearance) = appearance {
         dictionary.set("AP", {
             let mut ap = Dictionary::new();
@@ -858,6 +884,9 @@ fn subtype(kind: MarkKind) -> &'static [u8] {
         // a claim that it is round --- exactly as `/Square` above is not a claim
         // that the box is square. Both are the names of one family.
         MarkKind::Ellipse => b"Circle",
+        // `/FreeText`, where "free" means unattached to a text selection rather
+        // than anything about the words. A reader sees "Text box".
+        MarkKind::TextBox => b"FreeText",
         MarkKind::Ink => b"Ink",
     }
 }
@@ -888,6 +917,18 @@ enum Paint {
     /// The quad's edge, opaque, leaving whatever is inside it visible. Which is
     /// the entire point of a box: it says "this", it does not cover it.
     Outline,
+    /// The reader's own words, set in Helvetica inside the quad.
+    ///
+    /// **The only style whose content is not geometry.** Every other variant
+    /// draws the mark's rectangle, a band inside it, its edge or a path; this
+    /// one draws a string, which means the appearance stream needs a font in its
+    /// resources and the writer needs to know how wide each glyph is. See
+    /// `textbox.rs` for both.
+    ///
+    /// It is also the only one that reads [`PlannedMark::note`]. That field has
+    /// always been carried to the writer --- it becomes `/Contents` for every
+    /// kind --- and until now nothing drew from it.
+    Text,
     /// A wave along the bottom of the quad, stroked.
     ///
     /// **Separate from [`Paint::Line`] for the reason [`Paint::Ellipse`] is
@@ -939,6 +980,7 @@ fn paint(kind: MarkKind) -> Paint {
         MarkKind::Squiggly => Paint::Wave,
         MarkKind::Square => Paint::Outline,
         MarkKind::Ellipse => Paint::Ellipse,
+        MarkKind::TextBox => Paint::Text,
         MarkKind::Ink => Paint::Path,
         MarkKind::Note => Paint::None,
     }
@@ -1027,6 +1069,42 @@ const SQUIGGLE_HEIGHT: f64 = 0.18;
 /// constants rather than on either.
 const SQUIGGLE_PERIOD: f64 = 2.0;
 
+/// One line of text as a hex string of `/WinAnsiEncoding` bytes.
+///
+/// **A hex string rather than a literal `(...)`, and the reason is an encoding
+/// bug that would have been invisible in ASCII.** The content stream is built as
+/// a Rust `String`, which is UTF-8, so pushing `ü` into it writes the two bytes
+/// `C3 BC` where WinAnsi wants the one byte `FC`. Every English text box would
+/// have looked perfect and every German one would have drawn `Ã¼`.
+///
+/// Hex also removes the other half of the problem: no escaping. A literal string
+/// has to escape `(`, `)` and `\`, and a reader typing a smiley `:-)` into a
+/// text box is not an unusual thing to do.
+///
+/// Latin-1 and WinAnsi agree byte for byte over `A0..=FF`, and
+/// `textbox::encodable` admits nothing else above ASCII, so the code point *is*
+/// the byte.
+fn winansi_hex(line: &str) -> String {
+    let mut out = String::with_capacity(line.len() * 2);
+    for ch in line.chars() {
+        let code = ch as u32;
+        // Unencodable characters are refused long before a plan is built; this
+        // is the floor under that, and it writes a space rather than a byte that
+        // would decode to something else entirely.
+        let byte = if code <= 0xff { code as u8 } else { b' ' };
+        out.push_str(&format!("{byte:02X}"));
+    }
+    out
+}
+
+/// The name the appearance stream's resources give Helvetica.
+///
+/// Written into `/DA` as well as into the stream, and they have to agree: a
+/// `/DA` naming a font the resources do not have is what makes a reader
+/// substitute one, which is the whole failure `textbox.rs` avoids by measuring a
+/// font every reader is required to have.
+const TEXT_FONT: &str = "Helv";
+
 /// A line's own rectangle inside a quad: `(bottom, height)` in the page's space.
 ///
 /// **It stays inside the quad**, which is not a nicety. The appearance stream's
@@ -1058,6 +1136,10 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         // The band is taller than a rule and starts at the same edge, which is
         // the whole of what tells the two apart once they are drawn.
         MarkKind::Squiggly => (bottom, full * SQUIGGLE_HEIGHT),
+        // Not reached: a text box's ink is lines of type placed from its top
+        // edge downwards, which is not a band inside a quad at all. The whole
+        // quad, for the box's reason.
+        MarkKind::TextBox => (bottom, full),
         MarkKind::StrikeOut => (bottom + full / 2.0 - thickness / 2.0, thickness),
         // Not reached either, and one step further out than the highlight
         // above: a comment has no appearance stream of ours at all, so nothing
@@ -1258,6 +1340,26 @@ fn appearance_stream(
     states.set("GS0", Object::Reference(state));
     let mut resources = Dictionary::new();
     resources.set("ExtGState", Object::Dictionary(states));
+    // A font, for the one style that draws words. **Only for that style**: a
+    // `/Font` entry on a highlight's resources is dead weight in every saved
+    // file, and one of the standard fourteen costs nothing to name but is still
+    // a dictionary and a reference per mark.
+    //
+    // Helvetica with `/WinAnsiEncoding` and no `/FontDescriptor`, `/Widths` or
+    // `/FirstChar`: it is one of the fourteen every reader is required to have,
+    // so there is no file to embed and nothing to subset -- which is what keeps
+    // this clear of the two font traps this repository already records.
+    if style == Paint::Text {
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding",
+        });
+        let mut fonts = Dictionary::new();
+        fonts.set(TEXT_FONT, Object::Reference(font));
+        resources.set("Font", Object::Dictionary(fonts));
+    }
 
     // `rg` sets the *fill* colour and `RG` the stroke's, and one operator does
     // not imply the other: a path stroked after only `rg` comes out black,
@@ -1309,6 +1411,47 @@ fn appearance_stream(
             for quad in quads {
                 let [x, y, width, height] = outline_path(*quad);
                 content.push_str(&format!("{x} {y} {width} {height} re S\n"));
+            }
+        }
+        // The reader's words, one `Tj` per line, from the top of the box down.
+        //
+        // **`Td` is relative to the previous text object's origin**, so each
+        // line's offset is the leading rather than an absolute y --- which is
+        // why this is one `BT`/`ET` pair with several `Td`/`Tj` and not one pair
+        // per line. Getting that wrong stacks every line on the first.
+        //
+        // Lines that would fall below the box are dropped rather than drawn: the
+        // /BBox clips them anyway, and emitting ink nobody can see makes the
+        // stream disagree with what the overlay shows.
+        Paint::Text => {
+            for quad in quads {
+                let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;
+                let lines = textbox::wrap(&mark.note, textbox::SIZE, width.max(1.0));
+                if lines.is_empty() {
+                    continue;
+                }
+                let leading = textbox::SIZE * textbox::LEADING;
+                // The first baseline sits one ascent below the top inset, not at
+                // it: `Td` places a baseline, and a line placed *at* the top edge
+                // hangs its whole body above the box.
+                let first = quad[3] - textbox::INSET - textbox::SIZE;
+                content.push_str(&format!(
+                    "BT /{TEXT_FONT} {size} Tf\n",
+                    size = textbox::SIZE
+                ));
+                content.push_str(&format!("{} {first} Td\n", quad[0] + textbox::INSET));
+                for (index, line) in lines.iter().enumerate() {
+                    if index > 0 {
+                        content.push_str(&format!("0 {} Td\n", -leading));
+                    }
+                    let baseline =
+                        quad[3] - textbox::INSET - textbox::SIZE - leading * (index as f64);
+                    if baseline < quad[1] {
+                        break;
+                    }
+                    content.push_str(&format!("<{}> Tj\n", winansi_hex(line)));
+                }
+                content.push_str("ET\n");
             }
         }
         // A zigzag along the bottom of the quad, stroked.
@@ -3828,12 +3971,33 @@ mod tests {
         .expect("the appearance stream is text")
     }
 
+    /// The appearance stream's content for a plan the caller built.
+    ///
+    /// [`appearance_of`]'s shape, for the one test that needs a mark whose
+    /// *note* is something other than the default: a text box draws its note, so
+    /// the note is the thing under test rather than a field the fixture fills
+    /// in.
+    fn appearance_of_plan(plan: &Plan, scratch: &Scratch) -> String {
+        let (_, stream) = written_appearance_of(plan, scratch);
+        String::from_utf8(
+            stream
+                .decompressed_content()
+                .unwrap_or(stream.content.clone()),
+        )
+        .expect("the appearance stream is text")
+    }
+
     /// The reopened document and the one form XObject a written mark adds.
     fn written_appearance(kind: MarkKind, scratch: &Scratch) -> (Document, lopdf::Stream) {
+        written_appearance_of(&plan_of_kind(kind, one_quad()), scratch)
+    }
+
+    /// The same, for a plan the caller built.
+    fn written_appearance_of(plan: &Plan, scratch: &Scratch) -> (Document, lopdf::Stream) {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_of_kind(kind, one_quad()), &out).expect("save");
+        write_copy(&source, plan, &out).expect("save");
         let doc = Document::load(&out).expect("reopen");
         // Every form XObject in the file, of which the fixture has none.
         let stream = doc
@@ -4100,6 +4264,7 @@ mod tests {
             // invisible on screen and wrong in every other program.
             (MarkKind::Ellipse, "Circle"),
             (MarkKind::Squiggly, "Squiggly"),
+            (MarkKind::TextBox, "FreeText"),
         ] {
             let scratch = Scratch::new("annots-subtype");
             let written = written_mark(kind, &scratch);
@@ -4109,6 +4274,112 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_text_box_carries_the_da_the_specification_requires_and_nothing_else_does() {
+        // **`/DA` is required on a `/FreeText` and forbidden nowhere else, so
+        // both halves of this are assertions.** A text box without it displays
+        // from its `/AP` and cannot be *edited* in any other reader: Acrobat
+        // regenerates the appearance when a reader types, and `/DA` is what it
+        // regenerates from. A highlight carrying one would be an unlisted key
+        // whose meaning for that subtype is undefined.
+        let scratch = Scratch::new("annots-freetext-da");
+        let written = written_mark(MarkKind::TextBox, &scratch);
+        let da = written
+            .get(b"DA")
+            .and_then(Object::as_str)
+            .expect("a /FreeText carries /DA");
+        let da = String::from_utf8_lossy(da);
+
+        // The font name and the size have to be the ones the appearance stream
+        // used, or a reader that regenerates redraws the same words at another
+        // size. Compared against the constants rather than against a literal, so
+        // changing the size moves both together or fails here.
+        assert!(
+            da.contains(&format!("/{TEXT_FONT} ")),
+            "/DA names the appearance stream's font: {da}"
+        );
+        assert!(
+            da.contains(&format!("{} Tf", textbox::SIZE)),
+            "/DA names the size the stream set: {da}"
+        );
+        assert!(da.contains("rg"), "/DA sets a fill colour: {da}");
+
+        // The control, and it is what makes the assertion above mean "required
+        // *here*" rather than "written everywhere".
+        let scratch = Scratch::new("annots-freetext-da-control");
+        let other = written_mark(MarkKind::Highlight, &scratch);
+        assert!(other.get(b"DA").is_err(), "only a /FreeText carries /DA");
+    }
+
+    #[test]
+    fn a_text_box_draws_its_words_as_winansi_hex_rather_than_a_literal() {
+        // **The encoding bug this would otherwise have shipped with.** The
+        // content stream is a Rust `String`, so an umlaut pushed into it as a
+        // literal is two UTF-8 bytes where WinAnsi wants one — every English
+        // text box correct, every German one drawing `Ã¼`. Hex removes the
+        // question, and removes the escaping question with it.
+        let scratch = Scratch::new("annots-freetext-hex");
+        let mut plan = plan_of_kind(MarkKind::TextBox, one_quad());
+        "Grüße".clone_into(&mut plan.marks[0].note);
+        let content = appearance_of_plan(&plan, &scratch);
+
+        assert!(
+            !content.contains("Tj") || content.contains("> Tj"),
+            "the text is a hex string: {content}"
+        );
+        // `ü` is one byte, `FC`, and it is the byte that would be `C3 BC` if the
+        // stream had been built as UTF-8.
+        assert!(
+            content.contains("FC"),
+            "the umlaut is one WinAnsi byte: {content}"
+        );
+        assert!(
+            !content.contains("C3BC"),
+            "and not two UTF-8 ones: {content}"
+        );
+        // A font to draw it with, in the appearance stream's own resources. A
+        // `Tf` naming a font the resources do not have draws nothing at all.
+        assert!(
+            content.contains(&format!("/{TEXT_FONT} ")),
+            "the stream names its font: {content}"
+        );
+        let scratch = Scratch::new("annots-freetext-font");
+        let (_, stream) = written_appearance(MarkKind::TextBox, &scratch);
+        assert!(
+            font_names(&stream).contains(&TEXT_FONT.to_string()),
+            "the resources carry the font the stream names"
+        );
+
+        // **The control, and it is what the comment at the call site claims.**
+        // The writer adds `/Font` only for `Paint::Text`, on the grounds that a
+        // font on a highlight's resources is dead weight in every saved file --
+        // a claim with no test until a surviving mutation said so. An assertion
+        // that a text box *has* a font passes equally well if every kind does.
+        let scratch = Scratch::new("annots-freetext-font-control");
+        let (_, plain) = written_appearance(MarkKind::Highlight, &scratch);
+        assert!(
+            font_names(&plain).is_empty(),
+            "only a text box's appearance carries a font"
+        );
+    }
+
+    /// The names in an appearance stream's `/Resources /Font`, if it has any.
+    fn font_names(stream: &lopdf::Stream) -> Vec<String> {
+        stream
+            .dict
+            .get(b"Resources")
+            .and_then(Object::as_dict)
+            .ok()
+            .and_then(|r| r.get(b"Font").and_then(Object::as_dict).ok())
+            .map(|fonts| {
+                fonts
+                    .iter()
+                    .map(|(name, _)| String::from_utf8_lossy(name).into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     #[test]

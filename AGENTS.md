@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 389 entries
+The one thing this file does *not* carry in full is the trap list --- 391 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 389 of them and the full text
-was 93% of this file --- an instruction budget spent on the 381 traps that are not
+titles. Only the titles are here, because there are 391 of them and the full text
+was 93% of this file --- an instruction budget spent on the 383 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1363,6 +1363,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A new command turns the mutation harness's control red, one layer from where it reads (the control's failure is a statement about the tree, not about the mutation; two harnesses, two lists a new command has to join)
 - A new kind that is a near-twin inherits a predicate written when it had no twin (every bound the box's check sets is true of an ellipse; ask what reading is different, not whether the old predicate still holds)
 - A test named for the population it covers is renamed by every kind you add (renamed twice in two days, the second time deliberately to fix this and falsified within hours; the body never changed and nothing ever failed)
+- A mutation that ANDs with true has changed nothing, and SURVIVED is then correct (a fourth way a mutation lies, and the one leaving least evidence: the edit lands, the digest moves, the build passes, only the semantics are a no-op)
+- A mechanical edit keyed on a field name hits every occurrence of that name (six wrong insertions: a parameter list, a request payload, an assertion, a check table; make the field required and let the type-checker enumerate the real sites)
 
 ### Windows and portability
 - The gates had never run on the platform where they fail

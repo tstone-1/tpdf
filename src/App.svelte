@@ -223,6 +223,7 @@
     addComment: (at) => void addComment(at),
     drawBox: () => viewer?.armDraw("square"),
     drawEllipse: () => viewer?.armDraw("ellipse"),
+    drawTextBox: () => viewer?.armDraw("textbox"),
     draw: () => viewer?.armDraw("ink"),
     erase: () => viewer?.armErase(),
     hasSelection: () => (status?.selected ?? 0) > 0,

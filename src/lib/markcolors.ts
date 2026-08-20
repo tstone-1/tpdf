@@ -94,6 +94,10 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // invisible. Sharing a default is also what makes the two read as one family
   // when a reader drags a box round one figure and a ring round another.
   ellipse: [0.85, 0.15, 0.15],
+  // The lines' red again, and here it colours *words* rather than a stroke. Red
+  // type on white paper reads as an annotation rather than as part of the
+  // document, which is the whole reason a reader puts a text box on a page.
+  textbox: [0.85, 0.15, 0.15],
 };
 
 /**

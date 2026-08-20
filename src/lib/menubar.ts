@@ -145,6 +145,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // wants to ring a figure rather than frame it is picking a shape, and two
       // shapes a menu separates read as two unrelated tools.
       "edit.drawEllipse",
+      // After the two shapes, because it is the third thing a drag can place and
+      // a reader choosing between them is choosing what appears.
+      "edit.addTextBox",
       // After the two shapes: all three arm a tool rather than acting on the
       // document, so they read as a run and a reader who found one has found
       // the others. Third rather than first because the shapes are one choice

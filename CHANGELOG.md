@@ -19,6 +19,25 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### Add a text box
+
+- **Add a text box...** in the Edit menu and the command palette, beside the two
+  shapes. Drag out a rectangle and type into its note --- what you type appears
+  on the page, wrapped to the box.
+
+- Set in Helvetica at 11 point in the mark's colour, so it reads as an
+  annotation rather than as part of the document. Saved as a `/FreeText`, which
+  Preview and Acrobat both draw --- and can edit, because the annotation carries
+  the default appearance they need.
+
+- **Text that Helvetica cannot write is refused**, with a message saying so.
+  That covers Greek, Cyrillic, CJK and emoji: the font a text box is set in
+  holds Latin-1 and no more, and drawing substituted glyphs would look right
+  here and be wrong in every other reader.
+
+- Long words are broken rather than allowed to run past the edge of the box,
+  where they would be invisible.
+
 ### Squiggly underline
 
 - **Squiggly underline selection** in the Edit menu and the command palette,

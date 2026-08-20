@@ -110,6 +110,7 @@ function mark(rect: [number, number, number, number]): MarkView {
     strokes: [],
     color: [1, 0.9, 0.2],
     note: "",
+    lines: [],
   };
 }
 
@@ -135,6 +136,7 @@ function placed(viewer: Viewer, rect: [number, number, number, number]) {
   const inner = viewer as unknown as Placing;
   return {
     note: inner.anchorFor(comment(rect)),
+    lines: [],
     anchor: inner.anchorForMark(mark(rect)),
     drawn: inner.viewQuadsOf(mark(rect))?.quads[0],
   };
