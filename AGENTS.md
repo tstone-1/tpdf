@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 377 entries
+The one thing this file does *not* carry in full is the trap list --- 381 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 377 of them and the full text
-was 93% of this file --- an instruction budget spent on the 371 traps that are not
+titles. Only the titles are here, because there are 381 of them and the full text
+was 93% of this file --- an instruction budget spent on the 375 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1210,6 +1210,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A reply parsed as the wrong shape reads as absence, and absence is the reassuring branch
 - A canvas round trip cannot read back what a renderer produced
 - A dependency that refuses your test input makes your own guard look redundant
+- PDFKit synthesises an appearance for an annotation that has none (so a "does a foreign reader draw it" check cannot test whether the appearance was written — and the claim about Acrobat is still unchecked)
 - A defect that switches off a check's precondition is not caught by that check
 - An "already have it" cache needs an in-flight set, not just the cache
 - A text comparison cannot see a property that is not about text
@@ -1237,6 +1238,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Four checks that say where the ink is, and none that says how long it is (the rectangle is derived from the strokes, so nothing relating the two can fail; the lesson was already written down forty lines below)
 - A check that measures along the axis it is policing shrinks its expectation with its measurement (`14.2 pt of 14.4, needs 11.5` — passing; the ratio is preserved exactly when the decision is wrong)
 - The same assumption, quiet in one mode and loud in its neighbour (one silently certified a wrong drawing, the other condemned a right one — and the loud failure had never been seen)
+- Borrowing the writer's own table to avoid drift made the check unable to fail (the rule against a second copy is real, and applying it here produced the worse defect; the way out was neither table)
+- Two readers of one file cannot catch the writer that moved it (a differential is evidence about parsing, never about geometry — ask which population could move without the other)
 - An outcome two mechanisms can produce cannot test either one
 - A length bound cannot be tested by the verdict it produces
 - A check nested inside a lookup for the thing under test disappears with it
@@ -1413,6 +1416,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A square fixture cannot tell a rotation from an identity
 - A bound in the code hides everything after it in the fixture
 - A `-manifest.json` sidecar enrols a fixture in a check it never claimed
+- A `/Text` annotation's rectangle is advisory, and PDFKit replaces it (a 24x24 icon on your top-left corner reads as a 229 pt error, and it hangs below your rectangle's bottom edge)
 - A rotated page makes a document mixed-size, and two checks assume it is not
 - A new corpus has to satisfy the sample points every existing check hardcodes
 - An empty transcript is what a *running* viewer check looks like

@@ -151,6 +151,8 @@ enum Mode {
     NoAp,
     Legible,
     Refuse,
+    /// What PDFKit --- which is Preview --- makes of the saved file.
+    Preview,
 }
 
 struct Args {
@@ -200,6 +202,7 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Ink | Mode::NoAp => ink(args, &document, bindings),
         Mode::Legible => legible(args, &document, bindings),
         Mode::Refuse => refuse(args, &document),
+        Mode::Preview => preview(args, &document),
     }
 }
 
@@ -1005,6 +1008,463 @@ fn count(pixels: &[u8], width: u32, height: u32, band: [f32; 4], scale: f32) -> 
 /// at (217, 38, 38) is neither. Measured, not guessed --- the first draft reused
 /// `count` and reported zero rule pixels everywhere, which reads exactly like an
 /// appearance stream the renderer ignored.
+/// What a parser that did not write the file makes of the mark.
+///
+/// **Phase 2's exit criterion, which every other mode in this file is
+/// structurally unable to reach.** `--mode roundtrip` reads the saved file with
+/// `annots.rs`; the pixel modes render it with PDFium. Both of those are ours,
+/// and a writer and its own reader agree about a document that is wrong ---
+/// which is the failure `docs/TRAPS.md` records from four directions. The
+/// criterion is that the document "look right reopened in Acrobat and Preview",
+/// and only a foreign parser can say so.
+///
+/// PDFKit is what Preview is. It is already a dependency, because
+/// `print_macos.rs` reads every print job back with it for this same reason.
+///
+/// **Every check here is between two *readers*, and that bounds what the mode
+/// can ever catch.** A writer that moves something legally moves it for both of
+/// them, so they agree and the mode passes. Measured rather than reasoned about,
+/// by mutating `save.rs` and watching:
+///
+/// | mutation | preview | what does catch it |
+/// |----------|---------|--------------------|
+/// | no `/Contents` | **red** | --- |
+/// | no `/T` | **red** | --- |
+/// | appearance `/BBox` shrunk to a 1x1 corner | **red** on 5 of 6 kinds | nothing else |
+/// | `/Subtype` written as `/Underline` for a strikeout | green | `save::tests::each_kind_writes_its_own_subtype`, and `--mode roundtrip` |
+/// | `/Rect` shifted three points sideways | green | `--mode roundtrip`, which compares against where the characters were |
+/// | no `/AP` at all | green | `save.rs`'s own test that the key is written |
+///
+/// The `/BBox` row is the one that justifies the mode's existence beside the
+/// PDFium ones: PDFKit drew **196 px into a 14 pt corner** where a correct box
+/// draws 1306 across 254, while PDFium scaled the same form up until the frame
+/// filled the rectangle solid. Two renderers, two different wrong pictures, and
+/// only one of them is Preview. The kind that survives it is [`MarkKind::Note`],
+/// correctly: `save.rs` writes a comment no appearance stream at all, because
+/// every reader draws its own icon, so there is no `/BBox` to shrink.
+///
+/// **The rectangle comparison converts, and says so.** `annots.rs` answers in
+/// display space, after `/Rotate`; `PDFAnnotation.bounds` answers with the raw
+/// `/Rect`. Reading one against the other directly is the trap
+/// `docs/TRAPS.md` names under *"PDFKit reports an annotation's bounds rotated
+/// and renders the page unrotated"*, and it produced two rounds of a confident
+/// wrong conclusion the first time. `text::from_device` plus the crop origin is
+/// the conversion, which is `save::user_quads`'s, so what survives the
+/// cancellation is whether PDFKit found the same four numbers.
+///
+/// **The pixel half is whole-page on a turned page and cannot be otherwise.**
+/// Measured 2026-08-20: PDFKit draws a `/Rotate` page's content *rotated* into
+/// an *unrotated* frame --- `boundsForBox` answers 612x792 for a page poppler
+/// renders at 792x612, and six of `rotated-90`'s twelve lines are clipped away
+/// --- while `bounds` stays unrotated. So the annotation layer and the content
+/// layer are in different frames and "coverage inside its own rectangle" reads
+/// 0.0% for a mark that is drawn perfectly. The containment check is therefore
+/// skipped on a turned page, out loud, rather than reported as a failure.
+#[cfg(target_os = "macos")]
+fn preview(args: &Args, document: &RawDocument) -> Result<bool, String> {
+    let (out, _) = mark_and_save(args, document)?;
+    let outcome = preview_pdfkit(args, document, &out);
+    if args.keep.is_none() {
+        let _ = std::fs::remove_file(&out);
+    }
+    outcome
+}
+
+/// The platform refusal, which is a gap rather than a guarantee.
+///
+/// Windows has an independent PDF parser and the print path already reads jobs
+/// back with it --- but `Windows.Data.Pdf` renders and exposes **no annotation
+/// object model at all**, so the metadata half of this mode has no counterpart
+/// there and the pixel half would be a second implementation rather than a
+/// port. Said here rather than left to fail obscurely, because a mode that is
+/// absent on a platform looks exactly like one that passes.
+#[cfg(not(target_os = "macos"))]
+fn preview(_args: &Args, _document: &RawDocument) -> Result<bool, String> {
+    Err(
+        "--mode preview reads the saved file with PDFKit, which is macOS only. \
+         Windows.Data.Pdf is the platform's own parser and the print path \
+         already uses it, but it exposes no annotation object model, so there \
+         is nothing there to ask the questions this mode asks."
+            .to_string(),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn preview_pdfkit(args: &Args, document: &RawDocument, out: &Path) -> Result<bool, String> {
+    let page = document.page(args.page)?;
+    let turns = page.quarter_turns();
+    let (width_pt, height_pt) = (page.width_pt(), page.height_pt());
+    let (origin_x, origin_y) = page.origin_pt();
+
+    // Our own reader over the same bytes, for the two checks that are
+    // differentials rather than assertions against what was asked for.
+    let bytes = std::fs::read(out).map_err(|e| format!("cannot re-read {}: {e}", out.display()))?;
+    let ours = annots::scan(&bytes, document.page_count() as usize)?;
+    let mine: Vec<&annots::Comment> = ours
+        .items
+        .iter()
+        .filter(|c| c.page == args.page && c.author == "annot-probe")
+        .collect();
+
+    let theirs = open_pdfkit(out)?;
+    let source = open_pdfkit(&args.file)?;
+    let listed = pdfkit_annotations(&theirs, args.page)?;
+    let already = pdfkit_annotations(&source, args.page)?;
+    // The source page's own annotations are not ours --- `links-cropped.pdf`
+    // carries a `/Link` --- so the count that has to agree is the difference.
+    let added = listed.len() as i64 - already.len() as i64;
+
+    println!(
+        "PDFKit on page {}: {} annotation(s), {} before the mark; annots.rs reports {} of ours",
+        args.page,
+        listed.len(),
+        already.len(),
+        mine.len()
+    );
+
+    let mut ok = true;
+    ok &= check(
+        &format!("annots.rs found exactly one mark of ours ({})", mine.len()),
+        mine.len() == 1,
+    );
+    ok &= check(
+        &format!("PDFKit found one annotation more than the source page had ({added})"),
+        added == 1,
+    );
+    let Some(mark) = mine.first() else {
+        return Ok(false);
+    };
+    let Some(theirs_mark) = listed
+        .iter()
+        .find(|a| a.author.as_deref() == Some("annot-probe"))
+    else {
+        // Not folded into the count check above: a mark PDFKit lists but cannot
+        // attribute is a different defect from one it does not list at all.
+        check("PDFKit attributes the mark to its author", false);
+        return Ok(false);
+    };
+
+    // **Two readers of one file, compared through a third thing that is neither
+    // of them.** PDFKit's `/Subtype` string goes through `annots::Kind::of`, so
+    // what is asserted is that the two agree about what the mark *is* rather
+    // than about a spelling.
+    //
+    // This deliberately does **not** compare against the table `save.rs` writes
+    // from. That was the first version, and mutating `save::subtype` to write
+    // `/Underline` for a strikeout left it green: the check read the same table
+    // the writer did, so both moved together. A legal-but-wrong subtype is
+    // caught by `save::tests::each_kind_writes_its_own_subtype` and by
+    // `--mode roundtrip`'s kind assertion, both measured red under that
+    // mutation; what this one is for is a foreign parser disagreeing, which
+    // nothing else here can see.
+    let theirs_kind = theirs_mark
+        .subtype
+        .as_deref()
+        .and_then(|name| annots::Kind::of(name.as_bytes()));
+    ok &= check(
+        &format!(
+            "PDFKit and annots.rs agree what the mark is ({} against {:?})",
+            theirs_mark.subtype.as_deref().unwrap_or("(none)"),
+            mark.kind
+        ),
+        theirs_kind == Some(mark.kind),
+    );
+    ok &= check(
+        &format!(
+            "the note survives to a foreign reader ({:?})",
+            theirs_mark.note.as_deref().unwrap_or("")
+        ),
+        theirs_mark.note.as_deref() == Some("written by annot-probe"),
+    );
+
+    // The conversion, stated: display space -> the page's own, exactly as
+    // `save::user_quads` does it.
+    let us = to_page_space(turns, width_pt, height_pt, mark.rect, (origin_x, origin_y));
+    let them = theirs_mark.bounds;
+    if args.kind == MarkKind::Note {
+        // **A `/Text` annotation's rectangle is advisory and PDFKit replaces
+        // it**, which this mode found on its first run and which is the whole
+        // point of asking a foreign reader. Measured: `/Rect` written as
+        // `[60.322 717.074 313.652 730.192]`, 253.3 x 13.1, and PDFKit reports
+        // `(60.322, 706.192) 24 x 24` --- the standard icon, anchored at the
+        // rectangle's top-left corner, since `730.192 - 24 = 706.192`. The
+        // specification allows exactly that: a reader draws the icon at a size
+        // of its own choosing.
+        //
+        // So the equality below would be a defect report about a mark that is
+        // correct. What is asserted instead is the anchor and the size, which
+        // still proves PDFKit found our rectangle --- it cannot place the icon
+        // at our top-left corner without having read it.
+        let corner = (them[0] - us[0]).abs().max((them[3] - us[3]).abs());
+        ok &= check(
+            &format!(
+                "PDFKit hangs the note's icon off the corner annots.rs reports                  ({corner:.2} pt away)"
+            ),
+            corner < 0.5,
+        );
+        ok &= check(
+            &format!(
+                "and draws it at the standard size ({:.1} x {:.1})",
+                them[2] - them[0],
+                them[3] - them[1]
+            ),
+            (them[2] - them[0] - 24.0).abs() < 0.5 && (them[3] - them[1] - 24.0).abs() < 0.5,
+        );
+    } else {
+        let apart = (0..4)
+            .map(|i| (them[i] - us[i]).abs())
+            .fold(0.0f64, f64::max);
+        ok &= check(
+            &format!(
+                "PDFKit and annots.rs agree about the rectangle (worst corner {apart:.2} pt apart)"
+            ),
+            apart < 0.5,
+        );
+    }
+
+    let before = pdfkit_render(&source, args.page)?;
+    let after = pdfkit_render(&theirs, args.page)?;
+    if before.1 != after.1 || before.2 != after.2 {
+        return Err(format!(
+            "PDFKit renders the copy {}x{} and the source {}x{}, so no comparison \
+             between them means anything",
+            after.1, after.2, before.1, before.2
+        ));
+    }
+    let (changed, box_) = differing(&before.0, &after.0, before.1, before.2, after.3);
+    println!(
+        "PDFKit's own render: {changed} px changed of {}, within ({:.1}, {:.1}) {:.1} x {:.1}",
+        before.1 * before.2,
+        box_[0],
+        box_[1],
+        box_[2] - box_[0],
+        box_[3] - box_[1]
+    );
+    ok &= check(
+        &format!("PDFKit draws something the source page does not ({changed} px)"),
+        changed > 0,
+    );
+    // **How much of the rectangle the drawing reaches, which "something was
+    // drawn" cannot see.** Kind-independent, and it has to be: a highlight
+    // fills its box, an underline is a rule two points tall inside a box of
+    // thirteen, and ink is two thin strokes. What every one of them does is
+    // span the rectangle's *longer* side, so that is the only dimension asked
+    // about.
+    //
+    // Written because a mutation shrinking the appearance stream's `/BBox` to a
+    // 1x1 corner survived everything above: PDFKit drew 196 px in a 14 pt
+    // square where a correct box draws 1306 across 254 pt, and both "something
+    // was drawn" and "it stayed inside the rectangle" are satisfied by a mark
+    // that has collapsed. PDFium does not fail the same way --- it scales the
+    // form up until the frame fills the rectangle solid --- which is the whole
+    // argument for asking a second renderer.
+    let (drew, spans) = (
+        (box_[2] - box_[0]).max(box_[3] - box_[1]),
+        (them[2] - them[0]).max(them[3] - them[1]),
+    );
+    ok &= check(
+        &format!(
+            "and draws across the rectangle rather than into a corner of it              ({drew:.1} pt of {spans:.1})"
+        ),
+        drew >= spans * 0.8,
+    );
+
+    if turns % 4 == 0 {
+        // **Against the rectangle PDFKit reports, not the one we wrote**, and
+        // the two are tied together by the agreement check above --- which is
+        // what makes this more than PDFKit agreeing with itself. For a note
+        // they genuinely differ, since the icon hangs *below* our rectangle's
+        // bottom edge, so measuring containment against ours would report a
+        // defect in a mark the same run has just shown to be right.
+        //
+        // Two points of slack at each edge: the comparison is at one pixel per
+        // point and a stroke straddles its path.
+        let inside = box_[0] >= them[0] - 2.0
+            && box_[1] >= them[1] - 2.0
+            && box_[2] <= them[2] + 2.0
+            && box_[3] <= them[3] + 2.0;
+        ok &= check(
+            &format!(
+                "everything PDFKit drew is inside the rectangle it reports                  (({:.1}, {:.1}) {:.1} x {:.1})",
+                them[0],
+                them[1],
+                them[2] - them[0],
+                them[3] - them[1]
+            ),
+            inside,
+        );
+    } else {
+        println!(
+            "[SKIP] everything PDFKit drew is inside the mark's own rectangle: this page is \
+             /Rotate {}, and PDFKit draws the content turned while reporting bounds \
+             unturned -- the two layers are in different frames, so the containment \
+             figure would be about PDFKit rather than about us",
+            turns as u32 * 90
+        );
+    }
+    Ok(ok)
+}
+
+/// One annotation as PDFKit reports it.
+#[cfg(target_os = "macos")]
+struct Listed {
+    subtype: Option<String>,
+    author: Option<String>,
+    note: Option<String>,
+    /// `PDFAnnotation.bounds`, which is the raw `/Rect` --- **not** turned by
+    /// `/Rotate`, measured 2026-08-20 against the bytes of a marked
+    /// `rotated-90`. See [`preview_pdfkit`] for why that matters.
+    bounds: [f64; 4],
+}
+
+#[cfg(target_os = "macos")]
+fn open_pdfkit(path: &Path) -> Result<objc2::rc::Retained<objc2_pdf_kit::PDFDocument>, String> {
+    use objc2::AnyThread;
+    use objc2_foundation::{NSString, NSURL};
+    use objc2_pdf_kit::PDFDocument;
+
+    let text = NSString::from_str(&path.to_string_lossy());
+    let url = NSURL::fileURLWithPath(&text);
+    unsafe { PDFDocument::initWithURL(PDFDocument::alloc(), &url) }.ok_or_else(|| {
+        format!(
+            "PDFKit will not open {} at all. That is a finding rather than a harness \
+             fault: it is the parser Preview uses, and a file it refuses is a file a \
+             reader cannot open.",
+            path.display()
+        )
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn pdfkit_annotations(doc: &objc2_pdf_kit::PDFDocument, page: u32) -> Result<Vec<Listed>, String> {
+    let page = unsafe { doc.pageAtIndex(page as usize) }
+        .ok_or_else(|| format!("PDFKit reports no page {page}"))?;
+    let list = unsafe { page.annotations() };
+    let mut out = Vec::new();
+    for index in 0..list.count() {
+        let annot = list.objectAtIndex(index);
+        let bounds = unsafe { annot.bounds() };
+        out.push(Listed {
+            subtype: unsafe { annot.r#type() }.map(|s| s.to_string()),
+            author: unsafe { annot.userName() }.map(|s| s.to_string()),
+            note: unsafe { annot.contents() }.map(|s| s.to_string()),
+            bounds: [
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.origin.x + bounds.size.width,
+                bounds.origin.y + bounds.size.height,
+            ],
+        });
+    }
+    Ok(out)
+}
+
+/// PDFKit's own render of one page, at one pixel per point, RGBA.
+///
+/// One pixel per point rather than the 4x the ink modes use, because nothing
+/// here measures a coverage fraction --- the questions are "did anything change"
+/// and "where", and a 2.5 pt stroke is 2.5 px, which is plenty for both. Row 0
+/// of the buffer is the **top** of the page, which is a fact about
+/// `CGBitmapContextCreate` measured rather than reasoned about: reading it the
+/// other way round put every changed box at the wrong end of the page.
+#[cfg(target_os = "macos")]
+fn pdfkit_render(
+    doc: &objc2_pdf_kit::PDFDocument,
+    page: u32,
+) -> Result<(Vec<u8>, usize, usize, [f64; 2]), String> {
+    use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGImageAlphaInfo};
+    use objc2_pdf_kit::PDFDisplayBox;
+
+    let page = unsafe { doc.pageAtIndex(page as usize) }
+        .ok_or_else(|| format!("PDFKit reports no page {page}"))?;
+    let box_ = unsafe { page.boundsForBox(PDFDisplayBox::MediaBox) };
+    let (w, h) = (box_.size.width as usize, box_.size.height as usize);
+    if w == 0 || h == 0 {
+        return Err(format!(
+            "PDFKit reports a {w}x{h} media box, which cannot be rendered"
+        ));
+    }
+    // White, opaque, before anything is drawn --- the page's own background is
+    // not painted by `drawWithBox:`, so an unfilled buffer would make every
+    // blank pixel differ from itself run to run.
+    let mut pixels = vec![0xFFu8; w * h * 4];
+    let space = CGColorSpace::new_device_rgb().ok_or("no device RGB colour space")?;
+    let ctx = unsafe {
+        CGBitmapContextCreate(
+            pixels.as_mut_ptr().cast(),
+            w,
+            h,
+            8,
+            w * 4,
+            Some(&space),
+            CGImageAlphaInfo::PremultipliedLast.0,
+        )
+    }
+    .ok_or("CGBitmapContextCreate returned nothing")?;
+    unsafe { page.drawWithBox_toContext(PDFDisplayBox::MediaBox, &ctx) };
+    drop(ctx);
+    Ok((pixels, w, h, [box_.origin.x, box_.origin.y]))
+}
+
+/// How many pixels differ, and the box in page points that holds all of them.
+///
+/// The box is in the page's own space, bottom-left origin, so it can be compared
+/// with a `/Rect` directly.
+#[cfg(target_os = "macos")]
+fn differing(a: &[u8], b: &[u8], w: usize, h: usize, origin: [f64; 2]) -> (usize, [f64; 4]) {
+    let (mut lo_x, mut lo_y, mut hi_x, mut hi_y) = (w, h, 0usize, 0usize);
+    let mut count = 0usize;
+    for y in 0..h {
+        for x in 0..w {
+            let at = (y * w + x) * 4;
+            if a[at] != b[at] || a[at + 1] != b[at + 1] || a[at + 2] != b[at + 2] {
+                count += 1;
+                lo_x = lo_x.min(x);
+                hi_x = hi_x.max(x);
+                lo_y = lo_y.min(y);
+                hi_y = hi_y.max(y);
+            }
+        }
+    }
+    if count == 0 {
+        return (0, [0.0; 4]);
+    }
+    // Row 0 is the top, so the bottom edge is the *largest* row index.
+    (
+        count,
+        [
+            lo_x as f64 + origin[0],
+            (h - hi_y - 1) as f64 + origin[1],
+            (hi_x + 1) as f64 + origin[0],
+            (h - lo_y) as f64 + origin[1],
+        ],
+    )
+}
+
+/// A mark's rectangle out of display space and into the page's own.
+///
+/// `save::user_quads`' mapping, and deliberately the same one: what the
+/// comparison in [`preview_pdfkit`] is for is whether PDFKit found the same
+/// four numbers, so the conversion cancelling on both sides is the point rather
+/// than a weakness. Written here rather than called because `user_quads` is
+/// private to the writer and takes a `PlannedMark`.
+#[cfg(target_os = "macos")]
+fn to_page_space(
+    turns: u8,
+    width_pt: f32,
+    height_pt: f32,
+    rect: [f32; 4],
+    origin: (f32, f32),
+) -> [f64; 4] {
+    let page = text::from_device(turns, width_pt, height_pt, rect);
+    [
+        page[0] + f64::from(origin.0),
+        page[1] + f64::from(origin.1),
+        page[2] + f64::from(origin.0),
+        page[3] + f64::from(origin.1),
+    ]
+}
+
 /// How far the mark's own ink reaches along one axis inside `band`, in points.
 ///
 /// **The one question `rule_pixels` cannot answer, and the reason a transposed
@@ -1731,6 +2191,7 @@ fn parse_args() -> Result<Args, String> {
                     "noap" => Mode::NoAp,
                     "legible" => Mode::Legible,
                     "refuse" => Mode::Refuse,
+                    "preview" => Mode::Preview,
                     other => return Err(format!("unknown mode {other}")),
                 }
             }

@@ -99,9 +99,25 @@ objc2-pdf-kit = { version = "0.3", features = [
     "PDFDocument",
     "PDFPage",
     "objc2-app-kit",
+    # `annot-probe --mode preview`: the annotation list a parser that did not
+    # write the file reports, and PDFKit drawing the page into a bitmap so the
+    # mark can be shown to change pixels. Features on a crate already in the
+    # tree, so no package is added and the licensing sweep is unmoved.
+    "PDFAnnotation",
+    "objc2-core-graphics",
 ] }
 objc2-vision = { version = "0.3.2", default-features = false, features = ["VNRequest", "VNRecognizeTextRequest", "VNObservation", "VNRequestHandler", "VNTypes", "VNError", "std", "objc2-core-graphics", "objc2-core-foundation"] }
-objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGImage", "CGDataProvider", "CGColorSpace", "std"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "CGImage",
+    "CGDataProvider",
+    "CGColorSpace",
+    # `CGBitmapContextCreate`, which is what `--mode preview` draws into. Both
+    # names are needed: `CGContext` for the type, `CGBitmapContext` for the
+    # module the constructor lives in.
+    "CGContext",
+    "CGBitmapContext",
+    "std",
+] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "std"] }
 
 # Windows containment, for `examples/win_sandbox_probe.rs`. macOS gets its boundary

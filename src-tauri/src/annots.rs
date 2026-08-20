@@ -144,7 +144,14 @@ impl Kind {
     /// second note, and a link or a form field is not a comment at all. Counting
     /// them would put a permanent "some comments were dropped" notice on every
     /// document that has a hyperlink in it.
-    fn of(name: &[u8]) -> Option<Self> {
+    /// **Public so that `annot-probe --mode preview` can put PDFKit's reading of
+    /// `/Subtype` through this reader's own parser**, and compare the kind
+    /// rather than the string. The probe holding a table of its own would be a
+    /// copy free to drift from this one; borrowing the *writer's* table instead
+    /// was tried and is worse, because then a mutation of the writer moves the
+    /// check with it and the assertion cannot fail --- measured, and recorded in
+    /// `docs/TRAPS.md`.
+    pub fn of(name: &[u8]) -> Option<Self> {
         Some(match name {
             b"Text" => Self::Text,
             b"FreeText" => Self::FreeText,

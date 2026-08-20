@@ -6620,11 +6620,72 @@ The mode is unaffected, since it is the only thing here that reads `/QuadPoints`
 at all; what goes is the reassurance that some named reader in the wild
 regenerates our appearance. Nobody has shown one.
 
-**Not done:** a standing check for any of this. The instrument is a throwaway
-Swift harness, and turning it into a mode means deciding what to do about the
-rotated frame --- an upright-only positional assertion plus metadata on every
-page is the honest first version, and PDFKit on macOS has a counterpart in
-`Windows.Data.Pdf`, which the print path already uses for exactly this purpose.
+~~**Not done:** a standing check for any of this.~~ Done the same day --- see
+below. The shape it took is the one predicted: metadata on every page, the
+positional assertion upright-only. What was wrong in the prediction is the
+Windows half; `Windows.Data.Pdf` renders and exposes no annotation object model,
+so there is nothing there to ask these questions of.
+
+#### `--mode preview`, and what a two-reader check can never see --- 2026-08-20
+
+The by-hand run above, made repeatable. `annot-probe --mode preview` opens the
+saved file with PDFKit and asks eight questions: that PDFKit opens it at all,
+that it lists exactly one annotation more than the source page had, that
+`annots.rs` finds exactly one of ours, that the two agree what kind it is, that
+the note survives, that the rectangle agrees, that PDFKit draws something the
+source page does not, and that the drawing crosses the rectangle rather than
+collapsing into a corner. 18 runs green across three fixtures and six kinds.
+
+**The kind comparison goes through `annots::Kind::of`, which is neither reader's
+own table**, and that detail is the increment's main lesson. The first version
+compared against `save::subtype` --- the writer's table, made `pub` for the
+purpose, citing this repository's own rule against keeping two copies of a
+distinction. Mutating that table to write `/Underline` for a strikeout left the
+check green, because the expectation moved with the code. **The rule against a
+second copy is right and applying it here produced the worse defect.**
+
+##### What it catches, measured, and what it structurally cannot
+
+| mutation in `save.rs` | `--mode preview` | what does catch it |
+|---|---|---|
+| no `/Contents` | red | --- |
+| no `/T` | red | --- |
+| appearance `/BBox` shrunk to a 1x1 corner | red on 5 of 6 kinds | nothing else |
+| `/Subtype` written as `/Underline` for a strikeout | green | a unit test, and `--mode roundtrip` |
+| `/Rect` shifted three points sideways | green | `--mode roundtrip` |
+| no `/AP` at all | green | `save.rs`'s own test that the key is written |
+
+The bottom three are one fact: **every check here is between two readers, so a
+writer that moves something legally moves it for both.** A differential is
+evidence about parsing, never about geometry. Recorded as its own trap, because
+the practical rule --- when adding a check to a differential, ask which
+population could move without the other --- generalises well past this file.
+
+The `/BBox` row is what justifies the mode beside the PDFium ones. PDFKit drew
+**196 px into a 14 pt corner** where a correct box draws 1306 across 254, while
+PDFium scaled the same form up until the frame filled the rectangle solid: two
+renderers, two different wrong pictures, and only one of them is Preview. The
+kind that survives it is the comment, correctly --- `save.rs` writes a `/Text` no
+appearance at all, so there is no `/BBox` to shrink.
+
+##### Two facts about the oracle, both surprising
+
+**PDFKit replaces a `/Text` annotation's rectangle.** A comment written at
+`[60.322 717.074 313.652 730.192]` comes back as `(60.322, 706.192) 24 x 24` ---
+the standard icon on the rectangle's top-left corner, `730.192 - 24 = 706.192`
+exactly. It reads as a 229 pt error and is not one. The mode asserts the anchor
+and the size for that kind instead, which still proves PDFKit found our
+rectangle, and measures containment against the rectangle PDFKit reports, since
+the icon hangs below ours.
+
+**PDFKit draws an annotation that has no appearance stream**, generating its own
+--- 1056 px for a `/Square` against 1306 with ours. Which also means
+`docmodel.rs`'s note that Acrobat draws such a square as nothing is still
+unchecked: PDFKit is not Acrobat, and nothing here has asked it.
+
+**Not done:** an Acrobat run, which is the other half of the criterion's own
+wording and needs a licence and a person; and any of this on Windows.
+
 
 ### Phase 3 — Redaction
 
