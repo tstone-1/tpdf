@@ -6386,23 +6386,40 @@ The same gap every shell action has: `App.svelte` joins `edit.draw` to
 *instead of* the shell. The `wiring` gate covers the callback being wired at all,
 which is the defect that shipped with the box; it does not cover the arming.
 
-**And the overlay check written for this increment has never been executed.**
-`overlayInkChecks` gains a sixth kind --- *"a drawing follows its strokes and does
-not fill its rectangle"*, reading two inked edges and an empty centre, which is a
-combination none of the other five produces. It is the check that would catch ink
-painted from `markBand`, and `markBand` answers the whole quad for this kind, so
-the defect it is aimed at is one line away from being live. It is written and it
-is unproved: the screen was locked for the whole of the session that added it,
-`viewer_check.py` refuses rather than hanging in that state, and there is no way
-to unlock a macOS session from a script. So it has not been shown to pass, and
-more to the point it has not been shown that it can *fail*.
+##### The overlay, measured on both sides
 
-That is stated rather than implied because the repository's own standard is that
-a check which cannot run is not a check. **Before the next release: run the sweep,
-confirm the name appears, and mutate `paintMarks` to draw ink from
-`markBand(mark.kind, quad)` --- the one-line fallback --- and confirm the check
-goes red.** Until that has happened, the pixel evidence for ink is the *file's*,
-which `--mode strokes` measures, and the screen's is a claim.
+`overlayInkChecks` gains a sixth kind: *"a drawing follows its strokes and does
+not fill its rectangle"*, reading two inked edges and an empty centre --- a
+combination none of the other five produces, since an underline has one edge, a
+strikeout fills the centre and a frame has four.
+
+Run on `text-base14`, **177/177 with 102 not applicable**, and the reading is
+`17% of the rectangle, 0% of its centre, ink on 2 of its 4 sides`.
+
+**And it was shown to fail**, which is the half that makes the first number mean
+anything. The mutation is the one-line fallback the check exists for --- ink
+painted from `markBand`, which answers the whole quad for this kind:
+
+| | rectangle | centre | sides | |
+|---|---|---|---|---|
+| as written | 17% | 0% | 2 of 4 | `[OK]` |
+| drawn from `markBand` | 100% | 100% | 4 of 4 | `[FAIL]` |
+
+Two checks go red, not one: the distinctness check beside it drops to *"5 distinct
+readings from 6 kinds"*, because ink then reads identically to a highlight. 175/177
+against 177/177, and `viewer.ts` restored byte-identical afterwards.
+
+This ran a session later than the rest of the increment, and the paragraph here
+said the check was unproved until it did. Worth leaving that fact rather than
+overwriting it: a check nobody has watched fail is a claim, and the screen being
+locked is enough to stop one --- `viewer_check.py` refuses rather than hanging,
+which is the only reason the gap was visible instead of being a green run.
+
+**279 check names, not the 111 predicted here.** That prediction was BUILD.md's
+documented `109` plus the two added --- and `109` was measured on 2026-07-31,
+before marks, crops, print and the comment panel. Arithmetic on a stale number is
+exactly what that file's own paragraph warns against, and it produced a figure
+wrong by 168. The measured count is in `BUILD.md`.
 
 **Not done:** an ellipse, which is `/Circle` and the same rectangle with a
 different subtype; a crop a reader drags, still only a second caller of the
