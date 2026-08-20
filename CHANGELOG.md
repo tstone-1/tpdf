@@ -19,6 +19,24 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### A sidebar panel listing your own marks
+
+- **Show my marks** in the View menu and the command palette opens a fifth
+  sidebar tab. It lists every mark you have made in the document, in the order
+  you meet them reading down the pages: the note you typed, what kind of mark it
+  is, the page it is on, and a swatch in its own colour.
+
+- Pressing a row goes to that mark and opens its note, scrolling to it if it is
+  off screen. The keyboard works the same way --- Tab into the list once, then
+  arrow around, Enter to go.
+
+- The selection follows the page, so pressing a mark on the page highlights its
+  row, and closing the note clears it.
+
+- It is a separate tab from **Comments**, which lists the annotations that were
+  already in the file when you opened it. A mark of yours can be edited,
+  recoloured and taken off; a comment from the file can only be read.
+
 ### Add a text box
 
 - **Add a text box...** in the Edit menu and the command palette, beside the two

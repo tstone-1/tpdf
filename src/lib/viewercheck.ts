@@ -54,21 +54,21 @@ import {
 } from "./reading";
 import { TextCache, type PageText } from "./text";
 import type { EditState } from "./edits";
-import type { MarkKind, MarkView } from "./pages";
-import { Sidebar } from "./sidebar";
+import { markRows, unedited, type MarkKind, type MarkView } from "./pages";
+import { Sidebar, SIDEBAR_CLASS } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor, type Thumbnails } from "./thumbnails";
 import { SCROLLBAR_WIDTH, Viewer, type ViewerStatus } from "./viewer";
 
 /**
- * Tabs the sidebar has: outline, pages, results, comments.
+ * Tabs the sidebar has: outline, pages, results, comments, marks.
  *
  * Spelled out here rather than read from the sidebar, which would make the check
  * agree with whatever the sidebar happens to build. It went red on its own when
  * the results tab landed and again when the comments tab did, which is the check
- * working --- twice.
+ * working --- twice. Three times: the marks tab made it five.
  */
-const SIDEBAR_TABS = 4;
+const SIDEBAR_TABS = 5;
 
 /** Size of the surface the check mounts, in CSS pixels. */
 const WIDTH = 900;
@@ -321,6 +321,7 @@ async function run(path: string): Promise<void> {
     onNavigate: (target, top) => viewer.goToDestination(target, top),
     results: { onPick: (index) => viewer.showMatch(index) },
     comments: { onPick: (id) => viewer.showComment(id) },
+    marks: { onPick: (id) => viewer.showMark(id) },
     pages: {
       doc: doc.id,
       pageCount: doc.page_count,
@@ -371,6 +372,10 @@ async function run(path: string): Promise<void> {
     // What the viewer asked the model to do with the reader's own marks. There
     // is no model here, so this record *is* the observable --- see
     // `markNoteChecks`.
+    // Wired exactly as `App.svelte` wires it, so what the marks panel phase
+    // checks below is the connection the application has rather than a second
+    // one written for the harness.
+    onMark: (id) => sidebar.marks.select(id),
     onMarkNote: (mark, note) => markEdits.push(`note:${mark}:${note}`),
     onMarkRemove: (mark) => markEdits.push(`remove:${mark}`),
     // The swatch row's, recorded into the same list for the same reason --- see
@@ -540,6 +545,9 @@ async function run(path: string): Promise<void> {
   // leaves the view turned.
   await markNoteChecks(root, viewer, markEdits);
   await markColorChecks(viewer, markEdits);
+  // Under the same constraint again --- it presses a mark on the page through
+  // `screenPoint`, which does not apply the view's own rotation.
+  await markPanelChecks(root, viewer, sidebar, doc);
   await linkChecks(root, viewer, doc, problems);
   await thumbnailChecks(root, viewer, sidebar, doc, page, drags, menus);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
@@ -3297,6 +3305,11 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      id: "view.showMarks",
+      ...shell("showTab:marks"),
+      read: () => fired.join(","),
+    },
+    {
       id: "view.invertPages",
       ...shell("toggleInvert"),
       read: () => fired.join(","),
@@ -4440,6 +4453,207 @@ async function markNoteChecks(
   await markKeyboardChecks(root, viewer);
 }
 
+/** The names this phase reports, so a run that cannot start still prints them. */
+const MARK_PANEL_CHECKS = [
+  "the marks panel lists every mark the reader has made",
+  "a row says what the mark says and what kind it is",
+  "activating a row opens that mark's note and goes to it",
+  "pressing a mark on the page selects its row",
+  "closing the note clears the panel's selection",
+];
+
+/**
+ * The panel listing the reader's own marks, in a real window.
+ *
+ * What no unit test reaches, and it is the same three things every panel phase
+ * here is for. A row's text is read back out of a **real** DOM --- the fake one
+ * the unit tests run against computes no aggregate `textContent`, so a row that
+ * built nothing and a row that built the right thing are distinguishable there
+ * only by walking positions. Activating a row is a real `pointerdown` on a real
+ * element, and what it has to achieve is a *scroll*, which needs pages with
+ * heights. And the selection following a press on the page is the `onMark`
+ * wiring end to end: the popup fires it, the viewer forwards it, the panel
+ * marks the row.
+ *
+ * There is no model behind the harness, so `setMarks` on both sides is what an
+ * edit-state reply would be --- the same arrangement `markNoteChecks` uses, and
+ * for the same reason.
+ */
+async function markPanelChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  sidebar: Sidebar,
+  doc: DocumentInfo,
+): Promise<void> {
+  // The *last* page, and low down it. Two things this has to survive, both of
+  // which the corpus sweep found by failing:
+  //
+  //   * On a one-page document the two marks are on the same page, so they must
+  //     not also be at the same *height* --- at one band they land on top of
+  //     each other and a press meant for the first opens the second.
+  //   * The last page cannot reach the top of the viewport, so "went to it"
+  //     cannot be asserted as the viewer's page number: a scroll to the end
+  //     clamps, and on `rotated-90` that leaves the page before it at the top
+  //     while the mark is plainly on screen. The trap is already recorded under
+  //     that name; the assertion below is that the mark is *visible*, which is
+  //     what the check is actually about and is what a viewer that opened the
+  //     note without scrolling fails.
+  const last = doc.page_count - 1;
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+
+  const here = syntheticMark(viewer, 4246, "on the first page", 0.06);
+  const away = markOnPage(viewer, 4247, last, "low on the last page", 0.8);
+  const marks = [here, away];
+  viewer.setMarks(marks);
+  sidebar.setMarks(markRows(marks, unedited(doc.page_count)));
+  await frame();
+
+  check(
+    MARK_PANEL_CHECKS[0] ?? "",
+    sidebar.marks.rowCount === marks.length,
+    `${sidebar.marks.rowCount} rows for ${marks.length} marks, status ` +
+      `${JSON.stringify(sidebar.marks.status)}`,
+  );
+
+  const text = sidebar.marks.rowText(here.id);
+  check(
+    MARK_PANEL_CHECKS[1] ?? "",
+    text.note === here.note && text.kind === "Highlight" && text.page === "1",
+    `note=${JSON.stringify(text.note)}, kind=${JSON.stringify(text.kind)}, ` +
+      `page=${JSON.stringify(text.page)}`,
+  );
+
+  const row = sidebar.marks.elementFor(away.id);
+  if (!row) {
+    for (const name of MARK_PANEL_CHECKS.slice(2)) {
+      skip(name, "the mark has no row to press");
+    }
+    viewer.setMarks([]);
+    sidebar.setMarks([]);
+    return;
+  }
+  row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  await settle(() => viewer.idle);
+  await frame();
+  const bounds = root.getBoundingClientRect();
+  const landed = centreOn(viewer, away, last);
+  const onScreen =
+    landed.y > bounds.top &&
+    landed.y < bounds.bottom &&
+    landed.x > bounds.left &&
+    landed.x < bounds.right;
+  check(
+    MARK_PANEL_CHECKS[2] ?? "",
+    viewer.markOpen === away.id && onScreen,
+    `open=${viewer.markOpen} for #${away.id}, its centre at ` +
+      `(${landed.x.toFixed(0)}, ${landed.y.toFixed(0)}) in ` +
+      `(${bounds.left.toFixed(0)}..${bounds.right.toFixed(0)}, ` +
+      `${bounds.top.toFixed(0)}..${bounds.bottom.toFixed(0)}), viewer on page ` +
+      `${viewer.position.page + 1} of ${doc.page_count}, mark on ${last + 1}`,
+  );
+  viewer.closeMark();
+
+  // Back to the first page, and pressed on the *page* rather than in the panel.
+  // The row that lights up is the whole of the `onMark` wiring: the popup
+  // reports which mark it opened on, the viewer forwards it, the panel marks
+  // the row. Nothing in this phase told the panel which mark that was.
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+  sidebar.marks.select(null);
+  const centre = markCentre(viewer, here);
+  if (
+    centre.y < bounds.top + 4 ||
+    centre.y > bounds.bottom - 4 ||
+    centre.x < bounds.left + 4 ||
+    centre.x > bounds.right - 4
+  ) {
+    for (const name of MARK_PANEL_CHECKS.slice(3)) {
+      skip(name, `the mark's centre is off screen at (${centre.x}, ${centre.y})`);
+    }
+    viewer.setMarks([]);
+    sidebar.setMarks([]);
+    return;
+  }
+  const before = sidebar.marks.selectedId;
+  pointer(root, "pointerdown", centre.x, centre.y);
+  pointer(root, "pointerup", centre.x, centre.y);
+  await frame();
+  check(
+    MARK_PANEL_CHECKS[3] ?? "",
+    before === -1 && sidebar.marks.selectedId === here.id,
+    `selected=${sidebar.marks.selectedId} for #${here.id}, was ${before}`,
+  );
+
+  viewer.closeMark();
+  await frame();
+  check(
+    MARK_PANEL_CHECKS[4] ?? "",
+    sidebar.marks.selectedId === -1,
+    `selected=${sidebar.marks.selectedId} with no note open`,
+  );
+
+  viewer.setMarks([]);
+  sidebar.setMarks([]);
+  await frame();
+}
+
+/**
+ * A synthetic mark in the top-left corner of one page, addressed by slot.
+ *
+ * {@link syntheticMark}'s sibling, and it exists because that one is fixed to
+ * the first page --- which is right for the note checks and useless for a panel
+ * row whose job is to take the reader somewhere. The page **id** is the slot
+ * plus one, which is true of an unedited document and is the assumption the
+ * whole harness runs on; see `pages.ts`.
+ */
+function markOnPage(
+  viewer: Viewer,
+  id: number,
+  slot: number,
+  note: string,
+  band: number,
+): MarkView {
+  const size = viewer.pageSize(slot);
+  return {
+    id,
+    kind: "highlight",
+    page: slot + 1,
+    quads: [
+      size.width_pt * 0.15,
+      size.height_pt * band,
+      size.width_pt * 0.6,
+      size.height_pt * (band + 0.05),
+    ],
+    strokes: [],
+    color: [1, 0.9, 0.2],
+    note,
+    lines: [],
+  };
+}
+
+/**
+ * Where a mark's centre lands on screen, on the page it is actually on.
+ *
+ * {@link markCentre} asks `screenPoint` about **page 0**, which is right for
+ * every mark `syntheticMark` builds and wrong for one placed anywhere else ---
+ * the answer is then a point on the first page, which on a multi-page document
+ * is off screen exactly when the mark is on it.
+ */
+function centreOn(
+  viewer: Viewer,
+  mark: MarkView,
+  slot: number,
+): { x: number; y: number } {
+  const [left, top, right, bottom] = [
+    mark.quads[0] ?? 0,
+    mark.quads[1] ?? 0,
+    mark.quads[2] ?? 0,
+    mark.quads[3] ?? 0,
+  ];
+  return viewer.screenPoint(slot, (left + right) / 2, (top + bottom) / 2);
+}
+
 /**
  * Reaching a mark without a pointer, and typing in the note once you are there.
  *
@@ -5409,6 +5623,28 @@ async function thumbnailChecks(
     "the sidebar has a tab for pages",
     tabs.length === SIDEBAR_TABS && selected === 1,
     `${tabs.length} tabs (${tabs.map((t) => t.textContent).join(", ")}), ${selected} selected`,
+  );
+
+  // Five tabs in a 260-pixel panel, and each new one takes width from the rest.
+  // The count above cannot see this: a button clipped by the panel's
+  // `overflow:hidden` is still in the DOM, still `role="tab"`, and still
+  // unreachable by a pointer. Two readings, because they fail differently --- a
+  // button whose *label* does not fit is unreadable, and one whose *box* runs
+  // past the panel is unpressable.
+  const bar = document.querySelector(`.${SIDEBAR_CLASS}`)?.getBoundingClientRect();
+  const clipped = tabs.filter((t) => t.scrollWidth > t.clientWidth + 1);
+  const outside = bar
+    ? tabs.filter((t) => t.getBoundingClientRect().right > bar.right + 1)
+    : [];
+  check(
+    "every sidebar tab fits inside the panel",
+    !!bar && clipped.length === 0 && outside.length === 0,
+    tabs
+      .map((t) => `${t.textContent}=${t.scrollWidth}/${t.clientWidth}`)
+      .join(" ") +
+      ` in ${bar ? Math.round(bar.width) : "?"}px` +
+      (clipped.length ? `, clipped [${clipped.map((t) => t.textContent).join(", ")}]` : "") +
+      (outside.length ? `, past the edge [${outside.map((t) => t.textContent).join(", ")}]` : ""),
   );
 
   viewer.goToStart();
@@ -7979,6 +8215,10 @@ async function overlayInkChecks(
     corners: number;
     shoulder: number;
     second: number;
+    /** Which sides carry ink, for the detail line. */
+    sides: string[];
+    /** The rectangle as it was measured on screen, in CSS pixels. */
+    box: { width: number; height: number };
   } | null> => {
     const size = viewer.pageSize(0);
     const quad =
@@ -8064,15 +8304,25 @@ async function overlayInkChecks(
     ): boolean => (inked(left, top, right, bottom) ?? 0) > 0.02;
     const thickX = Math.max(3, width * 0.06);
     const thickY = Math.max(3, height * 0.15);
-    const edges = [
-      // Left and right, sampled across the middle tenth of the height, where a
-      // rule through the centre crosses them and an underline does not.
-      along(at.left, at.top + height * 0.45, at.left + thickX, at.bottom - height * 0.45),
-      along(at.right - thickX, at.top + height * 0.45, at.right, at.bottom - height * 0.45),
-      // Top and bottom, across the middle fifth of the width.
-      along(at.left + width * 0.4, at.top, at.right - width * 0.4, at.top + thickY),
-      along(at.left + width * 0.4, at.bottom - thickY, at.right - width * 0.4, at.bottom),
-    ].filter(Boolean).length;
+    const inkedSides = (
+      [
+        // Left and right, sampled across the middle tenth of the height, where a
+        // rule through the centre crosses them and an underline does not.
+        ["left", along(at.left, at.top + height * 0.45, at.left + thickX, at.bottom - height * 0.45)],
+        ["right", along(at.right - thickX, at.top + height * 0.45, at.right, at.bottom - height * 0.45)],
+        // Top and bottom, across the middle fifth of the width.
+        ["top", along(at.left + width * 0.4, at.top, at.right - width * 0.4, at.top + thickY)],
+        ["bottom", along(at.left + width * 0.4, at.bottom - thickY, at.right - width * 0.4, at.bottom)],
+      ] as [string, boolean][]
+    )
+      .filter(([, hit]) => hit)
+      .map(([side]) => side);
+    // **Which sides, not just how many.** A count says a check failed and a
+    // name says why: `edges === 1` on `rotated-90` was read three ways from
+    // arithmetic before this line existed, and the answer --- *which* edge ---
+    // is one word. The predicates below still read the count; this is for the
+    // detail line, which is what somebody has to act on.
+    const edges = inkedSides.length;
     // **How many of the four corners carry ink**, which is the only reading that
     // tells a frame from a ring. Every other number here is the same for both:
     // an ellipse touches its rectangle at the middle of each side, which is
@@ -8130,7 +8380,7 @@ async function overlayInkChecks(
     );
     return whole === null || core === null || shoulder === null || second === null
       ? null
-      : { whole, core, edges, corners, shoulder, second };
+      : { whole, core, edges, corners, shoulder, second, sides: inkedSides, box: { width, height } };
   };
 
   // The control, and it comes first for the reason every control here does: a
@@ -8264,9 +8514,15 @@ async function overlayInkChecks(
       holds(got),
       `${(got.whole * 100).toFixed(0)}% of the rectangle, ` +
         `${(got.core * 100).toFixed(0)}% of its centre, ` +
-        `ink on ${got.edges} of its 4 sides, ${got.corners} of its 4 corners, ` +
+        `ink on ${got.edges} of its 4 sides` +
+        (got.sides.length ? ` (${got.sides.join(", ")})` : "") +
+        `, ${got.corners} of its 4 corners, ` +
         `${(got.shoulder * 100).toFixed(0)}% of the strip above a rule, ` +
-        `${(got.second * 100).toFixed(1)}% where a second line goes`,
+        `${(got.second * 100).toFixed(1)}% where a second line goes, ` +
+        // The box's own size, because every sample above is a *fraction* of it
+        // while a text box's type is a fixed 11 points --- so a reading only
+        // means what it appears to mean beside the rectangle it was taken in.
+        `in a ${got.box.width.toFixed(0)}x${got.box.height.toFixed(0)} px box`,
     );
   }
 

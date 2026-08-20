@@ -96,9 +96,23 @@ export class CommentList {
     this.paint();
   }
 
-  /** Rows currently drawn. For the check harness and the tests. */
+  /**
+   * Rows currently drawn. For the check harness and the tests.
+   *
+   * **Counted out of the list element, not off `this.rows`.** The obvious
+   * version returns the rows the panel was *given*, which is the same number
+   * whether or not a single element was built. It was `this.rows.length` here
+   * until 2026-08-20, when the identical getter in `marklist.ts` --- copied from
+   * this one --- let a mutation that drew one row and stopped survive the window
+   * check written to catch exactly that. "the sidebar lists every comment" was
+   * unable to fail the same way, so it is fixed here too rather than left as the
+   * one panel where the finding does not apply. Same trap as `rowText` below,
+   * which is why that one already read the DOM.
+   */
   get rowCount(): number {
-    return this.rows.length;
+    return [...this.list.children].filter(
+      (child) => (child as HTMLElement).dataset?.id !== undefined,
+    ).length;
   }
 
   /** What the panel says above the list. For the check harness and the tests. */

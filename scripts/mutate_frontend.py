@@ -3103,6 +3103,98 @@ MUTATIONS += [
     ),
 ]
 
+MUTATIONS += [
+    Mutation(
+        # Sort the panel's rows the way they arrived, which is the order the
+        # marks were *made*. Plausible, and it is the whole reason `markRows`
+        # wraps `markWalk` rather than sorting: the keyboard walk and the panel
+        # are two ways to the same marks, and a reader uses both in the same
+        # minute. Aimed at the call, not at `markWalk` itself --- a rule
+        # everything agrees about and nothing consults is the trap about a guard
+        # only covered when a mutation removes its call.
+        "markRows: list the marks in the order they were made",
+        "src/lib/pages.ts",
+        "  for (const step of markWalk(items, pages)) {",
+        "  for (const step of items.map((mark, page) => ({ id: mark.id, page }))) {",
+        "lists marks in the walk's order",
+    ),
+    Mutation(
+        # Drop whatever the walk could not place. The panel then silently omits
+        # a mark, which tells a reader their mark is gone --- and the notice
+        # above the list, which counts the same rows, agrees that nothing is
+        # missing.
+        "markRows: drop a mark the walk could not place",
+        "src/lib/pages.ts",
+        "    if (left.has(mark.id)) rows.push({ mark, page: null });",
+        "    if (false) rows.push({ mark, page: null });",
+        "keeps a mark the walk could not place",
+    ),
+    Mutation(
+        # Name each kind with the wire's own word. "textbox" and "note" reach the
+        # panel, while the box that opens on the same mark says "Text box" and
+        # "Comment" --- two spellings of one thing in one window, which is what
+        # having a second table would eventually produce anyway.
+        "marklist: label a row with the serde name rather than the reader's word",
+        "src/lib/marklist.ts",
+        "    kind.textContent = nameOf(mark.kind);",
+        "    kind.textContent = mark.kind;",
+        "calls each kind what the note box calls it",
+    ),
+    Mutation(
+        # Put the note in a row unflattened. Every kind but one is unaffected,
+        # because only a text box's note routinely has newlines in it --- so this
+        # is the mutation a fixture of highlights cannot see.
+        "marklist: draw a note with its own line breaks in a one-line row",
+        "src/lib/marklist.ts",
+        '  const flattened = note.replace(/\\s+/g, " ").trim();',
+        '  const flattened = note.trim();',
+        "flattens a text box's own lines",
+    ),
+    Mutation(
+        # Let the keyboard activate a row that is on no page. The pointer is
+        # still refused, because a disabled row gets no listener at all --- so
+        # this is the half that has to be written twice and is the easy half to
+        # forget.
+        "marklist: let Enter navigate to a mark that is on no page",
+        "src/lib/marklist.ts",
+        "        if (from !== null && this.placed(from)) this.opts.onPick(from);",
+        "        if (from !== null) this.opts.onPick(from);",
+        "refuses to navigate to a mark that is on no page",
+    ),
+    Mutation(
+        # Keep a selection whose mark has gone. Ids are the model's and it hands
+        # them out again, so the row that lights up next is whichever mark
+        # inherits the number.
+        "marklist: keep the selection after the mark it was on is removed",
+        "src/lib/marklist.ts",
+        "    if (this.selected !== null && !this.rows.some((row) => row.mark.id === this.selected)) {",
+        "    if (false) {",
+        "drops the selection when the mark it was on goes",
+    ),
+    Mutation(
+        # Report an open on every `show`, including one that reopens the box on
+        # the mark it is already on. The panel's selection scrolls itself into
+        # view, so the visible cost is a list that jumps whenever a reader
+        # presses the mark they are already reading.
+        "markpopup: report an open for a box that was already on that mark",
+        "src/lib/markpopup.ts",
+        "    if (was !== mark.id) this.opts.onOpen(mark.id);",
+        "    this.opts.onOpen(mark.id);",
+        "says nothing for a close that closed nothing, or an open on the same mark",
+    ),
+    Mutation(
+        # Say nothing when the box closes. The panel keeps a row marked as the
+        # one being read after there is nothing open, which is the state the
+        # four `hide` calls in `viewer.ts` would each have had to remember to
+        # report --- and the reason this fires from the primitive instead.
+        "markpopup: close the box without saying it closed",
+        "src/lib/markpopup.ts",
+        '    this.input.value = "";\n    this.opts.onOpen(null);',
+        '    this.input.value = "";',
+        "reports which mark the box is on, including that it is on none",
+    ),
+]
+
 TEST_FILES = [
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",
@@ -3194,6 +3286,13 @@ TEST_FILES = [
     # mutations. Ninth entry, ninth time in that order.
     "src/lib/drag.test.ts",
     "src/lib/viewerdraw.test.ts",
+    # Added 2026-08-20 with the marks panel, before writing the mutations. Tenth
+    # time in that order, and it holds the tests for `markRows` too --- which
+    # lives in `pages.ts`, already listed, so this entry is not what makes those
+    # runnable. It is what makes them *visible*: a mutation naming a test in an
+    # unlisted file is refused rather than run, and the refusal names the test,
+    # not the file it could not find.
+    "src/lib/marklist.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

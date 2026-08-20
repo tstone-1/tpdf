@@ -28,11 +28,14 @@ function anchor(over: Partial<Anchor> = {}): Anchor {
 describe("MarkPopup", () => {
   let dom: FakeDom;
   let sent: string[];
+  /** Every id the box reported opening on, and every close as `null`. */
+  let opened: (number | null)[];
   let closed: number;
 
   beforeEach(() => {
     dom = installFakeDom();
     sent = [];
+    opened = [];
     closed = 0;
   });
 
@@ -50,6 +53,10 @@ describe("MarkPopup", () => {
       onClose: () => {
         closed += 1;
       },
+      // A list of its own, and not `sent`: this fires on every open and close,
+      // so folding it in would put a line in front of every assertion below
+      // about what the box sends on the reader's behalf.
+      onOpen: (id) => opened.push(id),
     });
   }
 
@@ -258,6 +265,42 @@ describe("MarkPopup", () => {
     expect(sent).toEqual(["note:7:about the first"]);
     expect(note.openId).toBe(8);
     expect(note.text).toBe("the second");
+  });
+
+  it("reports which mark the box is on, including that it is on none", () => {
+    // The marks panel's selection follows this, and it is fired here rather than
+    // at the viewer's four `hide` calls --- which carry five reasons between
+    // them: Escape and the close button share one, and the others are removing
+    // the mark, an undo taking it out from under the box, the mark scrolling off
+    // the page, and the viewer being torn down.
+    const note = popup();
+    note.show(mark({ id: 7 }), anchor(), false);
+    expect(opened).toEqual([7]);
+    note.hide();
+    expect(opened).toEqual([7, null]);
+  });
+
+  it("says nothing for a close that closed nothing, or an open on the same mark", () => {
+    // The control for the check above. Without the first clause a panel would
+    // clear its selection every time anything called `hide`; without the second
+    // it would be told about a reopen that changed nothing, and a selection that
+    // scrolls itself into view would jump for it.
+    const note = popup();
+    note.hide();
+    expect(opened).toEqual([]);
+    note.show(mark({ id: 7 }), anchor(), false);
+    note.show(mark({ id: 7 }), anchor(), false);
+    expect(opened).toEqual([7]);
+  });
+
+  it("reports a switch between marks as one open, not a close and an open", () => {
+    // A reader clicking straight from one highlight to another. `show` commits
+    // the first note without hiding the box, so a panel told `null` in between
+    // would blink its selection off and on.
+    const note = popup();
+    note.show(mark({ id: 7 }), anchor(), false);
+    note.show(mark({ id: 8 }), anchor(), false);
+    expect(opened).toEqual([7, 8]);
   });
 
   it("removes without sending what was typed", () => {

@@ -71,6 +71,21 @@ export interface MarkPopupOptions {
   onRecolor: (mark: number, color: MarkColor) => void;
   /** The popup asked to be closed --- Escape, or the close button. */
   onClose: () => void;
+  /**
+   * The box opened on a mark, or closed. Fires only when that changed.
+   *
+   * **Here rather than at the viewer's four `hide` calls**, which is the
+   * distinction this repository records as *"Recording a jump at the call sites
+   * is a rule; recording it inside the primitive is a mechanism"*. Those four
+   * carry five reasons between them --- Escape and the close button share one,
+   * and the others are removing the mark, an undo taking the mark out from under
+   * the box, the mark scrolling off the page, and the viewer being torn down.
+   * A caller that had to announce each would be four places to forget.
+   *
+   * Required rather than optional, unlike the viewer's own callbacks: an
+   * optional one is exactly what `onDrawn` was when it shipped unwired.
+   */
+  onOpen: (mark: number | null) => void;
 }
 
 /** The note editor for one mark the reader made. */
@@ -134,6 +149,19 @@ const NAMES: Record<MarkKind, string> = {
   // panels would notice if they did not.
   ink: "Drawing",
 };
+
+/**
+ * The word a reader sees for a kind, for anything that is not this popup.
+ *
+ * The marks panel lists the same nine kinds and has to call them the same
+ * things. A second table would be two tables agreeing right up until somebody
+ * renamed one --- the drift this repository already keeps `comments.ts`'s
+ * `labelFor` in step with by hand, and there is no reason to add a third
+ * spelling of the reader's own marks.
+ */
+export function nameOf(kind: MarkKind): string {
+  return NAMES[kind];
+}
 
 export class MarkPopup {
   private readonly host: HTMLElement;
@@ -251,6 +279,7 @@ export class MarkPopup {
     // A second mark clicked while the first is open is still a close, and its
     // note has to be committed before this one takes the box over.
     if (this.shown !== null && this.shown !== mark.id) this.commit();
+    const was = this.shown;
     this.shown = mark.id;
     // Both labels follow the mark, because the box is the one place that knows
     // which mark a reader means --- the Edit menu's item says "Remove mark",
@@ -263,6 +292,7 @@ export class MarkPopup {
     this.element.style.display = "block";
     this.place(at);
     if (focus) this.input.focus();
+    if (was !== mark.id) this.opts.onOpen(mark.id);
   }
 
   /**
@@ -292,6 +322,7 @@ export class MarkPopup {
     this.shown = null;
     this.element.style.display = "none";
     this.input.value = "";
+    this.opts.onOpen(null);
   }
 
   /** Moves the popup to a new anchor, without rebuilding it. See `popup.ts`. */

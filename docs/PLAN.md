@@ -5817,11 +5817,12 @@ that is not an absence: with no note open, Enter must still reach the **link**
 arm below it. "Nothing happened" is what a correct viewer and a broken one both
 look like there; a link that gets followed is what separates them.
 
-**Not done:** a panel that lists the reader's marks, which is the other thing
+~~**Not done:** a panel that lists the reader's marks, which is the other thing
 `showMark`'s comment anticipated and is a UI decision rather than an engineering
 one --- a fifth sidebar tab, or rows in the comments panel, which today lists what
 `annots.rs` read out of the *file* and would then be listing two kinds of thing
-with two activation paths. The remaining markup kinds are unchanged from the last
+with two activation paths.~~ (Done 2026-08-20, as a fifth tab, and for the reason
+this sentence names: two kinds of thing with two activation paths.) The remaining markup kinds are unchanged from the last
 increment: squiggly, and the ones that are not about a text selection at all
 (ink, shapes, text boxes, stamps), each of which needs a way to draw rather than
 a way to select. (Ink landed 2026-08-20, and the shapes are now the box and the
@@ -7216,6 +7217,155 @@ Three findings, and two are about how the work was done rather than about the fe
 a background, which `/FreeText` supports and which would make `/C` mean the box rather
 than the words; and rich text, which is `/RC` and a different subsystem. Text is also not
 re-wrapped when a box is resized, because a box cannot be resized yet.
+
+#### A panel that lists the reader's own marks --- done 2026-08-20
+
+The gap the last four increments left. Nine kinds of mark, and no way to see what you
+had marked: PDFium draws a highlight as a wash and a comment as a 24-point icon, so a
+document a reader had worked through opened as a document with coloured shapes in it.
+The same argument the comments panel makes about somebody else's annotations, made about
+the reader's own --- and it was the open question at the end of the mark increments,
+posed as *a fifth sidebar tab, or rows in the comments panel*.
+
+**A fifth tab.** The comments panel lists what `annots.rs` read out of the *file*, and
+folding both into one list would put two kinds of thing behind two activation paths in
+one place: a document's comment can only be read, and one of the reader's own can be
+edited, recoloured and taken off. They also answer to different owners --- a rescan of
+the file against a live journal --- and that is the difference that decides the states
+each panel has, below.
+
+##### It is not the comments panel with a different source
+
+Two differences do almost all the work.
+
+**This one is about live state, not about a file read once.** `document_comments` scans
+and the answer stands until the document is reopened, so that panel has three states ---
+reading, none, unreadable --- and says which. Marks come from the model in this process,
+which answers immediately and cannot fail, so there are two. There is nothing to say
+"still reading" about, and a placeholder that said it would be a lie a reader could sit
+and watch.
+
+**The order already has an owner.** `markWalk` decides which mark the keyboard walk
+meets next, so `markRows` wraps it rather than sorting again --- the panel and ⌥→ are two
+ways to the same marks and a reader uses both in the same minute. What `markRows` adds is
+that nothing is dropped: the walk leaves out a mark it cannot place, which is right for
+stepping and wrong for a list, so those come last with no page against them and marked
+`aria-disabled`. Not reachable from the model as it stands, and it is the treatment the
+two sibling panels already give an outline row whose destination resolves to no page and
+a reply whose parent was cut. The fixture is built by hand, which is what a guard with no
+reachable input needs.
+
+##### The selection follows the page, and it is fired from the primitive
+
+`onMark` is `onComment`'s twin: pressing a mark on the page selects its row, so the panel
+and the note box cannot disagree about which mark is being read. It is fired by
+`markpopup.ts` rather than at the viewer's call sites, because the box is closed in four
+places for five reasons --- Escape and the close button share one, and the others are
+removing the mark, an undo taking the mark out from under it, the mark scrolling off the
+page, and the viewer being torn down. That is the distinction this
+repository records as *"Recording a jump at the call sites is a rule; recording it inside
+the primitive is a mechanism"*, and `MarkPopup.onOpen` is required rather than optional
+for the reason `onDrawn` shipped unwired.
+
+The nine kinds are named once, by `nameOf` in `markpopup.ts`. A table here would be a
+second one, and the failure it produces is a mark called an Ellipse in the panel and a
+Circle in the box that opens when you press it.
+
+##### Evidence
+
+Thirteen mutations, all caught --- eight in `mutate_frontend.py`, five in
+`mutate_viewer.py`, one of which needed a new `viewer-comments` runner.
+
+`viewer_check.py`: 310 check names, seven of them new --- five that drive the panel,
+`view.showMarks` in the command sweep, and the tab check below --- and the sweep over all fourteen
+corpora is what made this increment's evidence worth anything --- it found three defects
+that `comments.pdf` alone could not.
+
+**A new check went red on its first run, on the defect it was written to look for.** Five
+tab labels want 293 px of content in a 260 px sidebar, so **Marks** was clipped by the
+panel's `overflow:hidden`: in the DOM, `role="tab"`, and unreachable by a pointer. The tab
+*count* check beside it passed the whole time, because a clipped button is still a button.
+The row wraps now. It is worth noting that this was predicted from arithmetic before it was
+measured, and measuring it is still what settled it --- the estimate was 316 px against a
+measured 318.
+
+**Two of the three defects were in the check phase itself**, and neither is visible on the
+corpus the increment was developed against. On `links-cropped`, which has one page, the
+phase's two synthetic marks sat at the same height on the same page, so the press meant for
+the first opened the second. On `rotated-90` the check asserted the viewer's *page number*
+after activating a row, which the last page cannot satisfy: a scroll to the end clamps, and
+the page before it is still at the top of the viewport. It asserts the mark is **visible**
+now, which is what "goes to it" means and is what a viewer that opened the note without
+scrolling fails.
+
+**One mutation survived, and the survivor is the finding.** *"Draw a row for the first
+mark and stop"* was caught by nothing: `rowCount` answered `this.rows.length` --- the rows
+the panel was **given** --- which is the same number whether or not a single element was
+built. The check written to catch exactly that compares `rowCount` against the marks it
+handed over, so it was comparing the input with itself. It reads the DOM now.
+
+The getter had been copied from `commentlist.ts`, which had the same defect and therefore
+the same unfalsifiable check: *"the sidebar lists every comment"* could not see a panel
+that drew one row either. Both are fixed, and the mutation that proves the second one is
+why the harness gained a runner --- the comments checks skip on a document with no
+comments, so a mutation aimed at one anywhere else is aimed at a check that cannot go red.
+
+**The type-checker enumerated the call sites, which is the lesson the last increment
+wrote down.** Making `MarkPopup.onOpen` and `SidebarOptions.marks` required rather than
+optional turned "find everywhere that constructs one" into four compiler errors. The
+previous increment had done the opposite --- a regex over a field name --- and paid six
+wrong insertions for it.
+
+**An escape sequence written into a mutation table through a shell never arrives as an
+escape**, for the second and third time, half an hour apart. Both were caught loudly, by
+a Python `SyntaxError` at the `anchors` gate rather than by a mutation quietly not
+landing, because the payload happened to contain a quote as well as a `\n`.
+
+##### One failing check, and it is not this increment's
+
+`a text box draws its words and not its rectangle` fails on four of the fourteen corpora
+--- `vector-heavy`, `vector-multi`, `rotated-90` and `links-cropped` --- and on nothing
+else. **Attributed by a control**, not by reading: a `git worktree` at `HEAD`, the
+text-box commit, built and run against `rotated-90` produces the byte-identical reading. So
+it shipped with the text box, and this increment's sweep is what found it: that increment
+was developed and verified against `comments.pdf` alone, where every page is upright A4 and
+its `/CropBox` is its `/MediaBox`.
+
+**The cause is measured.** The predicate is `whole > 0.02 && whole < 0.6 && edges === 0 &&
+second > 0.005`, and every one of those readings is a **fraction of the mark's rectangle**,
+while a text box's content is a fixed 11 points. The rectangle is
+`height_pt * 0.04` tall, so it scales with the page and the type does not. That produces
+the two failures, in opposite directions:
+
+  * On the A0 corpora the box is enormous --- two lines of 11-point type in about 1,073 x
+    135 points --- so `whole` and `second` both round to 0% against bounds of 2% and 0.5%.
+    Reading: `0% of the rectangle, ink on 0 of its 4 sides, 1 of its 4 corners`.
+  * On the short boxes the *sample* moves into the type. The left and right edge samples
+    read the **middle tenth of the height**, which on A4's 50-pixel box is well below a
+    baseline at 19 px and on `rotated-90`'s 20-pixel box is y = 9..11, straight through the
+    first line. Reading: `3% of the rectangle, ink on 1 of its 4 sides (left), in a 288x20
+    px box`; `links-cropped` is the same at `288x36`.
+
+The detail line names the side and prints the box now, which is what turned this from three
+arithmetic theories into one measurement. **The control is in the same run**: *"a box is a
+frame with its middle clear"* uses the identical rectangle --- `288x20`, printed --- and
+reads all four sides on `rotated-90`. So the sampler is right, the box is where it should
+be, and what fails is a bound.
+
+**Left red rather than relaxed**, and not fixed here, because the repair is a design
+decision about a predicate that discriminates nine kinds: the regions have to be derived
+from `TEXT_SIZE * zoom` rather than from fractions of a rectangle, and a predicate rewritten
+carelessly is how an unfalsifiable check is made. Moving a bound to turn a red check green
+is the move this repository records as *"a check chased back to a documented value is a
+defect introduced to satisfy a document"*. What is not in doubt is that the *drawing* is
+correct on all four.
+
+**Not done:** taking a mark off from the panel, which would be a second removal path
+beside the note box's own; the text a text-markup mark *covers*, which is the row content
+a reader would actually recognise and needs extraction per mark rather than the note;
+grouping or filtering by kind, page or colour; and a count, deliberately --- a status line
+saying "9 marks" is derivable from the rows, so a check asserting the two agree would be
+the panel agreeing with itself.
 
 ### Phase 3 --- Redaction
 
