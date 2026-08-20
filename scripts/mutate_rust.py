@@ -198,13 +198,15 @@ MUTATIONS = [
         "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(
-        # Hand the shell the path as it arrived. A relative one is then filed
-        # against the shell's current directory rather than ours, so the Jump
-        # List entry names a file that is somewhere else or nowhere.
+        # Hand the platform the path as it arrived. Windows files a relative one
+        # against the *shell's* current directory and AppKit resolves it against
+        # the *process's* --- two different wrong files from one mistake, which
+        # is why `resolved` is one function rather than two, and why this is one
+        # mutation that runs on both platforms rather than a pair that can drift.
         "recentdocs: file the path as given rather than resolving it",
         "src/recentdocs.rs",
-        "    let absolute = std::fs::canonicalize(path).ok()?;",
-        "    let absolute = path.to_path_buf();",
+        "    std::fs::canonicalize(path).ok()",
+        "    Some(path.to_path_buf())",
         "a_relative_path_is_made_absolute_rather_than_passed_through",
     ),
     Mutation(
@@ -216,6 +218,7 @@ MUTATIONS = [
         '    let text = text.strip_prefix(r"\\\\?\\").unwrap_or(&text);',
         "    let text = &text[..];",
         "a_path_the_shell_is_given_is_absolute_nul_terminated_and_not_verbatim",
+        only_on="windows",
     ),
     Mutation(
         # Drop the terminator. `SHARD_PATHW` says the pointer is a NUL-terminated
@@ -226,15 +229,30 @@ MUTATIONS = [
         "            .chain(std::iter::once(0))",
         "            .chain(std::iter::empty())",
         "a_path_the_shell_is_given_is_absolute_nul_terminated_and_not_verbatim",
+        only_on="windows",
     ),
     Mutation(
-        # File a document that is not there. The reader gets a Jump List entry
-        # that opens nothing, which is worse than the absence this module fixes.
+        # File a document that is not there. The reader gets an entry that opens
+        # nothing, which is worse than the absence this module fixes.
         "recentdocs: file a path that could not be resolved",
         "src/recentdocs.rs",
-        "    let absolute = std::fs::canonicalize(path).ok()?;",
-        "    let absolute = std::fs::canonicalize(path).unwrap_or(path.to_path_buf());",
+        "    std::fs::canonicalize(path).ok()",
+        "    Some(std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))",
         "a_file_that_is_not_there_is_not_filed",
+    ),
+    Mutation(
+        # Build a *string* URL rather than a *file* URL. `URLWithString:` parses
+        # its argument as a URL, so an ASCII path comes back with no scheme at
+        # all and `isFileURL` is false --- and a path with a space in it comes
+        # back nil outright, which is the ordinary case rather than an edge.
+        # This is the constructor that looks right, and the test's own fixture
+        # is what decides whether it can be told apart.
+        "recentdocs: hand AppKit a string URL rather than a file URL",
+        "src/recentdocs.rs",
+        "    objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(text))",
+        '    objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(text))\n        .expect("url")',
+        "a_url_the_menu_is_given_is_an_absolute_file_url",
+        only_on="macos",
     ),
     Mutation(
         # Collapse the split back: put the way-out sentence into the bare fact,

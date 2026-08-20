@@ -443,7 +443,7 @@ async fn open_document(
     // window, a double-click in Explorer, a path in argv, the single-instance
     // forward and the panel -- which is why it is here rather than in the dialog
     // handler, where four of the five would have missed it.
-    recentdocs::note_opened(Path::new(&path));
+    recentdocs::note_opened(&app, Path::new(&path));
     Ok(info)
 }
 

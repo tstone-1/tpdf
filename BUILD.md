@@ -2366,6 +2366,50 @@ output at all. `pkill -f "tpdf.app/Contents/MacOS/tpdf"` before a run, or `TPDF_
 This cost real time once already --- it looked exactly like the failure it was sitting next
 to, which was genuine.
 
+### Checking the recent documents the shell is told about
+
+Two lists, unrelated despite the name: `src/lib/recents.ts` is tpdf's own, shown in
+the command palette; the shell's is the Windows Jump List and macOS's *Open Recent* and
+Dock menu, filled by `recentdocs.rs` and by nothing else the application does.
+
+**Windows: look at the file the shell writes.** `SHAddToRecentDocs` drops a shortcut per
+document, so open one and look.
+
+```powershell
+ls "$env:APPDATA\Microsoft\Windows\Recent\*.pdf.lnk"
+$s = New-Object -ComObject WScript.Shell
+$s.CreateShortcut("$env:APPDATA\Microsoft\Windows\Recent\x.pdf.lnk").TargetPath
+```
+
+Resolve one --- an entry existing is not an entry that opens. Note a Jump List needs an
+*installed* build (a Start Menu shortcut is what gives the app an AppUserModelID), so a
+binary from `target\release` will look as though this does nothing.
+
+**macOS: there is no file, and every place you would look says the feature is broken.**
+Measured 2026-08-20: `defaults read com.timostein.tpdf NSRecentDocumentRecords` does not
+exist and never will (pre-Sierra location); `sfltool list-info` hangs; and
+`~/Library/Application Support/com.apple.sharedfilelist/` answers `Operation not
+permitted`, so what is in it is unknown --- do **not** run that `ls` with `2>/dev/null`,
+which turns the refusal into a convincing `total 0`.
+
+So the check is **two launches**, which is the feature rather than a proxy for it. It
+needs a bundle --- `npm run tauri build -- --bundles app` --- because a bare binary has no
+identifier to key a list to.
+
+```bash
+APP=src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf
+pkill -f "tpdf.app/Contents/MacOS/tpdf"
+TPDF_RECENTDOCS_PROBE=1 "$APP" "$PWD/testdata/text-heavy.pdf" 2>&1 | grep recentdocs
+# quit it, then:
+TPDF_RECENTDOCS_PROBE=1 "$APP" "$PWD/testdata/rotated.pdf" 2>&1 | grep recentdocs
+```
+
+The first launch must print `before filing, AppKit holds 0` and the second
+`before filing, AppKit holds 1` naming `text-heavy.pdf` --- a document the second process
+never filed. That carry-over is the whole assertion; a second launch holding 0 means the
+call is being dropped. The probe is off unless the variable is set, so a shipped run does
+not narrate its own menu bookkeeping into the one log a reader sends back.
+
 ### The exit code of a spike run
 
 `AppHandle::exit(code)` does **not** set the process's exit code. It ends the event loop,

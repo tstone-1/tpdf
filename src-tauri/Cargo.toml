@@ -87,8 +87,14 @@ tauri-plugin-updater = "2.10.1"
 # `Zlib OR Apache-2.0 OR MIT`, so no licensing question (AGENTS.md).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSData", "NSString"] }
-objc2-app-kit = { version = "0.3", features = ["NSPrintInfo", "NSPrintOperation"] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSPrintInfo",
+    "NSPrintOperation",
+    # `noteNewRecentDocumentURL:`, which fills *File > Open Recent* and the Dock
+    # icon's Recent Documents. See `recentdocs.rs`.
+    "NSDocumentController",
+] }
 objc2-pdf-kit = { version = "0.3", features = [
     "PDFDocument",
     "PDFPage",

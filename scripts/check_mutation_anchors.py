@@ -32,12 +32,29 @@ This deliberately does *not* try to distinguish those two cases. They need
 different fixes and the difference is obvious once you look at the line, whereas a
 check that guessed would be confidently wrong about half of them --- see the trap
 about a static reason turning a failure into a wrong diagnosis.
+
+A second invariant, added 2026-08-20 after the first instance cost nothing only
+because it was found by reading: **a mutation whose expected test lives in a
+platform-gated test module has to declare that platform in `only_on`.** The two
+`recentdocs` mutations written on Windows named a test inside
+`#[cfg(all(test, windows))] mod tests`, and carried no `only_on`. On a Mac that
+test does not exist, so `mutate_rust.py`'s name guard --- which is right to be
+loud about a name it cannot find --- would have refused the **entire** table over
+it. That is the trap already recorded as *"a guard that answers by refusing the
+whole run turns two blocked mutations into 178"*, and it is the mirror of the
+`menu::` incident the harness's own comment describes: written on one platform,
+silently blocking the other, and invisible until somebody runs it there.
+
+The anchor check could not see it, because the anchor is a *string in a file* and
+platform gating decides which strings become *code*. So this asks the other
+question: where is the test that is supposed to go red, and can it go red here?
 """
 
 from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -64,6 +81,51 @@ def load(path: str):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+#: A test module gated to one platform, and the `only_on` value that names it.
+#: Only the two forms this tree actually uses --- inventing more would be a
+#: parser with no subject, and a wrong guess here reads as a table defect.
+PLATFORM_GATES = [
+    (re.compile(r'^#\[cfg\(all\(test,\s*windows\)\)\]'), "windows"),
+    (re.compile(r'^#\[cfg\(all\(test,\s*target_os\s*=\s*"macos"\)\)\]'), "macos"),
+]
+
+
+#: Any `fn`, so the scan below can be one pass over the tree rather than one per
+#: mutation. Re-walking every source for each of ~200 names took 3.4 s against
+#: 0.3 s for the rest of this gate, which is the wrong shape for something that
+#: runs before every push.
+DEFINITION = re.compile(r"^\s*(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
+    """Every `fn` name defined inside a platform-gated test module, to its gates.
+
+    A name **absent** from this map is either ungated --- so it compiles
+    everywhere --- or not a test at all, and neither is this check's business:
+    a name the harness cannot find anywhere is the case its own guard owns, and
+    is deliberately loud about.
+
+    A name mapping to *several* gates is one rule with a test on each side of the
+    cfg, which needs no declaration because it can go red wherever it is aimed.
+    """
+    found: dict[str, set[str]] = {}
+    for source in sorted(root.rglob("*.rs")):
+        gate = None
+        for line in source.read_text(encoding="utf-8").splitlines():
+            for pattern, platform in PLATFORM_GATES:
+                if pattern.match(line):
+                    # A module attribute at column 0 opens a region that runs to
+                    # the next one or to the end of the file. Every test module
+                    # in this tree is written that way, and a nested one would
+                    # simply be attributed to its outer gate --- which is the
+                    # conservative direction.
+                    gate = platform
+            match = DEFINITION.match(line)
+            if match and gate is not None:
+                found.setdefault(match.group(1), set()).add(gate)
+    return found
 
 
 def main() -> int:
@@ -105,6 +167,42 @@ def main() -> int:
                 )
         total += len(table)
         print(f"[OK] {path}: {intact}/{len(table)} anchors present exactly once")
+
+        # Only the Rust table has platform-gated tests; the frontend ones run
+        # under one Node. Scanning the others would be a check with no subject,
+        # which passes exactly like one that looked.
+        if path != "scripts/mutate_rust.py":
+            continue
+        gated = gated_tests(base / "src")
+        # A scan that found no gated test at all passes every mutation below
+        # while proving nothing -- the same shape as the empty table above, and
+        # this tree has had two such modules since 2026-08-19.
+        if not gated:
+            problems.append(f"{path}: no platform-gated test modules found under {base / 'src'}")
+            continue
+        declared = 0
+        for mutation in table:
+            platforms = gated.get(mutation.expect)
+            if not platforms:
+                continue
+            if mutation.only_on in platforms:
+                declared += 1
+                continue
+            if len(platforms) > 1:
+                # Reachable on every platform it is gated to, so no declaration
+                # is needed -- one rule with a test on each side of the cfg.
+                declared += 1
+                continue
+            (only,) = sorted(platforms)
+            problems.append(
+                f"{path}: {mutation.name}\n"
+                f"       expects `{mutation.expect}`, which is defined only inside a\n"
+                f"       {only}-gated test module, and only_on is {mutation.only_on!r}.\n"
+                f"       On any other platform that test does not exist, and the\n"
+                f"       harness refuses the WHOLE table over an unknown name.\n"
+                f"       Set only_on=\"{only}\"."
+            )
+        print(f"[OK] {path}: {declared} mutation(s) aimed at platform-gated tests declare it")
 
     if problems:
         print()
