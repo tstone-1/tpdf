@@ -2149,10 +2149,26 @@ changelog entry. The table above is the one place they are written down.
 are of them is in the table above rather than in this sentence, which said `109` for two days
 after the number stopped being right.
 
-**Measured 2026-08-20 on `text-base14`: 279 names, 177 ran, 102 skipped, 0 failed.** Two were
-added that day --- `edit.draw` in the command sweep and *"a drawing follows its strokes and
-does not fill its rectangle"* in the overlay phase --- and *"the five kinds do not all look
-the same"* was reworded to `six`.
+**Measured 2026-08-20 --- 279 names, on every corpus, byte-identical as sets:**
+
+| fixture | ran | skipped | failed |
+|---|---|---|---|
+| `rotated-90` | 227 | 52 | 0 |
+| `comments` | 244 | 35 | 0 |
+
+Two names were added that day --- `edit.draw` in the command sweep and *"a drawing follows
+its strokes and does not fill its rectangle"* in the overlay phase --- and *"the five kinds do
+not all look the same"* was reworded to `six`.
+
+⚠ **The first run of that measurement was against `text-base14`, which is not a window
+corpus.** `viewer_sweep.py --list` classifies it as *"a backend-probe fixture: font coverage,
+measured through the worker"*, and the sweep was pointed at it anyway --- the trap recorded as
+*"a probe fixture swept as a corpus, against the file that already said not to"*, walked into
+by the person adding checks to the harness. It passed 177/279 with 102 skipped and **the same
+279 names**, which is why nothing looked wrong: the name set belongs to the harness, so it is
+identical whatever you open, and only the ran/skipped split is a fact about the document. A
+split from a non-corpus is meaningless as a table row, and it was written into this table as
+one. Take the fixture from `viewer_sweep.py --list`, not from `ls testdata`.
 
 ⚠ **The `109` above is of 2026-07-31 and is not the current count.** Between then and now the
 harness gained marks, crops, print and the comment panel, and nothing moved that number. It

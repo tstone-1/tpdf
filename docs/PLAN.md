@@ -6393,8 +6393,16 @@ not fill its rectangle"*, reading two inked edges and an empty centre --- a
 combination none of the other five produces, since an underline has one edge, a
 strikeout fills the centre and a frame has four.
 
-Run on `text-base14`, **177/177 with 102 not applicable**, and the reading is
-`17% of the rectangle, 0% of its centre, ink on 2 of its 4 sides`.
+Run on **`comments`, 244/244 with 35 not applicable**, and the reading is
+`17% of the rectangle, 0% of its centre, ink on 2 of its 4 sides`. On
+**`rotated-90`, 227/227 with 52 not applicable**, it reads `25% / 0% / 2 of 4`
+--- the rectangle is a different shape there and the discrimination is the same,
+which is what the phase's anchor-relative design is for. `rotated-90` skips the
+distinctness check beside it, saying *"not every kind could be sampled"* rather
+than passing on five readings.
+
+All three runs report the **same 279 names**, compared as sets rather than
+counted. That is the invariant; the ran/skipped split is not.
 
 **And it was shown to fail**, which is the half that makes the first number mean
 anything. The mutation is the one-line fallback the check exists for --- ink
@@ -6414,6 +6422,13 @@ said the check was unproved until it did. Worth leaving that fact rather than
 overwriting it: a check nobody has watched fail is a claim, and the screen being
 locked is enough to stop one --- `viewer_check.py` refuses rather than hanging,
 which is the only reason the gap was visible instead of being a green run.
+
+**The first of those runs was pointed at `text-base14`, which is not a window
+corpus at all** --- `viewer_sweep.py --list` says so in as many words. It passed,
+with the same 279 names, because the name set is the harness's and is identical
+whatever you open; only the split is a fact about the document. So the mistake
+cost nothing except a wrong row briefly written into `BUILD.md`'s table, and it
+is the trap that file's own corpus gate exists to prevent.
 
 **279 check names, not the 111 predicted here.** That prediction was BUILD.md's
 documented `109` plus the two added --- and `109` was measured on 2026-07-31,
