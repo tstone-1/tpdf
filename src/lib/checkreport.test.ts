@@ -296,6 +296,41 @@ describe("the machine-readable roll of check names", () => {
     expect(roll()).toEqual(["passed", long, "skipped"]);
   });
 
+  it("fails the run when two checks share a name", async () => {
+    // **A set cannot see a repeat**, and the roll is compared as a set --- so a
+    // duplicate makes a run report n names for n + 1 checks, prints one check's
+    // verdict under another's label, and drops the third from the roll
+    // entirely, with every count still adding up. Measured on 2026-08-20 in
+    // `viewercheck.ts`, where a phase named its checks by position in a list
+    // and two entries were appended after the one it indexed.
+    const report = new Report();
+    report.check("the same name", true, "first");
+    report.check("a different name", true, "second");
+    report.check("the same name", true, "third");
+    await report.finish();
+
+    expect(exitCode()).toBe(1);
+    const named = roll() ?? [];
+    expect(named).toContain("every check has a name of its own");
+    expect(lines().join("\n")).toContain("the same name");
+  });
+
+  it("says nothing about names when they are all different", async () => {
+    // The control, and it is the half that matters: a guard that fired on every
+    // run would be a check that cannot pass, and this one is added to the
+    // results rather than thrown, so it would inflate the count on every clean
+    // sweep too.
+    const report = new Report();
+    report.check("one", true, "");
+    report.check("two", true, "");
+    report.skip("three", "no reason");
+    await report.finish();
+
+    expect(exitCode()).toBe(0);
+    expect(roll()).toEqual(["one", "two", "three"]);
+    expect(lines().join("\n")).not.toContain("a name of its own");
+  });
+
   it("agrees with the summary about how many checks there were", async () => {
     // The property `viewer_sweep.py` asserts on every run, and the reason a
     // silently truncated parse cannot survive: the roll and the arithmetic are

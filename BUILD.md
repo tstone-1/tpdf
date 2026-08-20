@@ -2156,6 +2156,13 @@ after the number stopped being right.
 | `rotated-90` | 227 | 52 | 0 |
 | `comments` | 244 | 35 | 0 |
 
+Re-measured the same day at **281 names** after multi-stroke drawing added the
+two preview checks: `comments` 246 ran / 35 skipped / 0 failed, 281 names, all
+distinct. That last clause is now checked by the harness itself --- `Report.finish`
+fails a run in which two checks share a name, because the roll above is compared
+as a **set** and a set cannot see a repeat. It caught a real one within the hour
+of being written; see `docs/TRAPS.md`.
+
 Two names were added that day --- `edit.draw` in the command sweep and *"a drawing follows
 its strokes and does not fill its rectangle"* in the overlay phase --- and *"the five kinds do
 not all look the same"* was reworded to `six`.

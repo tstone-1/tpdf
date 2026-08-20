@@ -467,12 +467,24 @@ function scribble(points: { x: number; y: number }[]): void {
   });
 }
 
-/** The one stroke of the drawing at `at`, as `x y x y ...`. */
-function stroke(at = -1): number[] {
+/** An Enter, which is what finishes a drawing. */
+function enter(): void {
+  dom.root.dispatch("keydown", {
+    key: "Enter",
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    target: dom.root,
+  });
+}
+
+/** The stroke at `which` of the drawing at `at`, as `x y x y ...`. */
+function stroke(at = -1, which = 0): number[] {
   const made = drawn.at(at);
   if (!made) throw new Error("nothing was drawn");
-  const [only] = made.shape.strokes;
-  if (!only) throw new Error("the drawing carried no stroke");
+  const only = made.shape.strokes[which];
+  if (!only) throw new Error(`the drawing carried no stroke ${which}`);
   return only;
 }
 
@@ -491,6 +503,9 @@ describe("drawing freehand", () => {
       { x: 200, y: 150 },
       { x: 300, y: 100 },
     ]);
+    // Nothing yet: a drawing is finished by Enter, not by letting go.
+    expect(drawn).toEqual([]);
+    enter();
 
     expect(drawn).toHaveLength(1);
     expect(drawn[0]?.kind).toBe("ink");
@@ -514,6 +529,14 @@ describe("drawing freehand", () => {
 
     expect(drawn).toEqual([]);
     expect(viewer.drawArmed).toBe("ink");
+    // **And nothing was kept**, which is the assertion the tool-stays-armed
+    // change made load-bearing. Before it, a stroke of one point would have
+    // spent the tool and `drawArmed` was the reading that saw it; now the tool
+    // is armed either way, so only the stroke count can tell a refused press
+    // from a kept one --- a mutation deleting the bound survived until this
+    // line existed. Zero rather than null: the tool is armed, and nothing was
+    // kept, which is exactly the pair this has to tell apart.
+    expect(viewer.drawnStrokes).toBe(0);
     viewer.destroy();
   });
 
@@ -531,6 +554,7 @@ describe("drawing freehand", () => {
       y: 100,
     }));
     scribble([...jitter, { x: 300, y: 100 }]);
+    enter();
 
     // The press, the far point, and nothing from the jitter: 21 moves in and
     // two points out. A viewer that kept them all reports 21 or 22.
@@ -555,6 +579,7 @@ describe("drawing freehand", () => {
       // and only the unconditional push at the end can put it back.
       { x: 300.05, y: 100 },
     ]);
+    enter();
 
     const points = stroke();
     // Three points, and without the unconditional push it would be two: the
@@ -572,22 +597,135 @@ describe("drawing freehand", () => {
     viewer.destroy();
   });
 
-  it("is spent by one drawing", async () => {
+  it("stays armed so a drawing can be several strokes", async () => {
+    // **The whole point of the increment, and the opposite of the box.**
+    // `/InkList` is a list of lists so that one annotation holds several
+    // strokes, and a drawing normally is several. Before this the window could
+    // make exactly one, so `annot-probe --mode strokes` --- which sends two ---
+    // was creating a document no reader of tpdf could.
     const viewer = build();
     await settle();
 
     viewer.armDraw("ink");
     scribble([
       { x: 100, y: 100 },
-      { x: 300, y: 200 },
+      { x: 300, y: 120 },
     ]);
-    expect(viewer.drawArmed).toBe(null);
+    expect(viewer.drawArmed).toBe("ink");
+    expect(drawn).toEqual([]);
 
     scribble([
       { x: 100, y: 300 },
-      { x: 300, y: 400 },
+      { x: 300, y: 320 },
     ]);
+    expect(drawn).toEqual([]);
+
+    enter();
     expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.shape.strokes).toHaveLength(2);
+    // Both strokes, and each its own: flattened into one they would be four
+    // points in a single entry, which is the join `/InkList` exists to prevent.
+    expect(stroke(-1, 0)).toHaveLength(4);
+    expect(stroke(-1, 1)).toHaveLength(4);
+    expect(viewer.drawArmed).toBe(null);
+    viewer.destroy();
+  });
+
+  it("throws the whole drawing away on Escape", async () => {
+    // Escape has meant abandon since the box, so it means abandon here --- which
+    // is exactly why finishing had to be a different key. A mode a reader can
+    // only leave by discarding what they made is one they use once.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ink");
+    scribble([
+      { x: 100, y: 100 },
+      { x: 300, y: 120 },
+    ]);
+    scribble([
+      { x: 100, y: 300 },
+      { x: 300, y: 320 },
+    ]);
+    expect(viewer.drawnStrokes).toBe(2);
+
+    escape();
+    expect(drawn).toEqual([]);
+    expect(viewer.drawArmed).toBe(null);
+    expect(viewer.drawnStrokes).toBe(null);
+    viewer.destroy();
+  });
+
+  it("reports the drawing in the status, so the mode is visible", async () => {
+    // Every other tool here is one-shot and there is nothing to be stuck in.
+    // This one can be, so the window has to be able to say so.
+    //
+    // **Read through the accessor, which is what `ViewerStatus.drawing` is.**
+    // The status field was its own expression until a mutation that emptied it
+    // survived every test here: the tests asked the viewer, the window reads the
+    // status, and the two were a copy of one another. They are one accessor now,
+    // so this reading is the window's reading rather than a proxy for it --- and
+    // driving the frame loop to observe `onStatus` in these tests would need the
+    // tile IPC this file deliberately does not stub.
+    const viewer = build();
+    await settle();
+
+    expect(viewer.drawnStrokes).toBe(null);
+    // Zero, not null: armed, nothing drawn. The window says "press and drag"
+    // for this and names the strokes for anything above it.
+    viewer.armDraw("ink");
+    expect(viewer.drawnStrokes).toBe(0);
+
+    scribble([
+      { x: 100, y: 100 },
+      { x: 300, y: 120 },
+    ]);
+    expect(viewer.drawnStrokes).toBe(1);
+
+    enter();
+    expect(viewer.drawnStrokes).toBe(null);
+    viewer.destroy();
+  });
+
+  it("refuses a stroke that starts on another page", async () => {
+    // An annotation belongs to one page, so a second stroke elsewhere is not
+    // part of this drawing. Refused rather than dragged onto the first page,
+    // which would put ink where nobody drew it.
+    const viewer = build();
+    viewer.setPages([
+      { id: 1, source: 0, turns: 0 },
+      { id: 2, source: 1, turns: 0 },
+    ]);
+    await settle();
+
+    viewer.armDraw("ink");
+    scribble([
+      { x: 100, y: 100 },
+      { x: 300, y: 120 },
+    ]);
+    expect(viewer.drawnStrokes).toBe(1);
+
+    // Far enough down to land on the second page in this layout.
+    scribble([
+      { x: 100, y: 3000 },
+      { x: 300, y: 3020 },
+    ]);
+    expect(viewer.drawnStrokes).toBe(1);
+
+    enter();
+    expect(drawn[0]?.shape.strokes).toHaveLength(1);
+    viewer.destroy();
+  });
+
+  it("does nothing on Enter with no drawing in progress", async () => {
+    // So the key falls through to whatever else claims it --- a focused link,
+    // most of all, which the keyboard walk can leave behind and which `armDraw`
+    // does not clear.
+    const viewer = build();
+    await settle();
+
+    enter();
+    expect(drawn).toEqual([]);
     viewer.destroy();
   });
 
@@ -626,6 +764,7 @@ describe("drawing freehand", () => {
       { x: 100, y: 100 },
       { x: 300, y: 100 },
     ]);
+    enter();
 
     const turned = stroke();
     expect(turned).toHaveLength(4);

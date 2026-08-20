@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 370 entries
+The one thing this file does *not* carry in full is the trap list --- 374 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 370 of them and the full text
-was 93% of this file --- an instruction budget spent on the 364 traps that are not
+titles. Only the titles are here, because there are 374 of them and the full text
+was 93% of this file --- an instruction budget spent on the 368 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1232,6 +1232,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `NSURL` hands a path back decomposed, and the fixture that shows it is not the ASCII one (the filesystem kept NFC and AppKit decomposed; the assertion to write is a resolution, not an equality)
 - Reading a decision back out of the DOM makes the test double part of the logic (right in the browser, wrong under test --- the worst direction)
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion
+- The window reads the status and the tests read the viewer, so the copy between them is untested (the reading a reader sees was the uncovered one; the fix is one expression, not a cleverer test)
+- A bound stops discriminating when the behaviour around it changes, and its test keeps passing (`drawArmed` implied the bound only while the tool was one-shot)
 - An outcome two mechanisms can produce cannot test either one
 - A length bound cannot be tested by the verdict it produces
 - A check nested inside a lookup for the thing under test disappears with it
@@ -1318,6 +1320,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An expected error line beside a passing suite makes a green run unreadable
 - A harness that cannot read a script skips, and blames the fixture
 - A check name that is a prefix of another cannot be aimed at
+- A check named by its position in a list is renamed by whatever is appended to that list (twice in one hour: `[6]`, then `length - 1`; every count still adds up)
+- A global text replace with a "one or more" assertion rewrote four unrelated checks (927 tests, a clean type-check and 246/246 all passed; the duplicate-name guard caught it)
 - A mutation aimed at code no fixture reaches survives, and the fix is not a new corpus
 - A harness sliced a code-point index with `String.prototype.slice`
 - A measured string transcribed off a terminal loses what the terminal does not draw

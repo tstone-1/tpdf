@@ -6438,12 +6438,98 @@ wrong by 168. The measured count is in `BUILD.md`.
 
 **Not done:** an ellipse, which is `/Circle` and the same rectangle with a
 different subtype; a crop a reader drags, still only a second caller of the
-primitive; a tool that stays armed for several strokes, which ink wants more than
-the box did --- a drawing is usually several strokes and each currently costs a
-menu trip; and a colour a reader can choose, still the UI question `MARK_COLORS`
-names. Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
+primitive; and a colour a reader can choose, still the UI question `MARK_COLORS`
+names. (*A tool that stays armed for several strokes* was on this list and was
+built the same day --- see below.) Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
 put a width per point, and a Bézier fit would make the saved path something other
 than what the reader drew.
+
+#### A drawing of several strokes --- done 2026-08-20
+
+The gap the increment above left, and it was not polish: `/InkList` is a list of
+lists so that one annotation holds several strokes, the writer and the model were
+built for that from the start, and `annot-probe --mode strokes` sends **two** ---
+so the harness was creating a document the window could not. A drawing is
+normally several strokes, and each one cost a trip to the menu.
+
+**Ink is the first tool here that is not one-shot**, which is a real departure:
+the box's own note argues that a mode a reader can enter and not recognise is
+worse than one they ask for, and every tool until now spent itself on the next
+gesture so there was nothing to be stuck in. Three things pay that off.
+
+- **Enter finishes, Escape discards.** Escape has meant abandon since the box, so
+  the finish had to be a different key --- a mode whose only exit throws away the
+  work is one a reader uses once. First on the Enter ladder, and unlike the
+  Escape one that ordering is load-bearing: a drawing cannot co-exist with an
+  open note, but it very much can with a *focused link*, which `armDraw` does not
+  clear and which would otherwise swallow the key.
+- **The status line names both keys** while a drawing is live, and says how many
+  strokes it holds. That is the whole of how the mode is visible.
+- **A stroke that starts on another page is refused**, not moved: an annotation
+  belongs to one page, and dragging the reader's stroke a page upwards is worse
+  than a press that does nothing.
+
+##### A defect in what shipped the previous hour
+
+`paintDrawing` drew the dashed rubber band for **every** live drag, ink included.
+So a reader drawing freehand watched a rectangle stretch from where they pressed
+to wherever the pen was, and their line appeared only on release. It shipped with
+ink and nothing caught it: every check in the overlay phase reads marks the
+*model* holds, and a preview is by definition not one of those.
+
+`--mode strokes` could not have seen it either --- it measures the saved file.
+The overlay had a phase and the preview had nothing, which is the same gap that
+let the underline ship looking like a highlight.
+
+Two checks close it, and they are in the window harness because a unit test
+cannot: the fake DOM returns `null` from `getContext`, so nothing paints. A
+diagonal is drawn and held; its own bounding box is read at the centre --- inked
+by a line, empty for a rectangle that outlines the same box --- and a corner a
+rubber band would trace is asserted empty. Then a second stroke elsewhere, read
+as the viewer's own count rather than in pixels, because two strokes far apart
+would make a band measure position rather than identity. Measured on `comments`:
+`6% down the diagonal, 0% in the corner a rubber band would outline`, and
+`1 stroke after the first, 2 after the second`. 246/246, 281 names, all distinct.
+
+##### Eight mutations, and the three that survived are the yield
+
+Five caught outright. The three that were not are each a different failure and
+all three are in `docs/TRAPS.md`:
+
+- **The status field was a copy.** `ViewerStatus.drawing` and `drawnStrokes`
+  computed the same thing one line apart; the tests read the accessor and the
+  window renders the status, so emptying the status broke nothing any test could
+  see. The repair is that the field *is* the accessor --- one expression, nothing
+  to drift.
+- **A bound stopped discriminating when the mode changed.** The
+  fewer-than-two-points refusal was asserted through `drawArmed`, which implied
+  it only while the tool was one-shot. Making the tool stay armed removed the
+  implication and the test kept passing. It asserts the stroke count now, which
+  meant giving the accessor a `0` distinct from `null`.
+- **`checkreport.test.ts` was not in the harness's file list**, the seventh time
+  that list has been short. It refused rather than reporting SURVIVED, which is
+  the guard doing exactly its job.
+
+##### And the harness broke twice while being extended
+
+Both in `docs/TRAPS.md`, and the second was found by the first. A check named by
+its **position** in a names array was renamed by two entries appended after it ---
+for the second time in an hour, the first "fix" having been `length - 1`, which
+encodes *distinctness is last*. The names are keyed now, and
+`Report.finish` fails a run in which two checks share a name, because the roll is
+compared as a set and a set cannot see a repeat.
+
+That guard then caught something else on its first live run: a **global** text
+replace, guarded by `assert n >= 1` instead of `== 1`, had rewritten four
+unrelated checks in other phases to report under the ink preview's name. A clean
+type-check, 927 unit tests and a 246/246 window run all passed with that in the
+tree; the only thing that noticed was one label carrying the detail *"4 pages,
+now 3"*.
+
+**Still not done:** pressure and smoothing, for the reasons the previous section
+gives; and an eraser, which is now the obvious next thing a reader will reach for
+and which is a different subsystem --- removing a mark exists, removing *part* of
+one does not.
 
 ### Phase 3 — Redaction
 
