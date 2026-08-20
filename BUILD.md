@@ -272,6 +272,28 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode rule --kind squiggly
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode preview --kind squiggly
+# The text box, whose /AP holds words rather than a shape. `--mode rule` and
+# `--mode outline` both refuse it and should: its ink is wherever its words fall,
+# which depends on how many there are, so thirds of a quad do not describe it at
+# all rather than describing it coarsely.
+#
+# `--mode preview` is where it is measured, and for this kind that check asserts
+# something the others cannot: the drawn line is as wide as `textbox::advance`
+# predicts (110.0 pt against 109.4). That is the Helvetica widths table checked
+# through PDFKit, and `helvetica-probe` below checks it through PDFium.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind textbox
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode preview --kind textbox
+# The Helvetica widths, against what PDFium actually draws. **The only evidence
+# that table is right**: it is 95 numbers written out by hand, a wrong entry
+# still draws and still wraps, and any unit test would compare the table against
+# itself. Needs no fixture -- it writes its own page.
+#
+# Every string must come in UNDER its predicted advance and none may exceed it:
+# ink runs from the first glyph's left edge to the last one's right, and an
+# advance includes the trailing side bearing. 8/8.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example helvetica-probe
 # Freehand ink. `--mode strokes`, NOT `--mode ink` --- that name was taken nine
 # months earlier by the coverage measurement above and means something else
 # entirely, which is the collision `MarkKind::Ink` walked into.

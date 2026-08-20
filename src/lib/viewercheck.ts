@@ -2964,6 +2964,7 @@ async function appCommandChecks(
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
     drawEllipse: () => fired.push("drawEllipse"),
+    drawTextBox: () => fired.push("drawTextBox"),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
@@ -3594,6 +3595,15 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      // The third drag tool, aimed separately for the reason the two above it
+      // are: three commands now arm the same primitive with three different
+      // arguments, which is exactly where a copy-and-paste leaves two of them
+      // placing a `square`.
+      id: "edit.addTextBox",
+      ...shell("drawTextBox"),
+      read: () => fired.join(","),
+    },
+    {
       // The freehand tool, aimed separately for the reason the three mark kinds
       // below are: two commands that arm the same primitive with a different
       // argument is exactly the shape where a copy-and-paste leaves both arming
@@ -4054,6 +4064,7 @@ function syntheticMark(
   const size = viewer.pageSize(0);
   return {
     id,
+    lines: [],
     // A highlight, because the note box's behaviour is what this phase tests
     // and every kind reaches it identically. What differs between the three is
     // written by `save.rs` and read back by `annot-probe`.
@@ -7880,9 +7891,10 @@ const INK_CHECK = {
   strikeout: "a strikeout crosses the middle of its quad",
   square: "a box is a frame with its middle clear",
   ellipse: "an ellipse touches its rectangle's sides and misses its corners",
+  textbox: "a text box draws its words and not its rectangle",
   note: "a comment draws inside its own icon box",
   ink: "a drawing follows its strokes and does not fill its rectangle",
-  distinct: "the eight kinds do not all look the same",
+  distinct: "the nine kinds do not all look the same",
   preview: "a drawing in progress is previewed as a line, not as a rubber band",
   second: "a second stroke joins the drawing rather than replacing it",
   erased: "a stroke the eraser has taken stops being drawn at once",
@@ -7966,6 +7978,7 @@ async function overlayInkChecks(
     edges: number;
     corners: number;
     shoulder: number;
+    second: number;
   } | null> => {
     const size = viewer.pageSize(0);
     const quad =
@@ -7991,6 +8004,17 @@ async function overlayInkChecks(
             [left, bottom - INK_WIDTH, right, bottom - INK_WIDTH],
           ]
         : [];
+    // **A text box is the one kind that draws nothing without a note**, because
+    // for every other kind the note is a remark about something drawn and here
+    // it is the thing on the page. An empty one is a correct empty box, which
+    // is why the check below cannot be `whole > 0` alone.
+    //
+    // The lines are supplied rather than derived: in the application the backend
+    // wraps and sends them, and what this phase measures is whether the overlay
+    // *draws* what it is handed. Two short lines, so the ink lands across the
+    // top of the box and touches no edge -- which is the reading that separates
+    // a drawn text box from one that fell through to `fillRect`.
+    const words = kind === "textbox" ? ["the reader", "typed this"] : [];
     viewer.setMarks([
       {
         id: 7777,
@@ -7999,7 +8023,8 @@ async function overlayInkChecks(
         quads: quad,
         strokes,
         color: [0.85, 0.15, 0.15],
-        note: "",
+        note: words.join(" "),
+        lines: words,
       },
     ]);
     await frame();
@@ -8088,9 +8113,24 @@ async function overlayInkChecks(
       at.right,
       at.bottom - height * 0.1,
     );
-    return whole === null || core === null || shoulder === null
+    // **Ink where a second line of type would go**, which is the only reading
+    // that can count lines. Added because a mutation drawing just the first line
+    // of a text box survived everything else: `whole` drops from 5% to 3% and
+    // stays inside its bounds, `edges` stays at 0, and a reader loses every line
+    // after the first while the saved file keeps them all.
+    //
+    // The lower half of the box, which the fixture's first line cannot reach: at
+    // 11 pt in a box of about 34, the first line's body ends around 38% of the
+    // way down and the second begins around 44%.
+    const second = inked(
+      at.left,
+      at.top + height * 0.5,
+      at.right,
+      at.top + height * 0.9,
+    );
+    return whole === null || core === null || shoulder === null || second === null
       ? null
-      : { whole, core, edges, corners, shoulder };
+      : { whole, core, edges, corners, shoulder, second };
   };
 
   // The control, and it comes first for the reason every control here does: a
@@ -8113,6 +8153,7 @@ async function overlayInkChecks(
     edges: number;
     corners: number;
     shoulder: number;
+    second: number;
   };
   const read: Record<string, Reading> = {};
   const wanted: [MarkKind, string, (r: Reading) => boolean][] = [
@@ -8167,6 +8208,19 @@ async function overlayInkChecks(
       INK_CHECK.square,
       (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 4 && r.corners === 4,
     ],
+    // Words, which read like nothing else here: ink across the top of the box
+    // and none of it touching an edge. **The reading that matters is
+    // `edges === 0`**, and it separates a drawn text box from the way it fails.
+    // A box that fell through to the final `fillRect` -- which is what a missing
+    // `isText` gives you -- reads 1.00 whole with four inked sides, and a reader
+    // sees a solid red rectangle where they typed while the saved file has the
+    // words in it the whole time. That is the underline defect's shape for a
+    // third time, and this is the reading that catches it.
+    [
+      "textbox",
+      INK_CHECK.textbox,
+      (r) => r.whole > 0.02 && r.whole < 0.6 && r.edges === 0 && r.second > 0.005,
+    ],
     // A ring: the box's three readings exactly, and the corners are what make it
     // a different mark rather than the same one. Stated as `corners === 0` with
     // the box's `corners === 4` directly above, so the pair is a discrimination
@@ -8211,7 +8265,8 @@ async function overlayInkChecks(
       `${(got.whole * 100).toFixed(0)}% of the rectangle, ` +
         `${(got.core * 100).toFixed(0)}% of its centre, ` +
         `ink on ${got.edges} of its 4 sides, ${got.corners} of its 4 corners, ` +
-        `${(got.shoulder * 100).toFixed(0)}% of the strip above a rule`,
+        `${(got.shoulder * 100).toFixed(0)}% of the strip above a rule, ` +
+        `${(got.second * 100).toFixed(1)}% where a second line goes`,
     );
   }
 
@@ -8231,7 +8286,7 @@ async function overlayInkChecks(
       // would report a distinctness failure on a correct painter.
       (r) =>
         `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}/${r.corners}/` +
-        `${r.shoulder.toFixed(2)}`,
+        `${r.shoulder.toFixed(2)}/${r.second.toFixed(2)}`,
     ),
   );
   const distinct = INK_CHECK.distinct;
@@ -8287,6 +8342,7 @@ async function inkPreviewChecks(
       strokes: [],
       color: [1, 0.9, 0.2],
       note: "",
+      lines: [],
     },
   ]);
   await frame();
@@ -8396,6 +8452,7 @@ async function erasePreviewChecks(
       ],
       color: [0.85, 0.15, 0.15],
       note: "",
+      lines: [],
     },
   ]);
   await frame();
@@ -8642,6 +8699,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
       color: [1, 0.9, 0.2],
       author: "",
       note: "",
+      lines: [],
     },
   });
   const mark = made.state?.marks[0]?.id;
@@ -8685,6 +8743,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
         color: [0.85, 0.15, 0.15],
         author: "",
         note: "",
+        lines: [],
       },
     });
     kindsError ||= one.error;
@@ -8702,6 +8761,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
     doc: doc.id,
     mark,
     note: "typed through the command",
+    lines: [],
   });
   check(
     MARK_COMMAND_CHECKS[2] ?? "",
@@ -8722,6 +8782,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
     doc: doc.id,
     mark,
     note: "after it went",
+    lines: [],
   });
   check(
     MARK_COMMAND_CHECKS[4] ?? "",

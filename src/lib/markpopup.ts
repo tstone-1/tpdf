@@ -113,6 +113,14 @@ const NAMES: Record<MarkKind, string> = {
   // `annots.rs` read out of the file. Two tables disagreeing would have named
   // one shape two ways in one window.
   ellipse: "Ellipse",
+  // "Text box", where the PDF subtype is `/FreeText` and the serde name is
+  // `textbox`. A third spelling again: "free" in the file's name means
+  // unattached to a text selection, a distinction only the specification draws.
+  //
+  // **This is the one kind whose note box is not optional.** For every other
+  // mark the note is a remark about something drawn; here it is the thing on the
+  // page, so the field a reader types in is the mark itself.
+  textbox: "Text box",
   // "Drawing", never "Ink". `/Ink` is the file's spelling, `ink` is the serde
   // name, and inside this codebase "ink" already means how a mark is laid down
   // --- `Paint` in `save.rs`, `markBand` here. A reader who drew a line and

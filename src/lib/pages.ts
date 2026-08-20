@@ -41,6 +41,7 @@ export type MarkKind =
   | "note"
   | "square"
   | "ellipse"
+  | "textbox"
   | "ink";
 
 /**
@@ -92,6 +93,19 @@ export interface MarkView {
    * here may carry a URL. See `docs/THREAT-MODEL.md` T8.
    */
   note: string;
+  /**
+   * The note broken into the lines a text box is drawn in, empty otherwise.
+   *
+   * **The backend wraps, not the overlay.** `ctx.measureText` would measure
+   * whatever font the system resolved, and the file is set in Helvetica by
+   * `textbox.rs`'s own metrics --- two measurements of two fonts break lines in
+   * different places, so a reader would see three lines and save four. There is
+   * one layout, in one language, and this is what it produced.
+   *
+   * Attacker-controlled exactly as {@link MarkView.note} is, and it reaches the
+   * page the same way: as text, through the canvas, never as markup.
+   */
+  lines: string[];
 }
 
 /**

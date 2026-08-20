@@ -48,8 +48,12 @@ import {
   isIcon,
   isOutline,
   isPath,
+  isText,
   isWave,
   LINE_FRACTION,
+  TEXT_INSET,
+  TEXT_LEADING,
+  TEXT_SIZE,
   SQUIGGLE_PERIOD,
   INK_SAMPLE,
   INK_WIDTH,
@@ -4057,7 +4061,35 @@ export class Viewer {
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr;
         const width = (band.right - band.left) * this.zoom * dpr;
         const height = (band.bottom - band.top) * this.zoom * dpr;
-        if (isWave(mark.kind)) {
+        if (isText(mark.kind)) {
+          // The reader's words, in the lines the *backend* broke them into.
+          // Nothing here measures text: `ctx.measureText` would measure whatever
+          // font the system resolved and the file is set in Helvetica, so two
+          // measurements would break lines in two places. See `MarkView.lines`.
+          //
+          // Helvetica first in the stack for the same reason the breaks come
+          // from Rust: on a machine that has it the glyphs on screen are the
+          // glyphs in the file. Arial next, which was drawn to Helvetica's
+          // metrics, then whatever the system calls sans-serif.
+          //
+          // `fillText` puts the string on a canvas as pixels. It is not a markup
+          // sink and cannot become one, which is what lets document-controlled
+          // text be drawn here at all -- see `docs/THREAT-MODEL.md` T8.
+          ctx.fillStyle = markInk(mark.color, false);
+          const size = TEXT_SIZE * this.zoom * dpr;
+          ctx.font = `${size}px Helvetica, Arial, sans-serif`;
+          ctx.textBaseline = "alphabetic";
+          const inset = TEXT_INSET * this.zoom * dpr;
+          const leading = size * TEXT_LEADING;
+          mark.lines.forEach((line, index) => {
+            // The same first baseline `save.rs` uses: one size below the top
+            // inset, because a baseline placed *at* the top edge hangs the whole
+            // line above the box.
+            const y = top + inset + size + leading * index;
+            if (y > top + height) return;
+            ctx.fillText(line, left + inset, y);
+          });
+        } else if (isWave(mark.kind)) {
           // Stroked along the band rather than filling it, which is the whole
           // of what a squiggle is. Filling would draw a solid bar two and a
           // half times an underline's height and the file would stay correct --

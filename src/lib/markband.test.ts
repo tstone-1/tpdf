@@ -10,6 +10,7 @@ import {
   isEllipse,
   isIcon,
   isOutline,
+  isText,
   isWave,
   isWash,
   markBand,
@@ -239,6 +240,24 @@ describe("which kinds are drawn how", () => {
       "ink",
     ] as const) {
       expect(isWave(kind), kind).toBe(false);
+    }
+  });
+
+  it("says a text box is drawn as words and the others are not", () => {
+    // Without this the overlay falls through to `fillRect` and paints a solid
+    // block over the words, while the file drawn by `Paint::Text` has them.
+    expect(isText("textbox")).toBe(true);
+    for (const kind of [
+      "highlight",
+      "underline",
+      "strikeout",
+      "squiggly",
+      "note",
+      "square",
+      "ellipse",
+      "ink",
+    ] as const) {
+      expect(isText(kind), kind).toBe(false);
     }
   });
 

@@ -70,6 +70,29 @@ export const SQUIGGLE_HEIGHT = 0.18;
  */
 export const SQUIGGLE_PERIOD = 2;
 
+/**
+ * The size a text box's words are set at, in points.
+ *
+ * `textbox::SIZE` in Rust. Fixed rather than proportional to the box: nothing
+ * about how large a reader dragged the rectangle says how large they want the
+ * words.
+ */
+export const TEXT_SIZE = 11;
+
+/** Leading, as a multiple of {@link TEXT_SIZE}. `textbox::LEADING` in Rust. */
+export const TEXT_LEADING = 1.2;
+
+/**
+ * The inset from the rectangle's edge to the first glyph, in points.
+ *
+ * `textbox::INSET` in Rust, and it has to agree with it for a reason the other
+ * mirrored constants do not have: the backend subtracts this from the box's
+ * width before wrapping, so a different value here does not merely shift the
+ * text, it draws lines that were measured against a width the overlay is not
+ * using.
+ */
+export const TEXT_INSET = 2;
+
 /** A quad in the page's display space, as the overlay holds one. */
 export interface Quad {
   left: number;
@@ -152,6 +175,23 @@ export function isEllipse(kind: MarkKind): boolean {
  */
 export function isWave(kind: MarkKind): boolean {
   return kind === "squiggly";
+}
+
+/**
+ * Whether a kind is drawn as lines of type rather than as a shape.
+ *
+ * `Paint::Text` in `save.rs`. **The one predicate here whose kind draws
+ * something that is not derived from its rectangle at all** --- {@link isPath}
+ * is the other, and even ink's strokes are geometry. What a text box draws is
+ * the reader's words, which arrive already broken into lines by the backend, so
+ * the overlay places them and measures nothing.
+ *
+ * Without it a text box falls through to the final `fillRect` and a reader sees
+ * a solid red rectangle where they typed --- and the saved file, drawn by
+ * `Paint::Text`, has the words in it the whole time.
+ */
+export function isText(kind: MarkKind): boolean {
+  return kind === "textbox";
 }
 
 /**
@@ -479,6 +519,14 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // edge, so half of it falls outside the quad; `save.rs` insets its own
       // path by half the width because the appearance stream's /BBox would clip
       // that half away, and the overlay has no /BBox and needs no inset.
+      return quad;
+    case "textbox":
+      // The whole quad, and this is the fifth distinct reason: the quad is the
+      // rectangle the reader dragged, the words are placed inside it from the
+      // top down, and neither a band nor an edge describes where they land. The
+      // overlay asks {@link isText} and draws the lines; what this returns is
+      // the box they are laid inside, which is what the anchor and the hit test
+      // want.
       return quad;
     case "ellipse":
       // The whole quad a fourth time, and the reason is the box's above with one

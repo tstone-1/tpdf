@@ -49,6 +49,7 @@ pub mod startup;
 pub mod structure;
 pub mod sweep;
 pub mod text;
+pub mod textbox;
 pub mod worker;
 // The four modules `worker.rs` was split into at 2,861 lines. Public, and
 // re-exported by `worker` itself, so both the defining path and the path every

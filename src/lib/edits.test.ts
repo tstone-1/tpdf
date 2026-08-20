@@ -54,6 +54,7 @@ function mark(id: number, page: number): MarkView {
     strokes: [],
     color: [1, 0.9, 0.2],
     note: "",
+    lines: [],
   };
 }
 

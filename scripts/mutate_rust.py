@@ -2315,6 +2315,73 @@ MUTATIONS += [
         "the_wash_and_the_rules_fill_rather_than_stroke",
     ),
     Mutation(
+        # Write the text box's words as a UTF-8 literal instead of WinAnsi hex.
+        # Every ASCII text box stays perfect and every German one draws `Ã¼` --
+        # the encoding defect this would have shipped with, and the reason the
+        # writer uses hex at all.
+        "save: write a text box's words as UTF-8 rather than WinAnsi",
+        "src/save.rs",
+        '        let byte = if code <= 0xff { code as u8 } else { b\' \' };\n'
+        '        out.push_str(&format!("{byte:02X}"));',
+        '        for byte in ch.to_string().into_bytes() {\n'
+        '            out.push_str(&format!("{byte:02X}"));\n'
+        '        }',
+        "a_text_box_draws_its_words_as_winansi_hex_rather_than_a_literal",
+    ),
+    Mutation(
+        # Stop writing /DA. The mark still displays from its /AP everywhere, and
+        # becomes uneditable in every reader but this one -- which no rendering
+        # check can see, because nothing about the picture changes.
+        "save: leave /DA off a text box",
+        "src/save.rs",
+        "    if mark.kind == MarkKind::TextBox {",
+        "    if false {",
+        "a_text_box_carries_the_da_the_specification_requires_and_nothing_else_does",
+    ),
+    Mutation(
+        # Give every mark a font in its appearance resources. Harmless-looking,
+        # and it is the control for the `/Font` assertion: a check that only ever
+        # says "the text box has one" passes equally if everything does.
+        "save: put a font in every mark's appearance resources",
+        "src/save.rs",
+        "    if style == Paint::Text {",
+        "    if true {",
+        "a_text_box_draws_its_words_as_winansi_hex_rather_than_a_literal",
+    ),
+    Mutation(
+        # Push the empty leftover as a line. The trailing-blank defect a test
+        # found while being written for termination: one spurious line in a
+        # one-paragraph box, and a line of displacement for every paragraph after
+        # the first in a longer one.
+        "textbox: push an empty line after a word that was broken",
+        "src/textbox.rs",
+        "        if !line.is_empty() {\n            lines.push(line);\n        } else if paragraph.is_empty() {",
+        "        if !line.is_empty() || !paragraph.is_empty() {\n            lines.push(line);\n        } else if paragraph.is_empty() {",
+        "a_width_too_small_for_any_character_still_terminates",
+    ),
+    Mutation(
+        # Never break a word that does not fit. It emits one line wider than the
+        # box, the /BBox clips it, and the text disappears at the edge.
+        "textbox: let a word wider than the box overflow rather than breaking it",
+        "src/textbox.rs",
+        "            let mut rest = word;\n            while advance(rest, size) > width {",
+        "            let mut rest = word;\n            while false {",
+        "a_word_wider_than_the_box_is_broken_rather_than_overflowing",
+    ),
+    Mutation(
+        # Accept anything. A reader pastes Greek, tpdf draws it with a system
+        # font on the overlay, and the saved file has substituted glyphs.
+        "textbox: accept text Helvetica cannot write",
+        "src/textbox.rs",
+        # Re-aimed after `cargo fmt` collapsed the closure onto one line -- the
+        # anchor did not drift, the formatter moved it, which the `anchors` gate
+        # caught in 0.1 s. Run that gate after any `cargo fmt` that touches a
+        # file a mutation points into.
+        "        .all(|ch| ch == '\\n' || (' '..='~').contains(&ch) || ('\\u{a0}'..='\\u{ff}').contains(&ch))",
+        "        .all(|ch| {\n            let _ = ch;\n            true\n        })",
+        "what_helvetica_cannot_write_is_refused_and_what_it_can_is_not",
+    ),
+    Mutation(
         # Draw the squiggle as a flat rule. /Squiggly still goes in the file, so
         # every reader files it as a squiggle and draws an underline -- and the
         # subtype test passes it. The mirror of the mutation below it.

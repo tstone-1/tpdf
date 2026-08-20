@@ -395,6 +395,17 @@ MUTATIONS = [
         "says a box is drawn as an outline and the others are not",
     ),
     Mutation(
+        # Fill the text box's rectangle rather than drawing words in it, which
+        # is what the final `else` does and what a missing `isText` gives you: a
+        # solid red block where the reader typed, with the saved file carrying
+        # the words the whole time. The underline defect's shape, a third time.
+        "markband: draw a text box as a filled rectangle",
+        "src/lib/markband.ts",
+        '  return kind === "textbox";',
+        "  return false;",
+        "says a text box is drawn as words and the others are not",
+    ),
+    Mutation(
         # Fill the squiggle's band on the overlay rather than waving through it.
         # A solid red bar two and a half times an underline's height under the
         # words, with the saved file correct throughout -- which is the underline

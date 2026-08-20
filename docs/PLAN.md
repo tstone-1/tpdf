@@ -5694,8 +5694,8 @@ changed, so it is not in the changelog; `docs/TRAPS.md` has the general form.
 
 **Not done:** the remaining markup kinds --- squiggly, and the ones that are not
 about a text selection at all (ink, shapes, text boxes, stamps), each of which
-needs a way to *draw* rather than a way to select. (Ink, the box, the ellipse and
-squiggly have all landed since; text boxes and stamps are what remain.) ~~A colour a reader can
+needs a way to *draw* rather than a way to select. (Ink, the box, the ellipse,
+squiggly and text boxes have all landed since; stamps are what remain.) ~~A colour a reader can
 choose, which is still the UI question the `MARK_COLORS` table's comment names
 rather than a missing constant.~~ (Done 2026-08-20 --- that comment was the
 brief, and `markcolors.ts` answers it.) And a keyboard route to a mark, unchanged from the last
@@ -5825,8 +5825,8 @@ with two activation paths. The remaining markup kinds are unchanged from the las
 increment: squiggly, and the ones that are not about a text selection at all
 (ink, shapes, text boxes, stamps), each of which needs a way to draw rather than
 a way to select. (Ink landed 2026-08-20, and the shapes are now the box and the
-ellipse; squiggly landed the same day, so what is left of that list is text boxes
-and stamps.) ~~And a colour a reader can choose, still the UI question the
+ellipse; squiggly and text boxes landed the same day, so what is left of that
+list is stamps.) ~~And a colour a reader can choose, still the UI question the
 `MARK_COLORS` table's comment names.~~ (Done 2026-08-20.)
 
 #### Cropping a page --- done 2026-08-18
@@ -7094,8 +7094,128 @@ Three findings, none about the mark itself:
   in the test.
 
 **Not done:** nothing in the markup family --- this is the last of the four. What remains
-of the kinds list is text boxes and stamps, each of which needs a way to place something
-rather than a way to select or drag.
+of the kinds list is text boxes and stamps. (Text boxes landed the same day; see *A text
+box* below. Stamps are what is left.)
+
+#### A text box --- done 2026-08-20
+
+The first kind whose **note is the mark rather than a remark about it.** Take a
+highlight's note away and the highlight is still there; take a text box's away and
+there is nothing left. That one property is what makes this more than a ninth subtype,
+and it has three consequences.
+
+**Editing the note changes what is drawn.** `Command::Renote` already rebuilds
+`Working` and `save.rs` already builds its plan from the model on every save, so this
+needed no new machinery --- but it is the first kind for which that mattered. A design
+that had cached an appearance per mark at creation would have had to be undone here.
+
+**The writer has to lay text out**, which needs the width of every glyph. `textbox.rs`
+is the only place in this repository that measures text, and it exists solely for this.
+
+**What a reader types can be unwritable**, so `Edits::renote` refuses it --- the only
+kind that refuses a note at all.
+
+##### Helvetica, and how 95 hand-written numbers were made trustworthy
+
+One of the fourteen standard fonts, so no file is embedded and nothing is subsetted:
+that side-steps both font traps this repository already records, because a standard
+font has no subset. The cost is `/WinAnsiEncoding`, which is Latin-1 and no more.
+
+**The widths table is the risk in this increment**, and it is the kind of risk no unit
+test can retire: a wrong entry still draws, still wraps, and wraps in the wrong place,
+and a test comparing the table against itself is a writer agreeing with its own reader.
+
+So `examples/helvetica_probe.rs` asks the engine that will draw it. It writes a page
+holding one Helvetica string, renders it through PDFium, measures how far the ink
+actually extends, and compares that against what `advance` predicts:
+
+| string | advance | measured ink | short by |
+|---|---|---|---|
+| `Hamburgefonstiv` | 362.78 pt | 358.50 pt | 4.28 |
+| `WAVE Tokyo` | 285.41 | 283.25 | 2.16 |
+| `illiwilli` | 119.90 | 113.75 | 6.15 |
+| `0123456789` | 266.88 | 262.75 | 4.13 |
+| `Grüße aus München` | 432.19 | 431.75 | **0.44** |
+| `the quick brown fox jumps` | 554.88 | 552.25 | 2.63 |
+| `(punctuation!) @ 50%` | 464.93 | 459.25 | 5.68 |
+
+**The comparison is one-sided on purpose.** Ink runs from the first glyph's left edge
+to the last one's right; an advance includes the trailing side bearing, so a correct
+table comes in *under* and never over. A string ending in `A` or `V` under-runs by more
+than one ending in `l`, which is exactly the spread the table shows. Ink *exceeding*
+the advance is a hard failure --- that is text outside the box the wrap arithmetic
+promised.
+
+The German line is the one that matters most and agrees to 0.44 pt, which is the claim
+that an accented Latin-1 letter advances exactly as its base letter does. That is
+Helvetica's own arrangement rather than an approximation, and the whole reason a
+95-entry ASCII table can serve German text.
+
+**And PDFKit confirms it independently.** `--mode preview --kind textbox` now asserts
+that the drawn line is as wide as `textbox::advance` says it should be: 110.0 pt drawn
+against 109.4 predicted. Two engines that share no code with each other or with the
+table.
+
+##### Two things the wrap gets right that a greedy wrap does not
+
+**A word wider than the whole box is broken mid-word.** Without it a pasted URL or a
+long German compound emits one line past the rectangle, the appearance stream's `/BBox`
+clips it, and the text disappears at the edge --- invisibly. Breaking is ugly and
+visible; overflowing is invisible and loses words.
+
+**An empty leftover is not pushed as a line.** A test written to prove the degenerate
+width terminates found this instead: a word broken mid-way consumes all of `rest`, so
+the line ends empty while the paragraph is not, and the old condition pushed that empty
+string. One trailing blank in a one-paragraph box, and a whole line of displacement for
+every paragraph after the first in a longer one.
+
+##### The words go out as hex, and that is not a style choice
+
+The content stream is built as a Rust `String`, which is UTF-8. Pushing `ü` into it as a
+literal writes `C3 BC` where WinAnsi wants `FC`: every English text box perfect, every
+German one drawing `Ã¼`. A hex string removes the question, and removes the escaping
+question with it --- a literal has to escape `(`, `)` and `\`, and typing `:-)` into a
+text box is not unusual.
+
+##### One layout, in one language
+
+`MarkView` gained `lines`, the note already broken into the lines it will be drawn in.
+The webview *can* measure text, and measuring it there would be measuring whatever font
+the system resolved while the file is set in Helvetica by our own metrics --- two
+measurements of two fonts break lines in different places, so a reader would see three
+lines and save four with no way to tell which was right. The backend wraps; the overlay
+draws what it is handed.
+
+##### Evidence
+
+Eight mutations, all caught --- six in `mutate_rust.py`, one in `mutate_frontend.py`,
+one in `mutate_viewer.py`.
+
+`viewer_check.py`: **268/268** on `comments.pdf`, nine distinct readings from nine
+kinds. `annot-probe`: **11/11** `--mode roundtrip`, **8/8** `--mode preview` with PDFKit
+calling the kind `FreeText`. `helvetica-probe`: **8/8**.
+
+Three findings, and two are about how the work was done rather than about the feature:
+
+- **Two mutations were wrong before the code was.** *"Accept text Helvetica cannot
+  write"* was written as `all(|_| true) && all(original)` --- an `and` with `true`, which
+  is the original predicate. It reported SURVIVED, correctly, about a mutation that had
+  changed nothing. And *"put a font in every mark's resources"* survived for the opposite
+  reason: it was a real weakening and **nothing tested the claim**, which was written in
+  a comment saying only the text style gets a font. The control now exists.
+- **A blind mechanical edit cost six corrections.** Adding `lines` to `MarkView` meant
+  adding it to every fixture, done with a regex on `note: ...,` --- which also hit a
+  function parameter list, a `NewMark` request payload, an `invoke` assertion and the
+  `INK_CHECK` table, all of which merely have a field called `note`. Three were caught by
+  the type-checker and two by `vitest`.
+- **The overlay check could not count lines.** A mutation drawing only the first line
+  survived: `whole` fell from 5% to 3% and stayed inside its bounds, `edges` stayed at 0.
+  A reading of ink *where a second line goes* is what catches it.
+
+**Not done:** a size or a font the reader chooses; alignment other than left; a border or
+a background, which `/FreeText` supports and which would make `/C` mean the box rather
+than the words; and rich text, which is `/RC` and a different subsystem. Text is also not
+re-wrapped when a box is resized, because a box cannot be resized yet.
 
 ### Phase 3 --- Redaction
 

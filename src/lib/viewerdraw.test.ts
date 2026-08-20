@@ -95,6 +95,7 @@ function threeStrokes(id = 77): MarkView[] {
       ],
       color: [0.85, 0.15, 0.15],
       note: "",
+      lines: [],
     },
   ];
 }
@@ -923,6 +924,7 @@ describe("the eraser", () => {
         ],
         color: [1, 0.9, 0.2],
         note: "",
+        lines: [],
       },
     ]);
     await settle();

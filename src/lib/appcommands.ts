@@ -181,6 +181,15 @@ export interface AppActions {
    */
   drawEllipse(): void;
   /**
+   * Arms the text box tool: the reader's next drag on a page draws one.
+   *
+   * The same gesture as {@link drawBox} and {@link drawEllipse}, and a third
+   * command for their reason. What differs is what happens *after* the drag: the
+   * other two are finished when the reader lets go, and this one has only just
+   * started --- the box is empty until they type into its note.
+   */
+  drawTextBox(): void;
+  /**
    * Arms the freehand tool for one drawing.
    *
    * The same shape as {@link drawBox} and for the same reasons --- a mode,
@@ -550,6 +559,19 @@ export function registerAppCommands(
       title: "Draw an ellipse...",
       enabled: withDocument,
       run: () => actions.drawEllipse(),
+    },
+    {
+      // The third tool that reads a drag, after the two shapes. Everything the
+      // box's entry says about arming a mode applies unchanged.
+      //
+      // "Add a text box...", not "Draw...": the other two are finished by the
+      // gesture and this one is not --- the drag places an empty box and the
+      // words come afterwards, so a verb about drawing would describe the wrong
+      // half of it.
+      id: "edit.addTextBox",
+      title: "Add a text box...",
+      enabled: withDocument,
+      run: () => actions.drawTextBox(),
     },
     {
       // Beside the box, and everything the entry above says about arming a mode

@@ -171,6 +171,18 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # Draw only the first line of a text box. Everything else about the mark
+        # is right -- the words are there, in the right font, at the right place
+        # -- and a reader loses every line after the first while the saved file
+        # keeps them all. A check reading only "is there ink" cannot see it.
+        "viewer: draw only a text box's first line",
+        "src/lib/viewer.ts",
+        "          mark.lines.forEach((line, index) => {",
+        "          mark.lines.slice(0, 1).forEach((line, index) => {",
+        "a text box draws its words and not its rectangle",
+        runner="viewer",
+    ),
+    Mutation(
         # Draw the squiggle as the underline's flat rule on the overlay. **The
         # mutation the `shoulder` reading exists for**: `whole`, `core`, `edges`
         # and `corners` are all satisfied by a rule -- a squiggle is a thin band
