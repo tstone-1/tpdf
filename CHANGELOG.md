@@ -19,6 +19,18 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### Draw on a page
+
+- **Draw freehand...** in the Edit menu and the right-click menu arms a pen for
+  one stroke: press, draw, let go. The line is saved as a real `/Ink`
+  annotation, so Acrobat and Preview show it and can remove it.
+
+- Like **Draw a box...** it is one stroke per invocation --- a mode you did not
+  ask to stay in is worse than one you ask for twice.
+
+- A press that never moves keeps the pen armed rather than spending it. You have
+  not drawn anything yet.
+
 ### Documents you opened are in the Dock menu (macOS)
 
 - tpdf now tells macOS which documents you opened, so they appear under the Dock

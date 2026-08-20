@@ -47,7 +47,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 
-use crate::docmodel::{Command, Doc, Mark, MarkId, MarkKind, PageId, Quad, Rect, Refusal};
+use crate::docmodel::{
+    Command, Doc, Mark, MarkId, MarkKind, PageId, Point, Quad, Rect, Refusal, Stroke,
+};
 use crate::fingerprint::Fingerprint;
 
 /// One open document: the edit model, and what its file looked like at open.
@@ -138,6 +140,13 @@ pub struct MarkView {
     /// character boxes and for the same reason: this crosses to the webview as
     /// JSON and the overlay wants to iterate rather than to name fields.
     pub quads: Vec<f32>,
+    /// One entry per stroke, each `x y x y ...` in the same display space.
+    ///
+    /// **The overlay needs these or it cannot draw ink at all.** Every other
+    /// kind takes its shape from the quads above, so this list is empty for
+    /// them --- and for ink the quad is only the rectangle the drawing occupies,
+    /// which is a box round the ink rather than the ink.
+    pub strokes: Vec<Vec<f32>>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     /// What the reader typed, which may be empty.
@@ -167,7 +176,26 @@ pub struct NewMark {
     pub page: u64,
     /// Four numbers per rectangle --- left, top, right, bottom --- in display
     /// space.
+    ///
+    /// **Empty for ink**, whose rectangle nobody sends: it is
+    /// [`Stroke::bounds`] of the strokes, computed here so that the frontend and
+    /// the model cannot disagree about where a drawing is. A sender that
+    /// supplied one anyway would be describing the same fact twice, and the
+    /// copy that is wrong is the one that never gets looked at.
     pub quads: Vec<f32>,
+    /// One entry per stroke, each `x y x y ...` in display space.
+    ///
+    /// **Flat pairs rather than a list of `{x, y}` objects**, matching `quads`
+    /// above and for the same reason: a freehand line is hundreds of points, and
+    /// a JSON object per point is an order of magnitude more bytes over the IPC
+    /// boundary for a shape that is entirely positional.
+    ///
+    /// Defaulted so that every existing sender --- which is every mark that is
+    /// not ink --- keeps working unchanged, and so that a missing field is an
+    /// empty list rather than a deserialisation failure the reader would see as
+    /// "the highlight did nothing".
+    #[serde(default)]
+    pub strokes: Vec<Vec<f32>>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     pub author: String,
@@ -461,7 +489,26 @@ impl Edits {
                 want.quads.len()
             ));
         }
-        let quads: Vec<Quad> = want
+        // Same shape as the quads above and the same reason for checking it
+        // here: a ragged list is a sender defect, and chunking it silently would
+        // drop the last point of a stroke rather than say so.
+        if let Some(ragged) = want.strokes.iter().find(|s| s.len() % 2 != 0) {
+            return Err(format!(
+                "a stroke is two numbers per point, and one of these has {}",
+                ragged.len()
+            ));
+        }
+        let strokes: Vec<Stroke> = want
+            .strokes
+            .iter()
+            .map(|flat| Stroke {
+                points: flat
+                    .chunks_exact(2)
+                    .map(|p| Point { x: p[0], y: p[1] })
+                    .collect(),
+            })
+            .collect();
+        let mut quads: Vec<Quad> = want
             .quads
             .chunks_exact(4)
             .map(|q| Quad {
@@ -471,6 +518,16 @@ impl Edits {
                 bottom: q[3],
             })
             .collect();
+        // **Ink's rectangle is derived, not sent**, for the reason `NewMark::quads`
+        // gives. `INK_WIDTH / 2.0` because a stroke straddles its path, so the
+        // rectangle the ink occupies is wider than the points it runs through ---
+        // and tight bounds would additionally refuse a straight vertical line as
+        // covering no area. See `Stroke::bounds`.
+        if want.kind == MarkKind::Ink {
+            quads = Stroke::bounds(&strokes, (crate::save::INK_WIDTH / 2.0) as f32)
+                .into_iter()
+                .collect();
+        }
 
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
@@ -480,6 +537,7 @@ impl Edits {
                     kind: want.kind,
                     page: PageId::from_raw(want.page),
                     quads,
+                    strokes,
                     color: want.color.map(channel),
                     author: want.author,
                     made,
@@ -686,6 +744,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     kind: body.kind,
                     source: view.source,
                     quads: body.quads.clone(),
+                    strokes: body.strokes.clone(),
                     color: body.color,
                     author: body.author.clone(),
                     note: model.note_of(*mark).to_string(),
@@ -740,6 +799,10 @@ pub struct PlannedMark {
     /// Display space, as the model holds it. Mapped into the page's own space by
     /// the writer --- see [`Edits::annotate`].
     pub quads: Vec<Quad>,
+    /// The strokes, for ink, in the same display space. Empty for every other
+    /// kind --- the biconditional is [`Mark::strokes`]'s and is
+    /// enforced by the model before a mark can reach a plan.
+    pub strokes: Vec<Stroke>,
     pub color: [f32; 3],
     pub author: String,
     pub note: String,
@@ -786,6 +849,13 @@ fn describe(why: Refusal) -> String {
         Refusal::NoSuchMark(_) => "no such mark".into(),
         Refusal::MarkRemoved(_) => "that mark has already been removed".into(),
         Refusal::EmptyMark => "that mark covers nothing".into(),
+        // Not worded for a reader, because no reader can cause it: it means the
+        // wire and the model disagree about what a mark is --- strokes on a kind
+        // that is not ink, or ink with none. Naming the kind is what makes the
+        // report actionable for whoever sent it.
+        Refusal::ShapeMismatch(kind) => {
+            format!("a {kind:?} mark cannot carry the strokes it was sent with")
+        }
     }
 }
 
@@ -822,6 +892,11 @@ fn snapshot(model: &Doc) -> EditState {
                     .quads
                     .iter()
                     .flat_map(|q| [q.left, q.top, q.right, q.bottom])
+                    .collect(),
+                strokes: mark
+                    .strokes
+                    .iter()
+                    .map(|stroke| stroke.points.iter().flat_map(|p| [p.x, p.y]).collect())
                     .collect(),
                 color: mark.color,
                 note: model.note_of(id).to_string(),
@@ -1442,6 +1517,7 @@ mod tests {
             kind,
             page,
             quads: vec![72.0, 100.0, 300.0, 118.0],
+            strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
             author: "a reader".to_string(),
             note: String::new(),
@@ -1450,6 +1526,63 @@ mod tests {
 
     fn stamped() -> String {
         "D:20260818120000Z".to_string()
+    }
+
+    /// A drawing sent the way the viewer sends one: strokes, and no rectangle.
+    fn a_drawing(page: u64, strokes: Vec<Vec<f32>>) -> NewMark {
+        NewMark {
+            kind: MarkKind::Ink,
+            page,
+            quads: Vec::new(),
+            strokes,
+            color: [0.85, 0.15, 0.15],
+            author: "a reader".to_string(),
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_drawings_rectangle_is_derived_here_and_padded_by_half_a_line() {
+        // **This is the only test that reaches the derivation.** `docmodel`'s
+        // own tests build the `Mark` by hand, so they exercise `Stroke::bounds`
+        // and say nothing about whether anything calls it or with what --- which
+        // is how the mutation that takes the pad to zero came back SURVIVED with
+        // the model's tests all green. The harness found a real gap, and this is
+        // it: the padding decision lives on this side of the boundary.
+        //
+        // A straight vertical line, which is what a reader ruling a margin
+        // draws. Its tight bounds have **no width**, and `covers_area` rejects
+        // those --- so without the pad this is refused and a reader is told the
+        // line they can see covers nothing.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        let vertical = vec![vec![50.0, 50.0, 50.0, 300.0]];
+
+        let state = edits
+            .annotate(7, a_drawing(id, vertical), stamped())
+            .expect("a straight line is a drawing");
+        let mark = &state.marks[0];
+
+        // One rectangle, which the sender did not supply.
+        assert_eq!(
+            mark.quads.len(),
+            4,
+            "one derived rectangle: {:?}",
+            mark.quads
+        );
+        let [left, top, right, bottom] =
+            [mark.quads[0], mark.quads[1], mark.quads[2], mark.quads[3]];
+        let pad = (crate::save::INK_WIDTH / 2.0) as f32;
+        assert!(
+            (left - (50.0 - pad)).abs() < 0.01 && (right - (50.0 + pad)).abs() < 0.01,
+            "the rectangle is the stroke grown by half a line: {left} {right}"
+        );
+        assert!(
+            (top - (50.0 - pad)).abs() < 0.01 && (bottom - (300.0 + pad)).abs() < 0.01,
+            "and in the other direction too: {top} {bottom}"
+        );
+        // The strokes reach the reply as well, or the overlay cannot draw them.
+        assert_eq!(mark.strokes, vec![vec![50.0, 50.0, 50.0, 300.0]]);
     }
 
     #[test]

@@ -38,7 +38,8 @@ export type MarkKind =
   | "underline"
   | "strikeout"
   | "note"
-  | "square";
+  | "square"
+  | "ink";
 
 /**
  * One mark a reader made, as the backend reports it.
@@ -72,6 +73,14 @@ export interface MarkView {
    * The overlay applies those when it paints.
    */
   quads: number[];
+  /**
+   * One entry per stroke, each `x y x y ...` in the same display space.
+   *
+   * Empty for every kind but `ink`, whose shape this *is*: its {@link quads}
+   * holds one rectangle, and that rectangle is a box round the drawing rather
+   * than the drawing. The overlay paints from here when it is non-empty.
+   */
+  strokes: number[][];
   color: [number, number, number];
   /**
    * What the reader typed, which may be empty.

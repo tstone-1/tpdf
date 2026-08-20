@@ -66,6 +66,18 @@ const NAMES: Record<MarkKind, string> = {
   // dragged round a figure --- one that is actually square is the rare case.
   // The third spelling, and the same arrangement as `note` above.
   square: "Box",
+  // "Drawing", never "Ink". `/Ink` is the file's spelling, `ink` is the serde
+  // name, and inside this codebase "ink" already means how a mark is laid down
+  // --- `Paint` in `save.rs`, `markBand` here. A reader who drew a line and
+  // wants it gone is looking for the thing they drew, not for the substance.
+  //
+  // **And it is the word `comments.ts` already uses**, which was found rather
+  // than arranged: `labelFor` has answered "Drawing" for a document's own
+  // `/Ink` since the comment panel was built. The two tables name different
+  // things --- that one labels marks the file arrived with, this one labels the
+  // reader's --- so nothing forces them to agree, and a reader looking at both
+  // panels would notice if they did not.
+  ink: "Drawing",
 };
 
 export class MarkPopup {

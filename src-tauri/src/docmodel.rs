@@ -213,6 +213,95 @@ impl Quad {
     }
 }
 
+/// One point of a stroke a reader drew, in the same display space as [`Quad`].
+///
+/// **A separate type from [`Quad`] rather than a degenerate one**, for the reason
+/// `Quad`'s own note gives about `Rect`: a value of one passed where the other is
+/// expected would be plausible and wrong, and here the confusion is easy to make
+/// because a point *is* expressible as a rectangle of no size --- which is
+/// exactly the value [`Quad::covers_area`] exists to reject.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Point {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// One continuous line a reader drew without lifting the pointer.
+///
+/// `/InkList` is an array of these, which is why a mark holds a `Vec<Stroke>`
+/// rather than a `Vec<Point>`: lifting the pointer and drawing again is one mark
+/// with two strokes, and flattening them would join the end of the first to the
+/// start of the second with a line the reader never drew.
+///
+/// **Two points is the minimum and it is a real one.** A single point is a
+/// stroke with no length, which draws nothing with a round cap and nothing at
+/// all without one --- the ink equivalent of the empty quad above.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Stroke {
+    pub points: Vec<Point>,
+}
+
+impl Stroke {
+    /// Whether this stroke can be drawn at all.
+    ///
+    /// The counterpart of [`Quad::covers_area`], and the same job: a stroke that
+    /// fails this is one a reader cannot see and cannot find again to remove, so
+    /// writing it would be a command that silently did nothing.
+    ///
+    /// Length rather than point count, because a press that jitters produces
+    /// several points at one place, and three copies of one coordinate is as
+    /// invisible as one of them.
+    pub fn is_drawable(&self) -> bool {
+        let Some(first) = self.points.first() else {
+            return false;
+        };
+        self.points.iter().any(|p| p.x != first.x || p.y != first.y)
+    }
+
+    /// The rectangle enclosing every point, grown by `pad` on each side.
+    ///
+    /// **This is what makes ink fit the rest of the machinery.** Every other
+    /// kind answers "where is this mark" with its quads --- `/Rect`, the popup
+    /// anchor, hit-testing and the mark list all ask that question --- and ink
+    /// answers it with the bounds of what was drawn rather than with a shape of
+    /// its own. So an ink mark carries one quad like any other, and the strokes
+    /// are the *extra* field rather than a replacement for the geometry.
+    ///
+    /// **`pad` is half the line width, and it is not cosmetic.** A stroke
+    /// straddles its path, so tight bounds clip half the ink at every edge ---
+    /// the same arithmetic `outline_path` in `save.rs` is written around, and
+    /// the same failure, which looks like a thinner line rather than like a bug.
+    ///
+    /// It also removes a degenerate case that would otherwise refuse a perfectly
+    /// ordinary mark. A straight vertical line has tight bounds of **no width**,
+    /// and [`Quad::covers_area`] rejects those --- so a reader ruling a margin
+    /// down the side of a paragraph would have been told their mark covers no
+    /// area. Padding is the honest fix rather than a special case, because the
+    /// padded rectangle is the one the ink actually occupies.
+    pub fn bounds(strokes: &[Stroke], pad: f32) -> Option<Quad> {
+        let mut points = strokes.iter().flat_map(|s| s.points.iter());
+        let first = points.next()?;
+        let mut quad = Quad {
+            left: first.x,
+            top: first.y,
+            right: first.x,
+            bottom: first.y,
+        };
+        for point in points {
+            quad.left = quad.left.min(point.x);
+            quad.top = quad.top.min(point.y);
+            quad.right = quad.right.max(point.x);
+            quad.bottom = quad.bottom.max(point.y);
+        }
+        Some(Quad {
+            left: quad.left - pad,
+            top: quad.top - pad,
+            right: quad.right + pad,
+            bottom: quad.bottom + pad,
+        })
+    }
+}
+
 /// One version of one mark's note.
 ///
 /// Opaque, and it never leaves this module: the frontend addresses a note by the
@@ -298,6 +387,27 @@ pub enum MarkKind {
     /// specification's name for the family that includes `/Circle`, not a claim
     /// about the proportions.
     Square,
+    /// A line a reader drew freehand, `/Ink`.
+    ///
+    /// **The first kind whose shape is not a rectangle**, and the reason it is a
+    /// field on [`Mark`] rather than a type of its own. Ink has a page, a
+    /// colour, an author, a date, a note that can be edited afterwards, and a
+    /// rectangle it occupies --- which is every other kind --- plus the strokes.
+    /// That is one extra field, and the argument [`MarkKind::Note`] makes above
+    /// about not duplicating the machinery to express one *absent* field applies
+    /// unchanged to one present one.
+    ///
+    /// Its quad is [`Stroke::bounds`], so removal, the popup anchor,
+    /// hit-testing, the mark list and `/Rect` all keep asking the one question
+    /// they already ask. What the strokes decide is only what is *drawn*, in
+    /// `save.rs` for the file and `markband.ts` for the overlay.
+    ///
+    /// The serde name is `ink`, the PDF name is `/Ink`, and the word a reader
+    /// sees is **Draw** --- a third spelling for [`MarkKind::Square`]'s reason,
+    /// with the extra one that "ink" inside this codebase already names
+    /// `save.rs`'s `Paint`, which is how a mark is laid down rather than which
+    /// mark it is.
+    Ink,
 }
 
 /// One mark a reader made, with everything a writer needs to put it in a file.
@@ -318,7 +428,23 @@ pub struct Mark {
     /// writer holding only the table knows where each mark goes.
     pub page: PageId,
     /// The covered rectangles, in display space, in reading order.
+    ///
+    /// For [`MarkKind::Ink`] this is one rectangle, [`Stroke::bounds`] of the
+    /// strokes below, so that everything asking *where* a mark is gets the same
+    /// answer for every kind.
     pub quads: Vec<Quad>,
+    /// The lines drawn freehand, in display space. Empty for every kind but
+    /// [`MarkKind::Ink`], and non-empty for that one.
+    ///
+    /// **The biconditional is enforced rather than typed**, and that is a
+    /// deliberate trade this file otherwise argues against. Putting the strokes
+    /// inside the `MarkKind::Ink` variant would carry it in the type --- and
+    /// would cost [`MarkKind`] its `Copy`, which [`Command`] is built on, and
+    /// would make every `match` on a kind a `match` on a shape. So it is a
+    /// field, and [`Doc::annotate`] refuses both halves: strokes on a kind that
+    /// is not ink, and ink with nothing drawn. Both refusals have a test,
+    /// because a rule with no failing case is a comment.
+    pub strokes: Vec<Stroke>,
     /// Red, green and blue in 0..=1, as `/C` takes them.
     pub color: [f32; 3],
     /// `/T`. Empty when the reader has no name set.
@@ -455,6 +581,17 @@ pub enum Refusal {
     /// puts the reader in front of a document that claims an unsaved change and
     /// shows no sign of it.
     EmptyMark,
+    /// Strokes on a mark that is not ink, or ink with nothing drawn.
+    ///
+    /// **One variant for both halves, because they are one rule**: the strokes
+    /// field is non-empty exactly when the kind is [`MarkKind::Ink`]. Splitting
+    /// it in two would suggest a caller could sensibly hit one and not the
+    /// other, and neither is reachable from the frontend --- both mean the wire
+    /// and the model disagree about what a mark is, which is a defect on the
+    /// sending side rather than something a reader did.
+    ///
+    /// It carries the kind so a diagnostic can say which way round it went.
+    ShapeMismatch(MarkKind),
 }
 
 /// Baseline plus the commands applied so far, materialized.
@@ -883,7 +1020,26 @@ impl Doc {
     /// deleted. **The id is issued after those checks**, so a refused mark spends
     /// nothing; a document where every attempt failed has issued no ids at all.
     pub fn annotate(&mut self, mark: Mark, note: String) -> Result<MarkId, Refusal> {
-        if !mark.quads.iter().any(|quad| quad.covers_area()) {
+        // The biconditional [`Mark::strokes`] states, and the reason it is
+        // checked rather than typed is written there. Before the emptiness
+        // check below, because a mark whose shape and kind disagree has no
+        // meaningful emptiness to report.
+        if mark.strokes.is_empty() != (mark.kind != MarkKind::Ink) {
+            return Err(Refusal::ShapeMismatch(mark.kind));
+        }
+        // **Two questions, asked of the kind that can tell them apart.** For
+        // every other kind "covers nothing" is a quad with no area; for ink it
+        // is a stroke with no length, and its quad *always* covers area because
+        // `Stroke::bounds` pads it. Asking `covers_area` alone would therefore
+        // accept a mark of one repeated point --- invisible, unfindable, and an
+        // unsaved change the reader cannot see. This is the trap about one
+        // predicate answering two questions, caught while adding the second.
+        let empty = if mark.kind == MarkKind::Ink {
+            !mark.strokes.iter().any(Stroke::is_drawable)
+        } else {
+            !mark.quads.iter().any(|quad| quad.covers_area())
+        };
+        if empty {
             return Err(Refusal::EmptyMark);
         }
         self.now.live(mark.page)?;
@@ -1077,6 +1233,7 @@ mod tests {
                 right: 300.0,
                 bottom: 108.0,
             }],
+            strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
             author: "a reader".to_string(),
             made: "D:20260818T120000Z".to_string(),
@@ -1616,6 +1773,104 @@ mod tests {
             1,
             "replay issued an id, so a later undo would rename the mark"
         );
+    }
+
+    /// A drawing of two strokes, on `page`.
+    fn ink_on(page: PageId) -> Mark {
+        let strokes = vec![Stroke {
+            points: vec![Point { x: 72.0, y: 90.0 }, Point { x: 300.0, y: 108.0 }],
+        }];
+        Mark {
+            kind: MarkKind::Ink,
+            page,
+            quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
+            strokes,
+            color: [0.85, 0.15, 0.15],
+            author: "a reader".to_string(),
+            made: "D:20260820T120000Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_kind_and_a_shape_that_disagree_are_refused_both_ways_round() {
+        // The biconditional [`Mark::strokes`] states. Neither half is reachable
+        // from the window --- the viewer sends strokes for ink and quads for
+        // everything else --- so this is the only place the rule can fail, and
+        // a rule with no failing case is a comment.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+
+        let mut ink_without = ink_on(page);
+        ink_without.strokes.clear();
+        assert_eq!(
+            doc.annotate(ink_without, String::new()),
+            Err(Refusal::ShapeMismatch(MarkKind::Ink))
+        );
+
+        let mut highlight_with = mark_on(page);
+        highlight_with.strokes = ink_on(page).strokes;
+        assert_eq!(
+            doc.annotate(highlight_with, String::new()),
+            Err(Refusal::ShapeMismatch(MarkKind::Highlight))
+        );
+
+        // The control: after both refusals the model still takes a real
+        // drawing. Without it, a model that refused every ink mark would pass
+        // the first assertion and read as the rule working.
+        assert!(doc.annotate(ink_on(page), String::new()).is_ok());
+        assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
+    }
+
+    #[test]
+    fn ink_that_never_moved_is_refused_though_its_rectangle_covers_area() {
+        // **Not the same refusal as an empty quad, and this is what a padded
+        // rectangle would let through.** `Stroke::bounds` grows the quad by half
+        // a line width, so a stroke standing still still covers area --- which
+        // is exactly why `annotate` asks `is_drawable` for ink rather than
+        // `covers_area`. Asserted here rather than only in the harness, because
+        // the reading that makes it interesting is the second one: the quad
+        // this mark carries is a perfectly good rectangle.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+
+        let still = vec![Stroke {
+            points: vec![Point { x: 50.0, y: 50.0 }; 3],
+        }];
+        let quads: Vec<Quad> = Stroke::bounds(&still, 1.25).into_iter().collect();
+        assert!(
+            quads.iter().all(|quad| quad.covers_area()),
+            "the padded rectangle covers area, which is the whole point"
+        );
+
+        let mut mark = ink_on(page);
+        mark.strokes = still;
+        mark.quads = quads;
+        assert_eq!(doc.annotate(mark, String::new()), Err(Refusal::EmptyMark));
+        assert_eq!(doc.marks_issued(), 0);
+    }
+
+    #[test]
+    fn a_straight_stroke_is_accepted_because_its_bounds_are_padded() {
+        // The control for the padding, and the reason it exists: a reader ruling
+        // a straight line down a margin produces bounds of no width, which
+        // `covers_area` rejects. Without the pad this is refused and the reader
+        // is told their drawing covers no area.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+
+        let vertical = vec![Stroke {
+            points: vec![Point { x: 50.0, y: 50.0 }, Point { x: 50.0, y: 300.0 }],
+        }];
+        let tight = Stroke::bounds(&vertical, 0.0).expect("bounds");
+        assert!(
+            !tight.covers_area(),
+            "unpadded bounds of a vertical line have no width"
+        );
+
+        let mut mark = ink_on(page);
+        mark.quads = Stroke::bounds(&vertical, 1.25).into_iter().collect();
+        mark.strokes = vertical;
+        assert!(doc.annotate(mark, String::new()).is_ok());
     }
 
     #[test]

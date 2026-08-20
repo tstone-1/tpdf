@@ -10361,3 +10361,71 @@ already guards for the table itself. Exit 1 in all three, exit 0 clean.
 
 Note the control run printed `exit=0` at first: `$?` after a pipe through `tail`
 is `tail`'s status, which this file already records from another direction.
+
+### Padding a rectangle to make one refusal legal disables the check that refusal was doing
+
+An ink mark's `/Rect` is the bounds of its strokes, and the first version took
+them tight. A reader ruling a straight line down a margin then produced a
+rectangle of **no width**, which `Quad::covers_area` rejects --- so the most
+ordinary drawing there is came back as *"that mark covers nothing"*.
+
+The fix is not a special case: a stroke straddles its path, so the rectangle the
+ink actually occupies is the tight bounds grown by half the line width, and
+`Stroke::bounds` takes that pad. The vertical line then covers area, because it
+does.
+
+**And that quietly removed the emptiness check.** `Doc::annotate` refused a mark
+whose every quad was degenerate, which is what catches a click that never became
+a drag. With the pad, *every* ink mark covers area --- including one whose stroke
+is the same point repeated, which is exactly what a click produces. So the
+padding did not merely admit the vertical line; it admitted an invisible mark the
+reader cannot find again to remove, and no assertion moved.
+
+The general shape: **`covers_area` was answering two questions --- "is this
+rectangle drawable" and "did the reader make a gesture" --- and they coincided
+only while the rectangle *was* the gesture.** Ink is the first kind where the
+rectangle is derived from the gesture rather than being it, and the two come
+apart. The model asks `Stroke::is_drawable` for ink and `covers_area` for
+everything else, and the test that pins it asserts the padded rectangle covers
+area *first*, so the case cannot be mistaken for the one above it.
+
+Same family as the entry about one predicate answering three questions until a
+second kind made them disagree --- and worth noticing that the trigger here was a
+*fix*, not a feature: the pad was added to make a legitimate mark legal, and it
+took a check away on the way past.
+
+### A band check can pass by two hundredths of a point, and a passing run does not say so
+
+`annot-probe --mode strokes` proves ink is drawn where it was drawn by reading
+three bands of the mark's rectangle: the outer two must hold ink and the middle
+one must be empty. Its fixture draws two horizontal strokes at 15% and 85% of the
+text box.
+
+It passed. `0 px in the gap`, twice, on two corpora.
+
+The margin is one arithmetic step and it is not what the run suggests. A stroke
+centred at fraction `f` of a text box of height `h` occupies `[f·h, f·h + w]`
+measured from the derived rectangle's top, where `w` is the line width; the band
+boundary is `(h + w)/3`. On `text-base14`, `h = 9.2 pt` and `w = 2.5 pt`:
+
+```
+stroke reaches 0.15 * 9.2 + 2.5 = 3.88 pt
+band ends at  (9.2 + 2.5) / 3   = 3.90 pt
+```
+
+**Two hundredths of a point.** A corpus with slightly shorter lines puts the
+mark's own ink in the band the check asserts is empty, and the run reports a
+defect that is not there --- a control that cannot pass, which is the failure
+this file records from several directions and which reads as a real finding
+rather than as a broken instrument.
+
+Moving the strokes to 5% and 95% takes the margin to about a point, and the
+condition for the bands to separate at all becomes `h > 2w/0.85` --- which the
+mode now checks and refuses with the number rather than reading a rectangle it
+cannot discriminate in.
+
+The lesson is not about ink. **When a check is built from fractions of a derived
+quantity, the run tells you the sign of the margin and never its size.** Compute
+it once, in the units the check works in, and put the arithmetic in the comment:
+a green run is the same output at 0.02 pt of headroom as at 1 pt, and the first
+one is a defect waiting for a different fixture.

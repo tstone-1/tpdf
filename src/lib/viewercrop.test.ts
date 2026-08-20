@@ -107,6 +107,7 @@ function mark(rect: [number, number, number, number]): MarkView {
     kind: "highlight",
     page: 1,
     quads: [...rect],
+    strokes: [],
     color: [1, 0.9, 0.2],
     note: "",
   };

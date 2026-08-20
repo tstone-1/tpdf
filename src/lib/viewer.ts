@@ -45,6 +45,9 @@ import {
   iconQuad,
   isIcon,
   isOutline,
+  isPath,
+  INK_SAMPLE,
+  INK_WIDTH,
   isWash,
   markBand,
   OUTLINE_WIDTH,
@@ -239,6 +242,24 @@ export interface ViewerStatus {
   search: SearchStatus;
 }
 
+/**
+ * What a completed drag produced, in the file's display space.
+ *
+ * **Both fields always, one of them empty**, rather than a union of two shapes.
+ * That is deliberate and it is not laziness: this is exactly `NewMark` on the
+ * wire, so the callback hands its caller the command's own arguments and there
+ * is nothing to translate --- and the rule that decides which is empty lives in
+ * one place, `Doc::annotate`, which refuses a mark whose kind and shape
+ * disagree. A union here would put a second copy of that rule in TypeScript,
+ * where it could only be checked against itself.
+ */
+export interface Drawn {
+  /** Four numbers per rectangle. Empty for ink, whose rectangle is derived. */
+  quads: number[];
+  /** `x y x y ...` per stroke. Empty for every kind but ink. */
+  strokes: number[][];
+}
+
 export interface ViewerOptions {
   doc: number;
   pageCount: number;
@@ -305,8 +326,8 @@ export interface ViewerOptions {
   /**
    * Called when the reader finished drawing a mark, with the page it is on.
    *
-   * `page` is the page's **id**, not its slot, and `quads` is in the file's
-   * display space --- the same pair a `mark` command takes, because that is what
+   * `page` is the page's **id**, not its slot, and {@link Drawn} is in the
+   * file's display space --- the same pair a `mark` command takes, because that is what
    * the caller does with it. Doing the translation here rather than at the
    * caller is the point: the slot, the crop and the two rotations are all the
    * viewer's, and a caller that had to undo them would be a second copy of
@@ -315,7 +336,7 @@ export interface ViewerOptions {
    * Optional, so a viewer with no model behind it can still be driven. A drag
    * then draws its preview and commits nothing, which is what the harness does.
    */
-  onDrawn?: (kind: MarkKind, page: number, quads: number[]) => void;
+  onDrawn?: (kind: MarkKind, page: number, drawn: Drawn) => void;
   /**
    * Called after a jump that Back can undo, so a caller can re-enable a button.
    *
@@ -659,7 +680,21 @@ export class Viewer {
    * something different after a scroll. Both corners are stored on the page, so
    * a preview follows the page rather than the window.
    */
-  private drawing: { slot: number; from: Point; to: Point } | null = null;
+  private drawing: {
+    slot: number;
+    from: Point;
+    to: Point;
+    /**
+     * Every point the pointer visited, for ink. `[from]` for a box, unused.
+     *
+     * Kept beside `from`/`to` rather than replacing them, because the two are
+     * still what a box's preview and its committed quad are built from --- and
+     * because {@link drawPreview}, which the window harness reads, is about a
+     * rectangle. A drawing's preview is the same rectangle, growing as the hand
+     * moves, which is what tells a reader the tool is live.
+     */
+    points: Point[];
+  } | null = null;
   /**
    * The box's drag, which owns its own listener pair.
    *
@@ -834,7 +869,12 @@ export class Viewer {
       begin: (at: DragPoint) => {
         if (!this.drawKind) return false;
         const { page, x, y } = this.pageAndPoint(at);
-        this.drawing = { slot: page, from: { x, y }, to: { x, y } };
+        this.drawing = {
+          slot: page,
+          from: { x, y },
+          to: { x, y },
+          points: [{ x, y }],
+        };
         this.wake();
         return true;
       },
@@ -847,6 +887,21 @@ export class Viewer {
         // the next one is clamped to the first rather than silently moving.
         const { x, y } = this.pageAndPoint(at);
         live.to = { x, y };
+        // **Sampled, not every event.** A pointer reports at the display's rate
+        // and a slow hand produces dozens of points inside one millimetre, none
+        // of which changes the line and all of which go into the file and over
+        // the IPC boundary. `INK_SAMPLE` is in the page's own points, so the
+        // spacing is the same on the paper whatever the zoom --- sampling in
+        // client pixels would put four times as many points in a stroke drawn
+        // at 400% as in the identical stroke drawn at 100%.
+        const last = live.points[live.points.length - 1];
+        if (
+          !last ||
+          Math.abs(x - last.x) >= INK_SAMPLE ||
+          Math.abs(y - last.y) >= INK_SAMPLE
+        ) {
+          live.points.push({ x, y });
+        }
         this.wake();
       },
       end: (_at: DragPoint, committed: boolean) => {
@@ -860,6 +915,42 @@ export class Viewer {
           // `pointercancel` arriving by the same door.
           this.drawKind = null;
           this.showCursor();
+          return;
+        }
+        if (kind === "ink") {
+          // **The last point is added unconditionally**, because the sample
+          // above may have dropped it: a stroke that ends with a short movement
+          // would otherwise stop where the last kept sample was, which shortens
+          // every line by up to `INK_SAMPLE` and is most visible on the short
+          // strokes where it matters least to the eye and most to a tick or a
+          // cross.
+          const last = live.points[live.points.length - 1];
+          if (!last || last.x !== live.to.x || last.y !== live.to.y) {
+            live.points.push({ ...live.to });
+          }
+          const inkId = this.pages.idOf(live.slot);
+          // Two points is the minimum a stroke can be drawn from, and it is the
+          // same bound `Stroke::is_drawable` applies in the model --- stated
+          // here as well so that a press that never moved keeps the tool armed
+          // rather than spending it on a refusal the reader cannot see. A click
+          // is not a failure; it is a reader who has not started yet.
+          if (inkId === undefined || live.points.length < 2) return;
+          this.drawKind = null;
+          this.showCursor();
+          this.opts.onDrawn?.(kind, inkId, {
+            quads: [],
+            strokes: [
+              live.points.flatMap((point) => {
+                const mapped = this.fileRectOn(live.slot, {
+                  left: point.x,
+                  top: point.y,
+                  right: point.x,
+                  bottom: point.y,
+                });
+                return [mapped[0], mapped[1]];
+              }),
+            ],
+          });
           return;
         }
         const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));
@@ -876,7 +967,10 @@ export class Viewer {
         // arms it again is not undone by this line.
         this.drawKind = null;
         this.showCursor();
-        this.opts.onDrawn?.(kind, id, this.fileRectOn(live.slot, quad));
+        this.opts.onDrawn?.(kind, id, {
+          quads: this.fileRectOn(live.slot, quad),
+          strokes: [],
+        });
       },
     });
 
@@ -2559,6 +2653,36 @@ export class Viewer {
   }
 
   /**
+   * A mark's strokes in view space, or `null` when its page is not laid out.
+   *
+   * **Built on {@link viewRectOn} by handing it the point as a rectangle of no
+   * size**, which is the same move `user_strokes` makes in `save.rs` with
+   * `from_device` and for the same reason: the crop and the two turns are one
+   * rule, and a second copy written for points is a second thing to get wrong at
+   * every `/Rotate`. It is also the rule that has already drifted here once,
+   * which {@link viewQuadsOf}'s own comment records.
+   *
+   * Empty for every kind but ink, because nothing else carries strokes.
+   */
+  private viewStrokesOf(
+    mark: MarkView,
+  ): { slot: number; strokes: { x: number; y: number }[][] } | null {
+    const slot = this.pages.slotOfId(mark.page);
+    if (slot === undefined) return null;
+    const strokes = mark.strokes.map((flat) => {
+      const points: { x: number; y: number }[] = [];
+      for (let at = 0; at + 1 < flat.length; at += 2) {
+        const x = flat[at] ?? 0;
+        const y = flat[at + 1] ?? 0;
+        const placed = this.viewRectOn(slot, [x, y, x, y]);
+        points.push({ x: placed.left, y: placed.top });
+      }
+      return points;
+    });
+    return { slot, strokes };
+  }
+
+  /**
    * The reader's own mark under a pointer event, or `null`.
    *
    * Hit-tested per *rectangle* rather than over the mark's bounding box: a
@@ -3449,6 +3573,43 @@ export class Viewer {
       ctx.globalCompositeOperation = wash ? "multiply" : "source-over";
 
       const origin = this.scroller.pageOrigin(placed.slot);
+      // **Ink is drawn from its strokes and never from its quad**, which is the
+      // one rectangle in this loop that is not the shape of the mark: it is a
+      // box round the drawing, so painting it would put a filled block where a
+      // reader drew a line. Same class of defect as the underline that looked
+      // like a highlight, and the same tell --- the saved file would be right.
+      if (isPath(mark.kind)) {
+        const inked = this.viewStrokesOf(mark);
+        if (inked) {
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = INK_WIDTH * this.zoom * dpr;
+          // Round, matching the `1 J 1 j` the appearance stream sets: a mitre
+          // on a hand-drawn corner spikes, and a butt cap leaves a stroke that
+          // stops square where the reader's hand did not.
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          for (const stroke of inked.strokes) {
+            const [first, ...rest] = stroke;
+            if (!first) continue;
+            ctx.beginPath();
+            ctx.moveTo(
+              (origin.left + first.x * this.zoom) * dpr,
+              (origin.top + first.y * this.zoom - this.scrollTop) * dpr,
+            );
+            for (const point of rest) {
+              ctx.lineTo(
+                (origin.left + point.x * this.zoom) * dpr,
+                (origin.top + point.y * this.zoom - this.scrollTop) * dpr,
+              );
+            }
+            // One path per stroke, for the reason `save.rs` gives: a single
+            // path across all of them joins the end of each to the start of the
+            // next with a line the reader never drew.
+            ctx.stroke();
+          }
+        }
+        continue;
+      }
       for (const quad of placed.quads) {
         const band = markBand(mark.kind, quad);
         const left = (origin.left + band.left * this.zoom) * dpr;

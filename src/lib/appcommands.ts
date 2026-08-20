@@ -169,6 +169,16 @@ export interface AppActions {
    * unavoidable here and why it is one-shot.
    */
   drawBox(): void;
+  /**
+   * Arms the freehand tool for one drawing.
+   *
+   * The same shape as {@link drawBox} and for the same reasons --- a mode,
+   * one-shot, no chord --- and it is a second command rather than an argument to
+   * the first because a reader who wants to draw wants it in one press. What
+   * differs is only the gesture the armed tool reads: a box is two corners and
+   * this is every point between them.
+   */
+  draw(): void;
   /** Takes the mark whose note is open off the page it is on. */
   removeMark(): void;
   /** Whether a mark's note is open, which is what names the mark to remove. */
@@ -495,6 +505,21 @@ export function registerAppCommands(
       title: "Draw a box...",
       enabled: withDocument,
       run: () => actions.drawBox(),
+    },
+    {
+      // Beside the box, and everything the entry above says about arming a mode
+      // applies here unchanged. No chord for the same reason: a one-shot mode a
+      // reader enters by accident and does not recognise is worse than one they
+      // have to ask for.
+      //
+      // "Draw freehand", not "Ink": `/Ink` is the file's word and `ink` is the
+      // wire's, and inside this codebase "ink" already names how a mark is laid
+      // down rather than which mark it is. "Freehand" is also what separates it
+      // from the box above at a glance, which is what a menu is for.
+      id: "edit.draw",
+      title: "Draw freehand...",
+      enabled: withDocument,
+      run: () => actions.draw(),
     },
     {
       id: "edit.highlightSelection",

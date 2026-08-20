@@ -23,7 +23,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MIN_BOX } from "./markband";
 import type { MarkKind, PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
-import { Viewer } from "./viewer";
+import { Viewer, type Drawn } from "./viewer";
+import { INK_SAMPLE } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 const tiles = vi.hoisted(() => ({
@@ -37,7 +38,7 @@ vi.mock("./tiles", () => tiles);
 
 let dom: FakeDom;
 /** Every box the viewer reported, in order. */
-let drawn: { kind: MarkKind; page: number; quads: number[] }[];
+let drawn: { kind: MarkKind; page: number; shape: Drawn }[];
 
 beforeEach(() => {
   dom = installFakeDom();
@@ -61,7 +62,7 @@ function build(pages?: PageView[]): Viewer {
     doc: 1,
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
-    onDrawn: (kind, page, quads) => drawn.push({ kind, page, quads }),
+    onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
   });
   if (pages) viewer.setPages(pages);
   return viewer;
@@ -102,7 +103,7 @@ function escape(): void {
 function corners(at = -1): [number, number, number, number] {
   const box = drawn.at(at);
   if (!box) throw new Error("nothing was drawn");
-  const [left, top, right, bottom] = box.quads;
+  const [left, top, right, bottom] = box.shape.quads;
   return [left ?? 0, top ?? 0, right ?? 0, bottom ?? 0];
 }
 
@@ -367,7 +368,7 @@ describe("a drag that wanders", () => {
       doc: 1,
       pageCount: 2,
       pages: [{ width_pt: 600, height_pt: 800 }],
-      onDrawn: (kind, page, quads) => drawn.push({ kind, page, quads }),
+      onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
     });
     viewer.setPages([
       { id: 1, source: 0, turns: 0 },
@@ -436,6 +437,204 @@ describe("which path a press takes", () => {
 
     expect(viewer.drawPreview?.from).toEqual(corner);
     dom.root.dispatch("pointerup", { pointerId: 1, clientX: 300, clientY: 200 });
+    viewer.destroy();
+  });
+});
+
+/** Presses, drags through every point in turn, and releases. */
+function scribble(points: { x: number; y: number }[]): void {
+  const [first, ...rest] = points;
+  if (!first) throw new Error("a scribble needs a starting point");
+  dom.root.dispatch("pointerdown", {
+    button: 0,
+    pointerId: 1,
+    clientX: first.x,
+    clientY: first.y,
+    target: dom.root,
+  });
+  for (const at of rest) {
+    dom.root.dispatch("pointermove", {
+      pointerId: 1,
+      clientX: at.x,
+      clientY: at.y,
+    });
+  }
+  const last = points[points.length - 1] ?? first;
+  dom.root.dispatch("pointerup", {
+    pointerId: 1,
+    clientX: last.x,
+    clientY: last.y,
+  });
+}
+
+/** The one stroke of the drawing at `at`, as `x y x y ...`. */
+function stroke(at = -1): number[] {
+  const made = drawn.at(at);
+  if (!made) throw new Error("nothing was drawn");
+  const [only] = made.shape.strokes;
+  if (!only) throw new Error("the drawing carried no stroke");
+  return only;
+}
+
+describe("drawing freehand", () => {
+  it("commits strokes and no rectangle", async () => {
+    // **Both halves, and the second is the one that can go wrong quietly.** A
+    // drawing that also carried a quad would be refused by the model rather
+    // than drawn wrong, so the assertion that it is empty is what says the
+    // viewer knows which kind it is sending rather than getting away with it.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ink");
+    scribble([
+      { x: 100, y: 100 },
+      { x: 200, y: 150 },
+      { x: 300, y: 100 },
+    ]);
+
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.kind).toBe("ink");
+    expect(drawn[0]?.shape.quads).toEqual([]);
+    expect(drawn[0]?.shape.strokes).toHaveLength(1);
+    // Three points, six numbers: the press, one kept move, and the release.
+    expect(stroke()).toHaveLength(6);
+    viewer.destroy();
+  });
+
+  it("keeps the tool armed when the pointer never moved", async () => {
+    // A press with no movement is a reader who has not started, not a mark of
+    // no length --- the same answer `boxQuad`'s minimum gives a box, and for
+    // the same reason: spending the tool on it would cost them the command
+    // with nothing on screen to say why.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ink");
+    scribble([{ x: 100, y: 100 }]);
+
+    expect(drawn).toEqual([]);
+    expect(viewer.drawArmed).toBe("ink");
+    viewer.destroy();
+  });
+
+  it("samples the pointer rather than keeping every event", async () => {
+    // Twenty moves inside a tenth of a point, which a hand resting on a
+    // trackpad produces in a fraction of a second. Without the sample every one
+    // of them is a point in the file and a pair of numbers over the IPC
+    // boundary, and none of them changes the line.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ink");
+    const jitter = Array.from({ length: 20 }, (_, at) => ({
+      x: 100 + at * 0.005,
+      y: 100,
+    }));
+    scribble([...jitter, { x: 300, y: 100 }]);
+
+    // The press, the far point, and nothing from the jitter: 21 moves in and
+    // two points out. A viewer that kept them all reports 21 or 22.
+    expect(stroke()).toHaveLength(4);
+    viewer.destroy();
+  });
+
+  it("keeps the point the pointer was released on", async () => {
+    // **The sample can drop the last move, and this is the case where that
+    // matters.** A stroke whose final movement is shorter than the sample would
+    // otherwise end at the previous kept point, so every line is up to one
+    // sample short --- invisible on a long sweep and the whole of a tick or the
+    // crossing of a t.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ink");
+    scribble([
+      { x: 100, y: 100 },
+      { x: 300, y: 100 },
+      // Well inside INK_SAMPLE of the point before it, so the sample drops it
+      // and only the unconditional push at the end can put it back.
+      { x: 300.05, y: 100 },
+    ]);
+
+    const points = stroke();
+    // Three points, and without the unconditional push it would be two: the
+    // final move is inside the sample and is dropped on its way through.
+    expect(points).toHaveLength(6);
+    // **And the kept point is nearer than the sample would ever allow**, which
+    // is what says it arrived by the push rather than by the sample. Compared
+    // against its own neighbour rather than against the client coordinate: these
+    // are the file's display space, and the numbers that went in are the root's
+    // --- a comparison across those two is what the first draft of this line got
+    // wrong, and it read as a mapping defect.
+    const gap = (points[4] ?? 0) - (points[2] ?? 0);
+    expect(gap).toBeGreaterThan(0);
+    expect(gap).toBeLessThan(INK_SAMPLE);
+    viewer.destroy();
+  });
+
+  it("is spent by one drawing", async () => {
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ink");
+    scribble([
+      { x: 100, y: 100 },
+      { x: 300, y: 200 },
+    ]);
+    expect(viewer.drawArmed).toBe(null);
+
+    scribble([
+      { x: 100, y: 300 },
+      { x: 300, y: 400 },
+    ]);
+    expect(drawn).toHaveLength(1);
+    viewer.destroy();
+  });
+
+  it("commits nothing when Escape ends the drag", async () => {
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ink");
+    dom.root.dispatch("pointerdown", {
+      button: 0,
+      pointerId: 1,
+      clientX: 100,
+      clientY: 100,
+      target: dom.root,
+    });
+    dom.root.dispatch("pointermove", { pointerId: 1, clientX: 300, clientY: 200 });
+    escape();
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 300, clientY: 200 });
+
+    expect(drawn).toEqual([]);
+    expect(viewer.drawArmed).toBe(null);
+    viewer.destroy();
+  });
+
+  it("puts the points back in the file's space on a turned page", async () => {
+    // The same assertion the box's own turn test makes, and it needs its own:
+    // a box goes through `fileRectOn` once for its two corners and a drawing
+    // goes through it once per point, so a mapping applied to the rectangle and
+    // forgotten for the path is a defect no box could show.
+    const viewer = build();
+    viewer.setPages([{ id: 1, source: 0, turns: 1 }]);
+    await settle();
+
+    viewer.armDraw("ink");
+    scribble([
+      { x: 100, y: 100 },
+      { x: 300, y: 100 },
+    ]);
+
+    const turned = stroke();
+    expect(turned).toHaveLength(4);
+    // Drawn along a constant client y, so on a quarter-turned page the points
+    // must share an x in the file's space and differ in y. An unturned viewer
+    // reports the opposite, which is what makes this an assertion rather than a
+    // restatement of the input.
+    expect(turned[0]).toBeCloseTo(turned[2] ?? 0, 3);
+    expect(turned[1]).not.toBeCloseTo(turned[3] ?? 0, 1);
     viewer.destroy();
   });
 });

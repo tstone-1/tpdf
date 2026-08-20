@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 367 entries
+The one thing this file does *not* carry in full is the trap list --- 369 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 367 of them and the full text
-was 93% of this file --- an instruction budget spent on the 361 traps that are not
+titles. Only the titles are here, because there are 369 of them and the full text
+was 93% of this file --- an instruction budget spent on the 363 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1138,6 +1138,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A panel that lists a hidden comment must not let the page open it
 - `/F` is a bit field, and the flag every real link sets is not the one you are testing
 - One predicate answering three questions is right until a second kind makes them disagree (no test could have said which of the three it was checking)
+- Padding a rectangle to make one refusal legal disables the check that refusal was doing (the trigger was a fix, not a feature, and no assertion moved)
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1272,6 +1273,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A coverage figure over the union of several quads measures the line spacing (and two more statistics that were right for one input and meaningless for another)
 - A control refused by a different guard than the one it was written for (it failed, which was the lucky case)
 - A denominator that is constant in one dimension cannot compare areas (twelve orderly `[SKIP]` lines, and a percentage above 100 that went unread for a round)
+- A band check can pass by two hundredths of a point, and a passing run does not say so (compute the margin in the check's own units; green looks identical at 0.02 pt and at 1 pt)
 - A probe that writes one colour cannot measure a mark drawn in another (a zero reading that reads as the renderer ignoring our appearance stream; derive the classifier from the value sent, do not correct the constant)
 - A single-entry cache is evicted by the grid scan that was about to test it (two mutations of one key both survived; sweeping the page is what destroyed the evidence, and only turning back caught the writing end)
 - Removing the second copy is what made the differential unable to fail (8 red before the deduplication and 2 after; a comparison between subsystems that share an implementation is true by construction, and nothing goes red at the moment it stops testing anything)

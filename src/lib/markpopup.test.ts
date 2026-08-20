@@ -11,6 +11,7 @@ function mark(over: Partial<MarkView> & { id: number }): MarkView {
     kind: "highlight",
     page: 1,
     quads: [72, 100, 300, 118],
+    strokes: [],
     color: [1, 0.9, 0.2],
     note: "",
     ...over,
