@@ -11043,3 +11043,97 @@ Worth doing the other way round when the field is optional, since then nothing g
 and the mechanical edit is the only method available — which is an argument for making
 such a field required while the edit is being made.
 
+
+### A getter that answers from the rows it was handed cannot see a panel that drew one
+
+`MarkList.rowCount` was `this.rows.length` — the rows the panel had been *given*. The
+window check written for it compares that number against the marks the harness handed
+over, so it was comparing an input with itself, and a mutation that drew the first row
+and stopped survived it:
+
+```
+[SURVIVED] marklist: draw a row for the first mark and stop
+    expected 'the marks panel lists every mark the reader has made' to fail; 0 did: []
+```
+
+The panel really did draw one row out of two. Nothing about the check was subtle — it
+reads `sidebar.marks.rowCount === marks.length` — and it could not fail, because the
+getter's number arrives from the same place the expectation does. Counting the elements
+carrying a `data-id` out of the list element fixes it, and the mutation is then caught.
+
+**The same file already had the correct version of this, one method below.** `rowText`
+carries a comment saying it reads the DOM back rather than reporting the source, *"for
+the reason `results.ts` gives: a getter returning the source would agree with itself
+whatever the row actually contains"* — written by the same hand, in the same increment,
+about the getter three lines further down. Knowing the rule is not applying it: the
+question to ask of every accessor a check reads is **which side of the operation this
+number comes from**, and `rowCount` sounded like a fact about the panel while being a
+fact about its argument.
+
+**The defect was inherited, and so was the unfalsifiable check.** `MarkList` was written
+from `CommentList`, whose `rowCount` was the same expression — so *"the sidebar lists
+every comment"* was equally unable to see a comments panel that drew one row, and had
+been since that panel was built. It was fixed in both, and proving the second one needed
+a new `viewer-comments` runner in `mutate_viewer.py`: the comments checks `[SKIP]` on a
+document with no comments, so a mutation aimed at one on any other corpus is aimed at a
+check that cannot go red. That is the fourth constant of its kind in that file.
+
+The general form: **when a mutation survives, ask what the check's two operands are
+before strengthening anything.** Here both were the same value under two names, and no
+amount of tightening the comparison would have helped.
+
+### A count of the tabs cannot see that one of them is clipped out of the panel
+
+The sidebar had four tabs and 260 pixels. The fifth made five, and the labels then wanted
+293 px of content — Outline 58, Pages 50, Results 57, Comments 78, Marks 50 — which with
+the row's own padding and gaps is 318 against 247 available. The row did not wrap, and the
+host carries `overflow:hidden`, so **Marks** was clipped: present in the DOM, carrying
+`role="tab"`, `aria-selected` and its click handler, and unreachable by a pointer.
+
+`SIDEBAR_TABS` had gone from 4 to 5 in the same commit, and *"the sidebar has a tab for
+pages"* — which counts `[role="tab"]` elements and checks that exactly one is selected —
+passed throughout. It could not do otherwise: **a clipped button is still a button**, and
+every property that check reads survives being invisible.
+
+The reading that sees it is geometric, and it takes two, because they fail differently:
+
+```ts
+const clipped = tabs.filter((t) => t.scrollWidth > t.clientWidth + 1);
+const outside = tabs.filter((t) => t.getBoundingClientRect().right > bar.right + 1);
+```
+
+A button whose *label* does not fit is unreadable; one whose *box* runs past the panel is
+unpressable. It went red on its first run, on the defect it had just been written for.
+
+**The fix is to wrap the row, not to trim the padding.** Removing the buttons' horizontal
+padding entirely gets the content to 254 px against 247 — a fit by six pixels, dependent on
+the system font and on nobody ever adding a longer label. Wrapping is correct at every
+width and self-adjusts if the labels change; the cost is a second row of chrome exactly
+when the labels genuinely do not fit on one.
+
+Two general points. **Arithmetic predicted this before it was measured and measuring is
+still what settled it** — the estimate was 316 px against a measured 318, close enough to
+have been believed and not evidence. And when a container clips, *every* check that reads
+its children by identity rather than by geometry is blind to the clipping; the same is true
+of `overflow:hidden` on a list, a toolbar or a status row.
+
+### Two synthetic marks addressed by page land on top of each other on a one-page corpus
+
+The marks-panel phase builds two: one on the first page to press, one on the last page to
+navigate to. On `comments.pdf` that is pages 1 and 8 and everything works. On
+`links-cropped.pdf`, which has **one** page, "the first page" and "the last page" are the
+same page — and both marks were placed at the same 6% band, so they occupied the identical
+rectangle. The press aimed at the first opened the second, and the check reported
+`selected=4247 for #4246`.
+
+Nothing was wrong with the panel. The phase had two subjects that must be distinguishable
+and separated them on **one** axis, the page, which a corpus is free to collapse. Two
+marks meant to be told apart have to differ on every axis the phase addresses them by:
+different page *and* different height, so that a document with one page still has two
+distinct subjects.
+
+Related but not the same as *"Whatever a fixture is meant to discriminate, it needs two
+of"*: there were two of them. They were two of the same thing.
+
+Found by the corpus sweep and by nothing else. The phase was developed against
+`comments.pdf`, which has eight pages, and passed there every time.

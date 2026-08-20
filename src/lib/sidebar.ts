@@ -6,6 +6,10 @@
  * one for exactly this reason: the *second* tab is otherwise the one that has to
  * introduce it, by which point something else is positioned against its absence.
  *
+ * There are five. The fifth lists the reader's *own* marks, and it is not one of
+ * the four because when they were specified the reader could not make any; see
+ * `marklist.ts` for why it is not the comments panel with a different source.
+ *
  * ## The tabs are not equals, and the code says so
  *
  * An outline is read once, bounded at 10,000 entries, and costs nothing to
@@ -54,6 +58,8 @@ import {
 } from "./outline";
 import { CommentList, type CommentListOptions } from "./commentlist";
 import type { Comments } from "./comments";
+import { MarkList, type MarkListOptions } from "./marklist";
+import type { MarkRow } from "./pages";
 import { Results, type ResultsOptions } from "./results";
 import { Thumbnails, type ThumbnailOptions } from "./thumbnails";
 
@@ -64,7 +70,7 @@ const INDENT = 14;
 const WIDTH = 260;
 
 /** Which panel is showing. */
-export type Tab = "outline" | "pages" | "results" | "comments";
+export type Tab = "outline" | "pages" | "results" | "comments" | "marks";
 
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
@@ -73,6 +79,8 @@ export interface SidebarOptions {
   results: ResultsOptions;
   /** What the comments tab needs. */
   comments: CommentListOptions;
+  /** What the marks tab needs. */
+  marks: MarkListOptions;
   /**
    * What the page strip needs, or absent for no strip at all.
    *
@@ -104,6 +112,7 @@ export class Sidebar {
   private readonly strip: Thumbnails | null = null;
   private readonly hits: Results;
   private readonly notes: CommentList;
+  private readonly mine: MarkList;
   private showing: Tab = "outline";
   private visibleNow = true;
 
@@ -144,8 +153,18 @@ export class Sidebar {
     this.tablist = document.createElement("div");
     this.tablist.setAttribute("role", "tablist");
     this.tablist.setAttribute("aria-label", "Sidebar");
+    // **Wraps, because five labels do not fit across 260 pixels.** Measured in
+    // a real window: the buttons want 293 px of content --- Outline 58, Pages
+    // 50, Results 57, Comments 78, Marks 50 --- and with the row's own padding
+    // and gaps that is 318 against 247 available. Without wrapping the last tab
+    // is clipped by the host's `overflow:hidden`: still in the DOM, still
+    // `role="tab"`, and unreachable by a pointer. A second row is the honest
+    // outcome and it self-adjusts, where trimming the padding would fit today
+    // by 6 px and break on the next label or the next system font.
+    // `viewer_check.py`'s "every sidebar tab fits inside the panel" is what says
+    // so; it found this on its first run.
     this.tablist.style.cssText =
-      "flex:none;display:flex;gap:0.2rem;padding:0.3rem 0.4rem;" +
+      "flex:none;display:flex;flex-wrap:wrap;gap:0.2rem;padding:0.3rem 0.4rem;" +
       "border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);";
     this.tablist.addEventListener("keydown", this.onTabKey);
 
@@ -188,6 +207,10 @@ export class Sidebar {
     const commentsPanel = this.panel("comments", "Comments");
     this.host.appendChild(commentsPanel);
     this.notes = new CommentList(commentsPanel, opts.comments);
+
+    const marksPanel = this.panel("marks", "Marks");
+    this.host.appendChild(marksPanel);
+    this.mine = new MarkList(marksPanel, opts.marks);
 
     root.appendChild(this.host);
     this.selectTab("outline");
@@ -257,6 +280,23 @@ export class Sidebar {
   /** The comments panel. */
   get comments(): CommentList {
     return this.notes;
+  }
+
+  /** The panel listing the reader's own marks. */
+  get marks(): MarkList {
+    return this.mine;
+  }
+
+  /**
+   * Replaces the marks shown, already ordered and placed.
+   *
+   * Rows rather than `MarkView`s, because placing a mark needs the page order
+   * and the sidebar does not hold it --- `pages.ts`'s `markRows` does that with
+   * the map the application has, exactly as `commentsIn` does for the panel
+   * above.
+   */
+  setMarks(rows: readonly MarkRow[]): void {
+    this.mine.setMarks(rows);
   }
 
   /** Replaces the comments shown. `null` is a document that could not be read. */

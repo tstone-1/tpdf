@@ -360,6 +360,53 @@ export function markWalk(
   return walk;
 }
 
+/** One row of the marks panel: a mark, and the slot it is drawn on. */
+export interface MarkRow {
+  mark: MarkView;
+  /**
+   * Slot the mark is drawn on, or `null` when nothing could place it.
+   *
+   * Not reachable from the model as it stands --- `edits::snapshot` walks the
+   * live pages, so a mark on a deleted page is not in the list at all, and
+   * `annotate` refuses a mark that covers nothing. It is here because a panel
+   * that *silently* drops a row tells a reader their mark is gone, and the two
+   * sibling panels already made the other choice: `outline.ts` draws a row for
+   * a destination that resolves to no page, and `commentlist.ts` draws one for
+   * a reply whose parent was cut.
+   */
+  page: number | null;
+}
+
+/**
+ * The reader's own marks, in the order a panel should list them.
+ *
+ * **The order is {@link markWalk}'s, because it has to be the same order.** The
+ * keyboard walk and the panel are two ways of meeting the same marks, and a
+ * reader who steps with the walk key and reads down the list must see them agree
+ * --- a second sort here would be the trap this repository records as *"Two
+ * copies of a distinction drift, and a mutation of one survives"*, with the two
+ * copies being "which mark comes next".
+ *
+ * What this adds is that nothing is dropped. The walk leaves out a mark it
+ * cannot place, which is right for stepping --- there is nowhere to step to ---
+ * and wrong for a list, so those come last with no page against them.
+ */
+export function markRows(items: readonly MarkView[], pages: PageMap): MarkRow[] {
+  const left = new Map<number, MarkView>(items.map((mark) => [mark.id, mark]));
+  const rows: MarkRow[] = [];
+  for (const step of markWalk(items, pages)) {
+    const mark = left.get(step.id);
+    if (!mark) continue;
+    left.delete(step.id);
+    rows.push({ mark, page: step.page });
+  }
+  // In the order they were made, which is the order the model reports them in.
+  for (const mark of items) {
+    if (left.has(mark.id)) rows.push({ mark, page: null });
+  }
+  return rows;
+}
+
 /** The smallest rectangle covering every quad, or `null` if there are none. */
 function unionOf(
   quads: readonly number[],

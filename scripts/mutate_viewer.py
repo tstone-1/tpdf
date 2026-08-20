@@ -79,6 +79,11 @@ APP = (
 #: and a mutation that reports a broken run.
 PDFIUM_DIR = "vendor/pdfium/bin" if WINDOWS else "vendor/pdfium/lib"
 
+#: Whether to focus each window as it launches; set from `--raise`. A module
+#: global rather than a parameter because `run_check` is reached through the
+#: runner dispatch, which takes a name and nothing else.
+RAISE_WINDOW = False
+
 FIXTURE = ROOT / "testdata/outline-simple.pdf"
 #: The corpus the tagged-reading-order checks need. On every other fixture they
 #: `[SKIP]`, correctly and uselessly for a mutation: a check that skips cannot go
@@ -103,6 +108,12 @@ ENCODINGS_FIXTURE = ROOT / "testdata/encodings.pdf"
 #: layout --- the check says so and skips, and a mutation aimed at it on any
 #: other fixture is aimed at a check that cannot go red.
 MIXED_FIXTURE = ROOT / "testdata/mixed.pdf"
+
+#: The corpus that carries annotations of its own. The comments panel's checks
+#: skip on a document with none, so a mutation aimed at one of them anywhere else
+#: is aimed at a check that cannot go red --- the same reason the three constants
+#: above exist.
+COMMENTS_FIXTURE = ROOT / "testdata/comments.pdf"
 
 
 @dataclass(frozen=True)
@@ -853,6 +864,70 @@ MUTATIONS = [
         "the keyboard walk opens a mark's note with no pointer at all",
         "viewer",
     ),
+    Mutation(
+        # Swallow the box's report of which mark it opened on. The panel is then
+        # a list that never follows the page, which is exactly what it was before
+        # `onMark` existed --- and nothing else changes, so no vitest suite and no
+        # gate can see it: `App.svelte`'s object literal is the seam, and the
+        # wiring gate only asks whether the key is *there*.
+        "viewer: do not report which mark the note box opened on",
+        "src/lib/viewer.ts",
+        "      onOpen: (mark) => this.opts.onMark?.(mark),",
+        "      onOpen: () => {},",
+        "pressing a mark on the page selects its row",
+        "viewer",
+    ),
+    Mutation(
+        # Draw the rows and answer no press. The panel looks right, arrows move
+        # through it, and pressing a row does nothing at all --- the inert-feature
+        # shape this repository has now shipped once, and the reason a press in a
+        # real window is checked rather than the handler being unit-tested.
+        "marklist: draw the rows and ignore a press on one",
+        "src/lib/marklist.ts",
+        "      this.focus(mark.id);\n      this.opts.onPick(mark.id);",
+        "      this.focus(mark.id);",
+        "activating a row opens that mark's note and goes to it",
+        "viewer",
+    ),
+    Mutation(
+        # The same edit in the panel this one was copied from, on the corpus that
+        # has comments to list. It is here because the marks-panel mutation below
+        # *survived*: `rowCount` answered from the rows the panel was handed
+        # rather than from the rows it drew, and the identical getter in
+        # `commentlist.ts` made "the sidebar lists every comment" equally unable
+        # to fail. Both read the DOM now, and this is what says so.
+        "commentlist: draw a row for the first comment and stop",
+        "src/lib/commentlist.ts",
+        "    for (const row of this.rows) {\n      const element = this.build(row);",
+        "    for (const row of this.rows.slice(0, 1)) {\n      const element = this.build(row);",
+        "the sidebar lists every comment",
+        "viewer-comments",
+    ),
+    Mutation(
+        # Take the wrap off the tab row, which is the state the fifth tab shipped
+        # in for about an hour. The button is still in the DOM, still
+        # `role="tab"`, still counted by "the sidebar has a tab for pages" ---
+        # and clipped by the host's `overflow:hidden`, so a pointer cannot reach
+        # it. The check this reddens found it for real on its first run, which is
+        # better evidence than a mutation; this is what keeps it true.
+        "sidebar: lay the tab row out without wrapping",
+        "src/lib/sidebar.ts",
+        '      "flex:none;display:flex;flex-wrap:wrap;gap:0.2rem;padding:0.3rem 0.4rem;" +',
+        '      "flex:none;display:flex;gap:0.2rem;padding:0.3rem 0.4rem;" +',
+        "every sidebar tab fits inside the panel",
+        "viewer",
+    ),
+    Mutation(
+        # List the first mark only. The panel is not empty, which is the point:
+        # a reader with one mark sees a correct list, and the check that says
+        # otherwise has to count rows against the marks it was handed.
+        "marklist: draw a row for the first mark and stop",
+        "src/lib/marklist.ts",
+        "    for (const row of this.rows) {\n      const element = this.build(row);",
+        "    for (const row of this.rows.slice(0, 1)) {\n      const element = this.build(row);",
+        "the marks panel lists every mark the reader has made",
+        "viewer",
+    ),
 ]
 
 MARKER = re.compile(r"^\[(OK|FAIL|SKIP)\]\s+")
@@ -925,6 +1000,10 @@ RUNNERS = {
         "run": None,
     },
     "viewer-mixed": {
+        "build": APP_BUILD,
+        "run": None,
+    },
+    "viewer-comments": {
         "build": APP_BUILD,
         "run": None,
     },
@@ -1097,8 +1176,15 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     #  - a leftover kill first, because a stray window occludes the next one ---
     #    and on Windows it is worse than an occlusion, since single-instance
     #    makes the new process forward its argv to the old one and exit.
-    #  - `TPDF_RAISE`, which covers the other half: a window with nowhere visible
-    #    to go.
+    #  - `--raise`, which covers the other half: a window with nowhere visible
+    #    to go. **Off by default since 2026-08-20**, for the reason
+    #    `viewer_sweep.py` records at greater length: an unfocused window costs
+    #    these checks nothing, an *occluded* one costs them everything, and the
+    #    two are different properties --- so forcing the raise took the keyboard
+    #    away from whoever was at the machine on every mutation, to guarantee
+    #    something the polite default usually already has. A wrong default is
+    #    caught on the **baseline**, which runs before any mutation, so it costs
+    #    one run rather than the whole harness.
     #  - `--timeout`, so that a hang is a bounded failure. A harness whose worst
     #    case is an unbounded wait cannot report anything at all, and this one is
     #    run unattended by design.
@@ -1121,7 +1207,7 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
         # thirteen-corpus run six corpora in --- see the trap of that name.
         encoding="utf-8",
         errors="replace",
-        env={**os.environ, "TPDF_RAISE": "1"},
+        env={**os.environ, **({"TPDF_RAISE": "1"} if RAISE_WINDOW else {})},
     )
     out = done.stdout or ""
     lines = [line for line in out.splitlines() if MARKER.match(line)]
@@ -1138,6 +1224,8 @@ def execute(runner: str) -> tuple[list[str], str, str]:
         return run_check(ENCODINGS_FIXTURE)
     if runner == "viewer-mixed":
         return run_check(MIXED_FIXTURE)
+    if runner == "viewer-comments":
+        return run_check(COMMENTS_FIXTURE)
     return run_probe(runner)
 
 
@@ -1184,7 +1272,20 @@ def main() -> int:
         choices=["", *RUNNERS],
         help="run only the mutations judged by this harness",
     )
+    parser.add_argument(
+        "--raise",
+        dest="raise_window",
+        action="store_true",
+        help=(
+            "focus each window as it launches. Needed only where there is "
+            "nowhere visible to put one, and it takes the keyboard once per "
+            "mutation, so it is off by default. The baseline run is what says "
+            "whether it is needed here."
+        ),
+    )
     args = parser.parse_args()
+    global RAISE_WINDOW
+    RAISE_WINDOW = args.raise_window
 
     chosen = [
         m
@@ -1207,6 +1308,7 @@ def main() -> int:
         "viewer-tagged": TAGGED_FIXTURE,
         "viewer-encodings": ENCODINGS_FIXTURE,
         "viewer-mixed": MIXED_FIXTURE,
+        "viewer-comments": COMMENTS_FIXTURE,
     }
     for needed in {fixtures[m.runner] for m in chosen if m.runner in fixtures}:
         if not needed.exists():

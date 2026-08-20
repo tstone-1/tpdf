@@ -29,6 +29,7 @@ Usage:
     scripts/viewer_sweep.py --list                # the corpora, and what each is for
     scripts/viewer_sweep.py <app-exe>             # run them all, print the table
     scripts/viewer_sweep.py <app-exe> --only links,mixed
+    scripts/viewer_sweep.py <app-exe> --raise      # only if a run produced nothing
 
 The app must be a **bundle** executable
 (`src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf`), not a
@@ -231,7 +232,7 @@ def _kill_leftovers() -> None:
         pass
 
 
-def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
+def run_one(app: Path, stem: str, timeout: int, raise_window: bool) -> dict[str, object]:
     """One fixture through the harness, returning what the table needs.
 
     The wall-clock is measured because the sweep is the slowest thing anyone
@@ -243,8 +244,23 @@ def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
     """
     began = time.monotonic()
     # A leftover window occludes the next one, WebKit suspends an occluded
-    # page, and the run then produces nothing while using no CPU. TPDF_RAISE
+    # page, and the run then produces nothing while using no CPU. `--raise`
     # covers the other half, a window with nowhere visible to go.
+    #
+    # **Off by default since 2026-08-20, on the machine's owner's report that a
+    # sweep locks the Mac up.** It did: fourteen launches, each one taking the
+    # keyboard away from whatever was in front. And it was never what the checks
+    # need --- `lib.rs` says so at the call site, and its own default is polite:
+    # *"the check drives behaviour rather than timing it, so an unfocused window
+    # costs it nothing"*. What they need is a window that is not **occluded**,
+    # which is a different property. This forced the raise anyway, as a blunt
+    # guarantee that suited an unattended run and nothing else.
+    #
+    # The failure this guards against is real and is already detected: an
+    # occluded page is suspended, produces nothing, and uses no CPU, which
+    # `webview_guard.py` tells apart from a hang by a CPU delta and answers with
+    # the name of this flag. So the cost of the polite default is one wasted run
+    # that says what to do, rather than every run taking the screen.
     #
     # On Windows the leftover is worse than an occlusion:
     # `tauri-plugin-single-instance` makes a new process forward its argv to the
@@ -276,7 +292,7 @@ def run_one(app: Path, stem: str, timeout: int) -> dict[str, object]:
         # same reason, that `mutate_frontend.py` records for vitest's output.
         encoding="utf-8",
         errors="replace",
-        env={**os.environ, "TPDF_RAISE": "1"},
+        env={**os.environ, **({"TPDF_RAISE": "1"} if raise_window else {})},
     )
     out = (result.stdout or "") + (result.stderr or "")
     summary = SUMMARY.search(out)
@@ -351,6 +367,17 @@ def main() -> int:
     # generous timeout costs nothing on a fast run, and a tight one fails as
     # "the run printed no CHECK-NAMES-JSON line", which reads as a crash.
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument(
+        "--raise",
+        dest="raise_window",
+        action="store_true",
+        help=(
+            "focus each window as it launches. Needed only where there is "
+            "nowhere visible to put one --- a full-screen window over it, "
+            "another Space --- and it takes the keyboard fourteen times, so it "
+            "is off by default. A run that produces nothing says to use it."
+        ),
+    )
     args = parser.parse_args()
 
     corpora, excluded, missing = classify()
@@ -408,7 +435,7 @@ def main() -> int:
 
     results = []
     for stem in wanted:
-        result = run_one(app, stem, args.timeout)
+        result = run_one(app, stem, args.timeout, args.raise_window)
         results.append(result)
         mark = "[OK]  " if result["exit"] == 0 else "[FAIL]"
         print(

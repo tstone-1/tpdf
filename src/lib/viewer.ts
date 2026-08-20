@@ -353,6 +353,20 @@ export interface ViewerOptions {
    */
   onComment?: (id: number | null) => void;
   /**
+   * Called when the note on one of the reader's own marks opens, or closes.
+   *
+   * {@link onComment}'s twin, and the marks panel's selection follows it for the
+   * same reason --- pressing a mark on the page highlights its row, and neither
+   * side keeps its own idea of which mark is being read.
+   *
+   * Fired by `markpopup.ts` rather than from here, because the box is closed in
+   * four places for five reasons and one of them is a mark disappearing out from
+   * under it. Only ever on a change: reopening the box on the mark it is already
+   * on says nothing. A viewer being destroyed reports the close too, which is
+   * what a caller wants --- the panel is going with it either way.
+   */
+  onMark?: (id: number | null) => void;
+  /**
    * Called when the reader typed a note on one of their own marks.
    *
    * The whole note, and only when it changed --- see `markpopup.ts`. Optional
@@ -1035,6 +1049,7 @@ export class Viewer {
       onRecolor: (mark, color) => this.opts.onMarkRecolor?.(mark, color),
       onRemove: () => this.removeOpenMark(),
       onClose: () => this.closeMark(),
+      onOpen: (mark) => this.opts.onMark?.(mark),
     });
 
     // The keyboard's position on the page, drawn as an outline over the focused

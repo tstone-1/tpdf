@@ -1744,6 +1744,16 @@ is throttled, and a frame-rate benchmark would then be measuring the throttle.
 covered by another --- a full-screen terminal, a different Space --- is *occluded*, and
 WebKit suspends the page exactly as it does behind a lock screen. The run then produces no
 output, uses no CPU, and stays alive, which reads as a hang in whatever was last changed.
+`viewer_sweep.py` and `mutate_viewer.py` take **`--raise`**, and it is **off by default**
+as of 2026-08-20. They used to force `TPDF_RAISE=1` on every launch, which on a fourteen-
+corpus sweep takes the keyboard away fourteen times in a row --- reported from the machine
+as *"these tests are locking up this mac, as every window opens in foreground"*, and it
+was never what the checks need. `lib.rs` says so at the call site and keeps a polite
+default for exactly this reason: the checks drive behaviour rather than time it, so an
+unfocused window costs them nothing. What costs them everything is an **occluded** window,
+which is a different property --- and one `webview_guard.py` already detects and names the
+remedy for. Use `--raise` when a run produces nothing, not before.
+
 Set `TPDF_RAISE=1` to raise the window when there is nowhere visible to put one:
 
 ```
@@ -2319,6 +2329,58 @@ of being written; see `docs/TRAPS.md`.
 Two names were added that day --- `edit.draw` in the command sweep and *"a drawing follows
 its strokes and does not fill its rectangle"* in the overlay phase --- and *"the five kinds do
 not all look the same"* was reworded to `six`.
+
+**Measured 2026-08-20 at 310 names**, after the marks panel. Seven are new ---
+`view.showMarks` in the command sweep, the five that drive the panel, and *"every sidebar
+tab fits inside the panel"*. Two of the panel's five are worth naming because they are the
+ones no unit test can reach: *"activating a row opens that mark's note and goes to it"*,
+which needs a real press on a real element and a document with pages to travel through,
+and *"pressing a mark on the page selects its row"*, which is the `onMark` wiring end to
+end --- the popup reports, the viewer forwards, the panel marks the row, and nothing in
+the phase told the panel which mark that was.
+
+**The seventh went red on its first run, on a defect it was written to look for.** Five
+labels want 293 px of content in a 260 px sidebar, so **Marks** was clipped by the host's
+`overflow:hidden` --- present in the DOM, `role="tab"`, and unreachable by a pointer. The
+tab *count* check beside it passed throughout, because a clipped button is still a button.
+The row wraps now, and the detail line prints every label's `scrollWidth/clientWidth` so a
+failure says which one and by how much.
+
+**And the sweep is what found two defects in the panel phase itself**, neither visible on
+`comments.pdf`: on `links-cropped`, a one-page document, the phase's two synthetic marks
+were at the same height on the same page, so the press meant for the first opened the
+second; and on `rotated-90` the check asserted the viewer's page number after activating a
+row, which the last page cannot satisfy --- a scroll to the end clamps and leaves the page
+before it at the top of the viewport. The trap is recorded under that name. It asserts the
+mark is *visible* now, which is what "goes to it" means and is what a viewer that opened
+the note without scrolling fails.
+
+⚠ **One check is red on four corpora and it is not from this increment.** *"a text box
+draws its words and not its rectangle"* fails on `vector-heavy`, `vector-multi`,
+`rotated-90` and `links-cropped`; a `git worktree` control at the text-box commit
+reproduces the identical reading, so it shipped there and was invisible because that
+increment was verified against `comments.pdf` alone. **The drawing is correct on all
+four** --- the failing thing is the predicate, whose every reading is a fraction of a
+rectangle that scales with the page while a text box's type is a fixed 11 points. On A0 the
+box is so large that `whole` and `second` round to zero; on a 20-pixel-tall box the left
+edge sample, which reads the middle tenth of the height, lands on the first line of type.
+The control is in the same run: *"a box is a frame with its middle clear"* uses the
+identical `288x20` rectangle and reads all four sides. `docs/PLAN.md` has the full account
+and the shape of the repair. **Do not relax the bound to make the sweep green** --- the
+regions have to be derived from `TEXT_SIZE * zoom`, and that is its own piece of work.
+
+**Measured 2026-08-20, all fourteen corpora, `--raise` off:** the same **310 check names**
+on every one, diffed as sets. `text-heavy` 265/45, `outline-simple` 273/37,
+`outline-hostile` 273/37, `vector-heavy` 172/138, `vector-multi` 212/98, `rotated-90`
+258/52, `columns` 262/48, `tagged` 237/73, `multilingual` 254/56, `encodings` 255/55,
+`mixed` 262/48, `comments` 275/35, `links` 282/28, `links-cropped` 217/93. 740 s in total,
+of which `vector-multi` is 398 s and `vector-heavy` 164 s. The only failing check anywhere
+is the one above.
+
+One check failed once and did not recur: *"a drag selects text from where it was dragged"*
+on `outline-hostile`, in one of three sweeps that day. Two runs failing different checks is
+variance; the same check twice is a defect --- the trap is recorded under that name, and
+this was the first shape.
 
 ⚠ **The first run of that measurement was against `text-base14`, which is not a window
 corpus.** `viewer_sweep.py --list` classifies it as *"a backend-probe fixture: font coverage,

@@ -47,6 +47,7 @@ describe("Sidebar keyboard activation", () => {
       onNavigate: (page: number) => navigated.push(page),
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
+      marks: { onPick: () => {} },
       pages: {
         doc: 1,
         pageCount: 40,
@@ -97,6 +98,7 @@ describe("Sidebar keyboard activation", () => {
       onNavigate: () => {},
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
+      marks: { onPick: () => {} },
       pages: {
         doc: 1,
         pageCount: 40,

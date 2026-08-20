@@ -47,6 +47,7 @@
   import {
     commentsIn,
     linksIn,
+    markRows,
     NO_PAGES,
     outlineIn,
     type MarkKind,
@@ -481,6 +482,10 @@
         sidebar?.thumbnails?.setPages(after.pages.length);
       }
       viewer?.setMarks(after.marks);
+      // Beside the viewer's own copy rather than in `applyPageOrder`: the marks
+      // arrive with this answer, where the links, comments and outline are
+      // answers about the *file* that this reconciles against a new page order.
+      sidebar?.setMarks(markRows(after.marks, model.map));
       dirty = after.dirty;
       // Undo and Redo are the two menu items whose enablement moves on every
       // edit, which is why this is here rather than only at the ends of an open.
@@ -1572,6 +1577,14 @@
           // *read* in the note that opens --- so the keyboard belongs there.
           onPick: (id) => viewer?.showComment(id),
         },
+        marks: {
+          // The comments row's reasoning, one step stronger: a reader who picks
+          // one of their own marks out of a list is reaching for the box that
+          // edits it, so the keyboard goes into the field. The keyboard walk is
+          // the route that deliberately does not --- there the reader is
+          // stepping rather than writing, and taking focus would strand them.
+          onPick: (id) => viewer?.showMark(id),
+        },
         pages: {
           doc: doc.id,
           pageCount: doc.page_count,
@@ -1616,11 +1629,22 @@
       // model to ask. `refresh` is not awaited: it reads a `HashMap` in the
       // backend, and holding the first page behind it would put an IPC round
       // trip on the startup path for an answer that is "nothing is edited".
-      edits = new Edits(doc.id, doc.page_count);
+      const opening = new Edits(doc.id, doc.page_count);
+      edits = opening;
       dirty = false;
-      void edits.refresh().then(
+      void opening.refresh().then(
         (state) => {
+          // The model this reply belongs to, not whichever one is open when it
+          // lands. A second document opened inside the round trip replaces
+          // `edits` and the panels with it, and this would then translate one
+          // document's marks through another's page order and list the result.
+          // `dirty` had the same hazard and the same one-line fix.
+          if (edits !== opening) return;
           dirty = state.dirty;
+          // A document opened with edits already on it --- which is the model's
+          // to answer, not this file's to assume. Every later change comes
+          // through `runEdit` above.
+          sidebar?.setMarks(markRows(state.marks, opening.map));
         },
         (e) => {
           // Not raised to the reader. Nothing is wrong with their document ---
@@ -1640,6 +1664,11 @@
         // which comment is being read, which is the whole reason this is a
         // callback rather than each side tracking its own idea of it.
         onComment: (id) => sidebar?.comments.select(id),
+        // The same arrangement for the reader's own marks: pressing one on the
+        // page selects its row, so the panel and the box can never disagree
+        // about which mark is being read. `markpopup.ts` fires it, because the
+        // box is closed by five different things.
+        onMark: (id) => sidebar?.marks.select(id),
         // The note the reader typed on one of their own marks, committed when
         // its box closed. A command like any other: it lands in the journal, so
         // undo steps over it and the document is dirty until it is saved.

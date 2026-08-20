@@ -997,6 +997,16 @@ export function registerAppCommands(
       run: () => actions.showTab("pages"),
     },
     {
+      // "Show my marks", not "Show marks": the panel lists what *this* reader
+      // made, and the document's own annotations are in the comments tab
+      // beside it. A reader with both open needs the two titles to say which
+      // is which, and "Annotations" would name either.
+      id: "view.showMarks",
+      title: "Show my marks",
+      enabled: withDocument,
+      run: () => actions.showTab("marks"),
+    },
+    {
       // "Invert page colours", not "Dark mode". The chrome is already dark when
       // the desktop is, so a command called dark mode would appear to do nothing
       // for the reader who most expects it to --- and what this actually does is
