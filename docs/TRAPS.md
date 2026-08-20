@@ -8610,6 +8610,22 @@ convention than the thing under test cannot be read directly, and reading it dir
 a confident wrong conclusion. Cross-check in the space the feature is defined in, or convert
 explicitly and say so.
 
+> ⚠ **Re-measured 2026-08-20 on macOS 26, and the two halves are the other way round.**
+> `PDFAnnotation.bounds` returned `(60.949, 501.426) 246.7 x 11.9` for an annotation whose
+> `/Rect` is `[60.949 501.426 307.611 513.347]` — the raw rectangle, **unrotated**, byte for
+> byte. And `page.draw(with: .mediaBox)` drew the content **rotated**: the mark's pixels landed
+> at the turned position, and six of `rotated-90`'s twelve text lines were clipped off the side,
+> because `page.bounds(for: .mediaBox)` answers 612x792 for a page poppler renders at 792x612.
+> So PDFKit rotates when it draws and does not when it reports, which is the mirror of what is
+> written above.
+>
+> Whether the original session measured a different call, a different display box or a different
+> macOS is not recoverable, so this is left standing rather than rewritten. **The conclusion is
+> unaffected either way** — the two layers are in different frames and a figure read across them
+> is meaningless — and that is the half worth carrying: an assignment of which layer moved is a
+> detail to re-measure on the machine in front of you, not to inherit. `pdftoppm` honours the
+> turn on both layers and is the better oracle for a rotated page.
+
 ### A mutation that survives every check because nothing reads the field
 
 `/QuadPoints` says where a highlight's rectangles are. `save.rs` also writes an `/AP` appearance
@@ -8618,9 +8634,20 @@ renderer reads `/QuadPoints` at all**. Reordering every quad's corners changed n
 the geometry round trip, and passed the ink check.
 
 That is not a redundant field. A reader that regenerates the appearance — one that ignores
-`/AP`, or any editor that re-renders after a change — uses those numbers, and PDFKit is measured
-to be one. The check is to **strip the `/AP` from the saved file and render it again**, which is
-`annot-probe --mode noap`: what appears is then the renderer's own wash, from `/QuadPoints`.
+`/AP`, or any editor that re-renders after a change — uses those numbers. The check is to
+**strip the `/AP` from the saved file and render it again**, which is `annot-probe --mode noap`:
+what appears is then the renderer's own wash, from `/QuadPoints`.
+
+> ⚠ **This entry named PDFKit as such a reader for a fortnight and that is false**, measured
+> 2026-08-20 on macOS 26. Blanking the `/AP` key of a saved highlight with spaces — same file
+> length, so every xref offset still holds, and PDFKit still finds and paints the annotation —
+> changed what it draws: **43634 px over a 13.2 pt band with the appearance present, 33680 over
+> 10.8 pt without it**. PDFKit reads ours when it is there. The mode is not weakened by this,
+> because its real justification never needed a named reader: it is the only thing in this
+> repository that reads `/QuadPoints` at all, and a mutation reordering every quad's corners
+> survives without it. What the correction removes is the *reassurance* — nobody has yet shown a
+> reader in the wild that regenerates our appearance, so `/QuadPoints` is written on the
+> specification's authority rather than on a measurement of somebody rendering it.
 
 Two details:
 
@@ -10579,3 +10606,70 @@ same answer until the tool could stay armed.
 the old mode's side effects.** They will not fail. `drawArmed` was never a
 statement about the bound; it was a statement that happened to imply it, and
 implications are what a behaviour change takes away.
+
+### Four checks that say where the ink is, and none that says how long it is
+
+`annot-probe --mode strokes` asserts that a freehand drawing put ink in the outer thirds of its
+rectangle and none in the middle. On `rotated-90` — an invocation `BUILD.md` has recommended
+since the mode landed — it reported **5 of 5 green while each stroke was 11.9 pt long instead of
+246.7**, a nineteenth of its length. Two stubs at the ends of a rectangle satisfy "ink in the
+outer thirds, nothing between" exactly as well as two full-length strokes do.
+
+**The rectangle cannot be the standard, because the rectangle is derived from the strokes.**
+`Stroke::bounds` builds `/Rect` from the points, so the two agree by construction, in the wrong
+case as in the right one. Any assertion relating a stroke to the mark's own rectangle is
+therefore true whatever was drawn. What separates them is the *shape of the ink inside* the
+rectangle: the extent along its longer side, which is 99% of it for a stroke that runs the
+length of the mark and 1% for one drawn across it.
+
+The cause was the probe's input rather than the writer — `save::user_strokes` mapped what it was
+handed. `mark_and_save` synthesised its two strokes at 5% and 95% of the box's *height*, spanning
+`left` to `right`, and on a page displayed sideways the lines advance across the screen while the
+characters run down it, so that is across the run instead of along it. **The lesson had already
+been written down forty lines below, in `quads_for`'s own doc comment** — *"The axis is not always
+the vertical one, and the first version of this assumed it was"* — and did not transfer to the
+two functions added later that needed it.
+
+Found by pointing an unrelated renderer at the saved file. Nothing inside this repository could
+have said so, because every check here reads the mark through the same derivation that produced
+it.
+
+### A check that measures along the axis it is policing shrinks its expectation with its measurement
+
+The repair for the entry above was a span check: each stroke must reach at least 80% of the
+rectangle's long side. The first version asked *along the axis `sideways` had chosen*, `sideways`
+being the same determination the band split uses — and with both halves of the fix reverted it
+reported **"14.2 pt of 14.4, needs 11.5"** and passed.
+
+The arithmetic is the whole of it. A wrong `sideways` calls the short side the long one, so the
+expectation shrinks from 224.5 pt to 14.4 at exactly the moment the measurement shrinks from
+224.5 to 14.2. Ratio preserved, check satisfied, defect intact. **A check built on the decision it
+exists to police cannot fail when that decision is wrong** — which is the only case anyone cares
+about.
+
+The fix is one line and it is the shape to reach for: take the maximum span over **both** axes and
+compare it against `width.max(height)`, neither of which reads `sideways` at all. The two
+mechanisms can then disagree, and a disagreement is the finding.
+
+Proved by reverting both halves — the code exactly as it shipped — and watching the four original
+checks stay green while the two new ones report `14.2 pt of 224.5, needs 179.6`.
+
+### The same assumption, quiet in one mode and loud in its neighbour
+
+`--mode rule` splits a quad into thirds *down the page* and asks that an underline be in the
+bottom one. On `rotated-90` it reports **330 / 330 / 332** and fails two of its four checks — an
+underline drawn perfectly correctly, along a run that goes down the screen, crosses all three
+horizontal bands.
+
+So the same axis assumption sat in two modes of one file, silently certifying a wrong drawing in
+`--mode strokes` and loudly condemning a right one in `--mode rule`. **The loud one had never been
+seen**, because `BUILD.md` lists `--mode rule` only against `text-base14`: a check that would fail
+on an input nobody gives it is indistinguishable from a check that works.
+
+Which edge is "under" has four answers, read off `text::from_device`'s four arms — for turns 0, 90,
+180 and 270 the page-space bottom is the device box's bottom, left, top and right. `rotated.pdf`
+carries all four rotations on pages 0 to 3, so the table is testable in one sweep, and two
+mutations show it is load-bearing cell by cell: collapsing it to one answer reddens 90° and 180°
+only, and splitting down the page regardless reddens 90° and 270° only. Both leave the strikeout
+green under the first mutation, correctly — a strikeout's band is the middle, which a swap of the
+outer two does not move, so the underline checks alone carry the table.

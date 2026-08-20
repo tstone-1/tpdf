@@ -6531,6 +6531,101 @@ gives; and an eraser, which is now the obvious next thing a reader will reach fo
 and which is a different subsystem --- removing a mark exists, removing *part* of
 one does not.
 
+#### What somebody else's reader shows --- measured 2026-08-20
+
+Phase 2's exit criterion is that a document "can be marked up, saved, reopened in
+Acrobat and Preview, and look right". `BUILD.md` has named that gap since ink
+landed --- *"what it cannot prove is that somebody else's reader shows the mark
+at all"* --- with the remedy written as a by-hand step once per release. It had
+never been done, and a by-hand step that leaves no record is one nobody can tell
+was skipped.
+
+**Done, and it holds.** All six kinds written to `text-base14.pdf` and opened
+with PDFKit, which is what Preview is: each comes back with the right
+`/Subtype`, author and note, at the rectangle it was written at, painting pixels
+the source page does not --- highlight 81% of its own box, note 77%, ink 37%,
+box 27%, strikeout 9%, underline 8%, against a control of the original read
+against itself at 0 annotations and 0 pixels. There is still no standing check;
+`BUILD.md` now carries the result, the method and the two ways it misleads.
+
+##### The rotated page is where a third parser lies to you
+
+**PDFKit draws a `/Rotate` page's content rotated into an *unrotated* frame.**
+`page.bounds(for: .mediaBox)` answers 612x792 for a page poppler renders at
+792x612, and six of `rotated-90`'s twelve lines are clipped off the side.
+`annotation.bounds`, meanwhile, returns the raw `/Rect`. So the annotation layer
+and the content layer are in different frames, and "coverage inside its own
+bounds" reads **0.0%** for a mark that is drawn perfectly. That is
+`docs/TRAPS.md`'s existing warning about cross-checking in the wrong convention,
+met again from the opposite side --- the entry there assigns the rotation to
+`bounds` and the identity to the drawing, and the measurement says the reverse.
+
+poppler's `pdftoppm` honours the turn properly and draws annotations, which is
+what made it the usable oracle. It is a spike tool, not a dependency.
+
+##### And it found a check that could not fail
+
+`annot-probe --mode strokes` on `rotated-90` --- an invocation `BUILD.md` has
+recommended since the mode landed --- was **5 of 5 green while every stroke was
+11.9 pt long instead of 246.7**, 545 px against 10200. Two stubs at the ends of a
+rectangle put ink in both outer thirds and none in the middle, which is exactly
+what two full-length strokes do.
+
+The mark's rectangle cannot be the standard, because `Stroke::bounds` derives it
+*from* the strokes: the two agree by construction in the wrong case as in the
+right one. What separates them is the extent of the ink along the rectangle's
+longer side, 99% of it against 1%.
+
+The cause was the probe's own input. `save::user_strokes` mapped what it was
+handed; `mark_and_save` synthesised its strokes at 5% and 95% of the box's
+*height* spanning left to right, and on a page displayed sideways the lines
+advance across the screen while the characters run down it. **The rule was
+already written down forty lines below**, in `quads_for`'s doc comment --- *"The
+axis is not always the vertical one, and the first version of this assumed it
+was"* --- and did not transfer to either function added later that needed it.
+
+`--mode rule` had the same assumption in the loud direction: 330/330/332 and two
+failures on a sideways underline drawn correctly. Nobody had seen it, because
+`BUILD.md` pointed that mode only at an upright page. Which third is "under" has
+four answers, read off `text::from_device`'s four arms, and `rotated.pdf` carries
+all four turns on pages 0 to 3 so the table is testable in one sweep. `--mode
+outline` needed nothing: a box draws on all four edges.
+
+##### Five mutations, and one of them was against my own repair
+
+Both fixes proved, with the upright page as a control that stayed 7/7 throughout.
+Reverting the synthesis reddens the gap check; reverting the band split reddens
+the gap check and both new span checks; **reverting both --- the code exactly as
+it shipped --- leaves all four original checks green and is caught only by the
+new ones**, at `14.2 pt of 224.5, needs 179.6`. On `--mode rule`, collapsing the
+turn table to one answer reddens 90 and 180 only, and splitting down the page
+regardless reddens 90 and 270 only, which is the derivation confirmed cell by
+cell.
+
+The fifth mutation is the one worth keeping. The span check's first version asked
+along the axis `sideways` had chosen --- making it a second reader of the
+decision it exists to police --- and against the shipped code it reported
+**"14.2 pt of 14.4, needs 11.5"** and passed, because a wrong `sideways` shrinks
+the expectation by exactly as much as it shrinks the measurement. It takes the
+maximum over both axes against `width.max(height)` now, and shares nothing with
+the band split.
+
+##### A claim corrected on the way past
+
+`--mode noap`'s justification said PDFKit is a reader that ignores `/AP`.
+Blanking the `/AP` key of a saved highlight with spaces --- same file length, so
+every xref offset holds --- changed what PDFKit draws: **43634 px over a 13.2 pt
+band with the appearance present, 33680 over 10.8 pt without**. It reads ours.
+The mode is unaffected, since it is the only thing here that reads `/QuadPoints`
+at all; what goes is the reassurance that some named reader in the wild
+regenerates our appearance. Nobody has shown one.
+
+**Not done:** a standing check for any of this. The instrument is a throwaway
+Swift harness, and turning it into a mode means deciding what to do about the
+rotated frame --- an upright-only positional assertion plus metadata on every
+page is the honest first version, and PDFKit on macOS has a counterpart in
+`Windows.Data.Pdf`, which the print path already uses for exactly this purpose.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

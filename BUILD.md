@@ -216,6 +216,16 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode rule --kind underline
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode rule --kind strikeout
+# `--mode rule` on every turn. Which third of the quad is "under" has four
+# answers and the mode reads them off a table; `rotated.pdf` carries /Rotate 0,
+# 90, 180 and 270 on pages 0 to 3, so one sweep exercises all of it. Until
+# 2026-08-20 this mode was only ever pointed at an upright page and split the
+# quad down the screen regardless, which reported 330/330/332 and TWO FAILURES
+# on a sideways underline that was drawn correctly. 4/4 on each of the eight.
+for page in 0 1 2 3; do for kind in underline strikeout; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+      testdata/rotated.pdf --page $page --mode rule --kind $kind
+done; done
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode roundtrip --kind note
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
@@ -226,11 +236,20 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
 # months earlier by the coverage measurement above and means something else
 # entirely, which is the collision `MarkKind::Ink` walked into.
 #
-# The fixture is two horizontal strokes with a wide gap, and the gap must be
-# EMPTY: a writer that flattened `/InkList` into one path joins the upper stroke
-# to the lower one with a diagonal straight through it. The two outer bands are
+# The fixture is two strokes along the run with a wide gap, and the gap must be
+# EMPTY: a writer that flattened `/InkList` into one path joins the first stroke
+# to the second with a diagonal straight through it. The two outer bands are
 # read as well, because a writer that emitted only the first stroke also leaves
 # the gap empty. Renders at 4x whatever `--scale` says, and says so.
+#
+# SEVEN checks, not five, since 2026-08-20: the two added are how LONG each
+# stroke is. The other five passed on `rotated-90` while every stroke came out
+# at a nineteenth of its length -- 545 px against 10200 -- because two stubs at
+# the ends of a rectangle put ink in both outer thirds and none in the middle,
+# exactly as two full-length strokes do. Expect `249.0 pt of 249.2` on the
+# sideways page and `255.5 of 255.8` on the upright one; the bound is 80%, so a
+# green run has about a fifth of the rectangle in hand rather than the two
+# hundredths of a point this mode's band arithmetic once stood on.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode roundtrip --kind ink
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
@@ -242,6 +261,32 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
 # Preview or Acrobat by hand. Worth doing once per release: the probe proves the
 # geometry and the pixels PDFium draws, and what it cannot prove is that somebody
 # else's reader shows the mark at all.
+#
+# DONE ONCE, 2026-08-20, and this is the record -- a by-hand step that leaves no
+# record is a step nobody can tell was skipped. All six kinds were written to
+# `text-base14.pdf` and opened with PDFKit, which is what Preview is, through a
+# throwaway Swift harness reporting the annotation list and diffing the render
+# against the unmarked original. Every kind came back with the right /Subtype,
+# author and note, at the /Rect it was written at, painting pixels the source
+# page does not: highlight 81% of its own box, note 77%, ink 37%, box 27%,
+# strikeout 9%, underline 8%. The control -- the original against itself -- is
+# 0 annotations and 0 pixels changed.
+#
+# THIS IS PHASE 2's EXIT CRITERION and it has no standing check. Two things a
+# repeat run must know, both measured the same day and both able to produce a
+# confident wrong answer:
+#
+#   * On a /Rotate page PDFKit draws the content ROTATED into an UNROTATED
+#     frame. `page.bounds(for: .mediaBox)` answers 612x792 for a page poppler
+#     renders at 792x612, and six of rotated-90's twelve lines are clipped off
+#     the side. Meanwhile `annotation.bounds` returns the raw /Rect, unrotated.
+#     So the annotation layer and the content layer sit in different frames, and
+#     a coverage figure "inside its own bounds" reads 0.0% for a mark that is
+#     drawn correctly. Do the positional half on an upright page only.
+#   * poppler's `pdftoppm` honours /Rotate properly and draws annotations, so it
+#     is the better oracle for a turned page -- and it is how the transposed ink
+#     above was found. Not a dependency and not on every machine: a spike tool,
+#     not a gate.
 
 # crop-probe: the crop the reader sets, against PDFium rather than against us.
 #
