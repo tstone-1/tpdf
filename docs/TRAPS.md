@@ -10673,3 +10673,73 @@ mutations show it is load-bearing cell by cell: collapsing it to one answer redd
 only, and splitting down the page regardless reddens 90° and 270° only. Both leave the strikeout
 green under the first mutation, correctly — a strikeout's band is the middle, which a swap of the
 outer two does not move, so the underline checks alone carry the table.
+
+### Borrowing the writer's own table to avoid drift made the check unable to fail
+
+`annot-probe --mode preview` asks whether PDFKit reads back the `/Subtype` we wrote. The first
+version compared against `save::subtype`, the writer's own table, which was made `pub` for the
+purpose — deliberately, and citing this file's entry about two copies of a distinction drifting
+apart.
+
+Mutating `save::subtype` to write `/Underline` for a strikeout left the check **green**. Of
+course it did: the check read the same table the writer did, so the expectation moved with the
+code. The rule against a second copy is real, and applying it here produced the worse defect —
+a check that cannot fail is worth less than one that occasionally goes red for a stale reason.
+
+**The way out was neither table.** `annots::Kind::of` turns a `/Subtype` string into a kind
+through the *reader's* parser, so PDFKit's string and `annots.rs`'s reading are compared as
+kinds, by a third thing that is neither of them. No table in the probe, and no borrowing from
+the writer.
+
+That still cannot catch a writer that writes a legal wrong subtype, because both readers read
+the wrong value and agree about it. Two things already do, both measured red under the same
+mutation: `save::tests::each_kind_writes_its_own_subtype`, and `--mode roundtrip`'s kind
+assertion, which compares against what the run asked for. **Knowing which check owns which
+failure is the point of measuring; the mode's doc comment carries the table.**
+
+### Two readers of one file cannot catch the writer that moved it
+
+The general form of the entry above, and it is worth stating separately because it is a
+property of the whole design rather than of one check. `--mode preview` compares PDFKit against
+`annots.rs` over the same bytes. Shift the `/Rect` three points sideways in `save.rs` and both
+readers report a rectangle three points sideways; they agree perfectly and every check passes.
+
+So a differential between two readers is evidence about **parsing**, never about **geometry**.
+What it catches is a dictionary one of them rejects, a string one of them cannot decode, a
+subtype they map differently, an appearance one of them will not draw. What it cannot catch is
+anything the writer did consistently. Geometry needs a standard outside both — `--mode
+roundtrip` has one, the character boxes the mark was made from, which is why it fails on the
+same mutation.
+
+The practical consequence: when adding a check to a differential, ask which of the two
+populations could move without the other. If the answer is "neither, ever", the check is
+decoration.
+
+### PDFKit synthesises an appearance for an annotation that has none
+
+Deleting the `/AP` from every mark `save.rs` writes — proved landed, zero occurrences of `/AP`
+in the saved file — changed what PDFKit draws for a `/Square` from 1306 px to 1056, and drew it
+anyway. It generates its own frame. The same is true of a highlight: blanking `/AP` moved the
+wash from a 13.2 pt band to a 10.8 pt one rather than removing it.
+
+Two things follow. **A "does a foreign reader draw it" check cannot test whether the appearance
+stream was written**, which is what makes `save.rs`'s own assertion that the key is present the
+coverage for that. And **`docmodel.rs`'s note that "a `/Square` with no `/AP` is an annotation
+Acrobat draws as nothing at all" is a claim about Acrobat and has not been checked here** —
+PDFKit is not Acrobat, and this measurement says nothing either way about the reader that
+sentence names.
+
+### A `/Text` annotation's rectangle is advisory, and PDFKit replaces it
+
+A comment written with `/Rect [60.322 717.074 313.652 730.192]` — 253.3 by 13.1 — comes back
+from `PDFAnnotation.bounds` as `(60.322, 706.192) 24 x 24`. Not a corruption and not a
+rounding: the standard icon size, hung off the rectangle's **top-left** corner, since
+`730.192 - 24 = 706.192` exactly. The specification allows it; a reader draws the note icon at a
+size of its own choosing and the rectangle only says where.
+
+It reads as a 229 pt error the first time you see it, and the reflex is to go looking at the
+writer. Two consequences for anything comparing rectangles across readers: **exempt `/Text` and
+assert the anchor and the size instead** — which still proves the foreign reader found your
+rectangle, because it cannot place the icon on your corner otherwise — and note that the icon
+hangs **below** the rectangle's bottom edge, so a containment check against your own `/Rect`
+reports a defect in a mark that is correct.

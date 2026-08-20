@@ -262,8 +262,31 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
 # geometry and the pixels PDFium draws, and what it cannot prove is that somebody
 # else's reader shows the mark at all.
 #
-# DONE ONCE, 2026-08-20, and this is the record -- a by-hand step that leaves no
-# record is a step nobody can tell was skipped. All six kinds were written to
+# `--mode preview` IS THIS STEP NOW, and the paragraph below is the by-hand run
+# that came first. It opens the saved file with PDFKit and asks eight questions
+# of it; run it over every kind before a release:
+for kind in highlight underline strikeout note square ink; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+      testdata/text-base14.pdf --mode preview --kind $kind
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+      testdata/rotated-90.pdf --mode preview --kind $kind
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+      testdata/links-cropped.pdf --mode preview --kind $kind
+done
+# 18 runs, all green: 8/8 on an upright page, 7/8 plus one [SKIP] on the turned
+# one, and 9/9 for a note, which asks two questions instead of one about its
+# rectangle. macOS only -- Windows.Data.Pdf renders but exposes no annotation
+# object model, so the mode refuses there rather than half-running.
+#
+# WHAT IT CANNOT CATCH is in the mode's own doc comment as a measured table, and
+# is worth reading before trusting a green run: every check is between two
+# READERS, so a writer that moves something legally moves it for both. A /Rect
+# shifted three points sideways passes here and fails --mode roundtrip; a
+# /Subtype written as the wrong one passes here and fails a unit test; a missing
+# /AP passes here because PDFKit draws its own.
+#
+# DONE BY HAND FIRST, 2026-08-20, and this is that record -- a by-hand step that
+# leaves no record is a step nobody can tell was skipped. All six kinds were written to
 # `text-base14.pdf` and opened with PDFKit, which is what Preview is, through a
 # throwaway Swift harness reporting the annotation list and diffing the render
 # against the unmarked original. Every kind came back with the right /Subtype,
