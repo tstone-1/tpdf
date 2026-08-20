@@ -19,6 +19,25 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### Mark in a colour you choose
+
+- Six colours --- yellow, green, blue, pink, orange and red --- in the Edit menu
+  and the command palette as **Colour: green** and so on. Picking one sets what
+  the next mark you make is drawn in, and the status line says so until you
+  change it.
+
+- If a mark's note is open when you pick, **that mark becomes that colour too**.
+  It is one journal entry, so one undo puts it back.
+
+- The note box has a **row of swatches** at the top, with a ring round the
+  colour the mark is. Press another and the mark changes at once; press the one
+  it already is and nothing happens.
+
+- **Colour: default** goes back to a colour per kind rather than to any one
+  colour: yellow for a highlight and a comment, red for an underline, a
+  strikeout, a box and a drawing. With a note open it puts *that* mark back to
+  its own kind's colour, so a red underline stays red.
+
 ### Rub a drawing out
 
 - **Erase drawing...** in the Edit menu and the right-click menu arms an eraser.

@@ -666,6 +666,22 @@ async fn annot_note(
     edits.renote(doc, mark, note)
 }
 
+/// Replaces what one mark is drawn in.
+///
+/// The whole colour, not a channel --- see [`docmodel::Command::Recolor`]. Three
+/// floats from the webview, clamped into `0..=1` at the `edits.rs` boundary the
+/// same way a new mark's are, because this is the second route into `/C` and a
+/// non-finite channel would be three letters in the middle of a content stream.
+#[tauri::command]
+async fn annot_recolor(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+    color: [f32; 3],
+) -> Result<edits::EditState, String> {
+    edits.recolor(doc, mark, color)
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 async fn edit_undo(
@@ -2002,6 +2018,7 @@ pub fn run() {
             annot_remove,
             annot_erase,
             annot_note,
+            annot_recolor,
             edit_undo,
             edit_redo,
             edit_state,

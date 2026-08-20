@@ -2354,6 +2354,91 @@ MUTATIONS += [
         "        let appearance = if !is_text_markup(mark.kind) {",
         "a_comment_carries_no_text_markup_keys_and_the_others_do",
     ),
+    Mutation(
+        # Keep a colour version whose command was discarded with the redo tail.
+        # Invisible in every document the model can produce -- which is exactly
+        # why the accounting observable exists, and exactly how its twin below
+        # leaked for a week with nothing reading it.
+        "docmodel: keep a colour after the command naming it is discarded",
+        "src/docmodel.rs",
+        "                Command::Recolor { color, .. } => {\n"
+        "                    self.colors.remove(&color);\n"
+        "                }",
+        "                Command::Recolor { .. } => {}",
+        "a_colour_in_the_discarded_redo_tail_goes_with_it",
+    ),
+    Mutation(
+        # The same for the eraser's table, and this one is not hypothetical: the
+        # arm did not exist until the colour work went in, and a reader erasing
+        # and undoing in a loop grew `inks` forever.
+        "docmodel: keep a drawing after the command naming it is discarded",
+        "src/docmodel.rs",
+        "                Command::Reink { ink, .. } => {\n"
+        "                    self.inks.remove(&ink);\n"
+        "                }",
+        "                Command::Reink { .. } => {}",
+        "a_drawing_in_the_discarded_redo_tail_goes_with_it",
+    ),
+    Mutation(
+        # Leave a removed mark pointing at a colour version. Undo then brings the
+        # mark back in whatever colour it had been recoloured to rather than the
+        # one the journal says it was made in.
+        "docmodel: leave a removed mark's colour behind",
+        "src/docmodel.rs",
+        "                self.inks.remove(&mark);\n                self.colors.remove(&mark);",
+        "                self.inks.remove(&mark);",
+        "a_removed_mark_forgets_which_colour_it_was_on",
+    ),
+    Mutation(
+        # Answer a mark's colour out of its body. Everything still works and
+        # every recolour is silently ignored -- on screen and in the file, since
+        # both readers go through this one accessor.
+        "docmodel: answer a mark's colour out of its body",
+        "src/docmodel.rs",
+        "        self.now\n            .color_of(mark)\n            .and_then(|color| self.colors.get(&color))",
+        "        None.and_then(|color: ColorId| self.colors.get(&color))",
+        "recolouring_changes_what_a_mark_is_drawn_in_and_undo_puts_it_back",
+    ),
+    Mutation(
+        # Spend the id before checking the mark. A refused recolour then leaks a
+        # colour version per press, which no document can show.
+        "docmodel: spend a colour id before checking the mark is there",
+        "src/docmodel.rs",
+        "        self.now.live_mark(mark)?;\n        let color = self.issue_color(color);",
+        "        let color = self.issue_color(color);\n        self.now.live_mark(mark)?;",
+        "recolouring_a_mark_that_is_not_there_is_refused_before_an_id_is_spent",
+    ),
+    Mutation(
+        # Reply with the colour the mark was made in. The overlay paints from
+        # this field, so a recolour would be accepted, journalled, saved -- and
+        # invisible until the file was reopened, which is the shape of wrong the
+        # overlay work was done to end.
+        "edits: reply with the colour the mark was made in",
+        "src/edits.rs",
+        "                color: model.color_of(id),",
+        "                color: mark.color,",
+        "the_reply_carries_the_colour_the_mark_has_now",
+    ),
+    Mutation(
+        # And the writer's half, which the reply's test cannot see: the mark
+        # looks right on screen and saves in its first colour.
+        "edits: write the colour the mark was made in",
+        "src/edits.rs",
+        "                    color: model.color_of(*mark),",
+        "                    color: body.color,",
+        "a_saved_file_is_written_in_the_colour_the_mark_has_now",
+    ),
+    Mutation(
+        # Let a recolour past the clamp. `1e40` is valid JSON, becomes `inf` in
+        # an `f32`, and `format!` writes the three letters into a content stream
+        # -- a file no reader can parse, through the command that only changes an
+        # appearance.
+        "edits: let a recolour past the clamp a new mark goes through",
+        "src/edits.rs",
+        "            .recolor(MarkId::from_raw(mark), color.map(channel))",
+        "            .recolor(MarkId::from_raw(mark), color)",
+        "a_colour_that_is_not_a_number_is_clamped_at_this_door_too",
+    ),
 ]
 
 

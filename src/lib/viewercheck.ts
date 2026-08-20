@@ -37,6 +37,7 @@ import {
 import { frame, Report, settle as settleFor } from "./checkreport";
 import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { INK_WIDTH } from "./markband";
+import { DEFAULT_SWATCH, PALETTE, swatch } from "./markcolors";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
 import type { Comment, Comments } from "./comments";
@@ -372,6 +373,9 @@ async function run(path: string): Promise<void> {
     // `markNoteChecks`.
     onMarkNote: (mark, note) => markEdits.push(`note:${mark}:${note}`),
     onMarkRemove: (mark) => markEdits.push(`remove:${mark}`),
+    // The swatch row's, recorded into the same list for the same reason --- see
+    // `markColorChecks`.
+    onMarkRecolor: (mark, color) => markEdits.push(`color:${mark}:${color.join(",")}`),
   });
 
   // The constructor sizes itself against a root the layout has not reached, so
@@ -535,6 +539,7 @@ async function run(path: string): Promise<void> {
   // apply the view's rotation, so both have to run before `rotationChecks`
   // leaves the view turned.
   await markNoteChecks(root, viewer, markEdits);
+  await markColorChecks(viewer, markEdits);
   await linkChecks(root, viewer, doc, problems);
   await thumbnailChecks(root, viewer, sidebar, doc, page, drags, menus);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
@@ -2997,6 +3002,8 @@ async function appCommandChecks(
     // remove *is* the open note, so pinning this true would take the only
     // interesting thing about the command out of the check.
     removeMark: () => fired.push("removeMark"),
+    setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
+    markColor: () => "default",
     hasOpenMark: () => viewer.markOpen >= 0,
     // Recorded rather than driven, like the update pair: `file.save` is in
     // `undriven` below, because a ⌘S here would write the corpus fixture that
@@ -3596,6 +3603,18 @@ async function appCommandChecks(
       ...shell("erase"),
       read: () => fired.join(","),
     },
+    // Every colour, aimed separately, for the reason the three selection marks
+    // below are aimed separately and more so: these are seven commands built by
+    // one `map`, so the copy-and-paste this file worries about would be a whole
+    // family taking the wrong argument at once --- and `setMarkColor:<id>` is
+    // what says each reaches its own. Built from `PALETTE` because a colour
+    // added there and unclassified here reddens the sweep, which is what the
+    // classification is for.
+    ...PALETTE.map((entry) => ({
+      id: `edit.color.${entry.id}`,
+      ...shell(`setMarkColor:${entry.id}`),
+      read: () => fired.join(","),
+    })),
     {
       // The two other kinds, aimed separately. One action taking an argument,
       // which is the shape this file's own note about `movePage` warns about:
@@ -4057,6 +4076,144 @@ const MARK_NOTE_CHECKS = [
   "the walk stops at the last mark rather than wrapping",
   "a key typed into a note does not move the page under it",
 ];
+
+/**
+ * The names the swatch-row phase reports.
+ *
+ * A named object rather than an array indexed by position, which is what
+ * {@link MARK_NOTE_CHECKS} is --- and this file already carries the trap: a
+ * check named by its place in a list is renamed by whatever is appended to it.
+ * Appending six colour checks to that array would have renamed nothing and
+ * still made every `MARK_NOTE_CHECKS[n]` above harder to read.
+ */
+const MARK_COLOR_CHECK = {
+  row: "the note box offers a swatch for every colour a mark can be",
+  rings: "and rings the one the mark is drawn in",
+  sends: "pressing a swatch asks for that colour",
+  same: "pressing the swatch a mark already wears asks for nothing",
+  open: "a colour chosen with a note open recolours that mark",
+  closed: "and one chosen with no note open recolours nothing",
+} as const;
+
+const MARK_COLOR_CHECKS: string[] = Object.values(MARK_COLOR_CHECK);
+
+/**
+ * The swatch row: what it offers, what it rings, and what a press asks for.
+ *
+ * **Separate from `markpopup.test.ts`, which drives the same row against a fake
+ * DOM.** What that cannot reach is the row in the *shipped* bundle inside a real
+ * web view: whether the buttons are laid out at all, whether a `pointerdown` on
+ * one reaches its handler through the popup's own press guard, and whether the
+ * ring `showColor` writes survives the popup being reopened by the frame loop.
+ *
+ * The last two checks are the palette's route rather than the pointer's ---
+ * {@link Viewer.recolorOpenMark}, which every `Colour:` command reaches through
+ * `App.svelte`. They are here because the *pair* is the assertion: a command
+ * that recoloured whatever mark it found would pass the first alone.
+ *
+ * `edits` is the harness's record of what the viewer asked the model for; there
+ * is no model here, so the callback is the observable.
+ */
+async function markColorChecks(viewer: Viewer, edits: string[]): Promise<void> {
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+
+  const yellow = swatch("yellow");
+  const green = swatch("green");
+  if (!yellow?.rgb || !green?.rgb) {
+    // Unreachable while `PALETTE` holds them, and said rather than assumed: the
+    // whole phase is written against two named colours, and a rename there
+    // would otherwise report the viewer as broken.
+    for (const name of MARK_COLOR_CHECKS) {
+      skip(name, "the palette has no yellow or no green to press");
+    }
+    return;
+  }
+
+  // Spread into a fresh tuple: `MarkView` comes from Rust and is mutable, and
+  // the palette's entries are `readonly` because they are a constant table.
+  const mark: MarkView = {
+    ...syntheticMark(viewer, 4245, ""),
+    color: [...yellow.rgb],
+  };
+  viewer.setMarks([mark]);
+  await frame();
+  viewer.showMark(mark.id);
+
+  const buttons = [...viewer.markPopup.querySelectorAll("button")].filter(
+    (button) => PALETTE.some((entry) => entry.name === button.getAttribute("aria-label")),
+  );
+  const offered = PALETTE.filter((entry) => entry !== DEFAULT_SWATCH);
+  check(
+    MARK_COLOR_CHECK.row,
+    buttons.length === offered.length,
+    `${buttons.length} swatches for ${offered.length} colours: ` +
+      `[${buttons.map((b) => b.getAttribute("aria-label")).join(", ")}]`,
+  );
+
+  const pressed = (name: string): string | null =>
+    buttons
+      .find((button) => button.getAttribute("aria-label") === name)
+      ?.getAttribute("aria-pressed") ?? null;
+  check(
+    MARK_COLOR_CHECK.rings,
+    pressed("yellow") === "true" && pressed("green") === "false",
+    `yellow=${pressed("yellow")}, green=${pressed("green")} on a yellow mark`,
+  );
+
+  /** Presses the swatch labelled `name`, as a reader does. */
+  const pressSwatch = (name: string): void => {
+    buttons
+      .find((button) => button.getAttribute("aria-label") === name)
+      ?.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+      );
+  };
+
+  edits.length = 0;
+  pressSwatch("green");
+  check(
+    MARK_COLOR_CHECK.sends,
+    edits.join(",") === `color:${mark.id}:${green.rgb.join(",")}`,
+    `sent [${edits.join(", ")}]`,
+  );
+
+  // The control, and the reason the row does the comparison rather than the
+  // model: the ring is what invites a second press, so the swatch that is
+  // already on is the one a reader is most likely to hit twice.
+  edits.length = 0;
+  pressSwatch("green");
+  check(
+    MARK_COLOR_CHECK.same,
+    edits.length === 0,
+    `sent [${edits.join(", ")}] pressing the ring that was already on`,
+  );
+
+  // The palette's route. The mark is still yellow as far as the viewer knows ---
+  // there is no model to answer, so `setMarks` is what a state reply would be ---
+  // which is exactly why green is asked for and lands.
+  edits.length = 0;
+  viewer.showMark(mark.id);
+  const acted = viewer.recolorOpenMark(green.rgb);
+  check(
+    MARK_COLOR_CHECK.open,
+    acted && edits.join(",") === `color:${mark.id}:${green.rgb.join(",")}`,
+    `acted=${acted}, sent [${edits.join(", ")}]`,
+  );
+
+  edits.length = 0;
+  viewer.closeMark();
+  const idle = viewer.recolorOpenMark(green.rgb);
+  check(
+    MARK_COLOR_CHECK.closed,
+    !idle && edits.length === 0,
+    `acted=${idle}, sent [${edits.join(", ")}] with no note open`,
+  );
+
+  viewer.setMarks([]);
+  viewer.closeMark();
+  await frame();
+}
 
 /**
  * The note on one of the reader's own marks: opening it, typing, and removing.
@@ -7889,10 +8046,25 @@ async function overlayInkChecks(
     ],
     // The same thin band, through the one place an underline must not be. The
     // two together say the kinds are told apart, which neither says alone.
+    //
+    // **`core > 0.5`, and 0.8 was unreachable.** The bound went in at 0.8 with
+    // this check and this check has never once passed: `markBand` centres a rule
+    // `LINE_FRACTION` --- 7% --- of the quad's height, and `core` samples the
+    // middle tenth, so the *correct* painter's ceiling is 0.07/0.10 = 0.70. The
+    // reading was 0.71 on every run, antialiasing included. An assertion that
+    // cannot pass is the loud twin of one that cannot fail, and it survived a
+    // day only because this harness is not a gate and CI cannot run it.
+    //
+    // Not derived from `LINE_FRACTION`, which would make it move with the thing
+    // it polices and stop being able to fail --- the trap about a check that
+    // measures along the axis it is policing. A fixed number, chosen for what it
+    // has to tell apart: an underline, a frame and a drawing all read 0.00 here,
+    // so anything between those and 0.70 discriminates, and 0.5 sits in the
+    // middle of that gap.
     [
       "strikeout",
       INK_CHECK.strikeout,
-      (r) => r.whole < 0.3 && r.core > 0.8 && r.edges === 2,
+      (r) => r.whole < 0.3 && r.core > 0.5 && r.edges === 2,
     ],
     // A frame: a side where an underline has none, and a clear centre where a
     // filled box would have ink. Those are the two kinds it has to be told from,

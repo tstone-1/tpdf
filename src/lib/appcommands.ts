@@ -33,6 +33,7 @@
 import type { CommandRegistry } from "./commands";
 import { BINDINGS, inTextField, label, matches, type BoundCommand } from "./keys";
 import { describeRange, parsePageRange } from "./pageranges";
+import { PALETTE } from "./markcolors";
 import type { MarkKind } from "./pages";
 import type { Tab } from "./sidebar";
 import type { Viewer } from "./viewer";
@@ -192,6 +193,16 @@ export interface AppActions {
   removeMark(): void;
   /** Whether a mark's note is open, which is what names the mark to remove. */
   hasOpenMark(): boolean;
+  /**
+   * Picks the colour marks are drawn in, by a `markcolors.ts` swatch id.
+   *
+   * One call for both meanings --- what the next mark will be, and what the mark
+   * whose note is open becomes. See `App.svelte`, where the rule is written out;
+   * stating it here as well would be the second copy of it.
+   */
+  setMarkColor(id: string): void;
+  /** Which swatch is picked. For the check harness. */
+  markColor(): string;
   /** Whether there is a selection to mark. */
   hasSelection(): boolean;
   /** Write the working document over the file it was opened from. */
@@ -568,6 +579,28 @@ export function registerAppCommands(
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.markSelection("strikeout"),
     },
+    // Built from `PALETTE` rather than written out, because a colour added there
+    // and not here would be in the swatch row and reachable from nowhere else.
+    // Seven separate commands rather than one that asks which colour, for the
+    // reason the three selection marks above are three: a reader who wants green
+    // wants it in one press, and a palette that answered "Mark colour" and then
+    // asked again would cost two.
+    //
+    // No chords. Every letter that would suit is taken by navigation, and a
+    // colour is not a thing anybody reaches for often enough to spend one on.
+    ...PALETTE.map((entry) => ({
+      id: `edit.color.${entry.id}`,
+      // "Colour:" leads for `find.matchCase`'s reason --- it groups the run in a
+      // list sorted by title, and it is what a reader searches for when they do
+      // not know this application calls the colour "pink". The colour itself is
+      // lowercase because it is a word in a sentence rather than a name.
+      title: `Colour: ${entry.name}`,
+      // Enabled on any open document, with or without a mark open: with one it
+      // recolours, without one it arms the next mark. Guarding on `hasOpenMark`
+      // would grey out exactly the case a reader uses to choose before marking.
+      enabled: withDocument,
+      run: () => actions.setMarkColor(entry.id),
+    })),
     {
       // Takes the mark whose note is open, because that is the one the reader
       // has named. There is no "the mark under the pointer" here: a menu item

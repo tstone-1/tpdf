@@ -74,10 +74,15 @@ export const PAGE_MENU: Entry[] = [
  * left-press it, wait for its note box, and choose Remove mark from a menu the
  * reader had to know was elsewhere. Reported from use.
  *
- * **One entry, and that is the whole of what a mark can be asked to do.** The
- * kind cannot be changed --- there is no command for it --- and the note is
- * edited in the box that opens with this menu rather than through an item here.
- * A menu padded out with the selection commands would be the menu this replaced.
+ * **One entry, and the other two things a mark can be asked are not missing.**
+ * The kind cannot be changed --- there is no command for it. The note and the
+ * colour are both edited in the box that opens *with* this menu: the swatch row
+ * is the first thing in it, so listing the seven `edit.color.*` commands here
+ * would put a second surface under the reader's pointer for a choice already
+ * under their eyes, and make this the padded-out menu the one it replaced was.
+ * (That sentence read "one entry and that is the whole of what a mark can be
+ * asked to do" until the swatch row existed, which is why it is spelled out
+ * rather than shortened: the claim was true and stopped being.)
  *
  * **How it knows which mark.** It does not address one: `App.svelte` opens the
  * mark's note first and then shows this, so `edit.removeMark` acts on the mark
