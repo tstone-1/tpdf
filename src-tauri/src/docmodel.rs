@@ -317,6 +317,34 @@ impl Stroke {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct NoteId(u32);
 
+/// One version of one drawing's strokes.
+///
+/// [`NoteId`]'s twin, for the same reason and with the same allocator: a
+/// [`Command::Reink`] names *what the drawing was at a point in the journal*
+/// rather than carrying the points, which keeps [`Command`] `Copy` and replay
+/// allocation-free.
+///
+/// **It exists because an eraser makes a mark's strokes a thing that changes**,
+/// and everything that changes has to be rebuildable by replay. Until the
+/// eraser, a drawing's points were written once by [`Doc::annotate`] and never
+/// again, so they could live in the body table with the colour and the author.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct InkId(u32);
+
+/// What a drawing is now: its strokes, and the rectangle they occupy.
+///
+/// **The two travel together so that they cannot disagree.** The rectangle is
+/// [`Stroke::bounds`] of the strokes and nothing else, derived once by
+/// [`Doc::reink`]; a caller reading the strokes from here and the rectangle
+/// from the body would get a rectangle that still holds an erased stroke.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Ink {
+    /// What is still drawn.
+    pub strokes: Vec<Stroke>,
+    /// [`Stroke::bounds`] of them, padded as [`Doc::reink`] pads it.
+    pub quads: Vec<Quad>,
+}
+
 /// What kind of mark a reader made.
 ///
 /// **Only what tpdf can write.** [`crate::annots::Kind`] is the reading
@@ -520,6 +548,20 @@ pub enum Command {
     /// insert-at-offset command would make the journal a text editor's, which is
     /// a different thing to get right and buys nothing a reader can see.
     Renote { mark: MarkId, note: NoteId },
+    /// Replace what a drawing is made of.
+    ///
+    /// [`Command::Renote`]'s twin, and the argument there carries over word for
+    /// word: a whole stroke list rather than an edit to one, because the reader
+    /// sweeps an eraser and lets go, so the command is *what the drawing now
+    /// is*. Undo is the previous `Reink` --- or the [`Command::Annotate`] ---
+    /// being replayed instead.
+    ///
+    /// **Erasing every stroke is not this command.** A mark that draws nothing
+    /// must not exist, so [`Doc::reink`] refuses an empty list and the caller
+    /// issues [`Command::Unannotate`]. Which of the two a gesture produces is a
+    /// decision about the product, and it is made one layer up in `edits.rs`
+    /// rather than here.
+    Reink { mark: MarkId, ink: InkId },
 }
 
 impl Command {
@@ -536,7 +578,7 @@ impl Command {
             | Command::Delete { page }
             | Command::Move { page, .. }
             | Command::Annotate { page, .. } => Some(page),
-            Command::Unannotate { .. } | Command::Renote { .. } => None,
+            Command::Unannotate { .. } | Command::Renote { .. } | Command::Reink { .. } => None,
         }
     }
 }
@@ -634,6 +676,14 @@ pub struct Working {
     /// above states, and worth saying because the two maps sit next to each
     /// other.
     notes: HashMap<MarkId, NoteId>,
+    /// Which version of a drawing's strokes is current.
+    ///
+    /// **Unlike `notes` above, an absent entry is the common case and means
+    /// something**: the strokes the mark was made with, still in the body table.
+    /// Only a mark an eraser has touched has an entry here. That asymmetry is
+    /// deliberate --- [`Command::Annotate`] would otherwise have to carry an
+    /// [`InkId`] for five kinds that have no strokes at all.
+    inks: HashMap<MarkId, InkId>,
 }
 
 impl Working {
@@ -661,6 +711,7 @@ impl Working {
             marks: HashMap::new(),
             mark_graves: HashSet::new(),
             notes: HashMap::new(),
+            inks: HashMap::new(),
         }
     }
 
@@ -745,6 +796,11 @@ impl Working {
     }
 
     /// What a live mark says, as an id into [`Doc`]'s table.
+    pub fn ink_of(&self, mark: MarkId) -> Option<InkId> {
+        self.inks.get(&mark).copied()
+    }
+
+    /// Which version of a mark's note is current.
     pub fn note_of(&self, mark: MarkId) -> Option<NoteId> {
         self.notes.get(&mark).copied()
     }
@@ -850,10 +906,15 @@ impl Working {
                 }
                 self.mark_graves.insert(mark);
                 self.notes.remove(&mark);
+                self.inks.remove(&mark);
             }
             Command::Renote { mark, note } => {
                 self.live_mark(mark)?;
                 self.notes.insert(mark, note);
+            }
+            Command::Reink { mark, ink } => {
+                self.live_mark(mark)?;
+                self.inks.insert(mark, ink);
             }
         }
         Ok(())
@@ -908,6 +969,11 @@ pub struct Doc {
     notes: HashMap<NoteId, String>,
     /// The next note id to issue. Only ever counts up, as [`next_mark`](Doc::next_mark) does.
     next_note: u32,
+    /// What each version of each drawing is made of, keyed by the id its command
+    /// carries. `notes`' twin, and keyed by the version for the same reason.
+    inks: HashMap<InkId, Ink>,
+    /// The next ink id to issue. Only ever counts up.
+    next_ink: u32,
 }
 
 impl Doc {
@@ -923,6 +989,8 @@ impl Doc {
             next_mark: 1,
             notes: HashMap::new(),
             next_note: 1,
+            inks: HashMap::new(),
+            next_ink: 1,
         }
     }
 
@@ -1081,6 +1149,90 @@ impl Doc {
         self.now.live_mark(mark)?;
         let note = self.issue_note(note);
         self.apply(Command::Renote { mark, note })
+    }
+
+    /// Replaces what a drawing is made of --- the eraser's one command.
+    ///
+    /// **Refuses an empty result rather than removing the mark**, because a mark
+    /// that draws nothing must not exist and this layer does not get to decide
+    /// what a gesture meant. Sweeping an eraser over the last stroke of a
+    /// drawing is [`Command::Unannotate`], issued by the caller; see
+    /// [`Command::Reink`].
+    ///
+    /// The rectangle is derived here, from [`Stroke::bounds`], so that it is
+    /// derived in one place for both the drawing that is made and the drawing
+    /// that is erased --- `edits.rs` calls the same function when a mark is
+    /// first sent, and two derivations would be free to disagree about the
+    /// padding.
+    ///
+    /// # Errors
+    ///
+    /// The id names no mark or one already removed; the mark is not ink;
+    /// nothing drawable survives.
+    pub fn reink(&mut self, mark: MarkId, strokes: Vec<Stroke>) -> Result<(), Refusal> {
+        self.now.live_mark(mark)?;
+        let kind = self.mark(mark).map_or(MarkKind::Highlight, |m| m.kind);
+        if kind != MarkKind::Ink {
+            return Err(Refusal::ShapeMismatch(kind));
+        }
+        if !strokes.iter().any(Stroke::is_drawable) {
+            return Err(Refusal::EmptyMark);
+        }
+        let quads = Stroke::bounds(&strokes, crate::save::INK_WIDTH as f32 / 2.0)
+            .into_iter()
+            .collect();
+        let ink = self.issue_ink(Ink { strokes, quads });
+        self.apply(Command::Reink { mark, ink })
+    }
+
+    /// Records a version of a drawing and returns the id that names it.
+    fn issue_ink(&mut self, ink: Ink) -> InkId {
+        let id = InkId(self.next_ink);
+        self.inks.insert(id, ink);
+        self.next_ink += 1;
+        id
+    }
+
+    /// What a drawing is made of now, after any erasing.
+    ///
+    /// Reads the *working* document, so an undo restores what it answers. Falls
+    /// back to the strokes the mark was made with, which is the answer for every
+    /// mark an eraser has never touched --- and for every kind that has no
+    /// strokes at all, where it is empty.
+    pub fn strokes_of(&self, mark: MarkId) -> &[Stroke] {
+        self.now
+            .ink_of(mark)
+            .and_then(|ink| self.inks.get(&ink))
+            .map_or_else(
+                || self.mark(mark).map_or(&[][..], |m| &m.strokes[..]),
+                |ink| &ink.strokes[..],
+            )
+    }
+
+    /// The rectangles a mark occupies now.
+    ///
+    /// **The one accessor every reader of a mark's geometry has to go through**,
+    /// because erasing a stroke moves the rectangle: a caller taking
+    /// [`Mark::quads`] straight from the body would place the popup, hit-test
+    /// and write a `/Rect` around a stroke that is no longer drawn.
+    pub fn quads_of(&self, mark: MarkId) -> &[Quad] {
+        self.now
+            .ink_of(mark)
+            .and_then(|ink| self.inks.get(&ink))
+            .map_or_else(
+                || self.mark(mark).map_or(&[][..], |m| &m.quads[..]),
+                |ink| &ink.quads[..],
+            )
+    }
+
+    /// How many drawing versions are held.
+    ///
+    /// The accounting observable for strokes, and it exists for the reason
+    /// [`note_bodies`](Doc::note_bodies) does: a version kept after the command
+    /// naming it was discarded, and one correctly dropped, produce identical
+    /// documents.
+    pub fn ink_bodies(&self) -> usize {
+        self.inks.len()
     }
 
     /// Records a note's text and returns the id that names it.
@@ -1789,6 +1941,174 @@ mod tests {
             author: "a reader".to_string(),
             made: "D:20260820T120000Z".to_string(),
         }
+    }
+
+    /// A drawing of three strokes, well apart, on `page`.
+    ///
+    /// Three rather than two because the eraser tests need a *middle* one: with
+    /// two, "the survivors are the ones not named" and "the survivor is the last
+    /// one" are the same assertion.
+    fn drawing_on(page: PageId) -> Mark {
+        let strokes = vec![
+            Stroke {
+                points: vec![Point { x: 72.0, y: 90.0 }, Point { x: 300.0, y: 90.0 }],
+            },
+            Stroke {
+                points: vec![Point { x: 72.0, y: 150.0 }, Point { x: 300.0, y: 150.0 }],
+            },
+            Stroke {
+                points: vec![Point { x: 72.0, y: 210.0 }, Point { x: 300.0, y: 210.0 }],
+            },
+        ];
+        Mark {
+            kind: MarkKind::Ink,
+            page,
+            quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
+            strokes,
+            color: [0.85, 0.15, 0.15],
+            author: "a reader".to_string(),
+            made: "D:20260820T120000Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn erasing_a_stroke_leaves_the_others_and_shrinks_the_rectangle() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let before = doc.quads_of(id)[0];
+        assert_eq!(doc.strokes_of(id).len(), 3);
+
+        let keep = vec![doc.strokes_of(id)[0].clone(), doc.strokes_of(id)[1].clone()];
+        doc.reink(id, keep).expect("erased");
+
+        assert_eq!(doc.strokes_of(id).len(), 2, "the third stroke is gone");
+        let after = doc.quads_of(id)[0];
+        // The rectangle is the whole point of `quads_of` existing: the body
+        // still holds the three-stroke bounds, and a reader taking those would
+        // hit-test and place the popup around a stroke nobody can see.
+        assert!(
+            after.bottom < before.bottom,
+            "the rectangle still reaches the erased stroke: {after:?} against {before:?}"
+        );
+        assert_eq!(
+            doc.mark(id).expect("body").quads[0],
+            before,
+            "the body is unchanged, which is why every reader has to go through the accessor"
+        );
+    }
+
+    #[test]
+    fn an_undone_erasure_puts_the_stroke_back() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let whole = doc.strokes_of(id).to_vec();
+        let box_ = doc.quads_of(id)[0];
+
+        doc.reink(id, vec![doc.strokes_of(id)[0].clone()])
+            .expect("erased");
+        assert_eq!(doc.strokes_of(id).len(), 1);
+
+        assert!(doc.undo(), "an erasure is one command and undoes");
+        assert_eq!(doc.strokes_of(id), &whole[..], "every stroke is back");
+        assert_eq!(doc.quads_of(id)[0], box_, "and so is the rectangle");
+
+        assert!(doc.redo(), "and it redoes");
+        assert_eq!(doc.strokes_of(id).len(), 1);
+    }
+
+    #[test]
+    fn a_drawing_erased_to_nothing_is_refused_here() {
+        // The model's half of the rule; `Edits::erase` is the layer that turns
+        // the refusal into a removal, because only it knows the gesture meant
+        // "get rid of it". See `Command::Reink`.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        assert_eq!(doc.reink(id, Vec::new()), Err(Refusal::EmptyMark));
+        // A stroke of one point draws nothing either, and is the case a caller
+        // filtering on `is_empty` would let through.
+        let dot = Stroke {
+            points: vec![Point { x: 72.0, y: 90.0 }],
+        };
+        assert_eq!(doc.reink(id, vec![dot]), Err(Refusal::EmptyMark));
+        assert_eq!(doc.strokes_of(id).len(), 3, "and nothing was erased");
+    }
+
+    #[test]
+    fn only_a_drawing_can_be_erased() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        let stroke = drawing_on(page).strokes[0].clone();
+        assert_eq!(
+            doc.reink(id, vec![stroke]),
+            Err(Refusal::ShapeMismatch(MarkKind::Highlight)),
+            "a highlight has no strokes to rub out"
+        );
+    }
+
+    #[test]
+    fn erasing_a_mark_that_is_not_there_is_refused_before_an_id_is_spent() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let stroke = doc.strokes_of(id)[0].clone();
+        doc.apply(Command::Unannotate { mark: id })
+            .expect("removed");
+
+        let held = doc.ink_bodies();
+        assert_eq!(doc.reink(id, vec![stroke]), Err(Refusal::MarkRemoved(id)));
+        assert_eq!(
+            doc.ink_bodies(),
+            held,
+            "a refused erasure spends no version, the way a refused mark spends no id"
+        );
+    }
+
+    #[test]
+    fn a_drawing_nobody_has_erased_answers_out_of_its_body() {
+        // The fallback arm of both accessors, which every existing drawing takes
+        // and which no other test here reaches on purpose.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let body = doc.mark(id).expect("body");
+        assert_eq!(doc.strokes_of(id), &body.strokes[..]);
+        assert_eq!(doc.quads_of(id), &body.quads[..]);
+        assert_eq!(doc.ink_bodies(), 0, "and no version was recorded");
+    }
+
+    #[test]
+    fn a_removed_drawing_forgets_which_version_it_was_on() {
+        // `Unannotate` drops the entry, as it does for the note. Without that, a
+        // mark removed and restored by undo would come back at whatever version
+        // an erasure had left it on rather than at the one the journal says.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        doc.reink(id, vec![doc.strokes_of(id)[0].clone()])
+            .expect("erased");
+        doc.apply(Command::Unannotate { mark: id })
+            .expect("removed");
+        assert_eq!(
+            doc.working().ink_of(id),
+            None,
+            "the removed mark still names a version"
+        );
     }
 
     #[test]

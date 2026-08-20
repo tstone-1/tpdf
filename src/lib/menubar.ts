@@ -141,6 +141,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // document, so they read as a pair and a reader who found one has found
       // the other.
       "edit.draw",
+      // The third of the armed tools, and last of them so that the two that
+      // make a mark stay together above it.
+      "edit.erase",
       "edit.removeMark",
       SEPARATOR,
       "edit.selectAll",

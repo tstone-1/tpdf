@@ -209,6 +209,7 @@
     addComment: (at) => void addComment(at),
     drawBox: () => viewer?.armDraw("square"),
     draw: () => viewer?.armDraw("ink"),
+    erase: () => viewer?.armErase(),
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
@@ -1607,6 +1608,7 @@
         // through: which of its two halves is filled is the viewer's answer and
         // the model's rule, and restating it here would be a third copy.
         onDrawn: (kind, page, shape) => void drawn(kind, page, shape),
+        onErased: (mark, remove) => void applyEdit((e) => e.erase(mark, remove)),
         onStatus: (next) => {
           status = next;
           // Here rather than in a `$derived`, because this is the only moment
@@ -1964,6 +1966,20 @@
             ? "Drawing — press and drag"
             : `Drawing: ${status.drawing} stroke${status.drawing === 1 ? "" : "s"}`}
           — Enter to finish, Esc to discard
+        </span>
+      {/if}
+      <!--
+        The eraser's twin of the line above, and it names one key rather than
+        two: a sweep commits when the reader lifts the pointer, so there is
+        nothing waiting to be finished and Escape is the only way out of the
+        mode.
+      -->
+      {#if status.erasing !== null}
+        <span class="stat" data-testid="erasing">
+          {status.erasing === 0
+            ? "Erasing — drag across a drawing"
+            : `Erasing: ${status.erasing} stroke${status.erasing === 1 ? "" : "s"}`}
+          — Esc to stop
         </span>
       {/if}
       {#if status.selected > 0}

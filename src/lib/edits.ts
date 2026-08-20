@@ -327,6 +327,23 @@ export class Edits {
     );
   }
 
+  /**
+   * Rubs strokes out of one drawing, by the id a state reply gave it.
+   *
+   * `remove` is positions into the strokes the last state reply carried, which
+   * is why this takes no points: the backend owns what a drawing is made of and
+   * a command named "erase" must not be able to rewrite it. One call per sweep,
+   * so one call per undo.
+   *
+   * A sweep that takes every stroke removes the drawing --- decided in
+   * `edits.rs`, not here, and the reply simply comes back without the mark.
+   */
+  async erase(mark: number, remove: number[]): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("annot_erase", { doc: this.doc, mark, remove }),
+    );
+  }
+
   /** Takes one mark off the page it is on, by the id a state reply gave it. */
   async unmark(mark: number): Promise<EditState> {
     return this.adopt(

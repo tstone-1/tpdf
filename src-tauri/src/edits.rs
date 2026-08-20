@@ -564,6 +564,59 @@ impl Edits {
         )
     }
 
+    /// Rubs strokes out of a drawing, addressed by identity and by position.
+    ///
+    /// **Positions rather than points**, because the frontend is deciding *which*
+    /// strokes the eraser touched and the backend owns *what they are*: sending
+    /// the survivors back would let a stale or wrong frontend rewrite a drawing's
+    /// geometry through a command whose name says it only removes.
+    ///
+    /// **The whole gesture is one call and one command.** A reader sweeps an
+    /// eraser across four strokes and lets go; that is one thing they did, so it
+    /// is one undo. The frontend hides the doomed strokes while the drag is live
+    /// and sends the list on release, exactly as drawing accumulates and commits
+    /// on Enter.
+    ///
+    /// **Erasing everything removes the mark**, rather than leaving a drawing of
+    /// nothing behind: `Doc::reink` refuses an empty result and this is the
+    /// layer that knows the gesture meant "get rid of it". A reader who rubs out
+    /// the last stroke of a drawing and presses undo gets the whole drawing
+    /// back, because `Unannotate` is one command too.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the id names no mark, or one already
+    /// removed; the mark is not a drawing; a position names no stroke.
+    pub fn erase(&self, doc: u32, mark: u64, remove: Vec<usize>) -> Result<EditState, String> {
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let id = MarkId::from_raw(mark);
+        let held = model.strokes_of(id).len();
+        // Refused rather than ignored: a position past the end means the sender
+        // is looking at a drawing this is not, and quietly erasing the strokes
+        // it *did* name would act on half a stale gesture.
+        if let Some(past) = remove.iter().find(|&&at| at >= held) {
+            return Err(format!(
+                "stroke {past} of a drawing that has {held}, so this gesture was                  aimed at something else"
+            ));
+        }
+        let keep: Vec<Stroke> = model
+            .strokes_of(id)
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !remove.contains(at))
+            .map(|(_, stroke)| stroke.clone())
+            .collect();
+        if keep.iter().any(Stroke::is_drawable) {
+            model.reink(id, keep).map_err(describe)?;
+        } else {
+            model
+                .apply(Command::Unannotate { mark: id })
+                .map_err(describe)?;
+        }
+        Ok(snapshot(model))
+    }
+
     /// Replaces what one mark says, addressed by identity.
     ///
     /// Not routed through [`command`](Edits::command) like the other four, and
@@ -743,8 +796,11 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                 PlannedMark {
                     kind: body.kind,
                     source: view.source,
-                    quads: body.quads.clone(),
-                    strokes: body.strokes.clone(),
+                    // `snapshot`'s reason, and the consequence here is the
+                    // one that reaches a file: `/Rect` and `/InkList` are
+                    // written from these.
+                    quads: model.quads_of(*mark).to_vec(),
+                    strokes: model.strokes_of(*mark).to_vec(),
                     color: body.color,
                     author: body.author.clone(),
                     note: model.note_of(*mark).to_string(),
@@ -888,13 +944,18 @@ fn snapshot(model: &Doc) -> EditState {
                 id: id.get(),
                 kind: mark.kind,
                 page: page.get(),
-                quads: mark
-                    .quads
+                // **Through the model's accessors, not off the body**, because
+                // an eraser moves both: `Doc::quads_of` and `Doc::strokes_of`
+                // answer what is drawn *now*, and the body still holds what was
+                // drawn first. Taking `mark.quads` here would put the popup and
+                // the hit test around a stroke that has gone.
+                quads: model
+                    .quads_of(id)
                     .iter()
                     .flat_map(|q| [q.left, q.top, q.right, q.bottom])
                     .collect(),
-                strokes: mark
-                    .strokes
+                strokes: model
+                    .strokes_of(id)
                     .iter()
                     .map(|stroke| stroke.points.iter().flat_map(|p| [p.x, p.y]).collect())
                     .collect(),
@@ -1526,6 +1587,155 @@ mod tests {
 
     fn stamped() -> String {
         "D:20260818120000Z".to_string()
+    }
+
+    /// Three strokes well apart, the shape the eraser tests need.
+    fn three_strokes(page: u64) -> NewMark {
+        a_drawing(
+            page,
+            vec![
+                vec![72.0, 90.0, 300.0, 90.0],
+                vec![72.0, 150.0, 300.0, 150.0],
+                vec![72.0, 210.0, 300.0, 210.0],
+            ],
+        )
+    }
+
+    #[test]
+    fn one_sweep_is_one_undo() {
+        // The reason `erase` takes a list rather than being called once per
+        // stroke: a reader sweeping across two strokes did one thing, so one
+        // press of undo puts both back. Per-stroke calls would need two.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn");
+        let mark = state.marks[0].id;
+
+        let state = edits.erase(7, mark, vec![0, 2]).expect("erased");
+        assert_eq!(state.marks.len(), 1, "the drawing is still there");
+        assert_eq!(state.marks[0].strokes.len(), 1, "with its middle stroke");
+        assert_eq!(state.marks[0].strokes[0], vec![72.0, 150.0, 300.0, 150.0]);
+
+        let state = edits.undo(7).expect("undo");
+        assert_eq!(
+            state.marks[0].strokes.len(),
+            3,
+            "one undo, not two -- the sweep was one command"
+        );
+    }
+
+    #[test]
+    fn erasing_the_last_stroke_takes_the_drawing_with_it() {
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn");
+        let mark = state.marks[0].id;
+
+        let state = edits.erase(7, mark, vec![0, 1, 2]).expect("erased");
+        assert!(
+            state.marks.is_empty(),
+            "a drawing of nothing was left behind: {:?}",
+            state.marks
+        );
+
+        let state = edits.undo(7).expect("undo");
+        assert_eq!(
+            state.marks.len(),
+            1,
+            "and one undo brings the whole drawing back, not an empty one"
+        );
+        assert_eq!(state.marks[0].strokes.len(), 3);
+    }
+
+    #[test]
+    fn a_gesture_aimed_at_a_stroke_that_is_not_there_is_refused_whole() {
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn");
+        let mark = state.marks[0].id;
+
+        // Position 0 is real and position 9 is not. The refusal has to take the
+        // whole gesture: acting on the half it understood would erase a stroke
+        // on the strength of a sweep aimed at a drawing this is not.
+        let why = edits.erase(7, mark, vec![0, 9]).expect_err("refused");
+        assert!(why.contains("stroke 9"), "{why}");
+        assert!(why.contains("has 3"), "{why}");
+        assert_eq!(
+            edits.state(7).expect("state").marks[0].strokes.len(),
+            3,
+            "the stroke it did understand was erased anyway"
+        );
+    }
+
+    #[test]
+    fn erasing_the_same_stroke_twice_in_one_sweep_is_not_an_error() {
+        // A sweep reports what it touched, and a slow drag touches one stroke
+        // many times. Deduplicating in the frontend would be a rule two layers
+        // have to agree on; tolerating it here is one.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn");
+        let mark = state.marks[0].id;
+        let state = edits.erase(7, mark, vec![1, 1, 1]).expect("erased");
+        assert_eq!(state.marks[0].strokes.len(), 2);
+    }
+
+    #[test]
+    fn the_reply_carries_the_rectangle_the_drawing_has_now() {
+        // `snapshot`'s half, and it needs a test of its own: the model's
+        // `quads_of` is proved in `docmodel.rs` against the accessor directly,
+        // which says nothing about whether the reply asks it. Aiming a mutation
+        // of this line at that test left it SURVIVED -- the trap about unit
+        // tests that build their fixtures below the layer under test.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn");
+        let mark = state.marks[0].id;
+        let before = state.marks[0].quads.clone();
+
+        let state = edits.erase(7, mark, vec![2]).expect("erased");
+        let after = &state.marks[0].quads;
+        assert_eq!(after.len(), 4, "a drawing is one rectangle");
+        assert!(
+            after[3] < before[3],
+            "the reply's rectangle still reaches the erased stroke: {after:?} against {before:?}"
+        );
+    }
+
+    #[test]
+    fn a_saved_file_is_written_from_what_survived_the_eraser() {
+        // The plan is what `save.rs` writes `/InkList` and `/Rect` from, and it
+        // reads the same accessors the snapshot does. Without that, a document
+        // could look right in the window and save the erased stroke.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn");
+        let mark = state.marks[0].id;
+        let before = edits.plan(7).expect("plan").marks[0].quads[0];
+
+        edits.erase(7, mark, vec![2]).expect("erased");
+        let planned = &edits.plan(7).expect("plan").marks[0];
+        assert_eq!(
+            planned.strokes.len(),
+            2,
+            "the plan still holds three strokes"
+        );
+        assert!(
+            planned.quads[0].bottom < before.bottom,
+            "the rectangle a save writes still reaches the erased stroke"
+        );
     }
 
     /// A drawing sent the way the viewer sends one: strokes, and no rectangle.

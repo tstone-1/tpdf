@@ -124,6 +124,9 @@ export const SELECTION_MENU: Entry[] = [
   // to blank paper, and also has no chord, so a right-click is the only route
   // to it that anyone will find without being told.
   "edit.draw",
+  // And the eraser with them: a reader right-clicks on the drawing they want
+  // rid of, which is the gesture that puts the pointer where the tool is needed.
+  "edit.erase",
   "edit.copy",
   "edit.highlightSelection",
   "edit.underlineSelection",

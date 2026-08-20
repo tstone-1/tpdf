@@ -179,6 +179,15 @@ export interface AppActions {
    * this is every point between them.
    */
   draw(): void;
+  /**
+   * Arms the eraser.
+   *
+   * {@link draw}'s counterpart, and the third command here that arms rather
+   * than acts. It takes whole strokes out of freehand drawings; a sweep over a
+   * highlight does nothing, and removing a whole mark of any kind is
+   * {@link removeMark}, which says so in its name.
+   */
+  erase(): void;
   /** Takes the mark whose note is open off the page it is on. */
   removeMark(): void;
   /** Whether a mark's note is open, which is what names the mark to remove. */
@@ -520,6 +529,20 @@ export function registerAppCommands(
       title: "Draw freehand...",
       enabled: withDocument,
       run: () => actions.draw(),
+    },
+    {
+      // Beside the pen, because it is the other tool that stays armed and a
+      // reader who has just drawn something is the reader who wants it.
+      //
+      // "Erase drawing", not "Erase": it takes whole strokes out of freehand
+      // drawings and nothing else, and a bare "Erase" beside "Remove mark"
+      // would read as a second, blunter way to delete anything. The ellipsis
+      // matches the two tools above it and says the same thing they do --- the
+      // command arms something rather than acting now.
+      id: "edit.erase",
+      title: "Erase drawing...",
+      enabled: withDocument,
+      run: () => actions.erase(),
     },
     {
       id: "edit.highlightSelection",

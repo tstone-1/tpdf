@@ -21,7 +21,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MIN_BOX } from "./markband";
-import type { MarkKind, PageView } from "./pages";
+import type { MarkKind, MarkView, PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer, type Drawn } from "./viewer";
 import { INK_SAMPLE } from "./markband";
@@ -40,9 +40,13 @@ let dom: FakeDom;
 /** Every box the viewer reported, in order. */
 let drawn: { kind: MarkKind; page: number; shape: Drawn }[];
 
+/** Every sweep of the eraser the viewer reported, in order. */
+let erased: { mark: number; remove: number[] }[];
+
 beforeEach(() => {
   dom = installFakeDom();
   drawn = [];
+  erased = [];
   core.invoke.mockResolvedValue(null);
 });
 
@@ -63,9 +67,36 @@ function build(pages?: PageView[]): Viewer {
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
     onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
+    onErased: (mark, remove) => erased.push({ mark, remove }),
   });
   if (pages) viewer.setPages(pages);
   return viewer;
+}
+
+/**
+ * A drawing of three horizontal strokes, well apart, in the page's own points.
+ *
+ * Three because the middle one is what separates "the survivors are the ones
+ * the nib missed" from "the survivor is the last": with two strokes those are
+ * the same assertion. Y of 100, 300 and 500 on an 800 pt page, so the nib's few
+ * pixels cannot reach two of them at once at any zoom this test uses.
+ */
+function threeStrokes(id = 77): MarkView[] {
+  return [
+    {
+      id,
+      kind: "ink",
+      page: 1,
+      quads: [70, 98, 310, 502],
+      strokes: [
+        [80, 100, 300, 100],
+        [80, 300, 300, 300],
+        [80, 500, 300, 500],
+      ],
+      color: [0.85, 0.15, 0.15],
+      note: "",
+    },
+  ];
 }
 
 /** Presses, drags and releases, in the root's client coordinates. */
@@ -775,5 +806,163 @@ describe("drawing freehand", () => {
     expect(turned[0]).toBeCloseTo(turned[2] ?? 0, 3);
     expect(turned[1]).not.toBeCloseTo(turned[3] ?? 0, 1);
     viewer.destroy();
+  });
+});
+
+describe("the eraser", () => {
+  /**
+   * Where a point in the page's own space lands in the root's client
+   * coordinates, at the zoom the viewer settled on.
+   *
+   * Derived from the viewer rather than assumed, because every other number in
+   * this block is in page points and the pointer speaks client pixels. A
+   * hardcoded scale here would make each assertion true only at whatever zoom
+   * the fixture happens to produce.
+   */
+  function at(viewer: Viewer, x: number, y: number): { x: number; y: number } {
+    const box = viewer.markAnchor(77);
+    if (!box) throw new Error("the drawing is not on screen");
+    // The mark's rectangle is `[70, 98, 310, 502]` in page points, so two
+    // corners give the mapping in both directions with no zoom read anywhere.
+    const sx = (box.right - box.left) / (310 - 70);
+    const sy = (box.bottom - box.top) / (502 - 98);
+    return { x: box.left + (x - 70) * sx, y: box.top + (y - 98) * sy };
+  }
+
+  it("takes the stroke under the nib and leaves the others", async () => {
+    const viewer = build();
+    viewer.setMarks(threeStrokes());
+    await settle();
+    viewer.armErase();
+    const from = at(viewer, 120, 300);
+    const to = at(viewer, 260, 300);
+    drag(from, to);
+    await settle();
+    expect(erased).toEqual([{ mark: 77, remove: [1] }]);
+  });
+
+  it("takes several when the sweep crosses several, in one report", async () => {
+    // The reason `erase` takes a list: a reader who swept across two strokes did
+    // one thing, so it is one call and one undo.
+    const viewer = build();
+    viewer.setMarks(threeStrokes());
+    await settle();
+    viewer.armErase();
+    // Down the left-hand ends of all three, which the nib passes in one stroke.
+    drag(at(viewer, 85, 100), at(viewer, 85, 500));
+    await settle();
+    expect(erased).toEqual([{ mark: 77, remove: [0, 1, 2] }]);
+  });
+
+  it("reports the strokes in order however the hand crossed them", async () => {
+    // Bottom to top. The list is sorted so that a diagnostic quoting it reads
+    // the same for two readers who erased the same thing.
+    const viewer = build();
+    viewer.setMarks(threeStrokes());
+    await settle();
+    viewer.armErase();
+    drag(at(viewer, 85, 500), at(viewer, 85, 100));
+    await settle();
+    expect(erased).toEqual([{ mark: 77, remove: [0, 1, 2] }]);
+  });
+
+  it("says nothing when the sweep touches nothing", async () => {
+    // The control for every assertion above: a sweep that reported a mark
+    // whatever it crossed would satisfy them all.
+    const viewer = build();
+    viewer.setMarks(threeStrokes());
+    await settle();
+    viewer.armErase();
+    drag(at(viewer, 120, 200), at(viewer, 260, 200));
+    await settle();
+    expect(erased).toEqual([]);
+  });
+
+  it("leaves a highlight alone", async () => {
+    // A highlight has no strokes to take, and removing a whole mark of any kind
+    // is a different command that says so in its name.
+    //
+    // **The fixture carries strokes it has no business carrying, and that is
+    // the point.** A well-formed highlight has an empty stroke list, so the
+    // loop finds nothing whether or not the kind is checked -- a mutation
+    // deleting the guard survived against a plain highlight, because the guard
+    // is unreachable for one. The model's biconditional says this mark cannot
+    // arrive from the backend; the viewer is still the place that must not act
+    // on it if it does, and this is the only input that can tell.
+    const viewer = build();
+    viewer.setMarks([
+      {
+        id: 77,
+        kind: "highlight",
+        page: 1,
+        quads: [70, 98, 310, 502],
+        strokes: [
+          [80, 100, 300, 100],
+          [80, 300, 300, 300],
+          [80, 500, 300, 500],
+        ],
+        color: [1, 0.9, 0.2],
+        note: "",
+      },
+    ]);
+    await settle();
+    viewer.armErase();
+    drag(at(viewer, 120, 300), at(viewer, 260, 300));
+    await settle();
+    expect(erased).toEqual([]);
+  });
+
+  it("counts what the live sweep has taken, and forgets it on release", async () => {
+    const viewer = build();
+    viewer.setMarks(threeStrokes());
+    await settle();
+    expect(viewer.sweptStrokes).toBe(null);
+    viewer.armErase();
+    expect(viewer.sweptStrokes).toBe(0);
+    drag(at(viewer, 85, 100), at(viewer, 85, 500), false);
+    await settle();
+    expect(viewer.sweptStrokes).toBe(3);
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 0, clientY: 0 });
+    await settle();
+    expect(viewer.sweptStrokes).toBe(0);
+  });
+
+  it("stays armed between sweeps", async () => {
+    // The difference from the box, and the same choice ink made: a reader
+    // rubbing something out rubs out several things.
+    const viewer = build();
+    viewer.setMarks(threeStrokes());
+    await settle();
+    viewer.armErase();
+    drag(at(viewer, 120, 300), at(viewer, 260, 300));
+    await settle();
+    expect(viewer.eraseArmed).toBe(true);
+  });
+
+  it("sends nothing when Escape ends the sweep", async () => {
+    const viewer = build();
+    viewer.setMarks(threeStrokes());
+    await settle();
+    viewer.armErase();
+    drag(at(viewer, 85, 100), at(viewer, 85, 500), false);
+    await settle();
+    expect(viewer.sweptStrokes).toBe(3);
+    escape();
+    await settle();
+    expect(erased).toEqual([]);
+    expect(viewer.eraseArmed).toBe(false);
+  });
+
+  it("puts the pen away, and the pen puts it away", async () => {
+    // Two tools, one hand. Both directions, because a one-way clear leaves the
+    // other order producing two armed tools and one gesture that has to guess.
+    const viewer = build();
+    viewer.armDraw("ink");
+    viewer.armErase();
+    expect(viewer.drawArmed).toBe(null);
+    expect(viewer.eraseArmed).toBe(true);
+    viewer.armDraw("ink");
+    expect(viewer.eraseArmed).toBe(false);
+    expect(viewer.drawArmed).toBe("ink");
   });
 });

@@ -2226,7 +2226,20 @@ after the number stopped being right.
 
 Re-measured the same day at **281 names** after multi-stroke drawing added the
 two preview checks: `comments` 246 ran / 35 skipped / 0 failed, 281 names, all
-distinct. That last clause is now checked by the harness itself --- `Report.finish`
+distinct. And again at **284** when the eraser landed: `comments` **249 ran / 35
+skipped / 0 failed**, all distinct. The three it added are `edit.erase` in the
+command sweep and the two that read the eraser's preview --- *"a stroke the
+eraser has taken stops being drawn at once"* at 38% of the band before the nib
+and 0% after it, and its control *"and one the nib missed is still there"* at
+44%. The control is not a formality: an overlay that stopped painting the whole
+drawing satisfies the first check perfectly.
+
+**The first of those runs went red, on the check written for exactly it.**
+`edit.erase` was registered and unclassified, so *"every registered command is
+classified, and every classification is registered"* failed with
+`unclassified [edit.erase]` --- which is the trap about a command deliberately
+left out of the harness still having to be classified, firing on a command that
+was not meant to be left out at all. That last clause is now checked by the harness itself --- `Report.finish`
 fails a run in which two checks share a name, because the roll above is compared
 as a **set** and a set cannot see a repeat. It caught a real one within the hour
 of being written; see `docs/TRAPS.md`.

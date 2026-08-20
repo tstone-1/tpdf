@@ -19,6 +19,26 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### Rub a drawing out
+
+- **Erase drawing...** in the Edit menu and the right-click menu arms an eraser.
+  Drag across a drawing and the strokes under the pointer go. It stays armed, so
+  you can keep going; **Esc** puts it away.
+
+- It takes **whole strokes**, not parts of them: sweeping across the middle of a
+  line removes that line rather than leaving a gap in it.
+
+- The status line counts what the sweep has taken while you are dragging, and
+  the strokes disappear as the pointer crosses them, so you can see what you are
+  about to lose before you let go.
+
+- One sweep is **one undo**, however many strokes it took. Rub out the last
+  stroke of a drawing and the whole drawing goes --- and one undo brings it back
+  whole.
+
+- Only drawings. A sweep over a highlight or a comment does nothing; *Remove
+  mark* is still how you take one of those off.
+
 ### Draw on a page
 
 - **Draw freehand...** in the Edit menu and the right-click menu arms a pen.

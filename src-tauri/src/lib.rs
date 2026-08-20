@@ -632,6 +632,23 @@ async fn annot_remove(
     edits.unannotate(doc, mark)
 }
 
+/// Rubs strokes out of one drawing.
+///
+/// `remove` is positions into the drawing's current stroke list, not points ---
+/// see [`edits::Edits::erase`] for why the frontend does not get to send back
+/// geometry through a command that only removes. One call per gesture, so one
+/// undo puts the whole sweep back; and a sweep that takes the last stroke takes
+/// the drawing with it.
+#[tauri::command]
+async fn annot_erase(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+    remove: Vec<usize>,
+) -> Result<edits::EditState, String> {
+    edits.erase(doc, mark, remove)
+}
+
 /// Replaces what one mark says.
 ///
 /// The whole note, not an edit to it --- see [`docmodel::Command::Renote`]. The
@@ -1983,6 +2000,7 @@ pub fn run() {
             page_move,
             annot_mark,
             annot_remove,
+            annot_erase,
             annot_note,
             edit_undo,
             edit_redo,

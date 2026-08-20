@@ -84,6 +84,7 @@ function harness(
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
     draw: () => fired.push("draw"),
+    erase: () => fired.push("erase"),
     hasSelection: () => selected,
     // Default false, on the same reasoning: a document opens with no note open,
     // so the withheld direction is what a test that says nothing about a mark
@@ -665,6 +666,7 @@ describe("the window shortcuts for editing", () => {
       addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
       drawBox: () => fired.push("drawBox"),
     draw: () => fired.push("draw"),
+    erase: () => fired.push("erase"),
       hasSelection: () => false,
       removeMark: () => fired.push("removeMark"),
       hasOpenMark: () => false,

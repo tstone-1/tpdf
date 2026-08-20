@@ -10743,3 +10743,48 @@ assert the anchor and the size instead** — which still proves the foreign read
 rectangle, because it cannot place the icon on your corner otherwise — and note that the icon
 hangs **below** the rectangle's bottom edge, so a containment check against your own `/Rect`
 reports a defect in a mark that is correct.
+
+### A guard whose only reachable input is one the model forbids
+
+`viewer.ts`'s eraser skips marks that are not drawings: `if (!isPath(mark.kind)) continue;`.
+Deleting that line **changed nothing** — a mutation aimed at a test that swept the nib across a
+highlight survived, because a well-formed highlight has an empty stroke list and the loop under
+the guard finds nothing whether the kind is checked or not. The guard is unreachable for every
+input the backend can send, which is the model's `strokes.is_empty() != (kind != Ink)`
+biconditional doing its job one layer down.
+
+**The fixture that makes it reachable is a malformed one**, and building it deliberately is the
+answer rather than deleting the guard: a highlight carrying three strokes, which the model
+refuses and which the viewer must therefore never see. The viewer is still the place that must
+not act on it if it arrives, and that input is the only thing that can tell a working guard from
+a deleted one.
+
+Related to the existing entry about keeping an unreachable guard when the type can carry it
+instead, and the difference is worth naming: there the type could express the impossibility, so
+the guard could be deleted. Here `MarkView` allows any kind to carry strokes — the wire format
+is a JSON object and the biconditional lives in Rust — so the guard is real defence against a
+real (if remote) shape, and the test has to construct that shape by hand.
+
+### The nib was tested where it was, not where it had been
+
+The eraser's first version asked, at every pointer report, which strokes were within its radius
+of *that point*. A pointer reports at the display's rate and a hand crosses several strokes
+between two reports, so a quick sweep down a column of three strokes took the outer two and left
+the middle one — it lay between the samples.
+
+**It is the same failure the hit test already avoided one level down.** `strokeTouches` measures
+to the nearest *segment* of the stroke rather than to its nearest recorded point, precisely
+because a fast hand leaves points far apart; the sweep then made the identical mistake about its
+own path. Two polylines, and only one of them was being treated as a polyline.
+
+The fix is segment-to-polyline: the travel from the last report to this one, against each
+segment of each stroke. Which needs a crossing test as well as the four endpoint distances — an
+X of two long strokes is at distance zero with all four ends a hundred points apart, and a
+mutation deleting that test reddens five checks.
+
+Two notes for anyone writing the next one. A press is a segment of no length and needs no
+special case, so `strokeTouches(points, at, r)` is now `strokeSwept(points, at, at, r)` and the
+existing tests still hold. And **the first mutation written for this survived**: replacing two of
+the four endpoint distances with degenerate ones left three terms still reading the previous
+point, so the travel was still tested. Aim a mutation at the line that *holds* the state — here
+`const from = swept.last;` — not at one of several places that consume it.

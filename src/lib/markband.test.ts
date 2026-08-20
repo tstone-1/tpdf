@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   boxQuad,
+  ERASER_RADIUS,
   ICON_SIZE,
   LINE_FRACTION,
   MIN_BOX,
@@ -10,6 +11,8 @@ import {
   isOutline,
   isWash,
   markBand,
+  strokeSwept,
+  strokeTouches,
   type Quad,
 } from "./markband";
 
@@ -255,5 +258,88 @@ describe("the rectangle a drag makes", () => {
     // sliver against the edge -- which is the refusal working on a number the
     // reader never drew.
     expect(boxQuad({ x: -200, y: -200 }, { x: 1, y: 1 }, PAGE)).toBe(null);
+  });
+});
+
+describe("what the eraser's nib touches", () => {
+  /** A stroke across the page with one corner in it. */
+  const BENT = [
+    { x: 100, y: 100 },
+    { x: 300, y: 100 },
+    { x: 300, y: 260 },
+  ];
+
+  it("takes a stroke the nib is on", () => {
+    expect(strokeTouches(BENT, { x: 200, y: 100 }, ERASER_RADIUS)).toBe(true);
+  });
+
+  it("leaves one the nib misses", () => {
+    // The control. Without it, a predicate that answered `true` for everything
+    // would pass every other assertion in this block.
+    expect(strokeTouches(BENT, { x: 200, y: 180 }, ERASER_RADIUS)).toBe(false);
+  });
+
+  it("measures to the nearest segment, not to the nearest recorded point", () => {
+    // The whole reason this is not a point distance. A fast hand leaves points
+    // 200 pt apart; the midpoint of that segment is nowhere near either of
+    // them, and a nearest-point test lets the eraser pass straight through the
+    // middle of a long stroke. Measured: 100 pt from each end, 0 from the line.
+    const long = [
+      { x: 100, y: 100 },
+      { x: 300, y: 100 },
+    ];
+    expect(strokeTouches(long, { x: 200, y: 101 }, 2)).toBe(true);
+    // And the same point against the two endpoints alone, which is what a
+    // nearest-point implementation would be comparing.
+    expect(Math.hypot(200 - 100, 101 - 100)).toBeGreaterThan(ERASER_RADIUS);
+  });
+
+  it("does not reach along the line the segment sits on", () => {
+    // The clamp. Unclamped, the distance from a point beyond the end of a
+    // segment is measured to the infinite line through it -- which here is
+    // zero, so the eraser would take a stroke it passed a hundred points clear
+    // of, in the stroke's own direction.
+    expect(strokeTouches(BENT, { x: 500, y: 100 }, ERASER_RADIUS)).toBe(false);
+    expect(strokeTouches(BENT, { x: 302, y: 100 }, ERASER_RADIUS)).toBe(true);
+  });
+
+  it("reaches the corner between two segments", () => {
+    expect(strokeTouches(BENT, { x: 301, y: 101 }, ERASER_RADIUS)).toBe(true);
+  });
+
+  it("answers for a stroke of one point rather than refusing it", () => {
+    // The model will not keep such a stroke, so nothing should ever ask -- and
+    // a geometry helper that is wrong on a degenerate input is one somebody
+    // calls from somewhere else later. Both directions, so "always false" does
+    // not pass.
+    expect(strokeTouches([{ x: 50, y: 50 }], { x: 52, y: 50 }, ERASER_RADIUS)).toBe(true);
+    expect(strokeTouches([{ x: 50, y: 50 }], { x: 90, y: 50 }, ERASER_RADIUS)).toBe(false);
+  });
+
+  it("takes a stroke it crosses in the middle, with every end far away", () => {
+    // The case no endpoint distance can see: an X of two long segments is at
+    // distance zero and all four ends are a hundred points apart. Without the
+    // crossing test the nib goes straight through the stroke it is aimed at.
+    const across = [
+      { x: 100, y: 300 },
+      { x: 500, y: 300 },
+    ];
+    expect(strokeSwept(across, { x: 300, y: 100 }, { x: 300, y: 500 }, 1)).toBe(true);
+    // The control, and it is the same two segments moved apart rather than a
+    // different fixture: parallel, so they never cross and no end is near.
+    expect(strokeSwept(across, { x: 300, y: 100 }, { x: 300, y: 280 }, 1)).toBe(false);
+  });
+
+  it("is empty-handed about an empty stroke", () => {
+    expect(strokeTouches([], { x: 0, y: 0 }, ERASER_RADIUS)).toBe(false);
+  });
+
+  it("uses the radius it is given", () => {
+    // The radius is a parameter because the viewer divides it by the zoom. A
+    // constant baked in here would make that division a no-op and nothing would
+    // say so.
+    const off = { x: 200, y: 120 };
+    expect(strokeTouches(BENT, off, 10)).toBe(false);
+    expect(strokeTouches(BENT, off, 25)).toBe(true);
   });
 });

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 381 entries
+The one thing this file does *not* carry in full is the trap list --- 383 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 381 of them and the full text
-was 93% of this file --- an instruction budget spent on the 375 traps that are not
+titles. Only the titles are here, because there are 383 of them and the full text
+was 93% of this file --- an instruction budget spent on the 377 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1222,6 +1222,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A check that derives its inputs from the thing it is testing cannot fail
 - A closure and a direct read of the same variable disagreed, and it is unexplained
 - A hit-test slack that rescues a small target hands the click to its neighbour
+- The nib was tested where it was, not where it had been (the same polyline mistake one level up; and the first mutation written for it survived, because three other terms still read the state)
 - Recording a jump at the call sites is a rule; recording it inside the primitive is a mechanism
 - A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 - A synchroniser is not a fix, and the entry above called the arrows fixed anyway (it is the entry above that was wrong, six days later)
@@ -1247,6 +1248,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test whose failure is a hang reports a pass and a timeout in one breath
 - A check that cannot run is not a check, and a locked screen is enough to stop one
 - An unreachable guard is worth keeping if the type can carry it instead
+- A guard whose only reachable input is one the model forbids (build the malformed fixture by hand; the wire format cannot express the biconditional the model enforces)
 - An Escape ordering that no reachable input can distinguish (the surviving mutation was right and the comment claiming the ordering mattered was the defect)
 - A label rendered only from real ids cannot be tested on a combination none of them uses
 - A post-destroy guard that returns early leaks what it declined to take
