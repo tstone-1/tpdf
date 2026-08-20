@@ -36,7 +36,7 @@ import {
 } from "./appcommands";
 import { frame, Report, settle as settleFor } from "./checkreport";
 import { MULTI_CLICK_SLOP_PX } from "./clicks";
-import { INK_WIDTH } from "./markband";
+import { INK_WIDTH, TEXT_INSET, TEXT_LEADING, TEXT_SIZE } from "./markband";
 import { DEFAULT_SWATCH, PALETTE, swatch } from "./markcolors";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
@@ -8215,16 +8215,63 @@ async function overlayInkChecks(
     corners: number;
     shoulder: number;
     second: number;
+    /** Ink in the column and band where the first line of type must be. */
+    lineOne: number;
+    /** The same, where a second line goes. */
+    lineTwo: number;
+    /** How many of the box's top, right and bottom borders carry ink. */
+    rim: number;
     /** Which sides carry ink, for the detail line. */
     sides: string[];
     /** The rectangle as it was measured on screen, in CSS pixels. */
     box: { width: number; height: number };
   } | null> => {
     const size = viewer.pageSize(0);
+    // **A text box's rectangle is a fixed size in points, not a fraction of the
+    // page**, and that is the repair for a check that was red on four of the
+    // fourteen corpora. Every other reading here is a fraction of the mark's
+    // rectangle, which is right for a shape that scales with the page --- and a
+    // text box's content does not scale: it is 11-point type whatever the paper
+    // is. On A0 the page-relative box was 1,073 x 135 points, so two lines of
+    // type rounded to 0% of it and the check read "nothing was drawn"; on a
+    // 20-pixel-tall box the *sample* for the left edge, which reads the middle
+    // tenth of the height, landed on the first line and the check read "the
+    // rectangle was drawn". Both readings were wrong about a correct painter,
+    // in opposite directions, and they are the same defect: a fraction of a
+    // rectangle compared against something that is not.
+    //
+    // 260 x 90 points. The width and the *type* need far less --- two lines of
+    // 11-point Helvetica end by 28.4 points down, which is
+    // `TEXT_INSET + 2 * TEXT_SIZE * TEXT_LEADING` --- and the height is set by
+    // the **sampler's own floor at the smallest scale in the corpus**, not by
+    // the type. `inked` refuses a region under two pixels, `core` reads the
+    // middle tenth of the height, and an A0 page fits into a 900-pixel window at
+    // 0.37 pixels per point: at 40 points tall that sample is 1.5 pixels and the
+    // whole reading comes back `null`, which turned a red check into a skipped
+    // one on `vector-heavy` and `vector-multi`. At 90 it is 3.4 pixels. The
+    // extra height is empty paper below the type, which is what a text box
+    // dragged out large and typed one sentence into actually looks like.
+    //
+    // The same rectangle on every corpus is what lets the readings below be
+    // literals. Clamped to the page in case one is ever smaller than that; no
+    // corpus is, and if the clamp ever bites the check goes red with the
+    // measured box printed in its detail line rather than passing quietly.
+    const TEXT_BOX_PT = { width: 260, height: 90 };
+    const boxPt = {
+      width: Math.min(TEXT_BOX_PT.width, size.width_pt * 0.5),
+      height: Math.min(TEXT_BOX_PT.height, size.height_pt * 0.2),
+    };
     const quad =
       kind === "note"
         ? [size.width_pt * 0.2, size.height_pt * 0.08, size.width_pt * 0.2 + 20, size.height_pt * 0.08 + 20]
-        : [size.width_pt * 0.15, size.height_pt * 0.08, size.width_pt * 0.6, size.height_pt * 0.12];
+        : kind === "textbox"
+          ? [
+              size.width_pt * 0.15,
+              size.height_pt * 0.08,
+              size.width_pt * 0.15 + boxPt.width,
+              size.height_pt * 0.08 + boxPt.height,
+            ]
+          : [size.width_pt * 0.15, size.height_pt * 0.08, size.width_pt * 0.6, size.height_pt * 0.12];
     // **Ink is the one kind whose rectangle is not its shape**, so it is sent
     // the strokes and the rectangle is derived here the way the model derives
     // it. Two horizontal strokes along the top and bottom of the same box every
@@ -8378,9 +8425,85 @@ async function overlayInkChecks(
       at.right,
       at.top + height * 0.9,
     );
+
+    // **Three readings in points off the box's own corner, not in fractions of
+    // it.** They exist because the text box needs an observable that does not
+    // move when the paper does, and they are taken for every kind so that the
+    // distinctness signature keeps one shape --- which also makes the other
+    // eight their controls: a wash inks both line bands *and* all three rim
+    // strips, a frame inks the rims and neither band.
+    //
+    // `scale` is derived from the two things that define it, the rectangle as
+    // asked for in points and as measured on screen, rather than from the
+    // viewer's zoom --- so it is right whatever the fit and needs no second
+    // route to the same number.
+    const scale = width / (right - left);
+    // **This kind's own rectangle in points, not the text box's.** `boxPt`
+    // above is the text box's fixed 260 x 90, and using it here read a note's
+    // right-hand border 240 points outside the 20-point box it is drawn in ---
+    // a sample of empty canvas reported as a clean border.
+    const ownW = right - left;
+    const ownH = bottom - top;
+    const pt = (x0: number, y0: number, x1: number, y1: number) =>
+      along(
+        at.left + x0 * scale,
+        at.top + y0 * scale,
+        at.left + x1 * scale,
+        at.top + y1 * scale,
+      );
+    const band = (y0: number, y1: number) =>
+      inked(
+        at.left + 2 * scale,
+        at.top + y0 * scale,
+        // Clamped to this kind's own width, for `ownW`'s reason: 80 points of
+        // column is the text box's two strings and is wider than a note's whole
+        // rectangle.
+        at.left + Math.min(80, ownW) * scale,
+        at.top + y1 * scale,
+      ) ?? 0;
+    // **Literals, and the constants they were chosen from are stated rather
+    // than read.** A band computed from `TEXT_SIZE` and `TEXT_LEADING` moves
+    // with them and stops being able to fail, which is the argument
+    // `shoulder` already makes about `SQUIGGLE_HEIGHT`. At 11-point type with
+    // 1.2 leading and a 2-point inset the first line's baseline is at 13 points
+    // and its bodies span roughly 5 to 13; the second sits at 26.2, spanning
+    // 18 to 26. So 4..15 and 17..28 hold one line each and no part of the
+    // other, and both are in the top third of a box 90 points tall. The column
+    // is 2..80 points, which covers the
+    // fixture's two strings --- about 55 points of Helvetica --- and is
+    // independent of how wide the rectangle is.
+    const lineOne = band(4, 15);
+    const lineTwo = band(17, 28);
+    // **The rectangle's own border, three sides of it.** This replaces
+    // `edges === 0` for the text box, which asked the wrong question: that
+    // sample reads the middle tenth of the height, which in a two-line box is
+    // where the *second line* sits, and on A4 it passed by half a point.
+    //
+    // The left side is deliberately absent. The type starts `TEXT_INSET` in,
+    // which is 2 points, and a strip narrow enough to sit inside that is
+    // narrower than a glyph's antialiasing --- so it would be a reading that
+    // fails on correct output. Three sides catch what this has to catch: a
+    // `strokeRect` inks all four and a `fillRect` inks everything.
+    const rim = [
+      pt(0, 0, ownW, 3),
+      pt(ownW - 3, 0, ownW, ownH),
+      pt(0, ownH - 3, ownW, ownH),
+    ].filter(Boolean).length;
     return whole === null || core === null || shoulder === null || second === null
       ? null
-      : { whole, core, edges, corners, shoulder, second, sides: inkedSides, box: { width, height } };
+      : {
+          whole,
+          core,
+          edges,
+          corners,
+          shoulder,
+          second,
+          lineOne,
+          lineTwo,
+          rim,
+          sides: inkedSides,
+          box: { width, height },
+        };
   };
 
   // The control, and it comes first for the reason every control here does: a
@@ -8404,6 +8527,9 @@ async function overlayInkChecks(
     corners: number;
     shoulder: number;
     second: number;
+    lineOne: number;
+    lineTwo: number;
+    rim: number;
   };
   const read: Record<string, Reading> = {};
   const wanted: [MarkKind, string, (r: Reading) => boolean][] = [
@@ -8469,7 +8595,22 @@ async function overlayInkChecks(
     [
       "textbox",
       INK_CHECK.textbox,
-      (r) => r.whole > 0.02 && r.whole < 0.6 && r.edges === 0 && r.second > 0.005,
+      // **Not one of these readings is a fraction of the rectangle's size**, and
+      // that is the whole of the repair: the box is a fixed 260 x 40 points on
+      // every corpus and the three readings are taken in points off its corner.
+      // The predicate that stood here until 2026-08-20 --- `whole > 0.02 &&
+      // edges === 0 && second > 0.005` --- was red on four of the fourteen
+      // corpora against a painter that was drawing correctly on all four.
+      //
+      // Each clause is a different way for the drawing to be wrong. `lineOne`
+      // is that the words are there at all; `lineTwo` is that there are two of
+      // them, which is the reading a mutation drawing only the first line
+      // defeated everything else to reach; `rim` is that the rectangle itself
+      // is not drawn, which is what a `strokeRect` would do; and `whole` is
+      // that it is not a filled box, which is what a fall-through to the final
+      // `fillRect` gives --- the underline defect's shape for a third time, and
+      // the reason this check was written.
+      (r) => r.lineOne > 0.01 && r.lineTwo > 0.01 && r.rim === 0 && r.whole < 0.6,
     ],
     // A ring: the box's three readings exactly, and the corners are what make it
     // a different mark rather than the same one. Stated as `corners === 0` with
@@ -8502,7 +8643,25 @@ async function overlayInkChecks(
     ],
   ];
 
+  // **The literals above are a statement about the type, so the type is
+  // checked.** `lineOne` and `lineTwo` are written as fixed point offsets on
+  // purpose --- a band derived from the constants it polices moves with them and
+  // stops being able to fail --- and the cost of that is exactly this: the
+  // numbers 4..15 and 17..28 are only the right strips while the inset is 2, the
+  // size 11 and the leading 1.2. Changing one of those silently aims the sample
+  // somewhere else, so it is refused rather than measured.
+  const typeAsAssumed =
+    TEXT_INSET === 2 && TEXT_SIZE === 11 && TEXT_LEADING === 1.2;
+
   for (const [kind, name, holds] of wanted) {
+    if (kind === "textbox" && !typeAsAssumed) {
+      skip(
+        name,
+        `the type bands are written for an inset of 2, a size of 11 and a ` +
+          `leading of 1.2, and it is now ${TEXT_INSET}/${TEXT_SIZE}/${TEXT_LEADING}`,
+      );
+      continue;
+    }
     const got = await paint(kind);
     if (!got) {
       skip(name, "the mark's rectangle is off screen or too small to sample");
@@ -8519,6 +8678,8 @@ async function overlayInkChecks(
         `, ${got.corners} of its 4 corners, ` +
         `${(got.shoulder * 100).toFixed(0)}% of the strip above a rule, ` +
         `${(got.second * 100).toFixed(1)}% where a second line goes, ` +
+        `${(got.lineOne * 100).toFixed(0)}%/${(got.lineTwo * 100).toFixed(0)}% in ` +
+        `the two type bands, ink on ${got.rim} of its 3 border strips, ` +
         // The box's own size, because every sample above is a *fraction* of it
         // while a text box's type is a fixed 11 points --- so a reading only
         // means what it appears to mean beside the rectangle it was taken in.
@@ -8528,7 +8689,13 @@ async function overlayInkChecks(
 
   // The discrimination itself, in one line. Every check above is a bound, and a
   // painter that drew one shape for everything could in principle satisfy a
-  // subset of them; this says the six readings are six readings.
+  // subset of them; this says the nine kinds read as nine.
+  //
+  // **The key holds six of the nine readings, and the three added for the text
+  // box are deliberately not in it.** A signature with more dimensions in it
+  // collides less often, so adding them would make this pass more easily --- a
+  // distinctness check is one of the few where a richer key is a *weaker*
+  // check. Six already tell the nine kinds apart.
   //
   // **The index is the last entry of the list and moved when ink was added.**
   // Written as a literal it silently named ink's own check instead, which would

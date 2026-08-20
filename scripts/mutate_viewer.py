@@ -194,6 +194,34 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # Fall through to the final `fillRect`, which is what a missing `isText`
+        # gives: a solid red rectangle where the reader typed, while the saved
+        # file has the words in it the whole time. The underline defect's shape
+        # for a third time, and the reason this check exists at all. It reddens
+        # two of the four clauses --- `whole` goes to 1.00 and `rim` to 3 --- and
+        # the second of those is the reading that replaced `edges === 0`.
+        "viewer: draw a text box as a filled rectangle",
+        "src/lib/viewer.ts",
+        "        if (isText(mark.kind)) {",
+        "        if (false) {",
+        "a text box draws its words and not its rectangle",
+        "viewer",
+    ),
+    Mutation(
+        # Start the type one line lower --- an off-by-one in the baseline, which
+        # is the shape of mistake the arithmetic here invites. **Aimed at
+        # `lineOne` alone**: the first line lands in the second line's band and
+        # the second falls past both, so `lineTwo` still reads ink and only the
+        # top band is empty. Without it that clause is the one nothing exercises,
+        # since a fall-through to `fillRect` inks every band there is.
+        "viewer: start a text box's type one line lower",
+        "src/lib/viewer.ts",
+        "            const y = top + inset + size + leading * index;",
+        "            const y = top + inset + size + leading * (index + 1);",
+        "a text box draws its words and not its rectangle",
+        "viewer",
+    ),
+    Mutation(
         # Draw the squiggle as the underline's flat rule on the overlay. **The
         # mutation the `shoulder` reading exists for**: `whole`, `core`, `edges`
         # and `corners` are all satisfied by a rule -- a squiggle is a thin band

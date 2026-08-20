@@ -7321,44 +7321,60 @@ escape**, for the second and third time, half an hour apart. Both were caught lo
 a Python `SyntaxError` at the `anchors` gate rather than by a mutation quietly not
 landing, because the payload happened to contain a quote as well as a `\n`.
 
-##### One failing check, and it is not this increment's
+##### One failing check, found here and fixed the same day
 
-`a text box draws its words and not its rectangle` fails on four of the fourteen corpora
+`a text box draws its words and not its rectangle` was red on four of the fourteen corpora
 --- `vector-heavy`, `vector-multi`, `rotated-90` and `links-cropped` --- and on nothing
-else. **Attributed by a control**, not by reading: a `git worktree` at `HEAD`, the
-text-box commit, built and run against `rotated-90` produces the byte-identical reading. So
+else. **Attributed by a control** rather than by reading: a `git worktree` at `HEAD`, the
+text-box commit, built and run against `rotated-90` produced the byte-identical reading. So
 it shipped with the text box, and this increment's sweep is what found it: that increment
 was developed and verified against `comments.pdf` alone, where every page is upright A4 and
 its `/CropBox` is its `/MediaBox`.
 
-**The cause is measured.** The predicate is `whole > 0.02 && whole < 0.6 && edges === 0 &&
-second > 0.005`, and every one of those readings is a **fraction of the mark's rectangle**,
-while a text box's content is a fixed 11 points. The rectangle is
-`height_pt * 0.04` tall, so it scales with the page and the type does not. That produces
-the two failures, in opposite directions:
+**The painter was right on all four.** The predicate was `whole > 0.02 && whole < 0.6 &&
+edges === 0 && second > 0.005`, and every one of those readings is a fraction of the mark's
+rectangle, which was `height_pt * 0.04` tall and therefore scaled with the page. A text
+box's content does not scale --- it is 11-point type on A4 and on A0 --- so the check failed
+in both directions at once, which is why no bound could have been adjusted to fix it. On A0
+the box was about 1,073 x 135 points and two lines of type rounded to 0% of it. On a
+20-pixel-tall box the `edges` sample, which reads the middle tenth of the height, landed on
+the **second line**; on A4 it cleared it by half a point.
 
-  * On the A0 corpora the box is enormous --- two lines of 11-point type in about 1,073 x
-    135 points --- so `whole` and `second` both round to 0% against bounds of 2% and 0.5%.
-    Reading: `0% of the rectangle, ink on 0 of its 4 sides, 1 of its 4 corners`.
-  * On the short boxes the *sample* moves into the type. The left and right edge samples
-    read the **middle tenth of the height**, which on A4's 50-pixel box is well below a
-    baseline at 19 px and on `rotated-90`'s 20-pixel box is y = 9..11, straight through the
-    first line. Reading: `3% of the rectangle, ink on 1 of its 4 sides (left), in a 288x20
-    px box`; `links-cropped` is the same at `288x36`.
+The detail line names which side and prints the measured box now, which is what turned
+three arithmetic theories into one measurement --- `ink on 1 of its 4 sides (left), in a
+288x20 px box`, beside a box check reading all four sides of the *identical* rectangle.
 
-The detail line names the side and prints the box now, which is what turned this from three
-arithmetic theories into one measurement. **The control is in the same run**: *"a box is a
-frame with its middle clear"* uses the identical rectangle --- `288x20`, printed --- and
-reads all four sides on `rotated-90`. So the sampler is right, the box is where it should
-be, and what fails is a bound.
+**The repair, in two halves.** The readings became absolute point offsets from the box's own
+corner: two type-sized bands where the lines must be, and three border strips that must be
+clear. They are literals, because a band derived from `TEXT_SIZE` and `TEXT_LEADING` moves
+with them and stops being able to fail --- the argument `shoulder` already makes about
+`SQUIGGLE_HEIGHT`. The literals are then a claim about the type, so the check refuses to run
+if the inset, size and leading are not the three numbers it was written against. The left
+border is deliberately not sampled: the type starts two points in, and a strip narrow enough
+to fit inside that is narrower than a glyph's antialiasing.
 
-**Left red rather than relaxed**, and not fixed here, because the repair is a design
-decision about a predicate that discriminates nine kinds: the regions have to be derived
-from `TEXT_SIZE * zoom` rather than from fractions of a rectangle, and a predicate rewritten
-carelessly is how an unfalsifiable check is made. Moving a bound to turn a red check green
-is the move this repository records as *"a check chased back to a documented value is a
-defect introduced to satisfy a document"*. What is not in doubt is that the *drawing* is
-correct on all four.
+The other half is the fixture. The rectangle is a fixed 260 x 90 points rather than a
+fraction of the page, which is what lets the bands be literals and what removes a
+precondition a page-relative box would have needed --- `rotated-90`'s 24-point box cannot
+hold a second line, so *"there are two of them"*, the property a mutation had defeated
+everything else to reach, could not have been asserted there at all.
+
+**The 90 came from the sampler, not from the type.** Two lines end 28.4 points down, so 40
+looked right, and it turned the red check into a **skipped** one on the A0 corpora: `inked`
+refuses a region under two pixels, `core` reads the middle tenth of the height, and A0 fits
+a 900-pixel window at 0.37 pixels per point --- 1.5 pixels, so the whole reading came back
+`null`. A skip is the failure shape that reads as success.
+
+**Measured.** The two type bands read 38%/40% on `vector-heavy`, 27%/27% on `rotated-90`,
+25%/23% on `comments` and 23%/23% on `links-cropped` --- boxes from 70x24 to 320x116 pixels
+--- with all three border strips clear on every one. **The whole corpus was re-swept: all
+fourteen green**, the same 310 check names, and every ran/skipped split byte-identical to
+the run that found the failure. That last part is the half worth checking: a check repaired
+by making it skip somewhere would have moved a split, and none moved. Three mutations, all caught: draw
+only the first line (`lineTwo`), fall through to `fillRect` (`whole` and `rim`, and it also
+reddens the distinctness check, since a filled text box then reads as a highlight), and
+start the type one line lower --- which exists because the first two both leave the top band
+inked, so nothing else exercises `lineOne`.
 
 **Not done:** taking a mark off from the panel, which would be a second removal path
 beside the note box's own; the text a text-markup mark *covers*, which is the row content
