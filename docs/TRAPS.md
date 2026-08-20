@@ -10429,3 +10429,38 @@ quantity, the run tells you the sign of the margin and never its size.** Compute
 it once, in the units the check works in, and put the arithmetic in the comment:
 a green run is the same output at 0.02 pt of headroom as at 1 pt, and the first
 one is a defect waiting for a different fixture.
+
+### The harness prints the count so nobody has to derive it, and it was derived anyway
+
+`viewer_check.py` ends every run with `CHECK-NAMES-JSON` --- the full list of
+check names, as JSON, on one line. It exists so that the number is *read from a
+run* rather than remembered.
+
+On 2026-08-20 an increment added two names and needed to say what the new total
+would be. The screen was locked, so no run was possible; `BUILD.md` said **109**;
+the prediction written down was **111**.
+
+The measured answer is **279**.
+
+`109` was correct on 2026-07-31 and had not been touched since, while the harness
+gained marks, crops, print and the comment panel. So the error was not two-plus-a
+-hundred-and-nine going wrong --- it was treating a documented count as current
+because it was the only number to hand.
+
+**What makes this worth an entry is that the warning was already there and one
+paragraph away.** `BUILD.md` says, in its own words, that the ran/skipped columns
+are not the invariant, that the names are, and that *"a count chased back to a
+documented value is a defect introduced to satisfy a document"*. That is the same
+failure in the other direction, it was read during the same session, and the
+arithmetic was done anyway --- which is the shape recorded under *"a rule you
+wrote down is not a rule you enforce"*, arriving in a document about not trusting
+documents.
+
+Two things follow. **A count in prose needs a date beside it or it will be read
+as current** --- `109` carried none, and the entry that has one (`docs/TRAPS.md`'s
+own total, whose authority is a `grep -c`) has never been wrong in this way. And
+when the instrument emits the number, quote the command rather than the value:
+
+```sh
+python3 -c 'import json,sys;print(len(json.loads([l for l in open(sys.argv[1]) if l.startswith("CHECK-NAMES-JSON")][0][16:])))' run.log
+```

@@ -2149,14 +2149,22 @@ changelog entry. The table above is the one place they are written down.
 are of them is in the table above rather than in this sentence, which said `109` for two days
 after the number stopped being right.
 
-⚠ **Two names were added on 2026-08-20 and the table has not been re-measured**, because the
-screen was locked for that whole session and `viewer_check.py` refuses to run against a
-locked one --- correctly, and it cannot be worked around from a script. The additions are
-`edit.draw` in the command sweep and *"a drawing follows its strokes and does not fill its
-rectangle"* in the overlay phase, and *"the five kinds do not all look the same"* was reworded
-to `six`. So the next sweep should expect **111** names with one rename, and a run reporting
-109 is a stale binary rather than a regression. Re-measure the table then; do not adjust it by
-arithmetic, which is what the paragraph below the table warns against. A count chased
+**Measured 2026-08-20 on `text-base14`: 279 names, 177 ran, 102 skipped, 0 failed.** Two were
+added that day --- `edit.draw` in the command sweep and *"a drawing follows its strokes and
+does not fill its rectangle"* in the overlay phase --- and *"the five kinds do not all look
+the same"* was reworded to `six`.
+
+⚠ **The `109` above is of 2026-07-31 and is not the current count.** Between then and now the
+harness gained marks, crops, print and the comment panel, and nothing moved that number. It
+was left, and it then did exactly what a stale count does: an increment predicted the new
+total as `109 + 2 = 111` and was wrong by 168. **Take the count from a run, never from this
+file** --- the sentence below about the ran/skipped columns not being the invariant is the
+same warning, and it did not stop the arithmetic being done anyway. Read the names, and read
+`CHECK-NAMES-JSON`, which the harness prints for exactly this purpose:
+
+```sh
+python3 -c 'import json,sys;print(len(json.loads([l for l in open(sys.argv[1]) if l.startswith("CHECK-NAMES-JSON")][0][16:])))' run.log
+``` A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that
