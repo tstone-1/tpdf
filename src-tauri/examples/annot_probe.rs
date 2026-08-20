@@ -14,7 +14,8 @@
 //! page, a cropped page and an upright one are all covered by pointing this at
 //! them, and the expected geometry is never a number typed into a manifest.
 //!
-//! Four modes:
+//! Eight modes. The first five write a mark and read it back a different way;
+//! the last three measure what was drawn:
 //!
 //! * `--mode roundtrip` --- writes the mark, reads the saved file back with the
 //!   comment scan, and asserts it comes back on the right page, with the right
@@ -34,16 +35,40 @@
 //!   **removed** from the saved file, so the wash is the one the renderer
 //!   generates from `/QuadPoints`. Without it nothing reads those numbers at
 //!   all: our own `/AP` draws the mark, and a mutation that reordered every
-//!   quad's corners survived every other mode in this file. It is also the
-//!   closest thing here to what a reader that ignores `/AP` will show, and
-//!   PDFKit --- which is Preview --- is measured to be one.
+//!   quad's corners survived every other mode in this file. It is the only
+//!   thing here that reads those numbers at all, which is reason enough; what
+//!   it is **not** is a stand-in for some particular reader.
+//!
+//!   > This bullet used to end *"and PDFKit --- which is Preview --- is
+//!   > measured to be one [that ignores `/AP`]"*, and that is false on macOS 26.
+//!   > Blanking the `/AP` key of a saved highlight with spaces --- same file
+//!   > length, so every xref offset still holds --- changed what PDFKit draws:
+//!   > **43634 px over a 13.2 pt band with the appearance present, 33680 over
+//!   > 10.8 pt without it**. It reads ours when it is there and synthesises its
+//!   > own when it is not. `docs/TRAPS.md` carries the same claim under *"A
+//!   > mutation that survives every check because nothing reads the field"* and
+//!   > it is corrected there too.
 //!
 //! * `--mode refuse` --- the two refusals that are not defensive: a mark whose
 //!   page is shared by two page numbers, and one covering no area.
 //!
+//! * `--mode rule` --- an underline or a strikeout puts its line in one band of
+//!   the quad and leaves another empty. **Which band is "under" depends on the
+//!   page's turn**, and the four answers are tabled in [`rule`].
+//!
+//! * `--mode outline` --- a box is a frame: ink on all four edges and nothing
+//!   inside. The one measurement that separates `re S` from `re f`.
+//!
+//! * `--mode strokes` --- freehand ink: the two strokes were drawn, they were
+//!   drawn apart, and **each one runs the length of the mark**. The last of
+//!   those was added after the other four passed on a drawing whose strokes came
+//!   out at a nineteenth of their length.
+//!
 //! Usage:
-//!   annot-probe <file.pdf> [--page N] [--mode roundtrip|ink|legible|refuse]
-//!               [--chars N] [--scale F] [--lib DIR]
+//!   annot-probe <file.pdf> [--page N]
+//!               [--mode roundtrip|ink|legible|noap|refuse|rule|outline|strokes]
+//!               [--kind highlight|underline|strikeout|note|square|ink]
+//!               [--chars N] [--scale F] [--out PATH] [--lib DIR]
 
 use std::path::{Path, PathBuf};
 
@@ -236,6 +261,15 @@ fn strokes(
 
     let quad = union(&quads);
     let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
+    // **The strokes are offset across the rectangle's short side and run the
+    // length of its long one**, whichever those turn out to be. Reading the
+    // bands down the page regardless is the assumption `mark_and_save` used to
+    // make, and it is the reason this mode certified a transposed drawing ---
+    // see the comment there. Decided from the geometry rather than from the
+    // page's `/Rotate`, so that it is an independent determination: if the two
+    // ever disagree, the span checks below are what says so.
+    let sideways = width < height;
+    let across = if sideways { width } else { height };
     // **The bands only separate on a tall enough line, and that is checked
     // rather than assumed.** A stroke drawn at 5% of the text box occupies
     // `[0.05h, 0.05h + INK_WIDTH]` from the derived top and the boundary is
@@ -245,25 +279,41 @@ fn strokes(
     // not there --- a control that cannot pass, which this repository has
     // recorded from several directions. Refused with the number, so the reason
     // is the fixture rather than the code.
-    let text_height = height - INK_WIDTH as f32;
+    let text_across = across - INK_WIDTH as f32;
     let shortest = INK_WIDTH as f32 * 2.0 / 0.85;
-    if text_height <= shortest {
+    if text_across <= shortest {
         return Err(format!(
-            "the marked text is {text_height:.1} pt tall and --mode strokes needs more              than {shortest:.1} pt for its bands to separate a {INK_WIDTH} pt stroke;              point it at a document with larger type"
+            "the marked text is {text_across:.1} pt across and --mode strokes needs more              than {shortest:.1} pt for its bands to separate a {INK_WIDTH} pt stroke;              point it at a document with larger type"
         ));
     }
     let whole = [quad[0], quad[1], quad[2], quad[3]];
-    // Thirds of the derived rectangle. The strokes sit at 5% and 95% of the
-    // *text* box, and the derived rectangle is that padded by half a line width,
-    // so both land inside the outer thirds and the middle third holds neither.
-    let upper = [quad[0], quad[1], quad[2], quad[1] + height / 3.0];
-    let gap = [
-        quad[0],
-        quad[1] + height / 3.0,
-        quad[2],
-        quad[3] - height / 3.0,
-    ];
-    let lower = [quad[0], quad[3] - height / 3.0, quad[2], quad[3]];
+    // Thirds of the derived rectangle, taken across its **short** side. The
+    // strokes sit at 5% and 95% of the *text* box, and the derived rectangle is
+    // that padded by half a line width, so both land inside the outer thirds and
+    // the middle third holds neither.
+    let (upper, gap, lower) = if sideways {
+        (
+            [quad[0], quad[1], quad[0] + across / 3.0, quad[3]],
+            [
+                quad[0] + across / 3.0,
+                quad[1],
+                quad[2] - across / 3.0,
+                quad[3],
+            ],
+            [quad[2] - across / 3.0, quad[1], quad[2], quad[3]],
+        )
+    } else {
+        (
+            [quad[0], quad[1], quad[2], quad[1] + across / 3.0],
+            [
+                quad[0],
+                quad[1] + across / 3.0,
+                quad[2],
+                quad[3] - across / 3.0,
+            ],
+            [quad[0], quad[3] - across / 3.0, quad[2], quad[3]],
+        )
+    };
 
     let want = color_for(args.kind);
     let all = rule_pixels(&after, aw, ah, whole, scale, want);
@@ -294,6 +344,42 @@ fn strokes(
     ok &= check(
         &format!("the gap between the strokes is empty ({middle} px)"),
         middle == 0,
+    );
+    // **How long each stroke is, which none of the four checks above can see.**
+    // Each one runs the whole length of the text box, and the derived rectangle
+    // is that box padded by half a line width at either end, so the expected
+    // span is `long_side - INK_WIDTH` --- about 99% of it on every fixture
+    // measured. The bound is 80%, so the margin is roughly a fifth of the
+    // rectangle rather than the two hundredths of a point this mode's band
+    // arithmetic once stood on. A stroke drawn across the run instead of along
+    // it spans one line width, which is 1%.
+    //
+    // **The longer of the two axes, and not the one `sideways` picked.** The
+    // first version of this check asked along `sideways`'s long axis, which
+    // makes it a second reader of the decision it exists to police: reverting
+    // both halves of the fix left it reporting *"14.2 pt of 14.4, needs 11.5"*
+    // and passing, because a wrong `sideways` shrinks the expectation by
+    // exactly as much as it shrinks the measurement. Taking the maximum over
+    // both axes and comparing against the rectangle's own longer side shares
+    // nothing with the band split, so the two can disagree --- which is the
+    // whole point of having both.
+    let long_side = width.max(height);
+    let first = rule_span(&after, aw, ah, upper, scale, want, true)
+        .max(rule_span(&after, aw, ah, upper, scale, want, false));
+    let second = rule_span(&after, aw, ah, lower, scale, want, true)
+        .max(rule_span(&after, aw, ah, lower, scale, want, false));
+    let wanted = long_side * 0.8;
+    ok &= check(
+        &format!(
+            "the first stroke runs the length of the mark ({first:.1} pt of {long_side:.1}, needs {wanted:.1})"
+        ),
+        first >= wanted,
+    );
+    ok &= check(
+        &format!(
+            "the second stroke runs the length of the mark ({second:.1} pt of {long_side:.1}, needs {wanted:.1})"
+        ),
+        second >= wanted,
     );
     Ok(ok)
 }
@@ -409,22 +495,55 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
     let strokes: Vec<Vec<f32>> = if matches!(args.kind, MarkKind::Ink) {
         let box_ = union(&quads);
         let (left, top, right, bottom) = (box_[0], box_[1], box_[2], box_[3]);
-        let height = bottom - top;
+        // **Along the run, not along the screen's horizontal.** This is the same
+        // rule [`quads_for`] states below and the same trap `docs/TRAPS.md`
+        // records for the line grouping: on a page displayed sideways the lines
+        // advance across the screen and the characters run down it. A stroke
+        // drawn from `left` to `right` then crosses the text instead of
+        // following it.
+        //
+        // Measured on `rotated-90`, which `BUILD.md` has recommended running
+        // since the day this mode landed: each stroke came out **11.9 pt where
+        // it should be 246.7**, and every check below stayed green, because two
+        // stubs at the ends of the rectangle satisfy "ink in the outer thirds,
+        // nothing in the middle" exactly as well as two full-length strokes do.
+        // The writer was not involved --- `save::user_strokes` mapped what it
+        // was handed --- so this is the probe's own input, and the assertion
+        // that now catches it is in [`strokes`].
+        let sideways = extracted.quarter_turns % 2 == 1;
+        let (long_start, long_end) = if sideways {
+            (top, bottom)
+        } else {
+            (left, right)
+        };
+        let across = if sideways { right - left } else { bottom - top };
         // **5% rather than something more central, and the margin is arithmetic
         // rather than taste.** `--mode strokes` reads thirds of the *derived*
         // rectangle, which is this box grown by half a line width at each edge.
-        // A stroke centred at `f` of the text height occupies
-        // `[f*h, f*h + INK_WIDTH]` measured from the derived top, and the band
-        // boundary is `(h + INK_WIDTH)/3`. At f = 0.15 on this corpus that is
+        // A stroke centred at `f` of the text box's **short** side occupies
+        // `[f*h, f*h + INK_WIDTH]` measured from that side's near edge, and the
+        // band boundary is `(h + INK_WIDTH)/3`. At f = 0.15 on this corpus that is
         // 3.88 pt against 3.90 --- it passes, by two hundredths of a point, and
         // a fixture with slightly shorter lines would put ink in the band that
         // is asserted empty and report a defect that is not there. At 0.05 the
         // margin is about a point. The mode refuses a rectangle too short for
         // the bands to separate at all rather than reading one.
-        vec![
-            vec![left, top + height * 0.05, right, top + height * 0.05],
-            vec![left, bottom - height * 0.05, right, bottom - height * 0.05],
-        ]
+        let (near, far) = if sideways {
+            (left + across * 0.05, right - across * 0.05)
+        } else {
+            (top + across * 0.05, bottom - across * 0.05)
+        };
+        if sideways {
+            vec![
+                vec![near, long_start, near, long_end],
+                vec![far, long_start, far, long_end],
+            ]
+        } else {
+            vec![
+                vec![long_start, near, long_end, near],
+                vec![long_start, far, long_end, far],
+            ]
+        }
     } else {
         Vec::new()
     };
@@ -886,6 +1005,56 @@ fn count(pixels: &[u8], width: u32, height: u32, band: [f32; 4], scale: f32) -> 
 /// at (217, 38, 38) is neither. Measured, not guessed --- the first draft reused
 /// `count` and reported zero rule pixels everywhere, which reads exactly like an
 /// appearance stream the renderer ignored.
+/// How far the mark's own ink reaches along one axis inside `band`, in points.
+///
+/// **The one question `rule_pixels` cannot answer, and the reason a transposed
+/// drawing passed every check in `--mode strokes` for a day.** Counting pixels
+/// in a band says *whether* ink is there; two 11.9 pt stubs at the ends of a
+/// 224.5 pt rectangle put ink in both outer thirds and none in the middle,
+/// which is exactly what two full-length strokes do. The extent along the
+/// rectangle's long side is what separates them: 1% of it against 99%.
+///
+/// Returns 0.0 when the band holds none of the colour, which the caller reads
+/// as a stroke that was not drawn --- the same reading the count checks give.
+fn rule_span(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    band: [f32; 4],
+    scale: f32,
+    want: [f32; 3],
+    along_x: bool,
+) -> f32 {
+    let target = want.map(|c| (c * 255.0) as i32);
+    let x0 = (band[0] * scale).floor().max(0.0) as u32;
+    let y0 = (band[1] * scale).floor().max(0.0) as u32;
+    let x1 = ((band[2] * scale).ceil() as u32).min(width);
+    let y1 = ((band[3] * scale).ceil() as u32).min(height);
+    let (mut low, mut high) = (u32::MAX, 0u32);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let at = ((y * width + x) * 4) as usize;
+            let (r, g, b) = (
+                pixels[at] as i32,
+                pixels[at + 1] as i32,
+                pixels[at + 2] as i32,
+            );
+            if (r - target[0]).abs() < 40
+                && (g - target[1]).abs() < 40
+                && (b - target[2]).abs() < 40
+            {
+                let at = if along_x { x } else { y };
+                low = low.min(at);
+                high = high.max(at);
+            }
+        }
+    }
+    if low == u32::MAX {
+        return 0.0;
+    }
+    (high + 1 - low) as f32 / scale
+}
+
 fn rule_pixels(
     pixels: &[u8],
     width: u32,
@@ -961,39 +1130,65 @@ fn rule(
         ));
     }
 
-    let (mut top, mut bottom, mut middle, mut before_any) = (0usize, 0usize, 0usize, 0usize);
+    // **Which edge of the quad is "under" is decided by the page's turn, and
+    // there are four answers.** An underline sits below the baseline in the
+    // page's own space; `text::from_device` maps the device box there, and
+    // reading its four arms backwards says which device edge that is:
+    //
+    // | turn | page-space bottom is the device box's |
+    // |------|---------------------------------------|
+    // |   0  | bottom                                |
+    // |  90  | left                                  |
+    // | 180  | top                                   |
+    // | 270  | right                                 |
+    //
+    // Splitting the quad into thirds down the page regardless is what this mode
+    // used to do, and on `rotated-90` it reported 330/330/332 --- an underline
+    // drawn correctly along a run that goes *down* the screen crosses all three
+    // horizontal bands, so both assertions failed on a mark that was right. That
+    // is the loud direction of the same defect `--mode strokes` had quietly, and
+    // the same rule `quads_for` states below.
+    let turns = document.page(args.page)?.quarter_turns() % 4;
+    let (mut under, mut opposite, mut middle, mut before_any) = (0usize, 0usize, 0usize, 0usize);
     for quad in &quads {
-        let full = quad.bottom - quad.top;
-        // Thirds of the quad, in display space. The middle band is where a
-        // strikeout goes and the bottom where an underline does; the top is the
-        // control, since neither may draw there.
-        let bands = [
-            [quad.left, quad.top, quad.right, quad.top + full / 3.0],
-            [
-                quad.left,
-                quad.top + full / 3.0,
-                quad.right,
-                quad.top + 2.0 * full / 3.0,
-            ],
-            [
-                quad.left,
-                quad.top + 2.0 * full / 3.0,
-                quad.right,
-                quad.bottom,
-            ],
-        ];
+        // Thirds along the axis the turn puts the baseline on: down the page for
+        // an upright or upside-down page, across it for a sideways one.
+        let sideways = turns % 2 == 1;
+        let full = if sideways {
+            quad.right - quad.left
+        } else {
+            quad.bottom - quad.top
+        };
+        let band = |from: f32, to: f32| {
+            if sideways {
+                [quad.left + from, quad.top, quad.left + to, quad.bottom]
+            } else {
+                [quad.left, quad.top + from, quad.right, quad.top + to]
+            }
+        };
+        let near = band(0.0, full / 3.0);
+        let centre = band(full / 3.0, 2.0 * full / 3.0);
+        let far = band(2.0 * full / 3.0, full);
+        // `near` is the low edge of the axis --- top for a vertical split, left
+        // for a horizontal one --- so the table above chooses between them.
+        let (under_band, opposite_band) = match turns {
+            0 | 3 => (far, near),
+            _ => (near, far),
+        };
         let want = color_for(args.kind);
-        top += rule_pixels(&after, aw, ah, bands[0], args.scale, want);
-        middle += rule_pixels(&after, aw, ah, bands[1], args.scale, want);
-        bottom += rule_pixels(&after, aw, ah, bands[2], args.scale, want);
-        before_any += rule_pixels(&before, bw, bh, bands[0], args.scale, want)
-            + rule_pixels(&before, bw, bh, bands[1], args.scale, want)
-            + rule_pixels(&before, bw, bh, bands[2], args.scale, want);
+        under += rule_pixels(&after, aw, ah, under_band, args.scale, want);
+        middle += rule_pixels(&after, aw, ah, centre, args.scale, want);
+        opposite += rule_pixels(&after, aw, ah, opposite_band, args.scale, want);
+        before_any += rule_pixels(&before, bw, bh, near, args.scale, want)
+            + rule_pixels(&before, bw, bh, centre, args.scale, want)
+            + rule_pixels(&before, bw, bh, far, args.scale, want);
     }
 
     println!(
-        "{:?}: {top} px in the top third, {middle} in the middle, {bottom} in the bottom",
-        args.kind
+        "{:?} on a /Rotate {}: {under} px under the baseline, {middle} in the middle, \
+         {opposite} on the far side",
+        args.kind,
+        turns as u32 * 90
     );
 
     let mut ok = true;
@@ -1001,10 +1196,13 @@ fn rule(
         "the source page has no rule where the mark went (the control)",
         before_any == 0,
     );
-    ok &= check("the renderer drew a rule at all", top + middle + bottom > 0);
+    ok &= check(
+        "the renderer drew a rule at all",
+        under + middle + opposite > 0,
+    );
     let (wanted, forbidden, where_) = match args.kind {
-        MarkKind::Underline => (bottom, top, "bottom"),
-        MarkKind::StrikeOut => (middle, bottom, "middle"),
+        MarkKind::Underline => (under, opposite, "under-the-baseline"),
+        MarkKind::StrikeOut => (middle, under, "middle"),
         MarkKind::Highlight => unreachable!("refused above"),
         // Refused above with the highlight, and for a stronger reason: a
         // highlight draws a rule nowhere because it is a wash, and a comment
@@ -1026,7 +1224,7 @@ fn rule(
     };
     ok &= check(
         &format!("most of the rule is in the {where_} third ({wanted} px)"),
-        wanted * 2 > top + middle + bottom,
+        wanted * 2 > under + middle + opposite,
     );
     // The discrimination, and the reason this is two assertions rather than
     // one: an underline drawn across the middle satisfies "there is a rule" and
