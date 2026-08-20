@@ -48,6 +48,9 @@ import {
   isIcon,
   isOutline,
   isPath,
+  isWave,
+  LINE_FRACTION,
+  SQUIGGLE_PERIOD,
   INK_SAMPLE,
   INK_WIDTH,
   isWash,
@@ -498,6 +501,49 @@ const LINE_ALPHA = 1;
  * falls outside the rectangle, which is correct on a canvas with no clip and
  * wrong in an appearance stream, whose `/BBox` would cut it away.
  */
+/**
+ * Lays down the zigzag of a squiggle, fitted to a band.
+ *
+ * Traces without painting, for {@link traceEllipse}'s reason: both callers set
+ * their own stroke, and the committed mark's colour is not the preview's.
+ *
+ * **Straight segments, matching `save.rs`.** A curve would look the same at this
+ * size and would be a second approximation to keep in step across two languages;
+ * `lineTo` and `l` say the same thing exactly. The trough sits half a stroke
+ * above the band's foot and the peak half a stroke below its top, so the wave
+ * stays inside the band the hit test and the popup anchor use.
+ *
+ * The last segment is clipped to the band's right edge and interpolated rather
+ * than snapped to a peak --- a wave that climbed to full height in a tenth of a
+ * period ends on a near-vertical tick, which reads as a stray mark.
+ */
+function traceSquiggle(
+  ctx: CanvasRenderingContext2D,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  thickness: number,
+): void {
+  const low = top + height - thickness / 2;
+  const high = top + thickness / 2;
+  const half = (height * SQUIGGLE_PERIOD) / 2;
+  ctx.beginPath();
+  if (half <= 0 || low <= high) return;
+  ctx.moveTo(left, low);
+  let x = left;
+  let up = true;
+  while (x < left + width) {
+    const next = Math.min(x + half, left + width);
+    const reached = (next - x) / half;
+    const from = up ? low : high;
+    const to = up ? high : low;
+    ctx.lineTo(next, from + (to - from) * reached);
+    x = next;
+    up = !up;
+  }
+}
+
 function traceEllipse(
   ctx: CanvasRenderingContext2D,
   left: number,
@@ -4011,7 +4057,22 @@ export class Viewer {
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr;
         const width = (band.right - band.left) * this.zoom * dpr;
         const height = (band.bottom - band.top) * this.zoom * dpr;
-        if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);
+        if (isWave(mark.kind)) {
+          // Stroked along the band rather than filling it, which is the whole
+          // of what a squiggle is. Filling would draw a solid bar two and a
+          // half times an underline's height and the file would stay correct --
+          // the shape of the defect the underline shipped with.
+          //
+          // The thickness is the *quad's* `LINE_FRACTION`, not the band's, so a
+          // squiggle and an underline over the same words are drawn with the
+          // same weight of line. Taking it from the band would make the wave
+          // two and a half times heavier than the rule beside it.
+          ctx.strokeStyle = markInk(mark.color, false);
+          const pen = (quad.bottom - quad.top) * LINE_FRACTION * this.zoom * dpr;
+          ctx.lineWidth = pen;
+          traceSquiggle(ctx, left, top, width, height, pen);
+          ctx.stroke();
+        } else if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);
         else if (isOutline(mark.kind)) {
           // Stroked, not filled, which is the whole of what a box is --- and
           // the same decision `save.rs` makes with `re S` for the file. A

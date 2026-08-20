@@ -10947,3 +10947,36 @@ cannot tell them apart. This is the same failure arriving through the *predicate
 the fixture, which is worth separating because the fixture here was fine — `comments.pdf`
 renders both shapes perfectly, and the numbers were sitting there unread.
 
+### A test named for the population it covers is renamed by every kind you add
+
+One test in `save.rs` loops over the highlight, the underline and the strikeout and asserts
+each fills its rectangle rather than stroking it. The body has never changed. Its name has,
+twice, in two days, and both names were true when written:
+
+- `only_a_box_is_stroked` — accurate until the **ellipse** was added, which is also stroked.
+- `the_text_markup_kinds_fill_and_are_not_stroked` — accurate for about six hours, until the
+  **squiggly** was added, which is a text-markup kind and is stroked.
+
+The second rename is the instructive one, because it was made *deliberately, to fix exactly
+this problem*, and it reproduced the problem immediately. Both names described the set of
+kinds that happened to satisfy the assertion. A set is what the next kind changes.
+
+It is now `the_wash_and_the_rules_fill_rather_than_stroke`, which names the property: these
+three kinds fill. That survives a fourth stroked kind, because it never claimed to be about
+all of anything.
+
+**The damage is real even though nothing fails.** The body stays correct, every gate stays
+green, and a reader grepping `the_text_markup_kinds_fill_and_are_not_stroked` concludes that
+a squiggly fills its rectangle — which is the opposite of true, and is exactly the sort of
+thing someone checks a test name for rather than reading the loop.
+
+The rule: **name a test for the property it asserts, not for the population that currently
+satisfies it.** "Only X does this", "all the Y kinds", "every Z" — any name with a
+quantifier in it is a claim about a set, and it is a claim nothing enforces. A name is read
+far more often than a body, and no gate compares the two.
+
+The mirror case is worth keeping in view: where a test *does* enumerate a closed set, say so
+and make it closed. The quad-carrying loop next door lists all four markup subtypes because
+PDF 32000-1 defines exactly four, and its comment says that — there, "the whole list" is a
+fact about the specification rather than about what has been implemented so far.
+

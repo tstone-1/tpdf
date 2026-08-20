@@ -127,6 +127,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // flush against them.
       "edit.highlightSelection",
       "edit.underlineSelection",
+      // Directly under the plain underline, because the two mark the same words
+      // with a line in the same place and a reader is choosing between them.
+      "edit.squigglySelection",
       "edit.strikeoutSelection",
       // With the three marks rather than above them, because to the model it is
       // a fourth kind and removal applies to it identically. It sits last of

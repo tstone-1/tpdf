@@ -37,6 +37,7 @@ export type MarkKind =
   | "highlight"
   | "underline"
   | "strikeout"
+  | "squiggly"
   | "note"
   | "square"
   | "ellipse"

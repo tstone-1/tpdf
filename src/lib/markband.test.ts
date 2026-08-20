@@ -10,6 +10,7 @@ import {
   isEllipse,
   isIcon,
   isOutline,
+  isWave,
   isWash,
   markBand,
   strokeSwept,
@@ -220,6 +221,44 @@ describe("which kinds are drawn how", () => {
   it("gives a box the whole quad, because the quad is the mark", () => {
     const box: Quad = { left: 100, top: 200, right: 340, bottom: 260 };
     expect(markBand("square", box)).toEqual(box);
+  });
+
+  it("says a squiggle is drawn as a wave and the others are not", () => {
+    // The predicate that stops a squiggle being painted as a filled band. Its
+    // near-twin is the underline, which is the one that matters in this list:
+    // both sit at the bottom of the quad, and a `true` here for an underline
+    // would draw a wave where a reader asked for a rule.
+    expect(isWave("squiggly")).toBe(true);
+    for (const kind of [
+      "highlight",
+      "underline",
+      "strikeout",
+      "note",
+      "square",
+      "ellipse",
+      "ink",
+    ] as const) {
+      expect(isWave(kind), kind).toBe(false);
+    }
+  });
+
+  it("gives a squiggle a band taller than an underline's rule", () => {
+    // **The property every check that tells the two kinds apart rests on.**
+    // Asserted as a comparison rather than against a number, so the two
+    // constants cannot drift into agreement without this failing -- at which
+    // point a squiggle and an underline would be the same mark drawn twice, and
+    // nothing else in the frontend would say so.
+    const quad: Quad = { left: 100, top: 200, right: 340, bottom: 260 };
+    const rule = markBand("underline", quad);
+    const wave = markBand("squiggly", quad);
+
+    expect(wave.bottom - wave.top).toBeGreaterThan(
+      (rule.bottom - rule.top) * 2,
+    );
+    // Both sit on the same edge, which is what makes the difference a strip
+    // above the rule rather than two bands in unrelated places.
+    expect(wave.bottom).toBe(rule.bottom);
+    expect(wave.bottom).toBe(quad.bottom);
   });
 
   it("gives an ellipse the whole quad, which is what it is inscribed in", () => {

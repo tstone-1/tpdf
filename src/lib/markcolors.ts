@@ -69,6 +69,10 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   highlight: [1, 0.9, 0.2],
   underline: [0.85, 0.15, 0.15],
   strikeout: [0.85, 0.15, 0.15],
+  // The rules' red, because it is one of them: a line under words, drawn
+  // opaque. Sharing the underline's colour is also what makes the two read as a
+  // choice of shape rather than as two unrelated marks.
+  squiggly: [0.85, 0.15, 0.15],
   // The wash's yellow rather than the lines' red, and for the opposite reason
   // to both: this colour is not ink over words at all, it is the fill of an
   // icon sitting on the paper beside them. Yellow is what every reader draws a

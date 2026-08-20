@@ -171,6 +171,22 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # Draw the squiggle as the underline's flat rule on the overlay. **The
+        # mutation the `shoulder` reading exists for**: `whole`, `core`, `edges`
+        # and `corners` are all satisfied by a rule -- a squiggle is a thin band
+        # at the bottom of the quad with an empty centre, one inked side and two
+        # inked corners, which is an underline exactly -- so without the strip
+        # above the rule this passes every check on the overlay, and the saved
+        # file stays correct, so nothing else in the repository sees it either.
+        "viewer: draw a squiggle as the underline's flat rule on the overlay",
+        "src/lib/viewer.ts",
+        "          traceSquiggle(ctx, left, top, width, height, pen);\n"
+        "          ctx.stroke();",
+        "          ctx.fillRect(left, top + height - pen, width, pen);",
+        "a squiggle rises above where an underline's rule stops",
+        runner="viewer",
+    ),
+    Mutation(
         # Draw the ellipse with the box's `strokeRect` on the overlay. **The
         # mutation the corner reading exists for**, and the reason that reading
         # was added rather than the ellipse simply being given the box's
@@ -204,8 +220,8 @@ MUTATIONS = [
         # shows a red block where a bubble belongs.
         "viewer: draw a comment as a plain rectangle rather than a bubble",
         "src/lib/viewer.ts",
-        "        if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);",
-        "        if (isIcon(mark.kind)) ctx.fillRect(left, top, width, height);",
+        "} else if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);",
+        "} else if (isIcon(mark.kind)) ctx.fillRect(left, top, width, height);",
         "a comment draws inside its own icon box",
         runner="viewer",
     ),

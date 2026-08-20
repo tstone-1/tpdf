@@ -249,6 +249,29 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode roundtrip --kind ellipse
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode preview --kind ellipse
+# The squiggle and its control, and they are a PAIR for the corner check's exact
+# reason: `--mode wave` asserts that a squiggle puts ink in the strip above where
+# an underline's rule stops, and that an underline leaves that strip EMPTY.
+# Running only the squiggle leaves the emptiness untested; running only the
+# underline is an emptiness assertion that "the renderer drew nothing at all"
+# satisfies just as well.
+#
+# `--mode rule` is run for the squiggle too and passes -- its ink is under the
+# baseline -- but it CANNOT tell a squiggle from an underline, because thirds of
+# a quad put both kinds in the same one. That is why `--mode wave` exists.
+#
+# Upright pages only: `--mode wave` refuses a turned page rather than repeating
+# `--mode rule`'s four-row turn table for a second mode. 3/3 on each of the two.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode wave --kind squiggly
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode wave --kind underline
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind squiggly
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode rule --kind squiggly
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode preview --kind squiggly
 # Freehand ink. `--mode strokes`, NOT `--mode ink` --- that name was taken nine
 # months earlier by the coverage measurement above and means something else
 # entirely, which is the collision `MarkKind::Ink` walked into.

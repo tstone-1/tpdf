@@ -408,6 +408,34 @@ pub enum MarkKind {
     /// a name that would suggest text on the page to anyone who has not read the
     /// specification.
     Note,
+    /// A wavy line under a run of words, `/Squiggly`.
+    ///
+    /// **The fourth text-markup kind, and the last one PDF 32000-1 has.** It
+    /// takes a selection exactly as [`MarkKind::Highlight`],
+    /// [`MarkKind::Underline`] and [`MarkKind::StrikeOut`] do, carries
+    /// `/QuadPoints` as they do, and is positioned by the words rather than by
+    /// the reader --- so nothing about how it is made, moved, coloured or
+    /// removed is new. What is new is the only thing that ever is here: what
+    /// gets drawn.
+    ///
+    /// **It is the underline's near-twin, and that is the hazard rather than
+    /// the convenience.** Both sit at the bottom of the quad, both are red by
+    /// default, and every reading the checks took of an underline before this
+    /// kind existed is also true of a squiggle: ink at the bottom, an empty
+    /// centre, one inked side. A check that simply reused the underline's bounds
+    /// would be one that cannot fail --- see the trap about a near-twin
+    /// inheriting a predicate. What separates them is *height*: an underline is
+    /// a rule `LINE_FRACTION` of the text tall and a squiggle occupies a band
+    /// `SQUIGGLE_HEIGHT` tall (both in `save.rs`), so there is ink above the
+    /// underline's rule and
+    /// nothing there for an underline.
+    ///
+    /// The serde name is `squiggly`, the PDF name is `/Squiggly`, and the word
+    /// a reader sees is **Squiggly** --- the second kind whose three spellings
+    /// agree, after [`MarkKind::Ellipse`], and for the same reason: there is no
+    /// better everyday word for it, and `comments.ts` already uses this one for
+    /// a document's own.
+    Squiggly,
     /// A rectangle a reader drew, `/Square`.
     ///
     /// **The second kind the document did not place**, and the second half of

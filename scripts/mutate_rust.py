@@ -2312,7 +2312,49 @@ MUTATIONS += [
         "src/save.rs",
         '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re f',
         '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re S',
-        "the_text_markup_kinds_fill_and_are_not_stroked",
+        "the_wash_and_the_rules_fill_rather_than_stroke",
+    ),
+    Mutation(
+        # Draw the squiggle as a flat rule. /Squiggly still goes in the file, so
+        # every reader files it as a squiggle and draws an underline -- and the
+        # subtype test passes it. The mirror of the mutation below it.
+        "save: draw a squiggle as a flat rule",
+        "src/save.rs",
+        "        MarkKind::Squiggly => Paint::Wave,",
+        "        MarkKind::Squiggly => Paint::Line,",
+        "a_squiggle_is_a_stroked_zigzag_in_a_band_taller_than_a_rule",
+    ),
+    Mutation(
+        # Write the underline's subtype for a squiggle. Our own /AP draws the
+        # right wave, so the mark looks correct in tpdf and is an underline to
+        # everything else.
+        "save: write /Underline for a squiggle",
+        "src/save.rs",
+        '        MarkKind::Squiggly => b"Squiggly",',
+        '        MarkKind::Squiggly => b"Underline",',
+        "each_kind_writes_its_own_subtype",
+    ),
+    Mutation(
+        # Give the squiggle the underline's band. The wave is then drawn inside a
+        # rule's height -- a 7%-tall zigzag, which at body size is a fuzzy line
+        # and reads as bad antialiasing rather than as the wrong mark. It also
+        # closes the strip every discriminating check reads.
+        "save: fit a squiggle into an underline's band",
+        "src/save.rs",
+        "        MarkKind::Squiggly => (bottom, full * SQUIGGLE_HEIGHT),",
+        "        MarkKind::Squiggly => (bottom, thickness),",
+        "a_squiggle_is_a_stroked_zigzag_in_a_band_taller_than_a_rule",
+    ),
+    Mutation(
+        # Drop the squiggle out of the quad-carrying kinds. It is a text-markup
+        # subtype and the specification lists /QuadPoints on it, so a reader that
+        # positions from quads finds none and falls back to /Rect -- which is the
+        # union of the run and is wrong the moment a mark spans two lines.
+        "save: stop writing quads for a squiggle",
+        "src/save.rs",
+        "        MarkKind::Highlight | MarkKind::Underline | MarkKind::Squiggly | MarkKind::StrikeOut",
+        "        MarkKind::Highlight | MarkKind::Underline | MarkKind::StrikeOut",
+        "a_comment_carries_no_text_markup_keys_and_the_others_do",
     ),
     Mutation(
         # Draw the ellipse as a rectangle. `/Circle` still goes in the file, so

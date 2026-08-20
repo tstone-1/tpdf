@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### Squiggly underline
+
+- **Squiggly underline selection** in the Edit menu and the command palette,
+  directly under **Underline selection**. Select some words and it draws a wavy
+  line under them.
+
+- The same in every other way as the three marks beside it: same colours, same
+  note box, same **Remove mark**, and it follows the words rather than the page,
+  so a mark spanning two lines gets one wave per line.
+
+- Saved as a `/Squiggly`, the fourth and last markup annotation the PDF
+  specification defines --- tpdf now writes all four. Preview and Acrobat draw
+  it, and the comment panel lists it as *Squiggly*.
+
 ### Draw an ellipse
 
 - **Draw an ellipse...** in the Edit menu and the command palette, beside

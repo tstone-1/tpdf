@@ -51,6 +51,25 @@ import type { MarkKind } from "./pages";
  */
 export const LINE_FRACTION = 0.07;
 
+/**
+ * How tall a squiggle's band is, as a fraction of the marked text's height.
+ *
+ * `SQUIGGLE_HEIGHT` in `save.rs`. Peak to trough, from the bottom of the quad
+ * up, and **larger than {@link LINE_FRACTION} on purpose**: the gap between the
+ * two is what makes a squiggle distinguishable from an underline rather than a
+ * wobbly one, and every check that tells the kinds apart reads inside it.
+ */
+export const SQUIGGLE_HEIGHT = 0.18;
+
+/**
+ * One full cycle of a squiggle, as a multiple of its band's height.
+ *
+ * `SQUIGGLE_PERIOD` in `save.rs`. Tied to the band rather than to the quad's
+ * width, so a run of two words and a run of two lines get the same wave rather
+ * than the same number of cycles.
+ */
+export const SQUIGGLE_PERIOD = 2;
+
 /** A quad in the page's display space, as the overlay holds one. */
 export interface Quad {
   left: number;
@@ -118,6 +137,21 @@ export function isOutline(kind: MarkKind): boolean {
  */
 export function isEllipse(kind: MarkKind): boolean {
   return kind === "ellipse";
+}
+
+/**
+ * Whether a kind is drawn as a wave along the bottom of its band.
+ *
+ * `Paint::Wave` in `save.rs`, and separate from every predicate here for the
+ * reason they are all separate: the geometry differs. This is the one that
+ * stops a squiggle being painted as a filled band --- which is what
+ * {@link markBand} returns for it, and what the overlay would draw without
+ * being told otherwise. That would put a solid red bar under the words, two and
+ * a half times the height of an underline, and the saved file would be right
+ * the whole time: the underline defect's shape exactly.
+ */
+export function isWave(kind: MarkKind): boolean {
+  return kind === "squiggly";
 }
 
 /**
@@ -421,6 +455,16 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
         top: quad.top + height / 2 - thickness / 2,
         bottom: quad.top + height / 2 + thickness / 2,
       };
+    case "squiggly":
+      // A band at the bottom, like an underline's and taller. `save.rs`'s
+      // `line_rect` answers the same question with the same arithmetic, because
+      // where a kind's ink sits inside its quad is one question and two answers
+      // to it drift.
+      //
+      // **What is returned is the band, not the wave.** The overlay asks
+      // {@link isWave} and draws a zigzag inside this; the band is what the
+      // wave is fitted to, and it is also what a reader's press has to land in.
+      return { ...quad, top: quad.bottom - height * SQUIGGLE_HEIGHT };
     case "note":
       // The whole quad, and the quad is the icon's own box rather than a run of
       // text --- so this is the one kind where "the whole quad" is not a

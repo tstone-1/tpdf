@@ -85,6 +85,12 @@ const NAMES: Record<MarkKind, string> = {
   highlight: "Highlight",
   underline: "Underline",
   strikeout: "Strikeout",
+  // "Squiggly", where the PDF subtype, the serde name and the reader's word are
+  // all the same --- the second kind of which that is true, after `ellipse`, and
+  // for the same reason: there is no better everyday word, so there is nothing
+  // for a third spelling to fix. `comments.ts` already answers "Squiggly" for a
+  // document's own, so the two tables agree without being arranged to.
+  squiggly: "Squiggly",
   // "Comment", never "Note". The note is the *text*, and every mark has one ---
   // a box headed "Note" beside a field holding the note would be naming the
   // field rather than the thing being removed.
