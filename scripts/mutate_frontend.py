@@ -2522,8 +2522,8 @@ MUTATIONS = [
         # One colour for all three kinds, which is what the table replaced. A
         # 1.3 pt yellow rule on white paper is close to invisible, so a reader
         # presses Underline and nothing appears to happen.
-        "edits: give every kind the wash's colour",
-        "src/lib/edits.ts",
+        "markcolors: give every kind the wash's colour",
+        "src/lib/markcolors.ts",
         "  underline: [0.85, 0.15, 0.15],",
         "  underline: [1, 0.9, 0.2],",
         "sends each kind with its own colour",
@@ -2966,6 +2966,95 @@ MUTATIONS += [
         "      if (!isPath(mark.kind)) continue;",
         "      if (false) continue;",
         "leaves a highlight alone",
+    ),
+]
+
+# --- a colour a reader can choose ----------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Ignore what the reader picked. Every mark comes out in its kind's own
+        # colour, the swatch row and the status line both say green, and the
+        # only place the disagreement shows is the page.
+        "markcolors: let a chosen colour lose to the kind's own",
+        "src/lib/markcolors.ts",
+        "  return chosen ?? MARK_COLORS[kind];",
+        "  return MARK_COLORS[kind];",
+        "sends the reader's colour for every kind, once one is chosen",
+    ),
+    Mutation(
+        # Resolve the default swatch against one kind rather than the mark's.
+        # A red underline recoloured "default" becomes yellow -- a 1.3 pt yellow
+        # rule on white paper, which is close to invisible.
+        "viewer: read the default swatch as the highlight's colour, not the mark's",
+        "src/lib/viewer.ts",
+        "    const want = colorFor(mark.kind, color);",
+        '    const want = colorFor("highlight", color);',
+        "reads the default swatch as the open mark's own kind's colour",
+    ),
+    Mutation(
+        # Send the colour even when the mark already wears it. Every press of an
+        # already-ringed swatch is then an undo step for nothing, which a reader
+        # discovers by pressing undo and watching nothing change.
+        "viewer: recolour a mark that is already the colour asked for",
+        "src/lib/viewer.ts",
+        "    if (sameColor(mark.color, want)) return false;",
+        "    if (false) return false;",
+        "asks for nothing when the mark is already that colour",
+    ),
+    Mutation(
+        # Take the first mark held rather than the one whose note is open. The
+        # palette's `Colour:` commands then recolour a mark the reader is not
+        # looking at, and do it with no note open at all.
+        "viewer: recolour the first mark held rather than the open one",
+        "src/lib/viewer.ts",
+        "    const id = this.markNote.openId;\n"
+        "    if (id === null) return false;\n"
+        "    const mark = this.marks.find((held) => held.id === id);\n"
+        "    if (!mark) return false;",
+        "    const mark = this.marks[0];\n"
+        "    if (!mark) return false;\n"
+        "    const id = mark.id;",
+        "asks for nothing when no note is open",
+    ),
+    Mutation(
+        # Ring nothing. The row still works and no longer says which colour the
+        # mark is, so a reader pressing the one it already wears gets an undo
+        # step -- the guard below reads this attribute.
+        "markpopup: ring no swatch at all",
+        "src/lib/markpopup.ts",
+        '      button.setAttribute("aria-pressed", String(sameColor(rgb, color)));',
+        '      button.setAttribute("aria-pressed", String(false));',
+        "shows which colour the mark it is open on is drawn in",
+    ),
+    Mutation(
+        # Drop the no-op guard. The ring is what invites a second press, so the
+        # swatch already on is the one a reader hits twice.
+        "markpopup: send a colour the mark already wears",
+        "src/lib/markpopup.ts",
+        '        if (button.getAttribute("aria-pressed") === "true") return;',
+        "        if (false) return;",
+        "sends a colour the mark is not, and nothing for the one it is",
+    ),
+    Mutation(
+        # Wait for the model to answer before moving the ring. There is no model
+        # in the harness, and in the application the reply is a round trip -- so
+        # a press looks ignored for as long as that takes.
+        "markpopup: leave the ring where it was until the model answers",
+        "src/lib/markpopup.ts",
+        "        this.showColor(rgb);\n        this.opts.onRecolor(id, rgb);",
+        "        this.opts.onRecolor(id, rgb);",
+        "rings the colour that was pressed before the model has answered",
+    ),
+    Mutation(
+        # Build all seven commands round one swatch. This is the shape this
+        # repository's own note about `movePage` warns about: seven commands out
+        # of one `map`, so a wrong argument is wrong seven times at once and
+        # every one of them still runs.
+        "appcommands: give every colour command the same swatch",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.setMarkColor(entry.id),",
+        '      run: () => actions.setMarkColor("yellow"),',
+        "every colour command asks for its own colour",
     ),
 ]
 

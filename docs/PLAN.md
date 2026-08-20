@@ -5385,9 +5385,9 @@ Adding the command also turned a standing check red, which is that check working
 the harness *declares* which commands a document alone does not enable rather
 than subtracting a count, so a new one in that class has to be named.
 
-**Not done, and none of it is hidden by this:** editing a mark's note, choosing a
-colour, removing one from the page (the model and the command exist;
-no UI reaches them), the other sixteen markup subtypes, and writing a reply.
+**Not done, and none of it is hidden by this:** editing a mark's note, ~~choosing
+a colour~~ (done 2026-08-20), removing one from the page (the model and the
+command exist; no UI reaches them), the other sixteen markup subtypes, and writing a reply.
 `MarkKind` has one variant on purpose --- a variant there is a promise that the
 write path can produce something both readers render, so growing it is a change
 to `save.rs` and not to a list of names.
@@ -5460,7 +5460,8 @@ lets them run on the two corpora with no extractable text: the model is tested i
 can reach --- a rectangle on screen, a press landing on it, and the box that
 opens.
 
-**Not done:** a colour, a keyboard route to a mark (the pointer is the only way to
+**Not done:** ~~a colour~~ (done 2026-08-20 --- see *A colour a reader can
+choose*), a keyboard route to a mark (the pointer is the only way to
 open one), editing a comment that came *out of* a file --- the model knows nothing
 about those, and giving it a command that names one is its own increment --- and
 a note long enough to be worth bounding, which nothing does today.
@@ -5693,9 +5694,10 @@ changed, so it is not in the changelog; `docs/TRAPS.md` has the general form.
 
 **Not done:** the remaining markup kinds --- squiggly, and the ones that are not
 about a text selection at all (ink, shapes, text boxes, stamps), each of which
-needs a way to *draw* rather than a way to select. A colour a reader can choose,
-which is still the UI question the `MARK_COLORS` table's comment names rather
-than a missing constant. And a keyboard route to a mark, unchanged from the last
+needs a way to *draw* rather than a way to select. ~~A colour a reader can
+choose, which is still the UI question the `MARK_COLORS` table's comment names
+rather than a missing constant.~~ (Done 2026-08-20 --- that comment was the
+brief, and `markcolors.ts` answers it.) And a keyboard route to a mark, unchanged from the last
 increment: the pointer is still the only way to open one.
 
 #### Reaching a mark from the keyboard --- done 2026-08-18
@@ -5821,8 +5823,8 @@ one --- a fifth sidebar tab, or rows in the comments panel, which today lists wh
 with two activation paths. The remaining markup kinds are unchanged from the last
 increment: squiggly, and the ones that are not about a text selection at all
 (ink, shapes, text boxes, stamps), each of which needs a way to draw rather than
-a way to select. And a colour a reader can choose, still the UI question the
-`MARK_COLORS` table's comment names.
+a way to select. ~~And a colour a reader can choose, still the UI question the
+`MARK_COLORS` table's comment names.~~ (Done 2026-08-20.)
 
 #### Cropping a page --- done 2026-08-18
 
@@ -6266,8 +6268,9 @@ mattered was corrected, which is the finding.
 **Not done:** ink, which is the next consumer and needs the wire struct widened
 to a list of point lists; an ellipse, which is `/Circle` and the same rectangle
 with a different subtype; a crop a reader drags, which now needs only a second
-caller of the primitive; a tool that stays armed for several boxes; and a colour
-a reader can choose, still the UI question `MARK_COLORS` names. The two existing
+caller of the primitive; a tool that stays armed for several boxes; ~~and a
+colour a reader can choose, still the UI question `MARK_COLORS` names~~ (done
+2026-08-20). The two existing
 drags in `viewer.ts` were **not** converted onto the primitive --- the scrollbar's
 would be mechanical and the selection's owns a granularity state machine, and
 converting either on the commit that introduced the primitive gives a regression
@@ -6438,9 +6441,9 @@ wrong by 168. The measured count is in `BUILD.md`.
 
 **Not done:** an ellipse, which is `/Circle` and the same rectangle with a
 different subtype; a crop a reader drags, still only a second caller of the
-primitive; and a colour a reader can choose, still the UI question `MARK_COLORS`
-names. (*A tool that stays armed for several strokes* was on this list and was
-built the same day --- see below.) Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
+primitive; ~~and a colour a reader can choose, still the UI question
+`MARK_COLORS` names~~ (done 2026-08-20). (*A tool that stays armed for several
+strokes* was on this list and was built the same day --- see below.) Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
 put a width per point, and a Bézier fit would make the saved path something other
 than what the reader drew.
 
@@ -6767,6 +6770,89 @@ command that was not meant to be left out.
 **Not done:** splitting a stroke where the nib crosses it; an eraser for marks
 that are not drawings, which is `Unannotate` and already has a command; and a
 nib whose size the reader can choose.
+
+
+#### A colour a reader can choose --- done 2026-08-20
+
+`MARK_COLORS` had a doc comment saying what it was not: *"A palette is a
+different question --- where the swatches live, whether a reader picks before or
+after marking --- and answering it with a constant here would be answering it
+invisibly."* `src/lib/markcolors.ts` answers it.
+
+##### Both directions are one notion, so they are one command
+
+A reader picks a colour **before** marking --- the next highlight is green ---
+and **after** --- this highlight is green now. Preview and Word both treat those
+as one thing and so does this: picking sets the choice, and applies it to the
+mark whose note is open if there is one. The alternative is two families of
+commands, *"mark in green"* beside *"recolour this green"*, which doubles the
+surface to state a distinction the reader does not have.
+
+*Which* mark is the viewer's answer, as it is for `edit.removeMark`: the open
+note is where a reader says which one they mean, and a second way to name a mark
+is how two ways come to disagree.
+
+##### The choice can be *none*, and that is not the same as yellow
+
+With nothing chosen each kind keeps its own colour --- a wash yellow, a line red,
+for the reasons `MARK_COLORS` gives. `DEFAULT_SWATCH` is how a reader gets back,
+and it earns its place rather than being tidiness: without it, anyone who tried
+green could never again have a yellow highlight *and* a red underline without
+picking twice, which is a choice they never made. It carries `null`, not a
+colour, and `Viewer.recolorOpenMark` resolves it against the **mark's own kind**
+--- a red underline recoloured "default" stays red.
+
+##### Three surfaces, and the context menu deliberately gains nothing
+
+Seven `Colour:` commands built from `PALETTE`, in the palette and in the Edit
+menu; a six-swatch row at the top of the mark's note box. The row is six of the
+seven, because the default means *each kind's own colour* and a row of swatches
+is a row of colours you can see. The context menu keeps its one entry: it opens
+the mark's note, and the swatch row is the first thing in it.
+
+##### `Command::Recolor` is `Renote`'s third twin
+
+Same shape, same argument: a whole colour named by a `ColorId` so the enum stays
+`Copy` and replay stays allocation-free. It differs from `Reink` in having **no
+shape check** --- `/C` is written for all six kinds, so the only thing that can
+go wrong is the id.
+
+`color_of` is `quads_of`'s counterpart and had to exist for the same reason:
+`snapshot` paints the overlay from it and `plan` writes the file from it, and a
+caller taking `Mark::color` off the body would show a recolour on screen and save
+the first colour. Each has its own mutation.
+
+##### Evidence
+
+Eighteen mutations, all caught --- sixteen for the feature, two for the two
+defects below. Sixteen of them go through `gates.py`'s harnesses; two run the
+window check.
+
+Two findings, and neither is about colour:
+
+- **`Doc::ink_bodies` was an accounting observable nobody read, and the eraser's
+  bodies leaked.** It was added a week ago for the stated reason that a version
+  kept after its command was discarded produces an *identical document* --- and
+  then no test read it for that case, and the GC's `match` has a catch-all arm.
+  Found by asking what the note's version of that test looked like. The test was
+  written first and went red.
+- **`viewer_check.py`'s strikeout check had never once passed.** `core > 0.8`
+  against a sample band of 10% of the quad's height and a rule of 7% --- a
+  ceiling of 0.70, read as 0.71 on every run. It landed red on 2026-08-19 and
+  stayed red on a `main` CI called green on both platforms, because this harness
+  is not a gate and CI cannot run it. The bound is 0.5 now, chosen for what it
+  has to tell apart rather than derived from `LINE_FRACTION`, and a mutation
+  putting the rule where an underline's goes proves it still fails.
+
+Window harness: **252/252 on `text-heavy`**, and the same on `rotated-90` with an
+identical name set. The full sweep was not run; the phase's checks drive the
+popup and the callbacks directly, so nothing in them varies by corpus.
+
+**Not done:** a colour a reader mixes rather than picks, which is a colour picker
+and a different piece of work; a per-kind choice, so that green highlights can
+sit beside red underlines --- today a choice applies to every kind; and carrying
+the choice across a restart, which is `session.rs`'s question rather than this
+one.
 
 ### Phase 3 — Redaction
 

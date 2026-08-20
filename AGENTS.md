@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 383 entries
+The one thing this file does *not* carry in full is the trap list --- 385 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,7 +997,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 383 of them and the full text
+titles. Only the titles are here, because there are 385 of them and the full text
 was 93% of this file --- an instruction budget spent on the 377 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1238,6 +1238,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A bound stops discriminating when the behaviour around it changes, and its test keeps passing (`drawArmed` implied the bound only while the tool was one-shot)
 - Four checks that say where the ink is, and none that says how long it is (the rectangle is derived from the strokes, so nothing relating the two can fail; the lesson was already written down forty lines below)
 - A check that measures along the axis it is policing shrinks its expectation with its measurement (`14.2 pt of 14.4, needs 11.5` — passing; the ratio is preserved exactly when the decision is wrong)
+- A bound no correct input can reach makes a check that cannot pass, and a manual-only harness is where that survives (born red, still red a day later on a `main` CI called green; `71% against 80%` reads as drift and is a ceiling)
+- An accounting observable nobody reads is the same as not having one (the observable was written for exactly this leak and no test read it; a catch-all `_ => {}` is what makes forgetting the quiet outcome)
 - The same assumption, quiet in one mode and loud in its neighbour (one silently certified a wrong drawing, the other condemned a right one — and the loud failure had never been seen)
 - Borrowing the writer's own table to avoid drift made the check unable to fail (the rule against a second copy is real, and applying it here produced the worse defect; the way out was neither table)
 - Two readers of one file cannot catch the writer that moved it (a differential is evidence about parsing, never about geometry — ask which population could move without the other)

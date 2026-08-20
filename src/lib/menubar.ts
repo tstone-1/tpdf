@@ -58,6 +58,7 @@
 
 import type { Command, CommandRegistry } from "./commands";
 import { accelerator, BINDINGS, type BoundCommand } from "./keys";
+import { PALETTE } from "./markcolors";
 
 /** A gap between groups of items. */
 export const SEPARATOR = "---";
@@ -145,6 +146,17 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // make a mark stay together above it.
       "edit.erase",
       "edit.removeMark",
+      SEPARATOR,
+      // A group of their own, and the whole palette rather than a selection of
+      // it: a menu that offered four of the six colours the swatch row shows
+      // would read as the other two being unavailable rather than as an edit
+      // somebody made here. Listed from `PALETTE` for the reason `appcommands.ts`
+      // builds the commands from it --- a colour added there is in the row, in
+      // the palette and in this menu without three files having to agree.
+      //
+      // Below the marks rather than above, because a reader picking a colour has
+      // usually just made one. The default leads, as it does everywhere else.
+      ...PALETTE.map((entry) => `edit.color.${entry.id}`),
       SEPARATOR,
       "edit.selectAll",
       "edit.clearSelection",

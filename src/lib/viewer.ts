@@ -81,6 +81,7 @@ export interface ScreenPoint {
   clientY: number;
 }
 import { MarkPopup } from "./markpopup";
+import { colorFor, sameColor, type MarkColor } from "./markcolors";
 import type { Anchor } from "./popup";
 import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
 import {
@@ -354,6 +355,15 @@ export interface ViewerOptions {
   onMarkNote?: (mark: number, note: string) => void;
   /** Called when the reader asked to take one of their own marks off the page. */
   onMarkRemove?: (mark: number) => void;
+  /**
+   * Called when the reader picked a colour for one of their own marks.
+   *
+   * Only ever with a colour the mark is not already --- the swatch row does that
+   * comparison, next to the button that was pressed. Optional for
+   * {@link onMarkNote}'s reason: a viewer with no model behind it still draws
+   * the row and still shows which swatch is on.
+   */
+  onMarkRecolor?: (mark: number, color: MarkColor) => void;
   /**
    * Called when the reader finished drawing a mark, with the page it is on.
    *
@@ -932,6 +942,7 @@ export class Viewer {
     // gives. Hosted by the root and built once, exactly as above.
     this.markNote = new MarkPopup(root, {
       onNote: (mark, note) => this.opts.onMarkNote?.(mark, note),
+      onRecolor: (mark, color) => this.opts.onMarkRecolor?.(mark, color),
       onRemove: () => this.removeOpenMark(),
       onClose: () => this.closeMark(),
     });
@@ -3312,6 +3323,37 @@ export class Viewer {
     this.markNote.hide(false);
     this.opts.onMarkRemove?.(id);
     this.root.focus();
+  }
+
+  /**
+   * Draws the mark whose note is open in `color`.
+   *
+   * {@link removeOpenMark}'s shape and its argument: the open note is where a
+   * reader says which mark they mean, so the `Colour:` commands --- chosen from
+   * a palette with the pointer somewhere else entirely --- hand the question
+   * back here rather than carrying an id.
+   *
+   * **Answers whether it did anything**, which the removal does not need to:
+   * the caller sets the colour for new marks either way, and a `false` is how it
+   * knows there was nothing open to recolour rather than having to ask twice.
+   * Nothing is sent for a mark that is already that colour, which is the same
+   * comparison the swatch row makes and is made here for the same reason ---
+   * an undo step that changes nothing is worse than no command at all.
+   *
+   * **`null` is the mark's own kind's colour**, which is what the default swatch
+   * means and is resolved here rather than by the caller: the kind is the mark's
+   * and the mark is the one this method just found. A caller resolving it would
+   * have to look up a mark it addressed by not naming.
+   */
+  recolorOpenMark(color: MarkColor | null): boolean {
+    const id = this.markNote.openId;
+    if (id === null) return false;
+    const mark = this.marks.find((held) => held.id === id);
+    if (!mark) return false;
+    const want = colorFor(mark.kind, color);
+    if (sameColor(mark.color, want)) return false;
+    this.opts.onMarkRecolor?.(id, want);
+    return true;
   }
 
   /** Closes the note editor, committing what was typed in it. */

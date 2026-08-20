@@ -23,6 +23,7 @@ import {
   type MarkView,
   type PageView,
 } from "./pages";
+import { colorFor, type MarkColor } from "./markcolors";
 
 // Re-exported because this is the module a reader of the edit state comes to
 // first, and the declaration lives in `pages.ts` so that the modules which only
@@ -62,41 +63,6 @@ export const NOTHING_OPEN: EditState = {
   dirty: false,
 };
 
-/**
- * The colour each kind is written in, as red, green and blue in 0..=1.
- *
- * One colour per kind, because there is one command per kind. A *palette* is a
- * different question --- where the swatches live, whether a reader picks before
- * or after marking --- and answering it with a constant here would be answering
- * it invisibly.
- *
- * The two lines are red rather than the wash's yellow, and not by convention
- * alone: a yellow rule 1.3 pt thick on white paper is close to invisible, where
- * the same yellow spread over a whole line of text is exactly right. The wash
- * is drawn multiplied at 40% and the lines opaque, so what reads well as one
- * cannot be assumed to read well as the other.
- */
-const MARK_COLORS: Record<MarkKind, [number, number, number]> = {
-  highlight: [1, 0.9, 0.2],
-  underline: [0.85, 0.15, 0.15],
-  strikeout: [0.85, 0.15, 0.15],
-  // The wash's yellow rather than the lines' red, and for the opposite reason
-  // to both: this colour is not ink over words at all, it is the fill of an
-  // icon sitting on the paper beside them. Yellow is what every reader draws a
-  // comment bubble in, so a file opened in Acrobat looks like the file that was
-  // saved --- `/C` is what Acrobat colours its own icon with.
-  note: [1, 0.9, 0.2],
-  // The lines' red, not the bubble's yellow, because a box is a line: its ink
-  // is a stroke and it is drawn opaque and on top. A yellow box on white paper
-  // is nearly invisible, which is the same reason the underline and the
-  // strikeout above are not the wash's colour either.
-  square: [0.85, 0.15, 0.15],
-  // The lines' red again, for the box's reason: ink is a stroke, drawn opaque
-  // and on top, and yellow ink on white paper is nearly invisible. It is also
-  // what a reader reaches for a pen to do --- annotate in a colour that is not
-  // the document's --- which is the same argument, from the other end.
-  ink: [0.85, 0.15, 0.15],
-};
 
 /**
  * The edit state of one open document, and the commands that change it.
@@ -286,6 +252,11 @@ export class Edits {
    * three differ in a subtype, a colour and how the appearance is drawn, all of
    * which the writer decides; nothing on this side of the boundary changes with
    * the kind except which constant is read.
+   *
+   * `chosen` is the reader's colour, or `null` for the kind's own --- see
+   * `markcolors.ts`. Passed in rather than held here because {@link Edits} is
+   * built per document and the choice outlives one: a reader who picks green,
+   * closes the file and opens another has not gone back to yellow.
    */
   async mark(
     kind: MarkKind,
@@ -293,6 +264,7 @@ export class Edits {
     quads: number[],
     strokes: number[][] = [],
     note = "",
+    chosen: MarkColor | null = null,
   ): Promise<EditState> {
     const id = this.current.pages[page]?.id;
     if (id === undefined) return this.current;
@@ -304,7 +276,7 @@ export class Edits {
           page: id,
           quads,
           strokes,
-          color: MARK_COLORS[kind],
+          color: colorFor(kind, chosen),
           author: "",
           note,
         },
@@ -324,6 +296,20 @@ export class Edits {
   async renote(mark: number, note: string): Promise<EditState> {
     return this.adopt(
       await invoke<EditState>("annot_note", { doc: this.doc, mark, note }),
+    );
+  }
+
+  /**
+   * Replaces what one mark is drawn in, by the id a state reply gave it.
+   *
+   * {@link renote}'s shape, and its caveat too: the model journals whatever it
+   * is told, so a caller must not send the colour a mark already is --- that
+   * would be an undo step for nothing. The comparison is `markpopup.ts`'s, next
+   * to the swatch the reader pressed.
+   */
+  async recolor(mark: number, color: MarkColor): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("annot_recolor", { doc: this.doc, mark, color }),
     );
   }
 

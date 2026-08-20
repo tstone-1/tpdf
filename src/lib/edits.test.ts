@@ -364,6 +364,27 @@ describe("Edits", () => {
     expect(sent.strikeout).toEqual(sent.underline);
   });
 
+  it("sends the reader's colour for every kind, once one is chosen", async () => {
+    // The other half of the table above: a chosen colour replaces the kind's
+    // own, for *all* of them. Three kinds rather than one, because a rule
+    // applied to the highlight alone would leave a reader who picked green with
+    // a red underline and nothing saying why.
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    const green: [number, number, number] = [0.35, 0.8, 0.35];
+    for (const kind of ["highlight", "underline", "note"] as const) {
+      core.invoke.mockResolvedValueOnce(state(3, {}, []));
+      await edits.mark(kind, 2, [10, 20, 30, 40], [], "", green);
+      const call = core.invoke.mock.lastCall as [
+        string,
+        { mark: { color: [number, number, number] } },
+      ];
+      expect(call[1].mark.color).toEqual(green);
+    }
+  });
+
   it("does not send a mark for a slot the model has never mentioned", async () => {
     core.invoke.mockResolvedValueOnce(state(2));
     const edits = new Edits(9);

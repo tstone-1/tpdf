@@ -23,6 +23,7 @@ import {
   type AppActions,
 } from "./appcommands";
 import { CommandRegistry } from "./commands";
+import { PALETTE } from "./markcolors";
 
 /**
  * A registry with every application command in it, and a record of what fired.
@@ -90,6 +91,8 @@ function harness(
     // so the withheld direction is what a test that says nothing about a mark
     // exercises.
     removeMark: () => fired.push("removeMark"),
+    setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
+    markColor: () => "default",
     hasOpenMark: () => markOpen,
     // Default false, on the reasoning the journal pair above states: a document
     // opens with nothing to save, so a test that says nothing about edits
@@ -103,6 +106,30 @@ function harness(
   registerAppCommands(registry, actions);
   return { registry, fired };
 }
+
+describe("the colour commands", () => {
+  it("every colour command asks for its own colour", () => {
+    // Seven commands out of one `map`, which is the shape this file's own note
+    // about `movePage` warns about: a wrong argument is wrong seven times at
+    // once and every one of them still runs, so a check that only asserted each
+    // reaches `setMarkColor` would pass on a palette where every swatch is
+    // yellow. Asserted from `PALETTE` rather than a list written twice.
+    for (const entry of PALETTE) {
+      const { registry, fired } = harness();
+      expect(registry.run(`edit.color.${entry.id}`)).toBe(true);
+      expect(fired).toEqual([`setMarkColor:${entry.id}`]);
+    }
+  });
+
+  it("is offered with a document open whether or not a mark is", () => {
+    // The guard that is deliberately not `hasOpenMark`: choosing a colour
+    // before marking is the commoner of the two things this command does, and
+    // greying it out until a note is open would refuse exactly that.
+    const { registry } = harness();
+    const offered = registry.search("").map((ranked) => ranked.command.id);
+    for (const entry of PALETTE) expect(offered).toContain(`edit.color.${entry.id}`);
+  });
+});
 
 describe("Reload from disk", () => {
   it("runs the reload action and nothing else", () => {
@@ -669,6 +696,8 @@ describe("the window shortcuts for editing", () => {
     erase: () => fired.push("erase"),
       hasSelection: () => false,
       removeMark: () => fired.push("removeMark"),
+      setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
+      markColor: () => "default",
       hasOpenMark: () => false,
       saveDocument: () => fired.push("saveDocument"),
       isDirty: () => dirty,

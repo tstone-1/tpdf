@@ -331,6 +331,20 @@ pub struct NoteId(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct InkId(u32);
 
+/// One version of one mark's colour.
+///
+/// [`NoteId`]'s third twin, with the same allocator and the same argument:
+/// a [`Command::Recolor`] names *what the mark was drawn in at a point in the
+/// journal* rather than carrying three floats, so [`Command`] stays `Copy`.
+///
+/// Three floats would in fact fit in a `Copy` command, which is the one place
+/// this differs from its twins --- and it is still an id, because the rule the
+/// journal rests on is that a command names identities and the tables hold
+/// bodies. A variant that carried its value would be the one place a reader had
+/// to check which kind of thing they were looking at.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct ColorId(u32);
+
 /// What a drawing is now: its strokes, and the rectangle they occupy.
 ///
 /// **The two travel together so that they cannot disagree.** The rectangle is
@@ -562,6 +576,17 @@ pub enum Command {
     /// decision about the product, and it is made one layer up in `edits.rs`
     /// rather than here.
     Reink { mark: MarkId, ink: InkId },
+    /// Replace what a mark is drawn in.
+    ///
+    /// The third of [`Command::Renote`]'s family, and it takes that entry's
+    /// argument once more: a whole colour rather than a channel, because the
+    /// reader picks a swatch and undo is the previous pick being replayed.
+    ///
+    /// **Every kind takes one**, unlike [`Command::Reink`], which is ink's
+    /// alone. A colour is the one property all six share --- `/C` is written for
+    /// each of them --- so this is the only member of the family whose subject
+    /// is not narrowed by a kind check.
+    Recolor { mark: MarkId, color: ColorId },
 }
 
 impl Command {
@@ -578,7 +603,10 @@ impl Command {
             | Command::Delete { page }
             | Command::Move { page, .. }
             | Command::Annotate { page, .. } => Some(page),
-            Command::Unannotate { .. } | Command::Renote { .. } | Command::Reink { .. } => None,
+            Command::Unannotate { .. }
+            | Command::Renote { .. }
+            | Command::Reink { .. }
+            | Command::Recolor { .. } => None,
         }
     }
 }
@@ -684,6 +712,12 @@ pub struct Working {
     /// deliberate --- [`Command::Annotate`] would otherwise have to carry an
     /// [`InkId`] for five kinds that have no strokes at all.
     inks: HashMap<MarkId, InkId>,
+    /// Which version of a mark's colour is current.
+    ///
+    /// `inks` above, for the property every kind has: an absent entry is the
+    /// common case and means the colour the mark was made with, still in the
+    /// body table. Only a mark somebody has recoloured has an entry here.
+    colors: HashMap<MarkId, ColorId>,
 }
 
 impl Working {
@@ -712,6 +746,7 @@ impl Working {
             mark_graves: HashSet::new(),
             notes: HashMap::new(),
             inks: HashMap::new(),
+            colors: HashMap::new(),
         }
     }
 
@@ -798,6 +833,11 @@ impl Working {
     /// What a live mark says, as an id into [`Doc`]'s table.
     pub fn ink_of(&self, mark: MarkId) -> Option<InkId> {
         self.inks.get(&mark).copied()
+    }
+
+    /// Which version of a mark's colour is current.
+    pub fn color_of(&self, mark: MarkId) -> Option<ColorId> {
+        self.colors.get(&mark).copied()
     }
 
     /// Which version of a mark's note is current.
@@ -907,6 +947,7 @@ impl Working {
                 self.mark_graves.insert(mark);
                 self.notes.remove(&mark);
                 self.inks.remove(&mark);
+                self.colors.remove(&mark);
             }
             Command::Renote { mark, note } => {
                 self.live_mark(mark)?;
@@ -915,6 +956,10 @@ impl Working {
             Command::Reink { mark, ink } => {
                 self.live_mark(mark)?;
                 self.inks.insert(mark, ink);
+            }
+            Command::Recolor { mark, color } => {
+                self.live_mark(mark)?;
+                self.colors.insert(mark, color);
             }
         }
         Ok(())
@@ -974,6 +1019,11 @@ pub struct Doc {
     inks: HashMap<InkId, Ink>,
     /// The next ink id to issue. Only ever counts up.
     next_ink: u32,
+    /// What each version of each mark's colour is, keyed by the id its command
+    /// carries. `notes`' third twin, and keyed by the version for its reason.
+    colors: HashMap<ColorId, [f32; 3]>,
+    /// The next colour id to issue. Only ever counts up.
+    next_color: u32,
 }
 
 impl Doc {
@@ -991,6 +1041,8 @@ impl Doc {
             next_note: 1,
             inks: HashMap::new(),
             next_ink: 1,
+            colors: HashMap::new(),
+            next_color: 1,
         }
     }
 
@@ -1185,6 +1237,68 @@ impl Doc {
         self.apply(Command::Reink { mark, ink })
     }
 
+    /// Replaces what a mark is drawn in --- the swatch row's one command.
+    ///
+    /// **Every kind, and no shape check.** [`reink`](Doc::reink) is ink's alone
+    /// and refuses anything else; a colour is written as `/C` for all six, so
+    /// the only thing that can go wrong here is the id.
+    ///
+    /// Recolouring a mark to the colour it already is is still a command, for
+    /// the reason [`renote`](Doc::renote) gives at length: whether a reader
+    /// *meant* a no-op is a question about a gesture, and the layer holding the
+    /// gesture is the one that gets to drop it.
+    ///
+    /// **Not clamped here.** [`Mark::color`] promises `0..=1` and the wire
+    /// boundary in `edits.rs` is what makes that true, for a `NewMark` and for
+    /// this; a second clamp would be a second copy of the rule, and the copy
+    /// that is wrong is the one nothing reaches.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::NoSuchMark`] for an id nobody issued, and
+    /// [`Refusal::MarkRemoved`] for a mark taken off the page --- checked before
+    /// the id is issued, so a refused colour spends nothing.
+    pub fn recolor(&mut self, mark: MarkId, color: [f32; 3]) -> Result<(), Refusal> {
+        self.now.live_mark(mark)?;
+        let color = self.issue_color(color);
+        self.apply(Command::Recolor { mark, color })
+    }
+
+    /// Records a colour and returns the id that names it.
+    fn issue_color(&mut self, color: [f32; 3]) -> ColorId {
+        let id = ColorId(self.next_color);
+        self.colors.insert(id, color);
+        self.next_color += 1;
+        id
+    }
+
+    /// What a mark is drawn in now, after any recolouring.
+    ///
+    /// **The one accessor every reader of a mark's colour has to go through**,
+    /// for [`quads_of`](Doc::quads_of)'s reason exactly: a caller taking
+    /// [`Mark::color`] straight from the body would draw the overlay, and write
+    /// the file, in the colour the mark was made in rather than the one it is.
+    ///
+    /// Falls back to the body, which is the answer for every mark nobody has
+    /// recoloured. Black for an id this document never issued, which no caller
+    /// reaches --- both of them are walking marks the model just gave them.
+    pub fn color_of(&self, mark: MarkId) -> [f32; 3] {
+        self.now
+            .color_of(mark)
+            .and_then(|color| self.colors.get(&color))
+            .copied()
+            .unwrap_or_else(|| self.mark(mark).map_or([0.0; 3], |m| m.color))
+    }
+
+    /// How many colour versions are held.
+    ///
+    /// The accounting observable for colours, and it exists for the reason
+    /// [`note_bodies`](Doc::note_bodies) does --- with the difference that its
+    /// twin's version of this had no test reading it and leaked for a week.
+    pub fn color_bodies(&self) -> usize {
+        self.colors.len()
+    }
+
     /// Records a version of a drawing and returns the id that names it.
     fn issue_ink(&mut self, ink: Ink) -> InkId {
         let id = InkId(self.next_ink);
@@ -1284,6 +1398,12 @@ impl Doc {
                 }
                 Command::Renote { note, .. } => {
                     self.notes.remove(&note);
+                }
+                Command::Reink { ink, .. } => {
+                    self.inks.remove(&ink);
+                }
+                Command::Recolor { color, .. } => {
+                    self.colors.remove(&color);
                 }
                 _ => {}
             }
@@ -2111,6 +2231,124 @@ mod tests {
         );
     }
 
+    const GREEN: [f32; 3] = [0.35, 0.8, 0.35];
+
+    #[test]
+    fn a_mark_nobody_has_recoloured_answers_out_of_its_body() {
+        // The fallback arm of `color_of`, which every existing mark takes and
+        // which no other test here reaches on purpose.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        assert_eq!(doc.color_of(id), doc.mark(id).expect("body").color);
+        assert_eq!(doc.color_bodies(), 0, "and no version was recorded");
+    }
+
+    #[test]
+    fn recolouring_changes_what_a_mark_is_drawn_in_and_undo_puts_it_back() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        let made_in = doc.color_of(id);
+        assert_ne!(made_in, GREEN, "the fixture must not already be green");
+
+        doc.recolor(id, GREEN).expect("recoloured");
+        assert_eq!(doc.color_of(id), GREEN);
+        // The body is untouched, which is the whole of why this is undoable:
+        // `Mark` is written once and `Working` is what replay rebuilds.
+        assert_eq!(doc.mark(id).expect("body").color, made_in);
+
+        assert!(doc.undo());
+        assert_eq!(doc.color_of(id), made_in, "undo left the new colour on");
+        assert!(doc.redo());
+        assert_eq!(doc.color_of(id), GREEN);
+    }
+
+    #[test]
+    fn every_kind_can_be_recoloured_including_the_one_that_cannot_be_erased() {
+        // The property that separates this command from `Reink`: a colour is
+        // `/C` and every kind has one, so there is no shape check to fail.
+        // Ink is the discriminating case --- it is the kind `reink` accepts ---
+        // so a highlight beside it is what says the rule is about colour rather
+        // than about strokes.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let wash = doc.annotate(mark_on(page), String::new()).expect("marked");
+        let drawn = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+
+        doc.recolor(wash, GREEN).expect("a highlight takes it");
+        doc.recolor(drawn, GREEN).expect("a drawing takes it too");
+        assert_eq!(doc.color_of(wash), GREEN);
+        assert_eq!(doc.color_of(drawn), GREEN);
+        // And the kind that a *stroke* command refuses still refuses it, so the
+        // absence of a check here is this command's and not a hole in that one.
+        assert_eq!(
+            doc.reink(wash, vec![doc.strokes_of(drawn)[0].clone()]),
+            Err(Refusal::ShapeMismatch(MarkKind::Highlight))
+        );
+    }
+
+    #[test]
+    fn recolouring_a_mark_that_is_not_there_is_refused_before_an_id_is_spent() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        doc.apply(Command::Unannotate { mark: id })
+            .expect("removed");
+
+        let held = doc.color_bodies();
+        assert_eq!(doc.recolor(id, GREEN), Err(Refusal::MarkRemoved(id)));
+        assert_eq!(
+            doc.color_bodies(),
+            held,
+            "a refused colour spends no version, the way a refused mark spends no id"
+        );
+        assert_eq!(
+            doc.recolor(MarkId(9999), GREEN),
+            Err(Refusal::NoSuchMark(MarkId(9999)))
+        );
+    }
+
+    #[test]
+    fn a_removed_mark_forgets_which_colour_it_was_on() {
+        // `Unannotate` drops the entry, as it does for the note and the strokes.
+        // Without that, a mark removed and restored by undo would come back in
+        // whatever colour a recolour had left it rather than the journal's.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        doc.recolor(id, GREEN).expect("recoloured");
+        doc.apply(Command::Unannotate { mark: id })
+            .expect("removed");
+        assert_eq!(
+            doc.working().color_of(id),
+            None,
+            "the removed mark still names a version"
+        );
+    }
+
+    #[test]
+    fn a_colour_in_the_discarded_redo_tail_goes_with_it() {
+        // The leak `color_bodies` exists to see --- written at the same time as
+        // the table rather than a week later, which is the whole reason the
+        // drawing's version of this test found a real one.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        doc.recolor(id, GREEN).expect("kept");
+        doc.recolor(id, [0.3, 0.6, 0.95]).expect("discarded");
+        assert_eq!(doc.color_bodies(), 2, "two versions were recorded");
+
+        assert!(doc.undo());
+        doc.apply(Command::Rotate { page, turns: 1 })
+            .expect("this discards the tail");
+
+        assert_eq!(doc.color_bodies(), 1, "the discarded version was kept");
+        assert_eq!(doc.color_of(id), GREEN);
+    }
+
     #[test]
     fn a_kind_and_a_shape_that_disagree_are_refused_both_ways_round() {
         // The biconditional [`Mark::strokes`] states. Neither half is reachable
@@ -2521,6 +2759,31 @@ mod tests {
         assert_eq!(doc.depth(), before, "a refused note reached the journal");
         assert_eq!(doc.note_bodies(), held, "a refused note kept its text");
         assert_eq!(doc.note_of(id), "");
+    }
+
+    #[test]
+    fn a_drawing_in_the_discarded_redo_tail_goes_with_it() {
+        // The note's test below, for the eraser's table --- and it was written
+        // second and went red, which is why it exists rather than being assumed
+        // from the symmetry. `ink_bodies` was added with the eraser as the
+        // accounting observable for exactly this and nothing read it, so a
+        // reader erasing and undoing in a loop grew the table forever with no
+        // assertion over the working document able to see it.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let strokes = doc.strokes_of(id).to_vec();
+        doc.reink(id, strokes.clone()).expect("kept");
+        doc.reink(id, strokes).expect("discarded");
+        assert_eq!(doc.ink_bodies(), 2, "two versions were recorded");
+
+        assert!(doc.undo());
+        doc.apply(Command::Rotate { page, turns: 1 })
+            .expect("this discards the tail");
+
+        assert_eq!(doc.ink_bodies(), 1, "the discarded version was kept");
     }
 
     #[test]

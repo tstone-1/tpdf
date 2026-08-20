@@ -638,6 +638,30 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Replaces what one mark is drawn in, addressed by identity.
+    ///
+    /// [`renote`](Edits::renote)'s shape exactly, and not routed through
+    /// [`command`](Edits::command) for its reason: the [`Command`] carries an id
+    /// only the model may issue, so what crosses this boundary is the colour.
+    ///
+    /// **Clamped here**, by the same [`channel`] a new mark's colour goes
+    /// through --- this is the second door into `/C` and it has to be the same
+    /// door. Without it a sender could put `1e40` in a content stream through a
+    /// command whose name says it only changes an appearance.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the id names no mark, or one that has
+    /// already been removed.
+    pub fn recolor(&self, doc: u32, mark: u64, color: [f32; 3]) -> Result<EditState, String> {
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .recolor(MarkId::from_raw(mark), color.map(channel))
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Applies a command and returns the state it produced.
     fn command(&self, doc: u32, cmd: Command) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
@@ -801,7 +825,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     // written from these.
                     quads: model.quads_of(*mark).to_vec(),
                     strokes: model.strokes_of(*mark).to_vec(),
-                    color: body.color,
+                    color: model.color_of(*mark),
                     author: body.author.clone(),
                     note: model.note_of(*mark).to_string(),
                     made: body.made.clone(),
@@ -959,7 +983,11 @@ fn snapshot(model: &Doc) -> EditState {
                     .iter()
                     .map(|stroke| stroke.points.iter().flat_map(|p| [p.x, p.y]).collect())
                     .collect(),
-                color: mark.color,
+                // The accessor for the reason above it: `Doc::color_of` answers
+                // what the mark is drawn in *now*, and the body still holds what
+                // it was made in. Taking `mark.color` here would leave the
+                // overlay painting a recoloured mark in its first colour.
+                color: model.color_of(id),
                 note: model.note_of(id).to_string(),
             }
         })
@@ -1710,6 +1738,78 @@ mod tests {
             after[3] < before[3],
             "the reply's rectangle still reaches the erased stroke: {after:?} against {before:?}"
         );
+    }
+
+    /// The green in the swatch row, and not any mark's default.
+    const GREEN: [f32; 3] = [0.35, 0.8, 0.35];
+
+    #[test]
+    fn the_reply_carries_the_colour_the_mark_has_now() {
+        // `snapshot`'s half, and it needs its own test for the reason the
+        // rectangle's does: `docmodel`'s `color_of` is proved against the
+        // accessor directly, which says nothing about whether the reply asks
+        // it. The overlay paints from this field, so taking `mark.color` here
+        // leaves a recoloured mark on screen in the colour it was made in.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let mark = state.marks[0].id;
+        assert_ne!(state.marks[0].color, GREEN, "the fixture is already green");
+
+        let state = edits.recolor(7, mark, GREEN).expect("recoloured");
+        assert_eq!(state.marks[0].color, GREEN);
+    }
+
+    #[test]
+    fn a_saved_file_is_written_in_the_colour_the_mark_has_now() {
+        // The plan is what `save.rs` writes `/C` and the appearance stream from,
+        // and it reads the same accessor. Without this a recolour would show on
+        // screen and save in the old colour --- which is the shape of wrong
+        // `markband.ts` was written to end: the reader cannot tell until the
+        // file is reopened, and then the mark changes under them.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let mark = state.marks[0].id;
+
+        edits.recolor(7, mark, GREEN).expect("recoloured");
+        assert_eq!(edits.plan(7).expect("plan").marks[0].color, GREEN);
+    }
+
+    #[test]
+    fn a_colour_that_is_not_a_number_is_clamped_at_this_door_too() {
+        // The second route into `/C`. `channel`'s note is about a `NewMark`, and
+        // a recolour reaches the same field by a different command --- so a
+        // sender could put `inf` in a content stream through the one that only
+        // changes an appearance, and `save.rs` would write the three letters.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let mark = state.marks[0].id;
+
+        let state = edits
+            .recolor(7, mark, [f32::INFINITY, -1.0, 2.0])
+            .expect("recoloured");
+        assert_eq!(state.marks[0].color, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn recolouring_a_mark_that_is_gone_says_which_of_the_two_it_is() {
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let mark = state.marks[0].id;
+        edits.unannotate(7, mark).expect("removed");
+
+        assert_eq!(
+            edits.recolor(7, mark, GREEN),
+            Err("that mark has already been removed".to_string())
+        );
+        assert_eq!(
+            edits.recolor(7, 9999, GREEN),
+            Err("no such mark".to_string())
+        );
+        assert_eq!(edits.recolor(8, mark, GREEN), Err(unknown(8)));
     }
 
     #[test]

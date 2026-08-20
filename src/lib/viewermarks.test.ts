@@ -134,6 +134,84 @@ function key(
   };
 }
 
+describe("recolouring the mark whose note is open", () => {
+  /** The viewer, with a recorder for what it asks the model to do. */
+  function withRecorder(marks: MarkView[]): {
+    viewer: Viewer;
+    asked: string[];
+  } {
+    const asked: string[] = [];
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 4,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onError: (message) => errors.push(message),
+      onMarkRecolor: (id, color) => asked.push(`${id}:${color.join(",")}`),
+    });
+    viewer.setMarks(marks);
+    return { viewer, asked };
+  }
+
+  it("asks for the colour, naming the open mark and no other", async () => {
+    const { viewer, asked } = withRecorder([mark(4, 1, 100), mark(5, 1, 300)]);
+    await settle();
+
+    viewer.showMark(5);
+    expect(viewer.recolorOpenMark([0.35, 0.8, 0.35])).toBe(true);
+    expect(asked).toEqual(["5:0.35,0.8,0.35"]);
+    viewer.destroy();
+  });
+
+  it("asks for nothing when no note is open", async () => {
+    // The pair, and it is what makes the check above an assertion about *which*
+    // mark: a viewer that recoloured the first mark it held would pass that one
+    // whenever the open mark happened to be first, and this one never.
+    const { viewer, asked } = withRecorder([mark(4, 1, 100)]);
+    await settle();
+
+    expect(viewer.recolorOpenMark([0.35, 0.8, 0.35])).toBe(false);
+    expect(asked).toEqual([]);
+    viewer.destroy();
+  });
+
+  it("asks for nothing when the mark is already that colour", async () => {
+    // The comparison the swatch row also makes, made again here because this is
+    // the palette's route in and it reaches no row. An undo step that changes
+    // nothing is worse than no command at all.
+    const { viewer, asked } = withRecorder([mark(4, 1, 100)]);
+    await settle();
+
+    viewer.showMark(4);
+    expect(viewer.recolorOpenMark([1, 0.9, 0.2])).toBe(false);
+    expect(asked).toEqual([]);
+    viewer.destroy();
+  });
+
+  it("reads the default swatch as the open mark's own kind's colour", async () => {
+    // `null` is "each kind's own", and the kind is the *mark's*. A red
+    // underline is the case that discriminates: resolving it against the
+    // highlight's yellow --- or against any one colour --- would recolour it,
+    // and a fixture of highlights alone could not tell.
+    const underline: MarkView = { ...mark(4, 1, 100), kind: "underline" };
+    const { viewer, asked } = withRecorder([
+      { ...underline, color: [0.85, 0.15, 0.15] },
+    ]);
+    await settle();
+
+    viewer.showMark(4);
+    expect(viewer.recolorOpenMark(null)).toBe(false);
+    expect(asked).toEqual([]);
+
+    // And it does act when the mark is *not* its kind's colour, or the check
+    // above would be satisfied by a viewer that refuses every default.
+    viewer.setMarks([{ ...underline, color: [0.35, 0.8, 0.35] }]);
+    viewer.showMark(4);
+    expect(viewer.recolorOpenMark(null)).toBe(true);
+    expect(asked).toEqual(["4:0.85,0.15,0.15"]);
+    viewer.destroy();
+  });
+});
+
 describe("keys that went to a note", () => {
   it("scroll the page when they came from the page and not when they did not", async () => {
     const viewer = build();

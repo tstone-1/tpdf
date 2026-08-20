@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MarkPopup } from "./markpopup";
+import { DEFAULT_SWATCH, PALETTE } from "./markcolors";
 import type { MarkView } from "./pages";
 import type { Anchor } from "./popup";
 import { installFakeDom, type FakeDom } from "./testdom";
@@ -43,6 +44,7 @@ describe("MarkPopup", () => {
     dom.root.clientHeight = 700;
     return new MarkPopup(dom.root as unknown as HTMLElement, {
       onNote: (id, note) => sent.push(`note:${id}:${note}`),
+      onRecolor: (id, color) => sent.push(`color:${id}:${color.join(",")}`),
       onRemove: (id) => sent.push(`remove:${id}`),
       onClose: () => {
         closed += 1;
@@ -50,12 +52,20 @@ describe("MarkPopup", () => {
     });
   }
 
-  /** The box, which is the popup's second child. */
+  /**
+   * The box a reader types in.
+   *
+   * Found rather than indexed. It was `children[1]` and the swatch row took that
+   * slot, which is the trap about a check named by its position in a list ---
+   * every test here that types would have failed together, all of them pointing
+   * at the note rather than at the row that moved it.
+   */
   function box(note: MarkPopup): { value: string } {
-    const field = (note.node as unknown as { children: { value: string }[] })
-      .children[1];
+    const field = (
+      note.node as unknown as { children: { value?: string }[] }
+    ).children.find((child) => typeof child.value === "string");
     if (!field) throw new Error("the popup has no box to type in");
-    return field;
+    return field as { value: string };
   }
 
   /** Presses the button whose label is `text`. */
@@ -87,6 +97,82 @@ describe("MarkPopup", () => {
     }
     return found;
   }
+
+  /** The swatch labelled `name`, as the fake DOM lets a test poke it. */
+  function swatch(
+    note: MarkPopup,
+    name: string,
+  ): {
+    getAttribute: (n: string) => string | null;
+    dispatch: (t: string, e: object) => void;
+  } {
+    const found = (
+      note.colorButtons as unknown as {
+        getAttribute: (n: string) => string | null;
+        dispatch: (t: string, e: object) => void;
+      }[]
+    ).find((button) => button.getAttribute("aria-label") === name);
+    if (!found) throw new Error(`no swatch called ${name}`);
+    return found;
+  }
+
+  it("offers every colour a mark can be, and not the default", () => {
+    // The row is six of `PALETTE`'s seven. The seventh means "each kind's own
+    // colour", which is a fact about marks nobody has made yet and is not a
+    // colour a swatch could be drawn in --- see the module note. Asserted from
+    // `PALETTE` rather than from a list written twice, so a colour added there
+    // appears here without this test being the thing that forgets.
+    const note = popup();
+    const shown = note.colorButtons.map((button) =>
+      (button as unknown as { getAttribute: (n: string) => string | null }).getAttribute(
+        "aria-label",
+      ),
+    );
+    expect(shown).toEqual(
+      PALETTE.filter((entry) => entry.rgb !== null).map((entry) => entry.name),
+    );
+    expect(shown).not.toContain(DEFAULT_SWATCH.name);
+    expect(shown.length).toBeGreaterThan(1);
+  });
+
+  it("shows which colour the mark it is open on is drawn in", () => {
+    const note = popup();
+    note.show(mark({ id: 7, color: [0.35, 0.8, 0.35] }), anchor(), false);
+    expect(swatch(note, "green").getAttribute("aria-pressed")).toBe("true");
+    expect(swatch(note, "yellow").getAttribute("aria-pressed")).toBe("false");
+
+    // And follows the mark, for the reason the kind's labels do: a box built
+    // once would keep the first mark's colour ringed over the second's.
+    note.show(mark({ id: 8, color: [1, 0.9, 0.2] }), anchor(), false);
+    expect(swatch(note, "yellow").getAttribute("aria-pressed")).toBe("true");
+    expect(swatch(note, "green").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("sends a colour the mark is not, and nothing for the one it is", () => {
+    const note = popup();
+    note.show(mark({ id: 7, color: [1, 0.9, 0.2] }), anchor(), false);
+
+    swatch(note, "green").dispatch("pointerdown", {});
+    expect(sent).toEqual(["color:7:0.35,0.8,0.35"]);
+
+    // The comparison `edits.ts` says lives here. Without it a reader pressing
+    // the swatch that is already ringed spends an undo step on nothing --- and
+    // the row is exactly where that press happens, because the ring is what
+    // invites it.
+    swatch(note, "green").dispatch("pointerdown", {});
+    expect(sent).toEqual(["color:7:0.35,0.8,0.35"]);
+  });
+
+  it("rings the colour that was pressed before the model has answered", () => {
+    // The row is what the reader is looking at while they press it, so it moves
+    // its own ring rather than waiting to be shown again. Without this a press
+    // looks ignored until the state reply comes back and the popup is redrawn.
+    const note = popup();
+    note.show(mark({ id: 7, color: [1, 0.9, 0.2] }), anchor(), false);
+    swatch(note, "blue").dispatch("pointerdown", {});
+    expect(swatch(note, "blue").getAttribute("aria-pressed")).toBe("true");
+    expect(swatch(note, "yellow").getAttribute("aria-pressed")).toBe("false");
+  });
 
   it("names the kind of mark it is open on", () => {
     // Both the header and the button, because both said "highlight" when a

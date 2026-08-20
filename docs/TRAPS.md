@@ -10788,3 +10788,65 @@ existing tests still hold. And **the first mutation written for this survived**:
 the four endpoint distances with degenerate ones left three terms still reading the previous
 point, so the travel was still tested. Aim a mutation at the line that *holds* the state — here
 `const from = swept.last;` — not at one of several places that consume it.
+
+### A bound no correct input can reach makes a check that cannot pass, and a manual-only harness is where that survives
+
+`viewer_check.py`'s overlay phase asserts that a strikeout crosses the middle of its quad:
+
+```ts
+(r) => r.whole < 0.3 && r.core > 0.8 && r.edges === 2
+```
+
+`core` samples the middle tenth of the mark's height. `markBand` centres a rule
+`LINE_FRACTION` — 7% — of that height. So the **ceiling** for a correct painter is
+0.07 / 0.10 = 0.70, and every run read 0.71 with antialiasing. The check has never once
+passed. It went in red on 2026-08-19 with the phase it belongs to and was still red a day
+later, on a `main` that CI called green on both platforms.
+
+**Two things had to be true at once, and each is ordinary on its own.** The bound was
+written to say "most of it" without anybody doing the division; and the harness that runs it
+is not a `gates.py` gate — it needs a built bundle and an unlocked screen, so nothing in CI
+or in a gate run can execute it. A check in a manual harness is only as green as the last
+time a person ran it, which means **a check can be born red and stay that way indefinitely**.
+Every other kind of rot at least starts from a passing run.
+
+The tell was the printed evidence, not the verdict: `71% of its centre` against a bound of
+80% is a *near* miss, which reads like drift or a rendering difference. It is not drift. It
+is a number that cannot go higher, and the way to know is arithmetic on the two constants
+rather than another run.
+
+**Do not repair this by deriving the bound from the constant it polices.** `r.core >
+LINE_FRACTION / 0.10` would pass for every thickness including zero — the trap about a check
+that measures along the axis it is policing, arriving one file over. The bound is a fixed
+number chosen for what it has to tell apart: an underline, a frame and a drawing all read
+0.00 at the centre, so anything strictly between 0 and 0.70 discriminates, and 0.5 sits in
+the middle of that gap.
+
+**A bound lowered to turn a red check green needs its own control**, or the repair is an
+assertion nothing can fail. `mutate_viewer.py` carries it: putting a strikeout's rule where
+an underline's goes reddens the check at 0.5 exactly as it should.
+
+Related, and different in the half that matters: the `NaN` entry is about an assertion that
+cannot pass *loudly* — it fails on the first run and reads as a broken harness. This one
+fails quietly, in a phase of 250 checks, in a harness nobody runs on a schedule.
+
+### An accounting observable nobody reads is the same as not having one
+
+`Doc::ink_bodies` was added with the eraser for the stated reason that a version kept after
+its command was discarded and one correctly dropped produce **identical documents** — no
+assertion over the working document can tell them apart. It was then never read by a test for
+that case, and the arm that drops an `Ink` from a discarded redo tail was never written. A
+reader erasing and undoing in a loop grew the table forever.
+
+Its twin `note_bodies` had the test (`a_note_in_the_discarded_redo_tail_goes_with_it`) and the
+`Command::Renote` arm beside it, so the omission was not a missing idea. The GC's `match` ends
+in `_ => {}`, and a new command variant joins the silent arm by default — which is the
+mechanism worth remembering: **a catch-all arm makes forgetting the quiet outcome.**
+
+Found while writing the third table of the same shape, by asking what the second one's test
+looked like and discovering there wasn't one. The check is one line: for each accounting
+observable, grep for a test that *reads* it. An observable with no reader is documentation.
+
+Both arms are now covered by mutations, and the drawing's went in as a **regression** rather
+than as a symmetry — the test was written first and went red, which is why this entry can say
+the leak was real rather than possible.

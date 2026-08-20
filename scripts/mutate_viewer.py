@@ -138,6 +138,39 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # Build the note box without its swatch row. The colour is then
+        # unreachable by pointer --- the `Colour:` commands still work --- and
+        # this is what says the window phase written for the row runs at all, in
+        # the bundle that ships rather than against a fake DOM.
+        "markpopup: build the note box without its swatch row",
+        "src/lib/markpopup.ts",
+        "    this.element.append(this.header(), this.colors(), this.input, this.actions());",
+        "    this.element.append(this.header(), this.input, this.actions());",
+        "the note box offers a swatch for every colour a mark can be",
+        runner="viewer",
+    ),
+    Mutation(
+        # Put a strikeout's rule on the bottom edge, where an underline's goes.
+        # **The control for a bound that was lowered**: `core > 0.8` was
+        # arithmetically unreachable and became `> 0.5`, and a bound relaxed to
+        # make a red check green is exactly the move that produces an assertion
+        # nothing can fail. This says 0.5 still rejects the wrong shape --- an
+        # underline reads 0.00 at the centre, so the gap it has to discriminate
+        # across is the whole of it.
+        "markband: put a strikeout's rule where an underline's goes",
+        "src/lib/markband.ts",
+        "    case \"strikeout\":\n"
+        "      return {\n"
+        "        ...quad,\n"
+        "        top: quad.top + height / 2 - thickness / 2,\n"
+        "        bottom: quad.top + height / 2 + thickness / 2,\n"
+        "      };",
+        "    case \"strikeout\":\n"
+        "      return { ...quad, top: quad.bottom - thickness };",
+        "a strikeout crosses the middle of its quad",
+        runner="viewer",
+    ),
+    Mutation(
         # Fill the box rather than stroking it, on the overlay. The file is
         # still right, so a reader sees a solid block until they save and
         # reopen -- the same shape of wrong as the mutation above.

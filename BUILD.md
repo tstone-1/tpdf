@@ -1638,6 +1638,16 @@ It is **not** a `gates.py` gate: it needs a built bundle and a generated fixture
 which a gate run has. Run it before a release, and after any change to `viewer.ts`,
 `scroller.ts` or the tile protocol.
 
+**One corpus while you are working; the sweep before a push.** The rule above names *files*,
+and a file is the wrong unit: `viewer.ts` is 4,400 lines and most changes to it cannot vary
+by document. What `viewer_sweep.py` buys over a single run is the name-set invariant across
+fourteen corpora, so the question to ask is whether the change could make a check appear,
+vanish or skip on *some* documents --- layout, rotation, text extraction, the tile protocol,
+anything reading a page's size. A change whose checks drive the DOM and the callbacks
+directly cannot, and the sweep is then fourteen runs of the same answer. This is the
+portfolio rule about running the owning gate while iterating and the whole suite once, at the
+push, applied to the slowest instrument here.
+
 **It requires a bundle, not merely a release build.** A raw `cargo build` binary opens a
 window and never executes a line of JavaScript --- WKWebView needs the bundle identity, and
 the failure is silent: no error, no crash report, a blank window. Build one with

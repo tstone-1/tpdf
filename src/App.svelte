@@ -24,6 +24,11 @@
   import { contentBox } from "./lib/crop";
   import { Edits, type EditState } from "./lib/edits";
   import {
+    DEFAULT_SWATCH,
+    swatch,
+    type Swatch,
+  } from "./lib/markcolors";
+  import {
     afterCopy,
     afterFailedSave,
     beforeReload,
@@ -92,6 +97,15 @@
    */
   let dirty = $state(false);
   let status = $state<ViewerStatus | null>(null);
+  /**
+   * The colour the reader picked for marks, or {@link DEFAULT_SWATCH}.
+   *
+   * Here rather than on {@link Edits}, which is built per document: a reader who
+   * picks green, closes the file and opens another has not gone back to yellow.
+   * The whole swatch rather than its three floats, because the status line names
+   * it and `null` --- the default's colour --- has no name of its own.
+   */
+  let markColor = $state<Swatch>(DEFAULT_SWATCH);
   /**
    * The degraded-state words currently on screen, or `null` for none.
    *
@@ -213,6 +227,8 @@
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
+    setMarkColor: (id) => chooseMarkColor(id),
+    markColor: () => markColor.id,
     saveDocument: () => void saveDocument(),
     isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
@@ -255,7 +271,7 @@
   async function markSelection(kind: MarkKind): Promise<void> {
     const marks = viewer?.selectionQuadsByPage() ?? [];
     for (const { page, quads } of marks) {
-      await applyEdit((e) => e.mark(kind, page, quads));
+      await applyEdit((e) => e.mark(kind, page, quads, [], "", markColor.rgb));
     }
   }
 
@@ -283,7 +299,9 @@
     // things, and neither is written down anywhere as a promise --- a set
     // difference needs no promise at all.
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
-    await applyEdit((e) => e.mark("note", where.page, where.quads));
+    await applyEdit((e) =>
+      e.mark("note", where.page, where.quads, [], "", markColor.rgb),
+    );
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
     // Absent if the model refused --- an empty quad, a page that is gone. The
     // refusal has already been shown by `applyEdit`, so there is nothing to say
@@ -311,7 +329,9 @@
     shape: Drawn,
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
-    await applyEdit((e) => e.mark(kind, page, shape.quads, shape.strokes));
+    await applyEdit((e) =>
+      e.mark(kind, page, shape.quads, shape.strokes, "", markColor.rgb),
+    );
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
     if (made) viewer?.showMark(made.id);
   }
@@ -328,6 +348,29 @@
    */
   function removeMark(): void {
     viewer?.removeOpenMark();
+  }
+
+  /**
+   * Picks the colour marks are drawn in.
+   *
+   * **One gesture, both meanings**, which is the whole of the rule
+   * `markcolors.ts` states: it sets what the next mark will be, and if a mark's
+   * note is open it draws that mark in it too. A reader who has just made a
+   * highlight and wants it green means the second; a reader who has not made one
+   * yet means the first; and asking which would be asking them to know that
+   * there are two.
+   *
+   * *Which* mark is the viewer's answer for {@link removeMark}'s reason --- the
+   * open note is where a reader says which one they mean --- and it also drops
+   * a press that would recolour a mark to the colour it already is.
+   */
+  function chooseMarkColor(id: string): void {
+    const chosen = swatch(id);
+    // No such swatch means a command id that named one, which cannot happen from
+    // the registry: every `edit.color.*` command is built from `PALETTE`.
+    if (!chosen) return;
+    markColor = chosen;
+    viewer?.recolorOpenMark(chosen.rgb);
   }
 
   /**
@@ -1600,6 +1643,10 @@
         // undo steps over it and the document is dirty until it is saved.
         onMarkNote: (mark, note) => void applyEdit((e) => e.renote(mark, note)),
         onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),
+        // A colour picked in the swatch row, or by a `Colour:` command with a
+        // note open. A command like the note above it, and undone the same way.
+        onMarkRecolor: (mark, color) =>
+          void applyEdit((e) => e.recolor(mark, color)),
         // A box or a drawing the reader finished. The page id and the shape are
         // already in the file's space --- `Viewer.fileRectOn` does that, because
         // the crop and both rotations are the viewer's and nothing here could
@@ -1980,6 +2027,19 @@
             ? "Erasing — drag across a drawing"
             : `Erasing: ${status.erasing} stroke${status.erasing === 1 ? "" : "s"}`}
           — Esc to stop
+        </span>
+      {/if}
+      <!--
+        What the next mark will be drawn in, and only once a reader has chosen:
+        with nothing picked each kind keeps its own colour, which is what the
+        application has always done and is not worth a line of chrome. Once green
+        is armed it is a mode like the two above --- it outlives the gesture, and
+        the reader who set it three documents ago is exactly the one who needs
+        telling.
+      -->
+      {#if markColor.rgb !== null}
+        <span class="stat" data-testid="markcolor">
+          Marking in {markColor.name}
         </span>
       {/if}
       {#if status.selected > 0}

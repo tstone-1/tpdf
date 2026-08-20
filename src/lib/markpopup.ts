@@ -30,10 +30,29 @@
  * The one thing that does *not* commit is removing the mark: the note goes with
  * it, so committing first would journal a note onto a highlight that the very
  * next command deletes.
+ *
+ * ## The swatch row is six colours, not seven
+ *
+ * `markcolors.ts` has a seventh, its `DEFAULT_SWATCH`, and it is deliberately
+ * not here. It means *each kind's own colour* --- a concept about the marks a
+ * reader has not made yet --- and a row of swatches is a row of colours you can
+ * see. Every default is reachable anyway, because yellow and red are in the row
+ * and they are the defaults, byte for byte.
+ *
+ * The `Colour:` commands are the other half and they carry all seven, because
+ * from the palette a reader is setting what the *next* mark will be as often as
+ * recolouring this one.
  */
 
 import type { MarkKind, MarkView } from "./pages";
 import { place, POPUP_WIDTH, type Anchor } from "./popup";
+import {
+  cssColor,
+  PALETTE,
+  sameColor,
+  type MarkColor,
+  type Swatch,
+} from "./markcolors";
 
 /** What the popup does on the reader's behalf. The viewer supplies all three. */
 export interface MarkPopupOptions {
@@ -41,6 +60,15 @@ export interface MarkPopupOptions {
   onNote: (mark: number, note: string) => void;
   /** Remove this mark. The popup closes without committing its note. */
   onRemove: (mark: number) => void;
+  /**
+   * Draw this mark in this colour. Only ever with a colour it is not already.
+   *
+   * Unlike {@link onNote}, which waits for the box to close: a swatch press is
+   * the whole gesture and the reader is looking at the mark while they make it,
+   * so holding it back would mean a colour that appears when the popup is
+   * dismissed. One press, one journal entry, one undo.
+   */
+  onRecolor: (mark: number, color: MarkColor) => void;
   /** The popup asked to be closed --- Escape, or the close button. */
   onClose: () => void;
 }
@@ -91,6 +119,19 @@ export class MarkPopup {
   private readonly remove: HTMLButtonElement;
   /** What the field held when it was last filled, so a no-op sends nothing. */
   private was = "";
+  /** One button per swatch, in {@link offered} order, so `show` can mark one on. */
+  private readonly swatches: HTMLButtonElement[] = [];
+  /**
+   * The swatches this row draws: every one that is a colour.
+   *
+   * Narrowed rather than filtered loosely, and the type is doing real work:
+   * {@link swatches} is built one-for-one from this list and {@link showColor}
+   * indexes the two together, so a `Swatch` in here whose `rgb` is `null` would
+   * have no button and slide every ring one place along. With the predicate,
+   * that state cannot be written.
+   */
+  private readonly offered: readonly (Swatch & { rgb: MarkColor })[] =
+    PALETTE.filter((entry): entry is Swatch & { rgb: MarkColor } => entry.rgb !== null);
 
   constructor(host: HTMLElement, opts: MarkPopupOptions) {
     this.host = host;
@@ -139,7 +180,7 @@ export class MarkPopup {
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "border-radius:5px;padding:0.3rem 0.4rem;";
 
-    this.element.append(this.header(), this.input, this.actions());
+    this.element.append(this.header(), this.colors(), this.input, this.actions());
     host.appendChild(this.element);
   }
 
@@ -191,6 +232,7 @@ export class MarkPopup {
     this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;
     this.was = mark.note;
     this.input.value = mark.note;
+    this.showColor(mark.color);
     this.element.style.display = "block";
     this.place(at);
     if (focus) this.input.focus();
@@ -229,6 +271,78 @@ export class MarkPopup {
   place(at: Anchor): void {
     if (this.shown === null) return;
     place(this.host, this.element, at);
+  }
+
+  /**
+   * The swatch buttons, in {@link PALETTE} order. For the check harness.
+   *
+   * The elements rather than a "which one is on" number, for the reason
+   * {@link field} gives: `viewercheck` presses one in a real webview and reads
+   * `aria-pressed` back off it, and a number would be this file agreeing with
+   * itself about a row nothing had looked at.
+   */
+  get colorButtons(): readonly HTMLButtonElement[] {
+    return this.swatches;
+  }
+
+  /** Puts the row's pressed state on whichever swatch matches `color`. */
+  private showColor(color: MarkColor): void {
+    this.swatches.forEach((button, at) => {
+      const rgb = this.offered[at]?.rgb ?? null;
+      // `null` only for an index past the end, which the one-for-one build above
+      // makes unreachable --- and it rings nothing rather than ringing the first
+      // swatch, so an unreachable case stays the quiet one.
+      button.setAttribute("aria-pressed", String(sameColor(rgb, color)));
+      // Not a border colour, which would be invisible on the swatch whose own
+      // colour it is. A ring outside the button reads on every one of them.
+      button.style.boxShadow = sameColor(rgb, color)
+        ? "0 0 0 2px Canvas, 0 0 0 4px CanvasText"
+        : "none";
+    });
+  }
+
+  /**
+   * The colours this mark can be drawn in.
+   *
+   * Buttons rather than a `<select>`: a colour is a thing you point at, and the
+   * whole row is one press away where a menu is two. `aria-pressed` is what
+   * carries "this is the one it is" to a screen reader, since the ring around it
+   * is not something a name can say.
+   */
+  private colors(): HTMLElement {
+    const row = document.createElement("div");
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-label", "Mark colour");
+    row.style.cssText =
+      "display:flex;gap:0.45rem;align-items:center;margin-bottom:0.45rem;";
+
+    for (const entry of this.offered) {
+      const rgb = entry.rgb;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("aria-label", entry.name);
+      button.title = entry.name;
+      button.style.cssText =
+        `width:18px;height:18px;border-radius:50%;background:${cssColor(rgb)};` +
+        "border:1px solid color-mix(in srgb, CanvasText 30%, transparent);" +
+        "padding:0;cursor:default;";
+      button.addEventListener("pointerdown", (event) => {
+        // The popup's own handler would otherwise swallow it, and the page's
+        // would read it as a press outside the mark.
+        event.preventDefault();
+        event.stopPropagation();
+        const id = this.shown;
+        if (id === null) return;
+        // A colour the mark already is costs an undo step and changes nothing,
+        // which is the comparison `edits.ts`'s `recolor` says lives here.
+        if (button.getAttribute("aria-pressed") === "true") return;
+        this.showColor(rgb);
+        this.opts.onRecolor(id, rgb);
+      });
+      this.swatches.push(button);
+      row.append(button);
+    }
+    return row;
   }
 
   /** Sends the note if it changed. */
