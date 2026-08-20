@@ -2312,7 +2312,40 @@ MUTATIONS += [
         "src/save.rs",
         '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re f',
         '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re S',
-        "only_a_box_is_stroked",
+        "the_text_markup_kinds_fill_and_are_not_stroked",
+    ),
+    Mutation(
+        # Draw the ellipse as a rectangle. `/Circle` still goes in the file, so
+        # every reader files it under "ellipse" and every one of them draws a
+        # box -- the subtype and the appearance disagreeing, which is the one
+        # thing neither the subtype test nor a pixel count of the whole quad can
+        # see on its own.
+        "save: draw an ellipse with the box's rectangle",
+        "src/save.rs",
+        "        MarkKind::Ellipse => Paint::Ellipse,",
+        "        MarkKind::Ellipse => Paint::Outline,",
+        "an_ellipse_is_drawn_as_four_curves_and_not_as_a_rectangle",
+    ),
+    Mutation(
+        # Write the box's subtype for an ellipse. Our own /AP draws the right
+        # curve, so the mark looks correct in tpdf and is a rectangle to
+        # everything else -- the mirror of the mutation above, and the reason
+        # the two tests are separate.
+        "save: write /Square for an ellipse",
+        "src/save.rs",
+        '        MarkKind::Ellipse => b"Circle",',
+        '        MarkKind::Ellipse => b"Square",',
+        "each_kind_writes_its_own_subtype",
+    ),
+    Mutation(
+        # Leave the ellipse's path open. The fourth arc ends where the first
+        # began, so the shape is right and the join at three o'clock is a cap
+        # instead -- a nick in a thick stroke rather than a missing curve.
+        "save: leave an ellipse's path open rather than closing it",
+        "src/save.rs",
+        '                content.push_str("h S',
+        '                content.push_str("S',
+        "an_ellipse_is_drawn_as_four_curves_and_not_as_a_rectangle",
     ),
     Mutation(
         # Stroke on the quad's own edge. Half of every side falls outside the

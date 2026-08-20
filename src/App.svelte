@@ -222,6 +222,7 @@
     markSelection: (kind) => void markSelection(kind),
     addComment: (at) => void addComment(at),
     drawBox: () => viewer?.armDraw("square"),
+    drawEllipse: () => viewer?.armDraw("ellipse"),
     draw: () => viewer?.armDraw("ink"),
     erase: () => viewer?.armErase(),
     hasSelection: () => (status?.selected ?? 0) > 0,

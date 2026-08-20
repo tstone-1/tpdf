@@ -2963,6 +2963,7 @@ async function appCommandChecks(
     toggleSidebar: () => fired.push("toggleSidebar"),
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
+    drawEllipse: () => fired.push("drawEllipse"),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
@@ -3578,6 +3579,18 @@ async function appCommandChecks(
       // exactly what the shell probe reads.
       id: "edit.drawBox",
       ...shell("drawBox"),
+      read: () => fired.join(","),
+    },
+    {
+      // The ellipse, aimed separately for the reason the note below it gives
+      // about the freehand tool: it arms the same primitive as the box with a
+      // different argument, which is exactly the shape where a copy-and-paste
+      // leaves both arming a `square`. What this reads is that the command
+      // exists in the palette and reaches its *own* action --- the argument is
+      // chosen in `App.svelte`, which no window check can reach, and the
+      // `wiring` gate is what covers that half.
+      id: "edit.drawEllipse",
+      ...shell("drawEllipse"),
       read: () => fired.join(","),
     },
     {
@@ -7852,9 +7865,10 @@ const INK_CHECK = {
   underline: "an underline leaves the middle of its quad clear",
   strikeout: "a strikeout crosses the middle of its quad",
   square: "a box is a frame with its middle clear",
+  ellipse: "an ellipse touches its rectangle's sides and misses its corners",
   note: "a comment draws inside its own icon box",
   ink: "a drawing follows its strokes and does not fill its rectangle",
-  distinct: "the six kinds do not all look the same",
+  distinct: "the seven kinds do not all look the same",
   preview: "a drawing in progress is previewed as a line, not as a rubber band",
   second: "a second stroke joins the drawing rather than replacing it",
   erased: "a stroke the eraser has taken stops being drawn at once",
@@ -7932,7 +7946,7 @@ async function overlayInkChecks(
   /** Paints one mark alone and reads its own rectangle back. */
   const paint = async (
     kind: MarkKind,
-  ): Promise<{ whole: number; core: number; edges: number } | null> => {
+  ): Promise<{ whole: number; core: number; edges: number; corners: number } | null> => {
     const size = viewer.pageSize(0);
     const quad =
       kind === "note"
@@ -8014,7 +8028,30 @@ async function overlayInkChecks(
       along(at.left + width * 0.4, at.top, at.right - width * 0.4, at.top + thickY),
       along(at.left + width * 0.4, at.bottom - thickY, at.right - width * 0.4, at.bottom),
     ].filter(Boolean).length;
-    return whole === null || core === null ? null : { whole, core, edges };
+    // **How many of the four corners carry ink**, which is the only reading that
+    // tells a frame from a ring. Every other number here is the same for both:
+    // an ellipse touches its rectangle at the middle of each side, which is
+    // exactly where `edges` samples, and its centre is as empty as a box's --- so
+    // a painter that drew `strokeRect` for an ellipse would satisfy `whole`,
+    // `core` and `edges` and be caught by nothing.
+    //
+    // The same reading `annot-probe --mode outline` needed for the file, and it
+    // is needed here for a different reason: there the writer could emit `re`,
+    // here the overlay could call `strokeRect`. Two independent halves, one
+    // discriminating observable.
+    //
+    // Empty by a margin rather than by a hair: at `thickX` in from the left the
+    // ellipse still spans only the middle half of the height, well clear of the
+    // top `thickY`.
+    const corners = [
+      [at.left, at.top, at.left + thickX, at.top + thickY],
+      [at.right - thickX, at.top, at.right, at.top + thickY],
+      [at.left, at.bottom - thickY, at.left + thickX, at.bottom],
+      [at.right - thickX, at.bottom - thickY, at.right, at.bottom],
+    ].filter(([l, tp, r, b]) => along(l ?? 0, tp ?? 0, r ?? 0, b ?? 0)).length;
+    return whole === null || core === null
+      ? null
+      : { whole, core, edges, corners };
   };
 
   // The control, and it comes first for the reason every control here does: a
@@ -8031,7 +8068,7 @@ async function overlayInkChecks(
     empty === null ? "the overlay is too small to sample" : `${(empty * 100).toFixed(2)}% inked`,
   );
 
-  type Reading = { whole: number; core: number; edges: number };
+  type Reading = { whole: number; core: number; edges: number; corners: number };
   const read: Record<string, Reading> = {};
   const wanted: [MarkKind, string, (r: Reading) => boolean][] = [
     // A wash covers its quad, so every reading is high.
@@ -8072,7 +8109,17 @@ async function overlayInkChecks(
     [
       "square",
       INK_CHECK.square,
-      (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 4,
+      (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 4 && r.corners === 4,
+    ],
+    // A ring: the box's three readings exactly, and the corners are what make it
+    // a different mark rather than the same one. Stated as `corners === 0` with
+    // the box's `corners === 4` directly above, so the pair is a discrimination
+    // in both directions -- an emptiness assertion whose control is the line
+    // before it.
+    [
+      "ellipse",
+      INK_CHECK.ellipse,
+      (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 4 && r.corners === 0,
     ],
     // A bubble drawn inside a 20-point box. Loose on purpose: what shape it
     // should be is a drawing decision, and what a check can say is that
@@ -8107,7 +8154,7 @@ async function overlayInkChecks(
       holds(got),
       `${(got.whole * 100).toFixed(0)}% of the rectangle, ` +
         `${(got.core * 100).toFixed(0)}% of its centre, ` +
-        `ink on ${got.edges} of its 4 sides`,
+        `ink on ${got.edges} of its 4 sides, ${got.corners} of its 4 corners`,
     );
   }
 
@@ -8121,7 +8168,11 @@ async function overlayInkChecks(
   // the drawing's own unreported --- two wrong lines from one number.
   const shapes = new Set(
     Object.values(read).map(
-      (r) => `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}`,
+      // `corners` is in the key because without it the box and the ellipse can
+      // collide: their `whole` differs only by the length of a rounded corner
+      // against a curve, and two readings that round to the same two decimals
+      // would report a distinctness failure on a correct painter.
+      (r) => `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}/${r.corners}`,
     ),
   );
   const distinct = INK_CHECK.distinct;

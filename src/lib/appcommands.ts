@@ -171,6 +171,16 @@ export interface AppActions {
    */
   drawBox(): void;
   /**
+   * Arms the ellipse tool: the reader's next drag on a page draws one.
+   *
+   * A second command rather than an argument to {@link drawBox}, for the reason
+   * {@link draw} gives below: a reader who wants a ring wants it in one press,
+   * and a command that asked which shape afterwards would be two presses to say
+   * one thing. The gesture it reads is the box's exactly --- two corners --- and
+   * that is what makes them separate commands rather than separate modes.
+   */
+  drawEllipse(): void;
+  /**
    * Arms the freehand tool for one drawing.
    *
    * The same shape as {@link drawBox} and for the same reasons --- a mode,
@@ -525,6 +535,21 @@ export function registerAppCommands(
       title: "Draw a box...",
       enabled: withDocument,
       run: () => actions.drawBox(),
+    },
+    {
+      // Beside the box, because it is the box's gesture and a reader choosing
+      // between the two is choosing a shape rather than a tool. Everything the
+      // entry above says about arming a mode, about having no `hasSelection`
+      // guard and about having no chord applies here unchanged.
+      //
+      // "an ellipse", not "a circle": `/Circle` is the file's word and one a
+      // reader drags out is almost never circular, which is `markpopup.ts`'s
+      // argument for the label and the same one `edit.drawBox` makes about
+      // "square".
+      id: "edit.drawEllipse",
+      title: "Draw an ellipse...",
+      enabled: withDocument,
+      run: () => actions.drawEllipse(),
     },
     {
       // Beside the box, and everything the entry above says about arming a mode

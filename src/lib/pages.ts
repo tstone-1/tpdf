@@ -39,6 +39,7 @@ export type MarkKind =
   | "strikeout"
   | "note"
   | "square"
+  | "ellipse"
   | "ink";
 
 /**

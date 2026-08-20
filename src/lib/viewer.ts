@@ -44,6 +44,7 @@ import {
   ERASER_RADIUS,
   ICON_SIZE,
   iconQuad,
+  isEllipse,
   isIcon,
   isOutline,
   isPath,
@@ -480,6 +481,45 @@ const LINE_ALPHA = 1;
  * the canvas's own primitives rather than an image, because an icon that needs
  * a resource is an icon that can fail to load.
  */
+/**
+ * Lays down the path of the ellipse inscribed in a rectangle.
+ *
+ * **Traces, does not paint.** Both callers set their own stroke first --- the
+ * committed mark in the reader's colour, the drag preview dashed in
+ * `PREVIEW_STROKE` --- and a helper that stroked for them would need a colour
+ * argument and a dash argument to say the same two things twice.
+ *
+ * `ctx.ellipse` rather than the four Bézier arcs `save.rs` writes, and the two
+ * agree: `KAPPA` is the approximation a content stream needs because PDF has no
+ * ellipse operator, and a canvas has one. Using it here keeps the overlay exact
+ * and leaves the approximation in the one place that cannot avoid it.
+ *
+ * No inset, for the box's reason: the stroke straddles the path and half of it
+ * falls outside the rectangle, which is correct on a canvas with no clip and
+ * wrong in an appearance stream, whose `/BBox` would cut it away.
+ */
+function traceEllipse(
+  ctx: CanvasRenderingContext2D,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): void {
+  ctx.beginPath();
+  // Radii must not be negative: the caller normalises its corners, and
+  // `Math.abs` is the cheaper half of saying so at the boundary that would
+  // throw rather than trusting every future caller to have done it.
+  ctx.ellipse(
+    left + width / 2,
+    top + height / 2,
+    Math.abs(width) / 2,
+    Math.abs(height) / 2,
+    0,
+    0,
+    Math.PI * 2,
+  );
+}
+
 function drawBubble(
   ctx: CanvasRenderingContext2D,
   left: number,
@@ -3986,6 +4026,13 @@ export class Viewer {
           ctx.strokeStyle = markInk(mark.color, false);
           ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
           ctx.strokeRect(left, top, width, height);
+        } else if (isEllipse(mark.kind)) {
+          // Stroked like the box, and the same argument for it: a filled ring
+          // hides what it was drawn around. What differs is only the path.
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
+          traceEllipse(ctx, left, top, width, height);
+          ctx.stroke();
         } else ctx.fillRect(left, top, width, height);
       }
     }
@@ -4031,12 +4078,19 @@ export class Viewer {
     ctx.strokeStyle = PREVIEW_STROKE;
     ctx.lineWidth = Math.max(1, OUTLINE_WIDTH * this.zoom * dpr);
     ctx.setLineDash([6 * dpr, 4 * dpr]);
-    ctx.strokeRect(
-      (origin.left + left * this.zoom) * dpr,
-      (origin.top + top * this.zoom - this.scrollTop) * dpr,
-      (right - left) * this.zoom * dpr,
-      (bottom - top) * this.zoom * dpr,
-    );
+    // **The preview is the shape that will be committed**, which is the lesson
+    // the note above records rather than a new one: a rectangle was the wrong
+    // preview for ink, and it is the wrong preview for an ellipse for the same
+    // reason. A reader dragging out a ring should watch a ring, not a box that
+    // turns into one when they let go.
+    const px = (origin.left + left * this.zoom) * dpr;
+    const py = (origin.top + top * this.zoom - this.scrollTop) * dpr;
+    const pw = (right - left) * this.zoom * dpr;
+    const ph = (bottom - top) * this.zoom * dpr;
+    if (this.drawKind === "ellipse") {
+      traceEllipse(ctx, px, py, pw, ph);
+      ctx.stroke();
+    } else ctx.strokeRect(px, py, pw, ph);
     // Put back, or every later stroke on this context is dashed --- the mark
     // outlines above are painted on the same canvas on the next frame.
     ctx.setLineDash([]);

@@ -853,6 +853,10 @@ fn subtype(kind: MarkKind) -> &'static [u8] {
         // `/Ink`, and the one place in this `match` where the PDF name and the
         // variant agree while the reader's word does not: a reader sees "Draw".
         // Same three-spelling arrangement as the four above it.
+        // `/Circle`, which is the specification's name for an ellipse and not
+        // a claim that it is round --- exactly as `/Square` above is not a claim
+        // that the box is square. Both are the names of one family.
+        MarkKind::Ellipse => b"Circle",
         MarkKind::Ink => b"Ink",
     }
 }
@@ -883,6 +887,19 @@ enum Paint {
     /// The quad's edge, opaque, leaving whatever is inside it visible. Which is
     /// the entire point of a box: it says "this", it does not cover it.
     Outline,
+    /// The quad's inscribed ellipse, stroked, leaving its inside visible.
+    ///
+    /// **Separate from [`Paint::Outline`] rather than a flag on it**, because
+    /// the two differ in the one thing this enum exists to decide: the geometry.
+    /// A box is one `re` operator; an ellipse is four Bézier arcs, since a PDF
+    /// content stream has no ellipse primitive to call. Folding them together
+    /// would mean an `Outline` arm that asks the kind again --- a second copy of
+    /// the distinction `paint` already makes, which is the drift this enum's own
+    /// doc comment above is about.
+    ///
+    /// Everything else the variant decides is the box's: opaque, on top, and
+    /// inset by half the stroke width for [`outline_path`]'s reason.
+    Ellipse,
     /// The strokes a reader drew, opaque, with round joins and caps.
     ///
     /// **The first that does not derive its geometry from the quad at all.** The
@@ -897,7 +914,7 @@ enum Paint {
     None,
 }
 
-/// Which of the five a kind uses.
+/// Which of the six a kind uses.
 ///
 /// A `match` for [`subtype`]'s reason: adding a [`MarkKind`] has to be a compile
 /// error here rather than a mark that silently draws as a highlight.
@@ -906,6 +923,7 @@ fn paint(kind: MarkKind) -> Paint {
         MarkKind::Highlight => Paint::Wash,
         MarkKind::Underline | MarkKind::StrikeOut => Paint::Line,
         MarkKind::Square => Paint::Outline,
+        MarkKind::Ellipse => Paint::Ellipse,
         MarkKind::Ink => Paint::Path,
         MarkKind::Note => Paint::None,
     }
@@ -994,6 +1012,11 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         // narrowing it would need a second enum whose only job is to say which
         // three those are.
         MarkKind::Ink => (bottom, full),
+        // Not reached, for the box's reason exactly: an ellipse is drawn from
+        // its quad by `Paint::Ellipse` and has no band inside it either. The
+        // whole quad a fifth time, which is the argument above getting stronger
+        // rather than weaker -- five of six arms are now unreachable.
+        MarkKind::Ellipse => (bottom, full),
     }
 }
 
@@ -1010,6 +1033,30 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
 /// has to know how thick to expect it. A second copy of the number in the probe
 /// would agree with a wrong value here as readily as with a right one.
 pub const OUTLINE_WIDTH: f64 = 1.5;
+
+/// The Bézier circle constant: `4/3 * (sqrt(2) - 1)`.
+///
+/// How far a quarter-arc's control points sit from its endpoints, as a fraction
+/// of the radius, for the cubic that best approximates it. **Not an arbitrary
+/// tuning value** --- it is what makes the curve pass through the arc's midpoint
+/// exactly, and the worst radial error anywhere else is about 0.027% of the
+/// radius. On a 200 pt radius that is 0.05 pt, a thirtieth of the stroke's own
+/// width.
+///
+/// Written out rather than computed, because `f64::sqrt` is not a `const fn`,
+/// and named rather than inlined four times, because a reader meeting
+/// `0.5522847498307936` in a content stream has no way to tell a constant from a
+/// typo.
+///
+/// **`markband.ts` does *not* hold a copy of this**, which is the one place the
+/// overlay and the writer deliberately do different arithmetic. A canvas has
+/// `ctx.ellipse` and draws a true ellipse; a content stream has no ellipse
+/// operator and has to approximate. So the constant stays in the one place that
+/// cannot avoid it, and the two are compared by rendering rather than by sharing
+/// a literal --- `annot-probe --mode outline --kind ellipse` is that comparison.
+/// (`OUTLINE_WIDTH` above *is* duplicated there, and saying so here is the
+/// point: the neighbouring constant's rule is not this one's.)
+const KAPPA: f64 = 0.5522847498307936;
 
 /// How thick a freehand line is, in points.
 ///
@@ -1199,6 +1246,60 @@ fn appearance_stream(
             for quad in quads {
                 let [x, y, width, height] = outline_path(*quad);
                 content.push_str(&format!("{x} {y} {width} {height} re S\n"));
+            }
+        }
+        // Its inscribed ellipse, stroked. Four Bézier arcs, because a content
+        // stream has no ellipse operator -- `re` is the only built-in shape
+        // there is, and it is a rectangle.
+        //
+        // KAPPA is what makes four cubics look like an ellipse rather than
+        // nearly like one; `outline_path` insets first, for the reason it
+        // gives, so the stroke lands inside the /BBox exactly as the box's does.
+        Paint::Ellipse => {
+            for quad in quads {
+                let [x, y, width, height] = outline_path(*quad);
+                let (rx, ry) = (width / 2.0, height / 2.0);
+                let (cx, cy) = (x + rx, y + ry);
+                let (ox, oy) = (rx * KAPPA, ry * KAPPA);
+                // From the right of the ellipse, anticlockwise. `h` closes it
+                // rather than the fourth arc's endpoint being trusted to land
+                // back on the first: they agree to the last bit here, and a
+                // path left open joins with a cap instead of a join, which
+                // shows as a nick at three o'clock on a thick stroke.
+                content.push_str(&format!("{} {cy} m\n", cx + rx));
+                content.push_str(&format!(
+                    "{} {} {} {} {cx} {} c\n",
+                    cx + rx,
+                    cy + oy,
+                    cx + ox,
+                    cy + ry,
+                    cy + ry
+                ));
+                content.push_str(&format!(
+                    "{} {} {} {} {} {cy} c\n",
+                    cx - ox,
+                    cy + ry,
+                    cx - rx,
+                    cy + oy,
+                    cx - rx
+                ));
+                content.push_str(&format!(
+                    "{} {} {} {} {cx} {} c\n",
+                    cx - rx,
+                    cy - oy,
+                    cx - ox,
+                    cy - ry,
+                    cy - ry
+                ));
+                content.push_str(&format!(
+                    "{} {} {} {} {} {cy} c\n",
+                    cx + ox,
+                    cy - ry,
+                    cx + rx,
+                    cy - oy,
+                    cx + rx
+                ));
+                content.push_str("h S\n");
             }
         }
         // The path itself: `m` to the first point, `l` to each of the rest, and
@@ -3827,11 +3928,18 @@ mod tests {
     }
 
     #[test]
-    fn only_a_box_is_stroked() {
+    fn the_text_markup_kinds_fill_and_are_not_stroked() {
         // The control for the test above. "Contains `re S`" is satisfied by a
         // writer that stroked *everything*, which would turn every highlight
         // into an outline of itself -- and that is a change no assertion about
         // the box alone can see.
+        //
+        // **Called `only_a_box_is_stroked` until the ellipse arrived**, which
+        // was accurate when it was written and became a false claim the moment
+        // a second kind was stroked -- while the test itself stayed correct,
+        // because it only ever looked at the three kinds below. A name is read
+        // far more often than a body, and this one would have told a reader the
+        // ellipse fills its rectangle.
         for kind in [
             MarkKind::Highlight,
             MarkKind::Underline,
@@ -3862,6 +3970,11 @@ mod tests {
             (MarkKind::StrikeOut, "StrikeOut"),
             (MarkKind::Note, "Text"),
             (MarkKind::Square, "Square"),
+            // The pair whose two names differ, and the one arm here that would
+            // catch a copy-and-paste from the box above. Our own `/AP` draws the
+            // right ellipse whatever the subtype says, so a wrong `/Circle` is
+            // invisible on screen and wrong in every other program.
+            (MarkKind::Ellipse, "Circle"),
         ] {
             let scratch = Scratch::new("annots-subtype");
             let written = written_mark(kind, &scratch);
@@ -3871,6 +3984,85 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_ellipse_is_drawn_as_four_curves_and_not_as_a_rectangle() {
+        // **The check the subtype cannot make and the subtype check cannot
+        // make.** They fail in opposite directions and neither sees the other's
+        // defect: a `/Circle` whose appearance stream says `re` is a rectangle
+        // that every reader files under "ellipse", and a correct set of arcs
+        // written under `/Square` is an ellipse every reader calls a rectangle.
+        //
+        // `annot-probe --mode outline --kind ellipse` measures the same claim in
+        // pixels through PDFKit, which is the reader that has no idea what we
+        // intended. This one is here because it runs in `cargo test` and names
+        // the operator, so a failure says *what* was drawn rather than that a
+        // corner had ink in it.
+        let scratch = Scratch::new("annots-ellipse-curves");
+        let content = appearance_of(MarkKind::Ellipse, &scratch);
+
+        // Four, because that is what a whole ellipse takes: one cubic per
+        // quadrant. Three would be a defect that still looks curved, which is
+        // why this is an equality rather than `> 0`.
+        assert_eq!(
+            content.matches(" c\n").count(),
+            4,
+            "an ellipse is four Bézier arcs: {content}"
+        );
+        // The operator a rectangle would use. This is the assertion that fails
+        // if `Paint::Ellipse` is ever folded back into `Paint::Outline`.
+        assert!(
+            !content.contains(" re "),
+            "an ellipse is not a rectangle: {content}"
+        );
+        // Stroked and closed. `h` before `S` so the curve joins itself at three
+        // o'clock rather than being capped there --- see the writer.
+        assert!(
+            content.contains("h S"),
+            "the path is closed and stroked: {content}"
+        );
+        assert!(
+            !content.contains(" f\n"),
+            "a filled ellipse hides what it was drawn around: {content}"
+        );
+        // The stroke colour, for the box's reason: `rg` does not imply `RG`,
+        // and a path stroked after only `rg` comes out black.
+        assert!(
+            content.contains(" RG"),
+            "a stroke needs its own colour operator: {content}"
+        );
+
+        // **Where it starts, which is the reading that says the arcs describe
+        // the reader's rectangle rather than some other one.** `one_quad` is
+        // 72..300 by 100..118 in display space; the writer works in the page's,
+        // so only the horizontal extreme is compared here -- it is unaffected by
+        // the y-flip, where every vertical figure is not, and comparing one
+        // number correctly is worth more than four through a mapping this test
+        // would then be asserting twice.
+        //
+        // `outline_path` insets by half the stroke, so the rightmost point is
+        // the quad's right edge less that. A `KAPPA` typo does not move this
+        // point; the pixel probe is what catches one.
+        // Spelled out rather than via a local `inset`, which `outline_path`
+        // already uses: an identical line in two places makes an existing
+        // mutation's anchor ambiguous, and the `anchors` gate refuses that. It
+        // refused this, on the first run.
+        let rightmost = 300.0 - OUTLINE_WIDTH / 2.0;
+        let start = content
+            .lines()
+            .find(|line| line.ends_with(" m"))
+            .expect("the path starts with a moveto");
+        let x: f64 = start
+            .split_whitespace()
+            .next()
+            .expect("a moveto has two numbers")
+            .parse()
+            .expect("the x is a number");
+        assert!(
+            (x - rightmost).abs() < 0.01,
+            "the arc starts at the right of the inset quad, not at {x}: {start}"
+        );
     }
 
     #[test]

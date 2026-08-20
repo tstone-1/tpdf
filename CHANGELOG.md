@@ -19,6 +19,19 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### Draw an ellipse
+
+- **Draw an ellipse...** in the Edit menu and the command palette, beside
+  **Draw a box...**. Arms the tool; the next drag on a page draws one, inscribed
+  in the rectangle you drag out.
+
+- It is the box's gesture exactly --- drag two corners, in any direction --- and
+  everything else about the two is the same: the same colours, the same note
+  box, the same **Remove mark**, and a press anywhere in the rectangle opens it.
+
+- Saved as a `/Circle`, which is what every other PDF reader calls an ellipse.
+  Preview and Acrobat draw it, and the comment panel lists it as *Ellipse*.
+
 ### Mark in a colour you choose
 
 - Six colours --- yellow, green, blue, pink, orange and red --- in the Edit menu

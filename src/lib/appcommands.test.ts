@@ -84,6 +84,7 @@ function harness(
     // about the palette needs to be able to see.
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
+    drawEllipse: () => fired.push("drawEllipse"),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     hasSelection: () => selected,
@@ -692,6 +693,7 @@ describe("the window shortcuts for editing", () => {
       markSelection: (kind) => fired.push(`markSelection:${kind}`),
       addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
       drawBox: () => fired.push("drawBox"),
+      drawEllipse: () => fired.push("drawEllipse"),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
       hasSelection: () => false,

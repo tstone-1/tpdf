@@ -429,6 +429,42 @@ pub enum MarkKind {
     /// specification's name for the family that includes `/Circle`, not a claim
     /// about the proportions.
     Square,
+    /// An ellipse a reader drew, `/Circle`.
+    ///
+    /// **The box's sibling, and the first kind whose shape is not its
+    /// rectangle.** [`MarkKind::Square`] above says that `/Square` is the
+    /// specification's name for the family that includes `/Circle` rather than a
+    /// claim about proportions, and this is the other member of it. Everything
+    /// that positions a mark treats the two identically: the reader drags a
+    /// rectangle, `/Rect` is that rectangle, the popup hangs off it and the hit
+    /// test is against it. What differs is one thing only --- what is *drawn*
+    /// inside it, which is `save.rs`'s `Paint` for the file and `markband.ts`
+    /// for the overlay.
+    ///
+    /// That is a narrower difference than it first looks and a wider one than
+    /// `Viewer.armDraw`'s comment predicted. It said the next drag tool would
+    /// differ "in the subtype it writes and in nothing else", and the gesture
+    /// half of that is exactly right --- no drag code changed to add this. The
+    /// appearance half is not: a rectangle is one `re` operator and an ellipse
+    /// is four Bézier arcs, because PDF content streams have no ellipse
+    /// primitive. A kind that differed *only* in its subtype would draw as a
+    /// rectangle in every reader.
+    ///
+    /// **Its rectangle is not its ink**, which is what separates it from the
+    /// box. A box's stroke runs along the edge of its `/Rect`; an ellipse's
+    /// touches that edge at four points and is inside it everywhere else. So the
+    /// hit test selects on a bounding box that is mostly *not* drawn --- the same
+    /// bargain the box already makes with its own empty middle, which is
+    /// stroked-not-filled and selectable throughout. Consistency with the box
+    /// decided it: two shapes a reader drags out the same way should not answer
+    /// a press by two different rules.
+    ///
+    /// The serde name is `ellipse`, the PDF name is `/Circle`, and the word a
+    /// reader sees is **Ellipse** --- which makes this the one shape kind whose
+    /// three spellings do not all differ. `/Circle` is the specification's name
+    /// and is wrong for a reader in exactly the way `/Square` is: one that is
+    /// actually circular is the rare case.
+    Ellipse,
     /// A line a reader drew freehand, `/Ink`.
     ///
     /// **The first kind whose shape is not a rectangle**, and the reason it is a

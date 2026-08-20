@@ -224,6 +224,26 @@ describe("the rectangle that reaches the model", () => {
     viewer.destroy();
   });
 
+  it("carries the ellipse's kind rather than the box's", async () => {
+    // **The copy-and-paste check.** The two shapes arm the same primitive with
+    // a different argument and read the same gesture, so every other assertion
+    // about a drag passes identically whichever kind was armed --- including
+    // the one directly above, which is why this is a second test rather than a
+    // second expectation inside it. What would ship is an ellipse command that
+    // draws boxes, and nothing else here can see that.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("ellipse");
+    expect(viewer.drawArmed).toBe("ellipse");
+    drag({ x: 100, y: 100 }, { x: 300, y: 200 });
+
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.kind).toBe("ellipse");
+    expect(drawn[0]?.page).toBe(1);
+    viewer.destroy();
+  });
+
   it("orders the corners whichever way the drag went", async () => {
     // Four drags between the same two points. A rectangle built by subtracting
     // in arrival order comes out inside out for three of them, and an
