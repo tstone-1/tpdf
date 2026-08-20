@@ -395,6 +395,27 @@ MUTATIONS = [
         "says a box is drawn as an outline and the others are not",
     ),
     Mutation(
+        # Fill the squiggle's band on the overlay rather than waving through it.
+        # A solid red bar two and a half times an underline's height under the
+        # words, with the saved file correct throughout -- which is the underline
+        # defect's shape, one kind later.
+        "markband: draw a squiggle as a filled band",
+        "src/lib/markband.ts",
+        '  return kind === "squiggly";',
+        "  return false;",
+        "says a squiggle is drawn as a wave and the others are not",
+    ),
+    Mutation(
+        # Give the squiggle the underline's band. Nothing about the shape
+        # changes -- it is still a wave -- but it is drawn inside a rule's height,
+        # which closes the strip every check that tells the kinds apart reads.
+        "markband: fit a squiggle into an underline's band",
+        "src/lib/markband.ts",
+        "      return { ...quad, top: quad.bottom - height * SQUIGGLE_HEIGHT };",
+        "      return { ...quad, top: quad.bottom - height * LINE_FRACTION };",
+        "gives a squiggle a band taller than an underline's rule",
+    ),
+    Mutation(
         # Draw an ellipse as a filled rectangle on the overlay, which is what
         # the final `else` does. The box's mutation above is the same defect one
         # branch along, and the two are separate because the overlay asks

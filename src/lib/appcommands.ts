@@ -604,6 +604,20 @@ export function registerAppCommands(
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.markSelection("strikeout"),
     },
+    {
+      // The fourth and last of them: PDF 32000-1 lists exactly four subtypes
+      // that carry `/QuadPoints`, and with this one tpdf writes all four. A
+      // fourth entry rather than an argument, for the reason the note above
+      // gives about the other three.
+      //
+      // "Squiggly underline", not "Squiggly": the word alone names a shape
+      // rather than an action, and it sits directly under "Underline selection"
+      // where a reader is choosing between two lines under the same words.
+      id: "edit.squigglySelection",
+      title: "Squiggly underline selection",
+      enabled: () => withDocument() && actions.hasSelection(),
+      run: () => actions.markSelection("squiggly"),
+    },
     // Built from `PALETTE` rather than written out, because a colour added there
     // and not here would be in the swatch row and reachable from nowhere else.
     // Seven separate commands rather than one that asks which colour, for the

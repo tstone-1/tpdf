@@ -3648,6 +3648,18 @@ async function appCommandChecks(
       unless: withText,
     },
     {
+      // The fourth, and the one most exposed to the copy-and-paste the note
+      // above describes: it sits directly beneath the underline in the menu, in
+      // the palette and in this list, and an entry left passing "underline"
+      // gives a reader a Squiggly that draws a rule. The expectation carries
+      // the argument, so this names its own.
+      id: "edit.squigglySelection",
+      ...shell("markSelection:squiggly"),
+      read: () => fired.join(","),
+      from: () => viewer.selectPage(),
+      unless: withText,
+    },
+    {
       // The other viewer-guarded command, and its `from` has to *make* the
       // state the guard reads: a mark, and its note open. Nothing else in this
       // phase leaves one open, which is deliberate --- the sweep below asserts
@@ -3921,6 +3933,7 @@ async function appCommandChecks(
     "edit.highlightSelection",
     "edit.underlineSelection",
     "edit.strikeoutSelection",
+    "edit.squigglySelection",
     // Guarded on a note being open, which is how a reader names the mark they
     // mean. A document with no marks in it offers nothing to remove.
     "edit.removeMark",
@@ -7863,12 +7876,13 @@ const INK_CHECK = {
   empty: "an untouched page has nothing on the overlay",
   highlight: "a highlight fills its quad",
   underline: "an underline leaves the middle of its quad clear",
+  squiggly: "a squiggle rises above where an underline's rule stops",
   strikeout: "a strikeout crosses the middle of its quad",
   square: "a box is a frame with its middle clear",
   ellipse: "an ellipse touches its rectangle's sides and misses its corners",
   note: "a comment draws inside its own icon box",
   ink: "a drawing follows its strokes and does not fill its rectangle",
-  distinct: "the seven kinds do not all look the same",
+  distinct: "the eight kinds do not all look the same",
   preview: "a drawing in progress is previewed as a line, not as a rubber band",
   second: "a second stroke joins the drawing rather than replacing it",
   erased: "a stroke the eraser has taken stops being drawn at once",
@@ -7946,7 +7960,13 @@ async function overlayInkChecks(
   /** Paints one mark alone and reads its own rectangle back. */
   const paint = async (
     kind: MarkKind,
-  ): Promise<{ whole: number; core: number; edges: number; corners: number } | null> => {
+  ): Promise<{
+    whole: number;
+    core: number;
+    edges: number;
+    corners: number;
+    shoulder: number;
+  } | null> => {
     const size = viewer.pageSize(0);
     const quad =
       kind === "note"
@@ -8049,9 +8069,28 @@ async function overlayInkChecks(
       [at.left, at.bottom - thickY, at.left + thickX, at.bottom],
       [at.right - thickX, at.bottom - thickY, at.right, at.bottom],
     ].filter(([l, tp, r, b]) => along(l ?? 0, tp ?? 0, r ?? 0, b ?? 0)).length;
-    return whole === null || core === null
+    // **The strip above where an underline's rule stops**, which is the only
+    // reading that tells a squiggle from a rule. Every other number here is the
+    // same for both: a squiggle's ink is a thin band at the bottom of the quad
+    // with an empty centre, one inked side and two inked corners, which is an
+    // underline exactly. The kinds differ in how far up the quad the ink
+    // reaches, and nothing above measured that.
+    //
+    // **Fixed fractions, not derived from `LINE_FRACTION` or
+    // `SQUIGGLE_HEIGHT`.** A band computed from the constants it polices moves
+    // with them and stops being able to fail. The rule ends at 7% of the height
+    // and the wave's peaks reach 18%, so 10% to 16% is clear of both edges.
+    // `annot-probe --mode wave` reads the same strip in the saved file, against
+    // a different wrong implementation.
+    const shoulder = inked(
+      at.left,
+      at.bottom - height * 0.16,
+      at.right,
+      at.bottom - height * 0.1,
+    );
+    return whole === null || core === null || shoulder === null
       ? null
-      : { whole, core, edges, corners };
+      : { whole, core, edges, corners, shoulder };
   };
 
   // The control, and it comes first for the reason every control here does: a
@@ -8068,7 +8107,13 @@ async function overlayInkChecks(
     empty === null ? "the overlay is too small to sample" : `${(empty * 100).toFixed(2)}% inked`,
   );
 
-  type Reading = { whole: number; core: number; edges: number; corners: number };
+  type Reading = {
+    whole: number;
+    core: number;
+    edges: number;
+    corners: number;
+    shoulder: number;
+  };
   const read: Record<string, Reading> = {};
   const wanted: [MarkKind, string, (r: Reading) => boolean][] = [
     // A wash covers its quad, so every reading is high.
@@ -8079,7 +8124,18 @@ async function overlayInkChecks(
     [
       "underline",
       INK_CHECK.underline,
-      (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 1,
+      (r) =>
+        r.whole < 0.3 && r.core < 0.05 && r.edges === 1 && r.shoulder < 0.01,
+    ],
+    // A squiggle: the underline's three readings exactly, plus ink in the strip
+    // the rule leaves empty. The `shoulder < 0.01` on the line above is this
+    // one's control, and it is what stops the emptiness being a reading that
+    // "nothing was drawn" satisfies just as well.
+    [
+      "squiggly",
+      INK_CHECK.squiggly,
+      (r) =>
+        r.whole < 0.3 && r.core < 0.05 && r.edges === 1 && r.shoulder > 0.05,
     ],
     // The same thin band, through the one place an underline must not be. The
     // two together say the kinds are told apart, which neither says alone.
@@ -8154,7 +8210,8 @@ async function overlayInkChecks(
       holds(got),
       `${(got.whole * 100).toFixed(0)}% of the rectangle, ` +
         `${(got.core * 100).toFixed(0)}% of its centre, ` +
-        `ink on ${got.edges} of its 4 sides, ${got.corners} of its 4 corners`,
+        `ink on ${got.edges} of its 4 sides, ${got.corners} of its 4 corners, ` +
+        `${(got.shoulder * 100).toFixed(0)}% of the strip above a rule`,
     );
   }
 
@@ -8172,7 +8229,9 @@ async function overlayInkChecks(
       // collide: their `whole` differs only by the length of a rounded corner
       // against a curve, and two readings that round to the same two decimals
       // would report a distinctness failure on a correct painter.
-      (r) => `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}/${r.corners}`,
+      (r) =>
+        `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}/${r.corners}/` +
+        `${r.shoulder.toFixed(2)}`,
     ),
   );
   const distinct = INK_CHECK.distinct;

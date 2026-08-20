@@ -108,6 +108,10 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
     match kind {
         MarkKind::Highlight => YELLOW,
         MarkKind::Underline | MarkKind::StrikeOut => RULE_RED,
+        // The rules' red, and it is the same ink: a squiggle is a line under
+        // words, drawn opaque, and `--mode wave` classifies by the colour it
+        // asked for exactly as the modes above do.
+        MarkKind::Squiggly => RULE_RED,
         // The wash's yellow, matching `MARK_COLORS` in `edits.ts`: `/C` is what
         // a reader colours its own comment icon with, so this is the colour the
         // bubble comes out in everywhere else.
@@ -141,6 +145,15 @@ enum Mode {
     Rule,
     /// That a box is a frame and not a filled rectangle, in pixels.
     Outline,
+    /// That a squiggle rises above where an underline's rule stops.
+    ///
+    /// **The mode that exists because [`Mode::Rule`] cannot fail for this
+    /// kind.** Thirds of a quad put an underline and a squiggle in the same one,
+    /// so every reading that mode takes is satisfied by either -- and the
+    /// obvious move, giving the new kind the old one's expectations, produces a
+    /// check that reports green for the whole life of the defect. This reads the
+    /// strip between them.
+    Wave,
     /// That freehand ink is drawn where it was drawn, and only there.
     ///
     /// **Named `Strokes`, not `Ink`**, because [`Mode::Ink`] below is nine
@@ -201,6 +214,7 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Roundtrip => roundtrip(args, &document),
         Mode::Rule => rule(args, &document, bindings),
         Mode::Outline => outline(args, &document, bindings),
+        Mode::Wave => wave(args, &document, bindings),
         Mode::Strokes => strokes(args, &document, bindings),
         Mode::Ink | Mode::NoAp => ink(args, &document, bindings),
         Mode::Legible => legible(args, &document, bindings),
@@ -699,6 +713,11 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
         MarkKind::Highlight => Kind::Highlight,
         MarkKind::Underline => Kind::Underline,
         MarkKind::StrikeOut => Kind::StrikeOut,
+        // Names that agree, and it still earns an arm: `/Squiggly` is the one
+        // markup subtype tpdf could not write until this kind existed, so this
+        // is the round trip saying `save.rs` emits it and `annots.rs` reads it
+        // back rather than falling through to "some other annotation".
+        MarkKind::Squiggly => Kind::Squiggly,
         // The one pair whose two names differ. `MarkKind::Note` is what a
         // reader calls it and `Kind::Text` is what the file calls it, so this
         // arm is the round trip that says `save.rs` wrote `/Text` and
@@ -1588,7 +1607,10 @@ fn rule(
     document: &RawDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
-    if !matches!(args.kind, MarkKind::Underline | MarkKind::StrikeOut) {
+    if !matches!(
+        args.kind,
+        MarkKind::Underline | MarkKind::Squiggly | MarkKind::StrikeOut
+    ) {
         return Err(
             "--mode rule is for a line kind: pass --kind underline or --kind strikeout.              A highlight fills its quad, which is what --mode legible measures; a note              draws no ink of ours at all, since the reader synthesises its icon; and a box              draws on all four edges, which is what --mode outline measures."
                 .to_string(),
@@ -1680,6 +1702,15 @@ fn rule(
     let (wanted, forbidden, where_) = match args.kind {
         MarkKind::Underline => (under, opposite, "under-the-baseline"),
         MarkKind::StrikeOut => (middle, under, "middle"),
+        // **The underline's row exactly, and that is the point rather than an
+        // oversight.** A squiggle is a bottom-of-the-quad mark, so this mode
+        // says the true and useful thing that its ink is under the baseline and
+        // not through the words. What it cannot say is that the mark is a
+        // squiggle rather than an underline: thirds are far too coarse, and both
+        // kinds put all their ink in the same one. `--mode wave` is where that
+        // is measured, and it is a separate mode because it needs a band a third
+        // of a quad tall cannot express.
+        MarkKind::Squiggly => (under, opposite, "under-the-baseline"),
         MarkKind::Highlight => unreachable!("refused above"),
         // Refused above with the highlight, and for a stronger reason: a
         // highlight draws a rule nowhere because it is a wash, and a comment
@@ -1716,6 +1747,138 @@ fn rule(
         &format!("nothing was drawn in the band this kind must leave alone ({forbidden} px)"),
         forbidden == 0,
     );
+    Ok(ok)
+}
+
+/// A squiggle rises above where an underline's rule stops; an underline does not.
+///
+/// **Why this is a mode of its own.** `--mode rule` splits a quad into thirds and
+/// asks which one holds the ink. Both an underline and a squiggle put all of
+/// theirs in the bottom third, so every assertion that mode makes is satisfied
+/// by either kind, and a `Paint` that drew a flat rule for a `/Squiggly` would
+/// pass it. The kinds differ in *height*, and a third of a quad is far too
+/// coarse to see it.
+///
+/// The reading is the strip between the two: above where the rule stops, below
+/// where the wave's peaks reach. An underline must leave it empty and a squiggle
+/// must put ink in it.
+///
+/// **The two kinds are a pair and both should be run.** Asserting emptiness for
+/// the underline alone would be an assertion with no control -- "the strip is
+/// clear" and "the renderer drew nothing at all" are the same reading -- and
+/// asserting ink for the squiggle alone would not say the strip is anywhere an
+/// underline avoids.
+fn wave(
+    args: &Args,
+    document: &RawDocument,
+    bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    if !matches!(args.kind, MarkKind::Squiggly | MarkKind::Underline) {
+        return Err(
+            "--mode wave is for a squiggle and its control: pass --kind squiggly or              --kind underline. The other kinds are not lines under words."
+                .to_string(),
+        );
+    }
+    let wavy = matches!(args.kind, MarkKind::Squiggly);
+    let (out, quads) = mark_and_save(args, document)?;
+    if quads.len() != 1 {
+        return Err(format!(
+            "--mode wave reads one quad and this run made {}; a multi-line run              would put one kind's ink at several heights",
+            quads.len()
+        ));
+    }
+
+    // The same raise `--mode outline` makes and for the same reason: the strip
+    // this reads is about a tenth of a quad's height, and on body text that is
+    // barely a point. Printed, so a run says what it measured in.
+    let scale = args.scale.max(4.0);
+    if scale != args.scale {
+        println!("     rendering at {scale}x rather than {}x: the strip this reads is a tenth of a quad tall", args.scale);
+    }
+    let (before, bw, bh) = render(bindings, &args.file, args.page, scale)?;
+    let (after, aw, ah) = render(bindings, &out, args.page, scale)?;
+    if args.keep.is_none() {
+        let _ = std::fs::remove_file(&out);
+    }
+    if (bw, bh) != (aw, ah) {
+        return Err(format!(
+            "the copy renders {aw}x{ah} where the source renders {bw}x{bh}, so no              pixel comparison between them means anything"
+        ));
+    }
+
+    // **Upright pages only, and refused rather than assumed.** This mode reads
+    // two horizontal bands, and which edge of a quad is "under the baseline"
+    // depends on the page's turn -- `--mode rule` above has the four-row table
+    // and the account of reporting two failures on a sideways underline that was
+    // drawn correctly. Rather than repeat that arithmetic for a second mode, a
+    // turned page is refused: the discrimination this mode makes is about
+    // heights and is the same on every turn, so measuring it upright loses
+    // nothing.
+    let turns = document.page(args.page)?.quarter_turns() % 4;
+    if turns != 0 {
+        return Err(format!(
+            "--mode wave reads bands down the page and this one is /Rotate {}; the              strip it measures is not horizontal there",
+            turns * 90
+        ));
+    }
+
+    let quad = union(&quads);
+    let height = quad[3] - quad[1];
+    // **`union` is in display space, where y grows DOWNWARD**, so the foot of
+    // the quad is `quad[3]` and not `quad[1]`. Written the other way round
+    // first, which put both bands at the top of the quad and read 0 px for an
+    // underline that was drawn perfectly -- the control failing is what caught
+    // it, one run in, which is the whole argument for the control existing.
+    //
+    // **Fixed fractions, not derived from `SQUIGGLE_HEIGHT` or
+    // `LINE_FRACTION`.** A band computed from the constants it is policing moves
+    // with them and stops being able to fail -- the trap about a check that
+    // measures along the axis it polices. These sit inside the gap the two
+    // constants leave: the rule ends at 7% of the height and the wave's peaks
+    // reach 18%, so 10% to 16% is clear of both edges by three points of margin
+    // at either end.
+    let strip = [
+        quad[0],
+        quad[3] - height * 0.16,
+        quad[2],
+        quad[3] - height * 0.10,
+    ];
+    // The bottom sliver, where BOTH kinds have ink. Without it a squiggle that
+    // failed to draw at all would be indistinguishable from an underline that
+    // correctly left the strip empty, and the emptiness assertion would be the
+    // reassuring branch.
+    let foot = [quad[0], quad[3] - height * 0.05, quad[2], quad[3]];
+
+    let want = color_for(args.kind);
+    let in_strip = rule_pixels(&after, aw, ah, strip, scale, want);
+    let in_foot = rule_pixels(&after, aw, ah, foot, scale, want);
+    let control = rule_pixels(&before, bw, bh, strip, scale, want);
+    let shape = if wavy { "squiggle" } else { "rule" };
+    println!(
+        "{shape} over {:.1} pt: {in_strip} px in the strip above the rule, {in_foot} px at the              foot of the quad, {control} on the source page",
+        quad[2] - quad[0]
+    );
+
+    let mut ok = true;
+    ok &= check(
+        "the source page has no line where the mark went (the control)",
+        control == 0,
+    );
+    ok &= check(
+        &format!("the renderer drew a line at the foot of the quad at all ({in_foot} px)"),
+        in_foot > 0,
+    );
+    if wavy {
+        ok &= check(
+            &format!("the squiggle rises above where a rule stops ({in_strip} px)"),
+            in_strip > 0,
+        );
+    } else {
+        ok &= check(
+            &format!("a rule leaves that strip empty (the squiggle's control, {in_strip} px)"),
+            in_strip == 0,
+        );
+    }
     Ok(ok)
 }
 
@@ -2237,6 +2400,9 @@ fn parse_args() -> Result<Args, String> {
                     // The serde name once more. `/Ink` is the file's spelling
                     // and "draw" is the reader's; neither is accepted here.
                     "ink" => MarkKind::Ink,
+                    // The serde name, the PDF name and the reader's word, all
+                    // three the same for once.
+                    "squiggly" => MarkKind::Squiggly,
                     // The serde name a fourth time. `/Circle` is the file's
                     // spelling and "ellipse" is both the reader's word and the
                     // serde name, which makes this the one kind where the name
@@ -2251,6 +2417,7 @@ fn parse_args() -> Result<Args, String> {
                     "roundtrip" => Mode::Roundtrip,
                     "rule" => Mode::Rule,
                     "outline" => Mode::Outline,
+                    "wave" => Mode::Wave,
                     "strokes" => Mode::Strokes,
                     "ink" => Mode::Ink,
                     "noap" => Mode::NoAp,

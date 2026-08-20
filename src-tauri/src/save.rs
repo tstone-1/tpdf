@@ -837,6 +837,7 @@ fn subtype(kind: MarkKind) -> &'static [u8] {
     match kind {
         MarkKind::Highlight => b"Highlight",
         MarkKind::Underline => b"Underline",
+        MarkKind::Squiggly => b"Squiggly",
         // `/StrikeOut`, with that capitalisation. The variant is `StrikeOut`
         // and the serde name is `strikeout`; this is the only place all three
         // spellings meet, which is why it is a `match` and not a `to_lowercase`.
@@ -887,6 +888,19 @@ enum Paint {
     /// The quad's edge, opaque, leaving whatever is inside it visible. Which is
     /// the entire point of a box: it says "this", it does not cover it.
     Outline,
+    /// A wave along the bottom of the quad, stroked.
+    ///
+    /// **Separate from [`Paint::Line`] for the reason [`Paint::Ellipse`] is
+    /// separate from [`Paint::Outline`]**: the geometry differs, and geometry is
+    /// what this enum decides. A rule is one filled rectangle; a wave is a
+    /// stroked zigzag, and it is the only style here whose operator count
+    /// depends on how wide the quad is.
+    ///
+    /// It is also the only one that sets its own line width. The header writes a
+    /// single `w` for the whole stream, and a wave's thickness is
+    /// [`LINE_FRACTION`] of *its own quad's* height --- which differs per quad on
+    /// a run that crosses a heading. So the arm emits a `w` before each path.
+    Wave,
     /// The quad's inscribed ellipse, stroked, leaving its inside visible.
     ///
     /// **Separate from [`Paint::Outline`] rather than a flag on it**, because
@@ -922,6 +936,7 @@ fn paint(kind: MarkKind) -> Paint {
     match kind {
         MarkKind::Highlight => Paint::Wash,
         MarkKind::Underline | MarkKind::StrikeOut => Paint::Line,
+        MarkKind::Squiggly => Paint::Wave,
         MarkKind::Square => Paint::Outline,
         MarkKind::Ellipse => Paint::Ellipse,
         MarkKind::Ink => Paint::Path,
@@ -952,7 +967,7 @@ fn is_note(kind: MarkKind) -> bool {
 fn is_text_markup(kind: MarkKind) -> bool {
     matches!(
         kind,
-        MarkKind::Highlight | MarkKind::Underline | MarkKind::StrikeOut
+        MarkKind::Highlight | MarkKind::Underline | MarkKind::Squiggly | MarkKind::StrikeOut
     )
 }
 
@@ -972,6 +987,45 @@ fn is_wash(kind: MarkKind) -> bool {
 /// No floor is needed --- a quad with no area is dropped by [`user_quads`]
 /// before this is reached.
 const LINE_FRACTION: f64 = 0.07;
+
+/// How tall a squiggle's band is, as a fraction of the marked text's height.
+///
+/// Peak to trough, measured from the bottom of the quad up. Proportional for
+/// [`LINE_FRACTION`]'s reason --- the text decides how big the mark is --- and
+/// **larger than it on purpose**: this is the number that makes a squiggle
+/// distinguishable from an underline rather than a wobbly one.
+///
+/// At 0.18 against the rule's 0.07 there is a clear strip of quad, from 7% to
+/// 18% of the height, where an underline has no ink and a squiggle does. Every
+/// check that tells the two kinds apart reads somewhere in that strip, in the
+/// file and on the overlay both.
+///
+/// **No check derives its band from this constant**, which would make the test
+/// move with the thing it polices and stop being able to fail --- see the trap
+/// about a check that measures along the axis it is policing. They use fixed
+/// fractions chosen to sit inside the gap.
+const SQUIGGLE_HEIGHT: f64 = 0.18;
+
+/// One full cycle of a squiggle, as a multiple of [`SQUIGGLE_HEIGHT`]'s band.
+///
+/// Two, so a cycle is as wide as the band is tall twice over, and the zigzag
+/// climbs at 45 degrees. Tied to the band rather than to the quad's width
+/// because a wave whose period was a fraction of the *width* would have fewer,
+/// longer cycles on a long run and more on a short one --- the same mark drawn
+/// at two frequencies depending on how many words the reader picked.
+///
+/// `markband.ts` holds both of these, unavoidably: the overlay draws the same
+/// wave in another language. They are compared by rendering rather than by
+/// sharing a literal --- `annot-probe --mode wave` reads the file's and
+/// `viewer_check.py`'s overlay phase reads the screen's, and **neither reads
+/// these constants**, which is what lets either of them fail.
+///
+/// Private, like [`LINE_FRACTION`], because nothing outside this module has a
+/// reason to know them: [`OUTLINE_WIDTH`] is `pub` only because the probe
+/// measures a stroke it has to predict the width of, and no check here predicts
+/// a wave's geometry --- they read a strip chosen to sit between the two
+/// constants rather than on either.
+const SQUIGGLE_PERIOD: f64 = 2.0;
 
 /// A line's own rectangle inside a quad: `(bottom, height)` in the page's space.
 ///
@@ -995,6 +1049,15 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         // panic in front of a reader.
         MarkKind::Highlight => (bottom, full),
         MarkKind::Underline => (bottom, thickness),
+        // **Reached, unlike five of the six arms around it.** A wave is drawn by
+        // `Paint::Wave` rather than filled, and it asks here for the same reason
+        // the two rules do: where a kind's ink sits inside its quad is one
+        // question, and answering it in two places is how a mark comes out at
+        // one height in the file and another on screen.
+        //
+        // The band is taller than a rule and starts at the same edge, which is
+        // the whole of what tells the two apart once they are drawn.
+        MarkKind::Squiggly => (bottom, full * SQUIGGLE_HEIGHT),
         MarkKind::StrikeOut => (bottom + full / 2.0 - thickness / 2.0, thickness),
         // Not reached either, and one step further out than the highlight
         // above: a comment has no appearance stream of ours at all, so nothing
@@ -1246,6 +1309,59 @@ fn appearance_stream(
             for quad in quads {
                 let [x, y, width, height] = outline_path(*quad);
                 content.push_str(&format!("{x} {y} {width} {height} re S\n"));
+            }
+        }
+        // A zigzag along the bottom of the quad, stroked.
+        //
+        // **Straight segments rather than curves, and that is a decision.** A
+        // squiggle could be drawn as arcs, and Acrobat's is; at this size the
+        // difference is invisible and the cost is not. A zigzag is exact -- `l`
+        // says what it means -- where a curve would put a second approximation
+        // constant beside `KAPPA` for a shape whose whole peak-to-trough height
+        // is under two points on body text.
+        //
+        // Its own `w`, because the header wrote one width for the stream and
+        // this thickness is a fraction of *this quad's* height. A run crossing a
+        // heading has quads of two sizes and would otherwise get one thickness.
+        //
+        // The trough sits half a stroke above the quad's bottom edge and the
+        // peak half a stroke below the band's top, for `outline_path`'s reason:
+        // the /BBox clips, and a stroke centred on the edge loses half its width
+        // in every reader -- which reads as a thinner wave rather than as a bug.
+        Paint::Wave => {
+            for quad in quads {
+                let full = quad[3] - quad[1];
+                let thickness = full * LINE_FRACTION;
+                let (base, band) = line_rect(mark.kind, quad[1], quad[3]);
+                let low = base + thickness / 2.0;
+                let high = base + band - thickness / 2.0;
+                let half = band * SQUIGGLE_PERIOD / 2.0;
+                // A quad too short to hold one climb would emit `m` and no
+                // segment, which strokes nothing; a degenerate band is dropped
+                // by `user_quads` long before this, and this guard is for the
+                // arithmetic rather than for the data.
+                if half <= 0.0 || high <= low {
+                    continue;
+                }
+                content.push_str(&format!("{thickness} w\n"));
+                content.push_str(&format!("{} {low} m\n", quad[0]));
+                let mut x = quad[0];
+                let mut up = true;
+                while x < quad[2] {
+                    let next = (x + half).min(quad[2]);
+                    // The last segment is clipped to the quad's right edge, so
+                    // it ends part-way up its climb rather than overshooting.
+                    // Interpolated rather than snapped to the peak: a wave that
+                    // jumped to full height in a tenth of a period ends on a
+                    // near-vertical stroke, which looks like a stray tick.
+                    let reached = (next - x) / half;
+                    let (from, to) = if up { (low, high) } else { (high, low) };
+                    let y = from + (to - from) * reached;
+                    content.push_str(&format!("{next} {y} l\n"));
+                    x = next;
+                    up = !up;
+                }
+                content.push_str("S\n");
             }
         }
         // Its inscribed ellipse, stroked. Four Bézier arcs, because a content
@@ -3928,18 +4044,26 @@ mod tests {
     }
 
     #[test]
-    fn the_text_markup_kinds_fill_and_are_not_stroked() {
+    fn the_wash_and_the_rules_fill_rather_than_stroke() {
         // The control for the test above. "Contains `re S`" is satisfied by a
         // writer that stroked *everything*, which would turn every highlight
         // into an outline of itself -- and that is a change no assertion about
         // the box alone can see.
         //
-        // **Called `only_a_box_is_stroked` until the ellipse arrived**, which
-        // was accurate when it was written and became a false claim the moment
-        // a second kind was stroked -- while the test itself stayed correct,
-        // because it only ever looked at the three kinds below. A name is read
-        // far more often than a body, and this one would have told a reader the
-        // ellipse fills its rectangle.
+        // **This test has now been renamed twice, by two successive kinds, and
+        // the second time is the instructive one.** It was
+        // `only_a_box_is_stroked` until the ellipse arrived, which was accurate
+        // when written and false the moment a second kind was stroked. It was
+        // then renamed to `the_text_markup_kinds_fill_and_are_not_stroked` --
+        // and the squiggly is a text-markup kind that is *stroked*, so that name
+        // was false within the day.
+        //
+        // Both names described the population the loop happened to cover.
+        // Neither described the property it asserts, which never changed: these
+        // three kinds fill a rectangle. Name a test for what it checks, not for
+        // the set that currently satisfies it -- a population is what the next
+        // kind changes, and the body stays correct while the name quietly stops
+        // being true.
         for kind in [
             MarkKind::Highlight,
             MarkKind::Underline,
@@ -3975,6 +4099,7 @@ mod tests {
             // right ellipse whatever the subtype says, so a wrong `/Circle` is
             // invisible on screen and wrong in every other program.
             (MarkKind::Ellipse, "Circle"),
+            (MarkKind::Squiggly, "Squiggly"),
         ] {
             let scratch = Scratch::new("annots-subtype");
             let written = written_mark(kind, &scratch);
@@ -3984,6 +4109,58 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_squiggle_is_a_stroked_zigzag_in_a_band_taller_than_a_rule() {
+        // **The check the subtype cannot make.** `/Squiggly` with a flat rule in
+        // its appearance stream is a mark every reader files as a squiggle and
+        // draws as an underline, and the subtype test above passes it. The two
+        // halves fail in opposite directions, which is why they are two tests.
+        //
+        // `annot-probe --mode wave` measures the same claim in pixels through
+        // PDFium, with an underline as its control; this one names the operators,
+        // so a failure says *what* was drawn rather than that a strip was empty.
+        let scratch = Scratch::new("annots-squiggle-zigzag");
+        let content = appearance_of(MarkKind::Squiggly, &scratch);
+
+        // Stroked, and made of line segments. A wave drawn with `re` would be a
+        // rule; one drawn with `c` would be the curve this deliberately is not.
+        assert!(content.contains("S\n"), "a squiggle is stroked: {content}");
+        assert!(
+            !content.contains(" re "),
+            "a squiggle is not a rectangle: {content}"
+        );
+        assert!(
+            !content.contains(" c\n"),
+            "a squiggle is straight segments, not curves: {content}"
+        );
+        // Many of them. `one_quad` is 228 pt wide and 18 pt tall, so the band is
+        // 3.24 pt and a half-period is 3.24 pt -- about seventy segments. The
+        // bound is loose because the count is arithmetic this test should not
+        // restate; what it rules out is a "wave" of one or two segments, which
+        // is a diagonal line.
+        let segments = content.matches(" l\n").count();
+        assert!(
+            segments > 20,
+            "a squiggle is many segments and this has {segments}: {content}"
+        );
+
+        // **The band is taller than a rule's, which is the property every check
+        // that tells the two kinds apart depends on.** Compared against the
+        // underline rather than against a number, so the two constants cannot
+        // drift into agreement without this failing.
+        let (_, rule) = line_rect(MarkKind::Underline, 0.0, 100.0);
+        let (_, wave) = line_rect(MarkKind::Squiggly, 0.0, 100.0);
+        assert!(
+            wave > rule * 2.0,
+            "a squiggle's band ({wave}) must clear a rule's ({rule}) by enough to             read between them"
+        );
+        // And both start at the same edge, which is what makes the gap a strip
+        // above the rule rather than two bands somewhere else.
+        let (rule_base, _) = line_rect(MarkKind::Underline, 0.0, 100.0);
+        let (wave_base, _) = line_rect(MarkKind::Squiggly, 0.0, 100.0);
+        assert_eq!(rule_base, wave_base, "both sit on the quad's bottom edge");
     }
 
     #[test]
@@ -4082,6 +4259,11 @@ mod tests {
             MarkKind::Highlight,
             MarkKind::Underline,
             MarkKind::StrikeOut,
+            // The fourth and last subtype the specification lists `/QuadPoints`
+            // on. With it here, this loop is the whole of that list rather than
+            // a sample of it, which is what lets the comment's `is_none` beside
+            // it mean "not a markup kind" instead of "not one of three".
+            MarkKind::Squiggly,
         ] {
             let scratch = Scratch::new("annots-markup-keys");
             let written = written_mark(kind, &scratch);

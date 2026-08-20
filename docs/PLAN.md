@@ -5694,8 +5694,8 @@ changed, so it is not in the changelog; `docs/TRAPS.md` has the general form.
 
 **Not done:** the remaining markup kinds --- squiggly, and the ones that are not
 about a text selection at all (ink, shapes, text boxes, stamps), each of which
-needs a way to *draw* rather than a way to select. (Ink, the box and the ellipse
-have all landed since; squiggly, text boxes and stamps are what remain.) ~~A colour a reader can
+needs a way to *draw* rather than a way to select. (Ink, the box, the ellipse and
+squiggly have all landed since; text boxes and stamps are what remain.) ~~A colour a reader can
 choose, which is still the UI question the `MARK_COLORS` table's comment names
 rather than a missing constant.~~ (Done 2026-08-20 --- that comment was the
 brief, and `markcolors.ts` answers it.) And a keyboard route to a mark, unchanged from the last
@@ -5825,7 +5825,8 @@ with two activation paths. The remaining markup kinds are unchanged from the las
 increment: squiggly, and the ones that are not about a text selection at all
 (ink, shapes, text boxes, stamps), each of which needs a way to draw rather than
 a way to select. (Ink landed 2026-08-20, and the shapes are now the box and the
-ellipse; what is left of that list is squiggly, text boxes and stamps.) ~~And a colour a reader can choose, still the UI question the
+ellipse; squiggly landed the same day, so what is left of that list is text boxes
+and stamps.) ~~And a colour a reader can choose, still the UI question the
 `MARK_COLORS` table's comment names.~~ (Done 2026-08-20.)
 
 #### Cropping a page --- done 2026-08-18
@@ -6993,6 +6994,108 @@ Two findings, and both are about instruments rather than about the ellipse:
 rather than a kind and belongs with the other drag refinements; and the remaining
 markup kinds, unchanged --- squiggly, and text boxes and stamps, each of which needs
 a way to place something rather than a way to drag a rectangle.
+
+#### A squiggly underline --- done 2026-08-20
+
+The fourth text-markup kind, and the last one there is: PDF 32000-1 lists `/QuadPoints`
+on `/Highlight`, `/Underline`, `/Squiggly` and `/StrikeOut` and on no other subtype, so
+tpdf now writes all four. It takes a selection, carries quads, follows the words rather
+than the page, and is made, moved, coloured and removed by machinery that did not change.
+
+**The whole increment is one question: how is it drawn, and how would anyone know.**
+`markSelection` already took a kind, so there is no new action --- only a command entry, a
+menu line, a `Paint` variant and a band.
+
+##### It is the underline's twin, which is a hazard rather than a convenience
+
+Both sit at the bottom of the quad, both default to red, both are one thin band of ink
+with an empty centre. Every reading the checks took of an underline before this kind
+existed is also true of a squiggle, in **both** harnesses:
+
+| reading | underline | squiggle |
+|---|---|---|
+| ink in the quad | 7% | 10% |
+| ink at the centre | 0% | 0% |
+| inked sides | 1 | 1 |
+| inked corners | 2 | 2 |
+| **the strip above a rule** | **0%** | **58%** |
+
+Only the last line separates them, and it did not exist before this kind. Giving the
+squiggle the underline's bounds --- which is the obvious move, since it is the underline's
+sibling --- would have produced a check that reports green for the whole life of the
+defect. This is the trap recorded with the ellipse a few hours earlier, arriving again
+immediately, which is the argument for having written it down.
+
+`SQUIGGLE_HEIGHT` is 0.18 against the rule's `LINE_FRACTION` of 0.07, and the gap between
+them is not decoration: it is the strip every discriminating check reads. **No check
+derives its band from either constant** --- they read fixed fractions, 10% to 16%, chosen
+to sit inside the gap with margin at both ends. A band computed from the number it
+polices moves with it and stops being able to fail.
+
+##### Two harnesses, two wrong implementations, one observable
+
+The file's squiggle could be written as a flat rule; the overlay's could be drawn with
+`fillRect`. Neither place can borrow the other's evidence, so the strip is read twice:
+`annot-probe --mode wave` in the saved file, `viewer_check.py`'s overlay phase on screen.
+
+`--mode wave` is a mode of its own because `--mode rule` **cannot fail for this kind**.
+That mode splits a quad into thirds and asks which one holds the ink; both kinds put all
+of theirs in the bottom third. Squiggly is admitted to `rule` anyway, where it says the
+true and useful thing --- the ink is under the baseline, not through the words --- and the
+comment there says plainly what it cannot say.
+
+Both modes are run **as a pair with the underline as the control**. Asserting the strip is
+empty for a rule, on its own, is an assertion that "nothing was drawn at all" satisfies
+equally well.
+
+##### The wave is straight segments, and that is a decision
+
+A zigzag rather than arcs. Acrobat's squiggle is curved and at this size the difference is
+invisible; a curve would put a second approximation constant beside `KAPPA` and a second
+thing to keep in step across two languages, for a shape whose peak-to-trough height is
+under two points on body text. `l` and `lineTo` say the same thing exactly.
+
+The `Wave` arm is the only one that emits its own `w`. The header writes one line width for
+the stream, and a wave's thickness is `LINE_FRACTION` of *its own quad's* height --- which
+differs per quad on a run crossing a heading. The overlay takes its pen from the quad for
+the same reason, not from the band: a wave drawn at the band's fraction would be two and a
+half times heavier than the rule beside it.
+
+##### Evidence
+
+Seven mutations, all caught. Four in `mutate_rust.py` --- a flat rule for the wave,
+`/Underline` for its subtype, the underline's band, and dropping it from the quad-carrying
+kinds. Two in `mutate_frontend.py`. One in `mutate_viewer.py`, drawing it as the
+underline's flat rule on the overlay, which is the mutation the strip reading exists for
+and goes **2 red**.
+
+`viewer_check.py`: **266/266** on `comments.pdf`, 35 not applicable, eight distinct
+readings from eight kinds. `annot-probe`: **3/3** `--mode wave` on each of the squiggle
+and its underline control, **11/11** `--mode roundtrip` with its quad carried, **4/4**
+`--mode rule`, **8/8** `--mode preview` --- PDFKit and `annots.rs` agreeing the kind is
+`Squiggly`.
+
+Three findings, none about the mark itself:
+
+- **`--mode wave` read the top of the quad on its first run.** `union` returns display
+  coordinates, where y grows *downward*, and the band was written in the page's convention
+  where it grows up. An underline drawn perfectly reported 0 px. **The control is what
+  caught it**, one run in, before any squiggle had been rendered --- which is the whole
+  argument for a control that must find ink rather than only one that must not.
+- **A test renamed to fix a false name was falsified again within the day.**
+  `only_a_box_is_stroked` became `the_text_markup_kinds_fill_and_are_not_stroked` when the
+  ellipse arrived; the squiggly is a text-markup kind that is stroked. Both names described
+  the population the loop covered rather than the property it asserts. It is now
+  `the_wash_and_the_rules_fill_rather_than_stroke`, and the trap has the general form.
+- **The overlay change broke an unrelated mutation's anchor.** Adding the wave branch put
+  an `else` in front of the `isIcon` line, which an existing mutation was aimed at
+  verbatim. Caught by the `anchors` gate in 0.1 s. That one is a genuine drift and the fix
+  belonged in the anchor, which is the opposite of yesterday's case where the fix belonged
+  in the test.
+
+**Not done:** nothing in the markup family --- this is the last of the four. What remains
+of the kinds list is text boxes and stamps, each of which needs a way to place something
+rather than a way to select or drag.
 
 ### Phase 3 --- Redaction
 
