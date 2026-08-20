@@ -10219,3 +10219,145 @@ backend's text ends *"open the file again to see what is there now"*, and the
 window opens it again automatically --- so the instruction is addressed to
 somebody who has already had it carried out for them. Same shape as the refusal
 that told a reader to save edits that were already gone, one layer up.
+
+### Three ways to look for a macOS recent-documents list, and all three say nothing is there
+
+`recentdocs.rs`'s Windows half is checkable by looking at a file:
+`SHAddToRecentDocs` writes `%APPDATA%\Microsoft\Windows\Recent\<name>.lnk`, and
+the sweep produced one per corpus. Writing the macOS half on 2026-08-20, the
+module doc predicted the counterpart before measuring it:
+
+```text
+defaults read com.timostein.tpdf NSRecentDocumentRecords
+```
+
+It answers **"The domain/default pair does not exist"** --- on a run where the
+call had just succeeded. So did the next two places:
+
+* Still absent after 75 s of running, and after a clean `osascript` quit. The
+  application's `.plist` mtime never moved.
+* Probed from *inside* the process, `NSUserDefaults.standardUserDefaults` did not
+  hold the key either, immediately after the call. So this is not a `cfprefsd`
+  flush delay --- there is nothing to flush.
+* `sfltool list-info com.apple.LSSharedFileList.ApplicationRecentDocuments`
+  **hangs**. It is not an instrument.
+* `ls ~/Library/Application Support/com.apple.sharedfilelist/` --- and this one
+  is the trap inside the trap. Run with `2>/dev/null`, as it first was, it prints
+  `total 0` and reads as **an empty directory**. Run without, it says
+  **`Operation not permitted`**: the path is TCC-protected, and suppressing
+  stderr had converted a permission error into an emptiness claim that was then
+  written into three documents. The same shape as `gh api` printing its 404 body
+  to stdout --- *never suppress the stream whose silence you intend to treat as
+  evidence.*
+
+  What is inside it is therefore **not established**. `stat` on a named path
+  answers `No such file or directory` rather than `Operation not permitted`, so
+  search permission works and the answer looks real --- but it says the same for
+  `com.apple.Preview`, `com.apple.TextEdit` and `com.apple.Terminal`, so there is
+  **no positive control** proving `stat` would see a file that is there. An
+  instrument that answers "absent" for every input has not been shown to be able
+  to answer "present".
+
+Four negative answers in a row, and the conclusion they support --- "the call is
+accepted and then dropped, so ship it disclaimed" --- was drafted into
+`docs/PLAN.md` before the fifth measurement was taken. It was wrong.
+`NSRecentDocumentRecords` is simply the pre-Sierra location, and of the four,
+**one was a real absence, one was a hung tool, and one was a permission error
+wearing an absence's clothes.**
+
+**What settles it is asking a second process.** Launch on one document, quit,
+launch on another: the second process starts with `recentDocumentURLs` already
+holding the first document, which it never filed. Measured, `text-heavy.pdf` then
+`rotated.pdf`: `BEFORE filing, AppKit holds 0` on the first launch and `1` on the
+second, carrying the first document over, then ordered most-recent-first. The
+feature works, and every obvious observable had reported it absent.
+
+Two things to carry. **An absence is a fact about where you looked**, and four
+independent-looking places can share one wrong assumption --- here, that a list
+macOS persists must be persisted *as a file*. And the direction of the near-miss
+is the uncomfortable one: the wrong conclusion was the modest one. A disclaimer
+saying "filed, but it does not survive a launch" would have been quieter than the
+overclaim, would have read as commendable caution, and would have been false ---
+which is the shape the entry on a mitigation present and disclaimed already
+warns about, arriving here in a measurement rather than in a document.
+
+### `NSURL` hands a path back decomposed, and the fixture that shows it is not the ASCII one
+
+The macOS `recentdocs` seam converts a resolved path into an `NSURL`, and the
+test read it back with `url.path()` and compared:
+
+```rust
+assert_eq!(Path::new(&url_path), absolute, "and it is still the same file");
+```
+
+Green on a scratch file called `tpdf-recentdocs-plain-16036.pdf`. Red on
+`tpdf-recentdocs Prüfbericht 16036.pdf`, with a failure message that prints the
+path it was given and looks **identical** to the literal it was compared against.
+
+Measured rather than guessed, because the reflex answer here is wrong. Byte for
+byte:
+
+| where | `ü` |
+|-------|-----|
+| the Rust source literal | `c3 bc` (U+00FC, NFC) |
+| `std::fs::canonicalize` | `c3 bc` --- APFS preserved what it was given |
+| `NSURL::fileURLWithPath` → `path()` | `75 cc 88` (u + U+0308, **NFD**) |
+| `absoluteString()` | `Pru%CC%88fbericht` |
+
+So the standing note that *"APFS hands filenames back in NFC, so the macOS-
+normalises-to-NFD reflex is wrong here"* is exactly right about the filesystem
+and says nothing about AppKit, which is the layer that decomposes. Both halves
+are needed: the file on disk is composed, the URL naming it is decomposed, and
+the two are one `canonicalize` apart.
+
+**It is not a mangled name.** APFS looks a filename up normalisation-
+insensitively, so the decomposed path opens the composed file ---
+`Path::new(&url_path).exists()` is true, and `canonicalize` of it returns the
+composed form. Which is why the assertion to write is not an equality on the
+string but a resolution: *does this URL name the reader's file?*
+
+```rust
+assert_eq!(std::fs::canonicalize(&url_path).ok().as_deref(), Some(absolute.as_path()));
+```
+
+The general form is the one this file keeps recording from other directions: **a
+fixture where the right rule and the wrong rule agree cannot tell them apart.**
+An ASCII scratch name makes byte equality and same-file equivalent, so the test
+that was written first could not fail, and it was the *second* fixture --- a name
+no reader would call unusual --- that exposed the rule. Both tests use the
+resolving form now, including the ASCII one, so neither encodes a rule that holds
+only for its own fixture.
+
+### A mutation written on one platform names a test the other platform does not compile
+
+`recentdocs`'s two Windows mutations name
+`a_path_the_shell_is_given_is_absolute_nul_terminated_and_not_verbatim`, which
+lives inside `#[cfg(all(test, windows))] mod tests`. Neither carried `only_on`.
+
+On a Mac that test does not exist, and `mutate_rust.py`'s name guard --- which is
+right to be loud about a name it cannot find, and says so in its own comment ---
+refuses **the whole table** over it. So a table of 198 mutations was unrunnable
+on macOS from the day those two were written, for the same reason and in the
+exact mirror of the `menu::` incident that comment describes: written on one
+platform, silently blocking the other, invisible until somebody runs it there.
+
+Nothing caught it. `check_mutation_anchors.py` asks whether the anchor exists in
+the file, and it did --- an anchor is a *string in a file*, while platform gating
+decides which strings become *code*, so the existing gate was structurally unable
+to see this. It was found by reading, which is luck.
+
+The gate asks the second question now: **where is the test that is supposed to go
+red, and can it go red here?** It locates the `fn` by name, finds the enclosing
+`#[cfg(all(test, ...))]` region, and requires `only_on` to match. A test defined
+inside *several* platform-gated modules --- one rule with a test on each side of
+the cfg, which is what `resolved` has --- needs no declaration and gets none. A
+test found outside any gate is not this check's business.
+
+Proved three ways before it was trusted: dropping a required `only_on` fails
+naming the platform to set; declaring the *wrong* platform fails naming the right
+one; and a scan that finds **no** gated module anywhere fails rather than passing
+every mutation in silence --- which is the shape the emptiness control beside it
+already guards for the table itself. Exit 1 in all three, exit 0 clean.
+
+Note the control run printed `exit=0` at first: `$?` after a pipe through `tail`
+is `tail`'s status, which this file already records from another direction.

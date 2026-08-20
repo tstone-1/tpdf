@@ -1187,12 +1187,93 @@ change to the real code could have moved one.
 run produced one per corpus it opened, each resolving to the real fixture. The module docs
 carry the two commands.
 
-**macOS is not built, and the reason is a constraint rather than a schedule.** The
-counterpart is `NSDocumentController`'s `noteNewRecentDocumentURL:`, which fills the Dock
-icon's Recent Documents and *File ▸ Open Recent*. It is AppKit and must run on the main
-thread, which `open_document` --- an async command --- does not guarantee; it needs a
-`run_on_main_thread` hop. Calling AppKit off the main thread is undefined rather than
-merely wrong, and this machine cannot run it once to find out.
+#### macOS, built 2026-08-20
+
+`NSDocumentController`'s `noteNewRecentDocumentURL:` is the counterpart, and the blocker
+recorded here was exactly right about what it needed and about who could do it: AppKit
+must run on the main thread, `open_document` is an async command that guarantees nothing
+about which thread it is on, and calling AppKit off the main thread is undefined rather
+than merely wrong. The Windows machine could not run it once to find out. This is the Mac
+running it.
+
+**The hop is `run_on_main_thread`, and the requirement is carried by the type rather than
+by a comment**: `sharedDocumentController` takes a `MainThreadMarker`, which cannot be
+forged. The path is resolved *before* the hop and the closure carries a `String`, because
+`Retained<NSURL>` is not `Send` --- which is not a workaround but the right split, since it
+leaves the fallible half on a thread that can return and the main thread holding two
+infallible calls.
+
+**`resolved` is now one function for both platforms**, and that is the increment's other
+change. Windows files a relative path against the *shell's* current directory and AppKit
+resolves one against the *process's* --- two different wrong files from one mistake --- so
+the rule that a path must be absolute and must exist is written once. Two of the five
+mutations aimed at this module now run on both platforms instead of one.
+
+##### The observable, and four measurements that said the feature was broken
+
+The Windows half is checkable by looking at a file. macOS has no such file, and the three
+obvious places all report absence for a feature that is working:
+`defaults read com.timostein.tpdf NSRecentDocumentRecords` does not exist and stays that
+way through 75 s of running and a clean quit; `NSUserDefaults` does not hold the key when
+read from *inside* the process immediately after the call, so it is not a `cfprefsd` flush
+delay; `sfltool list-info` hangs; and
+`~/Library/Application Support/com.apple.sharedfilelist/` is TCC-protected --- which I
+first recorded as *empty*, because the `ls` ran with `2>/dev/null` and
+`Operation not permitted` became `total 0`. One of the four was not an absence at all.
+
+The conclusion those four support --- filed, then dropped, ship it disclaimed --- was
+drafted here before the fifth measurement was taken, and it was wrong. **Two launches
+settle it.** Open `text-heavy.pdf`, quit, open `rotated.pdf`: the second process starts
+with `AppKit holds 1` carrying `text-heavy.pdf`, which it never filed, and ends with both
+in most-recent-first order. A different process reading state this one left with the
+operating system is the standard the Windows `.lnk` sweep meets. `TPDF_RECENTDOCS_PROBE`
+prints the list either side of the call; `BUILD.md` has the procedure.
+
+The near-miss is worth more than the result: **the wrong conclusion was the modest one.**
+A disclaimer reading "filed, but it does not survive a launch" would have looked like
+caution and been false --- the shape *a mitigation present and disclaimed is quieter than
+one claimed and absent* already warns about, arriving in a measurement rather than in a
+document.
+
+##### What the tests can and cannot say
+
+Four, and the seam is where the Windows one is: `document_url` is separate so a test can
+read its result, because `noteNewRecentDocumentURL:` returns nothing and what it did is a
+menu a person looks at.
+
+The mistake it is aimed at is a specific one. `URLWithString:` parses its argument as a
+URL, so an ASCII path comes back with no scheme and a path with a space comes back **nil**
+--- and a reader's Documents folder is full of spaces. The mutation that swaps the
+constructor reddens two tests.
+
+**And the fixture is what decides whether a rule can be told apart.** The first test
+asserted `Path::new(&url_path) == absolute` and passed --- on an ASCII scratch name.
+`fileURLWithPath:` hands the path back **decomposed**: the file on disk is `c3 bc` (APFS
+preserved what `canonicalize` gave it) and `path()` returns `75 cc 88`, so the assertion is
+false for the first name with an umlaut in it, and the failure prints two strings that look
+identical. It is not a mangled name --- APFS looks a filename up normalisation-insensitively
+--- so both tests now assert a *resolution* rather than an equality, including the ASCII
+one, which otherwise encodes a rule that holds only for its own fixture.
+
+##### What a reader actually sees, stated exactly
+
+The measurement above says AppKit accepts the document, retains it across launches and
+orders the list most-recent-first. What that surfaces is the **Dock icon's Recent
+Documents**, which is AppKit's own menu over that list --- not measured here, and worth
+saying so rather than implying a screenshot was taken.
+
+**It does not surface *File ▸ Open Recent*, because tpdf has no such submenu.** The menu
+bar is built from `menubar.ts`'s own spec, and its `NOT_IN_MENU` table already records why
+the recent list is absent from it: the list is rebuilt whenever a file is opened, so a menu
+following it has to be rebuilt with it, and that is its own piece of work. This increment
+does not change that --- it fills the list the submenu would read. Anything claiming
+*Open Recent* works on macOS today is wrong, and an earlier draft of this section said it.
+
+**Not covered:** that `note_opened` is still *called*. Deleting the line from
+`open_document` reddens nothing on either platform, because no test can reach a Tauri
+command --- the same gap `verify_before_commit`'s call site has, and the honest statement is
+the same one: the conversion cannot be wrong while nothing proves it is still wired. The
+two-launch check is what covers it, by hand.
 
 ---
 

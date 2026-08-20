@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 364 entries
+The one thing this file does *not* carry in full is the trap list --- 367 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -664,6 +664,20 @@ that takes twenty minutes, and `mutate_viewer.py` carried an anchor deleted by c
 for weeks without anything saying so. An ordinary `*id` -> `id` cleanup in `save.rs` did the
 same thing to a passing mutation within the hour.
 
+**It asks a second question as of 2026-08-20: can the test it names go red on this
+platform?** An anchor is a string in a file; platform gating decides which strings become
+code, so the first invariant was structurally unable to see that `recentdocs`'s two
+Windows mutations named a test inside `#[cfg(all(test, windows))]` and declared no
+`only_on`. On a Mac that name does not exist and the harness's guard --- right to be loud
+about a name it cannot find --- refuses the **whole** table, so 198 mutations had been
+unrunnable there since the day those two were written. Exactly the mirror of the `menu::`
+incident the harness's own comment describes, and found by reading rather than by
+anything. The gate locates the `fn`, finds its enclosing gated module, and requires
+`only_on` to match; a test defined on both sides of the cfg --- one rule with a test per
+platform, which is what `resolved` has --- needs no declaration. Proved three ways: a missing
+declaration fails, a wrong one fails, and a scan finding no gated module anywhere fails
+rather than passing everything in silence.
+
 **`corpora` exists because the list of window corpora had no home.** It lived in whatever
 shell loop somebody typed, so on 2026-08-16 `links-rotated.pdf` was swept as a corpus and
 produced eight red checks, none of them a defect --- against a `BUILD.md` paragraph that
@@ -983,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 364 of them and the full text
-was 93% of this file --- an instruction budget spent on the 358 traps that are not
+titles. Only the titles are here, because there are 367 of them and the full text
+was 93% of this file --- an instruction budget spent on the 361 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1213,6 +1227,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A synthetic heading that does not reach the second column tests nothing
 - Whatever a fixture is meant to discriminate, it needs two of
 - A fixture where the right rule and the wrong rule agree cannot tell them apart (every ingredient present, the discrimination absent --- a surviving mutation indicts the fixture as often as the assertion)
+- `NSURL` hands a path back decomposed, and the fixture that shows it is not the ASCII one (the filesystem kept NFC and AppKit decomposed; the assertion to write is a resolution, not an equality)
 - Reading a decision back out of the DOM makes the test double part of the logic (right in the browser, wrong under test --- the worst direction)
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion
 - An outcome two mechanisms can produce cannot test either one
@@ -1326,6 +1341,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An event without the modifier fields a matcher tests reads as no match at all (four keys reported guarded were four leaks; the tidy result was the tell)
 - A probe copied from its neighbour inherits a starting point that may not apply (a working command measured as dead, and its sibling failed in the direction that looks like a pass)
 - The gate guarding the anchors reads the file differently from the harness that uses them (green on every anchor in the tree precisely where the harness could match none of the multi-line ones)
+- A mutation written on one platform names a test the other platform does not compile (198 mutations unrunnable on macOS, and the anchor gate was structurally unable to see it)
 
 ### Windows and portability
 - The gates had never run on the platform where they fail
@@ -1370,6 +1386,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A green gate list can sit beside a distributable that cannot be built
 - A bundled app that finds its library in the dev tree proves nothing about the bundle
 - A GUI process has no stderr, and every Windows check launched the app from a shell (the installed build could open no document at all, and no harness could reach the case)
+- Three ways to look for a macOS recent-documents list, and all three say nothing is there (one real absence, one hung tool, and one permission error that `2>/dev/null` turned into `total 0` --- and the wrong conclusion they supported was the MODEST one)
 - Moving a binary out of the installer moves it out of the gate that links it
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 - A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it (15/15 green for sixteen commits while an example did not compile; one type error reads as four broken gates)

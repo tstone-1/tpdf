@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.8.6] - Unreleased
 
+### Documents you opened are in the Dock menu (macOS)
+
+- tpdf now tells macOS which documents you opened, so they appear under the Dock
+  icon's **Recent Documents**. It survives quitting: open one file today, and it
+  is still listed next time you launch.
+
+- Not **File ▸ Open Recent** --- tpdf builds its own menu bar and has no such
+  submenu yet. This fills the list that submenu will read.
+
+- Windows has had this since 26.8.5, in the taskbar Jump List. This is the other
+  half, and it works the same way --- filed once per document that actually
+  opened, whichever way you opened it: a drop on the window, a double-click, a
+  path on the command line.
+
 ### Which version am I running
 
 - **About tpdf** says so, from the palette and from the tpdf menu. It asks the
