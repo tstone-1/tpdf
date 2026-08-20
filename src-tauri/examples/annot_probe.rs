@@ -52,7 +52,7 @@ use tpdf_lib::docmodel::{MarkKind, Quad};
 use tpdf_lib::edits::{Edits, NewMark};
 use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
 use tpdf_lib::save;
-use tpdf_lib::save::OUTLINE_WIDTH;
+use tpdf_lib::save::{INK_WIDTH, OUTLINE_WIDTH};
 use tpdf_lib::text;
 
 /// The document handle every mode opens under. One document, so any number does.
@@ -92,6 +92,10 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         // asked for --- so a yellow box on white paper would be measured as an
         // absence, which is the mistake `RULE_RED`'s own comment records.
         MarkKind::Square => RULE_RED,
+        // The lines' red again, and for the box's reason exactly: ink is a
+        // stroke, so `--mode outline` classifies its pixels by the colour it
+        // asked for and yellow ink on white paper would measure as an absence.
+        MarkKind::Ink => RULE_RED,
     }
 }
 
@@ -109,6 +113,15 @@ enum Mode {
     Rule,
     /// That a box is a frame and not a filled rectangle, in pixels.
     Outline,
+    /// That freehand ink is drawn where it was drawn, and only there.
+    ///
+    /// **Named `Strokes`, not `Ink`**, because [`Mode::Ink`] below is nine
+    /// months older and means something else entirely: how much ink of *any*
+    /// kind lands in a mark's band. The collision is with `MarkKind::Ink`, which
+    /// is a kind of mark rather than a measurement, and renaming the older mode
+    /// would break a documented invocation for a name nobody is confused by
+    /// until they read both.
+    Strokes,
     Ink,
     NoAp,
     Legible,
@@ -158,10 +171,131 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Roundtrip => roundtrip(args, &document),
         Mode::Rule => rule(args, &document, bindings),
         Mode::Outline => outline(args, &document, bindings),
+        Mode::Strokes => strokes(args, &document, bindings),
         Mode::Ink | Mode::NoAp => ink(args, &document, bindings),
         Mode::Legible => legible(args, &document, bindings),
         Mode::Refuse => refuse(args, &document),
     }
+}
+
+/// That freehand ink is drawn where it was drawn, and only there.
+///
+/// **The measurement is a band that must be empty, and it is aimed at one
+/// specific way of getting `/InkList` wrong.** The mark `mark_and_save` writes
+/// for this mode is two horizontal strokes near the top and bottom of the text,
+/// both running left to right, with a wide gap between them. A writer that
+/// flattened the list into one path would join the end of the upper stroke to
+/// the start of the lower one, and that join is a diagonal crossing the gap
+/// across its full width --- so the gap is empty when the strokes are kept apart
+/// and inked when they are not.
+///
+/// The two outer bands are read as well, and neither is redundant. Ink in the
+/// gap alone would not say *which* stroke was drawn, and a writer that emitted
+/// only the first stroke leaves the gap perfectly empty --- so "the upper band
+/// is inked" and "the lower band is inked" are the two readings that make the
+/// empty gap mean what it appears to mean.
+///
+/// Rendered at 4x for [`outline`]'s reason: at the default 2x a
+/// [`INK_WIDTH`] stroke is 5 px and its antialiased edges are a large
+/// fraction of that, which is a poor base for a count.
+fn strokes(
+    args: &Args,
+    document: &RawDocument,
+    bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    if !matches!(args.kind, MarkKind::Ink) {
+        return Err(
+            "--mode strokes is for freehand ink: pass --kind ink. The other kinds take              their shape from a rectangle, which is what --mode rule and --mode outline              measure."
+                .to_string(),
+        );
+    }
+    let (out, quads) = mark_and_save(args, document)?;
+    // One rectangle, and for ink it is not sent at all: the model derives it
+    // from the strokes. Asserted because everything below reads bands of it.
+    if quads.len() != 1 {
+        return Err(format!(
+            "ink is one derived rectangle and this run made {}; --mode strokes cannot              read that",
+            quads.len()
+        ));
+    }
+
+    let scale = args.scale.max(4.0);
+    if scale != args.scale {
+        println!("     rendering at {scale}x rather than {}x: a stroke {INK_WIDTH} pt thick needs pixels to be measured in", args.scale);
+    }
+    let (before, bw, bh) = render(bindings, &args.file, args.page, scale)?;
+    let (after, aw, ah) = render(bindings, &out, args.page, scale)?;
+    if args.keep.is_none() {
+        let _ = std::fs::remove_file(&out);
+    }
+    if (bw, bh) != (aw, ah) {
+        return Err(format!(
+            "the copy renders {aw}x{ah} where the source renders {bw}x{bh}, so no              pixel comparison between them means anything"
+        ));
+    }
+
+    let quad = union(&quads);
+    let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
+    // **The bands only separate on a tall enough line, and that is checked
+    // rather than assumed.** A stroke drawn at 5% of the text box occupies
+    // `[0.05h, 0.05h + INK_WIDTH]` from the derived top and the boundary is
+    // `(h + INK_WIDTH)/3`, so the ink clears the band when
+    // `h > INK_WIDTH * 2 / 0.85`. Below that the mark's own ink lands in the
+    // band this mode asserts is empty, and the run would report a defect that is
+    // not there --- a control that cannot pass, which this repository has
+    // recorded from several directions. Refused with the number, so the reason
+    // is the fixture rather than the code.
+    let text_height = height - INK_WIDTH as f32;
+    let shortest = INK_WIDTH as f32 * 2.0 / 0.85;
+    if text_height <= shortest {
+        return Err(format!(
+            "the marked text is {text_height:.1} pt tall and --mode strokes needs more              than {shortest:.1} pt for its bands to separate a {INK_WIDTH} pt stroke;              point it at a document with larger type"
+        ));
+    }
+    let whole = [quad[0], quad[1], quad[2], quad[3]];
+    // Thirds of the derived rectangle. The strokes sit at 5% and 95% of the
+    // *text* box, and the derived rectangle is that padded by half a line width,
+    // so both land inside the outer thirds and the middle third holds neither.
+    let upper = [quad[0], quad[1], quad[2], quad[1] + height / 3.0];
+    let gap = [
+        quad[0],
+        quad[1] + height / 3.0,
+        quad[2],
+        quad[3] - height / 3.0,
+    ];
+    let lower = [quad[0], quad[3] - height / 3.0, quad[2], quad[3]];
+
+    let want = color_for(args.kind);
+    let all = rule_pixels(&after, aw, ah, whole, scale, want);
+    let top = rule_pixels(&after, aw, ah, upper, scale, want);
+    let middle = rule_pixels(&after, aw, ah, gap, scale, want);
+    let bottom = rule_pixels(&after, aw, ah, lower, scale, want);
+    let control = rule_pixels(&before, bw, bh, whole, scale, want);
+    println!(
+        "ink {width:.1}x{height:.1} pt: {all} px in the whole rectangle, {top} upper,          {middle} in the gap, {bottom} lower, {control} on the source page"
+    );
+
+    let mut ok = true;
+    ok &= check(
+        "the source page has no ink where the mark went (the control)",
+        control == 0,
+    );
+    ok &= check(&format!("the renderer drew ink at all ({all} px)"), all > 0);
+    ok &= check(&format!("the upper stroke was drawn ({top} px)"), top > 0);
+    // Second, and not a duplicate of the one above: a writer that emitted only
+    // the first entry of `/InkList` passes that check and leaves the gap empty,
+    // so this is what separates "kept apart" from "only one of them exists".
+    ok &= check(
+        &format!("the lower stroke was drawn ({bottom} px)"),
+        bottom > 0,
+    );
+    // The discrimination. A flattened `/InkList` draws a diagonal across this
+    // band; two separate strokes leave it untouched.
+    ok &= check(
+        &format!("the gap between the strokes is empty ({middle} px)"),
+        middle == 0,
+    );
+    Ok(ok)
 }
 
 /// The characters `args` names, as one display-space quad per line.
@@ -258,6 +392,48 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
         ));
     }
 
+    // **Ink sends strokes and no quads**, because its rectangle is derived from
+    // what was drawn rather than sent --- see `NewMark::quads`. Synthetic rather
+    // than anything a hand made, and that is the right shape for a probe: what
+    // is being measured is that the points reach the page in the right place,
+    // and a path whose turns are known is one whose pixels can be predicted.
+    //
+    // **Two horizontal strokes with a wide empty band between them, and the
+    // emptiness is the whole design.** A writer that flattened `/InkList` into
+    // one path would join the end of the upper stroke to the start of the lower
+    // one, and because the upper runs left-to-right and so does the lower, that
+    // join is a diagonal crossing the middle band across its full width. So the
+    // middle band is empty for a correct writer and inked for a flattening one
+    // --- which is the discrimination `--mode strokes` reads, and the same shape
+    // `--mode rule` uses for a band that must be empty.
+    let strokes: Vec<Vec<f32>> = if matches!(args.kind, MarkKind::Ink) {
+        let box_ = union(&quads);
+        let (left, top, right, bottom) = (box_[0], box_[1], box_[2], box_[3]);
+        let height = bottom - top;
+        // **5% rather than something more central, and the margin is arithmetic
+        // rather than taste.** `--mode strokes` reads thirds of the *derived*
+        // rectangle, which is this box grown by half a line width at each edge.
+        // A stroke centred at `f` of the text height occupies
+        // `[f*h, f*h + INK_WIDTH]` measured from the derived top, and the band
+        // boundary is `(h + INK_WIDTH)/3`. At f = 0.15 on this corpus that is
+        // 3.88 pt against 3.90 --- it passes, by two hundredths of a point, and
+        // a fixture with slightly shorter lines would put ink in the band that
+        // is asserted empty and report a defect that is not there. At 0.05 the
+        // margin is about a point. The mode refuses a rectangle too short for
+        // the bands to separate at all rather than reading one.
+        vec![
+            vec![left, top + height * 0.05, right, top + height * 0.05],
+            vec![left, bottom - height * 0.05, right, bottom - height * 0.05],
+        ]
+    } else {
+        Vec::new()
+    };
+    let quads = if strokes.is_empty() {
+        quads
+    } else {
+        Vec::new()
+    };
+
     let edits = Edits::default();
     edits.open(DOC, document.page_count(), None);
     let state = edits
@@ -279,6 +455,7 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
                     .iter()
                     .flat_map(|q| [q.left, q.top, q.right, q.bottom])
                     .collect(),
+                strokes,
                 color: color_for(args.kind),
                 author: "annot-probe".to_string(),
                 note: String::new(),
@@ -313,6 +490,21 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
     if args.mode == Mode::NoAp {
         strip_appearances(&out)?;
     }
+    // **The plan's quads, not the ones sent**, and for ink they are the only
+    // ones there are: its rectangle is derived by the model from the strokes, so
+    // this end sends none. Read back rather than recomputed here, because a
+    // second copy of `Stroke::bounds` in the probe would agree with a wrong one
+    // in the model as readily as with a right one --- and every band `--mode
+    // strokes` measures is a fraction of this rectangle.
+    //
+    // Identical to `quads` for every other kind, which is what makes this safe
+    // to do for all of them rather than only for ink: one mark was written, and
+    // the plan holds what the model made of what was sent.
+    let quads = plan
+        .marks
+        .first()
+        .map(|mark| mark.quads.clone())
+        .unwrap_or(quads);
     Ok((out, quads))
 }
 
@@ -392,6 +584,11 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
         // `/Square` is what the writer emits and what the reader reads, and the
         // word "box" a reader actually sees is in neither enum.
         MarkKind::Square => Kind::Square,
+        // The second pair whose names agree, and it is worth an arm rather than
+        // being folded in with the box above: what a reader sees is "Draw",
+        // which is in neither enum, so both of the two spellings this file can
+        // see happen to be the third one.
+        MarkKind::Ink => Kind::Ink,
     };
     ok &= check(
         &format!("kind read back as {expected:?}"),
@@ -429,13 +626,16 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
     // real count in the same run.
     // A box expects none for the same reason by a different route: it is not a
     // markup subtype either, and `is_text_markup` in `save.rs` is the single
-    // predicate both of them go through.
-    let expected_quads = if matches!(args.kind, MarkKind::Note | MarkKind::Square) {
+    // predicate both of them go through. Ink is the third and the clearest of
+    // them: its shape is a list of paths, and a rectangle per line of text would
+    // be a claim about words it does not mark.
+    let expected_quads = if matches!(args.kind, MarkKind::Note | MarkKind::Square | MarkKind::Ink) {
         0
     } else {
         quads.len()
     };
     ok &= quad_points_are_in_reading_order(&out, expected_quads);
+    ok &= ink_list_matches_what_was_drawn(&out, args.kind);
     if args.keep.is_none() {
         let _ = std::fs::remove_file(&out);
     }
@@ -512,6 +712,95 @@ fn quad_points_are_in_reading_order(file: &Path, expected: usize) -> bool {
         "every quad is upper-left, upper-right, lower-left, lower-right",
         ok,
     )
+}
+
+/// Reads `/InkList` off the written file and checks it against the appearance.
+///
+/// **The `/AP` is what every reader draws, and the list is what an editor
+/// reads.** `--mode strokes` measures the first in pixels and would pass on a
+/// file whose `/InkList` was absent, wrong, or flattened, because nothing
+/// renders it. So this is the other half, and the two together are what make a
+/// file *ink* rather than a picture of ink.
+///
+/// What it can say is structural: the key exists on an `/Ink` and on nothing
+/// else, it holds one array per stroke, each holds an even number of numbers,
+/// and every point is inside the annotation's own `/Rect`. That last one is the
+/// assertion with teeth --- a wrong turn in [`user_strokes`] puts the points on
+/// the page in a plausible place, and `/Rect` is computed from the quads by a
+/// different route, so a mapping that disagreed with it would land outside.
+///
+/// What it deliberately does not do is compare the numbers against what the
+/// probe sent. Those are display-space and these are page-space, so the
+/// comparison would need the mapping --- and a check that reimplements the
+/// mapping it is checking agrees with a wrong one exactly as readily.
+fn ink_list_matches_what_was_drawn(file: &Path, kind: MarkKind) -> bool {
+    let Ok(doc) = lopdf::Document::load(file) else {
+        return check("the written file reopens", false);
+    };
+    let mut found = 0usize;
+    let mut ok = true;
+    // **Separate from `ok`, and the reason is a control that misreported.**
+    // Written as `check("every point is inside /Rect", ok)` this read back the
+    // *accumulated* flag, so a mutation that stopped writing the key at all made
+    // it go red too --- naming a geometry defect for a file with no geometry in
+    // it. One predicate answering two questions, caught by its own control.
+    let mut inside = true;
+    for object in doc.objects.values() {
+        let Ok(dictionary) = object.as_dict() else {
+            continue;
+        };
+        let Ok(list) = dictionary.get(b"InkList").and_then(lopdf::Object::as_array) else {
+            continue;
+        };
+        found += 1;
+        let rect: Vec<f32> = dictionary
+            .get(b"Rect")
+            .and_then(lopdf::Object::as_array)
+            .map(|r| r.iter().filter_map(|v| v.as_float().ok()).collect())
+            .unwrap_or_default();
+        if rect.len() != 4 {
+            return check("an /Ink annotation carries a four-number /Rect", false);
+        }
+        for stroke in list {
+            let Ok(points) = stroke.as_array() else {
+                return check("every /InkList entry is an array", false);
+            };
+            let values: Vec<f32> = points.iter().filter_map(|v| v.as_float().ok()).collect();
+            if values.len() != points.len() || values.len() % 2 != 0 {
+                return check("every stroke is an even count of numbers", false);
+            }
+            // Half a line width of slack, because `/Rect` is grown by exactly
+            // that and floats do not round trip through a decimal literal.
+            let slack = (INK_WIDTH / 2.0) as f32 + 0.01;
+            for pair in values.chunks_exact(2) {
+                inside &= pair[0] >= rect[0] - slack
+                    && pair[0] <= rect[2] + slack
+                    && pair[1] >= rect[1] - slack
+                    && pair[1] <= rect[3] + slack;
+            }
+        }
+        ok &= check(
+            &format!("the /InkList holds {} stroke(s)", list.len()),
+            list.len() == 2,
+        );
+    }
+    // **Both directions**, and the second is what a `matches!` on the kind buys:
+    // an `/InkList` on a highlight would be as wrong as its absence on ink, and
+    // a writer that emitted the key unconditionally passes every assertion above.
+    let wanted = usize::from(kind == MarkKind::Ink);
+    ok &= check(
+        &format!("{found} annotation(s) carry an /InkList, and {wanted} should"),
+        found == wanted,
+    );
+    // Only where there is a list to be inside anything: with none, this would
+    // be an assertion about no points, which passes by having nothing to check.
+    if found > 0 {
+        ok &= check(
+            "every /InkList point is inside the annotation's /Rect",
+            inside,
+        );
+    }
+    ok
 }
 
 /// The union of a set of display-space quads, as `[left, top, right, bottom]`.
@@ -728,6 +1017,12 @@ fn rule(
         // inside it. Thirds of the quad cannot discriminate anything about it,
         // which is what `--mode outline` exists for.
         MarkKind::Square => unreachable!("refused above"),
+        // Refused above with the box, and for the same reason one step further:
+        // ink is not in a band *or* on an edge, it is wherever the reader's hand
+        // went, so thirds of its bounding rectangle discriminate nothing at all.
+        // `--mode outline` measures it, and the inset it uses for a box does not
+        // transfer --- see that mode.
+        MarkKind::Ink => unreachable!("refused above"),
     };
     ok &= check(
         &format!("most of the rule is in the {where_} third ({wanted} px)"),
@@ -1038,6 +1333,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
             kind: MarkKind::Highlight,
             page: id,
             quads: vec![10.0, 10.0, 10.0, 40.0],
+            strokes: Vec::new(),
             color: YELLOW,
             author: String::new(),
             note: String::new(),
@@ -1055,6 +1351,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
             kind: MarkKind::Highlight,
             page: id,
             quads: vec![10.0, 10.0, 40.0],
+            strokes: Vec::new(),
             color: YELLOW,
             author: String::new(),
             note: String::new(),
@@ -1064,6 +1361,88 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
     ok &= check(
         &format!("quads that are not a multiple of four are refused: {ragged:?}"),
         ragged.is_err(),
+    );
+
+    // **The biconditional `Mark::strokes` states, both ways round.** Neither is
+    // reachable from the window --- the frontend sends strokes for ink and quads
+    // for everything else --- so these are the only place the rule can be shown
+    // to hold, and a rule with no failing case is a comment.
+    let strokes_on_a_highlight = edits.annotate(
+        DOC,
+        NewMark {
+            kind: MarkKind::Highlight,
+            page: id,
+            quads: vec![10.0, 10.0, 200.0, 40.0],
+            strokes: vec![vec![10.0, 10.0, 200.0, 40.0]],
+            color: YELLOW,
+            author: String::new(),
+            note: String::new(),
+        },
+        save::pdf_date(std::time::SystemTime::now()),
+    );
+    ok &= check(
+        &format!("strokes on a kind that is not ink are refused: {strokes_on_a_highlight:?}"),
+        strokes_on_a_highlight.is_err(),
+    );
+
+    let ink_with_nothing_drawn = edits.annotate(
+        DOC,
+        NewMark {
+            kind: MarkKind::Ink,
+            page: id,
+            quads: Vec::new(),
+            strokes: Vec::new(),
+            color: RULE_RED,
+            author: String::new(),
+            note: String::new(),
+        },
+        save::pdf_date(std::time::SystemTime::now()),
+    );
+    ok &= check(
+        &format!("ink with no strokes at all is refused: {ink_with_nothing_drawn:?}"),
+        ink_with_nothing_drawn.is_err(),
+    );
+
+    // **Not the same refusal as the one above, and this is the one a padded
+    // rectangle would let through.** `Stroke::bounds` grows the quad by half the
+    // line width, so a stroke standing still still covers area --- which is why
+    // the model asks `is_drawable` for ink rather than `covers_area`. Without
+    // that branch this passes and a reader gets an invisible mark they cannot
+    // find again to remove.
+    let ink_that_never_moved = edits.annotate(
+        DOC,
+        NewMark {
+            kind: MarkKind::Ink,
+            page: id,
+            quads: Vec::new(),
+            strokes: vec![vec![50.0, 50.0, 50.0, 50.0, 50.0, 50.0]],
+            color: RULE_RED,
+            author: String::new(),
+            note: String::new(),
+        },
+        save::pdf_date(std::time::SystemTime::now()),
+    );
+    ok &= check(
+        &format!("ink that never moved is refused: {ink_that_never_moved:?}"),
+        ink_that_never_moved.is_err(),
+    );
+
+    let odd_stroke = edits.annotate(
+        DOC,
+        NewMark {
+            kind: MarkKind::Ink,
+            page: id,
+            quads: Vec::new(),
+            strokes: vec![vec![10.0, 10.0, 40.0]],
+            color: RULE_RED,
+            author: String::new(),
+            note: String::new(),
+        },
+        save::pdf_date(std::time::SystemTime::now()),
+    );
+    ok &= check(
+        &format!("a stroke that is not pairs of numbers is refused: {odd_stroke:?}"),
+        odd_stroke.is_err(),
     );
 
     let gone = edits.unannotate(DOC, 4242);
@@ -1080,6 +1459,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
             kind: MarkKind::Highlight,
             page: id,
             quads: vec![10.0, 10.0, 200.0, 40.0],
+            strokes: Vec::new(),
             color: YELLOW,
             author: String::new(),
             note: String::new(),
@@ -1136,6 +1516,9 @@ fn parse_args() -> Result<Args, String> {
                     // The serde name again. `/Square` is the file's spelling and
                     // "box" is the reader's, and neither is accepted here.
                     "square" => MarkKind::Square,
+                    // The serde name once more. `/Ink` is the file's spelling
+                    // and "draw" is the reader's; neither is accepted here.
+                    "ink" => MarkKind::Ink,
                     other => return Err(format!("unknown kind {other}")),
                 }
             }
@@ -1145,6 +1528,7 @@ fn parse_args() -> Result<Args, String> {
                     "roundtrip" => Mode::Roundtrip,
                     "rule" => Mode::Rule,
                     "outline" => Mode::Outline,
+                    "strokes" => Mode::Strokes,
                     "ink" => Mode::Ink,
                     "noap" => Mode::NoAp,
                     "legible" => Mode::Legible,

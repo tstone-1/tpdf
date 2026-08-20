@@ -91,6 +91,11 @@ const MARK_COLORS: Record<MarkKind, [number, number, number]> = {
   // is nearly invisible, which is the same reason the underline and the
   // strikeout above are not the wash's colour either.
   square: [0.85, 0.15, 0.15],
+  // The lines' red again, for the box's reason: ink is a stroke, drawn opaque
+  // and on top, and yellow ink on white paper is nearly invisible. It is also
+  // what a reader reaches for a pen to do --- annotate in a colour that is not
+  // the document's --- which is the same argument, from the other end.
+  ink: [0.85, 0.15, 0.15],
 };
 
 /**
@@ -282,13 +287,27 @@ export class Edits {
    * which the writer decides; nothing on this side of the boundary changes with
    * the kind except which constant is read.
    */
-  async mark(kind: MarkKind, page: number, quads: number[], note = ""): Promise<EditState> {
+  async mark(
+    kind: MarkKind,
+    page: number,
+    quads: number[],
+    strokes: number[][] = [],
+    note = "",
+  ): Promise<EditState> {
     const id = this.current.pages[page]?.id;
     if (id === undefined) return this.current;
     return this.adopt(
       await invoke<EditState>("annot_mark", {
         doc: this.doc,
-        mark: { kind, page: id, quads, color: MARK_COLORS[kind], author: "", note },
+        mark: {
+          kind,
+          page: id,
+          quads,
+          strokes,
+          color: MARK_COLORS[kind],
+          author: "",
+          note,
+        },
       }),
     );
   }

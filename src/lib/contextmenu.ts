@@ -120,6 +120,10 @@ export const SELECTION_MENU: Entry[] = [
   // to blank space. It is also the only route to the tool a reader will find
   // without being told, since it has no chord and the menu bar is macOS-only.
   "edit.drawBox",
+  // With the box, for its reason exactly: this is also a thing a reader can do
+  // to blank paper, and also has no chord, so a right-click is the only route
+  // to it that anyone will find without being told.
+  "edit.draw",
   "edit.copy",
   "edit.highlightSelection",
   "edit.underlineSelection",

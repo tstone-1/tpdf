@@ -17,7 +17,7 @@
  *
  * ## The rule is `save.rs`'s, restated here rather than invented
  *
- * `ink`, `LINE_FRACTION`, `line_rect` and `OUTLINE_WIDTH` in
+ * `paint`, `LINE_FRACTION`, `line_rect` and `OUTLINE_WIDTH` in
  * `src-tauri/src/save.rs` decide this for the file, and what a reader sees on screen has to be the same
  * decision or the two disagree about what a mark *is*. This is a second copy of
  * a constant across a language boundary, which this repository has a trap about;
@@ -101,6 +101,46 @@ export function isIcon(kind: MarkKind): boolean {
 export function isOutline(kind: MarkKind): boolean {
   return kind === "square";
 }
+
+/**
+ * Whether a kind is drawn from strokes rather than from its rectangle.
+ *
+ * `Paint::Path` in `save.rs`. **The first kind whose quad is not its shape**:
+ * every other mark is its rectangle, a band inside it, or its edge, and this one
+ * is a path that merely happens to fit in one. So an overlay that painted from
+ * {@link markBand} would draw a filled box where a reader drew a line --- which
+ * is the same class of defect as the underline that looked like a highlight,
+ * and the reason that one is worth remembering is that the *file* was right
+ * throughout.
+ */
+export function isPath(kind: MarkKind): boolean {
+  return kind === "ink";
+}
+
+/**
+ * How thick a freehand line is, in points, before any zoom.
+ *
+ * `INK_WIDTH` in `save.rs`. Heavier than {@link OUTLINE_WIDTH} for the reason
+ * stated there: a box is a frame round something and should not compete with
+ * it, while a drawn line *is* the content, and at hairline weight freehand ink
+ * reads as tentative and breaks up wherever the pointer moved fast.
+ */
+export const INK_WIDTH = 2.5;
+
+/**
+ * How far the pointer must move before a stroke keeps another point, in points.
+ *
+ * **No counterpart in `save.rs`**, and it is the one constant here that is not
+ * mirroring one: sampling is a property of the input device, and the writer
+ * receives whatever the drag decided. It is in this file because it belongs
+ * beside the ink constants a reader of either would look for together.
+ *
+ * Half a point, in the *page's* space rather than in client pixels, so a line
+ * drawn at 400% carries the same number of points as the identical line drawn at
+ * 100%. At 2.5 pt of line width it is well under what any hand can see, and it
+ * takes a slow diagonal across a page from thousands of points to hundreds.
+ */
+export const INK_SAMPLE = 0.5;
 
 /**
  * How thick a box's outline is, in points, before any zoom.
@@ -245,6 +285,14 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // edge, so half of it falls outside the quad; `save.rs` insets its own
       // path by half the width because the appearance stream's /BBox would clip
       // that half away, and the overlay has no /BBox and needs no inset.
+      return quad;
+    case "ink":
+      // The whole quad a fourth time, and it is the only one of the four where
+      // the answer is not merely *unused* but meaningless: a drawing has no
+      // band, no edge and no relationship to its rectangle beyond happening to
+      // fit inside it. The overlay asks {@link isPath} first and paints the
+      // strokes, so nothing reaches this arm --- it exists because the switch
+      // is exhaustive, which is what makes a sixth kind a compile error here.
       return quad;
   }
 }

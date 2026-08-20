@@ -182,9 +182,59 @@ MUTATIONS = [
         # did not ask to stay in.
         "viewer: keep the box tool armed after a box is drawn",
         "src/lib/viewer.ts",
-        "        this.drawKind = null;\n        this.showCursor();\n        this.opts.onDrawn?.(kind, id, this.fileRectOn(live.slot, quad));",
-        "        this.showCursor();\n        this.opts.onDrawn?.(kind, id, this.fileRectOn(live.slot, quad));",
+        "        this.drawKind = null;\n        this.showCursor();\n        this.opts.onDrawn?.(kind, id, {",
+        "        this.showCursor();\n        this.opts.onDrawn?.(kind, id, {",
         "is spent by one box",
+    ),
+    Mutation(
+        # Keep every pointer event. A hand resting on a trackpad produces dozens
+        # of points inside a tenth of a point, none of which changes the line and
+        # all of which go into the file and over the IPC boundary.
+        "viewer: keep every pointer event rather than sampling the stroke",
+        "src/lib/viewer.ts",
+        "        const last = live.points[live.points.length - 1];\n        if (\n          !last ||",
+        "        const last = live.points[live.points.length - 1];\n        if (\n          true ||",
+        "samples the pointer rather than keeping every event",
+    ),
+    Mutation(
+        # Drop the point the pointer was released on. The sample may have
+        # discarded it, so every stroke ends up to one sample short --- invisible
+        # on a long sweep and the whole of a tick or the crossing of a t.
+        "viewer: end a stroke at the last sample rather than at the release",
+        "src/lib/viewer.ts",
+        "          if (!last || last.x !== live.to.x || last.y !== live.to.y) {\n            live.points.push({ ...live.to });\n          }",
+        "          if (false) {\n            live.points.push({ ...live.to });\n          }",
+        "keeps the point the pointer was released on",
+    ),
+    Mutation(
+        # Commit a drawing of one point. A press that never moved is a reader who
+        # has not started, and spending the tool on it costs them the command
+        # with nothing on screen to say why.
+        "viewer: commit a drawing the pointer never moved for",
+        "src/lib/viewer.ts",
+        "          if (inkId === undefined || live.points.length < 2) return;",
+        "          if (inkId === undefined) return;",
+        "keeps the tool armed when the pointer never moved",
+    ),
+    Mutation(
+        # Send a drawing's rectangle as well as its strokes. The model refuses
+        # the pair outright, so the mark never lands -- which reads as the tool
+        # doing nothing rather than as a wire defect.
+        "viewer: send a rectangle alongside a drawing's strokes",
+        "src/lib/viewer.ts",
+        "          this.opts.onDrawn?.(kind, inkId, {\n            quads: [],",
+        "          this.opts.onDrawn?.(kind, inkId, {\n            quads: [0, 0, 1, 1],",
+        "commits strokes and no rectangle",
+    ),
+    Mutation(
+        # Leave a drawing's points in the view's space. Correct on an unturned
+        # page and wrong on every other, which is the shape of defect a single
+        # untried corpus hides.
+        "viewer: leave a drawing's points unmapped into the file's space",
+        "src/lib/viewer.ts",
+        "                const mapped = this.fileRectOn(live.slot, {",
+        "                const mapped = [point.x, point.y] as const;\n                void this.fileRectOn(live.slot, {",
+        "puts the points back in the file's space on a turned page",
     ),
     Mutation(
         # Send the slot rather than the page's id. Works on every document until
@@ -2300,8 +2350,8 @@ MUTATIONS = [
         # took that slot, at the coordinates of the words it was made from.
         "edits: send a mark's slot rather than its page id",
         "src/lib/edits.ts",
-        "        mark: { kind, page: id, quads, color: MARK_COLORS[kind], author: \"\", note },",
-        "        mark: { kind, page, quads, color: MARK_COLORS[kind], author: \"\", note },",
+        "          page: id,\n          quads,",
+        "          page,\n          quads,",
         "sends the page's id rather than its slot when a mark is made",
     ),
     Mutation(

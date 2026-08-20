@@ -198,6 +198,74 @@ MUTATIONS = [
         "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(
+        # Flatten `/InkList` into one path. The end of each stroke is then joined
+        # to the start of the next by a line the reader never drew, which looks
+        # like a drawing rather than like a defect --- and `--mode strokes`
+        # measures the same thing in pixels by asserting the band between two
+        # strokes is empty.
+        "save: draw every stroke as one path rather than one each",
+        "src/save.rs",
+        "            for stroke in strokes {",
+        "            for stroke in strokes.iter().take(1) {",
+        "each_stroke_is_its_own_path_in_the_appearance_stream",
+    ),
+    Mutation(
+        # Mitre the joins, which is the default. A hand-drawn corner turns at
+        # whatever angle the hand made, and a mitre on a sharp one spikes out to
+        # a point that reads as a rendering fault.
+        "save: leave a drawing's joins mitred, as a box's are",
+        "src/save.rs",
+        '        Paint::Path => (INK_WIDTH, "1 J 1 j "),',
+        '        Paint::Path => (INK_WIDTH, ""),',
+        "each_stroke_is_its_own_path_in_the_appearance_stream",
+    ),
+    Mutation(
+        # Write `/InkList` on every kind. The appearance stream is unchanged, so
+        # every pixel check still passes and every reader still draws the right
+        # thing --- what breaks is the file's own account of what it holds.
+        "save: write an /InkList on kinds that have no strokes",
+        "src/save.rs",
+        "    if paint(mark.kind) == Paint::Path {\n        dictionary.set(\n            \"InkList\",",
+        "    if true {\n        dictionary.set(\n            \"InkList\",",
+        "the_ink_list_is_written_for_ink_and_for_nothing_else",
+    ),
+    Mutation(
+        # Accept a mark whose kind and shape disagree. Nothing a reader can do
+        # reaches this, so the only thing that can catch it is the test named
+        # for it -- which is the case a rule with no failing case is in.
+        "docmodel: let a kind and a shape disagree",
+        "src/docmodel.rs",
+        "        if mark.strokes.is_empty() != (mark.kind != MarkKind::Ink) {",
+        "        if false {",
+        "a_kind_and_a_shape_that_disagree_are_refused_both_ways_round",
+    ),
+    Mutation(
+        # Ask `covers_area` of ink too. Its rectangle is padded by half a line
+        # width, so a stroke that never moved still covers area and the mark is
+        # accepted -- invisible on the page and unfindable in the panel, which is
+        # an unsaved change the reader cannot see.
+        "docmodel: judge ink empty by its rectangle rather than by its length",
+        "src/docmodel.rs",
+        "        let empty = if mark.kind == MarkKind::Ink {\n            !mark.strokes.iter().any(Stroke::is_drawable)",
+        "        let empty = if false {\n            !mark.strokes.iter().any(Stroke::is_drawable)",
+        "ink_that_never_moved_is_refused_though_its_rectangle_covers_area",
+    ),
+    Mutation(
+        # Stop padding the bounds. A straight vertical stroke then has a
+        # rectangle of no width, which `covers_area` refuses -- so ruling a line
+        # down a margin is answered with "that mark covers nothing".
+        "edits: take ink's rectangle tight against the strokes",
+        "src/edits.rs",
+        "            quads = Stroke::bounds(&strokes, (crate::save::INK_WIDTH / 2.0) as f32)",
+        "            quads = Stroke::bounds(&strokes, 0.0)",
+        # **Not the `docmodel` test that looks like the right one.** That one
+        # builds its `Mark` by hand, so it exercises `Stroke::bounds` and says
+        # nothing about whether anything calls it -- and this mutation reported
+        # SURVIVED against it, which is the harness finding a real gap rather
+        # than a variant. The test that reaches the derivation is on this side.
+        "a_drawings_rectangle_is_derived_here_and_padded_by_half_a_line",
+    ),
+    Mutation(
         # Hand the platform the path as it arrived. Windows files a relative one
         # against the *shell's* current directory and AppKit resolves it against
         # the *process's* --- two different wrong files from one mistake, which
@@ -1808,8 +1876,8 @@ MUTATIONS = [
         # accounting observable.
         "docmodel: issue a mark's id before checking that it covers anything",
         "src/docmodel.rs",
-        "        if !mark.quads.iter().any(|quad| quad.covers_area()) {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(self.next_mark);",
-        "        let id = MarkId(self.next_mark);\n        self.next_mark += 1;\n        if !mark.quads.iter().any(|quad| quad.covers_area()) {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(id.get());",
+        "        if empty {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(self.next_mark);",
+        "        let id = MarkId(self.next_mark);\n        self.next_mark += 1;\n        if empty {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(id.get());",
         "a_mark_covering_nothing_is_refused_and_spends_no_id",
     ),
     Mutation(
@@ -1819,8 +1887,8 @@ MUTATIONS = [
         # which only ever hands it marks where nothing has area.
         "docmodel: require every quad to cover area rather than any",
         "src/docmodel.rs",
-        "        if !mark.quads.iter().any(|quad| quad.covers_area()) {",
-        "        if !mark.quads.iter().all(|quad| quad.covers_area()) {",
+        "            !mark.quads.iter().any(|quad| quad.covers_area())",
+        "            !mark.quads.iter().all(|quad| quad.covers_area())",
         "one_quad_with_area_is_enough",
     ),
     Mutation(
@@ -1957,8 +2025,8 @@ MUTATIONS = [
         # question: the arm it named said `=> false` and now says `=> Ink::Line`.
         "save: draw the two line kinds as washes",
         "src/save.rs",
-        "        MarkKind::Underline | MarkKind::StrikeOut => Ink::Line,",
-        "        MarkKind::Underline | MarkKind::StrikeOut => Ink::Wash,",
+        "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Line,",
+        "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Wash,",
         "a_line_is_opaque_and_a_wash_is_not",
     ),
     Mutation(
@@ -2199,8 +2267,8 @@ MUTATIONS += [
         # ignored rather than one that was never set.
         "save: set only the fill colour, so the stroke comes out black",
         "src/save.rs",
-        "{r} {g} {b} rg {r} {g} {b} RG {OUTLINE_WIDTH} w",
-        "{r} {g} {b} rg {OUTLINE_WIDTH} w",
+        "{r} {g} {b} rg {r} {g} {b} RG {width} w {joins}",
+        "{r} {g} {b} rg {width} w {joins}",
         "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
     ),
     Mutation(
@@ -2219,7 +2287,7 @@ MUTATIONS += [
         # findable, removable -- and invisible.
         "save: leave a box's appearance to the reader, as a comment's is",
         "src/save.rs",
-        "        let appearance = if ink(mark.kind) == Ink::None {",
+        "        let appearance = if paint(mark.kind) == Paint::None {",
         "        let appearance = if !is_text_markup(mark.kind) {",
         "a_comment_carries_no_text_markup_keys_and_the_others_do",
     ),

@@ -36,6 +36,7 @@ import {
 } from "./appcommands";
 import { frame, Report, settle as settleFor } from "./checkreport";
 import { MULTI_CLICK_SLOP_PX } from "./clicks";
+import { INK_WIDTH } from "./markband";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
 import type { Comment, Comments } from "./comments";
@@ -2957,6 +2958,7 @@ async function appCommandChecks(
     toggleSidebar: () => fired.push("toggleSidebar"),
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
+    draw: () => fired.push("draw"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
     toggleInvert: () => fired.push("toggleInvert"),
     // Recorded like the rest, though neither command is driven here --- both are
@@ -3571,6 +3573,18 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      // The freehand tool, aimed separately for the reason the three mark kinds
+      // below are: two commands that arm the same primitive with a different
+      // argument is exactly the shape where a copy-and-paste leaves both arming
+      // the box, and a probe that only checked "a tool was armed" could not see
+      // it. `App.svelte` is where the argument is chosen, which this cannot
+      // reach --- so what it says is that the command exists and reaches its own
+      // action, which is the defect that shipped with the box.
+      id: "edit.draw",
+      ...shell("draw"),
+      read: () => fired.join(","),
+    },
+    {
       // The two other kinds, aimed separately. One action taking an argument,
       // which is the shape this file's own note about `movePage` warns about:
       // a copy-and-paste that left all three passing "highlight" gives a reader
@@ -3998,6 +4012,7 @@ function syntheticMark(
       size.width_pt * 0.6,
       size.height_pt * (band + 0.05),
     ],
+    strokes: [],
     color: [1, 0.9, 0.2],
     note,
   };
@@ -7655,7 +7670,8 @@ const OVERLAY_INK_CHECKS = [
   "a strikeout crosses the middle of its quad",
   "a box is a frame with its middle clear",
   "a comment draws inside its own icon box",
-  "the five kinds do not all look the same",
+  "a drawing follows its strokes and does not fill its rectangle",
+  "the six kinds do not all look the same",
 ];
 
 /**
@@ -7728,8 +7744,35 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
       kind === "note"
         ? [size.width_pt * 0.2, size.height_pt * 0.08, size.width_pt * 0.2 + 20, size.height_pt * 0.08 + 20]
         : [size.width_pt * 0.15, size.height_pt * 0.08, size.width_pt * 0.6, size.height_pt * 0.12];
+    // **Ink is the one kind whose rectangle is not its shape**, so it is sent
+    // the strokes and the rectangle is derived here the way the model derives
+    // it. Two horizontal strokes along the top and bottom of the same box every
+    // other kind uses: that reads as two inked edges and an empty centre, which
+    // is a combination none of the other five produces --- an underline has one
+    // edge, a strikeout fills the centre, a frame has four.
+    const [left, top, right, bottom] = [
+      quad[0] ?? 0,
+      quad[1] ?? 0,
+      quad[2] ?? 0,
+      quad[3] ?? 0,
+    ];
+    const strokes =
+      kind === "ink"
+        ? [
+            [left, top + INK_WIDTH, right, top + INK_WIDTH],
+            [left, bottom - INK_WIDTH, right, bottom - INK_WIDTH],
+          ]
+        : [];
     viewer.setMarks([
-      { id: 7777, kind, page: 1, quads: quad, color: [0.85, 0.15, 0.15], note: "" },
+      {
+        id: 7777,
+        kind,
+        page: 1,
+        quads: quad,
+        strokes,
+        color: [0.85, 0.15, 0.15],
+        note: "",
+      },
     ]);
     await frame();
     await frame();
@@ -7831,6 +7874,16 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
       OVERLAY_INK_CHECKS[5] ?? "",
       (r) => r.whole > 0.2 && r.whole < 0.95 && r.core > 0.5,
     ],
+    // Two rules near the top and bottom edges, and nothing between them. The
+    // reading that matters is `edges === 2` *with* an empty core: a painter
+    // that fell back to the quad --- which is what `markBand` answers for this
+    // kind, and what every other kind is drawn from --- fills all three, and
+    // that is the exact defect the underline shipped with, one kind later.
+    [
+      "ink",
+      OVERLAY_INK_CHECKS[6] ?? "",
+      (r) => r.whole < 0.4 && r.core < 0.05 && r.edges === 2,
+    ],
   ];
 
   for (const [kind, name, holds] of wanted) {
@@ -7851,17 +7904,23 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
 
   // The discrimination itself, in one line. Every check above is a bound, and a
   // painter that drew one shape for everything could in principle satisfy a
-  // subset of them; this says the five readings are five readings.
+  // subset of them; this says the six readings are six readings.
+  //
+  // **The index is the last entry of the list and moved when ink was added.**
+  // Written as a literal it silently named ink's own check instead, which would
+  // have reported the distinctness verdict under the drawing's name and left
+  // the drawing's own unreported --- two wrong lines from one number.
   const shapes = new Set(
     Object.values(read).map(
       (r) => `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}`,
     ),
   );
+  const distinct = OVERLAY_INK_CHECKS[OVERLAY_INK_CHECKS.length - 1] ?? "";
   if (Object.keys(read).length < wanted.length) {
-    skip(OVERLAY_INK_CHECKS[6] ?? "", "not every kind could be sampled");
+    skip(distinct, "not every kind could be sampled");
   } else {
     check(
-      OVERLAY_INK_CHECKS[6] ?? "",
+      distinct,
       shapes.size === wanted.length,
       `${shapes.size} distinct readings from ${wanted.length} kinds`,
     );

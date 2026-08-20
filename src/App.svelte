@@ -7,7 +7,7 @@
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
   import { runViewerCheckIfRequested } from "./lib/viewercheck";
-  import type { ScreenPoint } from "./lib/viewer";
+  import type { Drawn, ScreenPoint } from "./lib/viewer";
   import {
     handleWindowKey,
     registerAppCommands,
@@ -208,6 +208,7 @@
     markSelection: (kind) => void markSelection(kind),
     addComment: (at) => void addComment(at),
     drawBox: () => viewer?.armDraw("square"),
+    draw: () => viewer?.armDraw("ink"),
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
@@ -306,10 +307,10 @@
   async function drawn(
     kind: MarkKind,
     page: number,
-    quads: number[],
+    shape: Drawn,
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
-    await applyEdit((e) => e.mark(kind, page, quads));
+    await applyEdit((e) => e.mark(kind, page, shape.quads, shape.strokes));
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
     if (made) viewer?.showMark(made.id);
   }
@@ -1598,12 +1599,14 @@
         // undo steps over it and the document is dirty until it is saved.
         onMarkNote: (mark, note) => void applyEdit((e) => e.renote(mark, note)),
         onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),
-        // A box the reader finished drawing. The page id and the quad are
+        // A box or a drawing the reader finished. The page id and the shape are
         // already in the file's space --- `Viewer.fileRectOn` does that, because
         // the crop and both rotations are the viewer's and nothing here could
         // undo them --- so this is the same one-line journal entry a highlight
-        // is, and undo steps over it identically.
-        onDrawn: (kind, page, quads) => void drawn(kind, page, quads),
+        // is, and undo steps over it identically. The shape is handed straight
+        // through: which of its two halves is filled is the viewer's answer and
+        // the model's rule, and restating it here would be a third copy.
+        onDrawn: (kind, page, shape) => void drawn(kind, page, shape),
         onStatus: (next) => {
           status = next;
           // Here rather than in a `$derived`, because this is the only moment

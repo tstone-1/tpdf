@@ -6273,6 +6273,146 @@ would be mechanical and the selection's owns a granularity state machine, and
 converting either on the commit that introduced the primitive gives a regression
 two places to hide.
 
+#### Drawing freehand --- done 2026-08-20
+
+The next consumer of the drag primitive, and the increment that finds out whether
+`Mark` generalises past a rectangle. It does, with one field --- but the answer is
+less interesting than what asking it cost, which is set out below.
+
+**`Mark` gains `strokes`, and the geometry did not become an enum.** The
+alternative was replacing `quads` with `Shape::Quads | Shape::Strokes`, which
+carries the biconditional in the type. It was rejected because five consumers ask
+*where* a mark is --- `/Rect`, the popup anchor, hit-testing, the mark list and
+the state reply --- and ink answers that with the bounds of what was drawn,
+exactly as every other kind answers with its rectangle. An enum would force all
+five to handle a case none of them cares about. It is the same argument
+`MarkKind::Note` already makes for reusing `Mark` rather than building a parallel
+type to express one *absent* field; here it is one present one.
+
+The cost is an invariant the type does not carry: `strokes` is non-empty exactly
+when the kind is ink. `Doc::annotate` refuses both halves and both have a test,
+because a rule with no failing case is a comment --- and neither half is reachable
+from the window, so those tests are the only place the rule can fail.
+
+**A rename came with it.** `save.rs` had a private `enum Ink { Wash, Line,
+Outline, None }` meaning *how* a mark is laid down. `ink(kind) -> Ink` beside
+`MarkKind::Ink` is legal Rust that reads as one thing referring to itself, so it
+is `Paint` now, with `Paint::Path` as the fifth variant. Three spellings again,
+as `Square` has: serde `ink`, PDF `/Ink`, and **Draw** in the menu.
+
+##### What the file gets, and why it is two things
+
+The appearance stream is `m`/`l`/`S` per stroke, at `INK_WIDTH` with `1 J 1 j` ---
+round caps and joins, because a mitre on a hand-drawn corner spikes out to a
+point that reads as a rendering fault rather than as a style. **One `S` per
+stroke and not one at the end**, which is the whole reason `/InkList` is a list of
+lists: a single path joins the end of each stroke to the start of the next with a
+line the reader never drew.
+
+`/InkList` is written **as well as** the `/AP`, not instead of it. The appearance
+is what every reader draws; the list is what a reader regenerating appearances,
+or an editor reshaping the line, reads to find out what was drawn. A file with
+only the first is a picture of ink rather than ink.
+
+##### Evidence, and the check that was passing by luck
+
+`--mode strokes` is the pixel half: two horizontal strokes with a wide gap, and
+the gap must be **empty**. A writer that flattened `/InkList` joins the upper
+stroke to the lower one with a diagonal crossing that gap across its full width.
+Measured on `text-base14`: 20401 px in the rectangle, 10200 upper, 10201 lower,
+**0 in the gap**; flattening the list puts **4242** in it and reddens that check
+alone. Emitting only the first stroke reddens the *lower* check and leaves the
+gap green --- which is why the pair is not redundant.
+
+**And the first version of that check passed with two hundredths of a point of
+headroom.** The strokes sat at 15% of the text box and the band boundary was
+3.90 pt against a stroke reaching 3.88. It passed on both corpora and would have
+reported a defect that is not there on a corpus with slightly shorter lines. The
+arithmetic is in `docs/TRAPS.md`; the fix is 5%, and the mode now refuses a
+rectangle too short for its bands to separate rather than reading one.
+
+`--mode roundtrip` is the structural half: `/InkList` present on ink and absent
+on every other kind, one array per stroke, an even count of numbers in each, and
+every point inside the annotation's own `/Rect` --- which is the assertion with
+teeth, since `/Rect` is computed from the quads by a different route, so a
+mapping that disagreed would land outside. Both directions proved by mutation,
+and green on `rotated-90.pdf` as well.
+
+##### The padding, and the check it took away
+
+`Stroke::bounds` grows the rectangle by half the line width. That is correct PDF
+--- a stroke straddles its path --- and it was added for a plainer reason: tight
+bounds of a straight vertical line have **no width**, and `covers_area` rejects
+those, so ruling a line down a margin came back as *"that mark covers nothing"*.
+
+The pad fixes that and disables the emptiness check on the way past, because now
+*every* ink mark covers area, including one whose stroke is a single point
+repeated --- which is what a click produces. So `annotate` asks
+`Stroke::is_drawable` for ink and `covers_area` for everything else. `docs/TRAPS.md`
+has the entry; the shape is one predicate that was answering two questions while
+the rectangle and the gesture were the same thing.
+
+##### Eleven mutations, and the one that survived is the yield
+
+Six in Rust, five in the frontend unit harness, and every one caught by the check
+named for it --- after a repair. **`edits: take ink's rectangle tight against the
+strokes` came back SURVIVED**, aimed at
+`a_straight_stroke_is_accepted_because_its_bounds_are_padded`, which is a test
+about exactly that padding and which passes.
+
+It is in `docmodel.rs`, and it builds its `Mark` by hand. So it exercises
+`Stroke::bounds` and says nothing whatever about who calls it or with what ---
+and the pad is chosen in `edits.rs`, on the other side of the boundary. Taking it
+to zero there broke nothing any test could see: a reader ruling a straight line
+down a margin would have been told their drawing covers no area, and the suite
+would have stayed green.
+
+That is the trap this repository already records as *"your unit tests build their
+fixtures directly, so the PARSER is untested"*, arriving in the same shape one
+layer up. The repair is a test that goes through `Edits::annotate` with a
+vertical stroke and reads the derived rectangle back --- which is now the only
+test that reaches the derivation at all, and the mutation names it.
+
+Worth stating plainly because the tempting reading was the other one: a survivor
+that has an obviously-related passing test looks like a variant rather than a
+gap, and this repository has an entry warning against strengthening a check on
+that basis. Here the check was in the wrong module, and the only way to tell was
+to ask which code the test's fixture actually runs.
+
+##### What no check covers
+
+The same gap every shell action has: `App.svelte` joins `edit.draw` to
+`Viewer.armDraw("ink")` and `onDrawn` to the command, and the window harness runs
+*instead of* the shell. The `wiring` gate covers the callback being wired at all,
+which is the defect that shipped with the box; it does not cover the arming.
+
+**And the overlay check written for this increment has never been executed.**
+`overlayInkChecks` gains a sixth kind --- *"a drawing follows its strokes and does
+not fill its rectangle"*, reading two inked edges and an empty centre, which is a
+combination none of the other five produces. It is the check that would catch ink
+painted from `markBand`, and `markBand` answers the whole quad for this kind, so
+the defect it is aimed at is one line away from being live. It is written and it
+is unproved: the screen was locked for the whole of the session that added it,
+`viewer_check.py` refuses rather than hanging in that state, and there is no way
+to unlock a macOS session from a script. So it has not been shown to pass, and
+more to the point it has not been shown that it can *fail*.
+
+That is stated rather than implied because the repository's own standard is that
+a check which cannot run is not a check. **Before the next release: run the sweep,
+confirm the name appears, and mutate `paintMarks` to draw ink from
+`markBand(mark.kind, quad)` --- the one-line fallback --- and confirm the check
+goes red.** Until that has happened, the pixel evidence for ink is the *file's*,
+which `--mode strokes` measures, and the screen's is a claim.
+
+**Not done:** an ellipse, which is `/Circle` and the same rectangle with a
+different subtype; a crop a reader drags, still only a second caller of the
+primitive; a tool that stays armed for several strokes, which ink wants more than
+the box did --- a drawing is usually several strokes and each currently costs a
+menu trip; and a colour a reader can choose, still the UI question `MARK_COLORS`
+names. Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
+put a width per point, and a Bézier fit would make the saved path something other
+than what the reader drew.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

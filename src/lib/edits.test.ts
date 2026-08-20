@@ -51,6 +51,7 @@ function mark(id: number, page: number): MarkView {
     kind: "highlight",
     page,
     quads: [72, 100, 300, 118],
+    strokes: [],
     color: [1, 0.9, 0.2],
     note: "",
   };
@@ -324,13 +325,14 @@ describe("Edits", () => {
     await edits.refresh();
 
     core.invoke.mockResolvedValueOnce(state(3, {}, [mark(1, 3)]));
-    const after = await edits.mark("highlight", 2, [10, 20, 30, 40], "a note");
+    const after = await edits.mark("highlight", 2, [10, 20, 30, 40], [], "a note");
     expect(core.invoke).toHaveBeenLastCalledWith("annot_mark", {
       doc: 9,
       mark: {
         kind: "highlight",
         page: 3,
         quads: [10, 20, 30, 40],
+        strokes: [],
         color: [1, 0.9, 0.2],
         author: "",
         note: "a note",

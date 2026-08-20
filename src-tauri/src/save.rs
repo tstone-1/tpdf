@@ -638,15 +638,16 @@ fn write_marks(
         // The three markup kinds are the opposite case and keep theirs: a
         // reader that declines to synthesise a highlight shows nothing at all,
         // which is why `appearance_stream` exists. **A box is on that side of
-        // the line, not the comment's**, and it is the reason this asks `ink`
+        // the line, not the comment's**, and it is the reason this asks `paint`
         // rather than `is_note`: nothing synthesises a rectangle, so a
         // `/Square` with no `/AP` is an annotation Acrobat draws as nothing.
-        let appearance = if ink(mark.kind) == Ink::None {
+        let strokes = user_strokes(mark, shown);
+        let appearance = if paint(mark.kind) == Paint::None {
             None
         } else {
-            Some(appearance_stream(doc, mark, &quads, rect))
+            Some(appearance_stream(doc, mark, &quads, &strokes, rect))
         };
-        let dictionary = mark_dictionary(mark, page, &quads, rect, appearance);
+        let dictionary = mark_dictionary(mark, page, &quads, &strokes, rect, appearance);
         let annotation = doc.add_object(dictionary);
         attach(doc, page, annotation)?;
     }
@@ -674,6 +675,42 @@ fn user_quads(mark: &PlannedMark, shown: DisplayedPage) -> Vec<[f64; 4]> {
             // The origin comes back on *after* the turn, because it came off
             // before one: `annots.rs` shifts into crop space and then maps.
             [page[0] + ox, page[1] + oy, page[2] + ox, page[3] + oy]
+        })
+        .collect()
+}
+
+/// A mark's strokes in the page's own space, one `(x, y)` list each.
+///
+/// **Built on [`crate::text::from_device`] rather than beside it**, by handing
+/// it the point as a rectangle of no size and taking the corner back. That looks
+/// roundabout and is the point: the flip and the turn that map display space
+/// onto the page are one rule, and a second copy written for points would be a
+/// second thing to get right at every `/Rotate`. The trap index has that under
+/// *"two copies of a distinction drift, and a mutation of one survives"*, and
+/// the mapping is exactly where it would bite --- a wrong turn puts ink on the
+/// page, in a plausible place, sideways.
+///
+/// A degenerate rectangle is safe here for the one reason it is unsafe in
+/// [`user_quads`]: nothing downstream asks whether it covers area. `from_device`
+/// is pure arithmetic on the corners.
+fn user_strokes(mark: &PlannedMark, shown: DisplayedPage) -> Vec<Vec<(f64, f64)>> {
+    let (ox, oy) = (f64::from(shown.origin.0), f64::from(shown.origin.1));
+    mark.strokes
+        .iter()
+        .map(|stroke| {
+            stroke
+                .points
+                .iter()
+                .map(|point| {
+                    let mapped = crate::text::from_device(
+                        shown.turns,
+                        shown.width,
+                        shown.height,
+                        [point.x, point.y, point.x, point.y],
+                    );
+                    (mapped[0] + ox, mapped[1] + oy)
+                })
+                .collect()
         })
         .collect()
 }
@@ -707,6 +744,7 @@ fn mark_dictionary(
     mark: &PlannedMark,
     page: ObjectId,
     quads: &[[f64; 4]],
+    strokes: &[Vec<(f64, f64)>],
     rect: [f64; 4],
     appearance: Option<ObjectId>,
 ) -> Dictionary {
@@ -724,6 +762,34 @@ fn mark_dictionary(
     // words it covers.
     if is_text_markup(mark.kind) {
         dictionary.set("QuadPoints", quad_points(quads));
+    }
+    // **`/InkList` is required on an `/Ink` and meaningless on anything else**,
+    // so it is asked of the paint rather than of the kind --- the same reasoning
+    // `is_text_markup` above records, one kind later. It is written as well as
+    // the appearance stream, not instead of it: the `/AP` is what every reader
+    // actually draws, and the list is what a reader that regenerates
+    // appearances, or an editor that wants to reshape the line, reads to find
+    // out what was drawn. A file with only the `/AP` is a picture of ink rather
+    // than ink.
+    if paint(mark.kind) == Paint::Path {
+        dictionary.set(
+            "InkList",
+            Object::Array(
+                strokes
+                    .iter()
+                    .map(|stroke| {
+                        Object::Array(
+                            stroke
+                                .iter()
+                                .flat_map(|(x, y)| {
+                                    [Object::Real(*x as f32), Object::Real(*y as f32)]
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
     }
     dictionary.set(
         "C",
@@ -784,10 +850,19 @@ fn subtype(kind: MarkKind) -> &'static [u8] {
         // specification uses that name for the family holding `/Circle` too.
         // The word a reader sees is "box"; the third spelling once again.
         MarkKind::Square => b"Square",
+        // `/Ink`, and the one place in this `match` where the PDF name and the
+        // variant agree while the reader's word does not: a reader sees "Draw".
+        // Same three-spelling arrangement as the four above it.
+        MarkKind::Ink => b"Ink",
     }
 }
 
 /// How a kind's ink is laid down.
+///
+/// **Called `Paint` rather than `Ink`, and the rename came with `MarkKind::Ink`.**
+/// This answers *how* a mark is drawn; that names *which* mark it is, and
+/// `ink(kind) -> Ink` beside `MarkKind::Ink` is legal Rust that reads as one
+/// thing referring to itself. `Paint::Path` is the variant ink uses.
 ///
 /// **One question with one exhaustive `match`.** This started as two booleans
 /// and the box would have made it three, which is where copies of a distinction
@@ -798,7 +873,7 @@ fn subtype(kind: MarkKind) -> &'static [u8] {
 ///
 /// `markband.ts` mirrors this across the language boundary for the overlay.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Ink {
+enum Paint {
     /// The whole quad, multiplied, so the words underneath stay readable.
     Wash,
     /// A band inside the quad, opaque and on top --- see [`line_rect`]. A
@@ -808,21 +883,31 @@ enum Ink {
     /// The quad's edge, opaque, leaving whatever is inside it visible. Which is
     /// the entire point of a box: it says "this", it does not cover it.
     Outline,
+    /// The strokes a reader drew, opaque, with round joins and caps.
+    ///
+    /// **The first that does not derive its geometry from the quad at all.** The
+    /// other four are the quad, a band inside it, or its edge; this one is the
+    /// path, and the quad is merely the rectangle that path happens to occupy.
+    /// Round rather than mitred because the line is freehand: a mitre on a
+    /// hand-drawn corner spikes, which reads as a rendering fault rather than as
+    /// a style.
+    Path,
     /// None of ours. The reader draws its own, which for `/Text` is the only
     /// way the icon can look like that reader's other comments.
     None,
 }
 
-/// Which of the four a kind uses.
+/// Which of the five a kind uses.
 ///
 /// A `match` for [`subtype`]'s reason: adding a [`MarkKind`] has to be a compile
 /// error here rather than a mark that silently draws as a highlight.
-fn ink(kind: MarkKind) -> Ink {
+fn paint(kind: MarkKind) -> Paint {
     match kind {
-        MarkKind::Highlight => Ink::Wash,
-        MarkKind::Underline | MarkKind::StrikeOut => Ink::Line,
-        MarkKind::Square => Ink::Outline,
-        MarkKind::Note => Ink::None,
+        MarkKind::Highlight => Paint::Wash,
+        MarkKind::Underline | MarkKind::StrikeOut => Paint::Line,
+        MarkKind::Square => Paint::Outline,
+        MarkKind::Ink => Paint::Path,
+        MarkKind::Note => Paint::None,
     }
 }
 
@@ -834,7 +919,7 @@ fn ink(kind: MarkKind) -> Ink {
 /// comment was the only kind for which all three answers happened to coincide.
 /// The box separated them: it also skips `/QuadPoints` and it very much needs an
 /// appearance stream. So this now answers only the first, [`is_text_markup`]
-/// answers the second and [`Ink::None`] the third.
+/// answers the second and [`Paint::None`] the third.
 fn is_note(kind: MarkKind) -> bool {
     matches!(kind, MarkKind::Note)
 }
@@ -855,10 +940,10 @@ fn is_text_markup(kind: MarkKind) -> bool {
 
 /// Whether a kind covers its quads rather than drawing inside or around them.
 ///
-/// Derived from [`ink`] rather than matching again, so that a kind can never be
+/// Derived from [`paint`] rather than matching again, so that a kind can never be
 /// a wash here and something else there. It decides the blend mode and `/CA`.
 fn is_wash(kind: MarkKind) -> bool {
-    ink(kind) == Ink::Wash
+    paint(kind) == Paint::Wash
 }
 
 /// A line's thickness as a fraction of the marked text's height.
@@ -902,6 +987,13 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         // it is drawn by `outline_path` rather than by a filled rectangle, and
         // it has no band inside its quad to describe. The whole quad again.
         MarkKind::Square => (bottom, full),
+        // Not reached, for the box's reason exactly: ink is drawn from its
+        // strokes and has no band either. The whole quad, a fourth time, and
+        // the fourth unreached arm is the argument for `line_rect` eventually
+        // taking only the kinds that have a band --- not today, because
+        // narrowing it would need a second enum whose only job is to say which
+        // three those are.
+        MarkKind::Ink => (bottom, full),
     }
 }
 
@@ -918,6 +1010,22 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
 /// has to know how thick to expect it. A second copy of the number in the probe
 /// would agree with a wrong value here as readily as with a right one.
 pub const OUTLINE_WIDTH: f64 = 1.5;
+
+/// How thick a freehand line is, in points.
+///
+/// **Heavier than [`OUTLINE_WIDTH`], and the reason is what each mark is for.**
+/// A box is a frame round something a reader wants to point at, and a frame that
+/// competes with its contents is a worse frame. A drawn line *is* the content:
+/// it is a reader's handwriting, a circle round a figure, an arrow. At 1.5 pt
+/// freehand ink reads as tentative --- and unlike a box, which is four straight
+/// edges, a hand-drawn line at hairline weight breaks up visually wherever the
+/// pointer moved fast.
+///
+/// Public for [`OUTLINE_WIDTH`]'s reason: `annot-probe` measures the stroke it
+/// draws and a second copy of the number in the probe would agree with a wrong
+/// value here as readily as with a right one. `markband.ts` holds the same
+/// number for the overlay.
+pub const INK_WIDTH: f64 = 2.5;
 
 /// A box's path inside its quad: `[x, y, width, height]` in the page's space.
 ///
@@ -1015,9 +1123,10 @@ fn appearance_stream(
     doc: &mut Document,
     mark: &PlannedMark,
     quads: &[[f64; 4]],
+    strokes: &[Vec<(f64, f64)>],
     rect: [f64; 4],
 ) -> ObjectId {
-    let style = ink(mark.kind);
+    let style = paint(mark.kind);
     let mut state = Dictionary::new();
     state.set("Type", Object::Name(b"ExtGState".to_vec()));
     // Multiply for a wash so the words show through it, Normal for anything
@@ -1025,7 +1134,7 @@ fn appearance_stream(
     // text is black, which is a strikeout nobody can see.
     state.set(
         "BM",
-        Object::Name(if style == Ink::Wash {
+        Object::Name(if style == Paint::Wash {
             b"Multiply".to_vec()
         } else {
             b"Normal".to_vec()
@@ -1045,38 +1154,75 @@ fn appearance_stream(
     // which on a red box looks like a colour that was ignored rather than one
     // that was never set. Both are written, in one colour, so the two can never
     // disagree.
+    // **The stroke width and the joins belong to the style, not to the file.**
+    // A box is four right angles, which mitre cleanly at the default `0 j`; a
+    // freehand line turns at whatever angle the reader's hand made, and a mitre
+    // on a sharp one spikes out to a point --- which reads as a rendering fault
+    // rather than as a style. `1 J 1 j` is round caps and round joins, and it
+    // also gives a stroke its ends, without which a line stops square.
+    let (width, joins) = match style {
+        Paint::Path => (INK_WIDTH, "1 J 1 j "),
+        _ => (OUTLINE_WIDTH, ""),
+    };
     let mut content = format!(
-        "/GS0 gs {r} {g} {b} rg {r} {g} {b} RG {OUTLINE_WIDTH} w\n",
+        "/GS0 gs {r} {g} {b} rg {r} {g} {b} RG {width} w {joins}\n",
         r = mark.color[0],
         g = mark.color[1],
         b = mark.color[2],
     );
-    for quad in quads {
-        match style {
-            // The whole quad, filled.
-            Ink::Wash => {
+    // **The loop is inside each arm rather than around the `match`**, because
+    // four of the five styles are one per quad and the fifth is one per stroke.
+    // Written out three times rather than hoisted, so that there is no arm which
+    // is reached with the wrong collection and silently draws nothing --- and so
+    // that a sixth style is a compile error here, which is the whole reason this
+    // is a `match` on an enum and not a pair of booleans.
+    match style {
+        // The whole quad, filled.
+        Paint::Wash => {
+            for quad in quads {
                 let (x, y) = (quad[0], quad[1]);
                 let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
                 content.push_str(&format!("{x} {y} {width} {height} re f\n"));
             }
-            // A band inside it, filled. Same operator, different rectangle.
-            Ink::Line => {
+        }
+        // A band inside it, filled. Same operator, different rectangle.
+        Paint::Line => {
+            for quad in quads {
                 let (x, width) = (quad[0], quad[2] - quad[0]);
                 let (y, height) = line_rect(mark.kind, quad[1], quad[3]);
                 content.push_str(&format!("{x} {y} {width} {height} re f\n"));
             }
-            // Its edge, stroked. `re S` rather than `re f`, and the path is
-            // inset so the stroke lands inside the /BBox -- see `outline_path`.
-            Ink::Outline => {
+        }
+        // Its edge, stroked. `re S` rather than `re f`, and the path is
+        // inset so the stroke lands inside the /BBox -- see `outline_path`.
+        Paint::Outline => {
+            for quad in quads {
                 let [x, y, width, height] = outline_path(*quad);
                 content.push_str(&format!("{x} {y} {width} {height} re S\n"));
             }
-            // Nothing. Unreachable, because the caller does not build an
-            // appearance stream for a kind that has none; written out rather
-            // than caught by a wildcard so that a kind added later is a compile
-            // error here as well as everywhere else.
-            Ink::None => {}
         }
+        // The path itself: `m` to the first point, `l` to each of the rest, and
+        // one `S` per stroke. A single `S` after all of them would join the end
+        // of each stroke to the start of the next with a line the reader never
+        // drew --- which is precisely the join `/InkList` exists to keep apart,
+        // and it would look like a drawing rather than like a bug.
+        Paint::Path => {
+            for stroke in strokes {
+                let Some(((x0, y0), rest)) = stroke.split_first() else {
+                    continue;
+                };
+                content.push_str(&format!("{x0} {y0} m\n"));
+                for (x, y) in rest {
+                    content.push_str(&format!("{x} {y} l\n"));
+                }
+                content.push_str("S\n");
+            }
+        }
+        // Nothing. Unreachable, because the caller does not build an
+        // appearance stream for a kind that has none; written out rather
+        // than caught by a wildcard so that a kind added later is a compile
+        // error here as well as everywhere else.
+        Paint::None => {}
     }
 
     let mut dictionary = Dictionary::new();
@@ -3092,6 +3238,7 @@ mod tests {
                 kind,
                 source: 0,
                 quads,
+                strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
                 author: "a reader".to_string(),
                 note: "a note".to_string(),
@@ -3245,6 +3392,7 @@ mod tests {
                 kind: MarkKind::Highlight,
                 source: 0,
                 quads: one_quad(),
+                strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
                 author: String::new(),
                 note: String::new(),
@@ -3291,6 +3439,7 @@ mod tests {
                 kind: MarkKind::Highlight,
                 source: 2,
                 quads: one_quad(),
+                strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
                 author: String::new(),
                 note: String::new(),
@@ -3484,6 +3633,128 @@ mod tests {
             })
             .expect("the mark has an appearance stream");
         (doc, stream)
+    }
+
+    /// A plan carrying one two-stroke drawing on page 0.
+    fn plan_with_ink() -> Plan {
+        let strokes = vec![
+            crate::docmodel::Stroke {
+                points: vec![
+                    crate::docmodel::Point { x: 72.0, y: 90.0 },
+                    crate::docmodel::Point { x: 300.0, y: 90.0 },
+                ],
+            },
+            crate::docmodel::Stroke {
+                points: vec![
+                    crate::docmodel::Point { x: 72.0, y: 140.0 },
+                    crate::docmodel::Point { x: 300.0, y: 140.0 },
+                ],
+            },
+        ];
+        let mut plan = plan_of_kind(
+            MarkKind::Ink,
+            crate::docmodel::Stroke::bounds(&strokes, (INK_WIDTH / 2.0) as f32)
+                .into_iter()
+                .collect(),
+        );
+        plan.marks[0].strokes = strokes;
+        plan
+    }
+
+    #[test]
+    fn each_stroke_is_its_own_path_in_the_appearance_stream() {
+        // **One `S` per stroke, and that is the whole assertion.** A writer that
+        // emitted a single path across both would join the end of the first to
+        // the start of the second with a line the reader never drew --- which is
+        // precisely what `/InkList` being a list of lists exists to prevent, and
+        // it would look like a drawing rather than like a defect.
+        // `annot-probe --mode strokes` measures the same thing in pixels, by
+        // asserting the band between two strokes is empty.
+        let scratch = Scratch::new("annots-ink-paths");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+        write_copy(&source, &plan_with_ink(), &out).expect("save");
+        let doc = Document::load(&out).expect("reopen");
+        let stream = doc
+            .objects
+            .values()
+            .filter_map(|object| object.as_stream().ok())
+            .find(|stream| {
+                stream
+                    .dict
+                    .get(b"Subtype")
+                    .and_then(Object::as_name)
+                    .is_ok_and(|name| name == b"Form")
+            })
+            .expect("the mark added a form XObject")
+            .clone();
+        let content = String::from_utf8(
+            stream
+                .decompressed_content()
+                .unwrap_or(stream.content.clone()),
+        )
+        .expect("the appearance stream is text");
+
+        assert_eq!(
+            content.matches(" m\n").count(),
+            2,
+            "one move-to per stroke: {content}"
+        );
+        assert_eq!(
+            content.matches("S\n").count(),
+            2,
+            "one stroke operator per stroke: {content}"
+        );
+        assert!(
+            content.contains("1 J 1 j"),
+            "round caps and joins, or a hand-drawn corner spikes: {content}"
+        );
+        // Not filled. A drawing is a line, and `f` here would flood whatever it
+        // was drawn around --- the box's mistake, one kind later.
+        assert!(
+            !content.contains(" re f"),
+            "ink is stroked, never filled: {content}"
+        );
+    }
+
+    #[test]
+    fn the_ink_list_is_written_for_ink_and_for_nothing_else() {
+        // The `/AP` above is what every reader draws; this is what an editor
+        // reads, and a file with only the first is a picture of ink. Both
+        // directions, because a writer that emitted the key unconditionally
+        // satisfies the first half exactly as a correct one does.
+        let scratch = Scratch::new("annots-ink-list");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+        write_copy(&source, &plan_with_ink(), &out).expect("save");
+        let doc = Document::load(&out).expect("reopen");
+        let lists: Vec<&Vec<Object>> = doc
+            .objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .filter_map(|dictionary| dictionary.get(b"InkList").ok())
+            .filter_map(|entry| entry.as_array().ok())
+            .collect();
+        assert_eq!(lists.len(), 1, "one /InkList, on the one drawing");
+        assert_eq!(lists[0].len(), 2, "one array per stroke");
+        for stroke in lists[0] {
+            let points = stroke.as_array().expect("a stroke is an array");
+            assert_eq!(points.len(), 4, "two points, four numbers");
+        }
+
+        // The other direction: a highlight written the same way carries none.
+        let out2 = scratch.join("out2.pdf");
+        write_copy(&source, &plan_with_mark(one_quad()), &out2).expect("save");
+        let doc2 = Document::load(&out2).expect("reopen");
+        assert!(
+            doc2.objects
+                .values()
+                .filter_map(|object| object.as_dict().ok())
+                .all(|dictionary| dictionary.get(b"InkList").is_err()),
+            "an /InkList on a highlight is as wrong as its absence on ink"
+        );
     }
 
     #[test]

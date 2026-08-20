@@ -222,6 +222,21 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode roundtrip --kind square
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode outline --kind square
+# Freehand ink. `--mode strokes`, NOT `--mode ink` --- that name was taken nine
+# months earlier by the coverage measurement above and means something else
+# entirely, which is the collision `MarkKind::Ink` walked into.
+#
+# The fixture is two horizontal strokes with a wide gap, and the gap must be
+# EMPTY: a writer that flattened `/InkList` into one path joins the upper stroke
+# to the lower one with a diagonal straight through it. The two outer bands are
+# read as well, because a writer that emitted only the first stroke also leaves
+# the gap empty. Renders at 4x whatever `--scale` says, and says so.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind ink
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode strokes --kind ink
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/rotated-90.pdf --mode strokes --kind ink
 
 # `--out PATH` keeps the marked copy instead of removing it, for opening in
 # Preview or Acrobat by hand. Worth doing once per release: the probe proves the
@@ -2132,7 +2147,16 @@ changelog entry. The table above is the one place they are written down.
 
 **So the ran/skipped columns are not the invariant** --- the **names** are, and how many there
 are of them is in the table above rather than in this sentence, which said `109` for two days
-after the number stopped being right. A count chased
+after the number stopped being right.
+
+⚠ **Two names were added on 2026-08-20 and the table has not been re-measured**, because the
+screen was locked for that whole session and `viewer_check.py` refuses to run against a
+locked one --- correctly, and it cannot be worked around from a script. The additions are
+`edit.draw` in the command sweep and *"a drawing follows its strokes and does not fill its
+rectangle"* in the overlay phase, and *"the five kinds do not all look the same"* was reworded
+to `six`. So the next sweep should expect **111** names with one rename, and a run reporting
+109 is a stale binary rather than a regression. Re-measure the table then; do not adjust it by
+arithmetic, which is what the paragraph below the table warns against. A count chased
 back to a documented value is a defect introduced to satisfy a document, and the repair here
 would be to delete the outstanding-request condition that makes the withdrawal observable at
 all. Read a differing count by checking that the name is present and `[SKIP]`; a name that
