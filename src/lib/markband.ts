@@ -155,6 +155,138 @@ export const INK_SAMPLE = 0.5;
 export const OUTLINE_WIDTH = 1.5;
 
 /**
+ * How close the eraser has to pass to a stroke to take it, in *view pixels*.
+ *
+ * **Screen pixels rather than the page's own points**, which is the opposite
+ * choice from {@link INK_SAMPLE} one constant above and worth saying why. A
+ * sample interval is about the fidelity of the line that gets stored, so it
+ * belongs to the paper; an eraser is a thing the reader aims with a pointer, and
+ * an eraser that shrank on screen as they zoomed in would get harder to hit a
+ * stroke with exactly when they are trying to be precise. At every zoom this is
+ * the same-sized nib under the cursor.
+ *
+ * Six rather than two: a stroke is 2.5 pt of line and the pointer is aimed by
+ * hand, so the nib has to forgive a near miss. It is deliberately smaller than
+ * the ring a press uses to *find* a mark, because taking the wrong stroke is a
+ * loss and opening the wrong note is not.
+ */
+export const ERASER_RADIUS = 6;
+
+/**
+ * Whether `at` is within `radius` of the polyline `points`.
+ *
+ * Distance to the nearest *segment*, not to the nearest recorded point, and the
+ * difference is the whole of it: a fast hand leaves points far apart, so a
+ * nearest-point test would let the eraser pass straight through the middle of a
+ * long stroke without touching it. Points are in whatever space the caller is
+ * working in and `radius` has to match; the viewer hands both in view pixels.
+ *
+ * A stroke of one point cannot be drawn --- the model refuses it --- but this
+ * still answers for one, as a plain point distance, rather than returning false
+ * for input it will never see. A geometry helper that is wrong on a degenerate
+ * case is a helper somebody will one day call from somewhere else.
+ */
+export function strokeTouches(
+  points: { x: number; y: number }[],
+  at: { x: number; y: number },
+  radius: number,
+): boolean {
+  return strokeSwept(points, at, at, radius);
+}
+
+/**
+ * Whether the nib travelling from `from` to `to` comes within `radius` of the
+ * polyline `points`.
+ *
+ * **The travel, not the two ends of it**, and that is not a refinement: a
+ * pointer reports at the display's rate and a hand crosses several strokes
+ * between two reports, so testing the sampled positions alone lets a quick
+ * sweep pass straight over a stroke and leave it there. Found by a test that
+ * dragged down a column of three strokes and got the outer two --- the middle
+ * one lay between the samples. It is the same failure {@link strokeTouches}
+ * already avoids *inside* a stroke, arriving one level up.
+ *
+ * A press is `from === to`, which is a segment of no length and needs no
+ * special case: the arithmetic below clamps to a point and answers the point
+ * distance.
+ */
+export function strokeSwept(
+  points: { x: number; y: number }[],
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  radius: number,
+): boolean {
+  if (points.length === 0) return false;
+  const within = radius * radius;
+  const first = points[0];
+  if (first === undefined) return false;
+  if (points.length === 1) {
+    return pointToSegment(first, from, to) <= within;
+  }
+  for (let index = 0; index + 1 < points.length; index += 1) {
+    const a = points[index];
+    const b = points[index + 1];
+    if (a === undefined || b === undefined) continue;
+    // Crossing segments are at distance zero and no endpoint of either need be
+    // near an endpoint of the other --- an X of two long strokes is the case,
+    // and the four endpoint distances below are all large for it.
+    if (segmentsCross(a, b, from, to)) return true;
+    const nearest = Math.min(
+      pointToSegment(a, from, to),
+      pointToSegment(b, from, to),
+      pointToSegment(from, a, b),
+      pointToSegment(to, a, b),
+    );
+    if (nearest <= within) return true;
+  }
+  return false;
+}
+
+/**
+ * Squared distance from `p` to the segment `a`--`b`.
+ *
+ * Clamped to the segment, so a point beyond either end measures to that end
+ * rather than to the infinite line the segment sits on --- which would let the
+ * eraser take a stroke it passed nowhere near, along that stroke's own
+ * direction. Squared, because every caller compares against a squared radius
+ * and a square root would round.
+ */
+function pointToSegment(
+  p: { x: number; y: number },
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = dx * dx + dy * dy;
+  const along =
+    length === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length));
+  const nx = a.x + along * dx;
+  const ny = a.y + along * dy;
+  return (p.x - nx) ** 2 + (p.y - ny) ** 2;
+}
+
+/** Whether the segments `a`--`b` and `c`--`d` properly cross. */
+function segmentsCross(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c: { x: number; y: number },
+  d: { x: number; y: number },
+): boolean {
+  const side = (
+    p: { x: number; y: number },
+    q: { x: number; y: number },
+    r: { x: number; y: number },
+  ) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  // Collinear and touching cases are deliberately left to the endpoint
+  // distances above, which answer them: this only has to catch the crossing
+  // that no endpoint pair is near.
+  return (
+    side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0
+  );
+}
+
+/**
  * The smallest box a drag may commit, in points.
  *
  * A click without a drag is a rectangle of no size, and one saved is an

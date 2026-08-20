@@ -2073,6 +2073,69 @@ MUTATIONS = [
         "                    kind: MarkKind::Highlight,",
         "the_kind_the_caller_asked_for_reaches_the_plan_and_the_reply",
     ),
+    Mutation(
+        # The eraser's whole reason for a `quads_of` accessor: read the body
+        # instead, which still holds the rectangle the drawing had before a
+        # stroke was rubbed out. Every field the reply carries is otherwise
+        # correct, so only a test that erases and then reads the rectangle can
+        # see it.
+        "edits: send the rectangle the drawing was made with, not the one it has",
+        "src/edits.rs",
+        "                quads: model\n                    .quads_of(id)",
+        "                quads: mark\n                    .quads",
+        "the_reply_carries_the_rectangle_the_drawing_has_now",
+    ),
+    Mutation(
+        # The same read on the path that reaches a FILE rather than the window.
+        # A document could then look right on screen and save the erased stroke,
+        # which is the worse direction of the two.
+        "edits: write the drawing the file was opened with, not the one on screen",
+        "src/edits.rs",
+        "                    strokes: model.strokes_of(*mark).to_vec(),",
+        "                    strokes: body.strokes.clone(),",
+        "a_saved_file_is_written_from_what_survived_the_eraser",
+    ),
+    Mutation(
+        # Refuse instead of removing. The model is right to refuse a drawing of
+        # nothing; this is the layer that knows the sweep meant "get rid of it",
+        # and without it a reader who rubs out the last stroke gets an error
+        # message and a drawing that is still there.
+        "edits: refuse a sweep that takes the last stroke instead of removing the drawing",
+        "src/edits.rs",
+        "        if keep.iter().any(Stroke::is_drawable) {",
+        "        if true {",
+        "erasing_the_last_stroke_takes_the_drawing_with_it",
+    ),
+    Mutation(
+        # Act on the half of the gesture that made sense. The stroke it did
+        # understand is erased on the strength of a sweep aimed at a drawing
+        # this is not -- and the reply looks entirely normal.
+        "edits: let a sweep name a stroke that is not there",
+        "src/edits.rs",
+        "        if let Some(past) = remove.iter().find(|&&at| at >= held) {",
+        "        if let Some(past) = None::<usize>.as_ref() {",
+        "a_gesture_aimed_at_a_stroke_that_is_not_there_is_refused_whole",
+    ),
+    Mutation(
+        # Keep the rectangle the strokes used to occupy. `Stroke::bounds` is
+        # called in two places -- when a drawing is made and when it is erased --
+        # and this is the second one.
+        "docmodel: derive an erased drawing's rectangle from nothing",
+        "src/docmodel.rs",
+        "        let quads = Stroke::bounds(&strokes, crate::save::INK_WIDTH as f32 / 2.0)",
+        "        let quads = Stroke::bounds(&strokes, 1000.0)",
+        "erasing_a_stroke_leaves_the_others_and_shrinks_the_rectangle",
+    ),
+    Mutation(
+        # Leave the version behind when the mark goes. A mark removed and
+        # restored by undo then comes back at whatever version an erasure left
+        # it on rather than the one the journal says.
+        "docmodel: let a removed drawing keep the version it was erased to",
+        "src/docmodel.rs",
+        "                self.inks.remove(&mark);",
+        "                let _ = &mark;",
+        "a_removed_drawing_forgets_which_version_it_was_on",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.

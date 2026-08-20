@@ -2959,6 +2959,7 @@ async function appCommandChecks(
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
     draw: () => fired.push("draw"),
+    erase: () => fired.push("erase"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
     toggleInvert: () => fired.push("toggleInvert"),
     // Recorded like the rest, though neither command is driven here --- both are
@@ -3582,6 +3583,17 @@ async function appCommandChecks(
       // action, which is the defect that shipped with the box.
       id: "edit.draw",
       ...shell("draw"),
+      read: () => fired.join(","),
+    },
+    {
+      // The eraser, aimed separately for the reason above it: three commands
+      // now arm a tool and the whole family is where a copy-and-paste leaves
+      // two of them arming the same one. What this says is that the command
+      // exists and reaches its own action; that the action arms the *eraser*
+      // rather than the pen is `viewerdraw.test.ts`'s, which can build a viewer
+      // and read `eraseArmed` back.
+      id: "edit.erase",
+      ...shell("erase"),
       read: () => fired.join(","),
     },
     {
@@ -7688,6 +7700,8 @@ const INK_CHECK = {
   distinct: "the six kinds do not all look the same",
   preview: "a drawing in progress is previewed as a line, not as a rubber band",
   second: "a second stroke joins the drawing rather than replacing it",
+  erased: "a stroke the eraser has taken stops being drawn at once",
+  spared: "and one the nib missed is still there",
 } as const;
 
 const OVERLAY_INK_CHECKS: string[] = Object.values(INK_CHECK);
@@ -8054,6 +8068,99 @@ async function inkPreviewChecks(
   // Escape rather than Enter: this phase must leave the document as it found
   // it, and Enter would put a mark on page 1 that every later phase would see.
   viewer.cancelDraw();
+  await frame();
+  await erasePreviewChecks(root, viewer, inked, box);
+}
+
+/**
+ * What a reader sees *while* rubbing something out.
+ *
+ * **The preview is an absence, which is what makes it hard to check and easy to
+ * get wrong.** A stroke the sweep has taken simply stops being painted; there
+ * is no ghost to compare against, so the only reading available is the pixels
+ * where the stroke used to be. That also means the check needs a *second*
+ * stroke as its control: "the band is empty" is satisfied by an overlay that
+ * stopped painting the drawing altogether, which is exactly the defect a
+ * one-band reading would certify.
+ *
+ * Runs on a mark handed straight to the viewer rather than one the model holds,
+ * for the reason the phase above does: the document must be as this found it.
+ */
+async function erasePreviewChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  inked: (l: number, t: number, r: number, b: number) => number | null,
+  box: { left: number; top: number; right: number; bottom: number },
+): Promise<void> {
+  const names = [INK_CHECK.erased, INK_CHECK.spared];
+  const size = viewer.pageSize(0);
+  const width = box.right - box.left;
+  const height = box.bottom - box.top;
+  // Two rules across the page in its own points, a third of the way down and
+  // two thirds. Far enough apart that the nib cannot reach both.
+  const upper = size.height_pt * 0.35;
+  const lower = size.height_pt * 0.65;
+  const from = size.width_pt * 0.2;
+  const to = size.width_pt * 0.8;
+  viewer.setMarks([
+    {
+      id: 4244,
+      kind: "ink",
+      page: 1,
+      quads: [from, upper, to, lower],
+      strokes: [
+        [from, upper, to, upper],
+        [from, lower, to, lower],
+      ],
+      color: [0.85, 0.15, 0.15],
+      note: "",
+    },
+  ]);
+  await frame();
+  await frame();
+
+  /** A thin band across one of the two rules, in the root's coordinates. */
+  const band = (atY: number) => {
+    const y = box.top + (atY / size.height_pt) * height;
+    return [box.left + width * 0.25, y - 4, box.left + width * 0.75, y + 4] as const;
+  };
+  const before = inked(...band(upper));
+  if (before === null || before < 0.02) {
+    for (const name of names) {
+      skip(name, "the drawing is not on screen, or its strokes drew nothing to erase");
+    }
+    viewer.setMarks([]);
+    await frame();
+    return;
+  }
+
+  viewer.armErase();
+  // Held, not released: what is being measured is the preview, and a release
+  // would send the sweep to a model that does not hold this mark.
+  const y = box.top + (upper / size.height_pt) * height;
+  pointer(root, "pointerdown", box.left + width * 0.25, y);
+  pointer(root, "pointermove", box.left + width * 0.75, y);
+  await frame();
+  await frame();
+
+  const gone = inked(...band(upper));
+  const kept = inked(...band(lower));
+  check(
+    INK_CHECK.erased,
+    (gone ?? 1) < 0.02,
+    `${((before ?? 0) * 100).toFixed(0)}% of the band before the nib, ` +
+      `${((gone ?? 0) * 100).toFixed(0)}% after it`,
+  );
+  // The control, and it is not a formality: an overlay that stopped painting
+  // the whole drawing satisfies the check above perfectly.
+  check(
+    INK_CHECK.spared,
+    (kept ?? 0) > 0.02,
+    `${((kept ?? 0) * 100).toFixed(0)}% of the band the nib did not cross`,
+  );
+
+  viewer.cancelDraw();
+  viewer.setMarks([]);
   await frame();
 }
 

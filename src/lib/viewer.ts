@@ -41,6 +41,7 @@ import {
 } from "./crop";
 import {
   boxQuad,
+  ERASER_RADIUS,
   ICON_SIZE,
   iconQuad,
   isIcon,
@@ -51,6 +52,7 @@ import {
   isWash,
   markBand,
   OUTLINE_WIDTH,
+  strokeSwept,
 } from "./markband";
 import { PointerDrag, type DragPoint } from "./drag";
 
@@ -254,6 +256,19 @@ export interface ViewerStatus {
    * nothing has been drawn yet.
    */
   drawing: number | null;
+  /**
+   * Strokes this sweep of the eraser has taken, or `null` when it is not armed.
+   *
+   * {@link drawing}'s twin and for its reason: the eraser is the second tool
+   * here that stays armed between gestures, so a reader can be in a state where
+   * the next press rubs out rather than selects. Zero is armed-and-nothing-swept
+   * and is not `null`.
+   *
+   * It counts *across* the marks a sweep crossed, because what the reader is
+   * watching is strokes disappearing and they do not care which drawing each
+   * one belonged to.
+   */
+  erasing: number | null;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -353,6 +368,16 @@ export interface ViewerOptions {
    * then draws its preview and commits nothing, which is what the harness does.
    */
   onDrawn?: (kind: MarkKind, page: number, drawn: Drawn) => void;
+
+  /**
+   * One sweep of the eraser: which drawing, and which of its strokes went.
+   *
+   * `remove` is *positions* into the strokes the viewer was last given, not
+   * points --- the backend owns what a drawing is made of and this says only
+   * which parts of it to drop. One call per mark the sweep crossed, which is
+   * almost always one.
+   */
+  onErased?: (mark: number, remove: number[]) => void;
   /**
    * Called after a jump that Back can undo, so a caller can re-enable a button.
    *
@@ -714,6 +739,36 @@ export class Viewer {
    */
   private inking: { slot: number; strokes: Point[][] } | null = null;
 
+  /**
+   * Whether the eraser is the armed tool.
+   *
+   * Separate from {@link drawKind} rather than a seventh `MarkKind`, because it
+   * is not a kind of mark: nothing it does creates one. Arming either closes the
+   * other, so the two are never both set --- which is asserted by the window
+   * check rather than by a type, since the states live in one object nobody
+   * constructs by hand.
+   */
+  private erasing = false;
+
+  /**
+   * Which strokes the sweep in progress has touched, by mark id.
+   *
+   * **Accumulated across the whole drag and committed on release**, exactly as
+   * {@link inking} accumulates strokes and commits on Enter. A reader sweeping
+   * across four strokes did one thing, so it is one call and one undo; sending
+   * each stroke as it is touched would cost four presses of undo to put back a
+   * gesture that took one movement of the hand.
+   *
+   * The doomed strokes stop being painted the moment they are added, which is
+   * the whole of the preview --- there is no separate ghost to keep in step.
+   */
+  private doomed: {
+    slot: number;
+    marks: Map<number, Set<number>>;
+    /** Where the nib was at the last report, so the sweep tests its travel. */
+    last: Point;
+  } | null = null;
+
   private drawing: {
     slot: number;
     from: Point;
@@ -901,8 +956,19 @@ export class Viewer {
     // arithmetic they call is in `markband.ts`, which the file's writer mirrors.
     this.drawDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
-        if (!this.drawKind) return false;
+        if (!this.drawKind && !this.erasing) return false;
         const { page, x, y } = this.pageAndPoint(at);
+        if (this.erasing) {
+          // The page the sweep started on, and it does not move --- the same
+          // rule the box's drag states below, for the same reason: a mark
+          // belongs to one page, so a sweep that wanders onto the next one
+          // erases nothing there rather than something the reader could not see
+          // themselves aiming at.
+          this.doomed = { slot: page, marks: new Map(), last: { x, y } };
+          this.sweep(x, y);
+          this.wake();
+          return true;
+        }
         // **A drawing lives on one page**, so a second stroke that starts on a
         // different one is refused rather than moved onto the first. Refusing
         // lets the press go on to whatever would have had it --- a selection, a
@@ -920,6 +986,12 @@ export class Viewer {
         return true;
       },
       move: (at: DragPoint) => {
+        if (this.doomed) {
+          const { x, y } = this.pageAndPoint(at);
+          this.sweep(x, y);
+          this.wake();
+          return;
+        }
         const live = this.drawing;
         if (!live) return;
         // The page is the one the drag *started* on and is deliberately not
@@ -946,6 +1018,25 @@ export class Viewer {
         this.wake();
       },
       end: (_at: DragPoint, committed: boolean) => {
+        const swept = this.doomed;
+        if (swept) {
+          this.doomed = null;
+          this.wake();
+          // Cancelled mid-sweep: the strokes come back, because nothing was
+          // sent. `cancelDraw` has already disarmed the tool if this arrived by
+          // Escape; a `pointercancel` leaves it armed, which is right --- the
+          // reader did not ask to stop erasing.
+          if (!committed) return;
+          for (const [mark, strokes] of swept.marks) {
+            if (strokes.size === 0) continue;
+            // Sorted so that the list a reader's gesture produces does not
+            // depend on the order their hand happened to cross the strokes.
+            // Nothing downstream requires it; a diagnostic quoting the list is
+            // readable because of it.
+            this.opts.onErased?.(mark, [...strokes].sort((a, b) => a - b));
+          }
+          return;
+        }
         const live = this.drawing;
         const kind = this.drawKind;
         this.drawing = null;
@@ -1293,6 +1384,7 @@ export class Viewer {
       failed: this.scroller.stats.failed,
       selected: this.selectedCount(),
       drawing: this.drawnStrokes,
+      erasing: this.sweptStrokes,
       search: this.searchStatus(),
     };
     const summary = [
@@ -2023,7 +2115,19 @@ export class Viewer {
       // stays correct if a later change *does* make the two co-exist, and the
       // alternative is a reader stuck in a mode --- which is the one failure the
       // one-shot design exists to rule out.
-      if (this.drawKind !== null || this.drawing || this.inking) this.cancelDraw();
+      // The eraser is in this list too. It stays armed between sweeps, so it is
+      // a mode a reader can be in with nothing on screen but the cursor --- the
+      // exact state Escape exists for, and the one a guard listing only the
+      // pen's fields leaves them stuck in.
+      if (
+        this.drawKind !== null ||
+        this.drawing ||
+        this.inking ||
+        this.erasing ||
+        this.doomed
+      ) {
+        this.cancelDraw();
+      }
       else if (this.popup.openId !== null) this.closeComment();
       else if (this.focusedLink) this.clearLinkFocus();
       else this.clearSelection();
@@ -2857,9 +2961,100 @@ export class Viewer {
   armDraw(kind: MarkKind): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
+    // Two tools, one hand. Arming a pen puts the eraser away, so the states
+    // cannot both be set and no gesture has to ask which one meant it.
+    this.erasing = false;
     this.drawKind = kind;
     this.showCursor();
     this.wake();
+  }
+
+  /**
+   * Arms the eraser.
+   *
+   * **It stays armed, and there is no finishing key.** Ink needed Enter because
+   * its strokes pile into one mark and something has to say the drawing is
+   * done; a sweep is complete when the reader lifts the pointer, so each one
+   * commits on its own and the next one can start immediately. Escape puts it
+   * away, which is the same key that abandons a drawing and means the same
+   * thing.
+   *
+   * **It takes whole strokes, not parts of them.** Sweeping across the middle
+   * of a line removes that line, rather than splitting it in two and leaving a
+   * gap --- which is what a pen-and-paper eraser does and is not what this is.
+   * Splitting would mean rewriting `/InkList` into more strokes than the reader
+   * drew and re-deriving the appearance around a hole; it is a real feature and
+   * it is not this one.
+   *
+   * Only drawings are erasable. A sweep over a highlight does nothing, because
+   * a highlight has no strokes to take and making the eraser remove whole marks
+   * of any kind would be a second, much more destructive command wearing the
+   * same cursor --- *Remove mark* already exists and says what it does.
+   */
+  armErase(): void {
+    if (this.markNote.openId !== null) this.closeMark();
+    if (this.popup.openId !== null) this.closeComment();
+    this.drawKind = null;
+    this.inking = null;
+    this.erasing = true;
+    this.showCursor();
+    this.wake();
+  }
+
+  /**
+   * Adds every drawing's stroke within the nib of `(x, y)` to the sweep.
+   *
+   * Reads the strokes through {@link viewStrokesOf}, so the comparison happens
+   * in the space the reader is pointing at rather than the page's own --- which
+   * is what lets {@link ERASER_RADIUS} be a fixed number of screen pixels at
+   * every zoom.
+   */
+  private sweep(x: number, y: number): void {
+    const swept = this.doomed;
+    if (!swept) return;
+    // **From where the nib was to where it is**, not the point it is at. A
+    // pointer reports at the display's rate and a hand crosses several strokes
+    // between two reports; testing the samples alone let a quick sweep down a
+    // column of three strokes take the outer two and leave the middle one.
+    const from = swept.last;
+    const to = { x, y };
+    swept.last = to;
+    for (const mark of this.marks) {
+      if (!isPath(mark.kind)) continue;
+      const inked = this.viewStrokesOf(mark);
+      if (!inked || inked.slot !== swept.slot) continue;
+      for (const [index, stroke] of inked.strokes.entries()) {
+        if (!strokeSwept(stroke, from, to, ERASER_RADIUS / this.zoom)) continue;
+        let taken = swept.marks.get(mark.id);
+        if (!taken) {
+          taken = new Set();
+          swept.marks.set(mark.id, taken);
+        }
+        taken.add(index);
+      }
+    }
+  }
+
+  /** Whether the eraser is armed. For the menu's enablement and the harness. */
+  get eraseArmed(): boolean {
+    return this.erasing;
+  }
+
+  /**
+   * How many strokes the sweep in progress has taken, or `null` when the eraser
+   * is not armed.
+   *
+   * `ViewerStatus.erasing` is this, for the reason {@link drawnStrokes} gives:
+   * a second expression computing the same thing is a copy that a mutation can
+   * break in one place and not the other.
+   *
+   * Zero is armed-and-nothing-swept, which is a mode the window says out loud.
+   */
+  get sweptStrokes(): number | null {
+    if (!this.erasing) return null;
+    let count = 0;
+    for (const strokes of this.doomed?.marks.values() ?? []) count += strokes.size;
+    return count;
   }
 
   /**
@@ -2878,6 +3073,11 @@ export class Viewer {
     // by it exactly as a half-dragged rectangle is --- which is why the finish
     // gesture had to be a *different* key rather than a second Escape.
     this.inking = null;
+    // The eraser goes with it. This method is "drop whatever tool is armed",
+    // which is what Escape means and what every caller wants; a separate
+    // `cancelErase` would leave Escape asking which of the two was live.
+    this.erasing = false;
+    this.doomed = null;
     this.showCursor();
     this.wake();
   }
@@ -3694,7 +3894,14 @@ export class Viewer {
           // stops square where the reader's hand did not.
           ctx.lineCap = "round";
           ctx.lineJoin = "round";
-          for (const stroke of inked.strokes) {
+          const going = this.doomed?.marks.get(mark.id);
+          for (const [index, stroke] of inked.strokes.entries()) {
+            // **The preview is the absence.** A stroke the sweep has taken stops
+            // being painted at once, so the reader watches the drawing come
+            // apart under the nib; there is no ghost copy to keep in step with
+            // what will be sent, because what will be sent is exactly what is
+            // no longer here.
+            if (going?.has(index)) continue;
             const [first, ...rest] = stroke;
             if (!first) continue;
             ctx.beginPath();

@@ -2862,6 +2862,113 @@ MUTATIONS += [
     ),
 ]
 
+# --- rubbing a drawing out -----------------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Measure to the nearest recorded point instead of the nearest segment.
+        # A fast hand leaves points far apart, so the eraser passes straight
+        # through the middle of a long stroke without touching it -- and every
+        # short stroke still erases, which is what makes it look like it works.
+        "markband: measure the eraser to the nearest point on the stroke",
+        "src/lib/markband.ts",
+        "  const nx = a.x + along * dx;\n  const ny = a.y + along * dy;",
+        "  const nx = a.x;\n  const ny = a.y;",
+        "measures to the nearest segment, not to the nearest recorded point",
+    ),
+    Mutation(
+        # Drop the clamp, so the distance is to the infinite line the segment
+        # sits on. The eraser then takes a stroke it passed a long way clear of,
+        # along that stroke's own direction.
+        "markband: let the eraser reach along the line a segment sits on",
+        "src/lib/markband.ts",
+        "    length === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length));",
+        "    length === 0 ? 0 : ((p.x - a.x) * dx + (p.y - a.y) * dy) / length;",
+        "does not reach along the line the segment sits on",
+    ),
+    Mutation(
+        # Ignore the radius the caller passed and use the constant. The viewer
+        # divides by the zoom, so this makes the nib the wrong size at every
+        # zoom but 100% -- and at 100% every other check here still passes.
+        "markband: give the eraser a nib of its own size whatever it was asked for",
+        "src/lib/markband.ts",
+        "  const within = radius * radius;",
+        "  const within = ERASER_RADIUS * ERASER_RADIUS;",
+        "uses the radius it is given",
+    ),
+    Mutation(
+        # Answer for a stroke of one point by refusing it. It is input the model
+        # never keeps, which is exactly why nothing else would notice.
+        "markband: refuse to measure a stroke of a single point",
+        "src/lib/markband.ts",
+        "    return pointToSegment(first, from, to) <= within;",
+        "    return false;",
+        "answers for a stroke of one point rather than refusing it",
+    ),
+    Mutation(
+        # Test the point the nib is at instead of the ground it covered. A
+        # pointer reports at the display's rate, so a quick sweep then passes
+        # over whole strokes and leaves them --- which is how this was found:
+        # a drag down a column of three took the outer two.
+        "viewer: sweep the eraser where it is rather than where it has been",
+        "src/lib/viewer.ts",
+        "    const from = swept.last;",
+        "    const from = { x, y };",
+        "takes several when the sweep crosses several, in one report",
+    ),
+    Mutation(
+        # Drop the crossing test. Two long segments that cross at their middles
+        # are at distance zero with all four endpoints far apart, so the nib
+        # goes straight through the stroke it is aimed at.
+        "markband: let the nib pass through a stroke it crosses",
+        "src/lib/markband.ts",
+        "    if (segmentsCross(a, b, from, to)) return true;",
+        "    if (false) return true;",
+        "takes a stroke it crosses in the middle, with every end far away",
+    ),
+    Mutation(
+        # Report the strokes in the order the hand crossed them. Nothing
+        # downstream requires the sort, which is why only a test that sweeps
+        # upwards can see it -- and a diagnostic quoting the list then reads
+        # differently for two readers who erased the same thing.
+        "viewer: report an erased stroke in the order the hand reached it",
+        "src/lib/viewer.ts",
+        "            this.opts.onErased?.(mark, [...strokes].sort((a, b) => a - b));",
+        "            this.opts.onErased?.(mark, [...strokes]);",
+        "reports the strokes in order however the hand crossed them",
+    ),
+    Mutation(
+        # Leave the pen armed when the eraser is taken up. Two tools are then
+        # live at once and the next press has to guess which one the reader
+        # meant -- and it guesses the eraser, because that branch is first.
+        "viewer: arm the eraser without putting the pen away",
+        "src/lib/viewer.ts",
+        "    this.drawKind = null;\n    this.inking = null;\n    this.erasing = true;",
+        "    this.erasing = true;",
+        "puts the pen away, and the pen puts it away",
+    ),
+    Mutation(
+        # Escape reaches only the pen's states, which is what it did when the
+        # eraser was written: a reader with the eraser armed and nothing on
+        # screen but a cursor cannot get out of the mode.
+        "viewer: let Escape past an armed eraser",
+        "src/lib/viewer.ts",
+        "        this.erasing ||\n        this.doomed",
+        "        false",
+        "sends nothing when Escape ends the sweep",
+    ),
+    Mutation(
+        # Erase every mark the nib passes over, not only the drawings. A sweep
+        # across a highlight then silently rewrites a mark that has no strokes,
+        # which the backend refuses -- so the reader gets an error from a
+        # gesture that looked like it was aimed at nothing.
+        "viewer: let the eraser take marks that are not drawings",
+        "src/lib/viewer.ts",
+        "      if (!isPath(mark.kind)) continue;",
+        "      if (false) continue;",
+        "leaves a highlight alone",
+    ),
+]
+
 TEST_FILES = [
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",

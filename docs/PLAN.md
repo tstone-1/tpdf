@@ -6687,6 +6687,87 @@ unchecked: PDFKit is not Acrobat, and nothing here has asked it.
 wording and needs a licence and a person; and any of this on Windows.
 
 
+#### An eraser --- done 2026-08-20
+
+The thing a reader reaches for immediately after drawing, and the first command
+here that changes a mark's *shape* rather than putting one on a page or taking
+one off. **Whole strokes, not parts of them**: sweeping across the middle of a
+line removes that line rather than leaving a gap in it. Splitting would mean
+rewriting `/InkList` into more strokes than the reader drew and re-deriving the
+appearance around a hole; it is a real feature and it is not this one.
+
+##### A drawing's strokes became a thing that changes
+
+Which is the whole design problem. `Working` exists because everything that
+changes about a document has to be rebuildable by replay, and until now a
+drawing's points were written once by `annotate` and never again --- so they sat
+in the body table beside the colour and the author. `Command::Reink` is
+`Renote`'s twin, down to the argument: a whole stroke list rather than an edit to
+one, named by an `InkId` so the enum stays `Copy` and replay stays
+allocation-free.
+
+**`Annotate` does not carry an `InkId`**, and the asymmetry is deliberate. An
+absent entry in `Working.inks` means "the strokes the mark was made with", which
+is the answer for every drawing an eraser has never touched and for the five
+kinds that have no strokes at all. Carrying one would have put an id on every
+`Annotate` for the sake of the one kind that can use it.
+
+**`quads_of` is the accessor that had to exist.** Erasing a stroke moves the
+rectangle, and a caller reading `Mark::quads` off the body would hit-test, anchor
+the popup and write a `/Rect` around a stroke nobody can see. Two callers ---
+`snapshot` for the window and `plan` for the file --- and each has its own
+mutation, because the second is the one that reaches a saved document.
+
+**Erasing everything removes the mark**, and that decision is in `edits.rs`
+rather than the model: `Doc::reink` refuses a drawing of nothing, because a mark
+that draws nothing must not exist, and only the layer above knows the sweep meant
+*get rid of it*. One `Unannotate`, so one undo brings the whole drawing back.
+
+##### The nib had to be tested along its travel
+
+The first version asked which strokes were within the radius of the point the
+pointer had just reported. A pointer reports at the display's rate and a hand
+crosses several strokes between two reports, so a drag down a column of three
+took the outer two and left the middle one --- **the same failure the hit test
+already avoided one level down**, where `strokeTouches` measures to the nearest
+*segment* precisely because a fast hand leaves points far apart. Two polylines,
+and only one of them was being treated as one.
+
+`strokeSwept` is segment-to-polyline: the travel from the last report to this
+one, against each segment of each stroke, with a crossing test as well as the
+four endpoint distances --- an X of two long strokes is at distance zero with all
+four ends a hundred points apart. A press is a segment of no length, so
+`strokeTouches` is now that function called with `from === to` and every test
+written for it still holds.
+
+##### Evidence
+
+Sixteen mutations, all caught, and three of them are the increment's yield.
+
+- **The `snapshot` mutation survived its first aiming.** It was pointed at a test
+  in `docmodel.rs` that calls `quads_of` directly, which says nothing about
+  whether the *reply* asks it --- the trap about unit tests that build their
+  fixtures below the layer under test. A test that erases and reads the reply's
+  rectangle catches it.
+- **The kind guard in the sweep is unreachable for every input the backend can
+  send.** A well-formed highlight has no strokes, so `if (!isPath(mark.kind))`
+  changes nothing and a mutation deleting it survived. The fixture that makes it
+  reachable is a malformed one --- a highlight carrying three strokes, which the
+  model's biconditional forbids and the wire format cannot rule out.
+- **The first mutation written for the travel survived too**, because it
+  degenerated two of the four endpoint distances and three other terms still read
+  the previous point. Aim at the line that *holds* the state, not at one of
+  several that consume it.
+
+Window harness: **249/249 on `comments`, 284 names, all distinct.** Its first run
+went red on *"every registered command is classified"* with
+`unclassified [edit.erase]` --- the check written for exactly that, firing on a
+command that was not meant to be left out.
+
+**Not done:** splitting a stroke where the nib crosses it; an eraser for marks
+that are not drawings, which is `Unannotate` and already has a command; and a
+nib whose size the reader can choose.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
