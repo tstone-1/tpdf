@@ -552,7 +552,7 @@ async function run(path: string): Promise<void> {
   // After every phase that drives the surface and before the backend ones:
   // it paints marks of its own on the overlay and clears them again, so it
   // must not run while another phase is looking at what is drawn.
-  await overlayInkChecks(viewer);
+  await overlayInkChecks(root, viewer);
   await markCommandChecks(doc);
   await cropCommandChecks(doc);
   await printChecks(path, doc);
@@ -7662,17 +7662,37 @@ async function drawnPastFirstPageCheck(
   );
 }
 
-/** The names this phase reports, so a run that cannot start still prints them. */
-const OVERLAY_INK_CHECKS = [
-  "an untouched page has nothing on the overlay",
-  "a highlight fills its quad",
-  "an underline leaves the middle of its quad clear",
-  "a strikeout crosses the middle of its quad",
-  "a box is a frame with its middle clear",
-  "a comment draws inside its own icon box",
-  "a drawing follows its strokes and does not fill its rectangle",
-  "the six kinds do not all look the same",
-];
+/**
+ * The names this phase reports, so a run that cannot start still prints them.
+ *
+ * **Keyed, not positional, and that is the second repair to the same mistake.**
+ * The distinctness check was written as `OVERLAY_INK_CHECKS[6]`; adding ink
+ * shifted it and it began reporting under the drawing's name. That was "fixed"
+ * with `length - 1` --- which encodes *"distinctness is last"* --- and two
+ * checks appended after it broke it again, identically, within the hour: the
+ * run printed the distinctness verdict under *"a second stroke joins the
+ * drawing"*, printed that name twice, and never printed *"the six kinds do not
+ * all look the same"* at all.
+ *
+ * A key cannot shift. {@link OVERLAY_INK_CHECKS} is derived from this so the
+ * declared list and the names used stay one thing.
+ */
+const INK_CHECK = {
+  empty: "an untouched page has nothing on the overlay",
+  highlight: "a highlight fills its quad",
+  underline: "an underline leaves the middle of its quad clear",
+  strikeout: "a strikeout crosses the middle of its quad",
+  square: "a box is a frame with its middle clear",
+  note: "a comment draws inside its own icon box",
+  ink: "a drawing follows its strokes and does not fill its rectangle",
+  distinct: "the six kinds do not all look the same",
+  preview: "a drawing in progress is previewed as a line, not as a rubber band",
+  second: "a second stroke joins the drawing rather than replacing it",
+} as const;
+
+const OVERLAY_INK_CHECKS: string[] = Object.values(INK_CHECK);
+
+
 
 /**
  * What the reader actually sees, in overlay pixels.
@@ -7696,7 +7716,10 @@ const OVERLAY_INK_CHECKS = [
  * and a fixture that skipped rotated corpora would skip the one that most needs
  * this.
  */
-async function overlayInkChecks(viewer: Viewer): Promise<void> {
+async function overlayInkChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+): Promise<void> {
   const canvas = viewer.overlaySurface;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) {
@@ -7832,7 +7855,7 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
   await frame();
   const empty = inked(0, 0, canvas.width / dpr, canvas.height / dpr);
   check(
-    OVERLAY_INK_CHECKS[0] ?? "",
+    INK_CHECK.empty,
     empty !== null && empty < 0.001,
     empty === null ? "the overlay is too small to sample" : `${(empty * 100).toFixed(2)}% inked`,
   );
@@ -7841,20 +7864,20 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
   const read: Record<string, Reading> = {};
   const wanted: [MarkKind, string, (r: Reading) => boolean][] = [
     // A wash covers its quad, so every reading is high.
-    ["highlight", OVERLAY_INK_CHECKS[1] ?? "", (r) => r.whole > 0.8 && r.core > 0.8],
+    ["highlight", INK_CHECK.highlight, (r) => r.whole > 0.8 && r.core > 0.8],
     // A rule at the bottom edge: a thin band, nothing at the centre and nothing
     // on the side. This is the exact reading the shipped defect got wrong --- it
     // drew the whole quad, so all three came back full.
     [
       "underline",
-      OVERLAY_INK_CHECKS[2] ?? "",
+      INK_CHECK.underline,
       (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 1,
     ],
     // The same thin band, through the one place an underline must not be. The
     // two together say the kinds are told apart, which neither says alone.
     [
       "strikeout",
-      OVERLAY_INK_CHECKS[3] ?? "",
+      INK_CHECK.strikeout,
       (r) => r.whole < 0.3 && r.core > 0.8 && r.edges === 2,
     ],
     // A frame: a side where an underline has none, and a clear centre where a
@@ -7862,7 +7885,7 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
     // and it takes both readings to do it.
     [
       "square",
-      OVERLAY_INK_CHECKS[4] ?? "",
+      INK_CHECK.square,
       (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 4,
     ],
     // A bubble drawn inside a 20-point box. Loose on purpose: what shape it
@@ -7871,7 +7894,7 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
     // rectangle --- which a `fillRect` fallback would be.
     [
       "note",
-      OVERLAY_INK_CHECKS[5] ?? "",
+      INK_CHECK.note,
       (r) => r.whole > 0.2 && r.whole < 0.95 && r.core > 0.5,
     ],
     // Two rules near the top and bottom edges, and nothing between them. The
@@ -7881,7 +7904,7 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
     // that is the exact defect the underline shipped with, one kind later.
     [
       "ink",
-      OVERLAY_INK_CHECKS[6] ?? "",
+      INK_CHECK.ink,
       (r) => r.whole < 0.4 && r.core < 0.05 && r.edges === 2,
     ],
   ];
@@ -7915,7 +7938,7 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
       (r) => `${r.whole.toFixed(2)}/${r.core.toFixed(2)}/${r.edges}`,
     ),
   );
-  const distinct = OVERLAY_INK_CHECKS[OVERLAY_INK_CHECKS.length - 1] ?? "";
+  const distinct = INK_CHECK.distinct;
   if (Object.keys(read).length < wanted.length) {
     skip(distinct, "not every kind could be sampled");
   } else {
@@ -7927,6 +7950,110 @@ async function overlayInkChecks(viewer: Viewer): Promise<void> {
   }
 
   viewer.setMarks([]);
+  await frame();
+  await inkPreviewChecks(root, viewer, inked);
+}
+
+/**
+ * What a reader sees *while* drawing, which no committed mark can show.
+ *
+ * **This exists because the first version of ink previewed a freehand stroke as
+ * a dashed rubber-band rectangle.** `paintDrawing` drew that for every live
+ * drag, so the line appeared only on release --- and it shipped, because every
+ * check in this phase reads marks the *model* holds, and a preview is by
+ * definition not one of those. The overlay had a phase and the preview had
+ * nothing.
+ *
+ * Two readings, and the second is what makes this about *drawings* rather than
+ * about one stroke. A rubber band inks all four sides of its own box and leaves
+ * the middle clear, which is also what a correct two-stroke drawing does --- so
+ * "not a rectangle" is read from a single diagonal stroke, whose box a rectangle
+ * would outline and whose line crosses the middle instead.
+ */
+async function inkPreviewChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  inked: (l: number, t: number, r: number, b: number) => number | null,
+): Promise<void> {
+  const names = [INK_CHECK.preview, INK_CHECK.second];
+  // **Where page 1 is on screen, taken from a mark rather than from the
+  // scroller.** `markAnchor` is the one thing here that answers in the root's
+  // own coordinates, which is what `pointer` needs --- and it is what the phase
+  // above already uses, so the two agree by construction rather than by two
+  // copies of the same arithmetic.
+  const size = viewer.pageSize(0);
+  viewer.setMarks([
+    {
+      id: 4243,
+      kind: "highlight",
+      page: 1,
+      quads: [0, 0, size.width_pt, size.height_pt],
+      strokes: [],
+      color: [1, 0.9, 0.2],
+      note: "",
+    },
+  ]);
+  await frame();
+  await frame();
+  const box = viewer.markAnchor(4243);
+  viewer.setMarks([]);
+  await frame();
+  if (!box || box.right - box.left < 80 || box.bottom - box.top < 80) {
+    for (const name of names) skip(name, "page 1 is not on screen, or is too small to draw on");
+    return;
+  }
+  const width = box.right - box.left;
+  const height = box.bottom - box.top;
+  const x0 = box.left + width * 0.25;
+  const y0 = box.top + height * 0.25;
+  const x1 = box.left + width * 0.65;
+  const y1 = box.top + height * 0.55;
+
+  viewer.armDraw("ink");
+  pointer(root, "pointerdown", x0, y0);
+  for (let step = 1; step <= 6; step++) {
+    const t = step / 6;
+    pointer(root, "pointermove", x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+  }
+  await frame();
+  await frame();
+
+  // The middle of the diagonal's own bounding box. A line through it inks this;
+  // a rectangle outlining the same box leaves it empty, which is the whole
+  // discrimination.
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const core = inked(x0 + w * 0.35, y0 + h * 0.35, x0 + w * 0.65, y0 + h * 0.65);
+  const corner = inked(x0 + w * 0.02, y0 + h * 0.7, x0 + w * 0.3, y0 + h * 0.98);
+  check(
+    INK_CHECK.preview,
+    core !== null && core > 0.02 && (corner ?? 1) < 0.02,
+    `${((core ?? 0) * 100).toFixed(0)}% down the diagonal, ` +
+      `${((corner ?? 0) * 100).toFixed(0)}% in the corner a rubber band would outline`,
+  );
+
+  pointer(root, "pointerup", x1, y1);
+  await frame();
+
+  // And a second stroke elsewhere, which must not replace the first. Read as
+  // the viewer's own count rather than in pixels: the two strokes are far apart
+  // and a band that held one of them would be measuring position, not identity.
+  const before = viewer.drawnStrokes;
+  drag(
+    root,
+    [box.left + width * 0.2, box.top + height * 0.75],
+    [box.left + width * 0.5, box.top + height * 0.8],
+  );
+  await frame();
+  check(
+    INK_CHECK.second,
+    before === 1 && viewer.drawnStrokes === 2,
+    `${before} stroke after the first, ${viewer.drawnStrokes} after the second`,
+  );
+
+  // Escape rather than Enter: this phase must leave the document as it found
+  // it, and Enter would put a mark on page 1 that every later phase would see.
+  viewer.cancelDraw();
   await frame();
 }
 

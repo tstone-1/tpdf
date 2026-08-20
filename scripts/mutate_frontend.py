@@ -187,6 +187,64 @@ MUTATIONS = [
         "is spent by one box",
     ),
     Mutation(
+        # Back to one-shot: commit on release, as the box does. A drawing is then
+        # one stroke and can never be more, which is the state the window was in
+        # until 2026-08-20 -- while `/InkList`, the writer and the probe were all
+        # built for several, so the harness could make a document no reader could.
+        "viewer: commit a drawing when the pointer comes up",
+        "src/lib/viewer.ts",
+        "          this.inking ??= { slot: live.slot, strokes: [] };\n          this.inking.strokes.push(live.points);",
+        "          this.inking ??= { slot: live.slot, strokes: [] };\n          this.inking.strokes.push(live.points);\n          this.finishDrawing();",
+        "stays armed so a drawing can be several strokes",
+    ),
+    Mutation(
+        # Keep what was drawn when Escape ends it. Escape has meant abandon since
+        # the box, so a drawing left behind by it is a mode the reader thinks
+        # they left -- and the next stroke anywhere joins a drawing they believe
+        # they threw away.
+        "viewer: leave the strokes behind when Escape ends a drawing",
+        "src/lib/viewer.ts",
+        "    // by it exactly as a half-dragged rectangle is --- which is why the finish\n    // gesture had to be a *different* key rather than a second Escape.\n    this.inking = null;",
+        "    // by it exactly as a half-dragged rectangle is --- which is why the finish\n    // gesture had to be a *different* key rather than a second Escape.",
+        "throws the whole drawing away on Escape",
+    ),
+    Mutation(
+        # Let a stroke on another page join the drawing. An annotation belongs to
+        # one page, so the second stroke is then drawn on a page it was not made
+        # on -- ink where nobody put it, which is worse than a refused press.
+        "viewer: let a stroke started on another page join the drawing",
+        "src/lib/viewer.ts",
+        "        if (this.inking && this.inking.slot !== page) return false;",
+        "        if (false) return false;",
+        "refuses a stroke that starts on another page",
+    ),
+    Mutation(
+        # Stop reporting the drawing. The one mode in this application then has
+        # nothing on screen to say it is live or how to leave it, which is what
+        # the box's one-shot design existed to avoid.
+        #
+        # **Aimed at the accessor, because `ViewerStatus.drawing` IS the
+        # accessor.** It was its own expression in the status object, and this
+        # mutation emptied that and SURVIVED: every test asked the viewer and
+        # only the window reads the status, so the copy nobody tested was the one
+        # a reader sees. Removing the copy is what makes this catchable.
+        "viewer: keep the drawing out of the status, so the mode is invisible",
+        "src/lib/viewer.ts",
+        "    if (this.inking) return this.inking.strokes.length;",
+        "    if (false) return this.inking?.strokes.length ?? 0;",
+        "reports the drawing in the status, so the mode is visible",
+    ),
+    Mutation(
+        # Let two checks share a name. The roll is compared as a set, so a repeat
+        # is invisible there: one verdict prints under another's label and a third
+        # name leaves the roll, with every count still adding up.
+        "checkreport: let two checks share a name",
+        "src/lib/checkreport.ts",
+        "    if (repeated.length > 0) {",
+        "    if (false) {",
+        "fails the run when two checks share a name",
+    ),
+    Mutation(
         # Keep every pointer event. A hand resting on a trackpad produces dozens
         # of points inside a tenth of a point, none of which changes the line and
         # all of which go into the file and over the IPC boundary.
@@ -212,8 +270,8 @@ MUTATIONS = [
         # with nothing on screen to say why.
         "viewer: commit a drawing the pointer never moved for",
         "src/lib/viewer.ts",
-        "          if (inkId === undefined || live.points.length < 2) return;",
-        "          if (inkId === undefined) return;",
+        "          if (live.points.length < 2) return;",
+        "          if (false) return;",
         "keeps the tool armed when the pointer never moved",
     ),
     Mutation(
@@ -222,8 +280,8 @@ MUTATIONS = [
         # doing nothing rather than as a wire defect.
         "viewer: send a rectangle alongside a drawing's strokes",
         "src/lib/viewer.ts",
-        "          this.opts.onDrawn?.(kind, inkId, {\n            quads: [],",
-        "          this.opts.onDrawn?.(kind, inkId, {\n            quads: [0, 0, 1, 1],",
+        "    this.opts.onDrawn?.(\"ink\", id, {\n      quads: [],",
+        "    this.opts.onDrawn?.(\"ink\", id, {\n      quads: [0, 0, 1, 1],",
         "commits strokes and no rectangle",
     ),
     Mutation(
@@ -232,8 +290,8 @@ MUTATIONS = [
         # untried corpus hides.
         "viewer: leave a drawing's points unmapped into the file's space",
         "src/lib/viewer.ts",
-        "                const mapped = this.fileRectOn(live.slot, {",
-        "                const mapped = [point.x, point.y] as const;\n                void this.fileRectOn(live.slot, {",
+        "          const mapped = this.fileRectOn(made.slot, {",
+        "          const mapped = [point.x, point.y] as const;\n          void this.fileRectOn(made.slot, {",
         "puts the points back in the file's space on a turned page",
     ),
     Mutation(
@@ -2851,6 +2909,14 @@ TEST_FILES = [
     # seven of them rather than reporting them survived, which is that guard
     # doing its job.
     "src/lib/pages.test.ts",
+    # Added 2026-08-20 with the duplicate-name guard. Seventh time, and the
+    # pattern the note above names holds again: `checkreport.ts` had been
+    # covered by no mutation, so its suite had never been here, and the first
+    # mutation written for it named a test the harness could not see. It
+    # refused rather than reporting SURVIVED, which is the whole value of the
+    # guard -- a mutation that cannot go red and a mutation nothing catches are
+    # indistinguishable from the verdict alone.
+    "src/lib/checkreport.test.ts",
     # Added 2026-08-17 with extract. The guard fired a fourth time, for five
     # mutations at once: every one named a `pageranges.test.ts` test and the
     # harness could not see the file, so it refused to start rather than

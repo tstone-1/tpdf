@@ -21,15 +21,23 @@ have the binary.)
 
 ### Draw on a page
 
-- **Draw freehand...** in the Edit menu and the right-click menu arms a pen for
-  one stroke: press, draw, let go. The line is saved as a real `/Ink`
-  annotation, so Acrobat and Preview show it and can remove it.
+- **Draw freehand...** in the Edit menu and the right-click menu arms a pen.
+  Press, draw, let go --- and draw again: **a drawing can be as many strokes as
+  you like**, which is how you circle a figure and put an arrow into it. Press
+  **Enter** when it is finished, or **Esc** to throw it away.
 
-- Like **Draw a box...** it is one stroke per invocation --- a mode you did not
-  ask to stay in is worse than one you ask for twice.
+- The status line says how many strokes you have and names both keys, so the pen
+  never leaves you somewhere you cannot see.
 
-- A press that never moves keeps the pen armed rather than spending it. You have
-  not drawn anything yet.
+- It is saved as one real `/Ink` annotation, so Acrobat and Preview show it and
+  can remove it.
+
+- A press that never moves keeps the pen armed rather than counting as a stroke.
+  You have not drawn anything yet.
+
+- A stroke has to start on the page the drawing is on. One annotation belongs to
+  one page, so a press on the next page down does nothing rather than dragging
+  your stroke somewhere you did not put it.
 
 ### Documents you opened are in the Dock menu (macOS)
 

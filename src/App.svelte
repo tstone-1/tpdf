@@ -1949,6 +1949,23 @@
         >{/if}
     {/if}
     {#if status}
+      <!--
+        **The one mode in this application, said out loud.** Every other tool is
+        one-shot and there is nothing to be stuck in; a drawing is several
+        strokes, so a reader can be in a state where the next press draws rather
+        than selects. `viewer.ts` argues that a mode a reader cannot recognise is
+        worse than one they asked for, and this line is what pays that off ---
+        it names both keys, because Escape alone would mean the only way out is
+        to discard the work.
+      -->
+      {#if status.drawing !== null}
+        <span class="stat" data-testid="drawing">
+          {status.drawing === 0
+            ? "Drawing — press and drag"
+            : `Drawing: ${status.drawing} stroke${status.drawing === 1 ? "" : "s"}`}
+          — Enter to finish, Esc to discard
+        </span>
+      {/if}
       {#if status.selected > 0}
         <span class="stat">{status.selected} selected</span>
       {/if}

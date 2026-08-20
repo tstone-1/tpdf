@@ -238,6 +238,22 @@ export interface ViewerStatus {
   failed: number;
   /** Characters currently selected, so a status line can say so. */
   selected: number;
+  /**
+   * Strokes in the drawing being made, or `null` when none is.
+   *
+   * **A mode has to be visible, and this is the whole of how.** Every other tool
+   * in this viewer is one-shot: it arms, the next gesture spends it, and there
+   * is nothing to be stuck in. Ink is not, because a drawing is several strokes
+   * --- so a reader can be in a state where the next press draws rather than
+   * selects, with no other sign of it. The box's own note argues that a mode a
+   * reader can enter and then not recognise is worse than one they ask for, and
+   * this field is what pays that argument off: the window reads it and says what
+   * is being made and which two keys end it.
+   *
+   * Zero is reachable and is not the same as `null`: the tool is armed and
+   * nothing has been drawn yet.
+   */
+  drawing: number | null;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -680,6 +696,24 @@ export class Viewer {
    * something different after a scroll. Both corners are stored on the page, so
    * a preview follows the page rather than the window.
    */
+  /**
+   * The finished strokes of the drawing in progress, and the page they are on.
+   *
+   * **Ink is the first tool that is not one-shot, and the reason is the format
+   * rather than a preference.** `/InkList` is a list of lists precisely so that
+   * one annotation holds several strokes, and a drawing normally is several: a
+   * circle and the arrow into it, a crossed-out word, anything handwritten. The
+   * writer, the model and `annot-probe --mode strokes` were all built for that
+   * from the start --- the probe sends two strokes --- and until this existed the
+   * window could produce exactly one, so the harness was creating a document no
+   * reader of tpdf could.
+   *
+   * The slot is held with them because every stroke of one drawing must land on
+   * one page: an annotation belongs to a page, so a second stroke started on the
+   * next page down is not part of this mark. It is refused rather than moved.
+   */
+  private inking: { slot: number; strokes: Point[][] } | null = null;
+
   private drawing: {
     slot: number;
     from: Point;
@@ -869,6 +903,13 @@ export class Viewer {
       begin: (at: DragPoint) => {
         if (!this.drawKind) return false;
         const { page, x, y } = this.pageAndPoint(at);
+        // **A drawing lives on one page**, so a second stroke that starts on a
+        // different one is refused rather than moved onto the first. Refusing
+        // lets the press go on to whatever would have had it --- a selection, a
+        // link --- which is the honest answer: the reader pressed somewhere this
+        // drawing cannot reach, and silently dragging their stroke a page
+        // upwards would be worse than doing nothing.
+        if (this.inking && this.inking.slot !== page) return false;
         this.drawing = {
           slot: page,
           from: { x, y },
@@ -928,29 +969,19 @@ export class Viewer {
           if (!last || last.x !== live.to.x || last.y !== live.to.y) {
             live.points.push({ ...live.to });
           }
-          const inkId = this.pages.idOf(live.slot);
           // Two points is the minimum a stroke can be drawn from, and it is the
           // same bound `Stroke::is_drawable` applies in the model --- stated
           // here as well so that a press that never moved keeps the tool armed
           // rather than spending it on a refusal the reader cannot see. A click
           // is not a failure; it is a reader who has not started yet.
-          if (inkId === undefined || live.points.length < 2) return;
-          this.drawKind = null;
-          this.showCursor();
-          this.opts.onDrawn?.(kind, inkId, {
-            quads: [],
-            strokes: [
-              live.points.flatMap((point) => {
-                const mapped = this.fileRectOn(live.slot, {
-                  left: point.x,
-                  top: point.y,
-                  right: point.x,
-                  bottom: point.y,
-                });
-                return [mapped[0], mapped[1]];
-              }),
-            ],
-          });
+          if (live.points.length < 2) return;
+          // **Kept, not committed.** The tool stays armed and the stroke joins
+          // the drawing; Enter finishes it and Escape throws it away. That is
+          // the whole difference from the box, and it is what `/InkList` being
+          // a list of lists is for. See `inking`.
+          this.inking ??= { slot: live.slot, strokes: [] };
+          this.inking.strokes.push(live.points);
+          this.wake();
           return;
         }
         const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));
@@ -1261,6 +1292,7 @@ export class Viewer {
       pending: this.scroller.pendingWork,
       failed: this.scroller.stats.failed,
       selected: this.selectedCount(),
+      drawing: this.drawnStrokes,
       search: this.searchStatus(),
     };
     const summary = [
@@ -1941,6 +1973,15 @@ export class Viewer {
       this.prevMatch();
     } else if (matches("find.next", event)) {
       this.nextMatch();
+    } else if (event.key === "Enter" && this.inking) {
+      // **First on the Enter ladder, and unlike the Escape one this ordering is
+      // load-bearing.** A drawing in progress cannot co-exist with an open note
+      // --- `armDraw` closes one and a press with a tool armed cannot open one
+      // --- but it very much can co-exist with a *focused link*, which the
+      // keyboard walk leaves behind and which `armDraw` does not clear. Below
+      // that arm, Enter on a document with a link focused would follow the link
+      // and strand the drawing.
+      this.finishDrawing();
     } else if (event.key === "Enter" && this.markNote.openId !== null) {
       // Before the link arm, on the ladder Escape already uses here: the
       // innermost thing wins, and a note the walk just opened is inside a link
@@ -1982,7 +2023,7 @@ export class Viewer {
       // stays correct if a later change *does* make the two co-exist, and the
       // alternative is a reader stuck in a mode --- which is the one failure the
       // one-shot design exists to rule out.
-      if (this.drawKind !== null || this.drawing) this.cancelDraw();
+      if (this.drawKind !== null || this.drawing || this.inking) this.cancelDraw();
       else if (this.popup.openId !== null) this.closeComment();
       else if (this.focusedLink) this.clearLinkFocus();
       else this.clearSelection();
@@ -2832,8 +2873,73 @@ export class Viewer {
     this.drawDrag.cancel();
     this.drawKind = null;
     this.drawing = null;
+    // Everything drawn goes with it. Escape means "abandon this" and it has
+    // meant that here since the box, so a drawing of six strokes is discarded
+    // by it exactly as a half-dragged rectangle is --- which is why the finish
+    // gesture had to be a *different* key rather than a second Escape.
+    this.inking = null;
     this.showCursor();
     this.wake();
+  }
+
+  /**
+   * Ends the drawing in progress and sends it as one mark.
+   *
+   * **Enter, and it had to be its own key.** Escape already means abandon, and
+   * a mode a reader can only leave by throwing away what they made is not a
+   * mode they will use twice. The two are the pair every application uses for
+   * "done" and "cancel", which is what makes an unlabelled mode learnable ---
+   * and the status line names both while a drawing is live, because a mode
+   * nobody can see is the one thing the box's one-shot design existed to rule
+   * out.
+   *
+   * Does nothing with no drawing in progress, so the key falls through to
+   * whatever else claims it. The caller does not have to ask first.
+   */
+  finishDrawing(): void {
+    const made = this.inking;
+    if (!made || made.strokes.length === 0) return;
+    const id = this.pages.idOf(made.slot);
+    this.inking = null;
+    this.drawKind = null;
+    this.showCursor();
+    this.wake();
+    // A page that went while the drawing was being made --- deleted from under
+    // it, or the document replaced. The strokes are dropped rather than sent to
+    // whatever moved into that slot, which is the same reasoning `Annotate`
+    // carries a page *id* for.
+    if (id === undefined) return;
+    this.opts.onDrawn?.("ink", id, {
+      quads: [],
+      strokes: made.strokes.map((stroke) =>
+        stroke.flatMap((point) => {
+          const mapped = this.fileRectOn(made.slot, {
+            left: point.x,
+            top: point.y,
+            right: point.x,
+            bottom: point.y,
+          });
+          return [mapped[0], mapped[1]];
+        }),
+      ),
+    });
+  }
+
+  /**
+   * Strokes in the drawing being made, or `null` when none is being made.
+   *
+   * **`ViewerStatus.drawing` is this, not a second reading of the same state.**
+   * Written as its own expression in the status it was a copy of a distinction,
+   * and a mutation that stopped filling the status field survived every test ---
+   * because the tests asked the viewer and the window reads the status, and the
+   * two were one line apart. One accessor, used by both, has nothing to drift.
+   *
+   * Zero is armed-with-nothing-drawn and is not `null`: the next press draws,
+   * which is a mode, and the window says so.
+   */
+  get drawnStrokes(): number | null {
+    if (this.inking) return this.inking.strokes.length;
+    return this.drawKind === "ink" ? 0 : null;
   }
 
   /** The armed tool, or `null`. For the menu's enablement and the harness. */
@@ -3652,8 +3758,20 @@ export class Viewer {
    * the tool is armed and working.
    */
   private paintDrawing(ctx: CanvasRenderingContext2D, dpr: number): void {
+    // **Ink first, and a rectangle is the wrong preview for it.** This painted
+    // the rubber band for *every* live drag, ink included, so a reader drawing
+    // freehand watched a dashed box stretch from where they pressed to wherever
+    // the pen was --- their line appearing only after they let go. It shipped in
+    // the commit that added ink and no check saw it: the overlay phase paints
+    // marks the model has, and a preview is by definition not one of those.
+    //
+    // Drawn before the `!live` return, because the strokes already finished
+    // have to stay on screen between them: a drawing is several strokes and the
+    // reader is looking at the ones they have made while deciding on the next.
+    this.paintInkPreview(ctx, dpr);
+
     const live = this.drawing;
-    if (!live) return;
+    if (!live || this.drawKind === "ink") return;
     const origin = this.scroller.pageOrigin(live.slot);
     const left = Math.min(live.from.x, live.to.x);
     const top = Math.min(live.from.y, live.to.y);
@@ -3673,6 +3791,56 @@ export class Viewer {
     // Put back, or every later stroke on this context is dashed --- the mark
     // outlines above are painted on the same canvas on the next frame.
     ctx.setLineDash([]);
+  }
+
+  /**
+   * The drawing in progress: the strokes already made, and the one being drawn.
+   *
+   * **In the preview colour rather than the mark's**, which is the rule the
+   * box's dashed outline states: a preview is not yet a mark, and a reader who
+   * presses Enter expects something to change. Dashing a freehand line would
+   * make it look like a different *kind* of mark rather than an unfinished one,
+   * so the colour carries it and the weight stays honest at {@link INK_WIDTH}.
+   *
+   * Both in one pass, because they are one thing to the reader: the stroke under
+   * the pen is the newest part of the drawing, not a separate object.
+   */
+  private paintInkPreview(ctx: CanvasRenderingContext2D, dpr: number): void {
+    const pending = this.inking;
+    const live = this.drawKind === "ink" ? this.drawing : null;
+    if (!pending && !live) return;
+    const slot = pending?.slot ?? live?.slot;
+    if (slot === undefined) return;
+
+    const origin = this.scroller.pageOrigin(slot);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = PREVIEW_STROKE;
+    ctx.lineWidth = INK_WIDTH * this.zoom * dpr;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    const strokes = [...(pending?.strokes ?? [])];
+    // The live one only while it is on the same page as the rest --- `begin`
+    // refuses a stroke elsewhere, so this can only differ before the first
+    // stroke is kept, and then `pending` is null and the live one is the page.
+    if (live && live.slot === slot) strokes.push(live.points);
+
+    for (const stroke of strokes) {
+      const [first, ...rest] = stroke;
+      if (!first) continue;
+      ctx.beginPath();
+      ctx.moveTo(
+        (origin.left + first.x * this.zoom) * dpr,
+        (origin.top + first.y * this.zoom - this.scrollTop) * dpr,
+      );
+      for (const point of rest) {
+        ctx.lineTo(
+          (origin.left + point.x * this.zoom) * dpr,
+          (origin.top + point.y * this.zoom - this.scrollTop) * dpr,
+        );
+      }
+      ctx.stroke();
+    }
   }
 
   private paintSelection(ctx: CanvasRenderingContext2D, dpr: number): void {

@@ -65,9 +65,6 @@ export class Report {
 
   /** Prints the summary and ends the process with the verdict's exit code. */
   async finish(): Promise<void> {
-    const failed = this.results.filter((r) => r.outcome === "fail").length;
-    const skipped = this.results.filter((r) => r.outcome === "skip").length;
-    const ran = this.results.length - skipped;
     // The names, machine-readable, because the human column cannot be parsed
     // back. A result line is `LABEL name.padEnd(46) detail`, so a name longer
     // than 46 characters overflows the column and is separated from its detail
@@ -77,7 +74,35 @@ export class Report {
     // first parser written for it silently matched 175 of 189 lines and then
     // reported the corpora agreeing about a set that was wrong on both sides.
     // A run's own list costs one line and cannot be misread.
+    const names = this.results.map((r) => r.name);
+    // **A duplicate name is a failure, not a curiosity.** The set comparison
+    // above is what catches a check quietly ceasing to exist, and a set cannot
+    // see a repeat: two results under one name make the run report `n` names
+    // from `n + 1` checks, so one check's verdict is printed under another's
+    // label and the third one vanishes from the roll entirely. That is not
+    // hypothetical --- it happened on 2026-08-20, when a phase named its checks
+    // by *position* in a list and two entries were appended after the one it
+    // indexed. The verdict went out under the wrong name, the name appeared
+    // twice, and every count still added up.
+    //
+    // Reported as a failed check rather than thrown, so the run still prints
+    // everything it measured: the names are the diagnosis and aborting would
+    // withhold them.
+    const repeated = [...new Set(names.filter((n, at) => names.indexOf(n) !== at))];
+    if (repeated.length > 0) {
+      this.record(
+        "every check has a name of its own",
+        "fail",
+        `${repeated.length} name(s) used twice: ${repeated.join("; ")}`,
+      );
+    }
     this.emit(`CHECK-NAMES-JSON ${JSON.stringify(this.results.map((r) => r.name))}`);
+    // Counted here rather than at the top of this method, because the duplicate
+    // check above adds a result --- and a verdict taken before it would report
+    // a green run that has just recorded a failure.
+    const failed = this.results.filter((r) => r.outcome === "fail").length;
+    const skipped = this.results.filter((r) => r.outcome === "skip").length;
+    const ran = this.results.length - skipped;
     this.emit(
       `\n${ran - failed}/${ran} checks passed` +
         (skipped ? `, ${skipped} not applicable` : ""),

@@ -10464,3 +10464,118 @@ when the instrument emits the number, quote the command rather than the value:
 ```sh
 python3 -c 'import json,sys;print(len(json.loads([l for l in open(sys.argv[1]) if l.startswith("CHECK-NAMES-JSON")][0][16:])))' run.log
 ```
+
+### A check named by its position in a list is renamed by whatever is appended to that list
+
+`overlayInkChecks` declares its names in one array so that a run which cannot
+start still prints them, and then indexes that array at the call sites. Adding
+ink pushed the last entry along, and the distinctness check --- written
+`OVERLAY_INK_CHECKS[6]` --- began reporting under the drawing's name while the
+drawing's own verdict went unprinted.
+
+That was noticed and "fixed" as `OVERLAY_INK_CHECKS[OVERLAY_INK_CHECKS.length - 1]`,
+with a comment explaining the trap. **Which encodes *"distinctness is last"*, and
+two checks were appended after it within the hour.** Identical failure, identical
+symptom, one hour and one comment later.
+
+The symptom is quiet in a way worth knowing. Every count still adds up: the run
+reports the same number of checks, all of them pass, and the roll of names is the
+right length. What actually happens is that one check's verdict is printed under
+another's label, the label appears twice, and a third name vanishes from the roll
+--- and `viewer_sweep.py` compares those rolls as **sets**, which cannot see a
+repeat.
+
+Two fixes, and the second is the one that generalises:
+
+- The names are a **keyed object** now, `INK_CHECK.distinct` rather than an
+  index. A key cannot shift. The array the harness prints is derived from it, so
+  the declared list and the names in use are one thing.
+- **`Report.finish` fails the run when two results share a name.** That is the
+  mechanism, and it belongs there rather than in the phase: any phase can do
+  this, and the set comparison the roll exists for is blind to exactly this. It
+  is recorded as a failed check rather than thrown, so a run still prints
+  everything it measured --- the names are the diagnosis.
+
+It found the real damage on its first live run, which was not the bug it was
+written for. See the entry below.
+
+### A global text replace with a "one or more" assertion rewrote four unrelated checks
+
+The keyed-name repair above was applied with a script that replaced
+`check(\n    names[0] ?? "",` with `check(\n    INK_CHECK.preview,`. Python's
+`str.replace` replaces **every** occurrence, and the assertion guarding it was
+`assert n >= 1` rather than `== 1`.
+
+Four other phases --- page turns, page deletion, page moves --- have a local
+`names` array of their own and call `check(names[0] ?? "", ...)` with the same
+formatting. All four were rewritten to report under the ink preview's name. The
+type-checker was happy, all 927 unit tests passed, `npm run check` was clean, and
+the window run reported **246/246 checks passed**.
+
+What caught it was the duplicate-name guard added in the same session, on its
+first real run, printing the four detail strings under one label: *"page 1 turned
+90"*, *"4 pages, now 3"*, *"4 pages, now 4"*. A check named *"a drawing in
+progress is previewed as a line"* reporting *"4 pages, now 3"* is not subtle ---
+and nothing except that guard was looking.
+
+**`assert n == 1` is not pedantry when the edit is textual.** A count is the only
+thing standing between a mechanical replace and the rest of the file, and
+loosening it to `>= 1` removes the guard entirely while still looking like one.
+This repository already records three ways a mutation can fail to land; this is
+the mirror --- an edit that landed, four more times than intended.
+
+The general form, and it is not about Python: **a textual edit is scoped by its
+pattern and by nothing else.** `check(\n    names[0] ?? "",` reads like a
+location and is a shape that four other functions happen to share. Where a
+mechanical edit is worth doing at all, count the sites first, assert the exact
+count, and read the diff for files you did not mean to touch.
+
+### The window reads the status and the tests read the viewer, so the copy between them is untested
+
+`Viewer` reported a drawing in progress twice: `drawnStrokes`, an accessor the
+check harness and the unit tests call, and `ViewerStatus.drawing`, which is what
+`App.svelte` renders into the status line. They were one line apart in the same
+file and computed the same thing from the same state.
+
+A mutation that emptied the status field **survived**. Every test asked the
+accessor; nothing in the frontend suite reads the status, because a status is
+published by the frame loop and driving that in a unit test needs the tile IPC
+those files deliberately do not stub. So the reading a reader actually sees was
+the one with no coverage, and the reading with coverage was the one nobody sees.
+
+The repair is not a cleverer test. **`ViewerStatus.drawing` is now the accessor**
+--- one expression, used by both --- so there is nothing between them to drift and
+the mutation has somewhere to bite. That is the same argument this file makes
+about two copies of a distinction, arriving where the copies are a *public* and
+a *private* reading of one fact.
+
+The general form: **when a value is exposed twice, ask which of the two the
+product uses and which one the tests use.** If the answer is different, the
+tested one is decoration. It applies to any accessor added "for the harness"
+beside a field the application renders.
+
+### A bound stops discriminating when the behaviour around it changes, and its test keeps passing
+
+`viewer.ts` refuses an ink stroke of fewer than two points --- a press that never
+moved is a reader who has not started, not a mark of no length. The test asserted
+that after such a press nothing was committed and the tool was still armed.
+
+Sound, while the tool was one-shot: a kept stroke would have spent the tool, so
+`drawArmed` being non-null said the press was refused.
+
+**Making the tool stay armed for several strokes removed that link, silently.**
+The tool is now armed either way, and nothing is committed either way --- so both
+assertions hold whether the bound is enforced or not, and a mutation deleting it
+survived. The test did not break; it stopped being able to.
+
+The reading that still discriminates is the stroke *count*: a refused press
+leaves the drawing at zero strokes and a kept one at one. Which is a second
+lesson in the same paragraph --- the count had to be *added* to the accessor as a
+distinct value (`0` for armed-with-nothing, `null` for not armed) before it could
+be asserted, because "no drawing" and "a drawing with nothing in it" had been the
+same answer until the tool could stay armed.
+
+**What to do with it: when a mode changes, re-read the tests that assert about
+the old mode's side effects.** They will not fail. `drawArmed` was never a
+statement about the bound; it was a statement that happened to imply it, and
+implications are what a behaviour change takes away.
