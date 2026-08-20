@@ -680,10 +680,27 @@ one; the field exists because the write path needs it and the reading path alrea
 **Something types one as of 2026-08-18** (§T6.4), and the paragraph above is what it was
 written against --- so the surface is the one already described rather than a new one. The
 box a reader types in is a `<textarea>`, whose `value` is text by construction and parses no
-markup; the note is displayed nowhere else while the document is open. The route by which it
-becomes *somebody else's* string is unchanged: it goes into `/Contents`, and comes back
-through `annots.rs` into the comment panel and the comment popup, which have treated a body
-that way since they were written.
+markup. The route by which it becomes *somebody else's* string is unchanged: it goes into
+`/Contents`, and comes back through `annots.rs` into the comment panel and the comment
+popup, which have treated a body that way since they were written.
+
+**A second display route landed on 2026-08-20 and this said there was none.** The sentence
+here read *"the note is displayed nowhere else while the document is open"*, which the marks
+panel made false: `marklist.ts` puts every mark's note on screen, from `edits::MarkView`
+rather than from `annots.rs`. The **mitigation is unchanged** --- the row's text is assigned
+through `textContent` and nothing else, and the `sinks` gate scans the whole frontend, so it
+covered the new file the day it appeared without anyone adding it to a list. What was wrong
+was the scope claim, and the cost of leaving it would have been an auditor asking *"where
+does a mark's note reach the DOM?"*, reading two file names, and missing a third.
+
+**And the model's notes are this session's, which is narrower than the paragraph above
+allows.** `Edits::open` builds `Doc::open(pages)` --- a fresh model with no marks --- so no
+`MarkView` ever carries bytes read back out of a file; a reopened document's annotations
+arrive as *comments*, through `annots.rs`, into the panel that has always treated them as
+attacker-chosen. `MarkView::note`'s own doc comment claims the stronger thing, and it is
+left claiming it: a string that is handled as data either way costs nothing to over-declare,
+and the narrower reading is one feature away from being wrong --- restoring an edit journal
+across an open would make it so without touching a line of this file.
 
 #### T6.5 — The frontend names the mark's kind, added 2026-08-18
 
@@ -1030,7 +1047,10 @@ between the two halves — see residual risk 7.
 **Comments raised the stakes on all of this on 2026-08-16 without changing the argument.** A
 document's annotations are the largest body of attacker-chosen prose tpdf has ever put on
 screen — bodies, authors, subjects, several paragraphs each — and they reach the DOM through
-`commentlist.ts` and `commentpopup.ts`. Every one of those assignments is `textContent`, so
+`commentlist.ts` and `commentpopup.ts`. The reader's *own* marks reach it through
+`marklist.ts` as of 2026-08-20, on the same terms and with a narrower origin --- §T6.4 has
+which strings those are, and why a file list is not what makes any of this safe.
+Every one of those assignments is `textContent`, so
 the sufficiency argument above covers them unchanged: with no markup-parsing sink in the
 frontend there is nothing for the text to be parsed as.
 

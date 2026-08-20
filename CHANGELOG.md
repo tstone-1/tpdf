@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.6] - Unreleased
+## [26.8.6] - 2026-08-20
 
 ### A sidebar panel listing your own marks
 

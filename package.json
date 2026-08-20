@@ -1,6 +1,6 @@
 {
   "name": "tpdf",
-  "version": "26.8.5",
+  "version": "26.8.6",
   "private": true,
   "description": "Fast, lightweight PDF viewer and editor",
   "type": "module",
