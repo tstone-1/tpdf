@@ -44,8 +44,8 @@ is the local instrument that makes the CI run a formality instead of a
 discovery. Run it before pushing anything that touches a Windows-only file, and
 before cutting a release.
 
-Nor does it prove the Windows build *links* or *runs* --- `cargo check` stops at
-type-checking. A linker error, a missing symbol at load, or a behavioural
+Nor does it prove the Windows build *links* or *runs* --- clippy stops at
+type-checking too. A linker error, a missing symbol at load, or a behavioural
 difference is still the runner's to find.
 
 Usage: scripts/check_windows.py [--verbose]
@@ -137,7 +137,16 @@ def main() -> int:
 
     argv = [
         "cargo",
-        "check",
+        # **clippy, not check, and `-D warnings` below.** It was `cargo check`
+        # until 2026-08-20, which type-checks without linting --- so a constant
+        # used only from a `#[cfg(target_os = "macos")]` function passed here and
+        # failed `windows-2025` as `constant TEXT_SIZE is never used`, since the
+        # `clippy` gate denies warnings. That is the same gap this script exists
+        # to close, one layer in: a Mac compiler never parses the other
+        # platform's arms, so it cannot see what is dead there either. It cost a
+        # rehearsal tag and a 25-minute round trip; clippy costs about the same
+        # here as check did.
+        "clippy",
         "--manifest-path",
         str(ROOT / "src-tauri" / "Cargo.toml"),
         "--target",
@@ -145,8 +154,13 @@ def main() -> int:
         # Examples are the point: `print_probe` is an example, and it is what
         # broke. Without this flag the one target that fails is not built.
         "--all-targets",
+        # Exactly what the `clippy` gate denies, so this leg and that one agree
+        # about what counts as a failure.
+        "--",
+        "-D",
+        "warnings",
     ]
-    print(f"[..] cargo check --target {TRIPLE} --all-targets", flush=True)
+    print(f"[..] cargo clippy --target {TRIPLE} --all-targets -- -D warnings", flush=True)
     result = subprocess.run(
         argv,
         cwd=ROOT,

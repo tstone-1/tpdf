@@ -2725,8 +2725,15 @@ starts at 0 and increments within the month.
    turned both runner legs red. That leg reported *four* failures, since clippy, test and
    bins all stop at the same `error[E0308]`.
 
-   It is `cargo check --target x86_64-pc-windows-msvc --all-targets` with the environment
-   that command needs, and it does not link, so no MSVC linker is involved. About **8 s**
+   It is `cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` with
+   the environment that command needs, and it does not link, so no MSVC linker is involved.
+   **It was `cargo check` until 2026-08-20**, and the difference is a whole class of
+   failure: dead code is not a type error, so a constant read only from a
+   `#[cfg(target_os = "macos")]` function passed here and failed `windows-2025` as
+   `constant TEXT_SIZE is never used`. 16/16 on the Mac, 15/16 on the runner, clippy the
+   only red one --- found by the `v26.8.6-rc1` rehearsal tag at a cost of a 25-minute round
+   trip. `-D warnings` is exactly what the `clippy` gate denies, so the two legs now agree
+   about what counts as a failure. See the trap of that name. About **8 s**
    warm against a CI round trip of six minutes. One-time setup, which the script names in
    full if anything is missing rather than failing four times in a row:
 
@@ -2742,9 +2749,13 @@ starts at 0 and increments within the month.
    exist`, which looks like a broken checkout. `vendor/` is gitignored and nothing on macOS
    loads it. The splat is 629 MB, which is why this is not a gate.
 
-   **What it does not say**: only that the Windows tree type-checks. A wrong *value* passes
-   --- proved, by changing a `PagePlan`'s turns and watching it stay green. Linking, loading
-   and behaviour are still the runner's to find.
+   **What it does not say**: only that the Windows tree type-checks and lints. A wrong
+   *value* passes --- proved, by changing a `PagePlan`'s turns and watching it stay green.
+   Linking, loading and behaviour are still the runner's to find. **The general form is
+   worth carrying to any stand-in for another platform: it is only as strong as the command
+   it runs there, never as strong as the target it names**, and anything the real gate list
+   does that the stand-in does not is a class of failure it cannot report while reading as
+   coverage.
 6. **Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list --- §3's boundary table, §5's sandbox policy and
    §6's macOS column especially. Every present-tense sentence there claims something is

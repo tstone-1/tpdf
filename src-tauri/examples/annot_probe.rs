@@ -149,6 +149,14 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
 /// would let the probe agree with a wrong value as readily as with a right one.
 /// The width prediction is checked against PDFKit's ink either way, so a drift
 /// between the two shows up as a failed comparison rather than as agreement.
+///
+/// **Carries `preview_pdfkit`'s own `cfg`**, because that is its only reader and
+/// PDFKit is macOS only. Without it the constant is dead code on Windows and
+/// clippy's `-D warnings` refuses the build --- which is invisible from a Mac,
+/// where the compiler never parses the other platform's arms at all. It cost a
+/// rehearsal tag: `v26.8.6-rc1` was 16/16 here and 15/16 on `windows-2025`,
+/// clippy the only red one.
+#[cfg(target_os = "macos")]
 const TEXT_SIZE: f64 = 11.0;
 
 const MEASURABLE_PX: usize = 200;

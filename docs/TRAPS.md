@@ -11182,3 +11182,40 @@ Measured after: the two type bands read 38%/40%, 27%/27%, 25%/23% and 23%/23% ac
 from 70x24 to 320x116 pixels, and the border strips are clear on all of them. Three
 mutations, all caught — draw only the first line, fall through to `fillRect`, start the type
 one line lower — and the third exists because the first two both leave the top band inked.
+
+### A cross-check that type-checks the other platform does not lint it
+
+`scripts/check_windows.py` exists because a Mac compiler never parses a `#[cfg(windows)]`
+line, so fifteen green gates here say nothing about that half of the tree. It ran `cargo
+check --target x86_64-pc-windows-msvc --all-targets`, which was enough for what it was
+written for — a type error in a Windows-only file — and not enough for the thing that
+actually shipped next.
+
+`examples/annot_probe.rs` defines `const TEXT_SIZE: f64 = 11.0;` and reads it from exactly
+one place, `preview_pdfkit`, which is `#[cfg(target_os = "macos")]` because PDFKit is. On
+Windows the constant therefore has no reader, and the `clippy` gate denies warnings:
+
+```
+error: constant `TEXT_SIZE` is never used
+error: could not compile `tpdf` (example "annot-probe") due to 1 previous error
+```
+
+16/16 on this Mac, 15/16 on `windows-2025`, clippy the only red one. Caught by a rehearsal
+tag — `v26.8.6-rc1` — at a cost of a 25-minute round trip, which is exactly what that step
+of the release checklist is for.
+
+**The gap is one layer inside the gap the script was written to close.** Dead code is not a
+type error, so a cross-*check* cannot see it; only a cross-*lint* can. And the direction is
+peculiar to conditional compilation: the same constant is perfectly alive here, so nothing
+local can go red, and no amount of reading the file tells you which arms the other platform
+keeps. The script runs `cargo clippy ... -- -D warnings` now, matching what the `clippy`
+gate denies, so the two legs agree about what a failure is. It costs about what `check` did.
+
+Proved by control in both directions rather than assumed: with the `#[cfg]` removed the
+script reports `[FAIL] the Windows tree does not type-check (exit 101)`, and with it back it
+reports `[OK]`.
+
+**The general form: a stand-in for another platform is only as strong as the *command* it
+runs there, not as strong as the target it names.** Anything the real gate list does that
+the stand-in does not — a lint, a test, a link — is a class of failure the stand-in is
+structurally unable to report, and it will read as coverage.
