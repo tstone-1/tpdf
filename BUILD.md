@@ -2355,19 +2355,18 @@ before it at the top of the viewport. The trap is recorded under that name. It a
 mark is *visible* now, which is what "goes to it" means and is what a viewer that opened
 the note without scrolling fails.
 
-⚠ **One check is red on four corpora and it is not from this increment.** *"a text box
-draws its words and not its rectangle"* fails on `vector-heavy`, `vector-multi`,
-`rotated-90` and `links-cropped`; a `git worktree` control at the text-box commit
-reproduces the identical reading, so it shipped there and was invisible because that
-increment was verified against `comments.pdf` alone. **The drawing is correct on all
-four** --- the failing thing is the predicate, whose every reading is a fraction of a
-rectangle that scales with the page while a text box's type is a fixed 11 points. On A0 the
-box is so large that `whole` and `second` round to zero; on a 20-pixel-tall box the left
-edge sample, which reads the middle tenth of the height, lands on the first line of type.
-The control is in the same run: *"a box is a frame with its middle clear"* uses the
-identical `288x20` rectangle and reads all four sides. `docs/PLAN.md` has the full account
-and the shape of the repair. **Do not relax the bound to make the sweep green** --- the
-regions have to be derived from `TEXT_SIZE * zoom`, and that is its own piece of work.
+**One check was red on four corpora and is now fixed.** *"a text box draws its words and
+not its rectangle"* failed on `vector-heavy`, `vector-multi`, `rotated-90` and
+`links-cropped`; a `git worktree` control at the text-box commit reproduced it, so it
+shipped there and was invisible because that increment was verified against `comments.pdf`
+alone. **The painter was right on all four** --- the predicate's every reading was a
+fraction of a rectangle that scaled with the page, while a text box's type is a fixed
+11 points, so it failed in both directions at once: on A0 the readings rounded to zero, and
+on a 20-pixel-tall box the `edges` sample, which reads the middle tenth of the height,
+landed on the second line. It is now two type-sized bands and three border strips measured
+in points off the box's own corner, on a fixture rectangle of a fixed 260 x 90 points.
+`docs/PLAN.md` has the full account, including why the 90 came from the sampler's
+two-pixel floor rather than from the type. Three mutations prove it can fail.
 
 **Measured 2026-08-20, all fourteen corpora, `--raise` off:** the same **310 check names**
 on every one, diffed as sets. `text-heavy` 265/45, `outline-simple` 273/37,
@@ -2375,7 +2374,10 @@ on every one, diffed as sets. `text-heavy` 265/45, `outline-simple` 273/37,
 258/52, `columns` 262/48, `tagged` 237/73, `multilingual` 254/56, `encodings` 255/55,
 `mixed` 262/48, `comments` 275/35, `links` 282/28, `links-cropped` 217/93. 740 s in total,
 of which `vector-multi` is 398 s and `vector-heavy` 164 s. The only failing check anywhere
-is the one above.
+was the one above. **Re-swept after the repair: all fourteen green** --- every ran/skipped
+split byte-identical to the run above, the same 310 names, and `no failing checks on any of
+14 corpora`. The splits being unchanged is the useful half: repairing a check by making it
+skip somewhere would have moved one.
 
 One check failed once and did not recur: *"a drag selects text from where it was dragged"*
 on `outline-hostile`, in one of three sweeps that day. Two runs failing different checks is

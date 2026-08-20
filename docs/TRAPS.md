@@ -11137,3 +11137,48 @@ of"*: there were two of them. They were two of the same thing.
 
 Found by the corpus sweep and by nothing else. The phase was developed against
 `comments.pdf`, which has eight pages, and passed there every time.
+
+### A reading in fractions of a rectangle cannot test something that is a fixed size
+
+*"a text box draws its words and not its rectangle"* was red on four of the fourteen
+corpora — `vector-heavy`, `vector-multi`, `rotated-90`, `links-cropped` — against a painter
+that was drawing correctly on all four. Its predicate was
+
+```ts
+r.whole > 0.02 && r.whole < 0.6 && r.edges === 0 && r.second > 0.005
+```
+
+and every one of those readings is a **fraction of the mark's rectangle**, which was
+`height_pt * 0.04` tall — so it scaled with the page. A text box's content does not scale:
+it is 11-point type on A4 and 11-point type on A0. The mismatch failed in both directions
+at once, which is why no single bound could have been adjusted to fix it:
+
+* On the A0 corpora the box was about 1,073 x 135 points, so two lines of type rounded to
+  **0%** of it against a bound of 2%, and the check read *nothing was drawn*.
+* On a 20-pixel-tall box the *sample* moved into the type. `edges` reads the middle tenth
+  of the height, which is where a rule through the centre would be — and where a two-line
+  box's **second line** sits. The check read *the rectangle was drawn*. On A4 it passed by
+  half a point, which is the margin that made it look fine for a week.
+
+The repair has two halves and the second is the interesting one. The readings became
+absolute point offsets from the box's own corner — two type-sized bands where the lines
+must be, and three border strips that must be clear — written as **literals**, because a
+band derived from `TEXT_SIZE` and `TEXT_LEADING` moves with them and stops being able to
+fail. The literals are then a claim about the type, so the check refuses to run at all if
+those three constants are not what it was written against. And the fixture rectangle became
+a fixed 260 x 90 points instead of a fraction of the page, which is what lets the literals
+be literals and what removes the precondition that a page-relative box would need — on
+`rotated-90` a 24-point-tall box cannot hold a second line, so the property a mutation had
+defeated could not have been asserted there at all.
+
+**The height came from the sampler, not from the type.** Two lines end 28.4 points down, so
+40 seemed right, and it turned the red check into a *skipped* one on the A0 corpora: `inked`
+refuses a region under two pixels, `core` reads the middle tenth of the height, and A0 fits
+a 900-pixel window at 0.37 pixels per point — 1.5 pixels. The whole reading came back
+`null`. A fixture's size can be constrained from a direction that has nothing to do with
+what it is a fixture of, and a skip is the failure shape that looks like success.
+
+Measured after: the two type bands read 38%/40%, 27%/27%, 25%/23% and 23%/23% across boxes
+from 70x24 to 320x116 pixels, and the border strips are clear on all of them. Three
+mutations, all caught — draw only the first line, fall through to `fillRect`, start the type
+one line lower — and the third exists because the first two both leave the top band inked.
