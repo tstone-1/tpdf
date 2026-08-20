@@ -138,11 +138,16 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // themselves rather than marks text with, and before the removal for the
       // reason stated above it.
       "edit.drawBox",
-      // Immediately after the box: the two arm a tool rather than acting on the
-      // document, so they read as a pair and a reader who found one has found
-      // the other.
+      // Immediately after the box, because the two are one choice: a reader who
+      // wants to ring a figure rather than frame it is picking a shape, and two
+      // shapes a menu separates read as two unrelated tools.
+      "edit.drawEllipse",
+      // After the two shapes: all three arm a tool rather than acting on the
+      // document, so they read as a run and a reader who found one has found
+      // the others. Third rather than first because the shapes are one choice
+      // and splitting them to put freehand in the middle would hide that.
       "edit.draw",
-      // The third of the armed tools, and last of them so that the two that
+      // The fourth of the armed tools, and last of them so that the three that
       // make a mark stay together above it.
       "edit.erase",
       "edit.removeMark",

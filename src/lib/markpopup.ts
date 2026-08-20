@@ -94,6 +94,19 @@ const NAMES: Record<MarkKind, string> = {
   // dragged round a figure --- one that is actually square is the rare case.
   // The third spelling, and the same arrangement as `note` above.
   square: "Box",
+  // "Ellipse", where the PDF subtype is `/Circle` and the serde name is
+  // `ellipse`. The one shape kind whose three spellings do not all differ ---
+  // and `/Circle` is the one that had to go, for `square`'s reason above: an
+  // ellipse a reader drags out is almost never circular.
+  //
+  // **And it is the word `comments.ts` already uses**, found rather than
+  // arranged, exactly as `ink` above was: `labelFor` has answered "Ellipse" for
+  // a document's own `/Circle` since the comment panel was built. That matters
+  // more here than it did there, because this is the kind a reader can make
+  // *and* meet again --- draw one, save, reopen, and the mark is now something
+  // `annots.rs` read out of the file. Two tables disagreeing would have named
+  // one shape two ways in one window.
+  ellipse: "Ellipse",
   // "Drawing", never "Ink". `/Ink` is the file's spelling, `ink` is the serde
   // name, and inside this codebase "ink" already means how a mark is laid down
   // --- `Paint` in `save.rs`, `markBand` here. A reader who drew a line and

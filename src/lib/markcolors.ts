@@ -85,6 +85,11 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // what a reader reaches for a pen to do --- annotate in a colour that is not
   // the document's --- which is the same argument, from the other end.
   ink: [0.85, 0.15, 0.15],
+  // The box's red, because it is the box's argument exactly: an ellipse is a
+  // line too, drawn opaque and on top, and yellow on white paper is nearly
+  // invisible. Sharing a default is also what makes the two read as one family
+  // when a reader drags a box round one figure and a ring round another.
+  ellipse: [0.85, 0.15, 0.15],
 };
 
 /**

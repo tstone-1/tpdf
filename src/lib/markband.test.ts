@@ -7,6 +7,7 @@ import {
   LINE_FRACTION,
   MIN_BOX,
   iconQuad,
+  isEllipse,
   isIcon,
   isOutline,
   isWash,
@@ -169,8 +170,39 @@ describe("which kinds are drawn how", () => {
     // other four kinds beside it or it is satisfied by a predicate that is
     // always true.
     expect(isOutline("square")).toBe(true);
-    for (const kind of ["highlight", "underline", "strikeout", "note"] as const) {
+    // **`ellipse` is the one that matters in this list**, and the reason it is
+    // named rather than left to the loop's original four: it is the only kind
+    // that could plausibly answer `true` here, being the box's sibling and
+    // stroked exactly like it. The overlay branches on this before it reaches
+    // {@link isEllipse}, so an outline that claimed the ellipse would draw a
+    // rectangle over every ring a reader made -- and every other assertion
+    // about an ellipse would still pass.
+    for (const kind of [
+      "highlight",
+      "underline",
+      "strikeout",
+      "note",
+      "ellipse",
+      "ink",
+    ] as const) {
       expect(isOutline(kind), kind).toBe(false);
+    }
+  });
+
+  it("says an ellipse is drawn as one and the others are not", () => {
+    // The box's control, in the other direction. Both halves are needed for the
+    // reason above: the overlay asks these two in order, so a predicate that
+    // was always true here would swallow the box.
+    expect(isEllipse("ellipse")).toBe(true);
+    for (const kind of [
+      "highlight",
+      "underline",
+      "strikeout",
+      "note",
+      "square",
+      "ink",
+    ] as const) {
+      expect(isEllipse(kind), kind).toBe(false);
     }
   });
 
@@ -188,6 +220,16 @@ describe("which kinds are drawn how", () => {
   it("gives a box the whole quad, because the quad is the mark", () => {
     const box: Quad = { left: 100, top: 200, right: 340, bottom: 260 };
     expect(markBand("square", box)).toEqual(box);
+  });
+
+  it("gives an ellipse the whole quad, which is what it is inscribed in", () => {
+    // The rectangle, not the curve. Everything downstream of this wants the
+    // bounding box -- the popup anchor, `/Rect`, the hit test -- and the curve
+    // exists only where something paints. A band inside the quad here would
+    // shrink the popup's anchor and the mark's own rectangle to the middle
+    // half of what the reader dragged.
+    const box: Quad = { left: 100, top: 200, right: 340, bottom: 260 };
+    expect(markBand("ellipse", box)).toEqual(box);
   });
 });
 

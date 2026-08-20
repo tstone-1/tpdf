@@ -171,6 +171,23 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # Draw the ellipse with the box's `strokeRect` on the overlay. **The
+        # mutation the corner reading exists for**, and the reason that reading
+        # was added rather than the ellipse simply being given the box's
+        # predicate: `whole`, `core` and `edges` are all satisfied by a rectangle
+        # -- an ellipse touches its quad exactly where `edges` samples, and its
+        # centre is as empty as a box's -- so without `corners` this mutation
+        # passes every check on the overlay, and the file stays correct, so
+        # nothing else in the repository sees it either.
+        "viewer: draw an ellipse with the box's strokeRect on the overlay",
+        "src/lib/viewer.ts",
+        "          traceEllipse(ctx, left, top, width, height);\n"
+        "          ctx.stroke();",
+        "          ctx.strokeRect(left, top, width, height);",
+        "an ellipse touches its rectangle's sides and misses its corners",
+        runner="viewer",
+    ),
+    Mutation(
         # Fill the box rather than stroking it, on the overlay. The file is
         # still right, so a reader sees a solid block until they save and
         # reopen -- the same shape of wrong as the mutation above.

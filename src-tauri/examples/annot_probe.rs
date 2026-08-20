@@ -121,6 +121,9 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         // stroke, so `--mode outline` classifies its pixels by the colour it
         // asked for and yellow ink on white paper would measure as an absence.
         MarkKind::Ink => RULE_RED,
+        // The box's red, for the box's reason: an ellipse's ink is a stroke and
+        // `--mode outline` classifies pixels by the colour it asked for.
+        MarkKind::Ellipse => RULE_RED,
     }
 }
 
@@ -711,6 +714,14 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
         // which is in neither enum, so both of the two spellings this file can
         // see happen to be the third one.
         MarkKind::Ink => Kind::Ink,
+        // **The pair whose names differ in the direction that matters most
+        // here.** `MarkKind::Ellipse` is written as `/Circle` and read back as
+        // `Kind::Circle`, so this arm is the one that would catch `subtype`
+        // emitting `/Square` for it --- which is a defect our own `/AP` hides
+        // completely, because the appearance stream draws the right ellipse
+        // whatever the subtype says. Every other program would call it a
+        // rectangle.
+        MarkKind::Ellipse => Kind::Circle,
     };
     ok &= check(
         &format!("kind read back as {expected:?}"),
@@ -751,7 +762,13 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
     // predicate both of them go through. Ink is the third and the clearest of
     // them: its shape is a list of paths, and a rectangle per line of text would
     // be a claim about words it does not mark.
-    let expected_quads = if matches!(args.kind, MarkKind::Note | MarkKind::Square | MarkKind::Ink) {
+    // The ellipse is the fourth, and it is the box's route exactly: not a markup
+    // subtype, so `is_text_markup` answers no for it and quads on it would be an
+    // unlisted key claiming a run of words the mark does not cover.
+    let expected_quads = if matches!(
+        args.kind,
+        MarkKind::Note | MarkKind::Square | MarkKind::Ink | MarkKind::Ellipse
+    ) {
         0
     } else {
         quads.len()
@@ -1681,6 +1698,11 @@ fn rule(
         // `--mode outline` measures it, and the inset it uses for a box does not
         // transfer --- see that mode.
         MarkKind::Ink => unreachable!("refused above"),
+        // Refused above with the box, whose reason it shares exactly: an
+        // ellipse's ink is on a curve through all three bands rather than in
+        // one of them, so thirds discriminate nothing. `--mode outline` is
+        // where it is measured, and it takes this kind.
+        MarkKind::Ellipse => unreachable!("refused above"),
     };
     ok &= check(
         &format!("most of the rule is in the {where_} third ({wanted} px)"),
@@ -1721,12 +1743,13 @@ fn outline(
     document: &RawDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
-    if !matches!(args.kind, MarkKind::Square) {
+    if !matches!(args.kind, MarkKind::Square | MarkKind::Ellipse) {
         return Err(
-            "--mode outline is for a box: pass --kind square. The other kinds fill              something, which is what --mode legible and --mode rule measure."
+            "--mode outline is for the two shapes: pass --kind square or --kind ellipse.              The other kinds fill something, which is what --mode legible and --mode rule measure."
                 .to_string(),
         );
     }
+    let round = matches!(args.kind, MarkKind::Ellipse);
     let (out, quads) = mark_and_save(args, document)?;
     // One rectangle, which is what the application sends and what `mark_and_save`
     // collapses a multi-line run into for this kind. Asserted rather than
@@ -1787,6 +1810,25 @@ fn outline(
         [centre, quad[1], centre + 0.01, quad[1] + height / 4.0],
         [centre, quad[3] - height / 4.0, centre + 0.01, quad[3]],
     ];
+    // **The one reading that tells the two shapes apart**, and the reason the
+    // ellipse needed more than a new `--kind` here. The three readings above are
+    // satisfied by a rectangle and by an ellipse alike: both put ink in the
+    // quad, both leave the inner half empty, and both cross the centre column at
+    // full thickness -- an ellipse touches its bounding box exactly at the top
+    // and bottom centres, which is where `edges` reads. So a `subtype` or a
+    // `Paint` that drew `re` for an ellipse would pass every one of them.
+    //
+    // A corner separates them: a rectangle's two edges meet there and an
+    // ellipse's curve is nowhere near it. An eighth of each side, which is
+    // comfortably clear of the curve -- at an eighth in from the left the
+    // ellipse is still within the middle 66% of the height, so the band is empty
+    // by a margin rather than by a hair.
+    let corner = [
+        quad[0],
+        quad[1],
+        quad[0] + width / 8.0,
+        quad[1] + height / 8.0,
+    ];
 
     let want = color_for(args.kind);
     let frame = rule_pixels(&after, aw, ah, whole, scale, want);
@@ -1797,8 +1839,10 @@ fn outline(
         .min()
         .unwrap_or(0);
     let control = rule_pixels(&before, bw, bh, whole, scale, want);
+    let corner_px = rule_pixels(&after, aw, ah, corner, scale, want);
+    let shape = if round { "ellipse" } else { "box" };
     println!(
-        "box {width:.1}x{height:.1} pt: {frame} px in the whole quad, {middle} inside it,          {thick} px on its thinner edge, {control} on the source page"
+        "{shape} {width:.1}x{height:.1} pt: {frame} px in the whole quad, {middle} inside it,          {thick} px on its thinner edge, {corner_px} in its top-left corner, {control} on the source page"
     );
 
     let mut ok = true;
@@ -1816,6 +1860,22 @@ fn outline(
         &format!("the middle of the box is empty ({middle} px)"),
         middle == 0,
     );
+    // The second discrimination, and it runs in **both** directions rather than
+    // only for the ellipse. Asserting emptiness for the ellipse alone would be
+    // an assertion with no control: a reading of zero would mean "the corner is
+    // clear" and "the renderer drew nothing at all" identically, and the box is
+    // the case that proves the band is somewhere ink can land.
+    if round {
+        ok &= check(
+            &format!("the ellipse leaves its bounding corner empty ({corner_px} px)"),
+            corner_px == 0,
+        );
+    } else {
+        ok &= check(
+            &format!("the box draws into its corner (the ellipse's control, {corner_px} px)"),
+            corner_px > 0,
+        );
+    }
     // **That the stroke is not clipped in half**, which is what `outline_path`'s
     // inset is for. Measured rather than reasoned about: this was first written
     // up as something pixels could not see, on the argument that a /BBox clip
@@ -2177,6 +2237,11 @@ fn parse_args() -> Result<Args, String> {
                     // The serde name once more. `/Ink` is the file's spelling
                     // and "draw" is the reader's; neither is accepted here.
                     "ink" => MarkKind::Ink,
+                    // The serde name a fourth time. `/Circle` is the file's
+                    // spelling and "ellipse" is both the reader's word and the
+                    // serde name, which makes this the one kind where the name
+                    // accepted here is also the one a reader would say.
+                    "ellipse" => MarkKind::Ellipse,
                     other => return Err(format!("unknown kind {other}")),
                 }
             }

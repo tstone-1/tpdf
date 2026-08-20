@@ -103,6 +103,24 @@ export function isOutline(kind: MarkKind): boolean {
 }
 
 /**
+ * Whether a kind is drawn as the ellipse inscribed in its rectangle.
+ *
+ * `Paint::Ellipse` in `save.rs`, and separate from {@link isOutline} for the
+ * reason that variant is separate from `Paint::Outline`: the two differ in their
+ * geometry, which is the one thing these predicates exist to decide. Folding
+ * them into one would mean a caller that asks the kind again after asking this,
+ * which is a second copy of a distinction already made here.
+ *
+ * **Its rectangle is not its ink.** A box's stroke runs along the edge of its
+ * quad; this one touches that edge at four points and is inside it everywhere
+ * else. Nothing downstream cares --- the popup anchor, `/Rect` and the hit test
+ * all want the rectangle, and the rectangle is what the reader dragged.
+ */
+export function isEllipse(kind: MarkKind): boolean {
+  return kind === "ellipse";
+}
+
+/**
  * Whether a kind is drawn from strokes rather than from its rectangle.
  *
  * `Paint::Path` in `save.rs`. **The first kind whose quad is not its shape**:
@@ -418,8 +436,15 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // path by half the width because the appearance stream's /BBox would clip
       // that half away, and the overlay has no /BBox and needs no inset.
       return quad;
+    case "ellipse":
+      // The whole quad a fourth time, and the reason is the box's above with one
+      // word changed: the quad *is* the mark, and the ink is on a curve through
+      // it rather than on its edge. The overlay asks {@link isEllipse} and draws
+      // that curve; what this returns is the rectangle the curve is inscribed
+      // in, which is what the anchor and the hit test want.
+      return quad;
     case "ink":
-      // The whole quad a fourth time, and it is the only one of the four where
+      // The whole quad a fifth time, and it is the only one of the five where
       // the answer is not merely *unused* but meaningless: a drawing has no
       // band, no edge and no relationship to its rectangle beyond happening to
       // fit inside it. The overlay asks {@link isPath} first and paints the

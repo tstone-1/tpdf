@@ -232,6 +232,23 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode roundtrip --kind square
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode outline --kind square
+# The ellipse, through the same mode and the same three readings -- plus a fourth
+# that is the whole reason it takes this kind at all. `--kind square` above and
+# `--kind ellipse` below are a PAIR: the corner check asserts emptiness for the
+# ellipse and INK for the box, so running only one of them leaves the other
+# direction untested, and an emptiness assertion whose control never runs cannot
+# tell "the corner is clear" from "the renderer drew nothing".
+#
+# Everything else in this mode passes for a rectangle drawn in place of an
+# ellipse -- measured, by mutating `Paint::Ellipse` to `Paint::Outline`: whole
+# quad, inner half and edge thickness all stay green and only the corner fires.
+# 5/5 on each of the two.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode outline --kind ellipse
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind ellipse
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode preview --kind ellipse
 # Freehand ink. `--mode strokes`, NOT `--mode ink` --- that name was taken nine
 # months earlier by the coverage measurement above and means something else
 # entirely, which is the collision `MarkKind::Ink` walked into.

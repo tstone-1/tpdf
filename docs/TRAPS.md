@@ -10850,3 +10850,100 @@ observable, grep for a test that *reads* it. An observable with no reader is doc
 Both arms are now covered by mutations, and the drawing's went in as a **regression** rather
 than as a symmetry — the test was written first and went red, which is why this entry can say
 the leak was real rather than possible.
+
+### A new test can make an existing mutation's anchor ambiguous, and the anchor never moved
+
+The `anchors` gate exists for two failures it names in its own output: an anchor that has
+**drifted** onto code that is gone, and a killed harness that left its **edit** in the tree.
+It refused a third on 2026-08-20, and the message's three explanations are all about the
+mutation rather than about what actually happened.
+
+A new unit test for the ellipse's appearance stream needed the inset the writer applies, and
+wrote the obvious line:
+
+```rust
+let inset = OUTLINE_WIDTH / 2.0;
+```
+
+That is byte-for-byte the body of `outline_path`, which an existing mutation — *"save: stroke
+a box on its edge rather than inset by half the stroke"* — is aimed at. The gate went red with
+`anchor occurs 2x in src/save.rs, expected 1`.
+
+**Nothing drifted and nothing was left behind. A second copy of the anchor appeared, in a
+file the mutation has no interest in.** The direction is the point: the existing entry above
+about near-copies is about *production* code being duplicated, and the reflex when a count
+goes to 2 is to look for a stale harness or a moved function. Here the new occurrence was in
+`#[cfg(test)]`, added deliberately, thirty seconds earlier, by the person reading the error.
+
+Two things follow. **A test is a place anchors can collide**, so writing an assertion that
+restates a one-line production expression is enough to break an unrelated mutation. And **the
+fix belongs in the test, not in the anchor**: re-aiming the mutation at a longer string would
+work and would move a load-bearing invariant to accommodate a test that could just as easily
+say `let rightmost = 300.0 - OUTLINE_WIDTH / 2.0;`.
+
+Worth running the gate immediately after adding any test that echoes a line of production
+code. It costs 0.1 s, and the alternative is a mutation nobody can reason about the next time
+the harness runs — which is twenty minutes away and reports `SURVIVED` or `MUTATED` for a
+reason that has nothing to do with the code under test.
+
+### A new command turns the mutation harness's control red, one layer from where it reads
+
+Registering `edit.drawEllipse` and not placing it in a menu is exactly the state
+`menubar.test.ts`'s *"gives every registered command a menu or a written reason"* was written
+to catch, and it caught it. What is worth recording is **where the failure surfaced**.
+
+It did not arrive as a red test in a `vitest` run. It arrived as:
+
+```
+[FAIL] the control run is not green: 1 failed, ['gives every registered command a menu or a written reason']
+```
+
+— from `mutate_frontend.py`, which runs the suite once *before* mutating anything, precisely
+so that a red baseline is never mistaken for a mutation's effect. That control did its job
+perfectly, and the reading is still momentarily wrong: the eye goes to the mutation being
+tested (an ellipse drawn as a filled rectangle) and asks what about *that* broke the suite.
+The answer is nothing. The harness had not mutated anything yet.
+
+The general shape, and it applies to every harness with a baseline: **a control's failure is
+a statement about the tree, not about the thing the harness was aimed at.** Read the test name
+in the control line before reading anything else — it names a defect that exists on `main`
+with no harness running, and it would have gone red in the plain `vitest` gate a minute later.
+
+The same pairing happened with the eraser, from the other side: its window check went red on
+*"every registered command is classified"* with `[edit.erase]` unclassified. Two harnesses,
+two different lists a new command has to join, and neither is the test suite — which is why
+adding a command reddens something surprising every time.
+
+### A new kind that is a near-twin inherits a predicate written when it had no twin
+
+`viewer_check.py` samples each mark kind as `{whole, core, edges}` and gives each one a
+bound. The box's is `whole < 0.3 && core < 0.05 && edges === 4` — a frame: little ink, an
+empty centre, all four sides carrying some.
+
+Every one of those is **also true of an ellipse**, and not approximately. An ellipse touches
+its bounding rectangle at the middle of each side, which is exactly where `edges` samples; its
+centre is as empty as a box's; and its ink covers a similar fraction of the rectangle. So the
+obvious move when adding the kind — give it the box's predicate, it is the box's sibling — is
+a check that **cannot fail**, and the mutation it would need to catch (`strokeRect` where the
+ellipse should be traced) passes it cleanly while the saved file stays correct, so nothing
+else in the repository sees it either.
+
+The same hole existed independently in the writer, against a different wrong implementation:
+`--mode outline`'s three readings are satisfied by a `re` operator emitted for a `/Circle`.
+Two languages, two mistakes that cannot share evidence, one missing observable.
+
+The observable is the **corners**. A rectangle inks all four; an ellipse inks none. Added to
+both harnesses, and in both it is asserted in *both directions* — the box's `corners === 4`
+sits on the line above the ellipse's `corners === 0`, because an emptiness assertion whose
+control never runs cannot tell "the corner is clear" from "nothing was drawn at all".
+
+**The question to ask when adding a kind to a family**: not "does the existing predicate hold
+for the new one" — it usually does, that is what makes them a family — but *"what reading is
+different, and is any check taking it?"* If the answer is none, the new kind's check is
+decoration, and it will report green for the whole life of the defect.
+
+A related trap one level up says a fixture where the right rule and the wrong rule agree
+cannot tell them apart. This is the same failure arriving through the *predicate* rather than
+the fixture, which is worth separating because the fixture here was fine — `comments.pdf`
+renders both shapes perfectly, and the numbers were sitting there unread.
+

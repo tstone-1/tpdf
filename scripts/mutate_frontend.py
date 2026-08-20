@@ -395,6 +395,19 @@ MUTATIONS = [
         "says a box is drawn as an outline and the others are not",
     ),
     Mutation(
+        # Draw an ellipse as a filled rectangle on the overlay, which is what
+        # the final `else` does. The box's mutation above is the same defect one
+        # branch along, and the two are separate because the overlay asks
+        # `isOutline` first: a reader watching a ring turn into a solid block
+        # would see the saved file come back correct, which is the underline
+        # defect's shape exactly.
+        "markband: draw an ellipse as a filled rectangle",
+        "src/lib/markband.ts",
+        '  return kind === "ellipse";',
+        "  return false;",
+        "says an ellipse is drawn as one and the others are not",
+    ),
+    Mutation(
         # Leave the move listener registered after the drag ends. The pointer
         # goes on being tracked with the button up, which reads as a viewer that
         # has become sticky rather than as a missing line -- and is exactly the

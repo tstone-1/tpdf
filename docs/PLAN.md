@@ -5694,7 +5694,8 @@ changed, so it is not in the changelog; `docs/TRAPS.md` has the general form.
 
 **Not done:** the remaining markup kinds --- squiggly, and the ones that are not
 about a text selection at all (ink, shapes, text boxes, stamps), each of which
-needs a way to *draw* rather than a way to select. ~~A colour a reader can
+needs a way to *draw* rather than a way to select. (Ink, the box and the ellipse
+have all landed since; squiggly, text boxes and stamps are what remain.) ~~A colour a reader can
 choose, which is still the UI question the `MARK_COLORS` table's comment names
 rather than a missing constant.~~ (Done 2026-08-20 --- that comment was the
 brief, and `markcolors.ts` answers it.) And a keyboard route to a mark, unchanged from the last
@@ -5823,7 +5824,8 @@ one --- a fifth sidebar tab, or rows in the comments panel, which today lists wh
 with two activation paths. The remaining markup kinds are unchanged from the last
 increment: squiggly, and the ones that are not about a text selection at all
 (ink, shapes, text boxes, stamps), each of which needs a way to draw rather than
-a way to select. ~~And a colour a reader can choose, still the UI question the
+a way to select. (Ink landed 2026-08-20, and the shapes are now the box and the
+ellipse; what is left of that list is squiggly, text boxes and stamps.) ~~And a colour a reader can choose, still the UI question the
 `MARK_COLORS` table's comment names.~~ (Done 2026-08-20.)
 
 #### Cropping a page --- done 2026-08-18
@@ -6439,8 +6441,11 @@ before marks, crops, print and the comment panel. Arithmetic on a stale number i
 exactly what that file's own paragraph warns against, and it produced a figure
 wrong by 168. The measured count is in `BUILD.md`.
 
-**Not done:** an ellipse, which is `/Circle` and the same rectangle with a
-different subtype; a crop a reader drags, still only a second caller of the
+**Not done:** ~~an ellipse, which is `/Circle` and the same rectangle with a
+different subtype~~ (done 2026-08-20 --- and *"the same rectangle with a different
+subtype"* was wrong in the half that mattered: a content stream has no ellipse
+operator, so it is four Bézier arcs and a new `Paint`. See *An ellipse* below);
+a crop a reader drags, still only a second caller of the
 primitive; ~~and a colour a reader can choose, still the UI question
 `MARK_COLORS` names~~ (done 2026-08-20). (*A tool that stays armed for several
 strokes* was on this list and was built the same day --- see below.) Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
@@ -6854,7 +6859,142 @@ sit beside red underlines --- today a choice applies to every kind; and carrying
 the choice across a restart, which is `session.rs`'s question rather than this
 one.
 
-### Phase 3 — Redaction
+#### An ellipse --- done 2026-08-20
+
+The other member of the family `MarkKind::Square`'s own doc comment names: `/Square`
+is the specification's word for the group that contains `/Circle`, and this is the
+second one. A reader drags out a rectangle exactly as they do for a box and gets the
+ellipse inscribed in it.
+
+**`Viewer.armDraw`'s comment predicted this increment and was half right, which is
+the useful half to state.** It said the next tool needing a drag would differ from
+the box "in the subtype it writes and in nothing else". The *gesture* half is exactly
+right: `armDraw` already took a kind, and the press, the corner ordering, the
+minimum size and the preview's lifetime are all shared, untouched.
+
+One line of the drag path *did* change, and saying "nothing changed" would have been
+the kind of round claim this file distrusts. `paintDrawing` draws the rubber band, and
+it now draws a dashed **ellipse** when the ellipse tool is armed. That is not a
+concession, it is the note directly above it: a rectangle was the wrong preview for
+ink, shipped that way, and no check saw it --- the overlay phase paints marks the
+model has and a preview is by definition not one. The same argument reaches the same
+answer here, which is why the preview is the shape that will be committed. The *appearance* half is wrong, and a kind that really differed only in its
+subtype would have drawn as a rectangle in every reader: a PDF content stream has no
+ellipse operator, so `re` becomes four Bézier arcs and `Paint` gains a variant.
+
+##### Three places the two shapes are one thing, and two where they are not
+
+The same, and deliberately so: the gesture, the colour (both default to the lines'
+red, because both are strokes and yellow on white paper is nearly invisible), the
+note box, removal, and **the hit test**. That last one is a decision rather than an
+omission. An ellipse's `/Rect` is mostly not drawn --- its curve touches the
+rectangle at four points and is inside it everywhere else --- so pressing a corner
+opens a mark that has no ink there. The box already makes that bargain with its own
+empty middle, being stroked and selectable throughout, and two shapes a reader drags
+out identically should not answer a press by two different rules.
+
+Different: the subtype, and the path. `Paint::Ellipse` is a variant rather than a
+flag on `Paint::Outline`, because the two differ in the one thing that enum exists to
+decide, and an `Outline` arm that asked the kind again would be a second copy of the
+distinction `paint` already makes. `markband.ts` mirrors it with `isEllipse` beside
+`isOutline` for the same reason.
+
+`KAPPA` is `4/3 * (sqrt(2) - 1)`, written out because `f64::sqrt` is not a `const fn`
+and named because `0.5522847498307936` in a content stream is indistinguishable from a
+typo. The overlay does **not** use it: a canvas has `ctx.ellipse`, so the
+approximation stays in the one place that cannot avoid it.
+
+##### The reading that separates a ring from a box
+
+`--mode outline` took `--kind ellipse`, and taking it was not enough. Its three
+existing readings are satisfied by a rectangle and an ellipse *alike*: both put ink
+in the quad, both leave the inner half empty --- an ellipse cannot enter it, since
+`|dx| <= rx/2` forces `|dy| >= 0.866 ry` --- and both cross the centre column at full
+thickness, because an ellipse touches its bounding box exactly where that column
+reads. So the mode would have passed a `Paint` that drew `re`.
+
+A corner separates them, and the check runs in **both** directions rather than only
+for the ellipse: asserting emptiness alone would be an assertion with no control,
+where "the corner is clear" and "the renderer drew nothing" read identically. The box
+is what proves the band is somewhere ink can land.
+
+Measured through PDFKit on `text-base14.pdf`, which is a parser that has never heard
+of our intentions:
+
+| | whole quad | inner half | thinner edge | top-left corner |
+|---|---|---|---|---|
+| box | 10545 px | 0 | 5 px | **636 px** |
+| ellipse | 10827 px | 0 | 5 px | **0 px** |
+| ellipse, with `Paint::Ellipse` mutated to `Paint::Outline` | 10545 px | 0 | 5 px | **636 px** |
+
+The third row is the point. Every other reading in it is green; the corner is the
+only assertion that fires, which is what makes it the discrimination rather than a
+fourth way of saying ink appeared.
+
+##### The same reading, needed twice, for two independent reasons
+
+The overlay has the identical hole and it is not the same code: the file's ellipse could
+be written as `re`, and the overlay's could be drawn with `strokeRect`. `viewer_check.py`
+samples each kind as `{whole, core, edges}`, and **a rectangle satisfies all three of the
+box's bounds** --- an ellipse touches its quad exactly where `edges` samples, at the middle
+of each side, and its centre is as empty as a box's. So giving the ellipse the box's
+predicate would have produced a check that could not fail.
+
+A fourth number, `corners`, is what makes it a check. Measured on `comments.pdf`:
+
+| kind | whole | core | sides | corners |
+|---|---|---|---|---|
+| box | 6% | 0% | 4 | **4** |
+| ellipse | 10% | 0% | 4 | **0** |
+
+The box's `corners === 4` is asserted on the line above the ellipse's `corners === 0`, so
+the emptiness assertion has its control beside it rather than nowhere. The distinctness
+check reads seven distinct readings from seven kinds, and `corners` is in its key --- the
+two shapes' `whole` differs only by a corner against a curve, which is not a margin to
+rest a rounding on.
+
+Worth stating plainly because it is the general shape: **one discriminating observable was
+needed twice, in two languages, against two different wrong implementations, and neither
+place could borrow the other's evidence.**
+
+##### Evidence
+
+Five mutations, all caught. The three in `mutate_rust.py` are drawing the ellipse with the
+box's rectangle, writing `/Square` for it, and leaving the path open; the one in
+`mutate_frontend.py` draws it as a filled rectangle on the overlay. The subtype
+mutation and the path mutation fail in opposite directions and neither sees the
+other's defect: a `/Circle` drawn with `re` is a rectangle every reader files under
+"ellipse", and correct arcs under `/Square` are an ellipse every reader calls a
+rectangle.
+
+Three in `mutate_rust.py`, one in `mutate_frontend.py`, and one in `mutate_viewer.py` ---
+drawing the ellipse with the box's `strokeRect` on the overlay, which is the mutation the
+corner reading exists for and goes **2 red**.
+
+`viewer_check.py`: **264/264** on `comments.pdf`, 35 not applicable. `annot-probe`: **5/5**
+`--mode outline`, **11/11** `--mode roundtrip`, **8/8**
+`--mode preview` --- PDFKit and `annots.rs` agreeing the kind is `Circle`, which is
+the assertion no rendering check can stand in for.
+
+Two findings, and both are about instruments rather than about the ellipse:
+
+- **The `anchors` gate refused the first version of the new unit test**, because it
+  wrote `let inset = OUTLINE_WIDTH / 2.0;` --- a line an existing mutation was already
+  aimed at, in `outline_path`. A test that duplicates a mutation's anchor makes that
+  mutation ambiguous, and the gate caught it on the first run, which is the trap of
+  that name arriving from the direction nobody watches: the anchor did not drift, a
+  *new* copy of it appeared.
+- **The menu-coverage test went red as the mutation harness's control**, not as a
+  check of the increment. `edit.drawEllipse` was registered and not placed, which is
+  exactly the state that test was written for --- and it surfaced as *"the control run
+  is not green"*, one layer away from where it would read as a defect in the mutation.
+
+**Not done:** a circle constrained to be round, which is a modifier on the drag
+rather than a kind and belongs with the other drag refinements; and the remaining
+markup kinds, unchanged --- squiggly, and text boxes and stamps, each of which needs
+a way to place something rather than a way to drag a rectangle.
+
+### Phase 3 --- Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
 carrier-based verification, flatten-to-image, XFA refusal.
