@@ -2842,6 +2842,32 @@ MUTATIONS += [
         "a_certificate_somebody_else_issued_is_not_called_self_issued",
     ),
     Mutation(
+        # List the signature fields in whatever order the queue pops them, which
+        # is the reverse of document order. Every fact about every signature is
+        # still correct; only which signature each belongs to is wrong, so a
+        # reader is shown the right names against the wrong fields. Invisible on
+        # any one-signature fixture, which was every signed fixture until
+        # `incr-two-signers.pdf`.
+        "docinfo: list the signature fields in the reverse of document order",
+        "src/docinfo.rs",
+        """    // Reversed so the queue pops in document order, which is the order a reader
+    // sees the fields in every other application.
+    queue.reverse();""",
+        "",
+        "two_signers_are_told_apart_and_neither_is_reported_as_the_authority",
+    ),
+    Mutation(
+        # Take the leaf's issuer as the signer's own name. Both leaves here are
+        # issued by one root, so this reports "tpdf test root CA" for both
+        # signatures --- the certificate-authority-as-signer mistake, which is
+        # what the whole `SignerInfo.sid` walk exists to avoid.
+        "docinfo: report the issuer's name as the subject's",
+        "src/docinfo.rs",
+        "        subject_cn: common_name(&tbs.subject),",
+        "        subject_cn: common_name(&tbs.issuer),",
+        "two_signers_are_told_apart_and_neither_is_reported_as_the_authority",
+    ),
+    Mutation(
         # Read a BMPString as bytes. It comes out as text interleaved with nulls,
         # which reads as a mangled name rather than as a decoding bug --- so this
         # is the version that ships looking merely ugly.
@@ -2859,7 +2885,7 @@ MUTATIONS += [
         "src/docinfo.rs",
         "    for byte in bytes.iter().take(MAX_VALUE_CHARS / 2) {",
         "    for byte in bytes.iter().rev().take(MAX_VALUE_CHARS / 2) {",
-        "what_an_independent_reader_says_about_the_same_certificate",
+        "every_field_of_a_certificate_whose_bytes_the_test_chose",
     ),
     Mutation(
         # Report `notBefore` as `notAfter`. Both are dates in the same format on
@@ -2868,7 +2894,7 @@ MUTATIONS += [
         "src/docinfo.rs",
         "        until: certificate_date(&tbs.validity.not_after),",
         "        until: certificate_date(&tbs.validity.not_before),",
-        "what_an_independent_reader_says_about_the_same_certificate",
+        "every_field_of_a_certificate_whose_bytes_the_test_chose",
     ),
 ]
 

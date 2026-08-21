@@ -282,6 +282,119 @@ def sign(source: bytes, out_path: str, certify: "int | None") -> bool:
     return True
 
 
+
+def _chain(common_name: str, issuer=None):
+    """A certificate and its key, self-issued or signed by `issuer`.
+
+    Returns `(cert, key)`. Passing `issuer` makes this a leaf under that
+    authority, which is what gives a signature blob a `certificates` set of more
+    than one -- the shape every fixture here lacked until 2026-08-21, and the one
+    that makes "take the first certificate rather than the signer's" a mistake a
+    test can see.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, common_name)])
+    now = datetime.now(timezone.utc)
+    authority = issuer is not None
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(issuer[0].subject if authority else name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=3650))
+        .add_extension(
+            x509.BasicConstraints(ca=not authority, path_length=None), critical=True
+        )
+    )
+    return builder.sign(issuer[1] if authority else key, hashes.SHA256()), key
+
+
+def sign_twice(source: bytes, out_path: str) -> bool:
+    """Signs `source` by two different signers, each carrying a chain.
+
+    Every other signed fixture here is one signature whose blob holds one
+    self-issued certificate, which makes four separate things untestable: the
+    per-signature pairing in `signature-probe`, walking `/AcroForm /Fields` when
+    it has more than one entry, picking the signer's certificate out of a set
+    with something else in it, and a first signature whose byte range stops short
+    because a second was appended after it.
+
+    Both leaves are issued by one root, so the two blobs differ in the leaf and
+    agree in the root -- a reader that takes the wrong element of the set reports
+    the same name for both signatures.
+    """
+    try:
+        import io
+
+        from pyhanko.sign import fields, signers
+    except ImportError:
+        return False
+
+    from asn1crypto import keys as asn1_keys
+    from asn1crypto import x509 as asn1_x509
+    from cryptography.hazmat.primitives import serialization
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+
+    root = _chain("tpdf test root CA")
+
+    def as_signer(cert, key):
+        # It moved out of `pyhanko.sign.general` at some version; the
+        # certvalidator registry is where it lives now.
+        from pyhanko_certvalidator.registry import SimpleCertificateStore
+
+        store = SimpleCertificateStore()
+        store.register(
+            asn1_x509.Certificate.load(root[0].public_bytes(serialization.Encoding.DER))
+        )
+        return signers.SimpleSigner(
+            signing_cert=asn1_x509.Certificate.load(
+                cert.public_bytes(serialization.Encoding.DER)
+            ),
+            signing_key=asn1_keys.PrivateKeyInfo.load(
+                key.private_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+            ),
+            cert_registry=store,
+        )
+
+    current = source
+    for index, who in enumerate(("First Signer", "Second Signer"), start=1):
+        cert, key = _chain(who, issuer=root)
+        field = f"Signature{index}"
+        writer = IncrementalPdfFileWriter(io.BytesIO(current))
+        fields.append_signature_field(
+            writer,
+            fields.SigFieldSpec(
+                sig_field_name=field,
+                on_page=0,
+                box=(60, 60 + 70 * index, 260, 120 + 70 * index),
+            ),
+        )
+        out = io.BytesIO()
+        signers.sign_pdf(
+            writer,
+            signers.PdfSignatureMetadata(field_name=field),
+            signer=as_signer(cert, key),
+            output=out,
+        )
+        current = out.getvalue()
+
+    with open(out_path, "wb") as handle:
+        handle.write(current)
+    return True
+
+
 def main(argv: "list[str] | None" = None) -> int:
     """Writes every fixture and a manifest describing what each one is for."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -385,6 +498,23 @@ def main(argv: "list[str] | None" = None) -> int:
             "docmdp": certify,
         }
         print(f"[OK] {name} ({os.path.getsize(path)} bytes)")
+
+    two_path = os.path.join(args.outdir, "incr-two-signers.pdf")
+    if sign_twice(inline, two_path):
+        manifest["incr-two-signers.pdf"] = {
+            "role": "two approval signatures by different signers, each blob "
+            "carrying its leaf and the one root above it -- the only fixture "
+            "where signature-probe's pairing, the /AcroForm /Fields walk past "
+            "one entry, and picking the signer out of a set of two can fail",
+            "pages": 2,
+            "bytes": os.path.getsize(two_path),
+            "xref": "table",
+            "docmdp": None,
+            "signatures": 2,
+        }
+        print(f"[OK] incr-two-signers.pdf ({os.path.getsize(two_path)} bytes)")
+    else:
+        print("[SKIP] incr-two-signers.pdf: pyhanko not installed")
 
     manifest_path = os.path.join(args.outdir, "incr-manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as handle:
