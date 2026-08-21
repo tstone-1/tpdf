@@ -12196,3 +12196,23 @@ Its first draft was wrong in a way worth keeping: **`/Contents` is also a page k
 content stream, so taking the next `<` after every occurrence read an unrelated dictionary and
 over-reported by 181 bytes. A scan for a PDF key is a scan for a name that several kinds of
 object share.
+
+**Then it happened a third time, and the third one is a flake rather than a constant.** The next
+push went green on macOS and red on Windows: `assert_eq!(certificate.serial.len(), 40)`, against
+a serial of **38** hex characters. pyhanko mints a random serial of at most 20 bytes and DER
+drops leading zeros, so roughly **one run in 256** produces a 19-byte one — per fixture, five
+fixtures, on every machine. It is not a per-machine constant like the size; it is a coin that had
+not come up yet, and the two legs disagreeing on the same commit is the tell.
+
+So the class has three members and they fail differently: a value that differs **per run** (the
+serial's bytes), one that differs **per machine** (the file size), and one that differs
+**rarely** (the serial's length). Only the third can sit green for weeks. The rule that covers
+all three is the same: **assert the invariant the generator guarantees, not the value it
+happened to produce** — here, hex, non-empty, whole bytes, at most twenty of them, and distinct
+between fixtures.
+
+**And the sweep after the third is what should have followed the first.** Enumerating every
+assertion in the module that reads a generated fixture takes one script and finds the remaining
+ones by inspection rather than by a fourth red run: two pinned strings, both safe — one over a
+certificate the test builds itself, one over a timestamp the generator pins on purpose. Three
+reds in a row is the signal to stop fixing instances and enumerate the population.
