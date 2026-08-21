@@ -227,6 +227,29 @@ pub struct Certificate {
     /// because a set of one leaves nothing to choose between. A blob with
     /// several and no match reports no certificate at all rather than guessing.
     pub matched_signer: bool,
+    /// The key usage extension, 2.5.29.15 --- what the *issuer* says this key
+    /// may be used for, named in the order RFC 5280 §4.2.1.3 defines the bits.
+    ///
+    /// `None` is a certificate carrying no such extension, which places no
+    /// limit at all; `Some` of an empty list is one that limits it to nothing.
+    /// The two are different documents and are kept different here.
+    pub key_usage: Option<Vec<String>>,
+    /// The extended key usage extension, 2.5.29.37 --- the purposes the issuer
+    /// named. Each is given its RFC 5280 name when it is one of the handful
+    /// written out in [`purpose_name`], and as dotted digits otherwise, so an
+    /// unrecognised purpose is reported rather than dropped.
+    ///
+    /// `None` and `Some(vec![])` differ for the same reason as above.
+    pub extended_usage: Option<Vec<String>>,
+    /// Basic constraints, 2.5.29.19: whether the certificate says it may issue
+    /// others. `None` when the extension is absent.
+    pub authority: Option<bool>,
+    /// Extensions present but not decodable.
+    ///
+    /// Counted rather than swallowed, because a malformed key usage reported as
+    /// an absent one reads as *"the issuer placed no limit"* --- which is the
+    /// reassuring direction, and is a claim the certificate does not make.
+    pub extensions_unread: u32,
 }
 
 /// What could not be read, so nothing here is silently partial.
@@ -992,6 +1015,8 @@ pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
     let tbs = &certificate.tbs_certificate;
     let subject = distinguished_name(&tbs.subject);
     let issuer = distinguished_name(&tbs.issuer);
+    let extensions = tbs.extensions.as_deref().unwrap_or(&[]);
+    let mut unread = 0u32;
     Some(Certificate {
         subject_cn: common_name(&tbs.subject),
         issuer_cn: common_name(&tbs.issuer),
@@ -1001,9 +1026,124 @@ pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
         serial: hex_of(tbs.serial_number.as_bytes()),
         from: certificate_date(&tbs.validity.not_before),
         until: certificate_date(&tbs.validity.not_after),
+        key_usage: key_usage(extensions, &mut unread),
+        extended_usage: extended_usage(extensions, &mut unread),
+        authority: authority(extensions, &mut unread),
         chain,
         matched_signer,
+        extensions_unread: unread,
     })
+}
+
+/// One extension's octets, by OID, and whether it was there at all.
+///
+/// The OIDs are written out at each call site rather than pulled from
+/// `const_oid`'s database, which is the same choice [`subject_key_identifier`]
+/// makes and for the same reason: the dependency stays to what is parsed.
+fn extension_bytes<'a>(extensions: &'a [x509_cert::ext::Extension], oid: &str) -> Option<&'a [u8]> {
+    extensions
+        .iter()
+        .find(|extension| extension.extn_id.to_string() == oid)
+        .map(|extension| extension.extn_value.as_bytes())
+}
+
+/// Decodes one extension, counting a present-but-malformed one.
+///
+/// The count is what stops a malformed extension reading as an absent one. For
+/// key usage those are opposite claims --- absent places no limit, malformed
+/// places an unknown one --- and absent is the reassuring branch.
+fn decode_extension<T>(
+    extensions: &[x509_cert::ext::Extension],
+    oid: &str,
+    unread: &mut u32,
+) -> Option<T>
+where
+    // Not `Decode<'static>`: that bound is satisfiable here only by leaking the
+    // bytes, which on attacker-chosen input is a leak an attacker sizes. The
+    // three types decoded here own everything they keep, so they decode from
+    // any lifetime and the borrow ends with the call.
+    T: for<'a> der::Decode<'a>,
+{
+    let bytes = extension_bytes(extensions, oid)?;
+    match T::from_der(bytes) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            *unread += 1;
+            None
+        }
+    }
+}
+
+/// What the issuer says this key is for --- 2.5.29.15.
+fn key_usage(extensions: &[x509_cert::ext::Extension], unread: &mut u32) -> Option<Vec<String>> {
+    use x509_cert::ext::pkix::{KeyUsage, KeyUsages};
+
+    let usage: KeyUsage = decode_extension(extensions, "2.5.29.15", unread)?;
+    // Listed in the order RFC 5280 numbers the bits, so two certificates with
+    // the same usage read the same way round.
+    let named = [
+        (KeyUsages::DigitalSignature, "Digital signature"),
+        (KeyUsages::NonRepudiation, "Non-repudiation"),
+        (KeyUsages::KeyEncipherment, "Key encipherment"),
+        (KeyUsages::DataEncipherment, "Data encipherment"),
+        (KeyUsages::KeyAgreement, "Key agreement"),
+        (KeyUsages::KeyCertSign, "Certificate signing"),
+        (KeyUsages::CRLSign, "CRL signing"),
+        (KeyUsages::EncipherOnly, "Encipher only"),
+        (KeyUsages::DecipherOnly, "Decipher only"),
+    ];
+    Some(
+        named
+            .into_iter()
+            .filter(|(bit, _)| usage.0.contains(*bit))
+            .map(|(_, name)| name.to_string())
+            .collect(),
+    )
+}
+
+/// The purposes the issuer named --- 2.5.29.37.
+fn extended_usage(
+    extensions: &[x509_cert::ext::Extension],
+    unread: &mut u32,
+) -> Option<Vec<String>> {
+    use x509_cert::ext::pkix::ExtendedKeyUsage;
+
+    let usage: ExtendedKeyUsage = decode_extension(extensions, "2.5.29.37", unread)?;
+    Some(
+        usage
+            .0
+            .iter()
+            .map(|oid| purpose_name(&oid.to_string()))
+            .collect(),
+    )
+}
+
+/// An extended key usage OID's name, or the OID itself.
+///
+/// Only the purposes RFC 5280 §4.2.1.12 defines are named, plus the wildcard.
+/// Anything else is returned as dotted digits: a purpose nobody here has heard
+/// of is a fact about the certificate, and dropping it would be the one outcome
+/// that reads as *"the issuer named nothing"*.
+fn purpose_name(oid: &str) -> String {
+    match oid {
+        "2.5.29.37.0" => "Any purpose",
+        "1.3.6.1.5.5.7.3.1" => "TLS server",
+        "1.3.6.1.5.5.7.3.2" => "TLS client",
+        "1.3.6.1.5.5.7.3.3" => "Code signing",
+        "1.3.6.1.5.5.7.3.4" => "Email protection",
+        "1.3.6.1.5.5.7.3.8" => "Time stamping",
+        "1.3.6.1.5.5.7.3.9" => "OCSP signing",
+        other => return other.to_string(),
+    }
+    .to_string()
+}
+
+/// Whether the certificate says it may issue others --- 2.5.29.19.
+fn authority(extensions: &[x509_cert::ext::Extension], unread: &mut u32) -> Option<bool> {
+    use x509_cert::ext::pkix::BasicConstraints;
+
+    let constraints: BasicConstraints = decode_extension(extensions, "2.5.29.19", unread)?;
+    Some(constraints.ca)
 }
 
 /// The subject key identifier extension's octets, when the certificate has one.
@@ -2135,6 +2275,36 @@ mod tests {
     /// and the signature is four more, because `parse_certificate` verifies
     /// nothing and must not start to; this is a shape, not a credential.
     fn cms_blob(subject: &str, issuer: &str, cert_serial: &[u8], sid_serial: &[u8]) -> Vec<u8> {
+        cms_blob_with(subject, issuer, cert_serial, sid_serial, Vec::new())
+    }
+
+    /// One extension, built from a value that knows its own encoding.
+    ///
+    /// The OID is passed rather than taken from `AssociatedOid`, so a test can
+    /// put a value under the *wrong* OID --- which is how the malformed case is
+    /// built without hand-writing DER.
+    fn extension(oid: &str, critical: bool, der_bytes: Vec<u8>) -> x509_cert::ext::Extension {
+        use der::asn1::OctetString;
+
+        x509_cert::ext::Extension {
+            extn_id: oid.parse().expect("an oid"),
+            critical,
+            extn_value: OctetString::new(der_bytes).expect("octets"),
+        }
+    }
+
+    /// As [`cms_blob`], with the certificate carrying the extensions given.
+    ///
+    /// An empty list means no `extensions` member at all, which is the
+    /// distinction the reading turns on: a certificate with no key usage places
+    /// no limit, and one with an empty key usage limits it to nothing.
+    fn cms_blob_with(
+        subject: &str,
+        issuer: &str,
+        cert_serial: &[u8],
+        sid_serial: &[u8],
+        extensions: Vec<x509_cert::ext::Extension>,
+    ) -> Vec<u8> {
         use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
         use cms::content_info::ContentInfo;
         use cms::signed_data::{
@@ -2182,7 +2352,7 @@ mod tests {
                 },
                 issuer_unique_id: None,
                 subject_unique_id: None,
-                extensions: None,
+                extensions: (!extensions.is_empty()).then_some(extensions),
             },
             signature_algorithm: algorithm.clone(),
             signature: BitString::from_bytes(&[0u8; 4]).expect("a signature"),
@@ -2574,6 +2744,14 @@ mod tests {
     /// moment to ask whether the new field states something the parser checked
     /// or something it merely read. `self_issued` is the only checked one and
     /// its doc comment says why that is not a verdict.
+    ///
+    /// The three usage fields are the case the question is worth asking about,
+    /// because they are one short step from one: *the issuer says this key is
+    /// for signing* is read out of the certificate, and *therefore this
+    /// signature is sound* is a verdict nothing here is entitled to. What the
+    /// extension constrains is the **key**, and only a chain built to a trusted
+    /// issuer makes that constraint mean anything --- so these say what the
+    /// certificate says, and the dialog labels them that way.
     #[test]
     fn no_certificate_field_may_carry_a_verdict() {
         let Certificate {
@@ -2587,7 +2765,283 @@ mod tests {
             self_issued: _,
             chain: _,
             matched_signer: _,
+            key_usage: _,
+            extended_usage: _,
+            authority: _,
+            extensions_unread: _,
         } = Certificate::default();
+    }
+
+    /// What a real certificate says it is for, against `openssl x509 -text`.
+    ///
+    /// The oracle shares no code with the parser --- for `incr-signed.pdf` it
+    /// reads *"X509v3 Key Usage: critical / Digital Signature, Non Repudiation"*
+    /// and *"X509v3 Basic Constraints: critical / CA:FALSE"*, and reports no
+    /// extended key usage at all. Both of those are the *encoded* form: the bit
+    /// order and the CA default are the two things a hand-rolled reading gets
+    /// wrong, and neither is visible in a certificate that merely parses.
+    #[test]
+    fn the_usage_a_real_certificate_states_is_the_usage_openssl_reads() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
+            println!("[SKIP] incr-signed.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 1).expect("the fixture must parse");
+        let certificate = properties.signatures[0]
+            .certificate
+            .as_ref()
+            .expect("the fixture is signed");
+
+        assert_eq!(
+            certificate.key_usage.as_deref(),
+            Some(
+                &[
+                    "Digital signature".to_string(),
+                    "Non-repudiation".to_string()
+                ][..]
+            ),
+            "the two bits openssl names, in the order RFC 5280 numbers them"
+        );
+        assert_eq!(
+            certificate.extended_usage, None,
+            "the certificate carries no extended key usage, which is not the \
+             same as carrying an empty one"
+        );
+        assert_eq!(certificate.authority, Some(false), "CA:FALSE, stated");
+        assert_eq!(certificate.extensions_unread, 0);
+    }
+
+    /// Every key usage bit, on its own, against the name RFC 5280 gives it.
+    ///
+    /// Written because a mutation swapping the first two rows of the table
+    /// **survived**, and it was right to: the fixture certificate sets both
+    /// bits, so a permutation of two selected entries produces the same list.
+    /// That is a fixture on which the right table and a wrong one agree, and no
+    /// assertion over it could have said so --- the discrimination has to come
+    /// from a certificate setting **one** bit, which no real one does.
+    ///
+    /// Enumerating the domain rather than sampling it: nine bits is the whole
+    /// of it, so every mapping is checked rather than the two that happen to
+    /// appear in the corpus.
+    #[test]
+    fn each_key_usage_bit_is_named_by_the_name_rfc_5280_gives_it() {
+        use der::Encode as _;
+        use x509_cert::ext::pkix::{KeyUsage, KeyUsages};
+
+        let bits = [
+            (KeyUsages::DigitalSignature, "Digital signature"),
+            (KeyUsages::NonRepudiation, "Non-repudiation"),
+            (KeyUsages::KeyEncipherment, "Key encipherment"),
+            (KeyUsages::DataEncipherment, "Data encipherment"),
+            (KeyUsages::KeyAgreement, "Key agreement"),
+            (KeyUsages::KeyCertSign, "Certificate signing"),
+            (KeyUsages::CRLSign, "CRL signing"),
+            (KeyUsages::EncipherOnly, "Encipher only"),
+            (KeyUsages::DecipherOnly, "Decipher only"),
+        ];
+
+        for (bit, expected) in bits {
+            let blob = cms_blob_with(
+                "Signer",
+                "Signer",
+                &[1],
+                &[1],
+                vec![extension(
+                    "2.5.29.15",
+                    true,
+                    KeyUsage(bit.into()).to_der().expect("der"),
+                )],
+            );
+            let certificate = parse_certificate(&blob).expect("a certificate");
+            assert_eq!(
+                certificate.key_usage.as_deref(),
+                Some(&[expected.to_string()][..]),
+                "the bit for {expected} must produce that name and no other"
+            );
+        }
+
+        // And the half the loop above structurally cannot check: **order**.
+        // Every assertion in it is over a one-element list, so a table whose
+        // rows are correct pairs in the wrong sequence satisfies all nine and
+        // then lists a real certificate's usage in an order no other reader
+        // shows. A certificate setting every bit is the only input that can
+        // see it.
+        //
+        // The table below is a second copy of the one in `key_usage`, which is
+        // what makes this able to fail at all --- comparing a table against
+        // itself is the failure this repository has recorded from the other
+        // direction. What it does not cover is a *tenth* row added to the
+        // production table, which nothing here sets and so nothing here sees;
+        // RFC 5280 closes the domain at nine, so that is a bound rather than a
+        // gap.
+        let all = bits.iter().fold(
+            Default::default(),
+            |set: der::flagset::FlagSet<KeyUsages>, (bit, _)| set | *bit,
+        );
+        let blob = cms_blob_with(
+            "Signer",
+            "Signer",
+            &[1],
+            &[1],
+            vec![extension(
+                "2.5.29.15",
+                true,
+                KeyUsage(all).to_der().expect("der"),
+            )],
+        );
+        let named: Vec<String> = bits.iter().map(|(_, name)| name.to_string()).collect();
+        assert_eq!(
+            parse_certificate(&blob)
+                .expect("a certificate")
+                .key_usage
+                .as_deref(),
+            Some(named.as_slice())
+        );
+    }
+
+    /// A certificate with the extension and one without make different claims.
+    ///
+    /// Absent places **no** limit on the key; empty limits it to **nothing**.
+    /// Collapsing them onto one value --- an empty list, or a `None` --- makes
+    /// the dialog say the same thing about two certificates that say opposite
+    /// things, and the direction it would fall is the reassuring one.
+    #[test]
+    fn a_certificate_stating_no_usage_and_one_stating_none_are_told_apart() {
+        use der::Encode as _;
+        use x509_cert::ext::pkix::KeyUsage;
+
+        let read = |blob: Vec<u8>| parse_certificate(&blob).expect("a certificate");
+
+        let silent = read(cms_blob("Signer", "Signer", &[1], &[1]));
+        assert_eq!(silent.key_usage, None, "no extension: no limit stated");
+        assert_eq!(silent.extended_usage, None);
+        assert_eq!(silent.authority, None, "and no basic constraints either");
+
+        let empty = read(cms_blob_with(
+            "Signer",
+            "Signer",
+            &[1],
+            &[1],
+            vec![extension(
+                "2.5.29.15",
+                true,
+                KeyUsage(Default::default()).to_der().expect("der"),
+            )],
+        ));
+        assert_eq!(
+            empty.key_usage,
+            Some(Vec::new()),
+            "an extension naming nothing limits the key to nothing"
+        );
+        assert_eq!(empty.extensions_unread, 0, "and it read perfectly well");
+    }
+
+    /// A purpose nobody here has heard of is reported, not dropped.
+    ///
+    /// Adobe's own signing purposes are outside RFC 5280, and so is every
+    /// enterprise arc; a reader shown *"Email protection"* for a certificate
+    /// that also names something else has been told the issuer named one
+    /// purpose. Dotted digits are ugly and true.
+    #[test]
+    fn an_extended_usage_this_module_cannot_name_is_shown_as_its_oid() {
+        use der::Encode as _;
+        use x509_cert::ext::pkix::ExtendedKeyUsage;
+
+        let purposes = ExtendedKeyUsage(vec![
+            "1.3.6.1.5.5.7.3.4".parse().expect("email protection"),
+            "1.2.840.113583.1.1.5".parse().expect("an adobe arc"),
+        ]);
+        let blob = cms_blob_with(
+            "Signer",
+            "Signer",
+            &[1],
+            &[1],
+            vec![extension(
+                "2.5.29.37",
+                false,
+                purposes.to_der().expect("der"),
+            )],
+        );
+
+        let certificate = parse_certificate(&blob).expect("a certificate");
+        assert_eq!(
+            certificate.extended_usage.as_deref(),
+            Some(
+                &[
+                    "Email protection".to_string(),
+                    "1.2.840.113583.1.1.5".to_string()
+                ][..]
+            )
+        );
+    }
+
+    /// A certificate saying it may issue others says so.
+    ///
+    /// Rare on a signer and worth surfacing when it happens, because a
+    /// certificate that is both the signer and an authority is one nobody
+    /// vouched for. It is still not a verdict --- see the exhaustive-match test.
+    #[test]
+    fn a_certificate_claiming_to_be_an_authority_is_reported_as_one() {
+        use der::Encode as _;
+        use x509_cert::ext::pkix::BasicConstraints;
+
+        let blob = cms_blob_with(
+            "Signer",
+            "Signer",
+            &[1],
+            &[1],
+            vec![extension(
+                "2.5.29.19",
+                true,
+                BasicConstraints {
+                    ca: true,
+                    path_len_constraint: None,
+                }
+                .to_der()
+                .expect("der"),
+            )],
+        );
+
+        assert_eq!(
+            parse_certificate(&blob).expect("a certificate").authority,
+            Some(true)
+        );
+    }
+
+    /// An extension that will not decode is counted, not read as absent.
+    ///
+    /// This is the failure with a reassuring shape: a malformed key usage
+    /// reported as `None` reads as *"the issuer placed no limit"*, which is a
+    /// claim the certificate does not make. The fixture puts basic constraints
+    /// under the key usage OID, so the bytes are real DER of the wrong type ---
+    /// which is what a producer bug actually looks like, and is not something a
+    /// length check would catch.
+    #[test]
+    fn an_extension_that_will_not_decode_is_counted_rather_than_read_as_absent() {
+        use der::Encode as _;
+        use x509_cert::ext::pkix::BasicConstraints;
+
+        let wrong_type = BasicConstraints {
+            ca: true,
+            path_len_constraint: None,
+        }
+        .to_der()
+        .expect("der");
+        let blob = cms_blob_with(
+            "Signer",
+            "Signer",
+            &[1],
+            &[1],
+            vec![extension("2.5.29.15", true, wrong_type)],
+        );
+
+        let certificate = parse_certificate(&blob).expect("the certificate still parses");
+        assert_eq!(certificate.key_usage, None, "nothing could be read");
+        assert_eq!(
+            certificate.extensions_unread, 1,
+            "and the reader is told, which is the whole difference between \
+             this and a certificate that states no usage"
+        );
     }
 
     /// A `BMPString` name is UTF-16BE, which is what Windows authorities emit.

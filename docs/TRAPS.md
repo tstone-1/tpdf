@@ -11819,3 +11819,49 @@ Two things follow, and the second is the general one:
 here reported exit 1 and it was the `python3` stage failing to parse `qpdf --json` output;
 qpdf's own exit was 0. Same family as the `$?`-after-a-command-substitution entry: run the tool
 alone before reading its status as evidence about the file.
+
+### A `Decode<'static>` bound is satisfiable by leaking, and nothing goes red
+
+Reading a certificate's extensions means decoding three DER values out of borrowed bytes. The
+signature that suggests itself, and compiles, is:
+
+```rust
+fn decode_extension<T: der::Decode<'static>>(extensions: &[Extension], oid: &str) -> Option<T>
+```
+
+`'static` is not satisfiable from a borrow, so the body has exactly one way out, and it is the
+one that was written:
+
+```rust
+let owned = bytes.to_vec();
+T::from_der(Box::leak(owned.into_boxed_slice()))
+```
+
+That is an allocation an attacker sizes, at a count an attacker chooses --- one per extension
+per signature per document, inside the process the sandbox exists to contain --- and **every
+gate was green with it in the tree**. It is not a crash, not a lint, not a test failure, and
+not visible in a diff that reads as "decode three extensions". `cargo clippy -D warnings` has
+no lint for a deliberate `Box::leak`; that is what the function is for.
+
+The correct bound is the higher-ranked one:
+
+```rust
+fn decode_extension<T>(...) -> Option<T> where T: for<'a> der::Decode<'a>
+```
+
+`KeyUsage`, `ExtendedKeyUsage` and `BasicConstraints` own everything they keep, so they decode
+from any lifetime and the borrow ends with the call. The leak disappears rather than being
+bounded.
+
+**The general form, and it is a reading habit rather than a tool.** When a trait bound demands
+`'static` and your data is borrowed, the compiler is not asking you to leak --- it is asking
+whether the bound is the one you meant. `for<'a>` is the bound for a type that *can* decode
+from any lifetime, and `'static` is the bound for one that must hold its input forever. Reaching
+for `Box::leak`, `mem::forget` or a `lazy_static` to satisfy a signature you wrote yourself is
+the tell: the signature is the thing to change.
+
+Worth knowing which instruments would have caught it, because the answer is none of the ones
+that run here. A leak checker (`valgrind --leak-check`, macOS `leaks`) sees it; `heaptrack` on a
+long run sees it; a fuzz corpus of many-extension certificates makes it a memory-growth curve.
+The repository has none of those, so the guard is the reviewer noticing `Box::leak` in a parser
+--- which is why it is written down rather than fixed and forgotten.

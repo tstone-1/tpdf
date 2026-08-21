@@ -88,6 +88,19 @@ have the binary.)
   more than one signature: a field's own name is unique only among its
   siblings, so a document with a `Signature1` under each of two groups gave
   both of them the same heading.
+- **The certificate says what its key is for, and the dialog says so.** A
+  certificate can state which operations its key may be used for --- signing,
+  non-repudiation, encryption --- and for which purposes it was issued, such as
+  email protection or code signing. Both are now shown, with any purpose this
+  version cannot name given as its raw identifier rather than left out.
+- **A certificate that states nothing and one that states none read
+  differently.** No key usage at all means the issuer placed no limit on the
+  key; an empty one means it named no use for it. Those are opposite claims and
+  the dialog no longer has one line for both. An extension that could not be
+  read is reported as unread, and not as one that said nothing.
+- Still not a verdict: what a certificate says its key is for is the issuer's
+  own word, and tpdf builds no chain to an issuer it trusts, so the disclaimer
+  under every signature now names that too.
 - **PDFium reads the same signatures independently, and now the two are
   compared.** `signature-probe` puts our reading of a document's signatures next
   to PDFium's own --- the count, the encoding, the reason, the signing time, the

@@ -2916,6 +2916,89 @@ MUTATIONS += [
         "a_signature_field_under_kids_is_found_rather_than_walked_past",
     ),
     Mutation(
+        # Report an extension that would not decode as an absent one. The two
+        # are opposite claims -- absent places no limit on the key, malformed
+        # places an unknown one -- and absent is the reassuring branch.
+        "docinfo: read a malformed extension as an absent one",
+        "src/docinfo.rs",
+        """        Err(_) => {
+            *unread += 1;
+            None
+        }""",
+        "        Err(_) => None,",
+        "an_extension_that_will_not_decode_is_counted_rather_than_read_as_absent",
+    ),
+    Mutation(
+        # Swap the first two key usage bits. This SURVIVED when it was aimed at
+        # the fixture test, and correctly: a real signing certificate sets both
+        # bits, so permuting two selected entries yields the same list. The test
+        # it names now sets one bit at a time, which is the only shape that can
+        # tell a table from a permutation of it.
+        "docinfo: name the first two key usage bits the wrong way round",
+        "src/docinfo.rs",
+        """        (KeyUsages::DigitalSignature, "Digital signature"),
+        (KeyUsages::NonRepudiation, "Non-repudiation"),""",
+        """        (KeyUsages::NonRepudiation, "Digital signature"),
+        (KeyUsages::DigitalSignature, "Non-repudiation"),""",
+        "each_key_usage_bit_is_named_by_the_name_rfc_5280_gives_it",
+    ),
+    Mutation(
+        # Reorder two whole rows, keeping every bit paired with its own name.
+        # The single-bit half of that test cannot see this -- each of its
+        # assertions is over a one-element list -- so it is the all-bits control
+        # beneath them that catches it, which is what that control is for.
+        "docinfo: list the key usage bits out of specification order",
+        "src/docinfo.rs",
+        """        (KeyUsages::KeyEncipherment, "Key encipherment"),
+        (KeyUsages::DataEncipherment, "Data encipherment"),""",
+        """        (KeyUsages::DataEncipherment, "Data encipherment"),
+        (KeyUsages::KeyEncipherment, "Key encipherment"),""",
+        "each_key_usage_bit_is_named_by_the_name_rfc_5280_gives_it",
+    ),
+    Mutation(
+        # Report a key usage naming nothing as no extension at all, which turns
+        # "this key is for nothing" into "no limit was placed on this key".
+        "docinfo: read an empty key usage as an absent one",
+        "src/docinfo.rs",
+        """    Some(
+        named
+            .into_iter()
+            .filter(|(bit, _)| usage.0.contains(*bit))
+            .map(|(_, name)| name.to_string())
+            .collect(),
+    )""",
+        """    let list: Vec<String> = named
+        .into_iter()
+        .filter(|(bit, _)| usage.0.contains(*bit))
+        .map(|(_, name)| name.to_string())
+        .collect();
+    (!list.is_empty()).then_some(list)""",
+        "a_certificate_stating_no_usage_and_one_stating_none_are_told_apart",
+    ),
+    Mutation(
+        # Drop an extended key usage OID this module cannot name. The reader is
+        # then shown the purposes we happen to know and told nothing about the
+        # rest, which reads as the issuer having named only those.
+        "docinfo: drop an extended key usage nobody here can name",
+        "src/docinfo.rs",
+        "        other => return other.to_string(),",
+        "        _ => \"\",",
+        "an_extended_usage_this_module_cannot_name_is_shown_as_its_oid",
+    ),
+    Mutation(
+        # Report an absent basic constraints as a stated CA:FALSE. RFC 5280
+        # reads it that way for chain building, and it is still the certificate
+        # not saying something rather than saying it.
+        "docinfo: read absent basic constraints as a stated CA:FALSE",
+        "src/docinfo.rs",
+        """    let constraints: BasicConstraints = decode_extension(extensions, "2.5.29.19", unread)?;
+    Some(constraints.ca)""",
+        """    let constraints: Option<BasicConstraints> =
+        decode_extension(extensions, "2.5.29.19", unread);
+    Some(constraints.is_some_and(|constraints| constraints.ca))""",
+        "a_certificate_stating_no_usage_and_one_stating_none_are_told_apart",
+    ),
+    Mutation(
         # Drop the depth bound, so a `/Kids` chain a document chose the length of
         # is followed to the end. The queue is the only thing between a hostile
         # field tree and however long it cares to be.

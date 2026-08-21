@@ -325,6 +325,23 @@ fn read(ours: &Properties, theirs: &[Theirs]) {
             signature.covered_bytes,
             named
         );
+        // PDFium exposes no extension accessor, so nothing below can be
+        // compared against it. Printed because `openssl x509 -text` can, and it
+        // is the oracle the unit tests are written against.
+        if let Some(certificate) = &signature.certificate {
+            let listed = |usage: &Option<Vec<String>>| match usage {
+                Some(names) if names.is_empty() => "(states none)".to_string(),
+                Some(names) => names.join(", "),
+                None => "(not stated)".to_string(),
+            };
+            println!(
+                "    key usage: {} | issued for: {} | authority: {:?} | unread extensions: {}",
+                listed(&certificate.key_usage),
+                listed(&certificate.extended_usage),
+                certificate.authority,
+                certificate.extensions_unread
+            );
+        }
     }
     println!("PDFium found {} signature(s)", theirs.len());
     for signature in theirs {

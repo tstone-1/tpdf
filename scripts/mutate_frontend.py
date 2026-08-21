@@ -3758,6 +3758,50 @@ MUTATIONS += [
         "  if (!certificate) return [{ name: \"Certificate names\", value: \"\" }];",
         "says nothing at all when there is no certificate",
     ),
+    Mutation(
+        # Say the same thing about a certificate that states no key usage and
+        # one that states an empty usage. Opposite claims, one row.
+        "certificate: collapse an unstated key usage onto an empty one",
+        "src/lib/properties.ts",
+        """      usage === null
+        ? "not stated --- the certificate places no limit on what the key is used for"
+        : usage.length > 0
+          ? usage.join(", ")
+          : "nothing --- the certificate names no use for its own key",""",
+        """      usage === null || usage.length === 0
+        ? "nothing --- the certificate names no use for its own key"
+        : usage.join(", "),""",
+        "tells a certificate that states no use apart from one that states none",
+    ),
+    Mutation(
+        # Drop the key usage row entirely when nothing is stated. A reader who
+        # sees no row cannot tell "the issuer placed no limit" from a row that
+        # was never written.
+        "certificate: omit the key usage row when nothing is stated",
+        "src/lib/properties.ts",
+        "  const usage = certificate.key_usage;\n  rows.push({",
+        "  const usage = certificate.key_usage;\n  if (usage !== null) rows.push({",
+        "tells a certificate that states no use apart from one that states none",
+    ),
+    Mutation(
+        # Warn on every certificate that is not an authority, which is nearly
+        # all of them -- a warning on the ordinary case teaches the reader to
+        # ignore the one that matters.
+        "certificate: report every certificate's authority, not only a claimed one",
+        "src/lib/properties.ts",
+        "  if (certificate.authority === true) {",
+        "  if (certificate.authority !== true) {",
+        "says so when the signer's own certificate claims to issue others",
+    ),
+    Mutation(
+        # Say nothing about extensions that could not be read, so an unknown
+        # constraint reads as an absent one.
+        "certificate: drop the notice for an extension that could not be read",
+        "src/lib/properties.ts",
+        "  if (certificate.extensions_unread > 0) {",
+        "  if (false) {",
+        "reports an extension it could not read rather than one that said nothing",
+    ),
 ]
 
 

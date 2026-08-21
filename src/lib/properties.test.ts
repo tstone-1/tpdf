@@ -71,6 +71,10 @@ function certificate(): Certificate {
     self_issued: false,
     chain: 2,
     matched_signer: true,
+    key_usage: ["Digital signature", "Non-repudiation"],
+    extended_usage: ["Email protection"],
+    authority: false,
+    extensions_unread: 0,
   };
 }
 
@@ -402,6 +406,75 @@ describe("the signing certificate", () => {
     sig.certificate = cert;
 
     const row = certificateRows(sig).find((r) => r.name === "Certificates present");
+    expect(row?.warn).toBe(true);
+  });
+
+  it("tells a certificate that states no use apart from one that states none", () => {
+    // Opposite claims. Absent places no limit on the key; empty limits it to
+    // nothing -- and the row a reader sees has to say which, because the
+    // direction a collapse would fall is the reassuring one.
+    const silent = certificate();
+    silent.key_usage = null;
+    const stated = certificate();
+    stated.key_usage = [];
+
+    const rowFor = (cert: Certificate) => {
+      const sig = signed();
+      sig.certificate = cert;
+      return certificateRows(sig).find((r) => r.name === "Key is for");
+    };
+
+    expect(rowFor(silent)?.value).toContain("not stated");
+    expect(rowFor(silent)?.warn).toBeFalsy();
+    expect(rowFor(stated)?.value).toContain("nothing");
+    expect(rowFor(stated)?.warn).toBe(true);
+    expect(rowFor(certificate())?.value).toBe("Digital signature, Non-repudiation");
+  });
+
+  it("omits the purpose row when the certificate names no purposes at all", () => {
+    // The asymmetry with the row above is deliberate. An absent key usage is
+    // information -- the issuer placed no limit -- while an absent extended key
+    // usage is the ordinary case for a signing certificate and a row saying so
+    // on nearly every document is noise.
+    const cert = certificate();
+    cert.extended_usage = null;
+    const sig = signed();
+    sig.certificate = cert;
+
+    expect(certificateRows(sig).find((r) => r.name === "Issued for")).toBeUndefined();
+    expect(certificateRows(sig).find((r) => r.name === "Key is for")).toBeDefined();
+  });
+
+  it("says so when the signer's own certificate claims to issue others", () => {
+    const cert = certificate();
+    cert.authority = true;
+    const sig = signed();
+    sig.certificate = cert;
+
+    const row = certificateRows(sig).find((r) => r.name === "Also an authority");
+    expect(row?.warn).toBe(true);
+
+    // And says nothing in the two ordinary cases, which read the same way.
+    for (const ordinary of [false, null] as const) {
+      const plain = certificate();
+      plain.authority = ordinary;
+      const other = signed();
+      other.certificate = plain;
+      expect(
+        certificateRows(other).find((r) => r.name === "Also an authority"),
+      ).toBeUndefined();
+    }
+  });
+
+  it("reports an extension it could not read rather than one that said nothing", () => {
+    const cert = certificate();
+    cert.key_usage = null;
+    cert.extensions_unread = 2;
+    const sig = signed();
+    sig.certificate = cert;
+
+    const row = certificateRows(sig).find((r) => r.name === "Extensions");
+    expect(row?.value).toContain("2");
     expect(row?.warn).toBe(true);
   });
 

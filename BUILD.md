@@ -167,6 +167,13 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 #                                                 fail (reversing docinfo's field
 #                                                 order reddens 4 of the 13)
 #   tagged / comments / links       --mode clean   3/3 each
+#
+# --mode read also prints what each certificate states its key is for. Nothing
+# compares that against PDFium, which exposes no extension accessor at all --
+# the oracle is `openssl x509 -text` on the same blob, which is what
+# `the_usage_a_real_certificate_states_is_the_usage_openssl_reads` is written
+# against. For incr-signed.pdf both read "Digital signature, Non-repudiation",
+# no extended key usage, and CA:FALSE.
 for f in incr-signed incr-certified-1 incr-certified-2 incr-certified-3 \
          incr-certified-3-indirect incr-two-signers; do
   cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
