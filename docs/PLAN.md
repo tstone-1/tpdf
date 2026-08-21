@@ -7376,12 +7376,32 @@ reddens the distinctness check, since a filled text box then reads as a highligh
 start the type one line lower --- which exists because the first two both leave the top band
 inked, so nothing else exercises `lineOne`.
 
-**Not done:** taking a mark off from the panel, which would be a second removal path
-beside the note box's own; the text a text-markup mark *covers*, which is the row content
-a reader would actually recognise and needs extraction per mark rather than the note;
-grouping or filtering by kind, page or colour; and a count, deliberately --- a status line
-saying "9 marks" is derivable from the rows, so a check asserting the two agree would be
-the panel agreeing with itself.
+**Taking a mark off from the panel, built 2026-08-21.** Each row carries a remove control,
+and Delete or Backspace on a focused row does the same. It was listed here as *"a second
+removal path beside the note box's own"*, and building it showed that description was
+wrong in the way that mattered: for part of this list it is the **only** path. A mark the
+model cannot place has `page: null`, is drawn disabled, and refuses Enter and the pointer
+because there is nowhere to scroll to --- and every removal until now went through the note
+box, which needs a page to open on. Those marks could be listed for ever and never taken
+off.
+
+That is also why this is the one place in `App.svelte` a mark is named by id rather than by
+whichever note is open, against the rule `removeMark` states --- and the rule is right, so
+the exception is written down at both ends rather than left to be discovered.
+
+The keyboard is deliberately not guarded the way Enter is: Enter refuses an unplaced row,
+Delete must not, and a mutation copying that guard across is in the table for exactly that
+reason. Four unit mutations cover the control, and a fifth lives in `mutate_viewer.py`,
+because the one property no unit test can decide is that pressing the control does not also
+fire the row underneath it --- the fake DOM does not bubble, so `stopPropagation` and its
+absence are indistinguishable there. The window check that catches it is *"a row's remove
+control asks for that mark and does not open it"*, and it takes the harness to 311 names.
+
+**Not done:** the text a text-markup mark *covers*, which is the row content a reader would
+actually recognise and needs extraction per mark rather than the note; grouping or filtering
+by kind, page or colour; and a count, deliberately --- a status line saying "9 marks" is
+derivable from the rows, so a check asserting the two agree would be the panel agreeing with
+itself.
 
 ### Phase 3 --- Redaction
 

@@ -946,6 +946,21 @@ MUTATIONS = [
         "viewer",
     ),
     Mutation(
+        # Let the press on a row's remove control reach the row underneath it.
+        # **This is the one mutation only a real DOM can catch**: the fake DOM
+        # the unit tests run against does not bubble, so `marklist.test.ts`
+        # cannot tell `stopPropagation` from its absence -- its own comment says
+        # so and points here. In a browser the row's `pointerdown` fires first
+        # and opens the note of the mark being taken off, which is a flash and an
+        # edit aimed through a box that is closing.
+        "marklist: let a press on the remove control reach the row under it",
+        "src/lib/marklist.ts",
+        '    remove.addEventListener("pointerdown", (event) => event.stopPropagation());',
+        '    remove.addEventListener("pointerdown", () => {});',
+        "a row's remove control asks for that mark and does not open it",
+        runner="viewer",
+    ),
+    Mutation(
         # List the first mark only. The panel is not empty, which is the point:
         # a reader with one mark sees a correct list, and the check that says
         # otherwise has to count rows against the marks it was handed.

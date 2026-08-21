@@ -2379,6 +2379,14 @@ split byte-identical to the run above, the same 310 names, and `no failing check
 14 corpora`. The splits being unchanged is the useful half: repairing a check by making it
 skip somewhere would have moved one.
 
+**311 names since 2026-08-21**, when the marks panel gained a remove control. The new one is
+*"a row's remove control asks for that mark and does not open it"*, and it is here rather
+than in a unit test for a reason the unit test says out loud: the fake DOM does not bubble,
+so `marklist.test.ts` cannot tell `stopPropagation` from its absence. Measured on `comments`
+at **276/35**, one more ran than the table above, and `mutate_viewer.py`'s baseline reports
+the 311 names. The fourteen-corpus table itself is still the 2026-08-20 run at 310 and needs
+a re-sweep before it is quoted again --- every split in it is one short.
+
 One check failed once and did not recur: *"a drag selects text from where it was dragged"*
 on `outline-hostile`, in one of three sweeps that day. Two runs failing different checks is
 variance; the same check twice is a defect --- the trap is recorded under that name, and
