@@ -756,6 +756,23 @@ signature is, and `no_certificate_field_may_carry_a_verdict` makes adding a fiel
 statement the certificate rows make is `self_issued`, which compares two byte strings and is
 deliberately not rendered as a warning: every root in every trust store is self-issued.
 
+**Extensions are decoded as of the same day, and the interesting part is what the bound on
+them nearly was.** `decode_extension` reads key usage, extended key usage and basic
+constraints, all inside the already-capped blob, so no new byte reaches a parser. The obvious
+signature for it is `T: der::Decode<'static>`, which compiles, and which on borrowed bytes is
+satisfiable only by leaking them --- an allocation an attacker sizes and chooses the count of,
+one per extension per signature, in the process the sandbox exists to contain. The bound that
+is actually correct is `for<'a> Decode<'a>`, which the three owned types satisfy and which
+borrows for the length of the call. Nothing would have gone red: a leak is not a crash, the
+gates were 16/16 with the leaking version in the tree, and clippy has no lint for it. The trap
+of that name carries it.
+
+A malformed extension is **counted**, not read as an absent one, because those are opposite
+claims: an absent key usage places no limit on the key, and a malformed one places an unknown
+limit. Absent is the reassuring branch, which is the direction a silent failure would fall.
+And what an extension states is still the issuer's word --- the constraint binds the key, and
+only a chain to a trusted issuer makes it mean anything, so `NOT_CHECKED` now says that too.
+
 #### T6.5 — The frontend names the mark's kind, added 2026-08-18
 
 **A reader can now choose Highlight, Underline or Strike out, so the kind travels on the

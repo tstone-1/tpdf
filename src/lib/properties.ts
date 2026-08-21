@@ -87,6 +87,18 @@ export interface Certificate {
   self_issued: boolean;
   chain: number;
   matched_signer: boolean;
+  /**
+   * What the issuer says the key is for. `null` is a certificate carrying no
+   * key usage extension, which places no limit; an empty array is one that
+   * limits it to nothing. Different claims, kept different.
+   */
+  key_usage: string[] | null;
+  /** Extended key usage, named where known and given as an OID where not. */
+  extended_usage: string[] | null;
+  /** Whether it says it may issue other certificates. `null` when unstated. */
+  authority: boolean | null;
+  /** Extensions present but not decodable. */
+  extensions_unread: number;
 }
 
 /** What could not be read. */
@@ -141,7 +153,9 @@ export const NOT_CHECKED =
   "tpdf reads what the signature and its certificate say. It does not check " +
   "the signature against the bytes it covers, build a chain to an issuer it " +
   "trusts, look for a revocation, or ask whether the certificate was in date " +
-  "when it was used, so nothing here means the signature is valid.";
+  "when it was used. What a certificate states its key is for is the issuer's " +
+  "own word, unchecked for the same reason, so nothing here means the " +
+  "signature is valid.";
 
 /**
  * Words that would read as a verdict on a signature.
@@ -252,6 +266,56 @@ export function certificateRows(signature: Signature): Row[] {
   }
   if (certificate.serial) {
     rows.push({ name: "Serial", value: certificate.serial });
+  }
+
+  // What the certificate says its key is for. Shown even when nothing is
+  // stated, because *nothing stated* is itself the issuer placing no limit ---
+  // and a reader who sees no row cannot tell that from a row that was dropped.
+  //
+  // Not a verdict, and the wording is what keeps it one: the extension
+  // constrains the key, and only a chain built to a trusted issuer makes that
+  // constraint mean anything. tpdf builds no chain, which NOT_CHECKED says.
+  const usage = certificate.key_usage;
+  rows.push({
+    name: "Key is for",
+    value:
+      usage === null
+        ? "not stated --- the certificate places no limit on what the key is used for"
+        : usage.length > 0
+          ? usage.join(", ")
+          : "nothing --- the certificate names no use for its own key",
+    warn: usage !== null && usage.length === 0,
+  });
+
+  const purposes = certificate.extended_usage;
+  if (purposes !== null) {
+    rows.push({
+      name: "Issued for",
+      value:
+        purposes.length > 0
+          ? purposes.join(", ")
+          : "nothing --- the certificate names no purpose",
+      warn: purposes.length === 0,
+    });
+  }
+
+  // Only when it claims to be one. `false` and *unstated* are the ordinary
+  // cases and both read the same way, so a row saying so on every document
+  // would be noise; a signer that is also an authority is worth a line.
+  if (certificate.authority === true) {
+    rows.push({
+      name: "Also an authority",
+      value: "this certificate says it may issue other certificates",
+      warn: true,
+    });
+  }
+
+  if (certificate.extensions_unread > 0) {
+    rows.push({
+      name: "Extensions",
+      value: `${certificate.extensions_unread} could not be read, so what they state is unknown`,
+      warn: true,
+    });
   }
   if (certificate.chain > 1) {
     rows.push({

@@ -7817,6 +7817,49 @@ in the middle --- `top..Signature1` --- and would name a wholly anonymous chain 
 PDFium exposes no field name at all, so `--mode agree` cannot corroborate any of this either;
 it stands on the three unit tests, one of which runs against the real nested fixture.
 
+#### What the certificate says it is for
+
+**Done 2026-08-21.** `docinfo::parse_certificate` reads three extensions --- key usage
+(2.5.29.15), extended key usage (2.5.29.37) and basic constraints (2.5.29.19) --- and the
+dialog shows what they state. On `incr-signed.pdf` that is *"Digital signature,
+Non-repudiation"*, which is byte for byte what `openssl x509 -text` reads out of the same
+certificate.
+
+**Absent and empty are different claims, and the whole design turns on keeping them apart.**
+A certificate with no key usage extension places *no limit* on its key; one with an empty key
+usage limits it to *nothing*. Both are `Option<Vec<String>>` here, `None` against
+`Some(vec![])`, and the dialog says which. A malformed extension is a third state and is
+**counted** in `Certificate::extensions_unread` rather than reported as absent --- absent is
+the reassuring branch, and a producer bug is not the issuer declining to constrain anything.
+
+**An extended key usage nobody here can name is shown as its OID.** Adobe's own signing
+purposes are outside RFC 5280 and every enterprise has an arc; naming the seven we know and
+dropping the rest would tell a reader the issuer named one purpose when it named two.
+
+**Not a verdict, and this is the field where that is hardest to hold.** *The issuer says this
+key is for signing* is read out of the certificate; *therefore this signature is sound* is a
+verdict nothing here is entitled to, because the constraint binds the key and only a chain to
+a trusted issuer makes it mean anything. `NOT_CHECKED` now says that in as many words, and
+`no_certificate_field_may_carry_a_verdict` made adding the four fields a compile error, which
+is the moment the question got asked.
+
+**A mutation swapping two rows of the bit table survived, and was right to.** A real signing
+certificate sets both `digitalSignature` and `nonRepudiation`, so permuting two selected
+entries produces an identical list --- the fixture is one on which the right table and a wrong
+one agree, which is the trap of that name arriving an hour after it was last invoked. The fix
+is not a stronger assertion over that fixture but a different input:
+`each_key_usage_bit_is_named_by_the_name_rfc_5280_gives_it` sets **one bit at a time**, nine
+times, which no real certificate does. Its all-bits control beneath is what catches *order*,
+since every assertion in the loop is over a one-element list; a mutation reordering two whole
+rows proves that half separately.
+
+**Nearly shipped: an attacker-sized leak, with every gate green.** The obvious bound for the
+extension decoder is `T: der::Decode<'static>`, which compiles and is satisfiable from borrowed
+bytes only by `Box::leak` --- one leak per extension per signature, inside the sandboxed
+worker. `for<'a> Decode<'a>` is the bound that was meant. Nothing in the repository could have
+found it: not clippy, not a test, not a diff that reads as *decode three extensions*. It has a
+trap.
+
 ### Phase 3 --- Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
