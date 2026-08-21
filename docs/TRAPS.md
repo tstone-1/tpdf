@@ -11728,3 +11728,50 @@ Two things to carry:
 > uncommitted change in it, the ten new mutations included. To undo an appended line, delete
 > the line --- `git checkout <path>` is not an undo, it is a revert of the whole file, and
 > the cross-repo notes already carry that rule for the whole worktree.
+
+### A test pinned a random value out of a generated fixture, and both places it runs hid that
+
+`what_an_independent_reader_says_about_the_same_certificate` asserted
+`certificate.serial == "085398B6930734A2C5F6F74C89AACE579C0EE11B"` and
+`certificate.from == "2026-07-25 16:52:27 UTC"`, transcribed from `openssl` reading
+`testdata/incr-signed.pdf`. It shipped green and it could not have stayed green: the fixture is
+written by `make_incremental_pdf.py`, which calls `x509.random_serial_number()` and
+`datetime.now(timezone.utc)`. Every regeneration changes both.
+
+**It went red the first time anyone followed `BUILD.md`** --- in this case, an hour later, when a
+new fixture was added and the generator rewrote all of them.
+
+The reason it looked safe is the part worth carrying, because **it was green in both places it
+runs, for two different reasons**:
+
+- **Locally**, the fixtures on disk were weeks old. `testdata/*.pdf` is gitignored --- *"The test
+  fixtures are generated, not committed"* is already an entry here --- so a development checkout
+  accumulates whatever it generated last, and nothing ever compares it against what the generator
+  would produce today.
+- **On a runner**, `scripts/ci_fixtures.py` deliberately does not build the signed fixtures (they
+  need pyhanko), so the test hit its `[SKIP]` path and passed without executing an assertion.
+
+A test that skips on CI and reads a stale artifact locally has no place left where it can tell
+you it is wrong.
+
+**The fix is not a stabler fixture, it is asserting a different kind of thing.** Two populations,
+and they want opposite treatment:
+
+- **What the generator hardcodes is stable and may be pinned**: the common name
+  `tpdf spike 0.6 test signer`, that it self-signs, that there is no chain above it. Plus the
+  *shape* of the random parts --- a 40-character uppercase-hex serial --- and the discriminating
+  property that all five fixtures report five **different** serials, which a parser returning a
+  constant could not manage.
+- **What must be pinned by value belongs on input the test wrote itself.** The synthetic
+  `cms_blob` builder takes the serial bytes and fixes the validity dates, so
+  `every_field_of_a_certificate_whose_bytes_the_test_chose` can assert `"010203"` and
+  `2026-01-01 00:00:00 UTC` honestly. That is also the *only* arrangement in which a reversed
+  serial or a validity read from one end is visible at all --- three bytes, all different, so a
+  reversal is not a palindrome.
+
+Two mutations had been aimed at the fixture test and were re-aimed at the synthetic one, which is
+the tell that the coverage had been resting on the stale bytes rather than on the assertion.
+
+**The general form: before pinning a value, ask what wrote it.** If the answer is a generator you
+also maintain, read that generator rather than the artifact --- `random`, `now()`, a UUID, a
+temporary path and a hostname are all values that look like constants in a passing test.

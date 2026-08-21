@@ -1885,72 +1885,74 @@ mod tests {
         assert_eq!(certificate.subject_cn, "tpdf spike 0.6 test signer");
     }
 
-    /// Every field of the certificate, on the one fixture, against `openssl`.
+    /// Every field of a certificate whose bytes this test chose itself.
     ///
-    /// The values come from `openssl pkcs7 -print_certs -text`, which shares no
-    /// code with the parser under test --- an independent reader of the same
-    /// bytes, on the standard this repository holds print jobs and redactions to.
+    /// **No value here comes from a fixture, and that is the fix rather than a
+    /// convenience.** The first version of this test pinned the serial and the
+    /// validity dates of `incr-signed.pdf` --- read out of a file that
+    /// `make_incremental_pdf.py` writes with `x509.random_serial_number()` and
+    /// `datetime.now()`, so every regeneration changes them. It was green in
+    /// both places it runs: locally against months-old fixtures, and on a runner
+    /// because CI cannot build the signed fixtures at all and the test skipped.
+    /// Regenerating turned it red, which is what a test asserting a random
+    /// number was always going to do. See `docs/TRAPS.md`.
+    ///
+    /// The synthetic blob is deterministic, so a value can be pinned honestly ---
+    /// and it is the only arrangement in which a *reversed* serial or a validity
+    /// read from one end is visible at all, because both readers in the
+    /// differential run this same parser.
     #[test]
-    fn what_an_independent_reader_says_about_the_same_certificate() {
-        let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
-            println!("[SKIP] incr-signed.pdf: not generated");
-            return;
-        };
-        let properties = scan(&bytes, 1).expect("a signed fixture must parse");
-        let certificate = properties.signatures[0]
-            .certificate
-            .as_ref()
-            .expect("the fixture is signed with a certificate");
+    fn every_field_of_a_certificate_whose_bytes_the_test_chose() {
+        // Three bytes, all different, so a reversal is not a palindrome.
+        let blob = cms_blob(
+            "A. Signer",
+            "Test Root CA",
+            &[0x01, 0x02, 0x03],
+            &[0x01, 0x02, 0x03],
+        );
+        let certificate = parse_certificate(&blob).expect("a parseable blob");
 
-        assert_eq!(certificate.subject, "CN=tpdf spike 0.6 test signer");
-        assert_eq!(certificate.issuer, "CN=tpdf spike 0.6 test signer");
+        assert_eq!(certificate.subject, "CN=A. Signer");
+        assert_eq!(certificate.subject_cn, "A. Signer");
+        assert_eq!(certificate.issuer, "CN=Test Root CA");
+        assert_eq!(certificate.issuer_cn, "Test Root CA");
         assert_eq!(
-            certificate.serial, "085398B6930734A2C5F6F74C89AACE579C0EE11B",
-            "openssl prints this colon-separated and lowercase"
+            certificate.serial, "010203",
+            "most significant byte first; reversed would read 030201"
         );
-        assert_eq!(certificate.from, "2026-07-25 16:52:27 UTC");
-        assert_eq!(certificate.until, "2036-07-23 16:52:27 UTC");
-        assert!(certificate.self_issued, "issuer and subject are one name");
-        assert_eq!(certificate.chain, 1, "the blob carries no chain above it");
-        assert!(
-            certificate.matched_signer,
-            "and SignerInfo.sid points at it, so it was not taken by default"
+        assert_eq!(certificate.from, "2026-01-01 00:00:00 UTC");
+        assert_eq!(
+            certificate.until, "2030-01-01 00:00:00 UTC",
+            "the other end of the validity, which must not be the same one"
         );
+        assert!(!certificate.self_issued);
+        assert_eq!(certificate.chain, 1);
+        assert!(certificate.matched_signer);
     }
 
     /// All five signed fixtures, so a certificate is read from every one of them
     /// rather than from the one that happened to be written first.
     ///
-    /// The serials discriminate: each fixture was signed with its own key, so a
-    /// parser that returned a cached or hardcoded answer would repeat one here.
+    /// **What is asserted is deliberately not a value.** These fixtures are
+    /// generated and not committed, with a fresh random serial and a `not_before`
+    /// of *now* on every run, so pinning either produces a test that fails the
+    /// next time somebody follows `BUILD.md`. What is stable is the name the
+    /// generator hardcodes, the shape of a serial, and --- the discriminating
+    /// part --- that the five serials are five *different* serials, which a
+    /// parser returning a cached or constant answer could not manage.
     #[test]
     fn each_signed_fixture_carries_its_own_certificate() {
         let cases = [
-            (
-                "incr-signed.pdf",
-                "085398B6930734A2C5F6F74C89AACE579C0EE11B",
-            ),
-            (
-                "incr-certified-1.pdf",
-                "133032403A2EB5C96CFD231D2A4CC5A47F8AF0CE",
-            ),
-            (
-                "incr-certified-2.pdf",
-                "6A1BE9B50DEE82A3C42B058ED8C6F0450FC95135",
-            ),
-            (
-                "incr-certified-3.pdf",
-                "7D485D2DB5773665A7EA4C1C6C32BBAEDB0A875D",
-            ),
-            (
-                "incr-certified-3-indirect.pdf",
-                "343CFE09E9E75742A2ACBDC131BD5AC7FBAA9728",
-            ),
+            "incr-signed.pdf",
+            "incr-certified-1.pdf",
+            "incr-certified-2.pdf",
+            "incr-certified-3.pdf",
+            "incr-certified-3-indirect.pdf",
         ];
 
         let mut examined = 0;
         let mut serials = std::collections::BTreeSet::new();
-        for (name, serial) in cases {
+        for name in cases {
             let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata").join(name)) else {
                 println!("[SKIP] {name}: not generated");
                 continue;
@@ -1961,12 +1963,27 @@ mod tests {
                 .as_ref()
                 .unwrap_or_else(|| panic!("{name} carries a certificate"));
 
-            assert_eq!(certificate.serial, serial, "{name}");
             assert_eq!(
                 certificate.subject_cn, "tpdf spike 0.6 test signer",
                 "{name}"
             );
+            assert!(certificate.self_issued, "{name}: the generator self-signs");
+            assert_eq!(certificate.chain, 1, "{name}: no chain above it");
             assert!(certificate.matched_signer, "{name}");
+            assert_eq!(
+                certificate.serial.len(),
+                40,
+                "{name}: a 20-byte serial as hex, {:?}",
+                certificate.serial
+            );
+            assert!(
+                certificate
+                    .serial
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c.is_ascii_uppercase()),
+                "{name}: uppercase hex, {:?}",
+                certificate.serial
+            );
             assert!(
                 !properties.limits.any(),
                 "{name}: nothing was cut, so an absent certificate would be a fact"
@@ -2233,6 +2250,85 @@ mod tests {
         let agreeing = cms_blob("Decoy", "Test Root CA", &[0x01], &[0x01]);
         let matched = parse_certificate(&agreeing).expect("a parseable blob");
         assert!(matched.matched_signer);
+    }
+
+    /// Two signatures, two signers, and a chain above each of them.
+    ///
+    /// `incr-two-signers.pdf` exists because four things were untestable while
+    /// every signed fixture was one signature carrying one self-issued
+    /// certificate: walking `/AcroForm /Fields` past its first entry, picking
+    /// the signer out of a `certificates` set with something else in it, a first
+    /// signature whose range stops short because a second was appended after it,
+    /// and `signature-probe`'s pairing of our list against PDFium's.
+    ///
+    /// Both leaves are issued by one root, so a reader taking the wrong element
+    /// of the set reports **the same name for both signatures** --- which is why
+    /// the two subjects being different is the assertion that matters here.
+    #[test]
+    fn two_signers_are_told_apart_and_neither_is_reported_as_the_authority() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-two-signers.pdf") else {
+            println!("[SKIP] incr-two-signers.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 2).expect("a signed fixture must parse");
+        assert_eq!(properties.signatures.len(), 2, "two signature fields");
+
+        let named: Vec<&str> = properties
+            .signatures
+            .iter()
+            .map(|signature| {
+                signature
+                    .certificate
+                    .as_ref()
+                    .map_or("", |certificate| certificate.subject_cn.as_str())
+            })
+            .collect();
+        assert_eq!(
+            named,
+            ["First Signer", "Second Signer"],
+            "in document order"
+        );
+
+        for (index, signature) in properties.signatures.iter().enumerate() {
+            let certificate = signature
+                .certificate
+                .as_ref()
+                .unwrap_or_else(|| panic!("signature {} carries a certificate", index + 1));
+            assert_eq!(
+                certificate.chain,
+                2,
+                "signature {}: the leaf and the root above it",
+                index + 1
+            );
+            assert!(
+                certificate.matched_signer,
+                "signature {}: found through SignerInfo.sid, not by position",
+                index + 1
+            );
+            assert!(
+                !certificate.self_issued,
+                "signature {}: a root issued it",
+                index + 1
+            );
+            assert_eq!(certificate.issuer_cn, "tpdf test root CA", "both leaves");
+        }
+
+        // The append is the second signature, so the first cannot cover the file
+        // and the second must. Nothing else in the corpus has both answers in
+        // one document, which is what makes this more than a restatement of
+        // `a_signature_covering_the_file_says_so_and_one_that_does_not_says_that`.
+        assert!(
+            !properties.signatures[0].covers_whole_file,
+            "the first was signed before the second was appended"
+        );
+        assert!(
+            properties.signatures[1].covers_whole_file,
+            "and the second reaches the last byte"
+        );
+        assert!(
+            properties.signatures[0].covered_bytes < properties.signatures[1].covered_bytes,
+            "so the first covers strictly less"
+        );
     }
 
     /// The honesty rule, held by the type rather than by review.

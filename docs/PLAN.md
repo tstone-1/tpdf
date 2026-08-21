@@ -7737,14 +7737,43 @@ guard: two readers that both find nothing agree perfectly, so `agree` exits 1 on
 document rather than reporting a clean sweep of zero comparisons, and `clean` exits 1 on a
 signed one. Measured in all four combinations.
 
+**`incr-two-signers.pdf` closed the corpus gap, 2026-08-21.** Every signed fixture was one
+signature carrying one self-issued certificate, which left four things untestable: walking
+`/AcroForm /Fields` past its first entry, picking the signer out of a `certificates` set with
+something else in it, a first signature whose range stops short because a second was appended
+after it, and the differential's per-signature *pairing*. The new fixture is two approval
+signatures by different signers, each blob carrying its leaf and the one root above them both
+--- so a reader taking the wrong element of the set reports **the same name for both
+signatures**, which is the mistake that would otherwise look like a working reader.
+
+It pays immediately. `signature-probe --mode agree` runs 13 comparisons on it, and deleting
+the one `queue.reverse()` in `read_signatures` --- which makes every fact about every signature
+correct and only which signature it belongs to wrong --- reddens **4 of the 13**. Nothing in
+the corpus could see that before.
+
+**And it exposed a limit of the differential that reading it would not have.** Replacing the
+signer match with `certificates[0]` leaves the probe at **13 of 13**, because both sides of the
+certificate comparison run `parse_certificate`: PDFium hands over the `/Contents` bytes and no
+view of the set, so a bug *inside* the parser makes the two readers agree on the same wrong
+answer. This is a differential over **which blob**, not over what the blob says. The unit tests
+own the second half, and that mutation is caught there.
+
+**A defect shipped in the previous commit came out of the same regeneration.** Two tests pinned
+a serial and a validity date read out of a *generated* fixture, and the generator calls
+`x509.random_serial_number()` and `datetime.now()`. They were green locally against weeks-old
+bytes and green on CI because the signed fixtures cannot be built on a runner and the tests
+skipped --- so there was nowhere left for them to be wrong out loud. Value-level assertions
+moved onto the synthetic `cms_blob`, where the test chooses the bytes; the fixture tests now
+assert the generator's hardcoded name, the *shape* of a serial, and that the five fixtures
+report five different ones. `docs/TRAPS.md` has it.
+
 **Not done.** The certificate's *extensions* are not read --- key usage, extended key usage
 and the basic-constraints CA flag are all there in the DER and none is shown; whether they are
 worth showing without a trust store to interpret them against is a real question rather than
 an oversight. A timestamp token, which is a whole second CMS structure inside an unsigned
 attribute, is not read either, so a document signed with one shows only the signer's claimed
-date. And every signed fixture carries exactly **one** signature, so the differential's
-per-signature *pairing* --- ours zipped against theirs in order --- has never been exercised
-on a document where the order could differ.
+date. No fixture nests a signature field under `/Kids`, so the recursion in `read_signatures`
+is still reached by nothing.
 
 ### Phase 3 --- Redaction
 

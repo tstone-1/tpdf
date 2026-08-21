@@ -154,10 +154,21 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 # ("Adobe.PPKLite" against "adbe.pkcs7.detached"), misspelling the /Contents key
 # (docinfo read none, PDFium's blob read one), and not recognising /FT /Sig at
 # all (0 signed of 0 fields against 1). Restored and re-run green each time.
+# What it CANNOT catch, measured rather than reasoned about: a bug inside
+# parse_certificate is invisible, because both sides of the certificate
+# comparison use it. PDFium hands over the /Contents bytes and no view of the
+# certificate set, so replacing the signer match with `certificates[0]` leaves
+# the probe at 13/13 on incr-two-signers.pdf -- both sides pick the same wrong
+# element. This is a differential over WHICH BLOB, not over what the blob says;
+# the unit tests own the second half.
 #   all five incr-* signed fixtures --mode agree   7/7 each, 35 comparisons
+#   incr-two-signers                --mode agree  13/13, the only fixture where
+#                                                 the per-signature pairing can
+#                                                 fail (reversing docinfo's field
+#                                                 order reddens 4 of the 13)
 #   tagged / comments / links       --mode clean   3/3 each
 for f in incr-signed incr-certified-1 incr-certified-2 incr-certified-3 \
-         incr-certified-3-indirect; do
+         incr-certified-3-indirect incr-two-signers; do
   cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
       "testdata/$f.pdf" --mode agree
 done

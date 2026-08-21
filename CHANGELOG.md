@@ -72,6 +72,11 @@ have the binary.)
   all four.
 - Verified field by field against `openssl pkcs7 -print_certs`, which shares no
   code with the parser, across all five pyhanko-signed fixtures.
+- **A document signed by two different people is read as two signatures by two
+  different people.** Every signed test document had one signature by one
+  signer, so nothing could tell a reader that lists them correctly from one that
+  hands both signatures the same name --- which is what happens when the wrong
+  certificate is picked out of a signature that carries a chain.
 - **PDFium reads the same signatures independently, and now the two are
   compared.** `signature-probe` puts our reading of a document's signatures next
   to PDFium's own --- the count, the encoding, the reason, the signing time, the

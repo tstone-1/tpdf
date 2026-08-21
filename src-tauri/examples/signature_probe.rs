@@ -34,6 +34,22 @@
 //!   that same rule.
 //! * **The signed byte range**, summed.
 //!
+//! ## What it cannot catch, which is not obvious
+//!
+//! **A bug inside `parse_certificate` is invisible here, because both sides use
+//! it.** PDFium hands over the `/Contents` bytes and nothing above them --- it
+//! exposes no view of the certificate set --- so the certificate comparison runs
+//! our parser twice, on two independently *found* blobs. Measured, not reasoned
+//! about: replacing the signer-matching logic with `certificates[0]` leaves this
+//! probe at 13 of 13 on `incr-two-signers.pdf`, where both blobs carry a leaf and
+//! a root, because both sides pick the same wrong element. Reversing the order
+//! `docinfo` lists its fields in reddens four checks immediately.
+//!
+//! So this is a differential over **which blob**, not over **what the blob
+//! says**. The second is the unit tests' job, and
+//! `each_signed_fixture_carries_its_own_certificate` is what actually catches
+//! that mutation.
+//!
 //! ## `--mode clean` is not optional
 //!
 //! Two readers that both find nothing agree perfectly. On a document with no
