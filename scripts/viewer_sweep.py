@@ -141,6 +141,12 @@ NOT_WINDOW: list[tuple[str, str]] = [
     ),
     ("incr-*", "incremental-save fixtures for the document model, not the viewer"),
     (
+        "signed-nested-field",
+        "a signature field two levels down the /AcroForm tree, read by "
+        "signature-probe and by docinfo's own tests; nothing in a window "
+        "depends on where in the field tree a signature sits",
+    ),
+    (
         "text-base14",
         "a backend-probe fixture: font coverage, measured through the worker",
     ),

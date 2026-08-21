@@ -2331,6 +2331,113 @@ mod tests {
         );
     }
 
+    /// A signature field two levels down the `/AcroForm` field tree is found.
+    ///
+    /// `/Fields` is a tree, not a list: an entry may be a node whose `/Kids` hold
+    /// fields, and producers that group fields write it that way. Every other
+    /// signature fixture puts its field directly in `/Fields`, so the recursion
+    /// in [`read_signatures`] was reached by nothing at all.
+    ///
+    /// **PDFium does not walk that tree**, established by control rather than
+    /// inferred --- the same document with the leaf flat instead of nested, same
+    /// signature dictionary byte for byte, gives `FPDF_GetSignatureCount` 1 and 0
+    /// respectively, and `qpdf --check` passes both. So this is one of the very
+    /// few places where the differential cannot corroborate us and the reading
+    /// has to stand on the specification; `signature-probe --mode nested`
+    /// asserts the disagreement so it cannot expire quietly.
+    #[test]
+    fn a_signature_field_under_kids_is_found_rather_than_walked_past() {
+        let Ok(bytes) = std::fs::read("../testdata/signed-nested-field.pdf") else {
+            println!("[SKIP] signed-nested-field.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 1).expect("the fixture must parse");
+
+        assert_eq!(
+            properties.signatures.len(),
+            1,
+            "one signature, two levels down"
+        );
+        let signature = &properties.signatures[0];
+        assert!(signature.signed);
+        assert_eq!(signature.field, "Signature1", "the leaf's own /T");
+        assert_eq!(signature.kind, "adbe.pkcs7.detached");
+        assert!(
+            signature
+                .certificate
+                .as_ref()
+                .is_some_and(|certificate| !certificate.subject_cn.is_empty()),
+            "and its certificate is read like any other"
+        );
+        assert_eq!(properties.limits.unreadable, 0, "nothing was walked past");
+    }
+
+    /// The field tree is walked to eight levels and no further.
+    ///
+    /// A `/Kids` chain is attacker-shaped: a document is free to make it a
+    /// thousand deep, or to point a node at itself. The bound is what stops that,
+    /// and until now nothing exercised it --- so this asserts both halves, which
+    /// is what makes it a bound rather than a refusal. Seven levels are walked;
+    /// nine are not, and the refusal is *counted* rather than silent, because a
+    /// signature dropped without a word is indistinguishable from a document that
+    /// has none.
+    #[test]
+    fn a_field_tree_is_walked_to_a_bounded_depth_and_the_refusal_is_counted() {
+        // `depth` counts the nodes above the signature field.
+        let scan_at = |depth: usize| -> Properties {
+            let mut document = Document::with_version("1.7");
+            let sig = document.add_object(Object::Dictionary(dictionary! {
+                "Type" => "Sig",
+                "Filter" => "Adobe.PPKLite",
+                "SubFilter" => "adbe.pkcs7.detached",
+            }));
+            let mut node = document.add_object(Object::Dictionary(dictionary! {
+                "FT" => "Sig",
+                "T" => Object::string_literal("Signature1"),
+                "V" => Object::Reference(sig),
+            }));
+            for _ in 0..depth {
+                node = document.add_object(Object::Dictionary(dictionary! {
+                    "Kids" => vec![Object::Reference(node)],
+                }));
+            }
+            let form = document.add_object(Object::Dictionary(dictionary! {
+                "Fields" => vec![Object::Reference(node)],
+            }));
+            let pages = document.add_object(Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => Object::Array(vec![]),
+                "Count" => 0,
+            }));
+            let catalog = document.add_object(Object::Dictionary(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => Object::Reference(pages),
+                "AcroForm" => Object::Reference(form),
+            }));
+            document.trailer.set("Root", Object::Reference(catalog));
+            let mut out = Vec::new();
+            document.save_to(&mut out).expect("a writable document");
+            scan(&out, 0).expect("the document must parse")
+        };
+
+        let shallow = scan_at(7);
+        assert_eq!(
+            shallow.signatures.len(),
+            1,
+            "seven levels are within the bound"
+        );
+        assert_eq!(shallow.limits.unreadable, 0, "and nothing was refused");
+
+        let deep = scan_at(9);
+        assert!(deep.signatures.is_empty(), "nine levels are past it");
+        assert!(
+            deep.limits.unreadable > 0,
+            "and the refusal is counted, so the reader is told rather than \
+             shown a document that looks unsigned"
+        );
+        assert!(deep.limits.any(), "which puts the notice on the dialog");
+    }
+
     /// The honesty rule, held by the type rather than by review.
     ///
     /// Adding a field to [`Certificate`] is a compile error here, which is the

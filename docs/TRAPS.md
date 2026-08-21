@@ -11775,3 +11775,47 @@ the tell that the coverage had been resting on the stale bytes rather than on th
 **The general form: before pinning a value, ask what wrote it.** If the answer is a generator you
 also maintain, read that generator rather than the artifact --- `random`, `now()`, a UUID, a
 temporary path and a hostname are all values that look like constants in a passing test.
+
+### PDFium's signature enumeration does not walk the field tree, and ours does
+
+`/AcroForm /Fields` is a **tree**. An entry is either a field or a node whose `/Kids` hold
+fields, and a fully qualified field name is the `/T` values joined down the chain --- producers
+that group fields, Acrobat included, write it that way. `docinfo.rs` recurses, with a depth
+bound. `FPDF_GetSignatureCount` reads the array's entries and stops.
+
+So on a document whose signature field sits under a `/Kids` node, **PDFium reports zero
+signatures and tpdf reports one**, and the differential that exists to corroborate us instead
+reports a count mismatch that reads like a defect in us.
+
+**Established by control, not by inference, and the control is the whole entry.** Two files
+differing in exactly one thing --- whether the leaf sits directly in `/Fields` or two `/Kids`
+nodes down --- with the same page, the same field dictionary and the same signature dictionary
+byte for byte:
+
+```
+flat     PDFium found 1 signature(s)
+nested   PDFium found 0 signature(s)
+```
+
+`qpdf --check` passes the nested file with `No syntax or stream encoding errors found`. Without
+that pair the obvious reading is that the fixture is malformed, which is where an hour goes.
+
+Two things follow, and the second is the general one:
+
+- **Write a known limitation down as an assertion, not as a comment.**
+  `signature-probe --mode nested` asserts the *disagreement*: one signature here, none there,
+  and a certificate still read. It says so in its own output --- *"if this is 1, PDFium now
+  recurses and this mode is obsolete"* --- so the day the limitation ends, the check goes red
+  instead of a comment quietly becoming false. This repository already carries
+  *"A quirk documented as harmless becomes a defect the day its precondition is wired"*; this
+  is the same lesson from the side where the quirk is somebody else's.
+- **A differential's silence is bounded by the weaker reader.** Every check
+  `signature-probe --mode agree` makes is a check PDFium is *able* to make, so the shapes
+  PDFium cannot see are exactly the shapes where we are on our own --- and a nested field is
+  one of them. `docinfo: do not walk into a field node's kids` is caught by a unit test and by
+  nothing else, because PDFium's own answer under that mutation is the mutated one.
+
+⚠ **`qpdf --check` in a pipeline exits with the pipeline's status, not qpdf's.** The first run
+here reported exit 1 and it was the `python3` stage failing to parse `qpdf --json` output;
+qpdf's own exit was 0. Same family as the `$?`-after-a-command-substitution entry: run the tool
+alone before reading its status as evidence about the file.

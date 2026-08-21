@@ -2868,6 +2868,46 @@ MUTATIONS += [
         "two_signers_are_told_apart_and_neither_is_reported_as_the_authority",
     ),
     Mutation(
+        # Stop recursing into `/Kids`, so a signature field grouped under a node
+        # is walked straight past. The document then reports no signature at all,
+        # which is indistinguishable from one that has none -- and PDFium does
+        # exactly this, so the differential cannot catch it either.
+        "docinfo: do not walk into a field node's kids",
+        "src/docinfo.rs",
+        """            if depth < 8 {
+                for kid in kids.iter().rev() {
+                    queue.push((kid, depth + 1));
+                }
+            } else {""",
+        """            if false {
+                for kid in kids.iter().rev() {
+                    queue.push((kid, depth + 1));
+                }
+            } else {""",
+        "a_signature_field_under_kids_is_found_rather_than_walked_past",
+    ),
+    Mutation(
+        # Drop the depth bound, so a `/Kids` chain a document chose the length of
+        # is followed to the end. The queue is the only thing between a hostile
+        # field tree and however long it cares to be.
+        "docinfo: follow a field tree to whatever depth it claims",
+        "src/docinfo.rs",
+        "            if depth < 8 {",
+        "            if depth < usize::MAX as u32 {",
+        "a_field_tree_is_walked_to_a_bounded_depth_and_the_refusal_is_counted",
+    ),
+    Mutation(
+        # Refuse a too-deep tree in silence. A signature dropped without a word
+        # reads as a document that has none, which is the reassuring direction.
+        "docinfo: drop a too-deep field node without counting it",
+        "src/docinfo.rs",
+        """            } else {
+                limits.unreadable += 1;
+            }""",
+        """            }""",
+        "a_field_tree_is_walked_to_a_bounded_depth_and_the_refusal_is_counted",
+    ),
+    Mutation(
         # Read a BMPString as bytes. It comes out as text interleaved with nulls,
         # which reads as a mangled name rather than as a decoding bug --- so this
         # is the version that ships looking merely ugly.
