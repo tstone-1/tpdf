@@ -3357,8 +3357,16 @@ def run_tests(files: list[str] | None = None) -> tuple[set[str], int | None, str
     return names, counted, out
 
 
-def all_test_names() -> dict[str, str]:
-    """Every test the suite defines, mapped to the file it is in."""
+def all_test_names() -> dict[str, list[str]]:
+    """Every test the suite defines, mapped to the file(s) it is in.
+
+    Files, plural, and that is not defensive. `says nothing when nothing was
+    cut` is defined in both `comments.test.ts` and `links.test.ts`, so a
+    `dict[str, str]` kept whichever the listing printed last and the narrow run
+    below aimed at the wrong file --- caught on 2026-08-21 only because the
+    fallback ran all 36 files and got the right answer anyway, at the cost of the
+    saving this whole mechanism exists for.
+    """
     done = subprocess.run(
         [npx(), "vitest", "run", "--reporter=verbose", *TEST_FILES],
         cwd=ROOT,
@@ -3373,11 +3381,15 @@ def all_test_names() -> dict[str, str]:
     # the rest, never a fixed column. The file comes back too: it is printed
     # right there, and deriving it beats a second table that can drift from the
     # one above.
-    return {
-        name.strip(): file.strip()
-        for file, name in TEST_NAME.findall(out)
-        if name.strip()
-    }
+    found: dict[str, list[str]] = {}
+    for file, name in TEST_NAME.findall(out):
+        name, file = name.strip(), file.strip()
+        if not name:
+            continue
+        where = found.setdefault(name, [])
+        if file not in where:
+            where.append(file)
+    return found
 
 
 def main() -> int:
@@ -3482,7 +3494,12 @@ def main() -> int:
                 # nineteen files to find that out cost 5.8 s a time -- 31
                 # minutes over this table, measured 2026-08-21 before this.
                 aimed = sorted(
-                    {file for name, file in known.items() if mutation.expect in name}
+                    {
+                        file
+                        for name, files in known.items()
+                        if mutation.expect in name
+                        for file in files
+                    }
                 )
                 names, counted, out = run_tests(aimed or None)
                 narrow = bool(aimed)
