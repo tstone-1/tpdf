@@ -11385,3 +11385,99 @@ And the diagnosis order is the point: the run was the first with the change in i
 this failure mine?"* came before *"is this a defect?"*. It was mine, and the answer took one
 reproduction and one hand-applied mutation --- against a full re-run of the table, which would
 have reproduced the symptom and explained nothing.
+
+### The plan said the words had to be extracted, and the model had never let them be lost
+
+`docs/PLAN.md` §8 carried this as the marks panel's next piece, in its own words: *"the text
+a text-markup mark **covers**, which is the row content a reader would actually recognise and
+**needs extraction per mark** rather than the note"*. The first half is the feature and was
+right. The second half is a mechanism, and building it would have been the wrong program.
+
+Extraction means asking, for a rectangle on a page, which characters lie under it. That is a
+real problem with a real cost --- a page-text request per marked page, queued in front of the
+tiles a reader is waiting on, for pages `TextCache` may have evicted; rows that fill in at
+different times; and, worst, **a second answer to a question something else already answers**,
+since the rectangle was made by mapping a character range the other way. Two mappings that
+disagree is the drift this repository records under *"Two copies of a distinction drift, and a
+mutation of one survives"*.
+
+None of it was necessary, and one signature says so:
+
+```rust
+pub fn open(pages: u32) -> Doc
+```
+
+`Doc::open` takes a page count and nothing else. **The model never loads a file's
+annotations**, so every mark in this panel was made in this session, and a saved document
+reopened puts its annotations in the *comments* panel --- which `annots.rs` fills by scanning
+the file, and which is where the "read it back off the page" reflex comes from. There is no
+mark in this list whose creation tpdf did not watch, and at that moment `markSelection` is
+holding the selection that produced the rectangles. The words come out beside them, from the
+same range, in one line of `selectionQuadsByPage`.
+
+**The general shape, and it is the second time in two increments.** A *Not done* line is
+written when the surrounding work is fresh and the thing itself does not exist; it is a good
+statement of the goal and a **guess** about the mechanism, made before anyone looked at what
+the mechanism would have to touch. The previous increment's line called panel removal *"a
+second removal path beside the note box's own"*, and building it showed that for a mark with
+no page it is the **only** path --- the opposite of a duplicate. Both were wrong in the same
+direction: the plan reasoned from the feature, and the answer was in the model.
+
+So read a *Not done* as naming the outcome, not the method, and spend the ten minutes on the
+data structure before designing to it. The cost of not doing that is not a wasted hour; it is
+a shipped second implementation of something that already had one.
+
+The trade this one does make is worth stating rather than discovering: because the words are
+held beside the mark rather than derived from the page, a mark that came back from a saved
+file has none, and its row says *"No note"* exactly as before. That is not a gap the
+extraction build would have closed either --- a PDF has no entry for the text a highlight sits
+on, so such a mark's words would have to be re-derived from geometry every time, which is the
+program this entry is about.
+
+### A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
+
+Written the day after the entry above, on the mirror of the same mistake, and this one cost a
+wrong recommendation to the user rather than a wrong build.
+
+`docs/PLAN.md`'s save increment ended with a *Not done* saying that **"nothing warns the
+reader that the file changed on disk before they try to save ... §5's identity-plus-mtime
+watch is not here"**. Read on 2026-08-21 while ranking what to build next, it named the only
+outstanding item whose failure mode was somebody's work disappearing, so it went to the user
+as the recommendation with that reasoning attached.
+
+It had been false since **2026-08-19**. §5's own *External modification* section, four
+thousand lines up the same file, records that watch as built: `fingerprint.rs` takes the
+file's length, mtime and a streamed SHA-256 at open, it rides on `Plan` beside `baseline`,
+and three separate checks refuse a save or a copy planned against a file that has moved ---
+with a Reload the refusal offers and `recovery.ts` makes reachable. `save.rs` imports it at
+line 70 and its comments point back at §5 by name. Nothing about it is subtle or hidden.
+
+**The mechanism is that a *Not done* is written in the section that could not do the thing,
+and the work lands in a different section.** The commit that closes it has every reason to
+write up where it landed and no reason at all to go looking for a sentence elsewhere that
+happens to claim its absence. So the note ages in place, and it ages *silently*: a claim of
+absence has no test, no gate and no reader who would notice, because the way you find out it
+is wrong is by knowing the answer already --- which is precisely what somebody consulting it
+does not.
+
+**A claim of absence is the most expensive kind of stale sentence.** A stale claim that
+something *works* gets caught the first time somebody uses it. A stale claim that something
+is *missing* gets caught only if somebody builds it twice, and the sentence is read exactly
+when the reader has least context. This one was read while planning, which is the moment its
+being wrong does the most damage.
+
+Two habits, and the second is the one that would have worked here:
+
+- When closing a gap, grep the plan for the words the gap was described in and strike the
+  note where it stands, in the same commit. `docs/PLAN.md` is one file.
+- **Before recommending work off a *Not done*, spend one grep confirming the thing is still
+  absent.** `grep -n fingerprint src-tauri/src/save.rs` answers this in a second, and it is
+  the same discipline the repository already applies to a documented blocker --- *"a list of
+  documented blockers can be wrong in the direction that looks thorough"*, where the error
+  ran the other way and four such lists were wrong in one week. Absence is a claim about the
+  tree; ask the tree.
+
+The note is corrected rather than deleted, with what it said and why it was wrong, because
+the sentence that remains true --- nothing *watches* the file while it is open, so the reader
+learns at the moment they press Save --- is a much smaller thing than the one it was read as,
+and the difference between the two is the whole lesson.

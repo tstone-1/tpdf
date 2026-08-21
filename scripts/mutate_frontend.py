@@ -3141,14 +3141,51 @@ MUTATIONS += [
         "calls each kind what the note box calls it",
     ),
     Mutation(
-        # Put the note in a row unflattened. Every kind but one is unaffected,
-        # because only a text box's note routinely has newlines in it --- so this
-        # is the mutation a fixture of highlights cannot see.
-        "marklist: draw a note with its own line breaks in a one-line row",
+        # Put a row's first line in unflattened. It used to aim at a private
+        # helper that only the note went through, and the comment here said so:
+        # every kind but one is unaffected, because only a text box's note
+        # routinely has newlines in it. `flatten` now takes the covered words as
+        # well --- which come off a page and are *always* several lines --- so
+        # this reddens three tests where it used to redden one, and a fixture of
+        # highlights can see it after all.
+        "marklist: draw a row's first line with its own line breaks in it",
         "src/lib/marklist.ts",
-        '  const flattened = note.replace(/\\s+/g, " ").trim();',
-        '  const flattened = note.trim();',
+        '  return text.replace(/\\s+/g, " ").trim();',
+        "  return text.trim();",
         "flattens a text box's own lines",
+    ),
+    Mutation(
+        # List a noted mark by the words it sits on instead of by the note. The
+        # substitution rule with its two candidates the wrong way round, which is
+        # the version anyone would write who thought the covered words were the
+        # more informative of the two --- they are, for the eight rows in nine
+        # that have no note, and never for the ninth.
+        "marklist: list a mark by the words it covers rather than its note",
+        "src/lib/marklist.ts",
+        "  if (typed) return { text: typed, own: true };",
+        "  if (typed) return { text: flatten(covered), own: true };",
+        "prefers what the reader typed over what the mark covers",
+    ),
+    Mutation(
+        # Call the document's words the reader's own. Nothing on the row moves
+        # except the one flag that says whose sentence it is --- so the text is
+        # right, the panel looks right, and a reader cannot tell a phrase they
+        # wrote from a phrase they highlighted.
+        "marklist: draw the covered words as though the reader had typed them",
+        "src/lib/marklist.ts",
+        "  if (words) return { text: words, own: false };",
+        "  if (words) return { text: words, own: true };",
+        "lists a mark nobody typed on by the words it covers",
+    ),
+    Mutation(
+        # Ask for the words by the page rather than by the mark. With one row on
+        # the list this is invisible --- the lookup misses, the row says nothing
+        # was typed, and that is what a mark with no covered words says anyway.
+        "marklist: look a row's covered words up by its page",
+        "src/lib/marklist.ts",
+        "    const line = rowLine(mark.note, this.opts.coveredFor(mark.id));",
+        "    const line = rowLine(mark.note, this.opts.coveredFor(mark.page));",
+        "asks for each row's words by that row's id",
     ),
     Mutation(
         # Let the keyboard activate a row that is on no page. The pointer is

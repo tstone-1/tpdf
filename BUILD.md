@@ -2368,7 +2368,9 @@ in points off the box's own corner, on a fixture rectangle of a fixed 260 x 90 p
 `docs/PLAN.md` has the full account, including why the 90 came from the sampler's
 two-pixel floor rather than from the type. Three mutations prove it can fail.
 
-**Measured 2026-08-20, all fourteen corpora, `--raise` off:** the same **310 check names**
+**Measured 2026-08-20, all fourteen corpora, `--raise` off** (superseded by the 2026-08-21
+table below, and kept because it is the run the text-box repair was proved against): the same
+**310 check names**
 on every one, diffed as sets. `text-heavy` 265/45, `outline-simple` 273/37,
 `outline-hostile` 273/37, `vector-heavy` 172/138, `vector-multi` 212/98, `rotated-90`
 258/52, `columns` 262/48, `tagged` 237/73, `multilingual` 254/56, `encodings` 255/55,
@@ -2379,13 +2381,49 @@ split byte-identical to the run above, the same 310 names, and `no failing check
 14 corpora`. The splits being unchanged is the useful half: repairing a check by making it
 skip somewhere would have moved one.
 
-**311 names since 2026-08-21**, when the marks panel gained a remove control. The new one is
-*"a row's remove control asks for that mark and does not open it"*, and it is here rather
-than in a unit test for a reason the unit test says out loud: the fake DOM does not bubble,
-so `marklist.test.ts` cannot tell `stopPropagation` from its absence. Measured on `comments`
-at **276/35**, one more ran than the table above, and `mutate_viewer.py`'s baseline reports
-the 311 names. The fourteen-corpus table itself is still the 2026-08-20 run at 310 and needs
-a re-sweep before it is quoted again --- every split in it is one short.
+**Measured 2026-08-21, all fourteen corpora, `--raise` off: the same 313 check names on
+every one, no failing check anywhere, 686 s in total.** Three names were added that day ---
+*"a row's remove control asks for that mark and does not open it"* with the marks panel's
+remove control, then *"and the words they cover are the words that are selected"* and *"a
+mark nothing was typed on is listed by the words it covers"* with the covered-words row.
+
+| corpus | ran | skipped | 2026-08-20 | s |
+|---|---|---|---|---|
+| `text-heavy` | 268 | 45 | 265/45 | 25 |
+| `outline-simple` | 276 | 37 | 273/37 | 10 |
+| `outline-hostile` | 276 | 37 | 273/37 | 10 |
+| `vector-heavy` | 174 | 139 | 172/138 | 152 |
+| `vector-multi` | 214 | 99 | 212/98 | 341 |
+| `rotated-90` | 261 | 52 | 258/52 | 9 |
+| `columns` | 265 | 48 | 262/48 | 9 |
+| `tagged` | 240 | 73 | 237/73 | 38 |
+| `multilingual` | 257 | 56 | 254/56 | 39 |
+| `encodings` | 258 | 55 | 255/55 | 9 |
+| `mixed` | 265 | 48 | 262/48 | 9 |
+| `comments` | 278 | 35 | 275/35 | 15 |
+| `links` | 285 | 28 | 282/28 | 11 |
+| `links-cropped` | 220 | 93 | 217/93 | 8 |
+
+**The previous column is there because the way the splits moved is the check on the run.**
+Twelve corpora are `+3` ran and `+0` skipped; `vector-heavy` and `vector-multi` are `+2` and
+`+1`, and those two are the documents with no text to select --- so the check that compares
+the selection's words is skipped there, exactly as its sibling *"a mark's rectangles come
+from the page's own text"* already was. Three names arriving and every corpus accounting for
+all three, in the two patterns its own contents predict, is a stronger statement than
+fourteen green lines.
+
+`vector-multi` is 50% of the wall clock and `vector-heavy` 22%, as before. The total fell
+from 740 s to 686 s, which is machine noise rather than anything about the harness --- these
+are single samples, not a benchmark.
+
+Two of the three are unreachable from a unit test, and for different reasons worth keeping
+apart. The remove control's is that the fake DOM does not bubble, so `marklist.test.ts`
+cannot tell `stopPropagation` from its absence. The covered-words row's is that the fake DOM
+**resolves no styles at all**: the words a mark covers and the note a reader typed sit in the
+same column, and the only thing separating them is that one is dimmed and italic, so a panel
+drawing them alike passes every unit test there is. That check paints a noted row beside a
+bare one and reads `getComputedStyle` on both --- the noted row being the control, since a
+panel calling every line the document's would satisfy half of it.
 
 One check failed once and did not recur: *"a drag selects text from where it was dragged"*
 on `outline-hostile`, in one of three sweeps that day. Two runs failing different checks is

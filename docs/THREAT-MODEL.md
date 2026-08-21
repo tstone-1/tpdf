@@ -986,6 +986,13 @@ landed.** Outline titles reach the DOM (`sidebar.ts`, `title.textContent = row.t
 "(untitled)"`) and so does every search result (`results.ts`), including the matched
 substring the query is highlighted in.
 
+**A fourth source landed 2026-08-21: the words a mark covers.** The marks panel lists a
+highlight nobody typed a note on by the phrase it sits on, taken off the page by
+`selectionQuadsByPage`, so a row of that panel can now be document text where before it was
+either the reader's own note or the literal "No note". Nothing about the mitigation changes
+--- `marklist.ts` assigns it through `textContent` like everything else, and the invariant
+below is what makes that sufficient rather than a promise about this one call site.
+
 The mitigation survived the change, and it is a **better** one than the sentence it replaces,
 because it is a property of the code rather than an absence of features: every one of those
 strings is assigned through **`textContent`**, which sets character data and never parses
