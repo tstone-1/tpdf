@@ -3847,6 +3847,41 @@ MUTATIONS += [
         "",
         "puts a claim in the file section of the readout",
     ),
+    Mutation(
+        # Show the attested time with no authority named and no disclaimer. It
+        # then reads as tpdf vouching for the moment.
+        "timestamp: state an attested time as a bare fact",
+        "src/lib/properties.ts",
+        '      value: `${stamp.when} by ${by} --- a separate party\'s claim, which tpdf does not check`,',
+        "      value: stamp.when,",
+        "names the authority beside the time, and says it is unchecked",
+    ),
+    Mutation(
+        # Drop the row when the token names no authority. A time worth less is
+        # not a time worth nothing, and the signature then reads as one nobody
+        # timestamped.
+        "timestamp: drop a timestamp whose authority is unnamed",
+        "src/lib/properties.ts",
+        "  if (stamp?.when) {",
+        "  if (stamp?.when && stamp.authority) {",
+        "still reports a token that names no authority",
+    ),
+    Mutation(
+        # Drop the signer's own date, leaving only the attested one. The
+        # readout then shows one time where the document offers two from
+        # different sources -- and it is the source the document itself states
+        # that goes missing.
+        #
+        # Aimed at the ordering test because that test is where the two rows
+        # are asserted to coexist. Its first version compared `indexOf` alone
+        # and this SURVIVED it: -1 is less than every real index, so deleting
+        # the row satisfied the ordering rather than breaking it.
+        "timestamp: drop the signer's own date, leaving only the attested one",
+        "src/lib/properties.ts",
+        '  claimed("Date given", signature.when);',
+        "",
+        "puts the attested time under the signer's own date, not over it",
+    ),
 ]
 
 

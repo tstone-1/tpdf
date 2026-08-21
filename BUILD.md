@@ -168,6 +168,18 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 #                                                 order reddens 4 of the 13)
 #   tagged / comments / links       --mode clean   3/3 each
 #
+# incr-timestamped.pdf is the only fixture whose signature carries an RFC 3161
+# token. genTime is PINNED by the generator (2026-08-21 12:00:00 UTC) so tests
+# assert the instant rather than its shape; the TSA is pyhanko's offline dummy,
+# so the structure is real and the trust is nil.
+#
+# One real signed document to hand carries a timestamp and tpdf reads NOTHING
+# from it: its /Contents is BER with indefinite lengths, which the `der` crate
+# refuses by design. So this feature is demonstrated on a fixture and on no real
+# document -- see the trap "A signature blob is trimmed by trailing zero, and
+# BER ends in zeros". The failure is honest (certificates_unread is 1), and the
+# fix would be a bounded BER-to-DER pass before the parsers see the blob.
+#
 # --mode read also prints what each certificate states its key is for. Nothing
 # compares that against PDFium, which exposes no extension accessor at all --
 # the oracle is `openssl x509 -text` on the same blob, which is what

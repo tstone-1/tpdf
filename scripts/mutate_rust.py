@@ -2791,7 +2791,7 @@ MUTATIONS += [
         "src/docinfo.rs",
         "    let last = raw.iter().rposition(|b| *b != 0)?;",
         """    let Some(last) = raw.iter().rposition(|b| *b != 0) else {
-        limits.certificates_unread += 1;
+        *unread += 1;
         return None;
     };""",
         "an_untouched_placeholder_is_absent_rather_than_unread",
@@ -2802,8 +2802,8 @@ MUTATIONS += [
         # as unparseable --- the failure that looks like a broken dependency.
         "docinfo: parse the blob without stripping its reserved padding",
         "src/docinfo.rs",
-        "    let der_bytes = &raw[..=last];",
-        "    let der_bytes = &raw[..];",
+        "    let trimmed = &raw[..=last];",
+        "    let trimmed = &raw[..];",
         "each_signed_fixture_carries_its_own_certificate",
     ),
     Mutation(
@@ -2812,8 +2812,8 @@ MUTATIONS += [
         # document and this is the only thing standing between it and a parser.
         "docinfo: parse a certificate blob of any size",
         "src/docinfo.rs",
-        """    if der_bytes.len() > bound {
-        limits.certificates_unread += 1;
+        """    if trimmed.len() > bound {
+        *unread += 1;
         return None;
     }""",
         "",
@@ -3100,6 +3100,82 @@ MUTATIONS += [
         .unwrap_or_else(|_| stream.content.clone());""",
         "    let packet = stream.content.clone();",
         "a_conformance_claim_in_the_metadata_stream_reaches_the_readout",
+    ),
+    Mutation(
+        # Read any CMS's encapsulated content as a TSTInfo. Every ordinary
+        # signature then yields a "timestamp" made of whatever a
+        # GeneralizedTime can be built from -- a plausible number attributed to
+        # an authority, which is the worst outcome this module has.
+        "docinfo: read any CMS content as a timestamp",
+        "src/docinfo.rs",
+        """    if signed.encap_content_info.econtent_type.to_string() != "1.2.840.113549.1.9.16.1.4" {
+        return None;
+    }""",
+        "",
+        "a_token_relabelled_as_something_else_is_not_read_as_a_timestamp",
+    ),
+    Mutation(
+        # Read the fourth field as genTime. Off by one in a positional skip,
+        # which is the failure the positional skip has to be bounded against.
+        "docinfo: take the field before genTime as the attested time",
+        "src/docinfo.rs",
+        "    for _ in 0..4 {",
+        "    for _ in 0..3 {",
+        "the_time_a_timestamp_authority_attested_is_read",
+    ),
+    Mutation(
+        # Drop the tag check, so a TSTInfo that is not a SEQUENCE has its value
+        # walked as if it were one.
+        "docinfo: read a TSTInfo without checking it is a sequence",
+        "src/docinfo.rs",
+        """    if sequence.tag() != der::Tag::Sequence {
+        return None;
+    }""",
+        "",
+        "a_tst_info_that_is_not_shaped_like_one_yields_no_time",
+    ),
+    Mutation(
+        # Take the first of several values on a timestamp attribute. There is
+        # nothing to choose between them, so this is a guess presented as an
+        # authority's statement.
+        "docinfo: guess when a timestamp attribute carries several values",
+        "src/docinfo.rs",
+        """    let [value] = attribute.values.as_slice() else {
+        *unread += 1;
+        return None;
+    };""",
+        """    let Some(value) = attribute.values.as_slice().first() else {
+        *unread += 1;
+        return None;
+    };""",
+        "a_timestamp_attribute_carrying_more_than_one_value_is_refused",
+    ),
+    Mutation(
+        # Look for the timestamp in the SIGNED attributes. A token is minted
+        # after the signature exists, so it cannot be inside what the signature
+        # covers -- and every real signature would then report none.
+        "docinfo: look for the timestamp among the signed attributes",
+        "src/docinfo.rs",
+        """    let attribute = signer
+        .unsigned_attrs""",
+        """    let attribute = signer
+        .signed_attrs""",
+        "the_time_a_timestamp_authority_attested_is_read",
+    ),
+    Mutation(
+        # Report a token that would not parse as a signature nobody timestamped,
+        # which is the ordinary case and therefore the reassuring one.
+        "docinfo: read an unreadable timestamp token as an absent one",
+        "src/docinfo.rs",
+        """    match parse_timestamp_token(&token) {
+        Some(timestamp) => Some(timestamp),
+        None => {
+            *unread += 1;
+            None
+        }
+    }""",
+        "    parse_timestamp_token(&token)",
+        "a_token_that_will_not_parse_is_counted_rather_than_read_as_absent",
     ),
     Mutation(
         # Report a key usage naming nothing as no extension at all, which turns

@@ -102,6 +102,19 @@ have the binary.)
   own word, and tpdf builds no chain to an issuer it trusts, so the disclaimer
   under every signature now names that too.
 
+### Added: when a third party says a signature existed
+
+- **A timestamp on a signature is read and shown.** A signature's own date is
+  whatever the clock on the signing computer read, and nothing checks it. Some
+  signatures also carry a token from a timestamp authority --- a separate
+  party's statement about when the signature existed --- and that is now shown
+  underneath, with the authority named.
+- **Still not checked**, and the disclaimer says so: tpdf does not verify the
+  token's own signature, look at who the authority is, or test whether the
+  token covers this signature at all.
+- A signature nobody timestamped says nothing, which is most of them. A token
+  that could not be read is reported as unread rather than as absent.
+
 ### Added: what a document claims to conform to
 
 - **A document that says it is PDF/A, PDF/UA or PDF/X now says so in the

@@ -57,6 +57,7 @@ function signed(): Signature {
     covered_bytes: 1024,
     certification: 0,
     certificate: null,
+    timestamp: null,
   };
 }
 
@@ -494,6 +495,77 @@ describe("the signing certificate", () => {
       for (const word of VERDICT_WORDS) {
         // The value may quote the document; the label may not, because the
         // label is the only half tpdf wrote.
+        expect(row.name.toLowerCase()).not.toContain(word);
+      }
+    }
+  });
+});
+
+describe("a timestamp on a signature", () => {
+  it("names the authority beside the time, and says it is unchecked", () => {
+    const authority = certificate();
+    authority.subject_cn = "Acme Time Authority";
+    const sig = signed();
+    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority };
+
+    const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamped");
+    expect(row?.value).toContain("2026-08-21 12:00:00 UTC");
+    expect(row?.value).toContain("Acme Time Authority");
+    // A time with no attester named is a number a reader cannot weigh, and a
+    // time presented without the disclaimer reads as tpdf agreeing.
+    expect(row?.value).toContain("does not check");
+  });
+
+  it("puts the attested time under the signer's own date, not over it", () => {
+    // Two answers to one question from two places, and the order is the claim
+    // about which is which: the signer's clock first because it is the one the
+    // document itself states, the authority's under it as the second source.
+    const sig = signed();
+    sig.when = "2026-08-21 16:58:20 +02:00";
+    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority: null };
+
+    const names = signatureRows(sig, 1024).map((r) => r.name);
+    // Both must be present before the comparison means anything: `indexOf`
+    // answers -1 for a row that is not there, and -1 is less than every real
+    // index -- so an ordering assertion on its own passes most loudly when the
+    // row it is about has been deleted.
+    expect(names).toContain("Date given");
+    expect(names).toContain("Timestamped");
+    expect(names.indexOf("Date given")).toBeLessThan(names.indexOf("Timestamped"));
+  });
+
+  it("still reports a token that names no authority", () => {
+    // The authority's certificate is optional in a token. A time with no name
+    // beside it is worth less and is not worth nothing, and dropping the row
+    // would report the signature as untimestamped.
+    const sig = signed();
+    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority: null };
+
+    const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamped");
+    expect(row?.value).toContain("an unnamed authority");
+  });
+
+  it("says nothing for a signature nobody timestamped", () => {
+    // The common case -- 1 of 10 signed documents to hand carries a token --
+    // and this is the control that stops the row appearing on all of them.
+    const sig = signed();
+    sig.timestamp = null;
+
+    expect(
+      signatureRows(sig, 1024).find((r) => r.name === "Timestamped"),
+    ).toBeUndefined();
+  });
+
+  it("puts no verdict word in a line built from an authority's own name", () => {
+    // A timestamp token is chosen by whoever signed the document, so the
+    // authority's name is attacker-controlled exactly as the signer's is.
+    const authority = certificate();
+    authority.subject_cn = "Verified Genuine Timestamps Ltd";
+    const sig = signed();
+    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority };
+
+    for (const row of signatureRows(sig, 1024)) {
+      for (const word of VERDICT_WORDS) {
         expect(row.name.toLowerCase()).not.toContain(word);
       }
     }

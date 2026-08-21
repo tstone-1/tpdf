@@ -11939,3 +11939,73 @@ but is at least a place it surfaces.
 Same family as the `$?`-after-a-command-substitution entry and the `time`-as-a-pipeline-stage
 one: a step that did no work reporting success, with the next step's output standing in for
 evidence that it ran.
+
+### A signature blob is trimmed by trailing zero, and BER ends in zeros
+
+A signature's `/Contents` is written by reserving a fixed span and filling it, so the blob is
+right-padded with zeros. `docinfo.rs` trims them the obvious way:
+
+```rust
+let last = raw.iter().rposition(|b| *b != 0)?;
+let trimmed = &raw[..=last];
+```
+
+That is wrong twice, and the second one is how it was found.
+
+**A DER blob whose last byte is legitimately `0x00` loses it.** The final byte is the tail of an
+RSA signature, so it is uniform: roughly **1 in 256** signatures is corrupted this way, the parse
+then fails, and the certificate is reported unread. Rare enough never to be noticed, common
+enough to be happening.
+
+**A BER indefinite-length blob loses its end-of-contents markers.** Those markers *are* `00 00`,
+so the trim eats exactly the bytes that terminate the structure. Demonstrated on a real CAdES
+signature: `openssl pkcs7` parses the padded blob and fails on the trimmed one with *"not enough
+data"* — which reads as a truncated file rather than as the reader having truncated it.
+
+The fix for both is to read the outer TLV's length rather than scan for zeros. It is not done
+here yet, and the second half would buy nothing on its own, because:
+
+**`der` refuses indefinite length outright.** `30 80` is a SEQUENCE of indefinite length, which
+is legal BER and not legal DER, and the crate says so: `indefinite length disallowed`. One of ten
+real signed documents to hand is encoded that way, so tpdf reads no certificate and no timestamp
+from it at all. It reports that honestly — `certificates_unread` is 1 — but a whole class of real
+signatures is unreadable, and the class is *the* class that carries timestamps, since CAdES is
+where timestamping is routine.
+
+Two things worth carrying:
+
+- **A "not enough data" error can be the reader's fault**, and it points at the file. The control
+  is one line: hand the untrimmed bytes to a second parser and see whether it agrees.
+- **Ask what a format's padding is made of before stripping it.** Zero padding and zero
+  terminators are indistinguishable byte-for-byte and distinguishable structurally.
+
+### A guard whose neighbour refuses the same input cannot be tested by it
+
+Three mutations of the timestamp reader survived on the first run, and all three were the same
+shape: a real guard with no input that reaches it, because something adjacent refuses the same
+case first.
+
+- **`eContentType == id-ct-TSTInfo`.** The fixture used to test it was an
+  `adbe.pkcs7.detached` signature — which is *detached*, so it carries no encapsulated content
+  and the very next line refuses it. Deleting the type check changed nothing. What
+  discriminates is a CMS that **has** content the check must reject: the real token with its
+  content type relabelled and its `TSTInfo` left exactly where it was.
+- **The SEQUENCE tag check on `TSTInfo`.** Fed a bare INTEGER, both versions refuse — the
+  four-value walk fails on one byte with or without the check. What discriminates is an OCTET
+  STRING wrapping a *well-formed* body: same contents, different tag, and only the check can
+  tell them apart.
+- **"refuse an attribute carrying several values".** The fixture added an INTEGER beside the
+  token, and a `SET OF` is ordered by encoded bytes — `02...` sorts **ahead** of `30...`, so a
+  mutation taking the first value got the rubbish and failed anyway. An empty SET (`31 00`)
+  sorts *after* the token, so "take the first" and "refuse several" finally give different
+  answers.
+
+The general form: **a guard is only covered by an input that gets past everything else that
+would refuse it.** Two guards producing one outcome means the weaker one is doing all the
+observable work, and no assertion over that input can see the difference. The question to ask of
+a survivor is not "is my assertion strong enough" but "does my input reach this line at all" —
+and in each of these three the answer was no for a different reason.
+
+A related one, from the same run and cheaper: an ordering assertion built on `indexOf` passes
+when the row is **missing**, because `-1` is less than every real index. Assert both operands
+exist before comparing them.

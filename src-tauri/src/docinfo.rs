@@ -180,6 +180,13 @@ pub struct Signature {
     /// `None` means either that the blob carried no certificate or that it
     /// could not be parsed; [`Limits::certificates_unread`] separates the two.
     pub certificate: Option<Certificate>,
+    /// What a timestamp authority attested about when this signature existed.
+    ///
+    /// `None` is a signature with no RFC 3161 token, which is most of them ---
+    /// 1 of 10 signed documents to hand carries one. A token that was present
+    /// and would not parse is counted in [`Limits::timestamps_unread`] rather
+    /// than reported as absent.
+    pub timestamp: Option<Timestamp>,
 }
 
 /// What the signing certificate says, as against what the signer typed.
@@ -252,6 +259,33 @@ pub struct Certificate {
     pub extensions_unread: u32,
 }
 
+/// What a timestamp authority said about when a signature existed.
+///
+/// A signature's `/M` is whatever the signer's own computer clock read: free
+/// text in the signature dictionary, written by the machine doing the signing.
+/// An RFC 3161 token is a **different party's** statement, minted by a
+/// timestamp authority and carried as an unsigned attribute on the signer.
+/// That is the only reason this is worth reading separately --- the two answer
+/// the same question from different places, and only one of them is anything
+/// but the signer's own word.
+///
+/// **Still not verified.** tpdf does not check the token's own signature, build
+/// a chain to a TSA it trusts, or compare the token's message imprint against
+/// the signature it claims to cover. So this is a second claim, not a check;
+/// `properties.ts` says so where it renders it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Timestamp {
+    /// `genTime` from the token's `TSTInfo`, formatted as every date here is.
+    pub when: String,
+    /// The certificate the token itself is signed with --- the authority's.
+    ///
+    /// Read by the same [`parse_certificate`] the signer's certificate goes
+    /// through, because a timestamp token **is** a CMS `SignedData`: the
+    /// authority is its signer. No second implementation, which is what stops
+    /// the two drifting into disagreeing about what a certificate says.
+    pub authority: Option<Certificate>,
+}
+
 /// What could not be read, so nothing here is silently partial.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Limits {
@@ -266,6 +300,12 @@ pub struct Limits {
     pub fields_dropped: usize,
     /// Values shortened at [`MAX_VALUE_CHARS`].
     pub values_clipped: usize,
+    /// Timestamp tokens present on a signature and not readable.
+    ///
+    /// Counted rather than swallowed, for the reason every other entry here is:
+    /// a token dropped in silence reads as a signature nobody timestamped,
+    /// which is the ordinary case and therefore the reassuring one.
+    pub timestamps_unread: usize,
     /// Signature fields not walked, at [`MAX_SIGNATURES`].
     pub signatures_dropped: usize,
     /// `/Fields` entries that resolved to nothing usable.
@@ -289,6 +329,7 @@ impl Limits {
             || self.signatures_dropped > 0
             || self.unreadable > 0
             || self.certificates_unread > 0
+            || self.timestamps_unread > 0
     }
 }
 
@@ -922,6 +963,28 @@ fn read_signature(
 
     out.certification = certification_of(document, sig);
     out.certificate = read_certificate(document, sig, limits);
+
+    // A *document* timestamp is a signature whose `/Contents` is the token
+    // itself rather than a CMS carrying one as an attribute --- PDF 2.0
+    // §12.8.5, `/SubFilter /ETSI.RFC3161`. Its signer is the authority, so the
+    // certificate read above is the TSA's; the timestamp is the whole point of
+    // the field rather than an attribute on something else.
+    let document_timestamp = out.kind == "ETSI.RFC3161";
+    if let Some(blob) =
+        signature_contents(document, sig, MAX_SIG_BLOB, &mut limits.timestamps_unread)
+    {
+        out.timestamp = if document_timestamp {
+            match parse_timestamp_token(&blob) {
+                Some(timestamp) => Some(timestamp),
+                None => {
+                    limits.timestamps_unread += 1;
+                    None
+                }
+            }
+        } else {
+            read_timestamp(&blob, &mut limits.timestamps_unread)
+        };
+    }
     out
 }
 
@@ -960,24 +1023,7 @@ fn read_certificate_bounded(
     limits: &mut Limits,
     bound: usize,
 ) -> Option<Certificate> {
-    let raw = sig
-        .get(b"Contents")
-        .ok()
-        .and_then(|o| resolve(document, o).as_str().ok())?;
-
-    // A signature is written by reserving a fixed span and filling it, so the
-    // blob is right-padded with zeros to whatever the writer reserved. Those
-    // are not part of the DER and a decoder is entitled to reject them.
-    // All zeros is a reserved-but-unwritten placeholder, not a failure --- so
-    // this leaves `limits` alone, and a mutation that increments here is caught
-    // by `an_untouched_placeholder_is_absent_rather_than_unread`.
-    let last = raw.iter().rposition(|b| *b != 0)?;
-    let der_bytes = &raw[..=last];
-
-    if der_bytes.len() > bound {
-        limits.certificates_unread += 1;
-        return None;
-    }
+    let der_bytes = &signature_contents(document, sig, bound, &mut limits.certificates_unread)?;
 
     match parse_certificate(der_bytes) {
         Some(certificate) => Some(certificate),
@@ -986,6 +1032,42 @@ fn read_certificate_bounded(
             None
         }
     }
+}
+
+/// One signature's `/Contents` blob, trimmed of its padding and bounded.
+///
+/// A signature is written by reserving a fixed span and filling it, so the blob
+/// is right-padded with zeros to whatever the writer reserved. Those are not
+/// part of the DER and a decoder is entitled to reject them.
+///
+/// All zeros is a reserved-but-unwritten placeholder, not a failure --- so that
+/// case leaves the counter alone, and a mutation that increments there is
+/// caught by `an_untouched_placeholder_is_absent_rather_than_unread`.
+///
+/// **The trim is by trailing zero and that is a known limitation**, recorded
+/// rather than fixed: a DER blob whose last byte is legitimately `0x00` loses
+/// it, which is roughly 1 in 256 signatures, and a **BER indefinite-length**
+/// blob loses its end-of-contents markers, which is worse because those blobs
+/// are not readable here anyway. Reading the outer TLV's length instead would
+/// fix the first exactly. See the trap of that name.
+fn signature_contents(
+    document: &Document,
+    sig: &Dictionary,
+    bound: usize,
+    unread: &mut usize,
+) -> Option<Vec<u8>> {
+    let raw = sig
+        .get(b"Contents")
+        .ok()
+        .and_then(|o| resolve(document, o).as_str().ok())?;
+    let last = raw.iter().rposition(|b| *b != 0)?;
+    let trimmed = &raw[..=last];
+
+    if trimmed.len() > bound {
+        *unread += 1;
+        return None;
+    }
+    Some(trimmed.to_vec())
 }
 
 /// The DER half of [`read_certificate`], split out so a test can hand it bytes.
@@ -1178,6 +1260,137 @@ fn authority(extensions: &[x509_cert::ext::Extension], unread: &mut u32) -> Opti
 
     let constraints: BasicConstraints = decode_extension(extensions, "2.5.29.19", unread)?;
     Some(constraints.ca)
+}
+
+/// The RFC 3161 token a signer carries, and what it says.
+///
+/// The token lives in `SignerInfo.unsignedAttrs` under
+/// 1.2.840.113549.1.9.16.2.14, which is where it has to live: it is minted
+/// *after* the signature exists, so it cannot be inside what the signature
+/// covers.
+///
+/// `None` is a signature with no token. `Some` with an empty [`Timestamp::when`]
+/// cannot happen --- a token whose `genTime` will not read is reported through
+/// `unread` and returns nothing, because a timestamp with no time is not a
+/// weaker claim, it is no claim.
+fn read_timestamp(blob: &[u8], unread: &mut usize) -> Option<Timestamp> {
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::SignedData;
+    use der::{Decode, Encode};
+
+    let info = ContentInfo::from_der(blob).ok()?;
+    let signed: SignedData = info.content.decode_as().ok()?;
+    let signer = signed.signer_infos.0.as_slice().first()?;
+    let attribute = signer
+        .unsigned_attrs
+        .as_ref()?
+        .iter()
+        // 1.2.840.113549.1.9.16.2.14, id-aa-timeStampToken, written out for the
+        // reason every other OID in this module is.
+        .find(|attribute| attribute.oid.to_string() == "1.2.840.113549.1.9.16.2.14")?;
+
+    // The attribute's value is a SET OF, and a timestamp attribute carries
+    // exactly one. Taking the first of several would be a guess; there is
+    // nothing to choose between them, so several is refused.
+    let [value] = attribute.values.as_slice() else {
+        *unread += 1;
+        return None;
+    };
+    let Ok(token) = value.to_der() else {
+        *unread += 1;
+        return None;
+    };
+    match parse_timestamp_token(&token) {
+        Some(timestamp) => Some(timestamp),
+        None => {
+            *unread += 1;
+            None
+        }
+    }
+}
+
+/// Reads one RFC 3161 `TimeStampToken`.
+///
+/// The token is itself a CMS `SignedData`, so its **signer is the authority**
+/// and [`parse_certificate`] reads it with no second implementation. Its
+/// encapsulated content is a `TSTInfo`, which is where the attested time lives.
+///
+/// Public because a document timestamp --- a signature field whose `/SubFilter`
+/// is `ETSI.RFC3161` --- carries the token directly in `/Contents` rather than
+/// as an attribute on something else.
+pub fn parse_timestamp_token(token: &[u8]) -> Option<Timestamp> {
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::SignedData;
+    use der::Decode;
+
+    let info = ContentInfo::from_der(token).ok()?;
+    let signed: SignedData = info.content.decode_as().ok()?;
+    // 1.2.840.113549.1.9.16.1.4, id-ct-TSTInfo. Checked rather than assumed:
+    // a CMS carrying something else is not a timestamp, and reading its content
+    // as a TSTInfo would produce a time out of whatever bytes happened to sit
+    // in the fifth position.
+    if signed.encap_content_info.econtent_type.to_string() != "1.2.840.113549.1.9.16.1.4" {
+        return None;
+    }
+    let content = signed.encap_content_info.econtent.as_ref()?;
+    let wrapped = content.decode_as::<der::asn1::OctetString>().ok()?;
+    let when = read_gen_time(wrapped.as_bytes())?;
+
+    Some(Timestamp {
+        when,
+        authority: parse_certificate(token),
+    })
+}
+
+/// `genTime` out of a `TSTInfo`, formatted as every date in this module is.
+///
+/// RFC 3161 §2.4.2 puts it fifth:
+///
+/// ```text
+/// TSTInfo ::= SEQUENCE {
+///    version         INTEGER { v1(1) },
+///    policy          TSAPolicyId,
+///    messageImprint  MessageImprint,
+///    serialNumber    INTEGER,
+///    genTime         GeneralizedTime,
+///    ...             -- five optional fields this does not read
+/// }
+/// ```
+///
+/// The four ahead of it are skipped as opaque values rather than modelled,
+/// which is deliberate: modelling `MessageImprint` and the five optional
+/// trailing fields would be a page of types to reach one string, and every one
+/// of them is a place to be wrong about a document nobody here has seen. The
+/// fields are skipped **by position**, so a `TSTInfo` that is malformed enough
+/// to shift them reads as no time rather than as the wrong time --- the parse of
+/// the fifth value as a `GeneralizedTime` is what enforces that.
+fn read_gen_time(tst_info: &[u8]) -> Option<String> {
+    use der::{Decode, Tagged as _};
+
+    let mut outer = der::SliceReader::new(tst_info).ok()?;
+    let sequence = der::asn1::AnyRef::decode(&mut outer).ok()?;
+    // Checked rather than trusted: reading the contents of something that is
+    // not a SEQUENCE would walk whatever bytes follow and could still land a
+    // plausible `GeneralizedTime`.
+    if sequence.tag() != der::Tag::Sequence {
+        return None;
+    }
+    let mut inner = der::SliceReader::new(sequence.value()).ok()?;
+    for _ in 0..4 {
+        der::asn1::AnyRef::decode(&mut inner).ok()?;
+    }
+    let at = der::asn1::GeneralizedTime::decode(&mut inner)
+        .ok()?
+        .to_date_time();
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        at.year(),
+        at.month(),
+        at.day(),
+        at.hour(),
+        at.minutes(),
+        at.seconds()
+    ))
 }
 
 /// The subject key identifier extension's octets, when the certificate has one.
@@ -2029,6 +2242,7 @@ mod tests {
             // A struct of its own, with a guard of its own ---
             // `no_certificate_field_may_carry_a_verdict`.
             certificate: _,
+            timestamp: _,
         } = signature;
     }
 
@@ -2843,6 +3057,428 @@ mod tests {
         );
         assert_eq!(certificate.authority, Some(false), "CA:FALSE, stated");
         assert_eq!(certificate.extensions_unread, 0);
+    }
+
+    /// What the authority attested, against the instant the fixture pinned.
+    ///
+    /// `genTime` is fixed by the generator rather than taken from the clock, so
+    /// this asserts the **instant** and not merely its shape --- the distinction
+    /// a serial and a date pinned out of generated bytes got wrong here once
+    /// already. The authority's name is likewise the generator's own string.
+    #[test]
+    fn the_time_a_timestamp_authority_attested_is_read() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
+            println!("[SKIP] incr-timestamped.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 2).expect("the fixture must parse");
+        let signature = &properties.signatures[0];
+        let timestamp = signature
+            .timestamp
+            .as_ref()
+            .expect("the fixture's signature carries a token");
+
+        assert_eq!(timestamp.when, "2026-08-21 12:00:00 UTC");
+        assert_eq!(
+            timestamp
+                .authority
+                .as_ref()
+                .map(|certificate| certificate.subject_cn.as_str()),
+            Some("tpdf dummy timestamp authority"),
+            "the token's own signer is the authority, read by the same parser \
+             the signer's certificate goes through"
+        );
+        assert_eq!(properties.limits.timestamps_unread, 0);
+    }
+
+    /// The attested time and the signer's own clock are two different answers.
+    ///
+    /// This is the whole reason a timestamp is worth reading separately. `/M`
+    /// is written by the machine doing the signing and nothing checks it; the
+    /// token is a third party's statement. In the fixture they differ by hours,
+    /// because the generator pins one and the signing clock supplies the other
+    /// --- so a reader that showed one number for both would be caught here.
+    #[test]
+    fn the_attested_time_is_not_the_clock_the_signer_wrote() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
+            println!("[SKIP] incr-timestamped.pdf: not generated");
+            return;
+        };
+        let signature = &scan(&bytes, 2).expect("must parse").signatures[0];
+
+        assert!(!signature.when.is_empty(), "the signer's clock is reported");
+        let attested = &signature.timestamp.as_ref().expect("a token").when;
+        assert_ne!(
+            &signature.when, attested,
+            "two sources, two answers -- and the readout must not collapse them"
+        );
+    }
+
+    /// A signature with no token reports none, and counts nothing.
+    ///
+    /// The control for every assertion above: most signatures carry no
+    /// timestamp --- 1 of 10 signed documents to hand does --- so a reader that
+    /// invented one would fail this and a reader that found none would fail
+    /// only the tests above.
+    #[test]
+    fn a_signature_with_no_token_reports_no_timestamp_and_no_failure() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
+            println!("[SKIP] incr-signed.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 1).expect("must parse");
+
+        assert!(properties.signatures[0].timestamp.is_none());
+        assert_eq!(
+            properties.limits.timestamps_unread, 0,
+            "absent is not the same as unreadable, and only one of them is a \
+             failure worth telling the reader about"
+        );
+    }
+
+    /// An ordinary signature blob is a CMS and is not a timestamp token.
+    ///
+    /// The check that makes that true is one comparison ---
+    /// `eContentType == id-ct-TSTInfo` --- and without it this would read the
+    /// encapsulated content of *any* CMS as a `TSTInfo` and hand back whatever
+    /// a `GeneralizedTime` could be made of the fifth value in it. A time
+    /// invented out of an ordinary signature is the worst outcome this module
+    /// has, because it is a plausible number attributed to an authority.
+    #[test]
+    fn an_ordinary_signature_blob_is_not_read_as_a_timestamp_token() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
+            println!("[SKIP] incr-signed.pdf: not generated");
+            return;
+        };
+        let document = Document::load_mem(&bytes).expect("must parse");
+        let mut limits = Limits::default();
+        let field = document
+            .objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .find(|dict| dict.has(b"ByteRange"))
+            .expect("the fixture is signed");
+        // `signature_contents`, not the test helper of a similar name one
+        // module down -- the collision cost a compile error, which is the
+        // outcome to want from two functions with nearly the same name.
+        let blob = signature_contents(
+            &document,
+            field,
+            MAX_SIG_BLOB,
+            &mut limits.certificates_unread,
+        )
+        .expect("a blob");
+
+        // It is a well-formed CMS -- the certificate reader gets a certificate
+        // out of it -- so this is not refused for being unparseable.
+        assert!(
+            parse_certificate(&blob).is_some(),
+            "the control: these bytes are a CMS this module reads"
+        );
+        assert!(
+            parse_timestamp_token(&blob).is_none(),
+            "and they are still not a timestamp token"
+        );
+    }
+
+    /// A real token relabelled as something else is not read as a timestamp.
+    ///
+    /// The fixture above cannot test the `eContentType` check and a mutation
+    /// deleting it **survived**, correctly: an `adbe.pkcs7.detached` signature
+    /// is *detached*, so it carries no encapsulated content at all and the step
+    /// after the check refuses it anyway. Two guards, one outcome, and the
+    /// weaker one doing the work.
+    ///
+    /// What discriminates is a CMS that **has** content the check must reject:
+    /// the real token with its content type changed and its `TSTInfo` left
+    /// exactly where it was. Reading it would be reading a time out of
+    /// something that does not claim to be a timestamp.
+    #[test]
+    fn a_token_relabelled_as_something_else_is_not_read_as_a_timestamp() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
+            println!("[SKIP] incr-timestamped.pdf: not generated");
+            return;
+        };
+        let token = timestamp_token_of(&timestamped_blob(&bytes));
+
+        // The control: as it stands it reads, so the refusal below is about the
+        // one thing that changed.
+        assert!(
+            parse_timestamp_token(&token).is_some(),
+            "the token itself reads"
+        );
+        assert!(
+            parse_timestamp_token(&relabelled(&token)).is_none(),
+            "and the same bytes under another content type do not"
+        );
+    }
+
+    /// The timestamp token out of a signature blob's unsigned attributes.
+    fn timestamp_token_of(blob: &[u8]) -> Vec<u8> {
+        use cms::content_info::ContentInfo;
+        use cms::signed_data::SignedData;
+        use der::{Decode, Encode};
+
+        let info = ContentInfo::from_der(blob).expect("a CMS");
+        let signed: SignedData = info.content.decode_as().expect("signed data");
+        let signer = signed.signer_infos.0.get(0).expect("a signer");
+        let attribute = signer
+            .unsigned_attrs
+            .as_ref()
+            .expect("unsigned attrs")
+            .iter()
+            .find(|attribute| attribute.oid.to_string() == "1.2.840.113549.1.9.16.2.14")
+            .expect("a timestamp attribute");
+        attribute.values.as_slice()[0]
+            .to_der()
+            .expect("the token's bytes")
+    }
+
+    /// A token whose encapsulated content type says it is something else.
+    ///
+    /// `id-data` rather than `id-ct-TSTInfo`. Nothing else about the token
+    /// changes, which is what makes it a control over one comparison.
+    fn relabelled(token: &[u8]) -> Vec<u8> {
+        use cms::content_info::ContentInfo;
+        use cms::signed_data::SignedData;
+        use der::{Decode, Encode};
+
+        let info = ContentInfo::from_der(token).expect("a CMS");
+        let mut signed: SignedData = info.content.decode_as().expect("signed data");
+        signed.encap_content_info.econtent_type = "1.2.840.113549.1.7.1".parse().expect("id-data");
+        let content = der::Any::encode_from(&signed).expect("re-encodable");
+        ContentInfo {
+            content_type: info.content_type,
+            content,
+        }
+        .to_der()
+        .expect("a CMS")
+    }
+
+    /// A timestamp attribute carrying several values is refused.
+    ///
+    /// The attribute's value is a `SET OF`, and RFC 3161 puts exactly one token
+    /// in it. Several is not a richer document, it is one nothing can choose
+    /// between --- and picking the first would present a guess as an
+    /// authority's statement. Refusing is the only honest answer, and it is
+    /// **counted**, because a refusal in silence reads as no timestamp at all.
+    ///
+    /// Built by hand rather than taken from a file, because no producer emits
+    /// this: the fixture is the signed one with a second copy of the token
+    /// spliced into the same attribute.
+    #[test]
+    fn a_timestamp_attribute_carrying_more_than_one_value_is_refused() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
+            println!("[SKIP] incr-timestamped.pdf: not generated");
+            return;
+        };
+        let blob = timestamped_blob(&bytes);
+        let mut unread = 0;
+
+        // The control first: as it stands, one value, and it reads.
+        assert!(
+            read_timestamp(&blob, &mut unread).is_some(),
+            "the unaltered blob carries a readable token"
+        );
+        assert_eq!(unread, 0);
+
+        let doubled = with_a_second_timestamp_value(&blob);
+        let mut unread = 0;
+        assert!(
+            read_timestamp(&doubled, &mut unread).is_none(),
+            "two values leave nothing to choose between"
+        );
+        assert_eq!(unread, 1, "and the refusal is counted, not silent");
+    }
+
+    /// A token that will not parse is counted, not read as an absent one.
+    #[test]
+    fn a_token_that_will_not_parse_is_counted_rather_than_read_as_absent() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
+            println!("[SKIP] incr-timestamped.pdf: not generated");
+            return;
+        };
+        let blob = timestamped_blob(&bytes);
+        let broken = with_broken_timestamp_attribute(&blob);
+        let mut unread = 0;
+
+        assert!(read_timestamp(&broken, &mut unread).is_none());
+        assert_eq!(
+            unread, 1,
+            "a token nobody could read is a failure worth reporting; a \
+             signature nobody timestamped is not"
+        );
+    }
+
+    /// The `/Contents` blob of the timestamped fixture.
+    fn timestamped_blob(bytes: &[u8]) -> Vec<u8> {
+        let document = Document::load_mem(bytes).expect("the fixture must parse");
+        let field = document
+            .objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .find(|dict| dict.has(b"ByteRange"))
+            .expect("the fixture is signed");
+        let mut unread = 0;
+        signature_contents(&document, field, MAX_SIG_BLOB, &mut unread).expect("a blob")
+    }
+
+    /// The same blob with a second value on the timestamp attribute.
+    ///
+    /// The second value is **not** a copy of the token, because it cannot be: a
+    /// `SET OF` forbids duplicate members and `SetOfVec::insert` refuses one.
+    /// So the attribute carries the real token and something else, which is
+    /// still the shape the guard exists for --- more than one value, nothing to
+    /// choose between them.
+    ///
+    /// Rebuilt through the CMS types rather than spliced at the byte level, so
+    /// the result is a structurally valid signature differing from the input in
+    /// exactly one thing.
+    fn with_a_second_timestamp_value(blob: &[u8]) -> Vec<u8> {
+        rebuilt_with(blob, |values| {
+            // An empty SET, whose encoding is `31 00`. The tag matters: a
+            // `SET OF` is ordered by encoded bytes, so a value beginning below
+            // 0x30 sorts **ahead** of the token, and a mutation taking the
+            // first value would then get the rubbish and fail anyway --- which
+            // is what an INTEGER did here, and the mutation survived. 0x31
+            // sorts after 0x30, so the token stays first and "take the first"
+            // and "refuse several" give different answers.
+            let other = der::Any::new(der::Tag::Set, []).expect("an empty set");
+            values.insert(other).expect("a second, different value");
+        })
+    }
+
+    /// The same blob with the token replaced by something that is not one.
+    fn with_broken_timestamp_attribute(blob: &[u8]) -> Vec<u8> {
+        rebuilt_with(blob, |values| {
+            let rubbish =
+                der::Any::encode_from(&der::asn1::Uint::new(&[7]).expect("a small integer"))
+                    .expect("encodable");
+            *values = Default::default();
+            values.insert(rubbish).expect("one value");
+        })
+    }
+
+    /// Rebuilds a signature blob with its timestamp attribute's values edited.
+    fn rebuilt_with(blob: &[u8], edit: impl FnOnce(&mut der::asn1::SetOfVec<der::Any>)) -> Vec<u8> {
+        use cms::content_info::ContentInfo;
+        use cms::signed_data::{SignedData, SignerInfos};
+        use der::{Decode, Encode};
+
+        let info = ContentInfo::from_der(blob).expect("a CMS");
+        let mut signed: SignedData = info.content.decode_as().expect("signed data");
+
+        // `SetOfVec` offers no mutable access at all, so both sets are rebuilt
+        // from clones. The fixture carries one signer, which is what makes
+        // rebuilding rather than editing straightforward here.
+        let mut signer = signed.signer_infos.0.get(0).cloned().expect("a signer");
+        let attributes = signer
+            .unsigned_attrs
+            .as_ref()
+            .expect("unsigned attrs")
+            .clone();
+        let mut edit = Some(edit);
+        let mut rebuilt = der::asn1::SetOfVec::new();
+        for attribute in attributes.iter() {
+            let mut attribute = attribute.clone();
+            if attribute.oid.to_string() == "1.2.840.113549.1.9.16.2.14" {
+                if let Some(edit) = edit.take() {
+                    edit(&mut attribute.values);
+                }
+            }
+            rebuilt.insert(attribute).expect("one attribute");
+        }
+        assert!(
+            edit.is_none(),
+            "the fixture must carry a timestamp attribute for this to alter one"
+        );
+        signer.unsigned_attrs = Some(rebuilt);
+
+        let mut infos = der::asn1::SetOfVec::new();
+        infos.insert(signer).expect("one signer");
+        signed.signer_infos = SignerInfos(infos);
+
+        let content = der::Any::encode_from(&signed).expect("re-encodable");
+        ContentInfo {
+            content_type: info.content_type,
+            content,
+        }
+        .to_der()
+        .expect("a CMS")
+    }
+
+    /// A `TSTInfo` whose fields are shifted reads as no time, not a wrong one.
+    ///
+    /// The four fields ahead of `genTime` are skipped by position rather than
+    /// modelled, which is a deliberate trade --- and this is what bounds it. A
+    /// structure short of five fields, or one whose fifth is something else,
+    /// has to yield nothing: a time read out of the wrong field would be
+    /// presented as an authority's statement, which is worse than silence.
+    #[test]
+    fn a_tst_info_that_is_not_shaped_like_one_yields_no_time() {
+        // Written as bytes rather than through a DER writer, because the point
+        // of each fixture is its *shape* and the bytes say it in one line.
+        // `02 01 vv` is an INTEGER; `30 LL` a SEQUENCE of that length.
+        let four_integers = &[
+            0x30, 0x0C, // SEQUENCE, 12 bytes
+            0x02, 0x01, 0x01, // version
+            0x02, 0x01, 0x02, // policy, standing in
+            0x02, 0x01, 0x03, // messageImprint, standing in
+            0x02, 0x01,
+            0x04, // serialNumber
+                  // and nothing where genTime belongs
+        ];
+        assert!(
+            read_gen_time(four_integers).is_none(),
+            "four fields and no fifth is not a time"
+        );
+
+        let fifth_is_not_a_time = &[
+            0x30, 0x0F, // SEQUENCE, 15 bytes
+            0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03, 0x02, 0x01, 0x04, 0x02, 0x01,
+            0x05, // an INTEGER where the GeneralizedTime belongs
+        ];
+        assert!(
+            read_gen_time(fifth_is_not_a_time).is_none(),
+            "a fifth field that is not a GeneralizedTime is not a time"
+        );
+
+        // Not a SEQUENCE at all. The discriminating shape is an OCTET STRING
+        // wrapping a body that IS well formed: an INTEGER holding rubbish is
+        // refused with or without the tag check --- the four-value walk fails on
+        // it either way --- so a mutation deleting the check survived that
+        // version of this assertion. Same contents, different tag, and only the
+        // check can tell them apart.
+        let body: &[u8] = &[
+            0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03, 0x02, 0x01, 0x04, 0x18, 0x0F,
+            b'2', b'0', b'2', b'6', b'0', b'8', b'2', b'1', b'1', b'2', b'0', b'0', b'0', b'0',
+            b'Z',
+        ];
+        let mut octet_string = vec![0x04, 0x1D];
+        octet_string.extend_from_slice(body);
+        assert!(
+            read_gen_time(&octet_string).is_none(),
+            "an OCTET STRING holding a well-formed body is still not a TSTInfo"
+        );
+        assert!(
+            read_gen_time(&[0x02, 0x01, 0x09]).is_none(),
+            "and neither is an INTEGER"
+        );
+
+        // And the control, so the three refusals above are not three ways of
+        // saying that this function never answers: the same shape with a real
+        // GeneralizedTime fifth **does** read.
+        let well_formed = &[
+            0x30, 0x1D, // SEQUENCE, 29 bytes: 12 of integers, 2 of header, 15 of time
+            0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03, 0x02, 0x01, 0x04, 0x18,
+            0x0F, // GeneralizedTime, 15 bytes
+            b'2', b'0', b'2', b'6', b'0', b'8', b'2', b'1', b'1', b'2', b'0', b'0', b'0', b'0',
+            b'Z',
+        ];
+        assert_eq!(
+            read_gen_time(well_formed).as_deref(),
+            Some("2026-08-21 12:00:00 UTC")
+        );
     }
 
     /// A document whose catalog points at the XMP packet given.
