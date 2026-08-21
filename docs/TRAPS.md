@@ -1794,6 +1794,23 @@ here. And a check whose subject is *the completeness of a list* is the one to be
 of while it is unrun, because its failure mode is silence: the list is simply short, and nothing
 about the shorter list looks wrong.
 
+**And a locked screen does not always announce itself as a refusal --- on 2026-08-21 it wore
+the shape of an application defect.** Driving the real menu bar to reproduce a save report, the
+run reported that a page rotation nine seconds after launch changed nothing: `Undo` stayed
+greyed, the file was untouched, and three consecutive launches agreed. That is a plausible and
+specific finding --- an edit silently dropped just after open --- and it was one keystroke from
+being written down. The screen had locked at 07:11:03, between the measurements that worked and
+the ones that did not: a locked session suspends the web view, so the document never opens,
+every command guarded on a document stays greyed, and a click on a greyed item does nothing at
+all. **The application looked broken because the check could not run**, and the only tell was a
+timestamp nobody had reason to read.
+
+Two habits close it, and the first is one line. Read `CGSSessionScreenIsLocked` out of
+`ioreg -n Root -d1` **before** any window-driving measurement and refuse with that as the
+reason, which `scripts/save_check.py` now does. And when a result changes partway through a
+session, ask what changed in the *machine* before believing the change is in the code: the
+successful runs and the failing ones were the same binary and the same commands, minutes apart.
+
 ### Reading a decision back out of the DOM makes the test double part of the logic
 
 `a11y.ts` builds a page element out of text nodes and `role="link"` spans, and returns whether it

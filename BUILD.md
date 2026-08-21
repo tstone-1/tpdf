@@ -2682,6 +2682,45 @@ never filed. That carry-over is the whole assertion; a second launch holding 0 m
 call is being dropped. The probe is off unless the variable is set, so a shipped run does
 not narrate its own menu bookkeeping into the one log a reader sends back.
 
+### Checking that a Save reaches the disk
+
+macOS only, and it needs a built bundle and an **unlocked** screen:
+
+```bash
+scripts/save_check.py                                  # the release bundle
+scripts/save_check.py path/to/tpdf.app testdata/outline-simple.pdf
+```
+
+It copies the fixture to a temporary directory, opens it, and drives the real
+menu --- `Page > Rotate page clockwise`, then `File > Save`, then a highlight over
+the page's own text and a second Save --- reading the *file* back each time by
+digest and through `qpdf --check`, which shares no code with anything here.
+
+**It exists because nothing else in the repository writes a file.**
+`viewer_check.py` lists `file.save` as undriven with the reason (it would write
+over the corpus fixture the rest of that run is reading), `save.rs`'s tests build
+their plans directly, and `edits.test.ts` asserts the shape of the `invoke` call.
+So when saving was reported broken from the running application on 2026-08-20,
+no check here could say whether it was, and 26.8.6 shipped with the symptom
+unreproduced.
+
+The control runs first and is the reason the rest means anything: Save must be
+**withheld** on a document with no edits. It also asserts Save greys again after
+the save --- the reopen has to produce a clean document --- and that nothing is
+left in the directory, since staging writes a sibling and renames it, so a stray
+is a commit that failed and said nothing.
+
+**A locked screen is refused, not skipped and not survived.** The web view is
+suspended while the session is locked, so the document never opens and every menu
+item stays greyed, which reads exactly like an application ignoring its own menu.
+The check reads `CGSSessionScreenIsLocked` first and exits 2 saying so.
+
+Every step of it was measured by hand on 26.8.6 before it was written --- a
+rotation and a Save changed the bytes, a highlight and a Save changed them again,
+Save was withheld at rest, and no stray was left --- but **the script as a whole
+has not yet completed a run**, because the screen locked while it was being
+written. Run it once before trusting a green line from it.
+
 ### Checking the menu bar
 
 macOS only, and it needs a built bundle and an unlocked screen --- but no document, no
@@ -2948,9 +2987,12 @@ starts at 0 and increments within the month.
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
    `print-probe` (§8), which is the only check that reaches a real spooler.
 
-   On macOS also `scripts/menu_check.py` against the bundle. It takes seconds and it reads
-   the one surface no test in either language can: a duplicate menu label shipped in 26.8.6
-   and reached a reader before anything here noticed.
+   On macOS also `scripts/menu_check.py` and `scripts/save_check.py` against the bundle.
+   Between them they read the two surfaces no test in either language can: the menu bar as
+   the reader sees it --- a duplicate label shipped in 26.8.6 and reached a reader before
+   anything here noticed --- and the file on disk after a Save, which nothing else in the
+   repository writes. Both need an unlocked screen; `save_check.py` refuses a locked one
+   rather than reporting an application that ignores its menu.
 
    **Windows produces an MSI and an NSIS installer**, since 2026-07-30. It did not until
    then, and the rule that came out of it is worth knowing before adding a probe:
