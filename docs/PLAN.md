@@ -8054,8 +8054,19 @@ machines the size moves as well** --- both runners build `incr-signed.pdf` at 8,
 this laptop's 8,128. So nothing absolute may be pinned out of one. The local pair agreeing on size
 is exactly what made the size look safe, and the first push turned both legs red on it.
 
-**Still not rehearsed on a runner.** A workflow's last step is its least-tested code, and the tag
-glob accepts an `-rcN` suffix for exactly this.
+**Run on both runners, green.** macOS and Windows each install pyhanko, build the nine signed
+fixtures and run the suite against them --- and it took three pushes, because the fixtures are
+generated per machine and three assertions had pinned values out of one. Those are one trap
+between them.
+
+**A rehearsal tag would now add nothing, and that is a claim with a check behind it rather than
+an excuse.** The habit exists because `release.yml`'s `gates` job is a copy of `ci.yml`'s and
+once lost a whole step. It is no longer a copy anybody maintains: `check_workflow_parity.py`
+compares the two jobs step for step and reports **the same 10 steps in the same order**, the two
+job headers are byte-identical outside those steps --- same name, same matrix, same runner
+images --- and CI has just run exactly those steps green on both platforms. What a tag would
+re-run beyond that is the build, signing and notarization, which this change does not touch and
+which four rehearsal tags proved for `26.8.0`.
 
 ### Phase 3 --- Redaction
 
