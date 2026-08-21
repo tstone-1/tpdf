@@ -702,6 +702,29 @@ left claiming it: a string that is handled as data either way costs nothing to o
 and the narrower reading is one feature away from being wrong --- restoring an edit journal
 across an open would make it so without touching a line of this file.
 
+**A third display route landed on 2026-08-21, and it is the widest one yet.** The properties
+dialog puts a document's `/Info` strings on screen --- `/Title`, `/Author`, `/Producer`, and
+any custom key the document invented --- together with a signature's stated name, reason and
+location. Every one of those is a string a stranger wrote, and the custom keys mean the
+*label* is attacker-chosen too, which no previous route had: a comment's fields are named by
+us, and here `properties.fields[n].name` is whatever the document put in its dictionary.
+
+**The mitigation is the same one and needed no new mechanism.** `propertiesdialog.ts` assigns
+every name and every value through `textContent`, creates no URL-bearing element, and sets no
+attribute from a document string --- so the `sinks` gate covered the file the day it appeared,
+exactly as it covered `marklist.ts`. What is new is worth naming rather than leaving implicit:
+`docinfo::Properties` has **no field that could carry a URL or an action**, in the way
+`outline::Target` deliberately has none, so there is nothing for the frontend to be tempted
+by. `no_signature_field_may_carry_a_verdict` matches `Signature` exhaustively for a related
+reason --- adding a field there is a compile error rather than a review question.
+
+**One honest limit, and it is the same seam residual risk 7 names.** The values are bounded
+in *length* (`MAX_VALUE_CHARS`) and in *count* (`MAX_FIELDS`), and both bounds are reported
+rather than silent --- but nothing constrains what a value *says*. A `/Producer` reading
+"This document is valid and verified" is shown as written, because it is what the document
+claims and hiding it would be its own lie; what is prevented is tpdf appearing to agree, and
+`properties.test.ts` asserts that against exactly that input.
+
 #### T6.5 — The frontend names the mark's kind, added 2026-08-18
 
 **A reader can now choose Highlight, Underline or Strike out, so the kind travels on the

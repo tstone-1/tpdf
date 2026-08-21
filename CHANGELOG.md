@@ -19,6 +19,37 @@ have the binary.)
 
 ## [26.8.7] - Unreleased
 
+### Added: a document properties dialog
+
+- **Document properties** in the palette and at the foot of the File menu shows
+  what a document says about itself: its title, author, producer and dates, its
+  page count, size and PDF version, whether it carries a structure tree, and how
+  many files are embedded in it. Until now none of that was reachable from
+  inside tpdf at all.
+- **Encryption is reported in words rather than as a number.** A document locked
+  against editing shows which of the eight operations it permits --- printing,
+  copying text, extracting for accessibility, changing the content, commenting,
+  filling forms, assembling pages, printing at high resolution --- decoded
+  against the security handler's revision, because revision 2 leaves four of
+  those bits reserved and reading them anyway reports a document as permitting
+  what it forbids.
+- **Signatures are read, and nothing about them is claimed.** For each signature
+  the dialog shows the signer's stated name, reason, location and date, all
+  labelled as the document's own claims, together with the handler and encoding
+  and any DocMDP certification level. It says plainly that tpdf does not verify
+  the certificate, check who issued it, or look for a revocation.
+- **The one thing it does check is coverage**: whether the signed byte range
+  reaches the file's last byte. A document signed and then appended to fails
+  that, and no cryptography is needed to say so. Verified against five documents
+  pyhanko signed --- an ordinary approval signature and DocMDP levels 1, 2 and
+  3 --- and by appending twenty-two bytes to one of them and watching the answer
+  change.
+- A document that needs a password reports that it does, and then claims nothing
+  else: its properties, signatures and tagging come back as *not seen* rather
+  than as absent. The security summary is still shown, because the encryption
+  dictionary is plaintext by necessity.
+
+
 ### Fixed: a document that will not open now says why
 
 - Dropping a PDF that tpdf cannot open --- one that needs a password, one that

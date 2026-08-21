@@ -114,6 +114,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.extractPages",
       SEPARATOR,
       "file.print",
+      SEPARATOR,
+      // Last, in a group of its own: everything above acts *on* the document
+      // and this only reports about it, so it reads as a fourth action when it
+      // sits flush against the print item.
+      "file.properties",
     ],
   },
   {

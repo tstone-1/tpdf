@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 404 entries
+The one thing this file does *not* carry in full is the trap list --- 406 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -481,8 +481,8 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
-**Comments and links are both read through `lopdf`, not through PDFium, and that is a
-measurement rather than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
+**Comments, links and a document's own properties are read through `lopdf`, not through
+PDFium, and that is a measurement rather than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
 anything was written --- but every one of them needs an `FPDF_PAGE`, and `FPDF_LoadPage`
 re-parses each time at up to 44 ms on a complex page. The panel's question is about the whole
 document, so through PDFium it is a page load per page; through the object graph it is one
@@ -499,6 +499,20 @@ page. So `links.pdf` gives its outline entries the same destinations as its link
 each other, since two resolvers wrong in the same way agree perfectly. **It found a defect on
 its first run**: `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every `/FitH`
 outline entry had been landing at the top of its page since `outline.rs` was written.
+
+**The properties readout takes the same route, and there the PDFium alternative genuinely
+existed.** All eight `FPDF*Signature*` symbols are exported by the vendored build --- checked
+with `nm`, not assumed --- so `docinfo.rs`'s signature half could have gone through it.
+`FPDFSignatureObj_*` has no accessor for the signature *field's* name, none for `/Location`,
+and nothing at all for `/Info` or `/Encrypt`, so a PDFium implementation would still have
+needed this parse and would then have been a second resolver to disagree with it. What that
+API is good for is a **differential**, which is the same instrument `links-probe --mode agree`
+is and is not built here.
+
+Two things in that module are traps rather than choices, both in the index: `lopdf::decrypt`
+removes the `/Encrypt` trailer entry, so the encryption has to be read **before** it; and the
+permission bits do not mean the same thing at every revision, because bits 9 to 12 are
+reserved under revision 2 and a negative `/P` sets all four.
 
 **What PDFium does supply is the marks themselves**, and that is why no drawing was added.
 `progressive.rs` renders with `FPDF_ANNOT`, so a sticky note's icon and a highlight's wash are
@@ -997,8 +1011,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 404 of them and the full text
-was 93% of this file --- an instruction budget spent on the 401 traps that are not
+titles. Only the titles are here, because there are 406 of them and the full text
+was 93% of this file --- an instruction budget spent on the 403 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1140,6 +1154,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `/F` is a bit field, and the flag every real link sets is not the one you are testing
 - One predicate answering three questions is right until a second kind makes them disagree (no test could have said which of the three it was checking)
 - Padding a rectangle to make one refusal legal disables the check that refusal was doing (the trigger was a fix, not a feature, and no assertion moved)
+- A byte grep cannot see inside an object stream, and it returns enough hits to look like it worked (five keys answered zero and all five were present; encryption was the innocent explanation everyone reached for)
+- `lopdf::decrypt` removes the entry that says the document is encrypted (so asking afterwards reports a plainly locked document as unencrypted, permissions and all)
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code

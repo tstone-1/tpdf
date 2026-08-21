@@ -209,12 +209,19 @@ describe("buildMenu", () => {
     const file = buildMenu(registry()).find(
       (section) => section.title === "File",
     );
+    // Pinned as a whole rather than derived from `MENU_LAYOUT`, deliberately:
+    // a check that reads the layout to decide what the layout should produce
+    // agrees with itself whatever either says. The cost is that adding a
+    // command to the File menu edits this line, which is the point --- the
+    // menu's shape is a decision, and a decision should not change silently.
     expect(file?.items.map((item) => item.kind)).toEqual([
       "command",
       "command",
       "separator",
       "command",
       "command",
+      "command",
+      "separator",
       "command",
       "separator",
       "command",

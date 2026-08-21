@@ -11589,3 +11589,59 @@ The general shape, which is not about PDFs: any loop that fixes up an item by re
 previous one has an orphan at the front, and the fix is a second pass in the other direction.
 Reaching for `last` and never asking what it holds on the first iteration is how it gets
 written.
+
+### A byte grep cannot see inside an object stream, and it returns enough hits to look like it worked
+
+Asked whether a reader's compliance certificate carried a digital signature, the first
+instrument reached for was a grep over the file's bytes for `/ByteRange`, `/Sig`,
+`/SubFilter`, `/AcroForm` and `/Perms`. All five returned **zero**, and the answer given was
+"this document is not signed".
+
+It is signed. It carries an `adbe.pkcs7.detached` signature by a certification authority,
+at DocMDP level 1, whose byte range covers the whole file.
+
+The mechanism is not encryption, which is what the same file's `/Encrypt` invited everyone
+to blame. **Dictionary keys stay plaintext under `/Encrypt`** --- a reader has to find
+`/Root` before it can decrypt anything --- so that reasoning was sound and the conclusion
+was still wrong. The blinder is **compression**: the document's second revision uses a
+cross-reference stream with compressed object streams, and every one of those five keys
+lives inside a `FlateDecode`d `/ObjStm`. A grep over the file cannot see any of them.
+
+**What made it convincing is the part worth remembering.** The same grep *did* return hits
+--- two each for `/Creator`, `/Producer`, `/CreationDate` and `/ModDate` --- because the
+first revision was written uncompressed. So the instrument produced a plausible, partial,
+correctly-formatted answer, which is far more persuasive than returning nothing. A tool that
+finds *some* of what you asked for reads as a working tool.
+
+Two habits close it, and the second is the general one:
+
+- **Ask a parser, not the bytes.** `qpdf --json --decrypt` answered the whole question in
+  one call, including the byte range and the DocMDP level. `qpdf --show-encryption` decoded
+  the permissions in the same second.
+- **A negative result from a grep over a binary format is not evidence of absence.** PDF,
+  DOCX, XLSX and every zip-shaped format hide their structure behind compression by default,
+  and the modern default for PDF *is* object streams. Reach for grep to find something, never
+  to establish that it is not there.
+
+### `lopdf::decrypt` removes the entry that says the document is encrypted
+
+`Document::decrypt` ends with `self.trailer.remove(b"Encrypt")` and deletes the object it
+pointed at. That is correct --- the strings and streams are now plaintext, so a trailer
+still advertising a security handler would describe a document that no longer exists --- and
+it means **`is_encrypted()` answers `false` immediately afterwards**.
+
+So a properties readout that decrypts first and then asks what the encryption was reports
+*none*, for a document that is plainly locked, with all eight of its permissions gone with
+it. The order is the whole of the fix and it is one line apart either way, which is what
+makes it easy to get wrong while reading well.
+
+`docinfo.rs` reads the encryption dictionary **before** calling `decrypt`, and the mutation
+`docinfo: ask about the encryption after decrypting rather than before` is what keeps that
+true. It is worth noticing that this is safe to do: every field a reader wants from that
+dictionary --- `/V`, `/R`, `/P`, `/Length`, `/CF` --- is plaintext by necessity, because a
+reader needs them before it can derive a key. The security summary is therefore available
+even for a document nothing can open, which is exactly when somebody wants it.
+
+The same shape as the crop-box trap two hundred entries above: **PDFium has no "put it
+back"**, and neither does this. A value you can only read once has to be read at the one
+moment it is there.

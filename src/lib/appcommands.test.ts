@@ -103,6 +103,7 @@ function harness(
     isDirty: () => dirty,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    showProperties: () => fired.push("showProperties"),
   };
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);
@@ -707,6 +708,7 @@ describe("the window shortcuts for editing", () => {
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    showProperties: () => fired.push("showProperties"),
     };
     return { fired, actions };
   }

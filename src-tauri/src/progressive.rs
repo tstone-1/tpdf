@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 use pdfium_render::prelude::*;
 
 use crate::annots::{self, Comments};
+use crate::docinfo::{self, Properties};
 use crate::encoding::{self, PageMapping};
 use crate::links::{self, Links};
 
@@ -212,6 +213,12 @@ pub struct RawDocument {
     /// a page is on screen rather than when a panel opens, so this is warmed
     /// just after first paint instead of on demand.
     links: OnceCell<Result<Links, String>>,
+    /// What the document says about itself, read at most once.
+    ///
+    /// Lazy and cached like [`RawDocument::comments`], and the laziest of the
+    /// three: nothing asks for this until a reader opens the properties dialog,
+    /// which most never will.
+    properties: OnceCell<Result<Properties, String>>,
 }
 
 /// `FPDF_ERR_*` codes from `fpdfview.h`.
@@ -345,6 +352,7 @@ impl RawDocument {
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
             links: OnceCell::new(),
+            properties: OnceCell::new(),
         })
     }
 
@@ -381,6 +389,7 @@ impl RawDocument {
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
             links: OnceCell::new(),
+            properties: OnceCell::new(),
         })
     }
 
@@ -467,6 +476,22 @@ impl RawDocument {
                     .source_bytes()
                     .ok_or_else(|| "the document's bytes could not be read".to_string())?;
                 links::scan(&bytes, self.page_count() as usize)
+            })
+            .clone()
+    }
+
+    /// What the document says about itself, read at most once.
+    ///
+    /// # Errors
+    ///
+    /// The bytes not being readable, or `lopdf` refusing to parse them.
+    pub fn properties(&self) -> Result<Properties, String> {
+        self.properties
+            .get_or_init(|| {
+                let bytes = self
+                    .source_bytes()
+                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+                docinfo::scan(&bytes, self.page_count())
             })
             .clone()
     }

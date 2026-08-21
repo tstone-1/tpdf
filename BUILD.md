@@ -1800,6 +1800,13 @@ scripts/viewer_sweep.py --list          # the 14 corpora, and every fixture excl
 scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf
 ```
 
+> **Not yet re-measured with the properties checks.** The properties dialog added five
+> names to every corpus on 2026-08-21, and the sweep below is a run from before it --- so
+> the totals in the table are five short of what the next run will print, and the invariant
+> the sweep asserts is the *agreement* between corpora rather than any particular number.
+> Written down rather than left to be noticed, because the table looks measured either way
+> and a stale total reads exactly like a current one.
+
 Every run reports the same check names; what differs is how many are `[SKIP]` with a reason,
 and a name that goes missing rather than skipping is the bug this arrangement exists to catch.
 **The script asserts that**, as a set difference across the corpora, rather than leaving it to
