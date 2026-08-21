@@ -7798,10 +7798,24 @@ and the refusal *counted* through `limits.unreadable`, because a signature dropp
 word is indistinguishable from a document that has none. A `/Kids` chain is attacker-shaped and
 nothing had ever reached that bound.
 
-**Not done.** A fully qualified field name is the `/T` values joined down the chain, and
-`signature.field` reports the leaf's `/T` alone --- `Signature1` where Acrobat would say
-`top.group.Signature1`. Harmless on every fixture here because the leaf names are unique, and
-wrong on a document that reuses a leaf name under two groups.
+**The name is the qualified one as of 2026-08-21**, which closes the *Not done* that stood
+here. It is the `/T` values joined down the chain with a period --- PDF 32000-1 §12.7.3.2 ---
+so the nested fixture reports `top.group.Signature1` where it used to report `Signature1`.
+
+The reason it is worth more than tidiness is that **`/T` is unique among siblings only**. A
+form that groups its fields is free to put a `Signature1` under each group, and the leaf's own
+name is then one string standing for two fields --- which on a document with two signatures is
+the one place a reader most needs them told apart. Every fixture here has unique leaf names, so
+this is a case where the right rule and the wrong rule agree on all of them and a synthetic
+document is the only thing that can discriminate; the trap of that name is the general form.
+
+A node carrying no `/T` is **not** a level of the name, which the specification says and which
+matters twice over: a widget annotation merged into its own field is such a node, and so is a
+group written only to hold kids together. Joining unconditionally would put an empty component
+in the middle --- `top..Signature1` --- and would name a wholly anonymous chain `.`.
+
+PDFium exposes no field name at all, so `--mode agree` cannot corroborate any of this either;
+it stands on the three unit tests, one of which runs against the real nested fixture.
 
 ### Phase 3 --- Redaction
 

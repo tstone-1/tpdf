@@ -82,6 +82,12 @@ have the binary.)
   is how Acrobat writes one when the fields are grouped. tpdf walks the tree.
   Chrome's PDF engine does not, so a document like that shows no signature at
   all there and its signature here.
+- **A signature field is named the way Acrobat names it**, by its own name and
+  the names of the groups it sits inside, joined with a period ---
+  `top.group.Signature1` rather than `Signature1`. That matters on a form with
+  more than one signature: a field's own name is unique only among its
+  siblings, so a document with a `Signature1` under each of two groups gave
+  both of them the same heading.
 - **PDFium reads the same signatures independently, and now the two are
   compared.** `signature-probe` puts our reading of a document's signatures next
   to PDFium's own --- the count, the encoding, the reason, the signing time, the
