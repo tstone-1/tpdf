@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 406 entries
+The one thing this file does *not* carry in full is the trap list --- 408 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -76,8 +76,9 @@ edit it by hand; a hand-maintained notices file is wrong the first time a depend
 and nothing says so.
 
 **The `cargo metadata` sweep this file has recommended since the beginning is real and
-structurally incomplete, and the gap is the whole product.** It sees 531 cargo packages. It
-is blind to the **fourteen C++ libraries compiled into libpdfium** --- FreeType, ICU,
+structurally incomplete, and the gap is the whole product.** It sees every cargo package ---
+572 of them on 2026-08-21, a figure that belongs in the command's output rather than in this
+sentence. It is blind to the **fourteen C++ libraries compiled into libpdfium** --- FreeType, ICU,
 libjpeg-turbo, libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float,
 simdutf, llvm-libc --- because no cargo command can see inside a prebuilt blob, and that
 blob is the thing that actually parses PDFs. A sweep complete over cargo and silent about
@@ -473,6 +474,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite; still wanted for preserving encryption and for object streams |
 | macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** --- paginates and runs the panel; also the independent parser every print job is read back with |
 | Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** --- reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
+| Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** --- reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building, and PDFium's own read-only signature API stays unused so the two cannot drift |
 
 The PDFium pin is `chromium/7881`, installed by `scripts/fetch_pdfium.py` and verified by
 digest. Every measurement in this file was taken against that build, so bumping it
@@ -509,6 +511,14 @@ needed this parse and would then have been a second resolver to disagree with it
 API is good for is a **differential**, which is the same instrument `links-probe --mode agree`
 is and is not built here.
 
+**Since 2026-08-21 that module also parses the signer's certificate**, which is a second ASN.1
+parser on attacker-chosen bytes and is bounded and sandboxed accordingly --- see
+`docs/THREAT-MODEL.md` §T6.4 and *Who signed it* in `docs/PLAN.md`. The route stays `lopdf`
+plus `cms` rather than PDFium for the same reason and one more: `FPDFSignatureObj_GetCert`
+hands back the DER of the signer's certificate and nothing above it, so the chain length and
+the `matched_signer` distinction would be unavailable through it. The differential is still
+worth building and is still not built.
+
 Two things in that module are traps rather than choices, both in the index: `lopdf::decrypt`
 removes the `/Encrypt` trailer entry, so the encryption has to be read **before** it; and the
 permission bits do not mean the same thing at every revision, because bits 9 to 12 are
@@ -533,10 +543,26 @@ for caseless *matching*. It brings `unicode-normalization` (MIT OR Apache-2.0) w
 `tinyvec`/`tinyvec_macros` (permissive) --- the only genuinely new packages either of them adds.
 
 Both checked with `cargo metadata` over the whole tree rather than from a README, which is the
-standing rule for anything the licensing constraint above touches. The sweep covers all 531
-packages and looks for the copyleft families by name; the only hits are MPL-2.0 (file-level, in
+standing rule for anything the licensing constraint above touches. The sweep looks for the
+copyleft families by name across the whole tree; the only hits are MPL-2.0 (file-level, in
 Servo's CSS crates via Tauri) and a triple-licensed `r-efi` whose `MIT OR Apache-2.0` arm
-applies, so the option of making this repository public is intact.
+applies, so the licence the repository already grants is intact.
+
+That sentence carried a package count for weeks and it is deliberately gone. It read **531**
+while the tree held 572, having been left behind by the updater plugin's 48 crates and again
+by the certificate reader's 9 --- a number in prose with no gate behind it, which is the
+failure this file already records about the trap count and then repeated here. The authority
+is the command: `cargo metadata --format-version 1 | python3 -c 'import json,sys;
+print(len(json.load(sys.stdin)["packages"]))'`.
+
+**Three crates read certificates, added 2026-08-21**: `cms` for the CMS `SignedData` in a
+signature's `/Contents`, `x509-cert` for the certificate inside it, and `der` underneath both.
+Nine packages in total (563 to 572), every one `Apache-2.0 OR MIT` except `flagset`, which is
+`Apache-2.0` alone. They matter to the threat model as much as to the licence: this is a
+**second ASN.1 parser on attacker-chosen bytes**, and `docs/THREAT-MODEL.md` §T6.4 records
+what bounds it --- it runs in the worker, the blob is capped at `MAX_SIG_BLOB` before the
+parser sees it, and exceeding that is reported rather than passed off as a document with no
+certificate.
 
 Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) --- the
@@ -1011,8 +1037,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 406 of them and the full text
-was 93% of this file --- an instruction budget spent on the 403 traps that are not
+titles. Only the titles are here, because there are 408 of them and the full text
+was 93% of this file --- an instruction budget spent on the 405 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1390,6 +1416,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mechanical edit keyed on a field name hits every occurrence of that name (six wrong insertions: a parameter list, a request payload, an assertion, a check table; make the field required and let the type-checker enumerate the real sites)
 - An AppleScript loop over a property list iterates a reference, and every menu reads as empty (an instrument failure wearing the shape of a finding; two causes, one symptom, six lines)
 - A harness that edits source files pays for the editor watching them (4.4 hours to 405 s; the language server held the build lock, and the suite ran 607 tests to check one assertion)
+- A documented cost measured warm is the wrong number for the run you are about to make (0.47 s, ~8 s, 2 min 58 s and longer are all the same command; the correction written first was wrong in both halves, and its long figure had a second copy of itself contending for the build lock)
+- A mutation block below the `__main__` guard is counted by the gate and run by nothing (251 anchors green, 241 registered, ten new mutations silently absent; the gate imports and a run executes, and undoing the control with `git checkout` discarded them a second time)
 - Narrowing a run made a shape the output parser had assumed away (with one file in the run nothing passed, and `Tests 2 failed (2)` read as a run that never finished)
 
 ### Windows and portability

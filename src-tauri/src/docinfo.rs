@@ -77,6 +77,15 @@ const MAX_SIGNATURES: usize = 32;
 /// Longest reported value, in characters, before it is clipped.
 const MAX_VALUE_CHARS: usize = 512;
 
+/// The largest `/Contents` blob a certificate is parsed out of.
+///
+/// A real PKCS#7 blob is tens of kilobytes; the largest seen here is 184 KB, on
+/// a document carrying a full chain and a timestamp. This bound exists because
+/// the blob is attacker-chosen DER handed to a parser, and a document is free
+/// to make it a megabyte of nesting. Exceeding it is reported through
+/// [`Limits::certificates_unread`] rather than passed off as "no certificate".
+const MAX_SIG_BLOB: usize = 1024 * 1024;
+
 /// The `/Info` keys PDF 32000-1 §14.3.3 defines, in the order a reader wants.
 ///
 /// Order is the point: a document's own dictionary order is arbitrary, and
@@ -164,6 +173,58 @@ pub struct Signature {
     /// discriminator it looks like --- a validator rejects edits the
     /// specification permits --- so it is reported and not acted on.
     pub certification: u8,
+    /// What the signing certificate says, when one could be read.
+    ///
+    /// `None` means either that the blob carried no certificate or that it
+    /// could not be parsed; [`Limits::certificates_unread`] separates the two.
+    pub certificate: Option<Certificate>,
+}
+
+/// What the signing certificate says, as against what the signer typed.
+///
+/// Read out of the DER blob in `/Contents`. **Nothing here is verified.** No
+/// chain is built, no issuer is looked up, no revocation list is consulted, and
+/// the signature is never tested against the bytes it covers. A certificate is
+/// a document like any other and states whatever its issuer put in it.
+///
+/// The reason it is worth reading at all is *provenance*, not validity.
+/// [`Signature::name`] is free text the signer typed into the PDF; this is what
+/// somebody put into a certificate and signed with a key. The two can disagree,
+/// and on the fixtures here one of them is routinely empty while the other is
+/// not --- `incr-signed.pdf` has no `/Name` and a certificate reading
+/// `CN=tpdf spike 0.6 test signer`.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Certificate {
+    /// The subject's distinguished name, near enough RFC 4514 form.
+    pub subject: String,
+    /// The subject's common name on its own, empty when it has none.
+    pub subject_cn: String,
+    /// The issuer's distinguished name.
+    pub issuer: String,
+    /// The issuer's common name on its own.
+    pub issuer_cn: String,
+    /// The serial number as uppercase hex, no separators.
+    pub serial: String,
+    /// `notBefore`, formatted as every other date in this module is.
+    pub from: String,
+    /// `notAfter`.
+    pub until: String,
+    /// Issuer and subject are the same name.
+    ///
+    /// A checked fact about two byte strings, and **not** a verdict: a
+    /// self-issued certificate is how every root in every trust store starts,
+    /// and it is also what an unvouched-for signer produces. Which of those
+    /// this is cannot be decided without a trust store, which tpdf has not got.
+    pub self_issued: bool,
+    /// How many certificates the blob carried, this one included.
+    pub chain: u32,
+    /// The signer's certificate was identified by `SignerInfo.sid`.
+    ///
+    /// False when the blob held exactly one certificate and the identifier did
+    /// not match it, in which case the only certificate present is reported
+    /// because a set of one leaves nothing to choose between. A blob with
+    /// several and no match reports no certificate at all rather than guessing.
+    pub matched_signer: bool,
 }
 
 /// What could not be read, so nothing here is silently partial.
@@ -184,6 +245,13 @@ pub struct Limits {
     pub signatures_dropped: usize,
     /// `/Fields` entries that resolved to nothing usable.
     pub unreadable: usize,
+    /// Signatures whose `/Contents` blob carried a certificate we could not read.
+    ///
+    /// Separate from a signature that simply has none, because the two want
+    /// opposite readings: absent is a fact about the document, unread is a fact
+    /// about tpdf, and reporting the second as the first would be tpdf agreeing
+    /// with itself.
+    pub certificates_unread: usize,
 }
 
 impl Limits {
@@ -195,6 +263,7 @@ impl Limits {
             || self.values_clipped > 0
             || self.signatures_dropped > 0
             || self.unreadable > 0
+            || self.certificates_unread > 0
     }
 }
 
@@ -702,14 +771,19 @@ fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<S
             continue;
         }
 
-        out.push(read_signature(document, field, size));
+        out.push(read_signature(document, field, size, limits));
     }
 
     out
 }
 
 /// Reads one signature field.
-fn read_signature(document: &Document, field: &Dictionary, size: u64) -> Signature {
+fn read_signature(
+    document: &Document,
+    field: &Dictionary,
+    size: u64,
+    limits: &mut Limits,
+) -> Signature {
     let text = |dict: &Dictionary, key: &[u8]| -> String {
         dict.get(key)
             .ok()
@@ -764,7 +838,264 @@ fn read_signature(document: &Document, field: &Dictionary, size: u64) -> Signatu
     }
 
     out.certification = certification_of(document, sig);
+    out.certificate = read_certificate(document, sig, limits);
     out
+}
+
+/// Reads the signer's certificate out of the `/Contents` blob.
+///
+/// `/Contents` holds DER: a CMS `ContentInfo` wrapping a `SignedData`, whose
+/// optional `certificates` set carries the signer's certificate and usually the
+/// chain above it. The set is *unordered* --- taking its first element would
+/// name a certificate authority as the signer about as often as not --- so the
+/// signer is identified through `SignerInfo.sid`, which is either an issuer and
+/// serial pair or a subject key identifier.
+///
+/// Returns `None` and leaves `limits` untouched when there is simply nothing to
+/// read; increments [`Limits::certificates_unread`] when there was and it could
+/// not be parsed.
+fn read_certificate(
+    document: &Document,
+    sig: &Dictionary,
+    limits: &mut Limits,
+) -> Option<Certificate> {
+    read_certificate_bounded(document, sig, limits, MAX_SIG_BLOB)
+}
+
+/// [`read_certificate`] with its bound named, so a test can make a *valid* blob
+/// exceed it.
+///
+/// The bound cannot be tested with an oversized piece of garbage: refusing it
+/// and parsing it and failing produce the same `None` and the same increment,
+/// so such a test passes whether the guard is there or not --- which is what
+/// the first version of it did, and a mutation deleting the guard survived it.
+/// Handing a real signature's blob a bound of a hundred bytes is the only
+/// arrangement where the two outcomes differ.
+fn read_certificate_bounded(
+    document: &Document,
+    sig: &Dictionary,
+    limits: &mut Limits,
+    bound: usize,
+) -> Option<Certificate> {
+    let raw = sig
+        .get(b"Contents")
+        .ok()
+        .and_then(|o| resolve(document, o).as_str().ok())?;
+
+    // A signature is written by reserving a fixed span and filling it, so the
+    // blob is right-padded with zeros to whatever the writer reserved. Those
+    // are not part of the DER and a decoder is entitled to reject them.
+    // All zeros is a reserved-but-unwritten placeholder, not a failure --- so
+    // this leaves `limits` alone, and a mutation that increments here is caught
+    // by `an_untouched_placeholder_is_absent_rather_than_unread`.
+    let last = raw.iter().rposition(|b| *b != 0)?;
+    let der_bytes = &raw[..=last];
+
+    if der_bytes.len() > bound {
+        limits.certificates_unread += 1;
+        return None;
+    }
+
+    match parse_certificate(der_bytes) {
+        Some(certificate) => Some(certificate),
+        None => {
+            limits.certificates_unread += 1;
+            None
+        }
+    }
+}
+
+/// The DER half of [`read_certificate`], split out so a test can hand it bytes.
+fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
+    use cms::cert::CertificateChoices;
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::{SignedData, SignerIdentifier};
+    use der::{Decode, Encode};
+
+    let info = ContentInfo::from_der(der_bytes).ok()?;
+    let signed: SignedData = info.content.decode_as().ok()?;
+    let set = signed.certificates.as_ref()?;
+
+    let certificates: Vec<&x509_cert::Certificate> = set
+        .0
+        .iter()
+        .filter_map(|choice| match choice {
+            CertificateChoices::Certificate(certificate) => Some(certificate),
+            CertificateChoices::Other(_) => None,
+        })
+        .collect();
+    let chain = u32::try_from(certificates.len()).unwrap_or(u32::MAX);
+    if certificates.is_empty() {
+        return None;
+    }
+
+    let wanted = signed
+        .signer_infos
+        .0
+        .as_slice()
+        .first()
+        .map(|info| &info.sid);
+    let matched = wanted.and_then(|sid| {
+        certificates.iter().copied().find(|certificate| match sid {
+            SignerIdentifier::IssuerAndSerialNumber(both) => {
+                certificate.tbs_certificate.serial_number == both.serial_number
+                    && certificate.tbs_certificate.issuer.to_der().ok() == both.issuer.to_der().ok()
+            }
+            SignerIdentifier::SubjectKeyIdentifier(key) => {
+                subject_key_identifier(certificate).is_some_and(|ski| ski == key.0.as_bytes())
+            }
+        })
+    });
+
+    // A set of one leaves nothing to choose between, so an identifier that does
+    // not match it is a disagreement about naming rather than an ambiguity ---
+    // report the certificate and say the match failed. Several with no match is
+    // a genuine ambiguity and reports nothing.
+    let (certificate, matched_signer) = match (matched, certificates.as_slice()) {
+        (Some(certificate), _) => (certificate, true),
+        (None, [only]) => (*only, false),
+        (None, _) => return None,
+    };
+
+    let tbs = &certificate.tbs_certificate;
+    let subject = distinguished_name(&tbs.subject);
+    let issuer = distinguished_name(&tbs.issuer);
+    Some(Certificate {
+        subject_cn: common_name(&tbs.subject),
+        issuer_cn: common_name(&tbs.issuer),
+        self_issued: tbs.subject.to_der().ok() == tbs.issuer.to_der().ok(),
+        subject,
+        issuer,
+        serial: hex_of(tbs.serial_number.as_bytes()),
+        from: certificate_date(&tbs.validity.not_before),
+        until: certificate_date(&tbs.validity.not_after),
+        chain,
+        matched_signer,
+    })
+}
+
+/// The subject key identifier extension's octets, when the certificate has one.
+fn subject_key_identifier(certificate: &x509_cert::Certificate) -> Option<Vec<u8>> {
+    use der::{asn1::OctetString, Decode};
+
+    certificate
+        .tbs_certificate
+        .extensions
+        .as_ref()?
+        .iter()
+        // 2.5.29.14, the subject key identifier, written out rather than pulled
+        // from a constant database so the dependency stays to what is parsed.
+        .find(|extension| extension.extn_id.to_string() == "2.5.29.14")
+        .and_then(|extension| OctetString::from_der(extension.extn_value.as_bytes()).ok())
+        .map(|octets| octets.as_bytes().to_vec())
+}
+
+/// A distinguished name, near enough RFC 4514: `CN=Someone, O=Something`.
+///
+/// Written out rather than taken from `RdnSequence`'s own `Display`, because
+/// that one escapes for round-tripping and this string is read by a person.
+fn distinguished_name(name: &x509_cert::name::Name) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for rdn in name.0.iter() {
+        for attribute in rdn.0.as_slice() {
+            let value = attribute_text(attribute);
+            if value.is_empty() {
+                continue;
+            }
+            parts.push(format!(
+                "{}={}",
+                short_oid(&attribute.oid.to_string()),
+                value
+            ));
+        }
+    }
+    parts.join(", ")
+}
+
+/// The common name alone, which is what a person reads as "who signed this".
+fn common_name(name: &x509_cert::name::Name) -> String {
+    for rdn in name.0.iter() {
+        for attribute in rdn.0.as_slice() {
+            if attribute.oid.to_string() == "2.5.4.3" {
+                return attribute_text(attribute);
+            }
+        }
+    }
+    String::new()
+}
+
+/// The short label for the attribute types a certificate actually uses.
+///
+/// Anything else keeps its numeric form, which is honest --- a made-up
+/// abbreviation would read as a standard one.
+fn short_oid(oid: &str) -> &str {
+    match oid {
+        "2.5.4.3" => "CN",
+        "2.5.4.6" => "C",
+        "2.5.4.7" => "L",
+        "2.5.4.8" => "ST",
+        "2.5.4.10" => "O",
+        "2.5.4.11" => "OU",
+        "2.5.4.5" => "SERIALNUMBER",
+        "1.2.840.113549.1.9.1" => "E",
+        other => other,
+    }
+}
+
+/// One name attribute's text.
+///
+/// A directory string is one of five ASN.1 string types and the encoding is the
+/// issuer's choice. `BMPString` is UTF-16BE and is what Windows certificate
+/// authorities emit, so it is decoded rather than shown as interleaved nulls;
+/// the rest carry their text as bytes. Anything undecodable comes back lossily
+/// rather than empty, because a mangled name still tells a reader who it is not.
+fn attribute_text(attribute: &x509_cert::attr::AttributeTypeAndValue) -> String {
+    use der::Tagged as _;
+
+    let bytes = attribute.value.value();
+    // Tag 0x1E is BMPString.
+    let text = if attribute.value.tag().number().value() == 0x1e {
+        let wide: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16_lossy(&wide)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    };
+    clip_text(text.trim())
+}
+
+/// `notBefore` / `notAfter`, in the shape [`format_date`] produces.
+fn certificate_date(time: &x509_cert::time::Time) -> String {
+    let at = time.to_date_time();
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        at.year(),
+        at.month(),
+        at.day(),
+        at.hour(),
+        at.minutes(),
+        at.seconds()
+    )
+}
+
+/// Uppercase hex, which is how every other tool prints a serial.
+fn hex_of(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes.iter().take(MAX_VALUE_CHARS / 2) {
+        let _ = write!(out, "{byte:02X}");
+    }
+    out
+}
+
+/// Bounds one string, on the same rule the `/Info` values use.
+fn clip_text(text: &str) -> String {
+    if text.chars().count() <= MAX_VALUE_CHARS {
+        return text.to_string();
+    }
+    text.chars().take(MAX_VALUE_CHARS).collect()
 }
 
 /// The DocMDP level a signature certifies at, or zero for an ordinary one.
@@ -1489,6 +1820,9 @@ mod tests {
             covers_whole_file: _,
             covered_bytes: _,
             certification: _,
+            // A struct of its own, with a guard of its own ---
+            // `no_certificate_field_may_carry_a_verdict`.
+            certificate: _,
         } = signature;
     }
 
@@ -1519,5 +1853,419 @@ mod tests {
         let exact = "y".repeat(MAX_VALUE_CHARS);
         assert_eq!(clip(exact, &mut untouched).chars().count(), MAX_VALUE_CHARS);
         assert_eq!(untouched.values_clipped, 0);
+    }
+
+    /// The whole point of reading the blob: a document can carry a certificate
+    /// naming its signer while the `/Name` a reader is shown is empty.
+    ///
+    /// `incr-signed.pdf` is exactly that shape and it is not contrived --- it is
+    /// what pyhanko writes when nobody passes a name, which is the default.
+    /// Before this, tpdf showed an empty "Signer says" for a document that says
+    /// who signed it in the one place that is cryptographically bound.
+    #[test]
+    fn a_signature_with_no_typed_name_still_names_its_signer() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
+            println!("[SKIP] incr-signed.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 1).expect("a signed fixture must parse");
+        let signature = &properties.signatures[0];
+
+        assert_eq!(signature.name, "", "the fixture types no /Name");
+        let certificate = signature
+            .certificate
+            .as_ref()
+            .expect("and yet it carries a certificate");
+        assert_eq!(certificate.subject_cn, "tpdf spike 0.6 test signer");
+    }
+
+    /// Every field of the certificate, on the one fixture, against `openssl`.
+    ///
+    /// The values come from `openssl pkcs7 -print_certs -text`, which shares no
+    /// code with the parser under test --- an independent reader of the same
+    /// bytes, on the standard this repository holds print jobs and redactions to.
+    #[test]
+    fn what_an_independent_reader_says_about_the_same_certificate() {
+        let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
+            println!("[SKIP] incr-signed.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 1).expect("a signed fixture must parse");
+        let certificate = properties.signatures[0]
+            .certificate
+            .as_ref()
+            .expect("the fixture is signed with a certificate");
+
+        assert_eq!(certificate.subject, "CN=tpdf spike 0.6 test signer");
+        assert_eq!(certificate.issuer, "CN=tpdf spike 0.6 test signer");
+        assert_eq!(
+            certificate.serial, "085398B6930734A2C5F6F74C89AACE579C0EE11B",
+            "openssl prints this colon-separated and lowercase"
+        );
+        assert_eq!(certificate.from, "2026-07-25 16:52:27 UTC");
+        assert_eq!(certificate.until, "2036-07-23 16:52:27 UTC");
+        assert!(certificate.self_issued, "issuer and subject are one name");
+        assert_eq!(certificate.chain, 1, "the blob carries no chain above it");
+        assert!(
+            certificate.matched_signer,
+            "and SignerInfo.sid points at it, so it was not taken by default"
+        );
+    }
+
+    /// All five signed fixtures, so a certificate is read from every one of them
+    /// rather than from the one that happened to be written first.
+    ///
+    /// The serials discriminate: each fixture was signed with its own key, so a
+    /// parser that returned a cached or hardcoded answer would repeat one here.
+    #[test]
+    fn each_signed_fixture_carries_its_own_certificate() {
+        let cases = [
+            (
+                "incr-signed.pdf",
+                "085398B6930734A2C5F6F74C89AACE579C0EE11B",
+            ),
+            (
+                "incr-certified-1.pdf",
+                "133032403A2EB5C96CFD231D2A4CC5A47F8AF0CE",
+            ),
+            (
+                "incr-certified-2.pdf",
+                "6A1BE9B50DEE82A3C42B058ED8C6F0450FC95135",
+            ),
+            (
+                "incr-certified-3.pdf",
+                "7D485D2DB5773665A7EA4C1C6C32BBAEDB0A875D",
+            ),
+            (
+                "incr-certified-3-indirect.pdf",
+                "343CFE09E9E75742A2ACBDC131BD5AC7FBAA9728",
+            ),
+        ];
+
+        let mut examined = 0;
+        let mut serials = std::collections::BTreeSet::new();
+        for (name, serial) in cases {
+            let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata").join(name)) else {
+                println!("[SKIP] {name}: not generated");
+                continue;
+            };
+            let properties = scan(&bytes, 1).expect("a signed fixture must parse");
+            let certificate = properties.signatures[0]
+                .certificate
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} carries a certificate"));
+
+            assert_eq!(certificate.serial, serial, "{name}");
+            assert_eq!(
+                certificate.subject_cn, "tpdf spike 0.6 test signer",
+                "{name}"
+            );
+            assert!(certificate.matched_signer, "{name}");
+            assert!(
+                !properties.limits.any(),
+                "{name}: nothing was cut, so an absent certificate would be a fact"
+            );
+            serials.insert(certificate.serial.clone());
+            examined += 1;
+        }
+
+        // Five SKIP lines and a pass look identical without this.
+        assert!(examined > 0, "no signed fixture was read; generate them");
+        assert_eq!(
+            serials.len(),
+            examined,
+            "every fixture reported a serial of its own"
+        );
+    }
+
+    /// A blob that is not DER is *unread*, which is not the same as absent.
+    ///
+    /// The two want opposite readings --- absent is a fact about the document,
+    /// unread is a fact about tpdf --- so the second must reach the reader as a
+    /// limit rather than as a quiet `None`.
+    #[test]
+    fn a_blob_that_is_not_der_is_reported_as_unread_rather_than_absent() {
+        let mut limits = Limits::default();
+        let mut document = Document::with_version("1.7");
+        let sig = dictionary! {
+            "Type" => "Sig",
+            "Filter" => "Adobe.PPKLite",
+            "SubFilter" => "adbe.pkcs7.detached",
+            "Contents" => Object::String(vec![0x30, 0x82, 0xFF, 0xFF, 0x01], lopdf::StringFormat::Hexadecimal),
+        };
+        let id = document.add_object(Object::Dictionary(sig.clone()));
+        let _ = id;
+
+        assert!(read_certificate(&document, &sig, &mut limits).is_none());
+        assert_eq!(limits.certificates_unread, 1, "and it says so");
+        assert!(limits.any(), "so the panel shows the notice");
+    }
+
+    /// An all-zero `/Contents` is a reserved placeholder, not a parse failure.
+    ///
+    /// A signature is written by reserving a span and filling it, so this is
+    /// what a half-written one looks like. Counting it as unread would put a
+    /// "could not read" notice on a document with nothing wrong with it.
+    #[test]
+    fn an_untouched_placeholder_is_absent_rather_than_unread() {
+        let mut limits = Limits::default();
+        let document = Document::with_version("1.7");
+        let sig = dictionary! {
+            "Type" => "Sig",
+            "Contents" => Object::String(vec![0; 512], lopdf::StringFormat::Hexadecimal),
+        };
+
+        assert!(read_certificate(&document, &sig, &mut limits).is_none());
+        assert_eq!(limits.certificates_unread, 0);
+        assert!(!limits.any(), "nothing is wrong with it");
+    }
+
+    /// A bound a *valid* blob exceeds refuses it rather than parsing it.
+    ///
+    /// The pair is the test. An oversized piece of garbage cannot check this ---
+    /// refused, and parsed-then-failed, produce the same `None` and the same
+    /// increment --- so such a test passes whether the guard is there or not.
+    /// The first version of it did exactly that, and a mutation deleting the
+    /// guard survived it. The same real blob is offered twice instead, once
+    /// under a bound it clears and once under one it does not; only the guard
+    /// can make those two differ.
+    #[test]
+    fn a_bound_a_valid_blob_exceeds_refuses_it_rather_than_parsing_it() {
+        let Some(blob) = signature_blob("incr-signed.pdf") else {
+            println!("[SKIP] incr-signed.pdf: not generated");
+            return;
+        };
+        let document = Document::with_version("1.7");
+        let sig = dictionary! {
+            "Contents" => Object::String(blob, lopdf::StringFormat::Hexadecimal),
+        };
+
+        // The control: under the real bound the very same blob parses.
+        let mut generous = Limits::default();
+        assert!(
+            read_certificate_bounded(&document, &sig, &mut generous, MAX_SIG_BLOB).is_some(),
+            "the blob is a real one and must parse when it is allowed to"
+        );
+        assert_eq!(generous.certificates_unread, 0);
+
+        let mut tight = Limits::default();
+        assert!(
+            read_certificate_bounded(&document, &sig, &mut tight, 100).is_none(),
+            "and must be refused when it is over the bound"
+        );
+        assert_eq!(tight.certificates_unread, 1, "and say so");
+    }
+
+    /// The `/Contents` blob of a signed fixture, padding and all.
+    fn signature_blob(name: &str) -> Option<Vec<u8>> {
+        let bytes = std::fs::read(std::path::Path::new("../testdata").join(name)).ok()?;
+        let document = Document::load_mem(&bytes).ok()?;
+        for object in document.objects.values() {
+            let Ok(dict) = object.as_dict() else { continue };
+            if !dict.has(b"ByteRange") {
+                continue;
+            }
+            if let Ok(contents) = dict.get(b"Contents").and_then(|o| o.as_str()) {
+                return Some(contents.to_vec());
+            }
+        }
+        None
+    }
+
+    /// Builds a CMS blob by hand, so a test can vary what no fixture varies.
+    ///
+    /// Every signed fixture in `testdata` is a **self-signed, single-certificate**
+    /// blob, which makes two things true by construction: a certificate's issuer
+    /// and subject are the same name, and matching a signer by issuer common name
+    /// gives the same answer as matching by encoded issuer and serial. Two
+    /// mutations survived on exactly that --- `self_issued: true` for everything,
+    /// and CN-only signer matching --- and neither is a variant. They are code no
+    /// fixture reaches.
+    ///
+    /// Nothing here is cryptographically meaningful. The key is eight zero bytes
+    /// and the signature is four more, because `parse_certificate` verifies
+    /// nothing and must not start to; this is a shape, not a credential.
+    fn cms_blob(subject: &str, issuer: &str, cert_serial: &[u8], sid_serial: &[u8]) -> Vec<u8> {
+        use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
+        use cms::content_info::ContentInfo;
+        use cms::signed_data::{
+            CertificateSet, EncapsulatedContentInfo, SignedData, SignerIdentifier, SignerInfo,
+            SignerInfos,
+        };
+        use der::asn1::{Any, BitString, OctetString, SetOfVec, Utf8StringRef};
+        use der::{oid::ObjectIdentifier, Encode};
+
+        let named = |text: &str| -> x509_cert::name::Name {
+            let attribute = x509_cert::attr::AttributeTypeAndValue {
+                oid: ObjectIdentifier::new_unwrap("2.5.4.3"),
+                value: Any::encode_from(&Utf8StringRef::new(text).expect("utf8")).expect("any"),
+            };
+            let mut set = SetOfVec::new();
+            set.insert(attribute).expect("one attribute");
+            x509_cert::name::RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(set)])
+        };
+        let algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+            oid: ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11"),
+            parameters: None,
+        };
+        let moment = |seconds: u64| -> x509_cert::time::Time {
+            x509_cert::time::Time::UtcTime(
+                der::asn1::UtcTime::from_unix_duration(std::time::Duration::from_secs(seconds))
+                    .expect("a time inside the UTCTime range"),
+            )
+        };
+
+        let certificate = x509_cert::Certificate {
+            tbs_certificate: x509_cert::TbsCertificate {
+                version: x509_cert::Version::V3,
+                serial_number: x509_cert::serial_number::SerialNumber::new(cert_serial)
+                    .expect("a serial"),
+                signature: algorithm.clone(),
+                issuer: named(issuer),
+                validity: x509_cert::time::Validity {
+                    not_before: moment(1_767_225_600),
+                    not_after: moment(1_893_456_000),
+                },
+                subject: named(subject),
+                subject_public_key_info: x509_cert::spki::SubjectPublicKeyInfoOwned {
+                    algorithm: algorithm.clone(),
+                    subject_public_key: BitString::from_bytes(&[0u8; 8]).expect("a key"),
+                },
+                issuer_unique_id: None,
+                subject_unique_id: None,
+                extensions: None,
+            },
+            signature_algorithm: algorithm.clone(),
+            signature: BitString::from_bytes(&[0u8; 4]).expect("a signature"),
+        };
+
+        let signer = SignerInfo {
+            version: cms::content_info::CmsVersion::V1,
+            sid: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+                issuer: named(issuer),
+                serial_number: x509_cert::serial_number::SerialNumber::new(sid_serial)
+                    .expect("a serial"),
+            }),
+            digest_alg: algorithm.clone(),
+            signed_attrs: None,
+            signature_algorithm: algorithm,
+            signature: OctetString::new(&[0u8; 4][..]).expect("a signature"),
+            unsigned_attrs: None,
+        };
+
+        let mut certificates = SetOfVec::new();
+        certificates
+            .insert(CertificateChoices::Certificate(certificate))
+            .expect("one certificate");
+        let mut signers = SetOfVec::new();
+        signers.insert(signer).expect("one signer");
+
+        let signed = SignedData {
+            version: cms::content_info::CmsVersion::V1,
+            digest_algorithms: SetOfVec::new(),
+            encap_content_info: EncapsulatedContentInfo {
+                econtent_type: ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1"),
+                econtent: None,
+            },
+            certificates: Some(CertificateSet(certificates)),
+            crls: None,
+            signer_infos: SignerInfos(signers),
+        };
+
+        let info = ContentInfo {
+            content_type: ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2"),
+            content: Any::encode_from(&signed).expect("any"),
+        };
+        info.to_der().expect("der")
+    }
+
+    /// A certificate somebody else issued is not reported as self-issued.
+    ///
+    /// Unreachable with any fixture in `testdata`, every one of which is
+    /// self-signed --- so before this, `self_issued: true` hardcoded would have
+    /// passed the whole suite while making a confident false statement about who
+    /// vouched for every signer tpdf will ever show.
+    #[test]
+    fn a_certificate_somebody_else_issued_is_not_called_self_issued() {
+        let blob = cms_blob("A. Signer", "Test Root CA", &[0x2A], &[0x2A]);
+        let certificate = parse_certificate(&blob).expect("a parseable blob");
+
+        assert_eq!(certificate.subject_cn, "A. Signer");
+        assert_eq!(certificate.issuer_cn, "Test Root CA");
+        assert!(!certificate.self_issued, "the issuer is not the subject");
+
+        // The control, so the assertion above is about the comparison and not
+        // about the builder: the same shape with one name reports the opposite.
+        let same = cms_blob("Test Root CA", "Test Root CA", &[0x2A], &[0x2A]);
+        let itself = parse_certificate(&same).expect("a parseable blob");
+        assert!(itself.self_issued);
+    }
+
+    /// A certificate from the right authority but the wrong serial is not the
+    /// signer's, and saying so is the whole of `matched_signer`.
+    ///
+    /// The decisive shape, and it took some finding: with **one** certificate in
+    /// the set there is no ordering to reason about, so correct matching (issuer
+    /// bytes *and* serial) and matching on the issuer's common name alone give
+    /// visibly different answers. Two authorities sharing a common name is the
+    /// real-world case this stands for, and it is the one where a reader would
+    /// be shown a name that is not the signer's.
+    #[test]
+    fn a_certificate_from_the_right_issuer_but_the_wrong_serial_is_not_the_signer() {
+        let blob = cms_blob("Decoy", "Test Root CA", &[0x01], &[0x02]);
+        let certificate = parse_certificate(&blob).expect("a parseable blob");
+
+        assert_eq!(certificate.chain, 1);
+        assert!(
+            !certificate.matched_signer,
+            "the signature names serial 02 and the certificate is serial 01"
+        );
+        // Still reported, because a set of one leaves nothing to choose between.
+        assert_eq!(certificate.subject_cn, "Decoy");
+
+        // The control: the same builder with the serials agreeing does match.
+        let agreeing = cms_blob("Decoy", "Test Root CA", &[0x01], &[0x01]);
+        let matched = parse_certificate(&agreeing).expect("a parseable blob");
+        assert!(matched.matched_signer);
+    }
+
+    /// The honesty rule, held by the type rather than by review.
+    ///
+    /// Adding a field to [`Certificate`] is a compile error here, which is the
+    /// moment to ask whether the new field states something the parser checked
+    /// or something it merely read. `self_issued` is the only checked one and
+    /// its doc comment says why that is not a verdict.
+    #[test]
+    fn no_certificate_field_may_carry_a_verdict() {
+        let Certificate {
+            subject: _,
+            subject_cn: _,
+            issuer: _,
+            issuer_cn: _,
+            serial: _,
+            from: _,
+            until: _,
+            self_issued: _,
+            chain: _,
+            matched_signer: _,
+        } = Certificate::default();
+    }
+
+    /// A `BMPString` name is UTF-16BE, which is what Windows authorities emit.
+    ///
+    /// Decoded as bytes it comes out as text interleaved with nulls, which reads
+    /// as a mangled name rather than as a decoding bug --- so this is the case
+    /// that would ship looking merely ugly.
+    #[test]
+    fn a_utf16_name_is_decoded_rather_than_shown_with_nulls() {
+        use der::asn1::{Any, BmpString};
+
+        let name = BmpString::from_utf8("Müller GmbH").expect("encodable");
+        let attribute = x509_cert::attr::AttributeTypeAndValue {
+            oid: "2.5.4.3".parse().expect("the common-name oid"),
+            value: Any::encode_from(&name).expect("any"),
+        };
+
+        assert_eq!(attribute_text(&attribute), "Müller GmbH");
     }
 }

@@ -725,6 +725,37 @@ rather than silent --- but nothing constrains what a value *says*. A `/Producer`
 claims and hiding it would be its own lie; what is prevented is tpdf appearing to agree, and
 `properties.test.ts` asserts that against exactly that input.
 
+**A fourth route, and this one changed what parses hostile bytes rather than what displays
+them: tpdf reads certificates as of 2026-08-21.** A signature's `/Contents` is a DER blob the
+document chose, and `docinfo::parse_certificate` now hands it to `cms` and `x509-cert`. So
+there is a second ASN.1 parser in the trust boundary beside PDFium's, on input just as
+attacker-controlled, and three things bound it rather than one.
+
+- **It runs in the worker, not in the app process.** `docinfo::scan` is reached through
+  `Request::Properties`, so the new parser sits behind the same sandbox as everything else that
+  reads a document. This is the property T1 exists for and it needed no new mechanism, which is
+  the argument for having built the boundary before it was needed rather than after.
+- **The blob is bounded before the parser sees it.** `MAX_SIG_BLOB` is 1 MiB against a real
+  blob of tens of kilobytes, and exceeding it is *reported* through `Limits::certificates_unread`
+  rather than passed off as a document with no certificate. The bound has a test that can fail,
+  which took two attempts --- see the trap; the first version could not distinguish refusing a
+  blob from parsing one and failing.
+- **Both crates are `no_std`-shaped pure-Rust decoders returning `Result`.** No `unsafe`, no
+  allocation driven by a declared length the input chose, and every failure path here maps to
+  `None` plus a counted limit. Nine packages, all `Apache-2.0 OR MIT` bar `flagset` which is
+  `Apache-2.0`, swept over the whole tree rather than read off a README.
+
+**And the honest limit, which is the part a reader would get wrong.** Parsing a certificate is
+not verifying one. tpdf builds no chain, holds no trust store, consults no revocation list, and
+never checks the signature against the bytes it covers --- so a document can name itself
+anything and tpdf will show it. What the certificate buys is a second, differently-sourced
+claim about who signed, next to the `/Name` the signer typed; `properties.ts` shows both and
+says when they disagree. `NOT_CHECKED` states all four omissions and is shown wherever a
+signature is, and `no_certificate_field_may_carry_a_verdict` makes adding a field to
+`docinfo::Certificate` a compile error rather than a review question. The one unhedged
+statement the certificate rows make is `self_issued`, which compares two byte strings and is
+deliberately not rendered as a warning: every root in every trust store is self-issued.
+
 #### T6.5 — The frontend names the mark's kind, added 2026-08-18
 
 **A reader can now choose Highlight, Underline or Strike out, so the kind travels on the

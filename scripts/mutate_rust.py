@@ -2750,6 +2750,129 @@ MUTATIONS += [
 ]
 
 
+# --- the certificate a signature was made with ----------------------------
+MUTATIONS += [
+    Mutation(
+        # Take the first certificate in the set instead of the one the signer
+        # actually points at. The set is *unordered* and normally carries the
+        # chain, so on any real document this names a certificate authority as
+        # the signer roughly as often as it names the signer. Every fixture here
+        # has a chain of one, which is why the check that catches this is the
+        # `matched_signer` assertion and not the name.
+        "docinfo: take the first certificate rather than the signer's",
+        "src/docinfo.rs",
+        """    let (certificate, matched_signer) = match (matched, certificates.as_slice()) {
+        (Some(certificate), _) => (certificate, true),
+        (None, [only]) => (*only, false),
+        (None, _) => return None,
+    };""",
+        """    let (certificate, matched_signer) = (certificates[0], false);""",
+        "each_signed_fixture_carries_its_own_certificate",
+    ),
+    Mutation(
+        # Report a blob that could not be parsed as a document with no
+        # certificate. The two readings are opposite --- absent is about the
+        # file, unread is about tpdf --- and this is the direction that makes
+        # tpdf's own failure look like the document's silence.
+        "docinfo: report an unreadable certificate as an absent one",
+        "src/docinfo.rs",
+        """        None => {
+            limits.certificates_unread += 1;
+            None
+        }""",
+        """        None => None,""",
+        "a_blob_that_is_not_der_is_reported_as_unread_rather_than_absent",
+    ),
+    Mutation(
+        # The mirror: count an all-zero placeholder as a failure. A signature is
+        # written by reserving a span and filling it, so this would put a "could
+        # not read" notice on a document with nothing wrong with it.
+        "docinfo: treat a reserved-but-empty placeholder as a parse failure",
+        "src/docinfo.rs",
+        "    let last = raw.iter().rposition(|b| *b != 0)?;",
+        """    let Some(last) = raw.iter().rposition(|b| *b != 0) else {
+        limits.certificates_unread += 1;
+        return None;
+    };""",
+        "an_untouched_placeholder_is_absent_rather_than_unread",
+    ),
+    Mutation(
+        # Hand the padded blob to the decoder. The trailing zeros are not DER and
+        # a decoder is entitled to reject them, so every certificate would read
+        # as unparseable --- the failure that looks like a broken dependency.
+        "docinfo: parse the blob without stripping its reserved padding",
+        "src/docinfo.rs",
+        "    let der_bytes = &raw[..=last];",
+        "    let der_bytes = &raw[..];",
+        "each_signed_fixture_carries_its_own_certificate",
+    ),
+    Mutation(
+        # Drop the size bound, so an attacker-chosen megabyte of nested DER goes
+        # to the parser. The blob is the most attacker-controlled thing in the
+        # document and this is the only thing standing between it and a parser.
+        "docinfo: parse a certificate blob of any size",
+        "src/docinfo.rs",
+        """    if der_bytes.len() > bound {
+        limits.certificates_unread += 1;
+        return None;
+    }""",
+        "",
+        "a_bound_a_valid_blob_exceeds_refuses_it_rather_than_parsing_it",
+    ),
+    Mutation(
+        # Compare issuers by their common name rather than by their encoded
+        # bytes. Two different authorities may use the same CN, and a DN is
+        # equal by encoding, not by the one attribute a person reads.
+        "docinfo: match a signer by common name rather than by encoded issuer",
+        "src/docinfo.rs",
+        """                certificate.tbs_certificate.serial_number == both.serial_number
+                    && certificate.tbs_certificate.issuer.to_der().ok() == both.issuer.to_der().ok()""",
+        """                common_name(&certificate.tbs_certificate.issuer)
+                    == common_name(&both.issuer)""",
+        "a_certificate_from_the_right_issuer_but_the_wrong_serial_is_not_the_signer",
+    ),
+    Mutation(
+        # Call every certificate self-issued. `self_issued` is one of exactly two
+        # unhedged statements the signature section makes, so a wrong one is a
+        # confident false claim about who vouched for a signer.
+        "docinfo: call every certificate self-issued",
+        "src/docinfo.rs",
+        "        self_issued: tbs.subject.to_der().ok() == tbs.issuer.to_der().ok(),",
+        "        self_issued: true,",
+        "a_certificate_somebody_else_issued_is_not_called_self_issued",
+    ),
+    Mutation(
+        # Read a BMPString as bytes. It comes out as text interleaved with nulls,
+        # which reads as a mangled name rather than as a decoding bug --- so this
+        # is the version that ships looking merely ugly.
+        "docinfo: read a UTF-16 name as bytes",
+        "src/docinfo.rs",
+        "    let text = if attribute.value.tag().number().value() == 0x1e {",
+        "    let text = if false {",
+        "a_utf16_name_is_decoded_rather_than_shown_with_nulls",
+    ),
+    Mutation(
+        # Print the serial with the bytes reversed. Endianness is invisible in a
+        # hex string --- it looks exactly as much like a serial either way --- so
+        # only a comparison against another tool's answer can see it.
+        "docinfo: print a serial least-significant byte first",
+        "src/docinfo.rs",
+        "    for byte in bytes.iter().take(MAX_VALUE_CHARS / 2) {",
+        "    for byte in bytes.iter().rev().take(MAX_VALUE_CHARS / 2) {",
+        "what_an_independent_reader_says_about_the_same_certificate",
+    ),
+    Mutation(
+        # Report `notBefore` as `notAfter`. Both are dates in the same format on
+        # adjacent lines, which is what makes it survive a reading.
+        "docinfo: report a certificate's validity from one end only",
+        "src/docinfo.rs",
+        "        until: certificate_date(&tbs.validity.not_after),",
+        "        until: certificate_date(&tbs.validity.not_before),",
+        "what_an_independent_reader_says_about_the_same_certificate",
+    ),
+]
+
+
 def main() -> int:
     # Before anything prints. A redirected run is block-buffered otherwise, and
     # this harness takes the better part of an hour: on 2026-08-19 a full run's

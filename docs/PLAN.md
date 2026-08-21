@@ -7643,13 +7643,80 @@ five gives the right level, handler, subfilter, field name and coverage, cross-c
 `lopdf` and reads it with `lopdf`, which is the writer-and-its-own-reader shape; these five are
 the ones whose passing says the reading is right rather than self-consistent.
 
-**Not done, and each for its own reason.** The *certificate* is not parsed --- the signer's
-real name lives inside the PKCS#7 blob, and getting it needs `x509-parser` and `cms` (both
-permissive, checked), which is a decision about scope rather than an oversight; what is shown
-today is the `/Name` the signer wrote, labelled as claimed. There is still no way to type a
-password, so an encrypted document reports that it needs one and stops. XMP metadata is not
-read, only `/Info`. And no `/FileAttachment` annotation is counted as an attachment --- those
-appear in the comments panel, where they belong.
+**Not done, and each for its own reason.** There is still no way to type a password, so an
+encrypted document reports that it needs one and stops --- and that is worth less than it
+sounds: of the 40 PDFs in `~/Downloads`, 3 carry `/Encrypt` and qpdf reports an **empty user
+password** on all three, so they are owner-restricted rather than reader-locked and every one
+of them opens without a prompt. A prompt would fire on none of them. XMP metadata is not read,
+only `/Info`. And no `/FileAttachment` annotation is counted as an attachment --- those appear
+in the comments panel, where they belong.
+
+**The certificate was on that list and came off it on 2026-08-21** --- see *Who signed it*
+below. The line read "the *certificate* is not parsed ... a decision about scope rather than
+an oversight", which was true when written and is the kind of claim nobody re-checks, so it is
+recorded here rather than deleted: a *Not done* note outlives the work that closes it, which
+this document already carries a trap about.
+
+#### Who signed it --- done 2026-08-21
+
+The properties dialog shipped four days earlier answering "who signed this" with the `/Name`
+the signer typed into the signature dictionary. The gap was demonstrable on a fixture already
+in the tree: **`incr-signed.pdf` has no `/Name` at all**, so tpdf showed an empty line for a
+document that names its signer plainly --- inside the PKCS#7 blob in `/Contents`, which was
+the one place tpdf did not look. That is what pyhanko writes when nobody passes a name, which
+is the default, so it is the common shape rather than a contrived one.
+
+**Nine packages, 563 to 572, all permissive.** `cms` for the CMS `SignedData`, `x509-cert`
+for the certificate, `der` underneath both, swept with `cargo metadata` over the whole tree
+rather than read off a README --- the only copyleft string in all 572 is the known `r-efi`,
+whose `MIT OR Apache-2.0` arm applies. `flagset` is `Apache-2.0` alone; every other new
+package is `Apache-2.0 OR MIT`.
+
+**The signer's certificate is not the first one in the set.** A blob normally carries the
+chain, and `certificates` is an ASN.1 SET --- unordered --- so taking element zero names a
+certificate authority as the signer about as often as it names the signer. `SignerInfo.sid`
+is the identifier, either an issuer-and-serial pair or a subject key identifier, and both are
+matched. A set of **one** that the identifier does not match is still reported, because
+nothing is being chosen between, with `matched_signer: false` saying so; several with no
+match reports nothing rather than guessing.
+
+**What this is worth, stated exactly, because the temptation is to oversell it.** Parsing a
+certificate is not verifying one. There is no trust store, no chain building, no revocation
+check, and the signature is never tested against the bytes it covers. What a reader gains is
+a *second* claim about who signed, from a different place than the first: `/Name` is free
+text the signer typed, the subject is what somebody put in a certificate. `properties.ts`
+shows both, and says so when they disagree --- which is the one line a reader could not work
+out by eye from the rows above it. `NOT_CHECKED` names all four omissions and is shown
+wherever a signature is.
+
+`self_issued` is the only unhedged sentence the certificate rows add, and it is deliberately
+**not** a warning. Every root in every trust store is self-issued, and so is a certificate
+somebody made for themselves five minutes ago; telling those apart needs a trust store, so
+the row states the fact and stops. A mutation that turns it into a warning is in the table.
+
+**Two mutations survived the first run and both were real, and they had one cause.** Every
+signed fixture in `testdata` is a self-signed, single-certificate blob, which makes two things
+true by construction: issuer and subject are the same name, and matching a signer by issuer
+common name gives the same answer as matching by encoded issuer and serial. So `self_issued:
+true` hardcoded passed the whole suite, and so did dropping the serial from the match. The fix
+is a synthetic CMS built in the test with `der` --- a certificate somebody else issued, and a
+decoy from the right issuer with the wrong serial. With **one** certificate in the set there
+is no ordering to reason about, which is what makes the second case decisive rather than
+lucky.
+
+A third survived for a different reason and is the more interesting one: the size bound's test
+handed it an oversized piece of garbage, and refusing a blob and parsing one and failing
+produce the same `None` and the same counted limit. The test could not fail. It offers the
+same **real** blob twice now, once under a bound it clears and once under one it does not.
+
+**Not done.** The certificate's *extensions* are not read --- key usage, extended key usage
+and the basic-constraints CA flag are all there in the DER and none is shown; whether they are
+worth showing without a trust store to interpret them against is a real question rather than
+an oversight. A timestamp token, which is a whole second CMS structure inside an unsigned
+attribute, is not read either, so a document signed with one shows only the signer's claimed
+date. And PDFium exports all eight `FPDF*Signature*` symbols, so a **differential** between
+the two readers is available and is not built --- the same instrument `links-probe --mode
+agree` is, and the one that found a destination bug on its first run.
 
 ### Phase 3 --- Redaction
 

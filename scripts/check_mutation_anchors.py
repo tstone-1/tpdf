@@ -128,10 +128,38 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
     return found
 
 
+def rows_after_entry_point(path: str) -> int:
+    """How many `MUTATIONS +=` blocks sit below the `__main__` guard.
+
+    This gate *imports* each table, and an import runs the whole module --- so a
+    block appended below `if __name__ == "__main__":` is counted here and is
+    **not** registered when the harness actually runs, because by then `main()`
+    has already read the table and returned. The gate goes green on anchors the
+    harness will never reach, which is the exact shape of the trap this file's
+    comment below records about reading a subject differently from the thing
+    that uses it. Hit on 2026-08-21 with ten new mutations, all of them counted
+    and none of them runnable.
+    """
+    below = 0
+    seen_guard = False
+    for line in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
+        if line.startswith('if __name__ == "__main__":'):
+            seen_guard = True
+        elif seen_guard and line.startswith("MUTATIONS"):
+            below += 1
+    return below
+
+
 def main() -> int:
     problems: list[str] = []
     total = 0
     for path, base in TABLES:
+        stranded = rows_after_entry_point(path)
+        if stranded:
+            problems.append(
+                f"{path}: {stranded} MUTATIONS block(s) below the __main__ guard -- "
+                "this gate imports the module and counts them, a real run does not"
+            )
         module = load(path)
         table = getattr(module, "MUTATIONS", None)
         # An empty or missing table passes every assertion below while proving

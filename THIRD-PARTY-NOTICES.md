@@ -2258,7 +2258,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Rust crates
 
-373 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+382 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2271,6 +2271,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT |
 | base64 | 0.21.7 | MIT OR Apache-2.0 |
 | base64 | 0.22.1 | MIT OR Apache-2.0 |
+| base64ct | 1.8.3 | Apache-2.0 OR MIT |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT |
 | bitflags | 1.3.2 | MIT/Apache-2.0 |
@@ -2296,7 +2297,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | chacha20 | 0.10.1 | MIT OR Apache-2.0 |
 | chrono | 0.4.45 | MIT OR Apache-2.0 |
 | cipher | 0.5.2 | MIT OR Apache-2.0 |
+| cms | 0.2.3 | Apache-2.0 OR MIT |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
+| const-oid | 0.9.6 | Apache-2.0 OR MIT |
 | cookie | 0.18.1 | MIT OR Apache-2.0 |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 |
@@ -2322,6 +2325,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | defmt | 1.1.1 | MIT OR Apache-2.0 |
 | defmt-macros | 1.1.1 | MIT OR Apache-2.0 |
 | defmt-parser | 1.0.0 | MIT OR Apache-2.0 |
+| der | 0.7.10 | Apache-2.0 OR MIT |
+| der_derive | 0.7.3 | Apache-2.0 OR MIT |
 | deranged | 0.5.8 | MIT OR Apache-2.0 |
 | derive_more | 2.1.1 | MIT |
 | derive_more-impl | 2.1.1 | MIT |
@@ -2349,6 +2354,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
 | filetime | 0.2.29 | MIT/Apache-2.0 |
+| flagset | 0.4.7 | Apache-2.0 |
 | flate2 | 1.1.9 | MIT OR Apache-2.0 |
 | fnv | 1.0.7 | Apache-2.0 / MIT |
 | foldhash | 0.2.0 | Zlib |
@@ -2453,6 +2459,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
 | pdfium-render | 0.9.3 | MIT OR Apache-2.0 |
+| pem-rfc7468 | 0.7.0 | Apache-2.0 OR MIT |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
 | phf | 0.13.1 | MIT |
 | phf_generator | 0.13.1 | MIT |
@@ -2521,6 +2528,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | smallvec | 1.15.2 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 |
+| spki | 0.7.3 | Apache-2.0 OR MIT |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
 | string_cache | 0.9.0 | MIT OR Apache-2.0 |
 | stringprep | 0.1.5 | MIT/Apache-2.0 |
@@ -2622,6 +2630,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | winnow | 1.0.4 | MIT |
 | writeable | 0.6.3 | Unicode-3.0 |
 | wry | 0.55.1 | Apache-2.0 OR MIT |
+| x509-cert | 0.2.5 | Apache-2.0 OR MIT |
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.2 | Unicode-3.0 |
@@ -2660,6 +2669,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2014 Paho Lurie-Gregg
 - Copyright (c) 2014 PistonDevelopers
 - Copyright (c) 2014 Sean McArthur
+- Copyright (c) 2014 Steve "Sc00bz" Thomas (steve at tobtu dot com)
 - Copyright (c) 2014 The Rust Project Developers
 - Copyright (c) 2014 The html5ever Project Developers
 - Copyright (c) 2014, Kang Seonghoon.
@@ -2764,12 +2774,17 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2020 Osspial
 - Copyright (c) 2020 Soveu
 - Copyright (c) 2020-2022 Tauri Programme within The Commons Conservancy
+- Copyright (c) 2020-2022 The RustCrypto Project Developers
 - Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy
+- Copyright (c) 2020-2023 The RustCrypto Project Developers
 - Copyright (c) 2020-2025 The RustCrypto Project Developers
 - Copyright (c) 2020-2026 The RustCrypto Project Developers
 - Copyright (c) 2021 Chip Reed
 - Copyright (c) 2021 RustCrypto Developers
+- Copyright (c) 2021 The RustCrypto Project Developers
 - Copyright (c) 2021 the Deno authors
+- Copyright (c) 2021-2023 The RustCrypto Project Developers
+- Copyright (c) 2021-2025 The RustCrypto Project Developers
 - Copyright (c) 2021-2026 RustCrypto Developers
 - Copyright (c) 2022 1Password
 - Copyright (c) 2022 Artyom Pavlov
@@ -5839,6 +5854,31 @@ Apache License
       of your accepting any such warranty or additional liability.
 
    END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
 ```
 
 #### Apache-2.0 — LICENSE.spdx

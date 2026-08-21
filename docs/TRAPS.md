@@ -11645,3 +11645,86 @@ even for a document nothing can open, which is exactly when somebody wants it.
 The same shape as the crop-box trap two hundred entries above: **PDFium has no "put it
 back"**, and neither does this. A value you can only read once has to be read at the one
 moment it is there.
+
+### A documented cost measured warm is the wrong number for the run you are about to make
+
+`BUILD.md` recorded `scripts/check_windows.py` as taking **about 8 s**. On 2026-08-21 it ran
+for fourteen minutes and was still inside its clippy pass, which held up a commit that was
+otherwise finished. The obvious correction --- *8 s warm, a quarter of an hour cold* --- was
+written into `BUILD.md` and was itself wrong in both halves, which is the part worth reading.
+
+**Measured afterwards, on the same tree, with nothing else running: 0.47 s.** So the documented
+8 s was never the warm figure either. It is the middle of four regimes, all measured on this
+machine on the same day: **0.47 s** when nothing has changed, **~8 s** when local Rust
+recompiles, **2 min 58 s** after three crates were added, and **minutes more** when the whole
+dependency tree has to be built for `x86_64-pc-windows-msvc` --- clippy *compiles* rather than
+checks, and a cross-target build shares nothing with the host one. A document that records one number for a command with a
+three-order-of-magnitude spread is not slightly stale, it is describing a machine state and
+calling it a cost.
+
+**And the fourteen minutes is a ceiling, not a measurement, because I had started the command
+twice.** The second copy blocked on cargo's build lock for its whole life. Cargo says so ---
+`Blocking waiting for file lock` --- but the script captures its output and prints at the end,
+so both runs showed one header line and nothing else, and two contending runs look exactly like
+one slow one. `docs/TRAPS.md` already carries *"A harness that prints only at the end cannot say
+where it stopped"*; this is that entry arriving as a wrong number in a document rather than as a
+lost diagnosis.
+
+Three habits, and the third is the general one:
+
+- **Record the regimes, not a number.** Say what tree state each figure was taken on. Either
+  half of a warm/cold pair alone points somewhere wrong, and the cheap one points at the more
+  expensive mistake: an 8 s step reads as one you can put in a tight loop and would never start
+  early; a fifteen-minute step reads as one to fire off before you need the answer.
+- **One at a time, and prove it before quoting an elapsed time.** `ps` costs nothing. A duration
+  read off a contended run is evidence about your own scheduling, and it is the kind of wrong
+  number that gets written down as a property of the tool.
+- **Any documented duration for a build-shaped command is a warm figure unless it says
+  otherwise**, because that is what whoever timed it had. This applies to every timing in this
+  repository's documents, and to `cargo`, `npm`, `vitest` and the mutation harnesses alike ---
+  `docs/TRAPS.md` already carries an entry about a harness whose 4.4 hours turned out to be 97%
+  an editor holding the build lock, which is the same lesson from the other side: the number
+  you were given describes a machine state, not the command.
+
+### A mutation block below the `__main__` guard is counted by the gate and run by nothing
+
+Ten new mutations were appended to `scripts/mutate_rust.py` and landed **after** its
+`if __name__ == "__main__":` line. `scripts/check_mutation_anchors.py` reported
+`251/251 anchors present exactly once` and went green. A real run registered **241**, and
+every one of the ten was silently absent.
+
+The two disagree because they load the file differently, and each is right for itself. The
+gate **imports** the module, and an import executes every top-level statement including the
+ones under the guard --- the guard suppresses `main()`, not the module body --- so
+`MUTATIONS` is fully populated by the time the gate reads it. A real run executes the file as
+`__main__`: `main()` is reached at the guard, reads the table as it stands *at that moment*,
+runs, and returns. The trailing block appends to a list nobody looks at again.
+
+**Nothing about this is visible.** The anchors are real, they point at real code, and they
+appear exactly once; a `--list` would have shown them, because `--list` is inside `main()`
+only when the block is above it. There is no error, no warning, and the gate's green line
+says the exact number you expected to see.
+
+Same family as *"The gate guarding the anchors reads the file differently from the harness
+that uses them"*, which is about newline translation, and it is worth stating that this is
+the **second** time that shape has produced a green gate over a blind harness. A guard whose
+reading of its subject differs from the real reader's is not a weaker guard, it is a guard
+aimed at a different file.
+
+`check_mutation_anchors.py` now refuses any `MUTATIONS` statement below the guard line, in
+every table. Proved by planting one: `[FAIL] ... 1 MUTATIONS block(s) below the __main__
+guard`, and green with it removed.
+
+Two things to carry:
+
+- **Insert a table block above `def main()`, never by appending to the file.** Appending is
+  the obvious mechanical edit and it is the one that fails.
+- **A count from the gate is not a count from the harness.** `python3 scripts/mutate_rust.py
+  --list | wc -l` is one command and it is the number that decides what runs.
+
+> ⚠ **And the repair to this cost the ten mutations a second time.** Proving the new guard
+> fires meant appending `MUTATIONS += []` as a control; undoing that with
+> `git checkout scripts/mutate_rust.py` restored the file from `HEAD` and discarded every
+> uncommitted change in it, the ten new mutations included. To undo an appended line, delete
+> the line --- `git checkout <path>` is not an undo, it is a revert of the whole file, and
+> the cross-repo notes already carry that rule for the whole worktree.

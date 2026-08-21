@@ -3663,6 +3663,101 @@ MUTATIONS += [
         "    rows.push({ name, value });",
         "leaves out a field the document does not state",
     ),
+    Mutation(
+        # Put what the signer typed above what the certificate says. A reader
+        # asks who signed this and meets the first answer; making that the one
+        # anybody can type into a dictionary is the wrong default, and nothing
+        # about either line looks different afterwards.
+        "certificate: show the typed name above the certificate's",
+        "src/lib/properties.ts",
+        """  rows.push(...certificateRows(signature));
+
+  claimed("Signer typed", signature.name);""",
+        """  claimed("Signer typed", signature.name);
+
+  rows.push(...certificateRows(signature));""",
+        "names the signer above what the signer typed",
+    ),
+    Mutation(
+        # Say nothing about a certificate that vouches for itself. Every root in
+        # every trust store is self-issued and so is every certificate a signer
+        # made for themselves five minutes ago; the row is what lets a reader
+        # tell those apart from one an authority issued.
+        "certificate: stop saying when a certificate vouches for itself",
+        "src/lib/properties.ts",
+        """      value: "itself --- self-issued, so no other party vouched for this name",""",
+        """      value: certificate.issuer_cn || certificate.issuer,""",
+        "says a self-issued certificate was vouched for by nobody",
+    ),
+    Mutation(
+        # Warn on a self-issued certificate. The opposite error and the more
+        # tempting one: it looks like caution, and it is a verdict tpdf has no
+        # trust store with which to reach.
+        "certificate: treat self-issued as something to warn about",
+        "src/lib/properties.ts",
+        """      name: "Issued by",
+      value: "itself --- self-issued, so no other party vouched for this name",
+    });""",
+        """      name: "Issued by",
+      value: "itself --- self-issued, so no other party vouched for this name",
+      warn: true,
+    });""",
+        "says a self-issued certificate was vouched for by nobody",
+    ),
+    Mutation(
+        # Stop reporting two names for one signer that disagree. This is the one
+        # line a reader could not work out by eye from the rows above it.
+        "certificate: say nothing when the two names for a signer differ",
+        "src/lib/properties.ts",
+        """  if (typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {""",
+        """  if (false) {""",
+        "points out two names for one signer that disagree",
+    ),
+    Mutation(
+        # Compare the two names case-sensitively, so `a. signer` and `A. Signer`
+        # are reported as a disagreement. A false alarm on a document with
+        # nothing wrong with it, and the shape that trains a reader to ignore
+        # the row that matters.
+        "certificate: call a difference of case a disagreement",
+        "src/lib/properties.ts",
+        "  if (typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {",
+        "  if (typed && inCert && typed !== inCert) {",
+        "does not call a difference of case a disagreement",
+    ),
+    Mutation(
+        # Show a certificate the signature does not point at without saying so.
+        # With one certificate it is the only thing it could be; saying nothing
+        # makes that indistinguishable from a match.
+        "certificate: show an unmatched certificate as though it matched",
+        "src/lib/properties.ts",
+        "  if (!certificate.matched_signer) {",
+        "  if (false) {",
+        "warns when the signature does not point at the certificate shown",
+    ),
+    Mutation(
+        # Report a certificate that could not be read as one that is not there.
+        # The frontend half of the same confusion `docinfo.rs` guards against:
+        # tpdf's failure rendered as the document's silence.
+        "certificate: drop the notice for a certificate that could not be read",
+        "src/lib/properties.ts",
+        """  say(
+    "Certificates",
+    limits.certificates_unread,
+    "were present but could not be read",
+  );""",
+        "",
+        "is reported as tpdf's failure and not as the document's silence",
+    ),
+    Mutation(
+        # Emit rows for a signature carrying no certificate. Every row would be
+        # empty, and an empty "Certificate names" reads as a document that
+        # states nothing rather than as one that carries nothing.
+        "certificate: emit rows when there is no certificate at all",
+        "src/lib/properties.ts",
+        "  if (!certificate) return [];",
+        "  if (!certificate) return [{ name: \"Certificate names\", value: \"\" }];",
+        "says nothing at all when there is no certificate",
+    ),
 ]
 
 
