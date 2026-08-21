@@ -660,7 +660,10 @@ fixture, none of which needs qpdf at all. It skips that one fixture now. The sec
 
 Proved both ways before the step was written: with the fixtures moved aside and pyhanko absent,
 `ci_fixtures.py --signed` exits **1** with `exited 0 but testdata/incr-signed.pdf does not
-exist`; with pyhanko present it exits 0 and writes all nine. That hard failure is what makes the
+exist`; with pyhanko present it exits 0 and writes all nine. **Green on both runners since
+2026-08-21**, after three pushes --- the first two failed on assertions that had pinned a value
+out of a locally generated fixture, which is one trap and worth reading before adding a test
+that reads one. That hard failure is what makes the
 tests' own `[SKIP]`-when-absent safe --- a runner that failed to build them goes red at the step
 that built them, not green through a suite that skipped.
 
