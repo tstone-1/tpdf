@@ -574,6 +574,90 @@ def signature_blob(path: str) -> "bytes | None":
     return bytes.fromhex(found.group(1).decode("ascii"))
 
 
+def to_indefinite(der: bytes) -> bytes:
+    """Rewrite every constructed value's length in BER's indefinite form.
+
+    A signer that streams its output cannot know a value's length before it has
+    written the value, so it writes `80` where the length belongs and a two-byte
+    end-of-contents marker where the value stops. That is legal BER, it is not
+    DER, and `der` refuses it -- which is why a real CAdES contract read as
+    having no certificate at all until `ber.rs` was written.
+
+    Converting rather than signing afresh is deliberate: the result differs from
+    `incr-signed.pdf` in the *length encoding and nothing else*, so a check that
+    reads the same certificate out of both is testing exactly that. pyHanko
+    emits DER and has no switch for this, so there is no way to produce the pair
+    other than by rewriting one into the other.
+    """
+
+    def convert(data: bytes, at: int) -> "tuple[bytes, int]":
+        start = at
+        tag = data[at]
+        at += 1
+        if tag & 0x1F == 0x1F:
+            while data[at] & 0x80:
+                at += 1
+            at += 1
+        identifier = data[start:at]
+        length = data[at]
+        at += 1
+        if length & 0x80:
+            count = length & 0x7F
+            length = int.from_bytes(data[at : at + count], "big")
+            at += count
+        end = at + length
+        if not tag & 0x20:
+            return data[start:end], end
+        body = b""
+        cursor = at
+        while cursor < end:
+            piece, cursor = convert(data, cursor)
+            body += piece
+        return identifier + b"\x80" + body + b"\x00\x00", end
+
+    converted, consumed = convert(der, 0)
+    if consumed != len(der):
+        raise ValueError("trailing bytes after the first value")
+    return converted
+
+
+def build_ber(source_path: str, out_path: str) -> bool:
+    """`incr-signed.pdf` with its signature blob rewritten in indefinite form.
+
+    The rewritten blob is padded back to the exact span the signer reserved, so
+    every byte offset in the file is unchanged and `/ByteRange` and the xref
+    stay correct. The signature does not verify, which is true of every fixture
+    here and irrelevant: nothing in tpdf verifies one.
+    """
+    import re
+
+    try:
+        with open(source_path, "rb") as handle:
+            raw = handle.read()
+    except OSError:
+        return False
+    found = re.search(rb"/Contents\s*<([0-9A-Fa-f]+)>", raw)
+    if found is None:
+        return False
+    digits = found.group(1)
+    blob = bytes.fromhex(digits.decode("ascii"))
+    last = max((index for index, byte in enumerate(blob) if byte), default=-1)
+    if last < 0:
+        return False
+    rewritten = to_indefinite(blob[: last + 1])
+    if len(rewritten) > len(blob):
+        return False
+    padded = rewritten + b"\x00" * (len(blob) - len(rewritten))
+    encoded = padded.hex()
+    if any(byte in b"ABCDEF" for byte in digits):
+        encoded = encoded.upper()
+    encoded = encoded.encode("ascii")
+    assert len(encoded) == len(digits), "the reserved span must not move"
+    with open(out_path, "wb") as handle:
+        handle.write(raw[: found.start(1)] + encoded + raw[found.end(1) :])
+    return True
+
+
 def main(argv: "list[str] | None" = None) -> int:
     """Writes every fixture and a manifest describing what each one is for."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -715,6 +799,25 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[OK] incr-two-signers.pdf ({os.path.getsize(two_path)} bytes)")
     else:
         print("[SKIP] incr-two-signers.pdf: pyhanko not installed")
+
+    ber_path = os.path.join(args.outdir, "incr-ber.pdf")
+    if build_ber(os.path.join(args.outdir, "incr-signed.pdf"), ber_path):
+        manifest["incr-ber.pdf"] = {
+            "role": "incr-signed.pdf with every constructed value in its "
+            "signature blob rewritten in BER's indefinite-length form, and "
+            "nothing else changed -- the pair is what makes a check of "
+            "ber::to_definite_length discriminate. Real CAdES signers emit "
+            "this and der refuses it, so before that module the certificate "
+            "was unreadable",
+            "pages": 1,
+            "bytes": os.path.getsize(ber_path),
+            "xref": "table",
+            "docmdp": None,
+            "signatures": 1,
+        }
+        print(f"[OK] incr-ber.pdf ({os.path.getsize(ber_path)} bytes)")
+    else:
+        print("[SKIP] incr-ber.pdf: incr-signed.pdf has no blob to rewrite")
 
     nested_path = os.path.join(args.outdir, "signed-nested-field.pdf")
     blob = signature_blob(os.path.join(args.outdir, "incr-signed.pdf"))

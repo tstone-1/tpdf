@@ -2789,21 +2789,23 @@ MUTATIONS += [
         # not read" notice on a document with nothing wrong with it.
         "docinfo: treat a reserved-but-empty placeholder as a parse failure",
         "src/docinfo.rs",
-        "    let last = raw.iter().rposition(|b| *b != 0)?;",
-        """    let Some(last) = raw.iter().rposition(|b| *b != 0) else {
+        """    if raw.iter().all(|byte| *byte == 0) {
+        return None;
+    }""",
+        """    if raw.iter().all(|byte| *byte == 0) {
         *unread += 1;
         return None;
-    };""",
+    }""",
         "an_untouched_placeholder_is_absent_rather_than_unread",
     ),
     Mutation(
         # Hand the padded blob to the decoder. The trailing zeros are not DER and
         # a decoder is entitled to reject them, so every certificate would read
         # as unparseable --- the failure that looks like a broken dependency.
-        "docinfo: parse the blob without stripping its reserved padding",
+        "docinfo: hand the parser the reserved span exactly as it arrived",
         "src/docinfo.rs",
-        "    let trimmed = &raw[..=last];",
-        "    let trimmed = &raw[..];",
+        "    let Some(blob) = ber::to_definite_length(raw) else {",
+        "    let Some(blob) = Some(raw.to_vec()) else {",
         "each_signed_fixture_carries_its_own_certificate",
     ),
     Mutation(
@@ -2812,7 +2814,7 @@ MUTATIONS += [
         # document and this is the only thing standing between it and a parser.
         "docinfo: parse a certificate blob of any size",
         "src/docinfo.rs",
-        """    if trimmed.len() > bound {
+        """    if blob.len() > bound {
         *unread += 1;
         return None;
     }""",
@@ -3271,6 +3273,127 @@ MUTATIONS += [
         "every_field_of_a_certificate_whose_bytes_the_test_chose",
     ),
 ]
+
+
+# --- indefinite lengths, and where a signature blob ends -------------------
+MUTATIONS += [
+    Mutation(
+        # Stop counting a blob whose structure will not walk. The two readings
+        # are opposite --- absent is about the file, unread is about tpdf ---
+        # and this is the direction that makes tpdf's own failure look like the
+        # document's silence. It is the *walk's* half of that distinction; the
+        # parser's half is a mutation of its own, because a blob that reaches
+        # one never reaches the other.
+        "docinfo: report a blob that will not walk as a signature with no certificate",
+        "src/docinfo.rs",
+        """    let Some(blob) = ber::to_definite_length(raw) else {
+        *unread += 1;
+        return None;
+    };""",
+        """    let Some(blob) = ber::to_definite_length(raw) else {
+        return None;
+    };""",
+        "a_blob_whose_structure_will_not_walk_is_reported_as_unread",
+    ),
+    Mutation(
+        # Accept the indefinite form on a primitive value. There is no marker to
+        # read such a value up to, so the walk would run into whatever follows
+        # and call it content --- X.690 forbids it for exactly that reason.
+        "ber: let an indefinite length end a primitive value too",
+        "src/ber.rs",
+        """        if !constructed {
+            return None;
+        }""",
+        "",
+        "an_indefinite_primitive_is_refused",
+    ),
+    Mutation(
+        # Trust a child to stay inside the length its parent declared. A child
+        # is bounded by the input, not by its parent, so one may decode
+        # perfectly and still overrun --- and the parent's length would then
+        # describe fewer bytes than the parent holds.
+        "ber: trust a child to stay inside the length its parent declared",
+        "src/ber.rs",
+        """                if cursor > end {
+                    return None;
+                }""",
+        "",
+        "a_child_that_overruns_its_parent_is_refused",
+    ),
+    Mutation(
+        # Delete the nesting bound. This is the only copy of it: `emit` runs
+        # after `measure` returned and deliberately carries no second guard, so
+        # a mutation of that one would have survived.
+        "ber: follow nesting to whatever depth the blob claims",
+        "src/ber.rs",
+        """    if depth > MAX_DEPTH {
+        return None;
+    }
+    let head = header(raw, at)?;
+    let body = at.checked_add(head.tag)?.checked_add(head.length)?;
+    let mut content = 0usize;""",
+        """    let head = header(raw, at)?;
+    let body = at.checked_add(head.tag)?.checked_add(head.length)?;
+    let mut content = 0usize;""",
+        "nesting_is_followed_to_the_bound_and_refused_past_it",
+    ),
+    Mutation(
+        # Bound nesting where no real signature fits. The unit test names the
+        # constant, so it cannot see this at all; the fixture check can, because
+        # a timestamped signature nests a chain inside a token inside a signer
+        # and reaches about twenty-five.
+        "ber: bound nesting at eight levels",
+        "src/ber.rs",
+        "pub const MAX_DEPTH: usize = 64;",
+        "pub const MAX_DEPTH: usize = 8;",
+        "a_der_signature_blob_is_returned_byte_for_byte",
+    ),
+    Mutation(
+        # Write every length in the long form. Legal BER, not DER, and the
+        # identity property that lets this sit in front of every signature
+        # rather than only the ones that need it goes with it.
+        "ber: write a length in the long form whatever its size",
+        "src/ber.rs",
+        "    if value < 0x80 {\n        field[0] = value as u8;",
+        "    if value < 0x00 {\n        field[0] = value as u8;",
+        "a_definite_encoding_comes_back_unchanged",
+    ),
+    Mutation(
+        # Accept a length field of any width. `0xff` is reserved and anything
+        # past four bytes is a length no blob here can have, so this is a walk
+        # taking an attacker's word for how far to read.
+        "ber: accept a length field of any width",
+        "src/ber.rs",
+        """    if count > MAX_LENGTH_BYTES {
+        return None;
+    }""",
+        "",
+        "a_length_field_past_the_bound_is_refused",
+    ),
+    Mutation(
+        # Keep whatever follows the first value. That is the reserved padding,
+        # and handing it to a decoder is what the scan this module replaced was
+        # for --- a decoder is entitled to reject it.
+        "ber: keep the bytes that follow the first value",
+        "src/ber.rs",
+        "    emit(raw, 0, 0, &mut out)?;",
+        """    emit(raw, 0, 0, &mut out)?;
+    out.extend_from_slice(&raw[span.input..]);""",
+        "padding_after_the_first_value_is_dropped",
+    ),
+    Mutation(
+        # Write the input length where the content length belongs. On a value
+        # that was already definite the two agree, which is what makes this
+        # survive a reading; on an indefinite one the header then claims the
+        # marker bytes as content.
+        "ber: write the length the input used rather than the one being written",
+        "src/ber.rs",
+        "    let (field, length) = length_field(span.content);",
+        "    let (field, length) = length_field(span.input);",
+        "an_indefinite_length_becomes_a_definite_one",
+    ),
+]
+
 
 
 def main() -> int:

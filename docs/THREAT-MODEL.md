@@ -702,6 +702,15 @@ left claiming it: a string that is handled as data either way costs nothing to o
 and the narrower reading is one feature away from being wrong --- restoring an edit journal
 across an open would make it so without touching a line of this file.
 
+#### T6.8 — What a document says about itself, added 2026-08-21
+
+> Everything from here to T6.5 is about **reading**, not saving, and it accumulated under
+> T6.3's heading — *Highlighting a selection* — one route at a time until the block was longer
+> than the section holding it. The heading is added rather than the block moved, because moving
+> a hundred and fifty lines to fix a filing error is the larger risk; the parent number stays
+> wrong for the same reason. `AGENTS.md` cited **§T6.4** for the certificate bounds, which is a
+> different subsection about marks, and now cites this one.
+
 **A third display route landed on 2026-08-21, and it is the widest one yet.** The properties
 dialog puts a document's `/Info` strings on screen --- `/Title`, `/Author`, `/Producer`, and
 any custom key the document invented --- together with a signature's stated name, reason and
@@ -787,12 +796,41 @@ Two refusals beside it, each with a test that reaches it: an attribute carrying 
 value is refused rather than guessed at, and a CMS whose `eContentType` is not `id-ct-TSTInfo`
 is not read as a timestamp however well-formed its content is.
 
-**One limitation worth stating here rather than only in the trap index.** A `/Contents` blob
-encoded in **BER with indefinite lengths** is refused outright by `der`, so tpdf reads no
-certificate and no timestamp from it. One of ten real signed documents to hand is such a file.
-The failure is reported (`certificates_unread`), not silent --- but a reader is told *"could not
-be read"* where another tool shows a signer, and the class this affects is CAdES, which is
-where timestamping is routine.
+**That limitation is closed, and closing it added a parser of our own.** A `/Contents` blob
+encoded in **BER with indefinite lengths** was refused outright by `der`, so tpdf read no
+certificate and no timestamp from it --- one of ten real signed documents to hand, and the class
+affected is CAdES, which is where timestamping is routine. `ber::to_definite_length` walks the
+blob and hands the crates a definite-length value.
+
+It is roughly 150 lines rather than a dependency, and it is the only code here that reads
+attacker-chosen bytes without a third party between us and them, so its bounds are the point:
+
+- **Nesting is capped at `MAX_DEPTH` (64)** against a real signature's twenty-five, and there is
+  exactly **one** copy of that bound. `emit` runs only after `measure` walked the same bytes and
+  returned, so it carries no second guard --- two copies would each refuse the blob alone, and a
+  mutation of either would have survived.
+- **A length field is capped at `MAX_LENGTH_BYTES` (4)** and a tag at `MAX_TAG_BYTES` (5). X.690
+  reserves `0xff` as a length-of-length and this refuses it by the same rule.
+- **Every read goes through `get`, never an index.** The two offsets built from a length the
+  document chose --- past a header, past a value --- go through `checked_add`; the rest are a
+  cursor plus at most five, and a cursor never exceeds the slice's length, so they cannot wrap.
+  A value claiming more bytes than it has, a child overrunning the length its parent declared,
+  and an indefinite value that never terminates are each refused rather than trusted, each with
+  a test whose input reaches only that rule.
+- **Output growth is bounded by input.** An indefinite header plus its marker is four bytes and
+  a definite one is at most six, so the rewrite can grow a blob by at most half, and
+  `MAX_SIG_BLOB` still bounds what reaches the parsers.
+- **It refuses rather than repairs.** DER constrains more than the length form --- `SET OF`
+  ordering, a canonical `BOOLEAN`, primitive strings --- and none of that is touched. A blob
+  violating one is refused by the parser after it and counted as unread, which is the same
+  outcome as before for every case this does not fix.
+
+The walk is also what decides where the blob **ends**, replacing a scan for the last non-zero
+byte. That is a security-relevant change as much as a correctness one: the old rule handed the
+parser however many padding bytes preceded the last non-zero one, and the new one hands it
+exactly one value. A blob that will not walk is counted through `certificates_unread` --- by its
+own mechanism, with its own test, because it and the parser's counter can produce the same
+number and one input reaches only one of them.
 
 **A fifth route, and a third parser: tpdf reads XMP as of 2026-08-21.** The catalog's
 `/Metadata` is an RDF/XML packet the document chose, and `xmp::scan` hands it to `quick-xml`.

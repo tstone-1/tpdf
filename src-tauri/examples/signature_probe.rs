@@ -342,6 +342,19 @@ fn read(ours: &Properties, theirs: &[Theirs]) {
                 certificate.extensions_unread
             );
         }
+        // No PDFium accessor reaches a timestamp either, so this is print-only
+        // as well --- and it is the one line that says a token was found in a
+        // *real* signature rather than in a fixture we wrote ourselves.
+        if let Some(timestamp) = &signature.timestamp {
+            println!(
+                "    timestamped: {} by {}",
+                timestamp.when,
+                timestamp
+                    .authority
+                    .as_ref()
+                    .map_or("(unnamed)", |cert| cert.subject_cn.as_str())
+            );
+        }
     }
     println!("PDFium found {} signature(s)", theirs.len());
     for signature in theirs {
@@ -421,7 +434,7 @@ fn agree(ours: &Properties, theirs: &[Theirs]) -> bool {
         // signature* --- a wrong pick shows a reader the wrong signer, and every
         // assertion above would still pass on a document whose signatures share
         // a subfilter and a date.
-        let from_theirs = docinfo::parse_certificate(strip_padding(&theirs.contents));
+        let from_theirs = docinfo::parse_certificate(&prepare(&theirs.contents));
         match (&ours.certificate, &from_theirs) {
             (Some(mine), Some(other)) => {
                 report.check(
@@ -433,10 +446,21 @@ fn agree(ours: &Properties, theirs: &[Theirs]) -> bool {
                     ),
                 );
             }
+            // Not agreement. Every signature reaching this loop is one both
+            // readers found and `ours.signed` is true for all of them, so two
+            // empty answers mean the blob defeated *both* parsers --- which is
+            // a finding about tpdf, not a fact about the document.
+            //
+            // This arm was hard-coded to pass, and it fired: on a real CAdES
+            // contract whose signature is BER, the run printed `7 passed, 0
+            // failed` over a certificate neither reader could read. The
+            // module note above says why `--mode clean` exists in almost these
+            // words --- two readers that both find nothing agree perfectly ---
+            // and the same hole was left open one function away.
             (None, None) => report.check(
-                &at("neither reader found a certificate"),
-                true,
-                "both empty, and the blobs agree about that",
+                &at("the same certificate, from each reader's own blob"),
+                false,
+                "neither reader read one, from a signature both readers found",
             ),
             (mine, other) => report.check(
                 &at("the same certificate, from each reader's own blob"),
@@ -462,12 +486,15 @@ fn agree(ours: &Properties, theirs: &[Theirs]) -> bool {
     report.failed == 0
 }
 
-/// A signature blob is right-padded with zeros to the span its writer reserved.
-fn strip_padding(blob: &[u8]) -> &[u8] {
-    match blob.iter().rposition(|b| *b != 0) {
-        Some(last) => &blob[..=last],
-        None => &[],
-    }
+/// The blob PDFium handed over, ended and normalised the way ours is.
+///
+/// This must be the **same** preparation `docinfo::signature_contents` does, or
+/// the differential compares a certificate read from one set of bytes against
+/// one read from another and reports a disagreement that is the probe's. It is
+/// the same function rather than a second copy of the rule, because two copies
+/// of a distinction drift and a mutation of one survives.
+fn prepare(blob: &[u8]) -> Vec<u8> {
+    tpdf_lib::ber::to_definite_length(blob).unwrap_or_default()
 }
 
 /// The known disagreement, asserted so it cannot expire in silence.

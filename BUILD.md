@@ -162,32 +162,51 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 # element. This is a differential over WHICH BLOB, not over what the blob says;
 # the unit tests own the second half.
 #   all five incr-* signed fixtures --mode agree   7/7 each, 35 comparisons
+#   incr-ber                        --mode agree   7/7, and every one of the 7 is
+#                                                 a comparison over a BER blob
 #   incr-two-signers                --mode agree  13/13, the only fixture where
 #                                                 the per-signature pairing can
 #                                                 fail (reversing docinfo's field
 #                                                 order reddens 4 of the 13)
 #   tagged / comments / links       --mode clean   3/3 each
 #
+# The certificate comparison's (None, None) arm was hard-coded to pass until
+# 2026-08-21 -- literally `report.check(..., true, ...)` -- so a document neither
+# reader could read a certificate from printed "7 passed, 0 failed". It is a
+# FAILURE now: every signature reaching that loop is one both readers found, so
+# two empty answers mean the blob defeated both parsers. Proved able to fail by
+# stubbing parse_certificate to refuse everything: incr-signed.pdf goes 6/1.
+#
 # incr-timestamped.pdf is the only fixture whose signature carries an RFC 3161
 # token. genTime is PINNED by the generator (2026-08-21 12:00:00 UTC) so tests
 # assert the instant rather than its shape; the TSA is pyhanko's offline dummy,
 # so the structure is real and the trust is nil.
 #
-# One real signed document to hand carries a timestamp and tpdf reads NOTHING
-# from it: its /Contents is BER with indefinite lengths, which the `der` crate
-# refuses by design. So this feature is demonstrated on a fixture and on no real
-# document -- see the trap "A signature blob is trimmed by trailing zero, and
-# BER ends in zeros". The failure is honest (certificates_unread is 1), and the
-# fix would be a bounded BER-to-DER pass before the parsers see the blob.
+# That fixture is no longer the only evidence. Until 2026-08-21 one real signed
+# document to hand carried a timestamp and tpdf read NOTHING from it -- its
+# /Contents is BER with indefinite lengths, which `der` refuses by design.
+# ber::to_definite_length walks the blob first, and the same document now reads
+# its certificate, the key usage it states, and a timestamp from a real TSA one
+# second after the signing time it claims. The control was the change stashed
+# and the probe rebuilt: cert="(no certificate)" before, named after.
 #
-# --mode read also prints what each certificate states its key is for. Nothing
+# incr-ber.pdf is the fixture for that path, and it is incr-signed.pdf with
+# every constructed value in its blob rewritten in indefinite form and NOTHING
+# else changed -- same length, byte-identical outside the /Contents span. The
+# pair is what makes the check discriminate: two blobs that come out of the walk
+# equal can only have done so by the length form being normalised away. It is
+# built by rewriting rather than by signing, because pyHanko emits DER and has
+# no switch for this.
+#
+# --mode read also prints the timestamp, when a signature carries one, and what
+# each certificate states its key is for. Nothing
 # compares that against PDFium, which exposes no extension accessor at all --
 # the oracle is `openssl x509 -text` on the same blob, which is what
 # `the_usage_a_real_certificate_states_is_the_usage_openssl_reads` is written
 # against. For incr-signed.pdf both read "Digital signature, Non-repudiation",
 # no extended key usage, and CA:FALSE.
 for f in incr-signed incr-certified-1 incr-certified-2 incr-certified-3 \
-         incr-certified-3-indirect incr-two-signers; do
+         incr-certified-3-indirect incr-two-signers incr-ber; do
   cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
       "testdata/$f.pdf" --mode agree
 done
@@ -629,6 +648,20 @@ cannot make it.
 
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
 300 MB file is near-instant" can be tested at 300 MB.
+
+**None of its signed fixtures exists on a hosted runner**, because it needs pyhanko and
+`scripts/ci_fixtures.py` builds only the dependency-free four. Three tests reading them ended
+with `assert!(examined > 0)` until 2026-08-21, which is red on exactly the machines that cannot
+have the files --- measured by hiding `testdata/incr-*.pdf`: three failures, each telling a
+runner to generate what the repository has written down as deliberately absent. They now assert
+that **every** named fixture was examined, behind an early return when none of them exists,
+which is stronger on a development machine and silent on a runner. Both directions proved: no
+signed fixture gives 702 passed, 0 failed; hiding exactly one gives two red.
+
+The consequence to decide on rather than inherit: **CI does not test the signature reader at
+all.** Making it do so means installing pyhanko on the runner and teaching the generator to skip
+the parts that need qpdf and a 550 MB write, in both workflows because `check_workflow_parity.py`
+compares them step for step. That is a piece of work of its own, not a line in this one.
 
 `make_comments_pdf.py` is the only fixture carrying annotations, and it is also one of the
 three `scripts/ci_fixtures.py` builds on a hosted runner --- it needs nothing but the standard

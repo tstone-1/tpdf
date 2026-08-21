@@ -137,6 +137,28 @@ have the binary.)
   the reasons that comparison can.
 
 
+### Fixed: signatures that were not written in DER are read at all
+
+- **A signature whose blob uses BER indefinite lengths now reads.** The standard
+  for these blobs requires DER; a signer that streams its output writes the
+  indefinite form instead, which the decoder tpdf uses refuses by design. On
+  such a document --- and a real signed contract to hand is one --- tpdf showed
+  *"could not be read"* where other viewers name a signer. It now walks the blob
+  and reads it: the certificate, what the certificate says the key is for, and
+  the timestamp a third party attached, all of which had shipped without ever
+  seeing a document of this kind.
+- **Where a signature ends is read from its structure, not guessed from its
+  padding.** A signature is written into a reserved span and padded with zeros,
+  and the old rule scanned back to the last non-zero byte. That is wrong twice:
+  a blob legitimately ending in a zero lost it, about one in 256, and a blob in
+  the indefinite form lost its terminators, which are themselves zero bytes ---
+  measured at six bytes short on the contract above, with 8,298 bytes of padding
+  behind them that no rule reading bytes alone can tell apart.
+- **A blob that cannot be walked is still reported rather than passed off as a
+  signature with no certificate**, on its own counter, as before.
+- Nothing here verifies anything. The dialog says so, in the same words it did
+  before.
+
 ### Fixed: a document that will not open now says why
 
 - Dropping a PDF that tpdf cannot open --- one that needs a password, one that

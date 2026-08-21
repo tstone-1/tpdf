@@ -7877,9 +7877,14 @@ seven fixtures and three real files --- exactly **one** carries a timestamp, and
 that one at all: its `/Contents` is **BER with indefinite lengths** (`30 80`), which the `der`
 crate refuses by design. So this feature is tested against a fixture built for it and has been
 demonstrated on zero real documents. The trap of that name carries the detail. That is the
-honest state, and the fix --- a bounded BER-to-DER normalisation before the parsers see the blob
---- would also make the existing certificate reader work on that class, which is the class where
+honest state, and the fix --- a bounded normalisation before the parsers see the blob --- would
+also make the existing certificate reader work on that class, which is the class where
 timestamping is routine.
+
+> **Closed the next day.** `ber.rs` landed 2026-08-21 and the same document now reports a
+> timestamp from *Timestamp Authority 2 — Notarius*, one second after the instant the signer
+> claims. *Reading a signature that was not written in DER*, below, has the measurement. The
+> paragraph is left standing because the ranking it argues for is what got built.
 
 **Three mutations survived the first run and all three were fixture gaps**, each with a
 different reason the input never reached the guard: a detached signature carries no encapsulated
@@ -7948,6 +7953,87 @@ bytes only by `Box::leak` --- one leak per extension per signature, inside the s
 worker. `for<'a> Decode<'a>` is the bound that was meant. Nothing in the repository could have
 found it: not clippy, not a test, not a diff that reads as *decode three extensions*. It has a
 trap.
+
+#### Reading a signature that was not written in DER
+
+**Done 2026-08-21.** RFC 5652 requires a CMS blob to be DER. A signer that streams its output
+cannot know a value's length before it has written the value, so it writes BER's **indefinite
+form** instead: `80` where the length belongs, a two-byte end-of-contents marker where the value
+stops. `der` refuses that outright --- *indefinite length disallowed* --- so before this, tpdf
+read nothing at all from such a document. One of ten real signed documents to hand is one, and
+the class is CAdES, which is where timestamping is routine.
+
+`ber::to_definite_length` walks the blob and hands the parsers a definite-length value. It is
+about 150 lines and no dependency: a general BER library would have been a large surface for one
+length rule, and the rule is small.
+
+**The measurement, on a real signed contract.** Before and after, same binary, same document, the
+change stashed and rebuilt for the control:
+
+| | |
+|---|---|
+| before | `cert="(no certificate)"` |
+| after | `cert="Dropbox Sign"`, key usage *Digital signature*, `authority: false` |
+| timestamp | *2026-06-29 17:24:23 UTC by Timestamp Authority 2 — Notarius*, one second after the signing time the document claims |
+| indefinite values in the blob | 5, nineteen levels deep |
+| where the trailing-zero scan said it ended | 46,281 |
+| where its structure says it ends | **46,287** |
+
+**Three features came alive at once**, which is why this was ranked ahead of anything new: the
+certificate reader, the extension reader and the timestamp reader had all shipped, been tested,
+and never once seen a real CAdES signature between them.
+
+**The larger half was where the blob ends, not what form its lengths take.** A signature is
+written by reserving a span and filling it, so the blob arrives right-padded with zeros, and the
+scan this replaced looked back for the last non-zero byte. An end-of-contents marker *is* two
+zero bytes, so on exactly the blobs this module exists for the scan ate the terminators --- six
+bytes, three nested markers, and 8,298 bytes of padding behind them that no byte-level rule can
+tell from the markers. Both questions are answered by walking the value, which is why one
+function answers both.
+
+**What it does not do, deliberately.** It is not a BER-to-DER canonicaliser. DER constrains
+`SET OF` ordering, `BOOLEAN` encoding and whether a string may be assembled from constructed
+segments, and none of that is touched; a blob violating one comes out unchanged in that respect
+and is refused by the parser after it, counted as unread. The scope is the one thing measured in
+the wild. Measured, not assumed: all five indefinite values in the real contract are `SEQUENCE`
+or context-tag `[0]`, and no constructed string appears in it or in any fixture.
+
+**The fixture pair is what makes the check discriminate.** `incr-ber.pdf` is `incr-signed.pdf`
+with every constructed value in its signature blob rewritten in indefinite form and **nothing
+else changed** --- the file is the same length and byte-identical outside the `/Contents` span,
+so `/ByteRange` and the xref stay correct. Producing it meant rewriting DER into BER, because
+pyHanko emits DER and has no switch for this; there is no other way to get the pair. Two blobs
+that come out of the walk equal can only have done so by the length form being normalised away.
+
+**Three findings came out of building it, each with a trap.**
+
+- A differential's `(None, None)` arm was hard-coded to pass. On the real contract,
+  `signature-probe --mode agree` printed **`7 passed, 0 failed`** while neither reader could read
+  the certificate --- and the probe's own module note explains, in almost those words, why
+  `--mode clean` has to exist.
+- Adding the walk in front of the parser **disarmed a mutation that had been caught**. The
+  parser's *"count it, do not report it as absent"* branch was covered by a malformed blob; the
+  walk now refuses that blob first and increments the same counter, so deleting the branch
+  changed nothing. One input per mechanism, and two tests.
+- A unit-test helper built its fixtures by calling the encoder under test. Mutating the encoder
+  reddened sixteen tests and not the one named for it, which is a recognisable signature: many
+  red and not the named one means the fixture is built by the code under test; **none** red means
+  the input never reaches the line.
+
+**Not done.** Constructed `OCTET STRING` and `BIT STRING` segments are not concatenated, so a
+blob using them is still refused --- by the parser rather than by the walk, and counted. No
+document to hand uses one, and writing the code for a case with no fixture would be untested
+code in the one module here that reads attacker-chosen bytes with no third party in between.
+
+**Also not done, and it is a decision rather than an omission: CI does not test any of this.**
+No signed fixture exists on a hosted runner --- they need pyhanko, and `ci_fixtures.py` builds
+only the dependency-free four --- so every test over a real signature `[SKIP]`s there, this
+one included. Three of them *asserted* instead of skipping, which would have turned CI red the
+day the signature work was pushed; that is fixed and has its own trap, but the gap it exposed
+is real. Closing it means installing pyhanko on the runner and teaching the generator to skip
+what needs qpdf and a 550 MB write, in **both** workflows because the parity gate compares them
+step for step. Worth doing; not worth doing blind, since a workflow's last step is its
+least-tested code and this one cannot be rehearsed locally.
 
 ### Phase 3 --- Redaction
 

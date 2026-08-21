@@ -8265,6 +8265,26 @@ the whole set is present. On a runner holding seven fixtures most patterns match
 reason that is not rot, and a warning that fires on every CI run is one nobody reads on the run
 where it means something.
 
+**It happened again on 2026-08-21, in unit tests rather than in a gate, and it had not been
+pushed yet.** Nine commits added the signature reader and its fixtures, and three of its tests
+end with `assert!(examined > 0)` beneath a loop that `[SKIP]`s a fixture it cannot read. The
+guard is the right instinct --- five SKIP lines and a pass look identical --- but no signed
+fixture exists on a hosted runner: they need pyhanko, and `scripts/ci_fixtures.py` says in its
+own docstring which families a runner deliberately does not get. Measured by hiding
+`testdata/incr-*.pdf`: **three red**, every one of them telling a machine that structurally
+cannot to "generate testdata/".
+
+The fix is not to weaken the guard but to aim it at the state it was for. *Some present and one
+missing* is a broken checkout and looks exactly like a pass; *none present* is a runner and is a
+fact about the machine. So the count became `assert_eq!(examined, cases.len())` --- every named
+fixture, not merely one --- behind an early return when none of them exists. Both directions
+were proved: no signed fixture at all gives **702 passed, 0 failed**, and hiding exactly one
+gives two red, which the count it replaced would have let through.
+
+**The general question to ask of any "did this actually run" guard: what does it say on the
+machine with the fewest inputs?** If the answer is "it fails", it is not a coverage check, it is
+a requirement --- and the place to state a requirement is the thing that installs the inputs.
+
 ### Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong
 
 `v26.8.3-rc2`'s macOS build died in `Set up job` on `429 Too Many Requests` fetching an
@@ -11962,8 +11982,8 @@ so the trim eats exactly the bytes that terminate the structure. Demonstrated on
 signature: `openssl pkcs7` parses the padded blob and fails on the trimmed one with *"not enough
 data"* — which reads as a truncated file rather than as the reader having truncated it.
 
-The fix for both is to read the outer TLV's length rather than scan for zeros. It is not done
-here yet, and the second half would buy nothing on its own, because:
+The fix for both is to read the outer TLV's length rather than scan for zeros, and the second
+half would buy nothing on its own, because:
 
 **`der` refuses indefinite length outright.** `30 80` is a SEQUENCE of indefinite length, which
 is legal BER and not legal DER, and the crate says so: `indefinite length disallowed`. One of ten
@@ -11978,6 +11998,20 @@ Two things worth carrying:
   is one line: hand the untrimmed bytes to a second parser and see whether it agrees.
 - **Ask what a format's padding is made of before stripping it.** Zero padding and zero
   terminators are indistinguishable byte-for-byte and distinguishable structurally.
+
+**Closed 2026-08-21 by `src-tauri/src/ber.rs`, and both halves went together because they are
+one question.** Where a blob ends and what length form it uses are both answered by walking it:
+`to_definite_length` returns exactly the first value, re-encoded with definite lengths, and drops
+whatever follows. A blob that is already DER comes back byte-identical, which is what makes it
+safe in front of every signature rather than only the ones that need it — and that property is
+asserted against the real fixtures rather than reasoned about.
+
+The measurement, on the same contract: the trailing-zero scan gave 46,281 bytes and the structure
+gives **46,287** — six bytes, three nested end-of-contents markers, and 8,298 bytes of padding
+after them that no byte-level rule can tell from the markers. Before: `cert="(no certificate)"`.
+After: `cert="Dropbox Sign"`, the key usage it states, and a timestamp from *Timestamp Authority
+2 — Notarius* one second after the signing time. One change, three readers that had never seen a
+real CAdES document between them.
 
 ### A guard whose neighbour refuses the same input cannot be tested by it
 
@@ -12009,3 +12043,104 @@ and in each of these three the answer was no for a different reason.
 A related one, from the same run and cheaper: an ordering assertion built on `indexOf` passes
 when the row is **missing**, because `-1` is less than every real index. Assert both operands
 exist before comparing them.
+
+### A differential's most important check was hard-coded to pass when both readers failed
+
+`signature-probe --mode agree` reads a signed document twice — once through `lopdf` and once
+through PDFium — and compares. Its own module note explains why `--mode clean` has to exist:
+
+> Two readers that both find nothing agree perfectly.
+
+One function away, the certificate comparison ends like this:
+
+```rust
+(None, None) => report.check(
+    &at("neither reader found a certificate"),
+    true,
+    "both empty, and the blobs agree about that",
+),
+```
+
+A `check` whose condition is the literal `true`. On a real CAdES contract, whose signature is BER
+and which no parser here could read, the run printed:
+
+```
+[OK]   signature 1: neither reader found a certificate: both empty, and the blobs agree about that
+
+7 passed, 0 failed
+```
+
+Seven passed on a document where the check that matters most — the one the code comment above it
+calls "the one that matters most", because a wrong pick shows a reader the wrong signer — had
+nothing to compare. Every signature reaching that loop is one **both readers found** and
+`ours.signed` is true for all of them, so two empty answers were never agreement; they were both
+parsers defeated by the same blob.
+
+Three things to carry:
+
+- **A reasoning written down in one place does not apply itself in the next.** The clean-mode note
+  is the correct argument, in almost these words, about the same failure mode. It was written
+  three months before the arm below it.
+- **Grep a differential for arms that cannot fail.** A literal `true`, an `assert!(x == x)`, a
+  branch whose only statement is a pass — the shape is findable, and in a comparison harness the
+  empty-versus-empty arm is where it hides, because that is the arm nobody has a fixture for.
+- **A check name that changes with the arm hides it in the transcript.** This one printed
+  `neither reader found a certificate` rather than `the same certificate...`, so the run did say
+  what happened, in a line a reader scanning for `0 failed` never reads. The repaired arm reuses
+  the ordinary name.
+
+The repair is one word, and it was proved by control rather than by reading: with
+`parse_certificate` stubbed to refuse everything, `incr-signed.pdf` goes `6 passed, 1 failed`.
+
+### Putting a guard in front of a parser disarms the parser's own guard, and the test still passes
+
+`ber::to_definite_length` was added ahead of every signature parse, and it refuses a blob whose
+structure will not walk — counting it, correctly, as unread. One mutation of the *parser's*
+counter then survived:
+
+```
+[FAIL] docinfo: report an unreadable certificate as an absent one: SURVIVED -- no test noticed
+```
+
+Nothing about that counter had changed. Its test fed `30 82 FF FF 01` — a SEQUENCE claiming
+65,535 bytes with one present — and asserted `certificates_unread == 1`. That blob no longer
+reaches the parser at all: the new walk refuses it first and increments the same counter, so the
+assertion held by the wrong mechanism and deleting the one it was written for changed nothing.
+
+This is the neighbour-refuses-the-same-input trap arriving from the other direction, and the
+direction is the news. There, the guard was born untestable and a first mutation run found it.
+Here it was **testable, covered, and disarmed by an unrelated change** — a change that adds
+validation, which is exactly the kind nobody re-runs a mutation table after, because it only ever
+makes things stricter.
+
+Two habits:
+
+- **After adding a guard upstream of anything, re-run the mutation table for what is downstream
+  of it.** Not the tests, which stay green by construction — the mutations.
+- **One input per mechanism.** The fix is a well-formed value that is not a CMS `ContentInfo`
+  (`30 03 02 01 41`) for the parser's counter, and the malformed one for the walk's, in a test of
+  its own. Two counters that can produce one number need two inputs, or one of them is decoration.
+
+### A test helper that builds its fixture with the encoder under test
+
+`ber.rs`'s unit tests build values with a `definite(tag, body)` helper, and its first draft wrote
+the length by calling `length_field` — the function that writes lengths in the module under test.
+Mutating that function to always use the long form produced this:
+
+```
+[FAIL] ber: write a length in the long form whatever its size: 16 red of 701 tests,
+       but NOT the expected one ('a_definite_encoding_comes_back_unchanged')
+```
+
+The named test is the identity check — a value that is already DER must come back byte-identical
+— and it is precisely a check *on the encoder*. Building its input with the encoder made both
+sides move together, so it agreed with whatever the encoder did. Sixteen other tests caught the
+mutation, none of them by design.
+
+**That output is the diagnostic, and it is worth recognising on sight:** a mutation reddening many
+tests but not the one named for it says the named test's fixture is built by the code under test.
+A mutation reddening *nothing* says something else entirely — the input never reaches the line.
+
+The fix is four lines of hand-written length encoding in the helper, covering only what the
+fixtures need and panicking on anything else. A test helper may share a *type* with production
+code; it must not share the transformation it exists to check.
