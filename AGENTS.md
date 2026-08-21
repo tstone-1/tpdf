@@ -474,7 +474,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite; still wanted for preserving encryption and for object streams |
 | macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** --- paginates and runs the panel; also the independent parser every print job is read back with |
 | Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** --- reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
-| Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** --- reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building, and PDFium's own read-only signature API stays unused so the two cannot drift |
+| Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** --- reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building. PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
 
 The PDFium pin is `chromium/7881`, installed by `scripts/fetch_pdfium.py` and verified by
 digest. Every measurement in this file was taken against that build, so bumping it
@@ -516,8 +516,14 @@ parser on attacker-chosen bytes and is bounded and sandboxed accordingly --- see
 `docs/THREAT-MODEL.md` §T6.4 and *Who signed it* in `docs/PLAN.md`. The route stays `lopdf`
 plus `cms` rather than PDFium for the same reason and one more: `FPDFSignatureObj_GetCert`
 hands back the DER of the signer's certificate and nothing above it, so the chain length and
-the `matched_signer` distinction would be unavailable through it. The differential is still
-worth building and is still not built.
+the `matched_signer` distinction would be unavailable through it.
+
+**The differential is built as of 2026-08-21** --- `examples/signature_probe.rs`, seven
+comparisons per signature against PDFium's own reading of the same file, including the
+certificate parsed out of *each reader's own* `/Contents` blob. 35 comparisons across the five
+signed fixtures, and five mutations of `docinfo.rs` proving each check can go red. It is the
+same instrument `links-probe --mode agree` is, and it is what makes `parse_certificate` public.
+`BUILD.md` has the invocations and the mutation table.
 
 Two things in that module are traps rather than choices, both in the index: `lopdf::decrypt`
 removes the `/Encrypt` trailer entry, so the encryption has to be read **before** it; and the

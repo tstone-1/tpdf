@@ -72,6 +72,12 @@ have the binary.)
   all four.
 - Verified field by field against `openssl pkcs7 -print_certs`, which shares no
   code with the parser, across all five pyhanko-signed fixtures.
+- **PDFium reads the same signatures independently, and now the two are
+  compared.** `signature-probe` puts our reading of a document's signatures next
+  to PDFium's own --- the count, the encoding, the reason, the signing time, the
+  certification level, the signed byte count, and the certificate parsed out of
+  each reader's own copy of the blob. Nothing in tpdf's own tests can fail for
+  the reasons that comparison can.
 
 
 ### Fixed: a document that will not open now says why

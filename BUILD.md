@@ -135,6 +135,35 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/text-base14.pdf --mode clean
 
+# Signatures: does PDFium agree with us about the same signatures?
+# `docinfo.rs` walks /AcroForm /Fields with lopdf; PDFium implements that walk
+# in C++ and exports the result. Neither knows about the other, which is what
+# makes this the instrument links-probe --mode agree is, for the subsystem where
+# being wrong means naming the wrong signer. Seven comparisons per signature:
+# the count, /SubFilter, /Reason, /M digit for digit, the DocMDP level, the
+# signed byte count, and -- the one that matters -- the certificate parsed out
+# of EACH READER'S OWN /Contents blob, compared by subject and serial.
+#
+# `clean` is the control and is not optional: two readers that both find nothing
+# agree perfectly. `agree` REFUSES an unsigned document (exit 1) and `clean`
+# refuses a signed one, so neither can report a vacuous pass.
+#
+# Proved able to fail by five mutations of docinfo.rs, each reddening exactly
+# the check it belongs to: summing the byte-range offsets (11357 against 3869),
+# never reporting a DocMDP level (0 against 2), reading /Filter as the subfilter
+# ("Adobe.PPKLite" against "adbe.pkcs7.detached"), misspelling the /Contents key
+# (docinfo read none, PDFium's blob read one), and not recognising /FT /Sig at
+# all (0 signed of 0 fields against 1). Restored and re-run green each time.
+#   all five incr-* signed fixtures --mode agree   7/7 each, 35 comparisons
+#   tagged / comments / links       --mode clean   3/3 each
+for f in incr-signed incr-certified-1 incr-certified-2 incr-certified-3 \
+         incr-certified-3-indirect; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
+      "testdata/$f.pdf" --mode agree
+done
+cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
+    testdata/tagged.pdf --mode clean
+
 # Marks: does a highlight a reader makes land on the words they made it from?
 # Run ALL FOUR modes, and run them on BOTH geometry fixtures -- that is not
 # thoroughness, it is the only way two of the checks can fail at all. Measured by
