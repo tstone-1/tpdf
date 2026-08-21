@@ -1484,6 +1484,10 @@ impl Engine for Workers {
         self.ask(doc, &Request::Mapping)
     }
 
+    fn properties(&self, doc: u32) -> Result<crate::docinfo::Properties, String> {
+        self.ask(doc, &Request::Properties)
+    }
+
     /// Drops the document, which kills every process holding it.
     ///
     /// **It waits for the pool to come home first**, and that wait is what keeps

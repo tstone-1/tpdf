@@ -123,6 +123,11 @@ pub enum Request {
     /// when a reader is about to be told something false --- a search that found
     /// nothing --- rather than on every open. See `crate::encoding`.
     Mapping,
+    /// Read what the document says about itself.
+    ///
+    /// Document-level and the laziest of the three `lopdf` requests: nothing
+    /// asks for it until a reader opens the properties dialog.
+    Properties,
 }
 
 /// A reply, one JSON object per line on the worker's stdout.

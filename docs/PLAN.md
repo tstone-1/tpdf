@@ -7584,6 +7584,73 @@ none and the row keeps its fallback; and a leading character PDFium placed nowhe
 from `readingOrder` altogether, measured while writing a fixture for this, which is a defect in
 the copy path and the accessibility tree rather than in this panel.
 
+#### What a document says about itself --- done 2026-08-21
+
+Asked for outright: *"we are completely missing a document info panel where I can see
+certificates etc?"* --- and the answer was yes, entirely. Forty-two commands and none of them
+read the `/Info` dictionary, the encryption dictionary, or a signature. A reader who wanted to
+know who produced a document, whether it was locked, or whether anybody had signed it, had to
+leave tpdf and open a shell.
+
+**The document that prompted it is the specification.** A supplier's RoHS certificate,
+encrypted with a 40-bit RC4 handler at revision 2 with an empty user password, signed by a
+certification authority with an `adbe.pkcs7.detached` signature at DocMDP level 1, whose byte
+range covers all 894,280 bytes. Every one of those facts is something a compliance reader has
+a real reason to check, and none of them was reachable.
+
+**A dialog, not a sixth sidebar tab.** The sidebar is for things you navigate alongside the
+page; a properties readout is one you open, read and dismiss, and it never wants to be on
+screen at the same time as the page. There is also a measured cost --- five tab labels already
+want 318 px of 247, which clipped one out of reach once --- so a sixth would spend a second row
+of chrome on every document for a panel most readers open rarely. It has no keyboard shortcut,
+deliberately: a chord is a global key claim rather than a label, and Acrobat's Cmd-D is free
+here and was left free.
+
+**`lopdf`, not PDFium, and this time the alternative was genuinely available.** All eight
+`FPDF*Signature*` symbols are exported by the vendored build --- checked with `nm` rather than
+assumed --- so the signature half could have gone through PDFium. It does not, because
+`FPDFSignatureObj_*` has no accessor for the signature *field's* name, none for `/Location`,
+and nothing at all for `/Info` or `/Encrypt`; a PDFium implementation would still have needed
+this parse and would then have been a second resolver to disagree with it. What that API *is*
+good for is a differential, which is worth building and is not built here.
+
+**Two things were learned the hard way, and both are traps now.** `lopdf::decrypt` removes the
+trailer's `/Encrypt` entry, so a readout that decrypts before asking reports a plainly locked
+document as unencrypted, permissions and all --- the encryption is read first, and a mutation
+keeps that true. And the permission bits do not mean the same thing at every revision: bits 9
+to 12 are reserved under revision 2, and `P = -60` is negative, so all four read as *allowed*
+to anything that does not check. On the real document that is the difference between reporting
+accessibility extraction as permitted and reporting it as forbidden, which is what it is.
+
+**The honesty rule is held by the type, not by a comment.** Nothing reported about a signature
+can be a verdict: there is no crypto stack here, no certificate parser and no trust store, so
+`Signature` has no field that could carry one and `no_signature_field_may_carry_a_verdict`
+matches it exhaustively --- adding one is a compile error rather than a red test. The frontend
+holds the other half by reading what is actually rendered, including against a document whose
+own `/Reason` says "valid and verified", because a document's words are the input that can
+introduce one.
+
+**The one thing that is checked rather than claimed** is whether the signed byte range reaches
+the file's last byte. That needs no cryptography and catches the failure that actually happens:
+a document signed and then appended to. Proved by doing it --- twenty-two bytes onto a real
+signed fixture, and the answer changes while `covered_bytes` does not.
+
+**The strongest evidence here is not a fixture written for it.**
+`testdata/incr-certified-{1,2,3,3-indirect}.pdf` and `incr-signed.pdf` already existed:
+pyhanko wrote them for spike 0.6, with real signatures at the three DocMDP levels. Reading all
+five gives the right level, handler, subfilter, field name and coverage, cross-checked against
+`qpdf --json` as a third reader. Every other test in `docinfo.rs` builds its subject with
+`lopdf` and reads it with `lopdf`, which is the writer-and-its-own-reader shape; these five are
+the ones whose passing says the reading is right rather than self-consistent.
+
+**Not done, and each for its own reason.** The *certificate* is not parsed --- the signer's
+real name lives inside the PKCS#7 blob, and getting it needs `x509-parser` and `cms` (both
+permissive, checked), which is a decision about scope rather than an oversight; what is shown
+today is the `/Name` the signer wrote, labelled as claimed. There is still no way to type a
+password, so an encrypted document reports that it needs one and stops. XMP metadata is not
+read, only `/Info`. And no `/FileAttachment` annotation is counted as an attachment --- those
+appear in the comments panel, where they belong.
+
 ### Phase 3 --- Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

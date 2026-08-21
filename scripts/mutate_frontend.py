@@ -3417,6 +3417,12 @@ TEST_FILES = [
     # guard -- a mutation that cannot go red and a mutation nothing catches are
     # indistinguishable from the verdict alone.
     "src/lib/checkreport.test.ts",
+    # Added 2026-08-21 with the properties dialog. Eighth time, and it happened
+    # exactly as the note above predicts: the tests were written first, the
+    # mutations second, and this list is edited only by whoever writes the
+    # second. All ten mutations named tests the harness could not see, and it
+    # refused all ten rather than reporting them survived.
+    "src/lib/properties.test.ts",
     # Added 2026-08-17 with extract. The guard fired a fourth time, for five
     # mutations at once: every one named a `pageranges.test.ts` test and the
     # harness could not see the file, so it refused to start rather than
@@ -3557,6 +3563,107 @@ def all_test_names() -> dict[str, list[str]]:
         if file not in where:
             where.append(file)
     return found
+
+
+# --- what a document says about itself ------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Report a range that covers nothing as covering nothing. It is a
+        # measurement, and there was no range to measure --- the reassuring
+        # branch, arrived at by treating absence as a zero.
+        "properties: read an absent byte range as zero coverage",
+        "src/lib/properties.ts",
+        "  if (signature.covered_bytes === 0) {",
+        "  if (false) {",
+        "refuses to answer at all when there is no byte range",
+    ),
+    Mutation(
+        # Drop the warning flag on partial coverage. The row still says the
+        # right words, so a check reading the text passes; what is lost is the
+        # only thing that makes it visible in a list of twenty rows.
+        "properties: state partial coverage without marking it",
+        "src/lib/properties.ts",
+        "    value: `not the whole file --- ${formatBytes(short)} lie outside the signed range`,\n    warn: true,",
+        "    value: `not the whole file --- ${formatBytes(short)} lie outside the signed range`,\n    warn: false,",
+        "names how much lies outside the range, and warns",
+    ),
+    Mutation(
+        # Put the disclaimer on every signature section including the unsigned
+        # placeholder, which claims nothing and so has nothing to disclaim.
+        "properties: disclaim a signature field nobody has signed",
+        "src/lib/properties.ts",
+        "    return signature.signed ? { title, rows, note: NOT_CHECKED } : { title, rows };",
+        "    return { title, rows, note: NOT_CHECKED };",
+        "does not disclaim an unsigned field, which claims nothing",
+    ),
+    Mutation(
+        # Drop the disclaimer entirely. The one mutation here whose survival
+        # would mean the honesty rule is held by a comment.
+        "properties: show a signature with no disclaimer at all",
+        "src/lib/properties.ts",
+        "    return signature.signed ? { title, rows, note: NOT_CHECKED } : { title, rows };",
+        "    return { title, rows };",
+        "carries the disclaimer on every signed signature",
+    ),
+    Mutation(
+        # Put the file's statistics above the signature. Both sections are
+        # present either way, so only an order check sees it --- and the reader
+        # who opened this dialog on a signed document opened it about that.
+        "properties: list the file's statistics above the signature",
+        "src/lib/properties.ts",
+        "  return [...locked, ...signatures, ...described, ...security, file, ...cut];",
+        "  return [...locked, file, ...signatures, ...described, ...security, ...cut];",
+        "puts a signature above the file's own statistics",
+    ),
+    Mutation(
+        # Report a locked document's tagging as a fact. `null` means the question
+        # could not be asked, and collapsing it to `false` is a confident false
+        # statement rather than a missing one.
+        "properties: state tagging even when it could not be asked",
+        "src/lib/properties.ts",
+        "  if (properties.tagged !== null) {",
+        "  if (true) {",
+        "omits the tagged line when the question could not be asked",
+    ),
+    Mutation(
+        # Round every size, including the ones below a kilobyte. "0.9 KB (923
+        # bytes)" is two numbers for a quantity nobody needs rounded.
+        "properties: put a rounded size beside a count of a few hundred bytes",
+        "src/lib/properties.ts",
+        "  if (bytes < 1024) return exact;",
+        "  if (bytes < 0) return exact;",
+        "gives a plain count below a kilobyte, with no rounded size beside it",
+    ),
+    Mutation(
+        # Let a size that is not a number through. `NaN bytes` reads as a
+        # measurement of the file rather than as the absence of one.
+        "properties: format a size that is not a number as though it were",
+        "src/lib/properties.ts",
+        "  if (!Number.isFinite(bytes) || bytes < 0) return \"unknown\";",
+        "  if (bytes < -1) return \"unknown\";",
+        "says so rather than printing NaN for a size it was not given",
+    ),
+    Mutation(
+        # Describe an ordinary approval signature as a certification. Level 0 is
+        # not one of the three the specification defines, and naming it makes a
+        # claim about what the signer intended.
+        "properties: describe every signature as a certification",
+        "src/lib/properties.ts",
+        "    default:\n      return \"\";",
+        "    default:\n      return \"certified, no changes permitted\";",
+        "says nothing for a level the specification does not define",
+    ),
+    Mutation(
+        # Show a field the document does not state, as an empty row. "Reason
+        # given:" with nothing after it reads as a blank reason rather than as
+        # an absent one.
+        "properties: show an empty row for a claim the document never made",
+        "src/lib/properties.ts",
+        "    if (value) rows.push({ name, value });",
+        "    rows.push({ name, value });",
+        "leaves out a field the document does not state",
+    ),
+]
 
 
 def main() -> int:

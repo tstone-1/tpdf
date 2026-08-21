@@ -79,6 +79,7 @@ use std::time::{Duration, Instant};
 use pdfium_render::prelude::*;
 
 use crate::annots::Comments;
+use crate::docinfo::Properties;
 use crate::encoding::PageMapping;
 use crate::links::Links;
 use crate::outline::{self, Outline};
@@ -388,6 +389,10 @@ pub(crate) enum Job {
     Mapping {
         doc: u32,
         reply: Reply<Vec<PageMapping>>,
+    },
+    Properties {
+        doc: u32,
+        reply: Reply<Properties>,
     },
     Close {
         doc: u32,
@@ -752,6 +757,17 @@ impl RenderService {
         }
     }
 
+    /// Reads what a document says about itself, invoking `reply` on a service
+    /// thread.
+    ///
+    /// One job for the whole document, like `comments` and `links`, and out of
+    /// the same single `lopdf` parse. See `crate::docinfo`.
+    pub fn properties(&self, doc: u32, reply: Reply<Properties>) {
+        if self.tx.send(Job::Properties { doc, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reports, per page, whether the text means anything, on a service thread.
     ///
     /// Asked for lazily --- see [`crate::encoding`] and `RawDocument::mapping`.
@@ -849,6 +865,7 @@ pub(crate) trait Engine {
 
     fn links(&self, doc: u32) -> Result<Links, String>;
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
+    fn properties(&self, doc: u32) -> Result<Properties, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 }
 
@@ -884,6 +901,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         } => reply(engine.geometry(doc, page, crop)),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
+        Job::Properties { doc, reply } => reply(engine.properties(doc)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
@@ -911,6 +929,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Comments { reply, .. } => reply(Err(error.to_string())),
             Job::Links { reply, .. } => reply(Err(error.to_string())),
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
+            Job::Properties { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
         }
     }
@@ -1072,6 +1091,10 @@ impl Engine for InProcess {
 
     fn links(&self, doc: u32) -> Result<Links, String> {
         run_links(open_slot(&self.docs.borrow(), doc)?)
+    }
+
+    fn properties(&self, doc: u32) -> Result<Properties, String> {
+        run_properties(open_slot(&self.docs.borrow(), doc)?)
     }
 
     /// Drops the document, which is what closes the Pdfium handle.
@@ -1355,6 +1378,14 @@ pub(crate) fn run_links(document: &RawDocument) -> Result<Links, String> {
 /// once per open document however often a reader searches.
 pub(crate) fn run_mapping(document: &RawDocument) -> Vec<PageMapping> {
     document.mapping().to_vec()
+}
+
+/// Reads what a document says about itself, on the render thread.
+///
+/// Cached inside [`RawDocument`] like the comments and the links are, so a
+/// reader who opens the properties dialog twice pays for the `lopdf` parse once.
+pub(crate) fn run_properties(document: &RawDocument) -> Result<Properties, String> {
+    document.properties()
 }
 
 #[cfg(test)]

@@ -2645,6 +2645,110 @@ MUTATIONS += [
     ),
 ]
 
+# --- what a document says about itself ------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Read the encryption *after* decrypting, which reading the code alone
+        # suggests is fine. `lopdf::decrypt` removes the trailer entry and the
+        # object it points at, so the same call then answers "not encrypted" for
+        # a document that plainly is, and every permission goes with it.
+        "docinfo: ask about the encryption after decrypting rather than before",
+        "src/docinfo.rs",
+        "    let encryption = read_encryption(&document);",
+        "    let encryption: Option<Encryption> = None;",
+        "a_document_that_needs_a_password_says_so_rather_than_reporting_nothing",
+    ),
+    Mutation(
+        # Report a locked document's structure tree as absent. "No" and "could
+        # not look" are different claims and only one is true here; the `Option`
+        # is what carries the difference.
+        "docinfo: report a locked document as untagged rather than unknown",
+        "src/docinfo.rs",
+        '        tagged: catalog.map(|c| c.has(b"StructTreeRoot")),',
+        '        tagged: Some(catalog.is_some_and(|c| c.has(b"StructTreeRoot"))),',
+        "a_document_that_needs_a_password_says_so_rather_than_reporting_nothing",
+    ),
+    Mutation(
+        # Ignore the revision, so bits 9 to 12 are read as permissions on a
+        # revision-2 document. All four are set in `P = -60` because the number
+        # is negative, so this reports a document forbidding accessibility
+        # extraction as permitting it.
+        "docinfo: read the reserved permission bits whatever the revision",
+        "src/docinfo.rs",
+        "    let old = revision < 3;",
+        "    let old = false;",
+        "revision_2_reads_the_reserved_bits_as_the_coarser_ones_they_stand_for",
+    ),
+    Mutation(
+        # Take any `/Reference` entry's level. A `/FieldMDP` transform's `/P` is
+        # a field-locking mode, not a certification level, so this reports a
+        # signature locking one form field as certifying the whole document.
+        "docinfo: take any transform's level, not the DocMDP one",
+        "src/docinfo.rs",
+        '        if name_of(document, reference, b"TransformMethod") != "DocMDP" {',
+        "        if false {",
+        "the_certification_level_comes_from_the_docmdp_reference_and_no_other",
+    ),
+    Mutation(
+        # Check only where the signed range ends. A range starting past zero
+        # leaves the file's head unsigned and still ends where the file does ---
+        # the half of the check that reading the code calls redundant.
+        "docinfo: check only where the signed range ends, not where it starts",
+        "src/docinfo.rs",
+        "        }) && numbers.first() == Some(&0);",
+        "        });",
+        "a_range_that_skips_the_start_of_the_file_is_not_whole_coverage",
+    ),
+    Mutation(
+        # Sum every number in `/ByteRange`. Offsets are not lengths, so this
+        # reports a signature as covering far more than it does --- wrong in the
+        # direction that reassures.
+        "docinfo: add up every byte-range number, offsets included",
+        "src/docinfo.rs",
+        "            .map(|pair| u64::try_from(pair[1]).unwrap_or_default())",
+        "            .map(|pair| u64::try_from(pair[0] + pair[1]).unwrap_or_default())",
+        "a_signature_covering_the_file_says_so_and_one_that_does_not_says_that",
+    ),
+    Mutation(
+        # Let the catalog's `/Version` win whatever it says. It exists so an
+        # incremental update can *raise* the version, never lower it.
+        "docinfo: let the catalog's version win even when it is earlier",
+        "src/docinfo.rs",
+        "    if catalog > header {",
+        "    if !catalog.is_empty() {",
+        "the_later_of_the_header_and_the_catalog_version_wins",
+    ),
+    Mutation(
+        # Count a name tree's entries rather than its pairs. `/Names` interleaves
+        # key and value, so this reports twice as many attachments as there are.
+        "docinfo: count a name tree's entries rather than its pairs",
+        "src/docinfo.rs",
+        "        .map_or(0, |array| array.len() / 2)",
+        "        .map_or(0, std::vec::Vec::len)",
+        "attachments_are_counted_as_pairs_because_a_name_tree_interleaves_them",
+    ),
+    Mutation(
+        # Shorten a value and say nothing. The readout then looks whole while a
+        # property is silently truncated, which is the failure every `Limits`
+        # field here exists to prevent.
+        "docinfo: clip a value without counting that anything was clipped",
+        "src/docinfo.rs",
+        "    limits.values_clipped += 1;",
+        "    limits.values_clipped += 0;",
+        "a_value_that_would_fill_the_dialog_is_clipped_and_counted",
+    ),
+    Mutation(
+        # Read the four claimed strings off the *field* rather than off the
+        # signature. They live in `/V`, so every one comes back empty and the
+        # dialog shows a signature nobody signed with no reason and no date.
+        "docinfo: read a signature's claims off the field, not the signature",
+        "src/docinfo.rs",
+        '    out.reason = text(sig, b"Reason");',
+        '    out.reason = text(field, b"Reason");',
+        "what_the_signer_says_is_carried_through_unchanged",
+    ),
+]
+
 
 def main() -> int:
     # Before anything prints. A redirected run is block-buffered otherwise, and

@@ -11,6 +11,7 @@
 pub mod annots;
 pub mod content;
 pub mod diag;
+pub mod docinfo;
 pub mod docmodel;
 pub mod edits;
 pub mod encoding;
@@ -1162,6 +1163,25 @@ async fn document_links(
     await_reply("document_links", rx).await
 }
 
+/// Reads what a document says about itself: properties, encryption, signatures.
+///
+/// Document-level like `document_comments`, and asked for only when a reader
+/// opens the dialog --- it is the one `lopdf` parse nothing on the reading path
+/// ever needs, so a reader who never asks never pays for it.
+///
+/// A failure is an error rather than an empty readout. `crate::docinfo` reports
+/// what it could not read through its own limits, so an error here means the
+/// document could not be parsed at all, which is worth saying.
+#[tauri::command]
+async fn document_properties(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+) -> Result<docinfo::Properties, String> {
+    let (reply, rx) = reply_channel();
+    service.properties(doc, reply);
+    await_reply("document_properties", rx).await
+}
+
 /// Reports, per page, whether the text means anything or PDFium is guessing.
 ///
 /// A CID font with no `/ToUnicode` makes PDFium read glyph ids as character
@@ -2067,6 +2087,7 @@ pub fn run() {
             document_outline,
             document_comments,
             document_links,
+            document_properties,
             document_mapping,
             launch_open_event,
             app_version,

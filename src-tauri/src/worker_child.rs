@@ -377,6 +377,10 @@ fn handle(
             Err(e) => Response::err(e),
         },
         Request::Mapping => Response::json(&render::run_mapping(document)),
+        Request::Properties => match render::run_properties(document) {
+            Ok(properties) => Response::json(&properties),
+            Err(e) => Response::err(e),
+        },
     }
 }
 

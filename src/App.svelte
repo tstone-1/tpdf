@@ -39,6 +39,8 @@
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
+  import { PropertiesDialog } from "./lib/propertiesdialog";
+  import type { Properties } from "./lib/properties";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import { pagesNeedingWords, wordsForPage, type Comments } from "./lib/comments";
@@ -153,6 +155,17 @@
   let viewer: Viewer | null = null;
   let palette: Palette | null = null;
   let sidebar: Sidebar | null = null;
+  let propertiesDialog: PropertiesDialog | null = null;
+  /**
+   * What the document says about itself, once anybody has asked.
+   *
+   * Cached here as well as in the backend, and the reason is what a reader sees
+   * rather than what it costs: the backend's own cache makes a second read
+   * nearly free, but the answer still arrives through an `await`, so a dialog
+   * reopened on the same document would flash "Reading the document..." every
+   * time. Cleared with the document, since it is an answer about a file.
+   */
+  let properties: Properties | null = null;
   let findTimer = 0;
   /**
    * The document the backend is holding for this window, or -1 for none.
@@ -291,6 +304,7 @@
     isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
     extractPages: (slots) => void extractPages(slots),
+    showProperties: () => void showProperties(),
   };
 
   /**
@@ -807,6 +821,43 @@
       await edits.extractPages(openPathName, chosen, slots);
     } catch (e) {
       say(String(e));
+    }
+  }
+
+  /**
+   * Shows what the document says about itself.
+   *
+   * Opens first and fills in second, deliberately. The `lopdf` parse behind this
+   * is the one nothing on the reading path ever needs, so it has not run when
+   * the dialog is asked for --- on the 337 MB fixture that is around twelve
+   * milliseconds and on an ordinary document a fraction of one, but a command
+   * that appears to do nothing for even a moment reads as broken. The dialog
+   * says it is reading, and replaces that with the answer.
+   *
+   * The `openDoc` guard is the one every document-level fetch here carries: a
+   * reader who closes one file and opens another before the answer lands must
+   * not be shown the first file's properties under the second file's name.
+   */
+  async function showProperties(): Promise<void> {
+    if (!propertiesDialog || openDoc < 0) return;
+    if (properties) {
+      propertiesDialog.show(properties, "");
+      return;
+    }
+
+    const wanted = openDoc;
+    propertiesDialog.show(null, "");
+    try {
+      const answer = await invoke<Properties>("document_properties", { doc: wanted });
+      if (openDoc !== wanted || !propertiesDialog.isOpen) return;
+      properties = answer;
+      propertiesDialog.show(answer, "");
+    } catch (e) {
+      if (openDoc !== wanted || !propertiesDialog.isOpen) return;
+      // Shown in the dialog rather than in the status line, because the dialog
+      // is what the reader is looking at and an empty one beside a message
+      // somewhere else reads as a document that states nothing.
+      propertiesDialog.show(null, String(e));
     }
   }
 
@@ -1361,6 +1412,10 @@
       // the shell, and a palette attached to `document.body` would outlive it.
       palette = new Palette(commands);
 
+      // On `document.body` rather than inside the viewer, for the reason the
+      // context menu is: a modal that lives in a scroll box is clipped by it.
+      propertiesDialog = new PropertiesDialog(document.body);
+
       // On `document.body`, not inside a panel: a menu opened on the last row
       // of the page strip would otherwise be clipped by that panel's scroll
       // box. Runs a chosen command through the registry, exactly as the palette
@@ -1701,6 +1756,8 @@
       // kept would tell the next file's page 3 that its words are already known.
       wordsAsked.clear();
       commentWords.clear();
+      properties = null;
+      propertiesDialog?.close();
       rawOutline = null;
       sidebar = new Sidebar(sidebarHost, {
         onNavigate: (target, top) => {

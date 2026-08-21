@@ -232,6 +232,8 @@ export interface AppActions {
   saveCopy(): void;
   /** Ask for a name and write the pages at `slots` to it, as a second file. */
   extractPages(slots: number[]): void;
+  /** Show what the document says about itself. */
+  showProperties(): void;
 }
 
 /**
@@ -318,6 +320,18 @@ export function registerAppCommands(
       title: "Install update and restart",
       enabled: () => actions.updateAvailable() && !actions.updateReady(),
       run: () => actions.applyUpdate(),
+    },
+    {
+      id: "file.properties",
+      title: "Document properties",
+      // No shortcut, on the same reasoning as "Extract pages...": this is a
+      // command a reader reaches deliberately rather than by muscle memory, and
+      // a chord is a *global key claim* rather than a label --- see
+      // `docs/TRAPS.md`. Acrobat's Cmd-D is free here and was deliberately not
+      // taken, because claiming a key for a dialog opened once a month costs
+      // every other command that might want it later.
+      enabled: withDocument,
+      run: () => actions.showProperties(),
     },
     {
       // No page-range field of our own, deliberately: the system panel has one,
