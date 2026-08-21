@@ -2682,6 +2682,41 @@ never filed. That carry-over is the whole assertion; a second launch holding 0 m
 call is being dropped. The probe is off unless the variable is set, so a shipped run does
 not narrate its own menu bookkeeping into the one log a reader sends back.
 
+### Checking the menu bar
+
+macOS only, and it needs a built bundle and an unlocked screen --- but no document, no
+fixture and no window of its own beyond the app's:
+
+```bash
+scripts/menu_check.py                                  # the release bundle
+scripts/menu_check.py path/to/tpdf.app
+scripts/menu_check.py --self-test                      # the rule, without a build
+```
+
+**Run it after touching `menu.rs`, `menubar.ts`, or any command's `title`.** It reads the
+live menu bar through System Events and asserts three things: that the read returned menus at
+all, that no two items in one menu carry the same name, and that the bar is exactly the
+menus `menubar.ts` declares in that order, plus the predefined `Window` that `menu.rs`
+appends.
+
+It exists because on 2026-08-21 the application menu carried **two items named "About tpdf"**
+and nothing in either language could have said so: the platform's items are never named in
+our source, and ours arrive over IPC as data, so the only place both lists exist at once is
+the bar. `docs/TRAPS.md` has the entry, including why our About was the one kept.
+
+**It launches with `open`, deliberately** --- not as a subprocess with pipes. A harness that
+captures output supplies a stdout and a stderr that a double-clicked application does not
+have, which is the trap that hid the Windows open defect for a month; this check has no
+reason to differ from the reader's launch, so it does not.
+
+Proved in both directions against real binaries rather than against a fixture: rebuilt from
+`git checkout -- src-tauri/src/menu.rs` it reports the duplicate and exits 2, and with the fix
+it exits 0. `--self-test` carries both measured menus so the rule can be shown to fire in a
+second, and it is not a substitute for the run: it tests the predicate, not the menu.
+
+It is **not** a gate, for the same reason `viewer_check.py` is not --- an accessibility read
+needs a real session, and on a headless runner it would not fail, it would hang.
+
 ### The exit code of a spike run
 
 `AppHandle::exit(code)` does **not** set the process's exit code. It ends the event loop,
@@ -2912,6 +2947,10 @@ starts at 0 and increments within the month.
 8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
    `print-probe` (§8), which is the only check that reaches a real spooler.
+
+   On macOS also `scripts/menu_check.py` against the bundle. It takes seconds and it reads
+   the one surface no test in either language can: a duplicate menu label shipped in 26.8.6
+   and reached a reader before anything here noticed.
 
    **Windows produces an MSI and an NSIS installer**, since 2026-07-30. It did not until
    then, and the rule that came out of it is worth knowing before adding a probe:

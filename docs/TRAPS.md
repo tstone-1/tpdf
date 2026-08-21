@@ -11219,3 +11219,67 @@ reports `[OK]`.
 runs there, not as strong as the target it names.** Anything the real gate list does that
 the stand-in does not — a lint, a test, a link — is a class of failure the stand-in is
 structurally unable to report, and it will read as coverage.
+
+### A label the platform writes is compared against a label we write by nothing
+
+A reader sent a screenshot on 2026-08-21 with **two items named "About tpdf"** in the
+application menu, one above the other, separated by a rule. Both were real and both worked:
+the first opened the macOS panel, the second wrote `tpdf 26.8.6` into the header.
+
+The two halves were written six weeks apart and neither could see the other. `menu.rs` put
+`PredefinedMenuItem::about` at the top of the application section, and **never names it** ---
+the label is the OS's, derived from the bundle name, so no string in that file says "About".
+`app.about` was added on 2026-08-19 with the version display, declared in `appcommands.ts`
+with `title: "About tpdf"` and placed first in `menubar.ts`'s application section, where it
+belongs: it is the only answer to "which version is this" on Windows, which has no such
+panel. Each side is correct alone.
+
+**Every test in both languages checks ids, and a reader reads labels.** `menu.rs`'s tests
+cover the wire shape of the spec; `menubar.test.ts` covers placement, accelerators and the
+four bindings the menu may not claim; `appcommands.test.ts` sweeps every registered command
+for an action and a rank. A duplicate *title* is invisible to all of them, and would be even
+if both lists were in one language --- nothing compared a label against a label.
+
+The only place both lists exist at once is the menu bar itself. `scripts/menu_check.py`
+reads it with System Events and asserts no two items in one menu share a name, which is an
+invariant neither source can state. Same argument as `examples/backend_probe.rs` against the
+dynamic linker's image table: when two subsystems each hold half the answer, measure the
+artifact they both write into.
+
+Proved against the real binary in both directions rather than against a fixture: the
+pre-fix bundle rebuilt from `git checkout -- src-tauri/src/menu.rs` reports
+`[FAIL] the tpdf menu carries "About tpdf" more than once` and exits 2; the fixed one exits
+0. The script also carries both measured menus as a `--self-test`, so the rule can be shown
+to fire without a build.
+
+**Ours was the one kept, and that is the general shape.** The reflex is to drop your own item
+and defer to the platform, and it is wrong here: the palette offers "About tpdf" on both
+platforms, so deferring would have left one name meaning two things depending on which
+surface the reader used --- the same defect moved rather than fixed.
+
+### An AppleScript loop over a property list iterates a reference, and every menu reads as empty
+
+The first two runs of `menu_check.py` reported `[FAIL] the tpdf menu is empty` for all eight
+menus of an application whose menus were demonstrably full --- the same script had printed
+their contents minutes earlier from a one-line `osascript`.
+
+`repeat with nm in (name of every menu item of menu 1 of mbi)` does not iterate a list. It
+iterates a **reference** into the property, and reading an element raises
+`Can't make item 1 of name of every menu item ... into type specifier. (-1700)`. The loop sat
+inside a `try` --- there because a menu bar item without a menu is legal --- so the error
+aborted the whole menu and left it looking like a menu with nothing in it. Materialising the
+list first (`set nms to name of every menu item of menu 1 of mbi`, then index it) is the fix.
+
+Two things worth carrying:
+
+- **An instrument failure wore the shape of a finding.** Eight empty menus is a plausible
+  defect --- a menu that failed to build is exactly what a broken `set_menu` looks like ---
+  and the run was one keystroke from being reported as one. What settled it in ten seconds
+  was that a *direct* read of the same menu worked; when a harness and a one-liner disagree
+  about the same observable, the harness is the suspect.
+- **A separator's name is `missing value`, and `missing value as text` raises -1700 too**, so
+  the same `try` swallowed a second, independent bug. Two causes with one symptom, in six
+  lines of AppleScript.
+
+The reason the empty case is a `[FAIL]` and not a `[SKIP]` in that script is this run: an
+empty read is the reassuring branch, and it was wrong both times it appeared.

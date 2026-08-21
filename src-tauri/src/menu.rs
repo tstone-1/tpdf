@@ -36,9 +36,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::Deserialize;
-use tauri::menu::{
-    AboutMetadata, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
-};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// The event a chosen menu item becomes, carrying the command's id.
@@ -177,17 +175,22 @@ fn build<R: Runtime>(app: &AppHandle<R>, spec: &[SectionSpec]) -> Result<(), Str
 
     for section in spec {
         let mut submenu = SubmenuBuilder::new(app, &section.title);
-        if section.app {
-            // About first and Quit last, with ours between About and Services,
-            // which is where every macOS application that has a "Check for
-            // Updates" puts it.
-            submenu = submenu
-                .item(
-                    &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))
-                        .map_err(why)?,
-                )
-                .separator();
-        }
+        // No predefined About here, and that is the correction rather than an
+        // omission. This branch added `PredefinedMenuItem::about` until
+        // 2026-08-21, and `app.about` -- our own, which answers the same
+        // question and is the only answer on Windows -- leads the application
+        // section of `menubar.ts`. So the menu carried "About tpdf" twice, one
+        // opening the platform panel and one writing the version into the
+        // header, which is exactly the "one term per concept" failure this menu
+        // exists to fix. Ours is the one kept: it says the same thing in both
+        // surfaces the reader has, the palette and the bar, and on both
+        // platforms. Nothing else predefined belongs at the top -- Quit and
+        // Services are still added below, where the platform puts them.
+        //
+        // Nothing could see this. The platform's items are built here and our
+        // titles arrive from the frontend, so neither side holds both lists,
+        // and no test in either language compares a label against a label.
+        // `scripts/menu_check.py` reads the real menu bar for that reason.
         for item in &section.items {
             match item {
                 ItemSpec::Separator => submenu = submenu.separator(),

@@ -17,6 +17,23 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.7] - Unreleased
+
+### Fixed: the application menu listed "About tpdf" twice
+
+- The macOS application menu carried two items with that name, one above the
+  other. Both worked and each was right on its own: one was the platform's
+  standard About panel, added by the Rust side, and one was tpdf's own, which
+  writes the version into the header and is the only answer to "which version is
+  this" on Windows. The platform's has been removed, so there is one "About
+  tpdf" in the menu, it is the same one the command palette offers, and it does
+  the same thing on both platforms.
+- `scripts/menu_check.py` reads the real menu bar and refuses a menu with two
+  items of one name. Nothing could have caught this before: the platform's items
+  are never named in our source --- the label comes from the operating system ---
+  and ours arrive from the frontend as data, so the two lists exist together only
+  in the bar itself.
+
 ## [26.8.6] - 2026-08-20
 
 ### A sidebar panel listing your own marks

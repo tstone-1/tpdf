@@ -75,9 +75,12 @@ export interface LayoutSection {
    * Whether this is the application menu --- the leftmost one, named after the
    * application by the platform rather than by us.
    *
-   * Its items are placed between About and Services, which is where macOS puts
-   * "Check for Updates" in every application that has one. The predefined items
-   * around them are the platform's and are added by the Rust side.
+   * Its items lead, and Services, Hide and Quit follow them --- all three
+   * predefined, added by the Rust side, and the platform's own. There is no
+   * predefined About above them: `app.about` is ours and answers the same
+   * question, and until 2026-08-21 both were in this menu under one name. See
+   * `docs/TRAPS.md`, "A label the platform writes is compared against a label we
+   * write by nothing".
    */
   app?: boolean;
 }
