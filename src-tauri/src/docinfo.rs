@@ -2482,10 +2482,19 @@ mod tests {
             assert!(certificate.self_issued, "{name}: the generator self-signs");
             assert_eq!(certificate.chain, 1, "{name}: no chain above it");
             assert!(certificate.matched_signer, "{name}");
-            assert_eq!(
-                certificate.serial.len(),
-                40,
-                "{name}: a 20-byte serial as hex, {:?}",
+            // Not `== 40`. pyhanko mints a random serial of at most 20 bytes
+            // and DER drops leading zeros, so roughly one in 256 comes out a
+            // byte shorter --- which is a flake, not a defect, and it fired on
+            // the Windows leg with a 19-byte serial while macOS passed the same
+            // commit. What is invariant is the bound and the encoding.
+            assert!(
+                !certificate.serial.is_empty() && certificate.serial.len() <= 40,
+                "{name}: at most a 20-byte serial as hex, {:?}",
+                certificate.serial
+            );
+            assert!(
+                certificate.serial.len() % 2 == 0,
+                "{name}: whole bytes, {:?}",
                 certificate.serial
             );
             assert!(
