@@ -12175,10 +12175,24 @@ proved nothing. The measurement that means something is taken with the artifacts
 pyhanko absent gives exit **1** and `exited 0 but testdata/incr-signed.pdf does not exist`;
 pyhanko present gives exit 0 and nine files.
 
-**The fixtures are not byte-reproducible, and nothing said so.** Two consecutive runs produce
-nine files of identical *size* and differing *bytes* — pyhanko mints a fresh key pair and serial
-each time. So CI builds a different set from any local one on every run, and a test may pin a
-size and must never pin a serial, a date or a digest. That is the trap *"A test pinned a random
-value out of a generated fixture"* arriving from the other side: there it was found by a stale
-local file, here by diffing two runs of the generator. The suite was re-run against a
-freshly-generated set before the change was trusted: 702 passed, 0 failed.
+**The fixtures are not reproducible — and the half I got wrong is the instructive half.** Two
+consecutive runs *on one machine* produce nine files of identical size and differing bytes,
+because pyhanko mints a fresh key pair and serial each time. I measured that, wrote *"a test may
+pin a size and must never pin a serial"*, and pushed. Both CI legs went red on a pinned size:
+`incr-signed.pdf` is **8,097** bytes on both runners and **8,128** here, on the same commit.
+
+**A two-run comparison on one machine cannot see a per-machine constant.** It is the control you
+reach for, and it holds every part of the environment fixed — which is precisely what the
+question turned out to be about. Answering it needs a second machine, and CI was the second
+machine, so the right reading of that first push is that it worked.
+
+What replaced the pinned numbers is a quantity **derived from the file at test time, by a route
+the code under test does not take**: `docinfo` reads `covered_bytes` from `/ByteRange`, and the
+test sums where the `/Contents` hex actually sits. A whole-file signature covers everything but
+that span, so the two must agree, and neither is a constant anyone transcribed. Proved able to
+fail by a mutation that counts only the first range pair.
+
+Its first draft was wrong in a way worth keeping: **`/Contents` is also a page key**, naming the
+content stream, so taking the next `<` after every occurrence read an unrelated dictionary and
+over-reported by 181 bytes. A scan for a PDF key is a scan for a name that several kinds of
+object share.

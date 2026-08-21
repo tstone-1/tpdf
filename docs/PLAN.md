@@ -8048,11 +8048,11 @@ all nine. **What that hard failure buys is the tests' silence.** They `[SKIP]` w
 is absent, which is right for a local checkout and would be a hole on a runner if nothing else
 checked; the workflow step is what checks, and it runs before the gates.
 
-**One thing the fixtures are not: reproducible.** Two runs give nine files of identical size and
-differing bytes, because pyhanko mints a new key and serial each time. CI will therefore build a
-different set from anyone's local one every run --- so a test may pin a size and must never pin a
-serial, a date or a digest, which the trap of that name already records from the other
-direction. The suite was re-run against a freshly generated set: 702 passed, 0 failed.
+**One thing the fixtures are not: reproducible.** Two runs *on one machine* give nine files of
+identical size and differing bytes, because pyhanko mints a new key and serial each time; **across
+machines the size moves as well** --- both runners build `incr-signed.pdf` at 8,097 bytes against
+this laptop's 8,128. So nothing absolute may be pinned out of one. The local pair agreeing on size
+is exactly what made the size look safe, and the first push turned both legs red on it.
 
 **Still not rehearsed on a runner.** A workflow's last step is its least-tested code, and the tag
 glob accepts an `-rcN` suffix for exactly this.
