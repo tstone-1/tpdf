@@ -773,6 +773,27 @@ limit. Absent is the reassuring branch, which is the direction a silent failure 
 And what an extension states is still the issuer's word --- the constraint binds the key, and
 only a chain to a trusted issuer makes it mean anything, so `NOT_CHECKED` now says that too.
 
+**Timestamps, same day, and they add no parser.** An RFC 3161 token is itself a CMS
+`SignedData`, so reading one exercises the crates already described here on bytes already
+bounded by `MAX_SIG_BLOB` --- the token sits *inside* the signature blob. The only new decoding
+is `TSTInfo`'s, and it is deliberately positional: four opaque values skipped, the fifth
+required to parse as a `GeneralizedTime`. That last requirement is the bound. A structure
+malformed enough to shift the fields yields **no** time rather than a time read out of the wrong
+field, which matters because the output is attributed to an authority --- a plausible wrong
+instant presented as a third party's attestation is worse than silence, and it is what a
+positional walk with no type check would produce.
+
+Two refusals beside it, each with a test that reaches it: an attribute carrying more than one
+value is refused rather than guessed at, and a CMS whose `eContentType` is not `id-ct-TSTInfo`
+is not read as a timestamp however well-formed its content is.
+
+**One limitation worth stating here rather than only in the trap index.** A `/Contents` blob
+encoded in **BER with indefinite lengths** is refused outright by `der`, so tpdf reads no
+certificate and no timestamp from it. One of ten real signed documents to hand is such a file.
+The failure is reported (`certificates_unread`), not silent --- but a reader is told *"could not
+be read"* where another tool shows a signer, and the class this affects is CAdES, which is
+where timestamping is routine.
+
 **A fifth route, and a third parser: tpdf reads XMP as of 2026-08-21.** The catalog's
 `/Metadata` is an RDF/XML packet the document chose, and `xmp::scan` hands it to `quick-xml`.
 That crate was **already in the tree** through Tauri's `plist` dependency, so this compiled no

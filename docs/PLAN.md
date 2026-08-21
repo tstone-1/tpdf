@@ -7853,6 +7853,48 @@ times, which no real certificate does. Its all-bits control beneath is what catc
 since every assertion in the loop is over a one-element list; a mutation reordering two whole
 rows proves that half separately.
 
+#### When a third party says the signature existed
+
+**Done 2026-08-21.** A signature's `/M` is whatever the signing machine's clock read --- free
+text in the signature dictionary, checked by nothing. An RFC 3161 **timestamp token** is a
+different party's statement, carried as an unsigned attribute on the `SignerInfo` under
+1.2.840.113549.1.9.16.2.14, and it is the only thing in a signature that is not the signer's own
+word about when. The dialog now shows it under the signer's own date, names the authority, and
+says it is unchecked.
+
+The authority is read by **`parse_certificate`, unchanged** --- a timestamp token *is* a CMS
+`SignedData`, so its signer is the TSA. No second implementation, which is the drift this
+repository has an entry about.
+
+`genTime` is read positionally: four opaque values skipped, the fifth decoded as a
+`GeneralizedTime`. Modelling `MessageImprint` and five optional trailing fields to reach one
+string would be a page of types and five places to be wrong; the bound on the shortcut is that
+the fifth value must *parse* as a time, so a shifted structure yields no time rather than a
+wrong one. A wrong time attributed to an authority is the worst outcome this module has.
+
+**The measurement that matters, and it is uncomfortable.** Of ten signed documents to hand --- the
+seven fixtures and three real files --- exactly **one** carries a timestamp, and tpdf cannot read
+that one at all: its `/Contents` is **BER with indefinite lengths** (`30 80`), which the `der`
+crate refuses by design. So this feature is tested against a fixture built for it and has been
+demonstrated on zero real documents. The trap of that name carries the detail. That is the
+honest state, and the fix --- a bounded BER-to-DER normalisation before the parsers see the blob
+--- would also make the existing certificate reader work on that class, which is the class where
+timestamping is routine.
+
+**Three mutations survived the first run and all three were fixture gaps**, each with a
+different reason the input never reached the guard: a detached signature carries no encapsulated
+content, so the content-type check was refused by its neighbour; a bare INTEGER fails the
+four-value walk with or without the SEQUENCE tag check; and a `SET OF` sorts by encoded bytes,
+so an INTEGER added beside the token sorted *ahead* of it and "take the first" got the rubbish.
+Written up as its own trap, because the question a survivor asks is *does my input reach this
+line*, not *is my assertion strong enough*.
+
+**Not done.** A document timestamp --- a signature field whose `/SubFilter` is `ETSI.RFC3161`,
+where `/Contents` is the token itself --- is **implemented** and reached by no fixture, because
+pyhanko's `sign_pdf` writes an ordinary signature and nothing here mints a bare document
+timestamp. The code path is one branch and it is honest about what it is; it is untested, and
+that is stated here rather than implied by silence.
+
 #### What the document says about itself in XMP
 
 **Done 2026-08-21, and the scope was decided by measurement.** The catalog's `/Metadata` is an

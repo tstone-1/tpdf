@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 413 entries
+The one thing this file does *not* carry in full is the trap list --- 415 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1054,8 +1054,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 413 of them and the full text
-was 93% of this file --- an instruction budget spent on the 412 traps that are not
+titles. Only the titles are here, because there are 415 of them and the full text
+was 93% of this file --- an instruction budget spent on the 414 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1188,6 +1188,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `lopdf` silently drops encryption on save
 - An incremental save is cheap on disk, not in memory --- and its cost is the parse
 - An object a prior revision overwrote is reachable by no parser
+- A signature blob is trimmed by trailing zero, and BER ends in zeros (1 in 256 DER blobs loses its last byte; a real CAdES signature loses its terminators, and `der` refuses indefinite length anyway)
 - A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
 - A shortcut can produce the right answer and lose the report
 - An empty answer from a whole-document scan cannot say whether it looked
@@ -1234,6 +1235,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A `Decode<'static>` bound is satisfiable by leaking, and nothing goes red (an attacker-sized leak inside the sandbox, with 16/16 gates green; the signature is the thing to change, not the body)
 - `trim_text` trims each event, and a value with an entity in it arrives as several (two bugs correct for every value with no `&` in it, and the obvious repair breaks `&#233;`)
 - A stale binary answered for a source file that was never written (a `cd` into the directory you are already in, `&&`, and a heredoc that never ran; `Finished in 0.15s` is not a build)
+- A guard whose neighbour refuses the same input cannot be tested by it (three survivors, three different reasons the input never reached the line; ask what your input reaches, not whether your assertion is strong)
 
 ### Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect

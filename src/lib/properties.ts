@@ -68,6 +68,19 @@ export interface Signature {
   covered_bytes: number;
   certification: number;
   certificate: Certificate | null;
+  timestamp: Timestamp | null;
+}
+
+/**
+ * What a timestamp authority attested, as `docinfo::Timestamp` reports it.
+ *
+ * A signature's own date is whatever the signer's computer clock read. This is
+ * a different party's statement, and it is still unverified --- see
+ * [`NOT_CHECKED`].
+ */
+export interface Timestamp {
+  when: string;
+  authority: Certificate | null;
 }
 
 /**
@@ -167,8 +180,10 @@ export const NOT_CHECKED =
   "the signature against the bytes it covers, build a chain to an issuer it " +
   "trusts, look for a revocation, or ask whether the certificate was in date " +
   "when it was used. What a certificate states its key is for is the issuer's " +
-  "own word, unchecked for the same reason, so nothing here means the " +
-  "signature is valid.";
+  "own word, unchecked for the same reason. Nor is a timestamp checked: its " +
+  "own signature, the authority behind it, and whether it covers this " +
+  "signature at all are all unexamined. Nothing here means the signature is " +
+  "valid.";
 
 /**
  * Words that would read as a verdict on a signature.
@@ -422,6 +437,22 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   claimed("Reason given", signature.reason);
   claimed("Location given", signature.location);
   claimed("Date given", signature.when);
+
+  // Directly under the signer's own date, because the two answer the same
+  // question from different places and the labels are what tell them apart:
+  // `/M` is written by the machine doing the signing and nothing checks it,
+  // while a token is a third party's statement. Naming the authority is the
+  // whole value of the row --- an attested time with no attester named is a
+  // number a reader has no way to weigh.
+  const stamp = signature.timestamp;
+  if (stamp?.when) {
+    const by =
+      stamp.authority?.subject_cn || stamp.authority?.subject || "an unnamed authority";
+    rows.push({
+      name: "Timestamped",
+      value: `${stamp.when} by ${by} --- a separate party's claim, which tpdf does not check`,
+    });
+  }
   rows.push(coverageOf(signature, bytes));
 
   const level = certificationOf(signature.certification);
