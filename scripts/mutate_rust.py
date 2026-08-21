@@ -32,14 +32,24 @@ mutation produces no failing-test lines, which is exactly what a surviving
 mutation looks like. It is the likeliest outcome here and the one that would
 otherwise read as good news.
 
+**It builds into its own target directory** (`src-tauri/target/mutations`) and
+**runs only the test each mutation names**, falling back to the whole suite when
+that test does not go red. Both are about cost rather than coverage, and the
+whole table went from 4.4 hours to 405 s on 2026-08-21 --- `docs/TRAPS.md`,
+"A harness that edits source files pays for the editor watching them", has the
+measurements and why the fallback is the part that keeps it honest.
+
 Usage:
     scripts/mutate_rust.py            # every mutation
     scripts/mutate_rust.py --list
+    scripts/mutate_rust.py --only save
+    scripts/mutate_rust.py --since HEAD~3   # only what the diff touched
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -53,6 +63,23 @@ from live_output import stream_results  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "src-tauri"
+
+#: This harness builds into its own target directory, and it is not tidiness.
+#:
+#: Every mutation writes a file under `src-tauri/src`, and an editor with
+#: rust-analyzer open answers each of those writes with
+#: `cargo check --workspace --all-targets`. That check takes the build
+#: directory's lock, so the mutation's own `cargo test` queues behind a
+#: whole-workspace re-check --- measured on 2026-08-21 with cargo saying so in as
+#: many words, `Blocking waiting for file lock on build directory`, and a
+#: no-op `cargo test --lib --no-run` taking 28.2 s where it takes 0.2 s alone.
+#: Multiply that by the table and the run is hours longer than the work in it.
+#:
+#: Inside `target/` so the existing ignore rule covers it, and persistent so the
+#: cost is one cold build ever rather than one per run. It also stops the editor
+#: from reporting diagnostics against a tree that is mutated at the time.
+MUT_TARGET = CRATE / "target" / "mutations"
+CARGO_ENV = {**os.environ, "CARGO_TARGET_DIR": str(MUT_TARGET)}
 
 #: Which platform this is, in the vocabulary `Mutation.only_on` uses.
 HERE = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "linux"
@@ -2145,11 +2172,45 @@ SUMMARY = re.compile(r"^test result: \w+\. \d+ passed; (\d+) failed", re.M)
 LISTED_TEST = re.compile(r"^(\S+): test$", re.M)
 
 
-def run_tests() -> tuple[set[str], int | None, str]:
-    """Runs the filtered suite, returning failed names, the summary count and the log."""
+def changed_files(ref: str) -> set[str] | None:
+    """Repo-relative paths differing from `ref`, working tree included.
+
+    Two questions, because they have different answers and both matter: what
+    the commits since `ref` touched, and what is edited right now and not
+    committed. A run that read only the first would skip exactly the mutation
+    aimed at the code being written.
+    """
+    out: set[str] = set()
+    for cmd in (
+        ["git", "diff", "--name-only", f"{ref}...HEAD"],
+        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
+        done = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        if done.returncode != 0:
+            return None
+        out |= {line.strip() for line in done.stdout.splitlines() if line.strip()}
+    return out
+
+
+def run_tests(only: str | None = None) -> tuple[set[str], int | None, str]:
+    """Runs the suite, returning failed names, the summary count and the log.
+
+    `only` narrows libtest's filter to the one test a mutation names, and that
+    is what makes a full table affordable. The twelve tests that reach macOS
+    frameworks -- `save.rs` and `print.rs`'s third-parser checks, and
+    `keylayout.rs` -- take 17 to 40 s each while the other 595 take 0.6 s
+    between them, so running everything for every mutation spends ~35 s to
+    exercise one assertion. Measured 2026-08-21.
+
+    The caller runs the full suite anyway whenever the narrow one finds nothing
+    red, which is the case where the diagnostic matters: SURVIVED and "something
+    else caught it" are different findings and both need the whole set.
+    """
     done = subprocess.run(
-        ["cargo", "test", "--lib", "--", *FILTERS],
+        ["cargo", "test", "--lib", "--", *([only] if only else FILTERS)],
         cwd=CRATE,
+        env=CARGO_ENV,
         capture_output=True,
         text=True,
         # As in `mutate_frontend.py`: `text=True` alone decodes with the locale
@@ -2174,6 +2235,7 @@ def all_test_names() -> set[str]:
     done = subprocess.run(
         ["cargo", "test", "--lib", "--", *FILTERS, "--list"],
         cwd=CRATE,
+        env=CARGO_ENV,
         capture_output=True,
         text=True,
         timeout=900,
@@ -2602,8 +2664,37 @@ def main() -> int:
     parser.add_argument(
         "--only", default="", help="run mutations whose name contains this"
     )
+    # For the loop while a change is being made, where `--only` needs you to
+    # know the mutation names and this needs you to know nothing. It selects the
+    # mutations whose FILE the diff touched, which is sound as far as it goes:
+    # every test these name is `#[cfg(test)]` in the file it mutates.
+    #
+    # **It does not go as far as the whole table, and the difference is not
+    # scope but reach.** A change in `docmodel.rs` can decide what `save.rs`
+    # does, so a mutation in an untouched file can stop being caught without
+    # that file changing. This is the fast loop; the table is what runs before a
+    # push, and the count of what it left out is printed rather than implied.
+    parser.add_argument(
+        "--since",
+        default="",
+        metavar="REF",
+        help="only mutations in files changed since REF (plus the working tree)",
+    )
     args = parser.parse_args()
     chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
+    if args.since:
+        touched = changed_files(args.since)
+        if touched is None:
+            print(f"[FAIL] git could not diff against {args.since!r}")
+            return 1
+        scoped = [m for m in chosen if str(Path("src-tauri") / m.path) in touched]
+        left = len(chosen) - len(scoped)
+        rust = sorted(f for f in touched if f.endswith(".rs"))
+        print(f"--- --since {args.since}: {len(rust)} Rust file(s) changed, "
+              f"{len(scoped)} mutation(s) aimed at them, {left} NOT run")
+        print("    a change elsewhere can still break a mutation in a file this "
+              "missed --- run the whole table before pushing")
+        chosen = scoped
     # Mutations for another platform. `--list` still shows them, marked: the
     # table is the same everywhere and what differs is which rows this machine
     # can execute, so a listing that silently dropped them would make two
@@ -2616,7 +2707,17 @@ def main() -> int:
             print(f"{mutation.name}  ->  expects: {mutation.expect}{aside}")
         return 0
     if not chosen:
-        print(f"[FAIL] no mutation matches {args.only!r}")
+        # Not exit 0. "Nothing to run" and "everything passed" are different
+        # facts, and a caller reading only the status must not be told the
+        # second when this is the first.
+        if args.since:
+            print(
+                f"[FAIL] no mutation is aimed at anything that changed since "
+                f"{args.since!r} -- this run proved nothing, which is not the "
+                "same as a green table"
+            )
+        else:
+            print(f"[FAIL] no mutation matches {args.only!r}")
         return 1
 
     for mutation in elsewhere:
@@ -2698,7 +2799,17 @@ def main() -> int:
                 if crlf:
                     mutated = mutated.replace("\n", "\r\n")
                 target.write_bytes(mutated.encode("utf-8"))
-                names, counted, out = run_tests()
+                # The test this mutation names, first and alone. When it goes
+                # red -- which is the whole table's expected outcome -- the
+                # verdict is settled and the run stops there.
+                names, counted, out = run_tests(mutation.expect)
+                narrow = True
+                if counted is not None and not names:
+                    # It did not. Now the full set matters: "nothing noticed"
+                    # and "something else noticed" are different findings, and
+                    # the second one prints which tests went red instead.
+                    names, counted, out = run_tests()
+                    narrow = False
             finally:
                 target.write_bytes(backup.read_bytes())
 
@@ -2727,8 +2838,12 @@ def main() -> int:
                 continue
             hit = any(mutation.expect in name for name in names)
             mark = "[OK]  " if hit else "[FAIL]"
+            # The scope is printed because the count means different things in
+            # the two cases: `1 red` out of the one test named for the mutation
+            # is not the same statement as `1 red` out of 607.
+            scope = "the test named for it" if narrow else f"{len(known)} tests"
             print(
-                f"{mark} {mutation.name}: {counted} red"
+                f"{mark} {mutation.name}: {counted} red of {scope}"
                 + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
             )
             if not hit:

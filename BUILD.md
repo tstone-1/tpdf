@@ -2841,19 +2841,19 @@ starts at 0 and increments within the month.
    PDFium bump). The half no probe covers is reading each claim and naming the line that
    keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
 7. Re-run the three mutation harnesses if any of the code they cover changed. They are not
-   gates --- each takes minutes and rebuilds per mutation --- and they are the only thing that
-   says the tests can fail:
+   gates --- they rebuild per mutation and two of them need a window --- and they are the only
+   thing that says the tests can fail:
 
    ```
    scripts/mutate_rust.py          # the modules in FILTERS, `cargo test --lib`
    scripts/mutate_frontend.py      # the modules under src/lib, `vitest`
    scripts/mutate_viewer.py        # every runner below, in one pass
 
-   # None of the three prints anything to a *redirected* log until it exits, so
-   # a backgrounded run is silent from the first second to the last --- twenty
-   # minutes for the front end, and over two hours for the Rust table on a
-   # 114-mutation run that rebuilds per mutation. Wait for a signal the job
-   # emits rather than asking the process table whether it is alive:
+   # The Rust table is 405 s for all 229 runnable mutations, measured
+   # 2026-08-21 -- see "What the Rust table costs" below, and read it before
+   # believing any older figure in this file. A backgrounded run is still worth
+   # waiting on by the signal the job emits rather than by asking the process
+   # table whether it is alive:
    #
    #   scripts/mutate_rust.py > run.log 2>&1; echo "exit=$?" >> run.log
    #   until grep -q '^exit=' run.log; do sleep 60; done
@@ -2865,7 +2865,15 @@ starts at 0 and increments within the month.
    # for the loop while a change is being made: `--only pagetree`, `--only
    # "page delete"`. The whole table is what runs before a push --- the flag
    # exists because re-proving a hundred mutations that could not have moved is
-   # an hour of somebody waiting, not because a subset is ever the gate.
+   # somebody waiting, not because a subset is ever the gate.
+
+   # mutate_rust.py also takes `--since <ref>`, which needs no knowledge of the
+   # mutation names: it runs the ones whose FILE the diff touched, working tree
+   # included, prints how many it left out, and exits 1 rather than looking
+   # green when it selected nothing. Its reach is shorter than its scope --- a
+   # change in docmodel.rs can stop a mutation in save.rs from being caught --
+   # so it is the loop, and the whole table is still the thing before a push.
+   scripts/mutate_rust.py --since HEAD~3
 
    # Or one runner at a time. The three probe runners need no webview, no bundle
    # and no unlocked screen; the three viewer ones need all three.
@@ -2982,6 +2990,34 @@ starts at 0 and increments within the month.
 
    So a Windows run of that table reports 176 and a macOS run reports 178, and the two rows
    the difference names are printed rather than absent. Do not "fix" the 176 into a 178.
+   (Those are counts of that date's table, which has since grown to 231.)
+
+   **What the Rust table costs, and what it used to cost.** On 2026-08-21 a full run was
+   measured at **69 s per mutation**, which for 231 of them is 4.4 hours --- a figure nobody
+   can pay per feature, and it was almost entirely two things that have nothing to do with
+   the mutations:
+
+   - **An editor holding the build lock.** Every mutation writes a file under
+     `src-tauri/src`, and rust-analyzer answers each write with
+     `cargo check --workspace --all-targets`, which takes the build directory's lock. Cargo
+     says so --- `Blocking waiting for file lock on build directory` --- and a no-op
+     `cargo test --lib --no-run` measured **28.2 s** against **0.2 s** with the editor idle.
+     The harness now sets `CARGO_TARGET_DIR` to `src-tauri/target/mutations`, so it shares
+     no lock with anything. One cold build (**42 s**, 2.4 GB, inside the already-ignored
+     `target/`) and it is warm for every run after.
+   - **607 tests to check one assertion.** Each mutation names the one test it expects to
+     redden, and the harness ran the whole filtered suite anyway. Timing the modules
+     separately says where that goes: `save::` 32.4 s, `print::` 32.3 s, `keylayout::`
+     17.0 s, and **the other fifteen modules 0.1 s between them** --- twelve tests that
+     reach PDFKit or HIToolbox, one of which a `sample` shows sitting in
+     `TISCopyCurrentKeyboardLayoutInputSource` for its whole run. It now runs the named test
+     alone, and the full suite **only** when that test does not go red, which is the case
+     where "nothing noticed" and "something else noticed" have to be told apart.
+
+   Measured after both, on the same machine and the same table: **405 s for all 229 runnable
+   mutations**, 0 survivors, 2 skipped, and **zero** fallbacks to the full suite. That is the
+   number to plan against; every older figure in this file is from before the two changes and
+   is left as a statement about its own date.
 
 8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
