@@ -4,15 +4,19 @@ import {
   bylineOf,
   hitTest,
   labelFor,
+  needsWords,
   noticeFor,
   onPage,
+  pagesNeedingWords,
   rowsOf,
   summaryOf,
   turnedFor,
   viewRect,
+  wordsForPage,
   type Comment,
   type CommentLimits,
 } from "./comments";
+import type { PageText } from "./text";
 
 /** One comment, with the fields a test is not about filled in plausibly. */
 function comment(over: Partial<Comment> & { id: number }): Comment {
@@ -24,6 +28,7 @@ function comment(over: Partial<Comment> & { id: number }): Comment {
     subject: "",
     date: "2026-08-12 10:15",
     rect: [100, 100, 124, 124],
+    quads: [],
     reply_to: null,
     hidden: false,
     ...over,
@@ -215,7 +220,9 @@ describe("noticeFor", () => {
 
 describe("summaryOf and bylineOf", () => {
   it("flattens a body to one line", () => {
-    expect(summaryOf(comment({ id: 1, body: "Two things:\n\nfirst, and second." }))).toBe(
+    expect(
+      summaryOf(comment({ id: 1, body: "Two things:\n\nfirst, and second." })).text,
+    ).toBe(
       "Two things: first, and second.",
     );
   });
@@ -223,7 +230,7 @@ describe("summaryOf and bylineOf", () => {
   it("says what kind of mark it is when there is no body", () => {
     // A row showing nothing looks broken; "somebody highlighted this" is what
     // actually happened.
-    expect(summaryOf(comment({ id: 1, kind: "highlight", body: "  " }))).toBe(
+    expect(summaryOf(comment({ id: 1, kind: "highlight", body: "  " })).text).toBe(
       "Highlight, no comment",
     );
   });
@@ -268,3 +275,107 @@ describe("labelFor", () => {
     expect(new Set(kinds.map(labelFor)).size).toBe(kinds.length);
   });
 });
+
+describe("which comments want the words they cover", () => {
+  /** A bare highlight with quads over one line. */
+  function bare(over: Partial<Comment> = {}): Comment {
+    return comment({
+      id: 1,
+      kind: "highlight",
+      body: "",
+      quads: [100, 700, 150, 712],
+      ...over,
+    });
+  }
+
+  it("wants words for a text-markup comment nobody wrote on", () => {
+    expect(needsWords(bare())).toBe(true);
+    expect(needsWords(bare({ kind: "underline" }))).toBe(true);
+    expect(needsWords(bare({ kind: "squiggly" }))).toBe(true);
+    expect(needsWords(bare({ kind: "strikeout" }))).toBe(true);
+  });
+
+  it("does not want words for a comment somebody wrote on", () => {
+    // Not merely wasteful --- `rowLine` would discard the answer, so fetching it
+    // would be a page extraction whose result is thrown away.
+    expect(needsWords(bare({ body: "Check this." }))).toBe(false);
+    // Whitespace is not a body: the row shows nothing for it either.
+    expect(needsWords(bare({ body: " \n\t " }))).toBe(true);
+  });
+
+  it("does not want words for a kind that marks no text", () => {
+    // A square carries no `/QuadPoints` in `annots.rs` --- `covers_text` is what
+    // decides --- so this is the frontend half of that agreeing.
+    expect(needsWords(bare({ kind: "square", quads: [] }))).toBe(false);
+    // And it stays false even where a producer wrote quads on one anyway.
+    expect(needsWords(bare({ kind: "text" }))).toBe(false);
+  });
+
+  it("does not want words where there are no rectangles to look under", () => {
+    expect(needsWords(bare({ quads: [] }))).toBe(false);
+  });
+
+  it("lists the pages that want words, once each and lowest first", () => {
+    expect(
+      pagesNeedingWords([
+        bare({ id: 1, page: 4 }),
+        bare({ id: 2, page: 1 }),
+        bare({ id: 3, page: 4 }),
+        bare({ id: 4, page: 2, body: "written on" }),
+        comment({ id: 5, page: 0, kind: "text" }),
+      ]),
+    ).toEqual([1, 4]);
+  });
+
+  it("asks for a page's text once and answers every comment on it", async () => {
+    const asked: number[] = [];
+    const words = await wordsForPage(
+      [
+        bare({ id: 1, page: 3, quads: [100, 700, 150, 712] }),
+        bare({ id: 2, page: 3, quads: [100, 720, 140, 732] }),
+        bare({ id: 3, page: 9 }),
+      ],
+      3,
+      (page) => {
+        asked.push(page);
+        return Promise.resolve(pageText());
+      },
+    );
+    expect(asked).toEqual([3]);
+    expect([...words]).toEqual([
+      [1, "alpha"],
+      [2, "beta"],
+    ]);
+  });
+
+  it("does not ask for a page whose comments all have bodies", async () => {
+    const asked: number[] = [];
+    const words = await wordsForPage([bare({ page: 2, body: "written" })], 2, (page) => {
+      asked.push(page);
+      return Promise.resolve(pageText());
+    });
+    expect(asked).toEqual([]);
+    expect(words.size).toBe(0);
+  });
+
+  it("answers nothing for a page whose text will not come", async () => {
+    const words = await wordsForPage([bare({ page: 2 })], 2, () => Promise.resolve(null));
+    expect(words.size).toBe(0);
+  });
+});
+
+/** Two ten-point words, `alpha` on one line and `beta` under it. */
+function pageText(): PageText {
+  const codes: number[] = [];
+  const boxes: number[] = [];
+  for (const [word, y] of [
+    ["alpha", 700],
+    ["beta", 720],
+  ] as const) {
+    [...word].forEach((char, at) => {
+      codes.push(char.codePointAt(0) ?? 0);
+      boxes.push(100 + at * 10, y, 110 + at * 10, y + 12);
+    });
+  }
+  return { codes, boxes, width_pt: 600, height_pt: 800, quarter_turns: 0, extract_ms: 0 };
+}

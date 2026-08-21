@@ -7475,23 +7475,114 @@ selection-words check skips there exactly as its sibling already did. Three name
 and every corpus accounting for all three in the pattern its own contents predict says more
 than fourteen `[OK]` lines. `BUILD.md` carries the table.
 
-**Not done, and the first of these is the extraction after all --- in the other panel.** Save
-and reopen, and these marks are gone from this list: they are the file's annotations now, so
-`commentlist.ts` has them, and a highlight with no body reads there as *"Highlight, no
-comment"* --- the same empty row this increment removed from the panel next to it. Closing
-that one **does** need extraction per comment, because nothing watched those marks being made
-and the file records no words under them; it is the program the trap above describes, wanted
-for a reason and against a cost, rather than reached for by reflex.
+~~**Not done, and the first of these is the extraction after all --- in the other panel.**~~
+**Done 2026-08-21, in the increment below.** Save and reopen, and these marks were gone from
+this list: they are the file's annotations then, so `commentlist.ts` has them, and a highlight
+with no body read there as *"Highlight, no comment"* --- the same empty row this increment
+removed from the panel next to it. Closing that one **did** need extraction per comment,
+because nothing watched those marks being made and the file records no words under them; it
+was the program the trap above describes, wanted for a reason and against a cost, rather than
+reached for by reflex.
 
-And it needs more than the page's characters: `annots.rs` reads `/Rect` and **not**
-`/QuadPoints` --- checked, because the sentence here first said the opposite --- and a
-`/Rect` is the bounding box of every line a highlight covers, so a containment test against
-it would take in the whole paragraph between the first line and the last. That is a backend
-piece of work, and it starts with a field nothing currently reads.
+It also needed more than the page's characters, and the note was right about that too:
+`annots.rs` read `/Rect` and **not** `/QuadPoints` --- checked, because the sentence here
+first said the opposite --- and a `/Rect` is the bounding box of every line a highlight
+covers, so a containment test against it would take in the whole paragraph between the first
+line and the last. That was the backend half, and it started with a field nothing read.
+
+The note is struck here rather than only written up below, which is trap 402's whole lesson:
+a *Not done* ages in place because the commit that closes it has every reason to describe
+where the work landed and none to go looking for a sentence elsewhere claiming its absence.
 
 Also not done: grouping or filtering by kind, page or colour; and a count, deliberately --- a
 status line saying "9 marks" is derivable from the rows, so a check asserting the two agree
 would be the panel agreeing with itself.
+
+#### The comments panel lists a highlight by the words it covers
+
+The other half of the increment above, and the half the note said would need real work. A
+document somebody reviewed opens with nine rows reading *"Highlight, no comment"*: the file
+records that a rectangle was drawn and not one word of what is under it.
+
+**The backend half was a field nothing read.** `annots.rs` read `/Rect` only, and a `/Rect` is
+the bounding box of every line a markup annotation covers --- so a containment test against it
+takes in the whole paragraph between the first line and the last. `/QuadPoints` is one
+rectangle per line, which is the shape the question actually has. It is now read for the four
+kinds `Kind::covers_text` names, through the same `place` the `/Rect` goes through, so a
+rotated page and a cropped one need no second implementation of the turn.
+
+Two things about that read are worth stating because they are where a reader gets it wrong.
+**The four corners are a set, not an order.** §12.5.6.10 gives upper-left, upper-right,
+lower-left, lower-right; Acrobat has written a different order for years and every reader in
+the wild takes the extremes. Our own `save.rs` writes the specification's order exactly, so a
+reader built by reading our writer round-trips perfectly against every fixture here and mangles
+somebody else's file --- the writer-and-its-own-reader trap arriving as geometry rather than as
+a parse failure. And **a malformed array is declined whole**: a length that is not a multiple
+of eight, a value that is not a number, a non-finite value. Keeping the part that parses would
+place a mark using half a producer's intent.
+
+**The frontend half is one containment rule, not a second one.** `links.ts` already answered
+*which characters does this rectangle cover* --- a character belongs when its **box's centre**
+is inside, never when the boxes overlap, because annotation rectangles are drawn generously and
+routinely touch the line above. Writing a second copy for highlights is precisely the drift
+this repository has a trap about, so the predicate moved into `text.ts` as `centreOfCharacter`
+and `coversPoint` and both callers share it.
+
+Sharing it fixed a defect nobody was looking for. PDFium reports a character it could not place
+as four zeroes, whose centre is (0, 0) --- inside **any** rectangle touching the page's
+top-left corner, which is what a link on a page's first line is. Every unplaced character on
+such a page was announced as part of that link. `centreOfCharacter` answers `null` for a box
+with no area, so it no longer is.
+
+The words come out in `readingOrder`, not in the file's order, so a highlight dragged across a
+gutter reads column by column exactly as copying the same drag does.
+
+**The scheduling is the part a reader feels.** Finding the words is one `page_text` extraction
+per page carrying a bare mark, and that pool is the pool drawing tiles. So it is paid for by a
+reader who opens the comments tab and by nobody else --- `Sidebar` reports its showing tab
+through a new required `onTab`, and `App.svelte` walks `pagesNeedingWords` **one page at a
+time, awaited**, so at most one extraction is ever queued in front of the page being read. The
+rows are rewritten in place rather than repainted, because these arrive while somebody is
+looking at the panel and a repaint drops their scroll position and the focused element.
+
+**Three things came out of building it that were not the feature.**
+
+`App.svelte` holds the words as well as the panel. `applyPageOrder` re-supplies the whole
+comment list whenever a page is deleted or moved, the panel drops its words with every
+`setComments`, and `wordsAsked` has already recorded every page as asked --- so without that
+map the rows fell back to *"Highlight, no comment"* on the first page deletion and stayed there
+for the session. Found by a mutation that survived: clearing the panel's map changed nothing
+observable, which is what made it worth reading one layer out. The panel now converges every
+row that could be listed by covered words onto its map, which makes the merge load-bearing
+instead of decorative, and the mutation is caught.
+
+The corpus could not reach the feature at all. `comments.pdf`'s one bare mark carried no
+`/QuadPoints`, so `needsWords` correctly refused it and every window check would have passed by
+never running. The underline now covers a known line, and the band and the expected words are
+computed from **one row index** in the generator --- because the first hand-written version
+named line 06 against a measured line 09, the arithmetic needing the page height and the page
+being A4 rather than letter.
+
+And `comments-corpus.json` carried that expectation for one commit with nothing reading it,
+which is a claim written down and not enforced. `corpus_manifest` is a third sidecar on the
+same arrangement as the reading and geometry ones, keyed in Rust by the open fixture's name
+because one generator writes several files. The window check now compares the row's line
+against a string a different program wrote before the document existed.
+
+**What is not covered, stated rather than left to be discovered.** The scheduling loop lives
+in `App.svelte`, and no harness here constructs that component --- `viewer_check.py` builds its
+own viewer and sidebar, and drives `wordsForPage` directly. So what is proved is the lookup,
+the panel, and the backend; what rests on the type system alone is that `App.svelte` supplies
+`onTab` at all, which is a compile error to omit because the option is required rather than
+optional. That was a deliberate choice after `onDrawn` shipped inert through an optional
+callback, and it is weaker than a check.
+
+**Not done:** asking a reader for a password, which the increment beside this one made
+visible --- an encrypted document now says it needs one, and there is still nothing to type it
+into. Also not done: words for a mark over a picture, where the honest answer is that there are
+none and the row keeps its fallback; and a leading character PDFium placed nowhere is dropped
+from `readingOrder` altogether, measured while writing a fixture for this, which is a defect in
+the copy path and the accessibility tree rather than in this panel.
 
 ### Phase 3 --- Redaction
 

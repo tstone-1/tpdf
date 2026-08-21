@@ -523,6 +523,103 @@ export function charQuad(text: PageText, index: number): Quad {
   };
 }
 
+/**
+ * The characters a set of rectangles covers, by index and in file order.
+ *
+ * `quads` is four values per rectangle --- left, top, right, bottom --- in the
+ * page's **displayed** space, which is where `annots.rs` reports `/QuadPoints`
+ * and `edits::MarkView` reports a mark's quads, and where `boxes` already is.
+ * That is why no rotation appears here: both sides went through `to_device` in
+ * Rust, so a `/Rotate 90` page needs no special case and adding one would be the
+ * second implementation of a turn this repository has a trap about.
+ *
+ * **A character is covered when its box's centre is inside a rectangle**, not
+ * when the boxes overlap --- the rule {@link linkRunsIn} states at length in
+ * `links.ts` and for the same reason: annotation rectangles are drawn generously
+ * around their text and routinely touch the words on the lines above and below,
+ * so overlap makes a highlight claim a stray word at each end. That rule is
+ * shared through {@link centreOfCharacter} and {@link coversPoint} rather than
+ * written twice.
+ *
+ * Empty for an empty `quads`, which is the ordinary case: most annotations carry
+ * no `/QuadPoints` at all.
+ */
+export function coveredIndices(
+  text: PageText,
+  quads: readonly number[],
+): number[] {
+  const out: number[] = [];
+  if (quads.length < 4) return out;
+  for (let at = 0; at < text.codes.length; at += 1) {
+    const centre = centreOfCharacter(text.boxes, at);
+    if (!centre) continue;
+    for (let quad = 0; quad + 3 < quads.length; quad += 4) {
+      if (coversPoint(quads, quad, centre.x, centre.y)) {
+        out.push(at);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The centre of a character's box, or `null` where it has none.
+ *
+ * `null` rather than the origin for a character PDFium gave four zeroes ---
+ * see {@link isPlaced} --- because a point at (0, 0) is inside any rectangle
+ * touching the page's top-left corner, and a covered-text reader would then take
+ * in every unplaced character on the page.
+ */
+export function centreOfCharacter(
+  boxes: readonly number[],
+  at: number,
+): { x: number; y: number } | null {
+  const base = at * 4;
+  const left = boxes[base];
+  const top = boxes[base + 1];
+  const right = boxes[base + 2];
+  const bottom = boxes[base + 3];
+  if (
+    left === undefined ||
+    top === undefined ||
+    right === undefined ||
+    bottom === undefined
+  ) {
+    return null;
+  }
+  if (!(right > left) || !(bottom > top)) return null;
+  return { x: (left + right) / 2, y: (top + bottom) / 2 };
+}
+
+/**
+ * Whether a point is inside the rectangle at `base` of a flat quad array.
+ *
+ * Inclusive on every edge, matching `links.ts`: a glyph whose centre lands
+ * exactly on the boundary of a rectangle drawn round it is inside it, and the
+ * alternative is a character dropped for being too well aligned.
+ */
+export function coversPoint(
+  quads: readonly number[],
+  base: number,
+  x: number,
+  y: number,
+): boolean {
+  const left = quads[base];
+  const top = quads[base + 1];
+  const right = quads[base + 2];
+  const bottom = quads[base + 3];
+  if (
+    left === undefined ||
+    top === undefined ||
+    right === undefined ||
+    bottom === undefined
+  ) {
+    return false;
+  }
+  return x >= left && x <= right && y >= top && y <= bottom;
+}
+
 /** Whether a character has no box, which PDFium reports as four zeroes. */
 function isPlaced(quad: Quad): boolean {
   return quad.right > quad.left && quad.bottom > quad.top;

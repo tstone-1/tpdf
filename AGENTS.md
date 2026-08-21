@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 403 entries
+The one thing this file does *not* carry in full is the trap list --- 404 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 403 of them and the full text
-was 93% of this file --- an instruction budget spent on the 400 traps that are not
+titles. Only the titles are here, because there are 404 of them and the full text
+was 93% of this file --- an instruction budget spent on the 401 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1055,6 +1055,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - PDFium's character order is not the page's line order
 - A dense page of uniform lines cannot detect a y-flip
 - A comma opens a line of its own, and every space on the line joins it
+- A loop that re-attaches to the previous item drops a leading orphan (the doc comment says it starts a fragment of its own; measured, it is dropped from the reading order altogether, and it made a new test unable to fail)
 - A font can float a space's box clear of its own line, and overlap banding drops it
 - An absolute epsilon refuses a page whose every glyph is that thin (the fix for the entry above, which moved the failure to another corpus rather than removing it)
 - A paragraph is one mark and several text objects, and the gap between them belongs to neither

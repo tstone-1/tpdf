@@ -41,7 +41,7 @@
   import { Palette } from "./lib/palette";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
-  import type { Comments } from "./lib/comments";
+  import { pagesNeedingWords, wordsForPage, type Comments } from "./lib/comments";
   import { noticeFor as linkNotice, type Link, type Links } from "./lib/links";
   import type { Outline } from "./lib/outline";
   import {
@@ -176,6 +176,33 @@
    */
   let rawLinks: readonly Link[] = [];
   let rawComments: Comments | null = null;
+  /**
+   * Pages whose covered words have been asked for, so no page is asked twice.
+   *
+   * Pages rather than comments: one extraction answers every comment on a page,
+   * and a page that came back with nothing is still a page that was asked.
+   * Cleared with the document, since a slot means nothing across two files.
+   */
+  const wordsAsked = new Set<number>();
+  /**
+   * The words each comment covers, for the ones that have been looked up.
+   *
+   * **Held here as well as in the panel, and that is not belt and braces.**
+   * `applyPageOrder` re-supplies the whole comment list whenever a page is
+   * deleted or moved, and the panel drops its words with every `setComments` ---
+   * ids are per document, so keeping them there across a list it did not compute
+   * would be the one way a sentence lands on the wrong row. Without this map the
+   * rows fell back to "Highlight, no comment" on the first page deletion and
+   * stayed there for the rest of the session, because {@link wordsAsked} had
+   * already recorded every page as asked.
+   *
+   * Found by a mutation that survived: clearing the panel's map on each answer
+   * changed nothing observable, which is what made it worth reading the code one
+   * layer out.
+   */
+  const commentWords = new Map<number, string>();
+  /** Whether {@link fillCommentWords} is walking, so a second call stands down. */
+  let fillingWords = false;
   let rawOutline: Outline | null = null;
 
   /** Path of the open document, which is what a remembered place is keyed on. */
@@ -570,12 +597,77 @@
       const items = commentsIn(rawComments.items, pages);
       viewer?.setComments(items);
       sidebar?.setComments({ ...rawComments, items });
+      // After, because `setComments` is a rebuild and drops what the panel knew.
+      // The words are about a comment rather than about a page order, so they
+      // survive a page being deleted or moved --- and re-asking for them is not
+      // an option, since the pages they came from are recorded as asked.
+      if (commentWords.size > 0) sidebar?.setCommentWords(commentWords);
     }
     if (rawOutline) {
       sidebar?.setOutline({
         ...rawOutline,
         items: outlineIn(rawOutline.items, pages),
       });
+    }
+  }
+
+  /**
+   * Fills in the words each bare highlight covers, a page at a time.
+   *
+   * **Why it exists.** A reviewer's highlight with nothing typed on it is a
+   * rectangle and no text, so the panel listed nine of them as nine rows all
+   * reading "Highlight, no comment" --- a list that says a document was marked
+   * up and not one word about what was marked. The words are in the page, under
+   * the rectangle, and `wordsForPage` is what reads them out.
+   *
+   * **Why a page at a time, awaited.** Each page is a `page_text` extraction in
+   * the backend, and the pool that answers it is the pool drawing tiles. Firing
+   * them all at once puts a document's worth of extractions in front of the page
+   * the reader is looking at; awaiting each means at most one is ever queued,
+   * and the panel fills in from the front of the document while they scroll.
+   *
+   * **Why it can be called again.** {@link CommentList.setWords} merges, and
+   * `asked` stops the same page being fetched twice, so a reader flipping to the
+   * comments tab repeatedly costs one pass. `running` is what makes a second
+   * call during the first a no-op rather than a second interleaved walk.
+   *
+   * The words are read against the page **as it is now** while the comments were
+   * scanned when the document opened. That is the same footing the rectangles
+   * are already on --- `applyPageOrder` re-slots a comment's page and leaves its
+   * geometry alone --- so a page an edit has rotated moves its highlight and its
+   * words together, or neither.
+   */
+  async function fillCommentWords(): Promise<void> {
+    if (fillingWords) return;
+    const source = rawComments;
+    if (!source) return;
+    fillingWords = true;
+    try {
+      for (;;) {
+        // **Re-slotted every round, not once before the loop.** A page number
+        // here is a slot, and a reader who deletes a page mid-walk renumbers
+        // every slot after it --- so a list captured up front would read slot 4's
+        // text and hand it to the comment that used to be there. Wrong words on
+        // a real row, which is the failure that looks entirely plausible.
+        const items = commentsIn(source.items, edits?.map ?? NO_PAGES);
+        const page = pagesNeedingWords(items).find((at) => !wordsAsked.has(at));
+        if (page === undefined) return;
+        // The document that was open when this page was asked for. A second file
+        // opened mid-walk replaces `rawComments`, and writing this one's
+        // sentences onto its rows has the same shape as the slot problem above.
+        if (rawComments !== source) return;
+        wordsAsked.add(page);
+        const words = await wordsForPage(items, page, (at) =>
+          viewer ? viewer.unturnedText(at) : Promise.resolve(null),
+        );
+        if (rawComments !== source) return;
+        if (words.size > 0) {
+          for (const [id, said] of words) commentWords.set(id, said);
+          sidebar?.setCommentWords(words);
+        }
+      }
+    } finally {
+      fillingWords = false;
     }
   }
 
@@ -1605,6 +1697,10 @@
       // file has changed.
       rawLinks = [];
       rawComments = null;
+      // A page number is a slot in the document that is closing, so an entry
+      // kept would tell the next file's page 3 that its words are already known.
+      wordsAsked.clear();
+      commentWords.clear();
       rawOutline = null;
       sidebar = new Sidebar(sidebarHost, {
         onNavigate: (target, top) => {
@@ -1678,6 +1774,13 @@
             viewer?.goToPage(slot);
             openContextMenu(PAGE_MENU, at);
           },
+        },
+        // The comments panel lists a bare highlight by the words it covers, and
+        // finding those words is one text extraction per page carrying one. So
+        // it is paid for by a reader who opens that tab, and by nobody else ---
+        // a document opened, read and closed on the outline costs none of it.
+        onTab: (tab) => {
+          if (tab === "comments") void fillCommentWords();
         },
       });
       sidebar.setVisible(sidebarShown);
@@ -1878,6 +1981,11 @@
           // deleted later.
           rawComments = result;
           applyPageOrder();
+          // A reader already on the comments tab when the scan lands would
+          // otherwise sit looking at rows reading "Highlight, no comment": the
+          // tab callback fired before there was anything to fill in, and it does
+          // not fire again for a tab that is already showing.
+          if (sidebar?.tab === "comments") void fillCommentWords();
         })
         .catch(() => {
           if (openDoc === wanted) sidebar?.setComments(null);

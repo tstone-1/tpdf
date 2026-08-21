@@ -79,6 +79,20 @@ export interface SidebarOptions {
   results: ResultsOptions;
   /** What the comments tab needs. */
   comments: CommentListOptions;
+  /**
+   * Called whenever the showing tab changes, including the initial one.
+   *
+   * Exists so a panel's owner can do work only while somebody is looking at it
+   * --- the comments panel's covered words are an extraction per page, and a
+   * document nobody opens that tab on should pay none of it. Required rather
+   * than optional so that leaving it out is a type error: an optional callback
+   * that nothing supplies is the defect `scripts/check_viewer_wiring.py` exists
+   * for, and this interface has no such gate.
+   *
+   * Fired for the initial `outline` too, from the constructor, so a caller sees
+   * every state the tab is ever in rather than every state but the first.
+   */
+  onTab: (tab: Tab) => void;
   /** What the marks tab needs. */
   marks: MarkListOptions;
   /**
@@ -300,6 +314,11 @@ export class Sidebar {
   }
 
   /** Replaces the comments shown. `null` is a document that could not be read. */
+  /** Supplies the words some comments cover; see {@link CommentList.setWords}. */
+  setCommentWords(words: ReadonlyMap<number, string>): void {
+    this.notes.setWords(words);
+  }
+
   setComments(comments: Comments | null): void {
     this.notes.setComments(comments);
   }
@@ -315,6 +334,7 @@ export class Sidebar {
    */
   selectTab(tab: Tab): void {
     this.showing = tab;
+    this.opts.onTab(tab);
     for (const [name, button] of this.tabs) {
       const on = name === tab;
       button.setAttribute("aria-selected", String(on));

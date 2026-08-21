@@ -14,6 +14,7 @@ function comment(over: Partial<Comment> & { id: number }): Comment {
     subject: "",
     date: "2026-08-12 10:15",
     rect: [100, 100, 124, 124],
+    quads: [],
     reply_to: null,
     hidden: false,
     ...over,

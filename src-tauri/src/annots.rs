@@ -97,6 +97,14 @@ const MAX_BODY_CHARS: usize = 4_000;
 /// Longest author or subject kept, in characters.
 const MAX_LINE_CHARS: usize = 120;
 
+/// Most quadrilaterals kept for one comment.
+///
+/// A highlight is a phrase, a line or a paragraph, so this is generous for
+/// anything a person made by dragging. What it bounds is a producer that writes
+/// one quad per glyph, which is legal and which a page of them would otherwise
+/// turn into a megabyte of geometry in a panel that draws none of it.
+const MAX_QUADS: usize = 512;
+
 /// Longest raw string the scan will decode, in bytes.
 ///
 /// Decoding is linear, so this bounds the work rather than a correctness
@@ -174,6 +182,21 @@ impl Kind {
         })
     }
 
+    /// Whether this kind marks *words*, and so carries `/QuadPoints`.
+    ///
+    /// The four text markup annotations of PDF 32000-1 §12.5.6.10. `/Redact`
+    /// carries the key too and is deliberately not here: a redaction names the
+    /// words it is going to remove, which is not the same statement as a
+    /// highlight naming the words somebody found interesting, and a panel that
+    /// listed one by the other would be reading out text the document's author
+    /// marked for deletion.
+    pub fn covers_text(self) -> bool {
+        matches!(
+            self,
+            Self::Highlight | Self::Underline | Self::Squiggly | Self::StrikeOut
+        )
+    }
+
     /// Whether a subtype is one deliberately not reported, as distinct from one
     /// this does not recognise.
     fn is_not_a_comment(name: &[u8]) -> bool {
@@ -212,6 +235,24 @@ pub struct Comment {
     /// character boxes in, which is what lets the viewer place both with one
     /// mapping.
     pub rect: [f32; 4],
+    /// The words this comment covers, four values per rectangle, in the same
+    /// **display** space as [`Comment::rect`].
+    ///
+    /// `/QuadPoints`, and empty for every kind that does not mark words --- see
+    /// [`Kind::covers_text`] --- and for a text markup annotation that omits the
+    /// key, which §12.5.6.10 permits and which means the `/Rect` is the region.
+    ///
+    /// Flattened, four to a rectangle, matching `edits::MarkView::quads`: the
+    /// frontend already has that vocabulary for the reader's own marks and a
+    /// second shape here would be a second thing to get right at every call
+    /// site.
+    ///
+    /// This is geometry rather than text, and the panel that wants the *words*
+    /// intersects it with the page's characters on the frontend --- which is
+    /// where the one extraction everything else reads already is. Doing it here
+    /// would put an `FPDF_LoadPage` per annotated page inside a scan whose whole
+    /// design, stated at the top of this file, is to avoid exactly that.
+    pub quads: Vec<f32>,
     /// The comment this one replies to, by [`Comment::id`].
     ///
     /// Acyclic by construction: a chain that loops has its last link cut, so a
@@ -400,10 +441,12 @@ fn read_page(
             id,
             number,
             kind,
-            width,
-            height,
-            turns,
-            (ox, oy),
+            Frame {
+                width,
+                height,
+                turns,
+                origin: (ox, oy),
+            },
             limits,
         ));
         parents.push(match annot.get(b"IRT") {
@@ -418,18 +461,13 @@ fn read_page(
 }
 
 /// Builds one comment from its annotation dictionary.
-#[allow(clippy::too_many_arguments)]
 fn comment(
     annot: &Dictionary,
     document: &Document,
     id: u32,
     page: u32,
     kind: Kind,
-    width: f32,
-    height: f32,
-    turns: u8,
-    // The displayed page box's lower-left corner -- see `page_geometry`.
-    origin: (f32, f32),
+    frame: Frame,
     limits: &mut Limits,
 ) -> Comment {
     let (body, clipped) = text_field(annot, document, b"Contents", MAX_BODY_CHARS, true);
@@ -452,7 +490,15 @@ fn comment(
             .map(|object| resolve(document, object))
             .and_then(|object| object.as_str().ok())
             .and_then(parse_date),
-        rect: rect_of(annot, document, width, height, turns, origin),
+        rect: rect_of(annot, document, frame),
+        // By kind rather than by whether the key is there, for the reason
+        // `covers_text` gives: a `/Redact` carries `/QuadPoints` too and its
+        // words are the ones somebody marked for deletion.
+        quads: if kind.covers_text() {
+            quads_of(annot, document, frame)
+        } else {
+            Vec::new()
+        },
         // Filled in by `resolve_replies`, which is the only place that can know
         // whether a link would loop.
         reply_to: None,
@@ -606,14 +652,7 @@ fn numbers(document: &Document, object: &Object, count: usize) -> Option<Vec<f32
 /// rather than poisoning the layout. And the result is clamped to the page,
 /// because a rectangle at 1e10 is a marker the viewer would place off any
 /// surface it could scroll to.
-fn rect_of(
-    annot: &Dictionary,
-    document: &Document,
-    width: f32,
-    height: f32,
-    turns: u8,
-    origin: (f32, f32),
-) -> [f32; 4] {
+fn rect_of(annot: &Dictionary, document: &Document, frame: Frame) -> [f32; 4] {
     let Some(values) = annot
         .get(b"Rect")
         .ok()
@@ -630,6 +669,40 @@ fn rect_of(
     let bottom = values[1].min(values[3]);
     let top = values[1].max(values[3]);
 
+    place(frame, left, bottom, right, top)
+}
+
+/// One rectangle of the page's own space, in display space and on the page.
+///
+/// Shared by [`rect_of`] and [`quads_of`] rather than written twice, which is
+/// the whole reason it is a function: the turn, the crop shift and the clamp are
+/// one rule about where an annotation sits, and two copies of it would be free
+/// to disagree about a rotated page --- with the `/Rect` landing correctly and
+/// the words it covers landing somewhere else, on exactly the documents nobody
+/// opens twice.
+/// The page an annotation is placed against.
+///
+/// The four values travel together through every function here and mean nothing
+/// apart --- a width without the turn that applies to it places a rectangle
+/// confidently in the wrong place. Grouping them is also what keeps [`place`]
+/// inside clippy's argument bound without an `allow`, which would have been the
+/// lazier half of the same observation.
+#[derive(Clone, Copy)]
+struct Frame {
+    width: f32,
+    height: f32,
+    turns: u8,
+    /// The displayed page box's lower-left corner --- see `page_geometry`.
+    origin: (f32, f32),
+}
+
+fn place(frame: Frame, left: f32, bottom: f32, right: f32, top: f32) -> [f32; 4] {
+    let Frame {
+        width,
+        height,
+        turns,
+        origin,
+    } = frame;
     // The same mapping `text.rs` uses for character boxes, and through the same
     // function on purpose: a page carrying `/Rotate` is described in its own
     // unrotated space while everything downstream works in the displayed one,
@@ -657,6 +730,58 @@ fn rect_of(
         placed[2].clamp(0.0, width),
         placed[3].clamp(0.0, height),
     ]
+}
+
+/// An annotation's `/QuadPoints`, normalised and mapped into display space.
+///
+/// Four values per quadrilateral --- left, top, right, bottom --- flattened, the
+/// same shape and the same space `edits::MarkView::quads` uses, so the frontend
+/// has one vocabulary for "the rectangles a mark covers" rather than two.
+///
+/// **The four corners are read as a set, not as an order, and that is the whole
+/// difficulty.** §12.5.6.10 gives them as upper-left, upper-right, lower-left,
+/// lower-right; Acrobat has written them in a different order for many years and
+/// every reader in the wild takes the extremes instead. Our own `save.rs` writes
+/// the specification's order exactly, so a reader built by reading our writer
+/// would round-trip perfectly against every fixture here and mangle somebody
+/// else's file --- the writer-and-its-own-reader trap, arriving as a geometry
+/// bug rather than as a parse failure.
+///
+/// Empty for a kind that has no such key, for an array whose length is not a
+/// multiple of eight, for a non-finite value anywhere in it, and past
+/// [`MAX_QUADS`]. Empty is not an error: a text markup annotation is permitted
+/// to omit `/QuadPoints`, in which case §12.5.6.10 says the `/Rect` is the
+/// region, and [`Comment::rect`] already carries that.
+fn quads_of(annot: &Dictionary, document: &Document, frame: Frame) -> Vec<f32> {
+    let Ok(object) = annot.get(b"QuadPoints") else {
+        return Vec::new();
+    };
+    let Object::Array(array) = resolve(document, object) else {
+        return Vec::new();
+    };
+    if array.is_empty() || array.len() % 8 != 0 {
+        return Vec::new();
+    }
+
+    let values: Vec<f32> = array
+        .iter()
+        .filter_map(|item| resolve(document, item).as_float().ok())
+        .collect();
+    if values.len() != array.len() || values.iter().any(|value| !value.is_finite()) {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for corners in values.chunks_exact(8).take(MAX_QUADS) {
+        let xs = [corners[0], corners[2], corners[4], corners[6]];
+        let ys = [corners[1], corners[3], corners[5], corners[7]];
+        let left = xs.iter().copied().fold(f32::INFINITY, f32::min);
+        let right = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let bottom = ys.iter().copied().fold(f32::INFINITY, f32::min);
+        let top = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        out.extend_from_slice(&place(frame, left, bottom, right, top));
+    }
+    out
 }
 
 /// Fills in `reply_to`, dropping any link that would close a loop.
@@ -1501,6 +1626,218 @@ mod tests {
         );
     }
 
+    /// One highlight with the `/QuadPoints` array given, and its quads.
+    fn quads_from(points: Vec<Object>) -> Vec<f32> {
+        let comments = scan_annots(vec![dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Highlight",
+            "Rect" => vec![100.into(), 700.into(), 300.into(), 720.into()],
+            "QuadPoints" => points,
+            "Contents" => Object::string_literal(""),
+        }]);
+        assert_eq!(comments.items.len(), 1, "limits {:?}", comments.limits);
+        comments.items[0].quads.clone()
+    }
+
+    /// The eight numbers of one quad, in the specification's corner order.
+    fn spec_order(left: i64, bottom: i64, right: i64, top: i64) -> Vec<Object> {
+        vec![
+            left.into(),
+            top.into(),
+            right.into(),
+            top.into(),
+            left.into(),
+            bottom.into(),
+            right.into(),
+            bottom.into(),
+        ]
+    }
+
+    #[test]
+    fn the_corners_of_a_quad_are_read_as_a_set_and_not_as_an_order() {
+        // The load-bearing one. §12.5.6.10 gives the corners as upper-left,
+        // upper-right, lower-left, lower-right; Acrobat has written them in a
+        // different order for years, and `save.rs` writes the specification's
+        // order exactly -- so a reader that trusted the order would agree with
+        // our own writer on every fixture in this repository and mangle
+        // everybody else's file. The two arrays below name the same four points
+        // and must produce the same rectangle.
+        let ours = quads_from(spec_order(100, 700, 300, 720));
+        let theirs = quads_from(vec![
+            // Lower-left, lower-right, upper-left, upper-right: one of the
+            // orders found in the wild, and a straight read of it as
+            // `[x1 y1 x2 y2]` yields a rectangle of zero height.
+            100.into(),
+            700.into(),
+            300.into(),
+            700.into(),
+            100.into(),
+            720.into(),
+            300.into(),
+            720.into(),
+        ]);
+        assert_eq!(ours.len(), 4, "one quad is four values");
+        assert_eq!(ours, theirs, "the corner order changed the rectangle");
+        // And that the rectangle is the right one rather than merely a stable
+        // one: a reader taking `values[0..4]` verbatim passes the equality
+        // above on a symmetric fixture and fails this.
+        assert!(
+            ours[2] - ours[0] > 190.0 && ours[3] - ours[1] > 19.0,
+            "a 200x20 quad came back as {ours:?}"
+        );
+    }
+
+    #[test]
+    fn a_quad_array_that_is_not_whole_quads_is_declined() {
+        // Not truncated to the whole quads it does contain: a producer that
+        // wrote seven numbers has told us nothing reliable about the four
+        // corners of anything, and half a rectangle placed on the page is worse
+        // than no rectangle at all.
+        assert!(quads_from(vec![1.into(); 7]).is_empty());
+        assert!(quads_from(vec![1.into(); 9]).is_empty());
+        assert!(quads_from(Vec::new()).is_empty());
+        // And eight is accepted, or the three above are satisfied by a reader
+        // that declines everything.
+        assert_eq!(quads_from(vec![1.into(); 8]).len(), 4);
+    }
+
+    /// `quads_of` called directly, with no file written or re-parsed.
+    ///
+    /// The malformed cases below have to be built in memory rather than round
+    /// tripped through `document_with`, and finding out why is worth the
+    /// paragraph: `lopdf` **cannot re-read its own output** for two of them.
+    /// `Object::string_literal` inside a number array writes `300(not a
+    /// number)`, which is legal --- a `(` is a delimiter and ends the number
+    /// token --- and its parser wants whitespace, so the whole annotation comes
+    /// back `unreadable` and the assertion passes for a reason that has nothing
+    /// to do with the code under test. `Object::Real(f32::INFINITY)` writes
+    /// `inf`, which is not a PDF number at all, and does the same thing. Both
+    /// would have been green.
+    fn quads_direct(points: Vec<Object>) -> Vec<f32> {
+        let annot = dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Highlight",
+            "QuadPoints" => points,
+        };
+        quads_of(
+            &annot,
+            &Document::new(),
+            Frame {
+                width: 595.0,
+                height: 842.0,
+                turns: 0,
+                origin: (0.0, 0.0),
+            },
+        )
+    }
+
+    #[test]
+    fn a_quad_with_a_value_that_is_not_a_number_is_declined() {
+        // The whole array, not the seven values that did parse. A producer that
+        // wrote a non-number among the corners has told us nothing reliable
+        // about any of them, and a rectangle built from the rest lands
+        // somewhere plausible and wrong.
+        let mut named = spec_order(100, 700, 300, 720);
+        named[3] = Object::Name(b"Top".to_vec());
+        assert!(quads_direct(named).is_empty());
+
+        let mut null = spec_order(100, 700, 300, 720);
+        null[3] = Object::Null;
+        assert!(quads_direct(null).is_empty());
+
+        let mut infinite = spec_order(100, 700, 300, 720);
+        infinite[3] = Object::Real(f32::INFINITY);
+        assert!(quads_direct(infinite).is_empty());
+
+        // The control, through the same door: without it every assertion above
+        // is satisfied by a `quads_direct` that returns nothing for anything.
+        assert_eq!(quads_direct(spec_order(100, 700, 300, 720)).len(), 4);
+    }
+
+    #[test]
+    fn quads_are_kept_only_for_the_kinds_that_mark_words() {
+        // A `/Text` note with a stray `/QuadPoints` -- legal to write, and
+        // meaningless, because a note is a point on the page rather than a span
+        // of words. The keying is on the kind and not on the key's presence,
+        // which is also what keeps a `/Redact`'s quads out: those name the words
+        // somebody marked for deletion.
+        for subtype in ["Text", "Square", "Ink", "Redact"] {
+            let comments = scan_annots(vec![dictionary! {
+                "Type" => "Annot",
+                "Subtype" => subtype,
+                "Rect" => vec![100.into(), 700.into(), 300.into(), 720.into()],
+                "QuadPoints" => spec_order(100, 700, 300, 720),
+                "Contents" => Object::string_literal(""),
+            }]);
+            assert!(
+                comments.items[0].quads.is_empty(),
+                "{subtype} kept quads it does not mark words with"
+            );
+        }
+        for subtype in ["Highlight", "Underline", "Squiggly", "StrikeOut"] {
+            let comments = scan_annots(vec![dictionary! {
+                "Type" => "Annot",
+                "Subtype" => subtype,
+                "Rect" => vec![100.into(), 700.into(), 300.into(), 720.into()],
+                "QuadPoints" => spec_order(100, 700, 300, 720),
+                "Contents" => Object::string_literal(""),
+            }]);
+            assert_eq!(
+                comments.items[0].quads.len(),
+                4,
+                "{subtype} marks words and lost its quads"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quad_array_past_the_bound_is_cut_to_it() {
+        let mut points = Vec::new();
+        for _ in 0..MAX_QUADS + 10 {
+            points.extend(spec_order(100, 700, 300, 720));
+        }
+        assert_eq!(quads_from(points).len(), MAX_QUADS * 4);
+    }
+
+    #[test]
+    fn a_rotated_page_places_quads_exactly_where_it_places_the_rect() {
+        // The reason `place` is one function. A quad and a `/Rect` naming the
+        // same region must land on the same pixels, or a panel would highlight
+        // one thing and the words under it would be another -- and only a
+        // rotated page can tell the two apart, since with `/Rotate 0` a second
+        // implementation that forgot the turn agrees with this one.
+        let bytes = document_with(
+            vec![dictionary! {
+                "Type" => "Annot",
+                "Subtype" => "Highlight",
+                "Rect" => vec![100.into(), 700.into(), 300.into(), 720.into()],
+                "QuadPoints" => spec_order(100, 700, 300, 720),
+                "Contents" => Object::string_literal(""),
+            }],
+            dictionary! { "Rotate" => 90 },
+        );
+        let comments = scan(&bytes, 1).expect("parse");
+        let item = &comments.items[0];
+        assert_eq!(
+            item.quads.as_slice(),
+            item.rect.as_slice(),
+            "the quad and the rect name one region and were placed differently"
+        );
+        // The control: without it the equality above is satisfied by two
+        // implementations that both ignore the rotation.
+        let flat = scan_annots(vec![dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Highlight",
+            "Rect" => vec![100.into(), 700.into(), 300.into(), 720.into()],
+            "QuadPoints" => spec_order(100, 700, 300, 720),
+            "Contents" => Object::string_literal(""),
+        }]);
+        assert_ne!(
+            flat.items[0].quads, item.quads,
+            "the rotation moved nothing, so this fixture cannot tell a turn from an identity"
+        );
+    }
+
     #[test]
     fn an_entry_that_cannot_be_read_is_counted_rather_than_skipped() {
         let comments = scan_annots(vec![dictionary! {
@@ -1546,6 +1883,7 @@ mod tests {
             subject: "Figure 3".into(),
             date: Some("2026-08-12 10:15".into()),
             rect: [1.0, 2.0, 3.0, 4.0],
+            quads: vec![1.0, 2.0, 3.0, 4.0],
             reply_to: Some(0),
             hidden: false,
         };
@@ -1559,6 +1897,7 @@ mod tests {
             subject,
             date,
             rect,
+            quads,
             reply_to,
             hidden,
         } = comment;
@@ -1581,6 +1920,10 @@ mod tests {
             format!("{kind:?}"),
             date.unwrap_or_default(),
             format!("{rect:?}"),
+            // Geometry the document chose the *numbers* of and this file chose
+            // the type of: an `f32` that failed to parse never reaches here,
+            // and one that did cannot spell anything.
+            format!("{quads:?}"),
             reply_to.map(|id| id.to_string()).unwrap_or_default(),
             hidden.to_string(),
         ];

@@ -2313,6 +2313,96 @@ MUTATIONS = [
         "stops at each end rather than wrapping",
     ),
     Mutation(
+        # Emit the covered characters in the order the file wrote them rather
+        # than in the order the page reads. On a two-column page a highlight
+        # across the gutter then lists one line from each column in turn, which
+        # is not what copying the same rectangle gives.
+        "reading: list a mark's covered words in the file's order",
+        "src/lib/reading.ts",
+        "  const order = readingOrder(text).filter((index) => wanted.has(index));",
+        "  const order = [...wanted].sort((a, b) => a - b);",
+        "reads a highlight across a gutter column by column, not line by line",
+    ),
+    Mutation(
+        # Take a character whose box PDFium never placed. Four zeroes have their
+        # centre at the page's top-left corner, which is inside any rectangle
+        # anchored there -- and a highlight on a page's first line is one.
+        "text: give an unplaced character to any rectangle at the page corner",
+        "src/lib/text.ts",
+        "  if (!(right > left) || !(bottom > top)) return null;",
+        "  if (false) return null;",
+        "does not take a character the page placed nowhere",
+    ),
+    Mutation(
+        # Look words up for a comment somebody already wrote on. `rowLine`
+        # discards them, so the only cost is a page extraction whose answer is
+        # thrown away -- on every page of a reviewed document.
+        "comments: fetch covered words for a comment that has a body",
+        "src/lib/comments.ts",
+        '    comment.body.trim() === "" &&',
+        "    true &&",
+        "does not want words for a comment somebody wrote on",
+    ),
+    Mutation(
+        # Go looking under a kind that marks no text. A square's rectangle is
+        # around a figure, so this lists it by whatever words happen to be inside.
+        "comments: look for covered words under any kind of mark",
+        "src/lib/comments.ts",
+        "    coversText(comment.kind) &&",
+        "    true &&",
+        "does not want words for a kind that marks no text",
+    ),
+    Mutation(
+        # Answer every bare comment in the document from one page's text, rather
+        # than the ones on that page. Deliberately covered by a unit test rather
+        # than by the window: `comments.pdf` has exactly one bare mark with
+        # rectangles, so on that corpus dropping the page filter changes nothing
+        # and the mutation would survive against a check that is working.
+        "comments: answer every page's comments from one page's text",
+        "src/lib/comments.ts",
+        "  const wanted = items.filter((comment) => comment.page === page && needsWords(comment));",
+        "  const wanted = items.filter((comment) => needsWords(comment));",
+        "asks for a page's text once and answers every comment on it",
+    ),
+    Mutation(
+        # Ask for a page's text even when nothing on it wants words, which is
+        # every page of an ordinary document.
+        "comments: extract a page whose comments want no words",
+        "src/lib/comments.ts",
+        "  if (wanted.length === 0) return out;",
+        "  if (false) return out;",
+        "does not ask for a page whose comments all have bodies",
+    ),
+    Mutation(
+        # Replace the words already known instead of merging. Each call carries
+        # one page, so the panel then shows only the page that answered last.
+        "commentlist: forget the pages that answered before this one",
+        "src/lib/commentlist.ts",
+        "    for (const [id, covered] of words) this.words.set(id, covered);",
+        "    this.words.clear();\n    for (const [id, covered] of words) this.words.set(id, covered);",
+        "keeps the words already known when a later page answers",
+    ),
+    Mutation(
+        # Rebuild the list rather than rewriting the row. Correct in what it
+        # shows and it drops the scroll position and the focused element under
+        # a reader, once per page that answers.
+        "commentlist: repaint the whole list when a page's words arrive",
+        "src/lib/commentlist.ts",
+        "      const body = bodyOf(this.elements.get(comment.id));",
+        "      this.paint();\n      const body = bodyOf(this.elements.get(comment.id));",
+        "rewrites the row rather than rebuilding the list",
+    ),
+    Mutation(
+        # Keep one document's covered words across an open. Ids start again with
+        # each document, so they land on whatever holds that id next -- and read
+        # perfectly plausibly.
+        "commentlist: carry covered words into the next document",
+        "src/lib/commentlist.ts",
+        "    this.words.clear();\n    this.focused = null;",
+        "    this.focused = null;",
+        "does not carry one document's words onto the next document's rows",
+    ),
+    Mutation(
         # Start the walk at the top of the document rather than at the viewport.
         # A reader on page 400 pressing "next link" is sent back to page 1.
         "links: start the link walk at the document rather than the viewport",
@@ -2346,9 +2436,9 @@ MUTATIONS = [
         # either side of it and a screen reader announce a link with a stray word
         # at each end.
         "links: claim a character whose box merely overlaps the link",
-        "src/lib/links.ts",
-        "    if (x >= l && x <= r && y >= t && y <= b) return link;",
-        "    if (right >= l && left <= r && bottom >= t && top <= b) return link;",
+        "src/lib/text.ts",
+        "  return x >= left && x <= right && y >= top && y <= bottom;",
+        "  return true;",
         "takes a character by its centre, not by its box overlapping",
     ),
     Mutation(
@@ -2376,9 +2466,9 @@ MUTATIONS = [
         # over-long range as ordinary text --- or as a link, depending on which
         # comparison is written first.
         "links: read a character box past the end of the array",
-        "src/lib/links.ts",
-        "  if (\n    left === undefined ||\n    top === undefined ||\n    right === undefined ||\n    bottom === undefined\n  ) {\n    return null;\n  }\n  const x = (left + right) / 2;\n  const y = (top + bottom) / 2;",
-        "  const x = ((left ?? 0) + (right ?? 0)) / 2;\n  const y = ((top ?? 0) + (bottom ?? 0)) / 2;",
+        "src/lib/text.ts",
+        "  if (\n    left === undefined ||\n    top === undefined ||\n    right === undefined ||\n    bottom === undefined\n  ) {\n    return null;\n  }\n  if (!(right > left) || !(bottom > top)) return null;\n  return { x: (left + right) / 2, y: (top + bottom) / 2 };",
+        "  return { x: ((left ?? 0) + (right ?? 0)) / 2, y: ((top ?? 0) + (bottom ?? 0)) / 2 };",
         "handles a range that runs past the boxes it has",
     ),
     Mutation(
@@ -3149,7 +3239,7 @@ MUTATIONS += [
         # this reddens three tests where it used to redden one, and a fixture of
         # highlights can see it after all.
         "marklist: draw a row's first line with its own line breaks in it",
-        "src/lib/marklist.ts",
+        "src/lib/rowline.ts",
         '  return text.replace(/\\s+/g, " ").trim();',
         "  return text.trim();",
         "flattens a text box's own lines",
@@ -3161,9 +3251,9 @@ MUTATIONS += [
         # more informative of the two --- they are, for the eight rows in nine
         # that have no note, and never for the ninth.
         "marklist: list a mark by the words it covers rather than its note",
-        "src/lib/marklist.ts",
-        "  if (typed) return { text: typed, own: true };",
-        "  if (typed) return { text: flatten(covered), own: true };",
+        "src/lib/rowline.ts",
+        "  if (wrote) return { text: wrote, own: true };",
+        "  if (wrote) return { text: flatten(covered), own: true };",
         "prefers what the reader typed over what the mark covers",
     ),
     Mutation(
@@ -3172,7 +3262,7 @@ MUTATIONS += [
         # right, the panel looks right, and a reader cannot tell a phrase they
         # wrote from a phrase they highlighted.
         "marklist: draw the covered words as though the reader had typed them",
-        "src/lib/marklist.ts",
+        "src/lib/rowline.ts",
         "  if (words) return { text: words, own: false };",
         "  if (words) return { text: words, own: true };",
         "lists a mark nobody typed on by the words it covers",
@@ -3183,8 +3273,8 @@ MUTATIONS += [
         # was typed, and that is what a mark with no covered words says anyway.
         "marklist: look a row's covered words up by its page",
         "src/lib/marklist.ts",
-        "    const line = rowLine(mark.note, this.opts.coveredFor(mark.id));",
-        "    const line = rowLine(mark.note, this.opts.coveredFor(mark.page));",
+        "    const line = rowLine(mark.note, this.opts.coveredFor(mark.id), NO_NOTE);",
+        "    const line = rowLine(mark.note, this.opts.coveredFor(mark.page), NO_NOTE);",
         "asks for each row's words by that row's id",
     ),
     Mutation(

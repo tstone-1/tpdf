@@ -172,6 +172,7 @@ describe("PageMap", () => {
         subject: "",
         date: null,
         rect: [0, 0, 10, 10],
+        quads: [],
         reply_to: null,
         hidden: false,
       };

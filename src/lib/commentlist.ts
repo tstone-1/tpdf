@@ -35,9 +35,11 @@
 
 import {
   bylineOf,
+  needsWords,
   noticeFor,
   rowsOf,
   summaryOf,
+  type Comment,
   type Comments,
   type CommentRow,
 } from "./comments";
@@ -57,6 +59,16 @@ export class CommentList {
   private readonly opts: CommentListOptions;
 
   private comments: Comments | null = null;
+  /**
+   * The words each comment covers, for the ones that have been looked up.
+   *
+   * Held here rather than folded into the comments, because they are not the
+   * document's --- they are recovered from the page's text and arrive long after
+   * the scan does. Keeping them separate means a repaint for any other reason
+   * cannot lose them, and a comment nobody has looked words up for is simply
+   * absent rather than holding an empty string that means two things.
+   */
+  private readonly words = new Map<number, string>();
   /** Whether an answer has arrived, as distinct from an empty one having. */
   private loaded = false;
   private rows: CommentRow[] = [];
@@ -142,9 +154,9 @@ export class CommentList {
    * reason `results.ts` gives: a getter returning the source would agree with
    * itself whatever the row actually contains.
    */
-  rowText(id: number): { body: string; byline: string } {
+  rowText(id: number): { body: string; byline: string; own: boolean } {
     const row = this.elements.get(id);
-    if (!row) return { body: "", byline: "" };
+    if (!row) return { body: "", byline: "", own: false };
     // Walked by position rather than found by attribute selector, and read off
     // the leaves rather than their container. `results.ts` records why both
     // matter: the fake DOM the unit tests run against matches selectors by tag
@@ -155,6 +167,10 @@ export class CommentList {
     return {
       body: body?.textContent ?? "",
       byline: byline?.textContent ?? "",
+      // Read off the element the same way, and for the same reason: whether a
+      // line is somebody's own is what decides how it is drawn, so a check that
+      // took it from the comment could not see a row drawn the wrong way.
+      own: body?.dataset?.own === "yes",
     };
   }
 
@@ -170,6 +186,9 @@ export class CommentList {
   setComments(comments: Comments | null): void {
     this.loaded = true;
     this.comments = comments;
+    // Ids are per document, so a stale entry would put one document's sentence
+    // on another document's highlight --- and it would look entirely plausible.
+    this.words.clear();
     this.focused = null;
     this.selected = null;
     this.paint();
@@ -230,6 +249,53 @@ export class CommentList {
     if (this.selected !== null) this.mark(this.selected, true);
   }
 
+  /**
+   * Supplies the words some comments cover, and redraws only those rows.
+   *
+   * **In place, not a repaint.** These arrive a page at a time while the reader
+   * is looking at the panel, and `paint` replaces every child --- which drops
+   * the scroll position and the focused element under them, several times over
+   * on a document with comments on many pages. So the one line that changed is
+   * the one line rewritten.
+   *
+   * Merged rather than replaced, for the same reason: each call carries one
+   * page's answers, and replacing the map would erase the pages already known.
+   */
+  setWords(words: ReadonlyMap<number, string>): void {
+    for (const [id, covered] of words) this.words.set(id, covered);
+    // Every row that *could* be listed by its covered words, not only the ones
+    // this call carried. The rows are then whatever the map says, so the merge
+    // above is load-bearing rather than an implementation detail --- clearing
+    // the map instead of merging into it now takes the pages that answered
+    // earlier back to their fallback, where before it changed nothing visible
+    // and a mutation saying so survived.
+    //
+    // Bounded by the comments that want words, which is what a caller is looking
+    // them up for, rather than by the 5,000 rows the scan may hold.
+    for (const { comment } of this.rows) {
+      if (!needsWords(comment)) continue;
+      const body = bodyOf(this.elements.get(comment.id));
+      if (body) this.draw(body, comment);
+    }
+  }
+
+  /**
+   * Writes a row's first line, and marks whether a person wrote it.
+   *
+   * One place, called by {@link build} and again whenever words arrive, so a
+   * line written the second time cannot be styled differently from one written
+   * the first. `data-own` is what a check and a test read; the italics are what
+   * a reader sees, and both come off the same value.
+   */
+  private draw(body: HTMLElement, comment: Comment): void {
+    const line = summaryOf(comment, this.words.get(comment.id) ?? "");
+    body.dataset.own = line.own ? "yes" : "no";
+    body.textContent = line.text;
+    body.style.cssText =
+      "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
+      (line.own ? "" : "opacity:0.6;font-style:italic;");
+  }
+
   private say(text: string): void {
     if (text === this.said) return;
     this.said = text;
@@ -268,10 +334,7 @@ export class CommentList {
 
     const body = document.createElement("div");
     body.dataset.part = "body";
-    body.textContent = summaryOf(comment);
-    body.style.cssText =
-      "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
-      (comment.body.trim() ? "" : "opacity:0.6;font-style:italic;");
+    this.draw(body, comment);
 
     const byline = document.createElement("div");
     byline.dataset.part = "byline";
@@ -368,6 +431,20 @@ export class CommentList {
 }
 
 /** The DOM id of a row, so a reply can name the row it answers. */
+/**
+ * A row's first-line element, walked by position rather than found by selector.
+ *
+ * `rowText` says why: the fake DOM the unit tests run against matches selectors
+ * by tag name only, so a `[data-part=body]` lookup returns nothing there and a
+ * row that was never redrawn is indistinguishable from one that was.
+ */
+function bodyOf(row: HTMLElement | undefined): HTMLElement | null {
+  if (!row) return null;
+  const [, text] = [...row.children] as HTMLElement[];
+  const [body] = [...(text?.children ?? [])] as HTMLElement[];
+  return body ?? null;
+}
+
 function rowId(id: number): string {
   return `tpdf-comment-${id}`;
 }

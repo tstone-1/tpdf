@@ -26,7 +26,9 @@
  * plausibly placed and wrong.
  */
 
-import { turnQuad, type Quad } from "./text";
+import { coveredText } from "./reading";
+import { rowLine } from "./rowline";
+import { turnQuad, type PageText, type Quad } from "./text";
 
 /** The kinds `annots.rs` reports, as it serialises them. */
 export type CommentKind =
@@ -59,6 +61,16 @@ export interface Comment {
   date: string | null;
   /** `[left, top, right, bottom]`, points from the displayed page's top-left. */
   rect: [number, number, number, number];
+  /**
+   * The rectangles a text-markup annotation covers, four values each.
+   *
+   * Same space as {@link Comment.rect} and the same flat shape `edits.ts` uses
+   * for a mark's quads, so {@link coveredText} needs no rotation of its own.
+   * Empty for every other kind, and empty for a highlight whose producer wrote
+   * no `/QuadPoints` --- see `annots.rs`, which declines a malformed array whole
+   * rather than keeping the part of it that parses.
+   */
+  quads: number[];
   reply_to: number | null;
   hidden: boolean;
 }
@@ -353,18 +365,106 @@ function joinList(parts: readonly string[]): string {
 }
 
 /**
- * The one line a row shows for a comment.
+ * The one line a row shows for a comment, and whether a person wrote it.
  *
- * A body may be several paragraphs, and a row is one line; the newlines become
- * spaces rather than being cut at the first, so a note whose first line is
- * "Two things:" does not read as empty. A mark with no body says what kind of
- * mark it is instead of showing nothing, which is the difference between a row
- * that looks broken and one that says "somebody highlighted this".
+ * Three candidates in {@link rowLine}'s order, shared with the marks panel. The
+ * body wins; failing that, the words the annotation covers, which is what makes
+ * a reviewer's bare highlight recognisable instead of a row reading "Highlight,
+ * no comment" nine times; failing both, the kind is named.
+ *
+ * `covered` is supplied by the caller rather than derived here, because deriving
+ * it needs the page's extracted text and this file is pure. `App.svelte` fetches
+ * it a page at a time for the comments {@link pagesNeedingWords} names, so a
+ * document nobody opens the panel on costs nothing.
  */
-export function summaryOf(comment: Comment): string {
-  const flattened = comment.body.replace(/\s+/g, " ").trim();
-  if (flattened) return flattened;
-  return `${labelFor(comment.kind)}, no comment`;
+export function summaryOf(
+  comment: Comment,
+  covered = "",
+): { text: string; own: boolean } {
+  return rowLine(comment.body, covered, `${labelFor(comment.kind)}, no comment`);
+}
+
+/**
+ * The kinds whose `/QuadPoints` say which words they are about.
+ *
+ * The frontend half of `Kind::covers_text` in `annots.rs`, and the two must
+ * agree: that one decides whether quads are read out of the file at all, this
+ * one decides whether to go looking for the words they cover. They are written
+ * twice because they are in two languages, so the cost of disagreeing is a
+ * comment whose words are fetched and never arrive --- which is why the
+ * `comments` corpus check reads a highlight's line rather than trusting either.
+ */
+export function coversText(kind: CommentKind): boolean {
+  return (
+    kind === "highlight" ||
+    kind === "underline" ||
+    kind === "squiggly" ||
+    kind === "strikeout"
+  );
+}
+
+/**
+ * Whether a comment would be listed by the words it covers, if they were known.
+ *
+ * All three conditions, and each rules out a different waste. A body means the
+ * row already says something a person wrote, and {@link rowLine} would discard
+ * the words anyway. A kind that marks no text has no words under it. And an
+ * empty `quads` is a highlight whose producer wrote no usable `/QuadPoints`,
+ * where the answer is knowably empty without reading the page.
+ */
+export function needsWords(comment: Comment): boolean {
+  return (
+    comment.body.trim() === "" &&
+    coversText(comment.kind) &&
+    comment.quads.length >= 4
+  );
+}
+
+/**
+ * The pages holding comments that want their covered words, lowest first.
+ *
+ * A page at a time is the unit because extracting text is a per-page request to
+ * the backend, and one page answers every comment on it. Ordered so the reader
+ * sees the front of the document fill in first, which is where they are looking
+ * --- the alternative is answers arriving in whatever order the annotations were
+ * written in the file, which is nobody's order.
+ */
+/**
+ * The words every comment on one page covers, keyed by id.
+ *
+ * The whole of the lookup, so that `App.svelte` and `viewercheck.ts` run the
+ * same one: a harness that re-implemented it would be checking its own copy,
+ * which is the failure recorded as *"A writer and its own reader agree about a
+ * document that is wrong"*. What is **not** here is the scheduling --- one page
+ * at a time, and only while somebody is looking at the tab --- because that is a
+ * policy about the reader's attention rather than a fact about comments.
+ *
+ * `textOf` rather than a `PageText` so the caller decides how the page is
+ * fetched, and answers `null` for a page whose text will not come. Empty then,
+ * and the rows keep saying what they said: an empty string here is *also* the
+ * honest answer for a highlight over a picture, and the two are the same
+ * outcome for a reader --- there are no words either way.
+ */
+export async function wordsForPage(
+  items: readonly Comment[],
+  page: number,
+  textOf: (page: number) => Promise<PageText | null>,
+): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  const wanted = items.filter((comment) => comment.page === page && needsWords(comment));
+  if (wanted.length === 0) return out;
+  const text = await textOf(page);
+  if (!text) return out;
+  for (const comment of wanted) out.set(comment.id, coveredText(text, comment.quads));
+  return out;
+}
+
+export function pagesNeedingWords(items: readonly Comment[]): number[] {
+  const pages = new Set<number>();
+  for (const comment of items) {
+    if (needsWords(comment)) pages.add(comment.page);
+  }
+  return [...pages].sort((a, b) => a - b);
 }
 
 /** The line under a row's body: who wrote it, and when. */

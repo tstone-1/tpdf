@@ -62,6 +62,7 @@ function comment(): Comment {
     subject: "",
     date: null,
     rect: RECT,
+    quads: [],
     reply_to: null,
     hidden: false,
   };

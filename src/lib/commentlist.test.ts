@@ -14,6 +14,7 @@ function comment(over: Partial<Comment> & { id: number }): Comment {
     subject: "",
     date: "2026-08-12 10:15",
     rect: [100, 100, 124, 124],
+    quads: [],
     reply_to: null,
     hidden: false,
     ...over,
@@ -36,6 +37,15 @@ function comments(items: Comment[], over: Partial<Comments> = {}): Comments {
     ...over,
   };
 }
+
+/**
+ * One rectangle, which is what makes a bare highlight one whose words are wanted.
+ *
+ * `needsWords` asks for all three of an empty body, a kind that marks text, and
+ * rectangles to look under --- so a fixture missing this is correctly refused,
+ * and every covered-words test would pass by never running.
+ */
+const BARE_QUADS = [100, 700, 150, 712];
 
 describe("CommentList", () => {
   let dom: FakeDom;
@@ -93,6 +103,7 @@ describe("CommentList", () => {
     expect(list.rowText(0)).toEqual({
       body: "Check this figure.",
       byline: "Timo · 2026-08-12 10:15",
+      own: true,
     });
   });
 
@@ -185,5 +196,98 @@ describe("CommentList", () => {
     const row = list.elementFor(0);
     const children = [...(row?.children ?? [])] as HTMLElement[];
     expect(children[children.length - 1]?.textContent).toBe("hidden");
+  });
+
+  it("lists a bare highlight by the words it covers, once they arrive", () => {
+    const list = panel();
+    list.setComments(comments([comment({ id: 7, kind: "highlight", body: "", quads: BARE_QUADS })]));
+    // Before: the kind, drawn as not the reader's own.
+    expect(list.rowText(7)).toMatchObject({
+      body: "Highlight, no comment",
+      own: false,
+    });
+    list.setWords(new Map([[7, "the words under it"]]));
+    // After: the words, still marked as not somebody's own, because nobody
+    // wrote them --- which is what the row's dimming is telling a reader.
+    expect(list.rowText(7)).toMatchObject({
+      body: "the words under it",
+      own: false,
+    });
+  });
+
+  it("flattens the covered words to the one line a row has", () => {
+    const list = panel();
+    list.setComments(comments([comment({ id: 7, kind: "highlight", body: "", quads: BARE_QUADS })]));
+    list.setWords(new Map([[7, "over\ntwo   lines"]]));
+    expect(list.rowText(7).body).toBe("over two lines");
+  });
+
+  it("leaves a comment with a body saying what its author wrote", () => {
+    // The control for the check above. Words are looked up per page, so a page
+    // holding one bare highlight and one written-on comment supplies words for
+    // both if the caller is careless --- and the row must ignore them.
+    const list = panel();
+    list.setComments(comments([comment({ id: 8, body: "Check this figure." })]));
+    list.setWords(new Map([[8, "the words under it"]]));
+    expect(list.rowText(8)).toMatchObject({
+      body: "Check this figure.",
+      own: true,
+    });
+  });
+
+  it("keeps the words already known when a later page answers", () => {
+    // Merged, not replaced: each call carries one page's answers.
+    const list = panel();
+    list.setComments(
+      comments([
+        comment({ id: 1, kind: "highlight", body: "", quads: BARE_QUADS, page: 0 }),
+        comment({ id: 2, kind: "highlight", body: "", quads: BARE_QUADS, page: 1 }),
+      ]),
+    );
+    list.setWords(new Map([[1, "first page"]]));
+    list.setWords(new Map([[2, "second page"]]));
+    expect(list.rowText(1).body).toBe("first page");
+    expect(list.rowText(2).body).toBe("second page");
+  });
+
+  it("does not carry one document's words onto the next document's rows", () => {
+    // Ids start again with each document, so a kept entry lands on whatever
+    // comment happens to hold that id in the next file --- and reads perfectly
+    // plausibly, which is why this is worth a test rather than a comment.
+    const list = panel();
+    list.setComments(comments([comment({ id: 3, kind: "highlight", body: "", quads: BARE_QUADS })]));
+    list.setWords(new Map([[3, "words from the first document"]]));
+    expect(list.rowText(3).body).toBe("words from the first document");
+    list.setComments(comments([comment({ id: 3, kind: "highlight", body: "", quads: BARE_QUADS })]));
+    expect(list.rowText(3).body).toBe("Highlight, no comment");
+  });
+
+  it("rewrites the row rather than rebuilding the list", () => {
+    // The property `setWords` exists for, and the only assertion here that can
+    // see it: these answers arrive a page at a time while somebody is reading
+    // the panel, and a repaint replaces every child --- dropping the scroll
+    // position and the focused element under them, once per page. Element
+    // identity is what tells a redraw from a rebuild; every other assertion in
+    // this file passes either way.
+    const list = panel();
+    list.setComments(
+      comments([
+        comment({ id: 1, kind: "highlight", body: "", quads: BARE_QUADS }),
+        comment({ id: 2, body: "written on" }),
+      ]),
+    );
+    const before = [list.elementFor(1), list.elementFor(2)];
+    list.setWords(new Map([[1, "the words under it"]]));
+    expect(list.elementFor(1)).toBe(before[0]);
+    expect(list.elementFor(2)).toBe(before[1]);
+    expect(list.rowText(1).body).toBe("the words under it");
+  });
+
+  it("ignores words for a comment that is not listed", () => {
+    const list = panel();
+    list.setComments(comments([comment({ id: 1, kind: "highlight", body: "", quads: BARE_QUADS })]));
+    list.setWords(new Map([[99, "nobody's"]]));
+    expect(list.rowText(1).body).toBe("Highlight, no comment");
+    expect(list.rowCount).toBe(1);
   });
 });

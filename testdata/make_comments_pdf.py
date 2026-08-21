@@ -131,6 +131,34 @@ WORDS = [
 ]
 
 
+#: The row the bare underline is drawn over. Any row with a neighbour either
+#: side; 9 is comfortably inside the 36 the page carries.
+BARE_ROW = 9
+
+
+def line_text(label: str, row: int) -> str:
+    """One row of body text: the label, the row number, then six words."""
+    words = " ".join(WORDS[(row + at) % len(WORDS)] for at in range(6))
+    return f"{label} line {row:02d}: {words}"
+
+
+def line_baseline(row: int) -> int:
+    """The PDF-space y a row's text sits on."""
+    return HEIGHT - 80 - row * LEADING
+
+
+def line_band(row: int) -> tuple[int, int]:
+    """A y band containing one row's glyph boxes and neither neighbour's.
+
+    At 13pt the boxes span roughly 12 points around the baseline --- about 2.7
+    below it and 9.3 above --- and the leading is 18, so a band reaching 2 below
+    and 16 above takes this row's characters and leaves the next row's centres
+    outside it. Centres, not overlap: that is the rule `coveredIndices` uses.
+    """
+    y = line_baseline(row)
+    return (y - 2, y + 16)
+
+
 def body_content(rows: int, label: str) -> bytes:
     """Page content: a few lines of words, so the page is not blank behind the marks.
 
@@ -138,11 +166,9 @@ def body_content(rows: int, label: str) -> bytes:
     """
     lines = []
     for row in range(rows):
-        y = HEIGHT - 80 - row * LEADING
-        words = " ".join(WORDS[(row + at) % len(WORDS)] for at in range(6))
         lines.append(
             "BT /F1 13 Tf 72 %d Td (%s) Tj ET"
-            % (y, escape(f"{label} line {row:02d}: {words}").decode("latin-1"))
+            % (line_baseline(row), escape(line_text(label, row)).decode("latin-1"))
         )
     return "\n".join(lines).encode("latin-1")
 
@@ -239,11 +265,23 @@ def build(path: str) -> dict:
         + b"/Contents " + literal(b"Boxed for discussion.") + b" "
         b"/T " + literal(b"Timo") + b" /M (D:20260812101700Z) >>"
     )
-    # A mark with no words. Listing it is the decision being tested: a reader
-    # who highlighted a line without typing anything still made a mark.
+    # A mark with no words, and the only annotation in the corpus that is both
+    # bare and carries `/QuadPoints`. Two decisions are being tested through it.
+    #
+    # Listing it at all: a reader who underlined a line without typing anything
+    # still made a mark.
+    #
+    # And listing it by **what it is under**, which is what `bare_mark_covers`
+    # below states. The band and the expected words are computed from the same
+    # row index, because the first version of this wrote the row number into the
+    # manifest by hand and named the wrong line --- the arithmetic needs the page
+    # height, and the page is A4 rather than letter.
+    band = line_band(BARE_ROW)
     ordinary.annot(
-        b"<< /Type /Annot /Subtype /Underline /Rect [ 70 600 320 620 ] "
-        b"/T " + literal(b"Timo") + b" /M (D:20260812101800Z) >>"
+        b"<< /Type /Annot /Subtype /Underline /Rect [ 70 %d 500 %d ] "
+        b"/QuadPoints [ 70 %d 500 %d 70 %d 500 %d ] "
+        % (band[0], band[1], band[1], band[1], band[0], band[0])
+        + b"/T " + literal(b"Timo") + b" /M (D:20260812101800Z) >>"
     )
     # Neither of these is a comment, and both carry text that would look like
     # one to a scan that keys on `/Contents` alone.
@@ -264,6 +302,10 @@ def build(path: str) -> dict:
         "reply_body": "It does not - page 2 is the revised figure.",
         "replies": 1,
         "kinds": ["text", "text", "highlight", "square", "underline"],
+        # What the bare underline is over, which is what the comments panel
+        # lists it by. Built by `line_text`, the same function `body_content`
+        # draws with, so the two cannot disagree about what is on that row.
+        "bare_mark_covers": line_text("Ordinary", BARE_ROW),
         "absent": ["Follow me", "typed into a form", "example.invalid"],
     }
 

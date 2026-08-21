@@ -11544,3 +11544,48 @@ than died on"* is satisfied by a worker that answers every open with an empty er
 *"and the reason names the document, not the worker"* asserts the message is non-empty and
 contains neither `stopped answering` nor `exited with`. Reverting the one line turns both red
 and prints, verbatim, the string the report quoted.
+
+### A loop that re-attaches to the previous item drops a leading orphan
+
+`fragmentsOf` in `reading.ts` keeps a character PDFium placed nowhere by attaching it to the
+character before it --- `trailing.get(last)`, where `last` is the index of the last *placed*
+character. Nothing is dropped, and the ranges stay usable as ranges. Its own doc comment says
+what happens at the start of a page:
+
+> On a page whose first character has no box there is nothing before it, and it starts a
+> fragment of its own with a degenerate box.
+
+It does not. `last` is `-1` there, so the character is filed under key `-1`, and `fragmentOf`
+only ever reads `trailing.get(item.index)` for indices that exist. **The character is dropped
+from `readingOrder` entirely** --- measured, three characters in, one unplaced and leading:
+
+```
+leading  : [1, 2]      <- index 0 is gone
+trailing : [0, 1, 2]
+```
+
+So it is missing from what a copy produces and from what a screen reader is handed, on any
+page whose producer emits a separator before the first glyph. `ownership`, the tagged path in
+the same file, does have the backward pass this needs and says why: *"A leading unclaimed
+character has nothing before it and takes the first owner that follows."* The two halves of
+one file disagree, and only one of them is right.
+
+**How it was found is the part worth keeping.** A new test asserted that `coveredText` does
+not take a character with no box, and built the fixture the obvious way --- the unplaced
+character first, because that is where the interesting case is. The mutation that deletes the
+guard was then reported red in `links.test.ts` and **green in the file the test was written
+in**: `coveredText` intersects the covered indices with `readingOrder`, and a character
+`readingOrder` never emits cannot be taken however wrong the rule is. The assertion passed for
+a reason unrelated to what it was testing.
+
+Two things follow. **A fixture must be placed where the code under test can actually reach
+it** --- moving the unplaced character to the end made the same mutation red in the right
+file, and nothing about the assertion changed. And **the mutation harness naming which file
+went red is what made this visible**: "caught" would have been a true and useless verdict, and
+the trap *"a check written because a mutation survived has to inherit that mutation's
+expectation"* is the same observation from the other side.
+
+The general shape, which is not about PDFs: any loop that fixes up an item by reference to the
+previous one has an orphan at the front, and the fix is a second pass in the other direction.
+Reaching for `last` and never asking what it holds on the first iteration is how it gets
+written.

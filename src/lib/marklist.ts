@@ -47,6 +47,7 @@
 
 import { cssColor } from "./markcolors";
 import { nameOf } from "./markpopup";
+import { rowLine } from "./rowline";
 import type { MarkRow } from "./pages";
 
 export interface MarkListOptions {
@@ -94,44 +95,14 @@ export function noticeFor(rows: readonly MarkRow[]): string {
 }
 
 /**
- * One line of whatever was handed in.
+ * What a row says when the reader typed nothing and the mark covers no words.
  *
- * A row is one line high and a text box's note has real newlines in it --- the
- * same treatment `comments.ts` gives a comment body, for the same reason. Both
- * of {@link rowLine}'s candidates go through it: the words a mark covers run
- * over the lines of the page they were taken from, so they arrive with exactly
- * the same problem.
+ * The marks panel's own word, which is why it is here and the rest of the rule
+ * is in `rowline.ts`: a mark with nothing on it is a mark with no note, and the
+ * comments panel's equivalent has to name a kind instead, because there the
+ * question is whose annotation it is.
  */
-function flatten(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-/**
- * What a row's first line says, and whether the reader wrote it.
- *
- * Three cases in one order, and the order is the argument. **What the reader
- * typed wins**, always: a note is the one thing on a row they chose, and a
- * highlight noted "check this against §4" must not be listed by the sentence it
- * sits on. Where they typed nothing, the words the mark covers are what they
- * would recognise it by --- which is the whole point, because the alternative is
- * a column of nine rows all reading "No note". And where there are neither, the
- * row says so as it always did.
- *
- * `own` is false for both fallbacks, and the row draws it the way it already
- * drew "No note": dimmed and italic. That is not decoration --- it is the only
- * thing separating a sentence the reader wrote from a sentence the document
- * did, in a panel whose subject is what the reader has done.
- */
-export function rowLine(
-  note: string,
-  covered: string,
-): { text: string; own: boolean } {
-  const typed = flatten(note);
-  if (typed) return { text: typed, own: true };
-  const words = flatten(covered);
-  if (words) return { text: words, own: false };
-  return { text: "No note", own: false };
-}
+const NO_NOTE = "No note";
 
 /** The marks panel: a row per mark the reader made, in walk order. */
 export class MarkList {
@@ -345,7 +316,7 @@ export class MarkList {
     const text = document.createElement("div");
     text.style.cssText = "flex:1;min-width:0;";
 
-    const line = rowLine(mark.note, this.opts.coveredFor(mark.id));
+    const line = rowLine(mark.note, this.opts.coveredFor(mark.id), NO_NOTE);
     const note = document.createElement("div");
     note.dataset.part = "note";
     // Whose words these are, said rather than left to be inferred from the
