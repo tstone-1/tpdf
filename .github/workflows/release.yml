@@ -225,16 +225,20 @@ jobs:
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag
           a thumbnail in the page strip, or use the command palette. Text you
-          drag across can be highlighted, underlined or struck out; you can
-          leave a comment anywhere on a page, and draw a box round anything on
-          one. All of them are real annotations any PDF reader shows, and each
-          takes a note. Everything is undoable, and the result is printed,
-          written back into the file you opened with *Save*, or written out to
-          a new file with *Save a copy*.
+          drag across can be highlighted, underlined, struck out or underlined
+          with a squiggle; you can leave a comment anywhere on a page, draw a
+          box, an ellipse or freehand ink on one, add a text box, and rub ink
+          out again with the eraser. Marks take a colour you choose and each
+          takes a note, and a sidebar panel lists every mark you have made. All
+          of them are real annotations any PDF reader shows — `/Highlight`,
+          `/Square`, `/Circle`, `/Ink`, `/FreeText` and the rest — rather than
+          anything only tpdf can read. Everything is undoable, and the result is
+          printed, written back into the file you opened with *Save*, or written
+          out to a new file with *Save a copy*.
 
-          **What it is not, yet.** Ink, text boxes and stamps, inserting pages,
-          true redaction, forms and text editing are not built. See the roadmap
-          in `docs/PLAN.md`.
+          **What it is not, yet.** Stamps, inserting pages, true redaction,
+          forms and text editing are not built. See the roadmap in
+          `docs/PLAN.md`.
 
           **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
           the `-setup.exe` if you prefer an installer that asks fewer

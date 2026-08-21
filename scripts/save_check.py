@@ -97,22 +97,43 @@ def digest(path: Path) -> str:
 
 
 def enabled(menu: int, item: str) -> bool:
-    return (
-        osa(
+    try:
+        answer = osa(
             'tell application "System Events" to tell process "tpdf" to return enabled of '
             f'menu item "{item}" of menu 1 of menu bar item {menu} of menu bar 1'
         )
-        == "true"
-    )
+    except RuntimeError as why:
+        raise MenuGone(f'"{item}" in menu {menu}: {why}') from why
+    # Only "true" is true. An answer this does not recognise is not a quiet
+    # `false` -- that would read as a correctly withheld command and pass the
+    # control below for the wrong reason.
+    if answer not in ("true", "false"):
+        raise MenuGone(f'"{item}" in menu {menu} answered {answer!r}, not true or false')
+    return answer == "true"
+
+
+class MenuGone(Exception):
+    """A menu item this check drives is not in the bar under that name.
+
+    Its own exception because it is a different finding from anything the save
+    path can produce: the check is aimed at a menu that has been renamed or
+    rearranged, and reporting that as a failed save would send the next reader
+    into `save.rs` for a defect that is in this file. `menu_check.py` is the
+    instrument for the bar itself; this one only has to say which item it
+    reached for.
+    """
 
 
 def click(menu: int, item: str, settle: float = 3.0) -> None:
     osa('tell application "tpdf" to activate')
     time.sleep(0.5)
-    osa(
-        'tell application "System Events" to tell process "tpdf" to click '
-        f'menu item "{item}" of menu 1 of menu bar item {menu} of menu bar 1'
-    )
+    try:
+        osa(
+            'tell application "System Events" to tell process "tpdf" to click '
+            f'menu item "{item}" of menu 1 of menu bar item {menu} of menu bar 1'
+        )
+    except RuntimeError as why:
+        raise MenuGone(f'"{item}" in menu {menu}: {why}') from why
     time.sleep(settle)
 
 
@@ -243,6 +264,13 @@ def main() -> int:
             problems += 1
         else:
             print("[OK]   nothing was left beside the document")
+    except MenuGone as why:
+        # Deliberately not counted as a save problem. The check could not ask
+        # its question, which is a third outcome and has to read as one.
+        print(f"[FAIL] this check drives a menu item that is not there: {why}")
+        print("[FAIL] nothing was proved about saving -- fix the item name here "
+              "or run menu_check.py to see what the bar holds now")
+        return 2
     finally:
         subprocess.run(["osascript", "-e", 'tell application "tpdf" to quit'],
                        capture_output=True)
