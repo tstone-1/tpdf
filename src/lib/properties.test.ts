@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   certificateRows,
   certificationOf,
+  conformanceRows,
   coverageOf,
   formatBytes,
   limitRows,
@@ -28,6 +29,7 @@ function blank(): Properties {
     tagged: null,
     language: "",
     attachments: null,
+    xmp: null,
     limits: {
       locked: false,
       fields_dropped: 0,
@@ -492,6 +494,75 @@ describe("the signing certificate", () => {
       for (const word of VERDICT_WORDS) {
         // The value may quote the document; the label may not, because the
         // label is the only half tpdf wrote.
+        expect(row.name.toLowerCase()).not.toContain(word);
+      }
+    }
+  });
+});
+
+describe("what a document claims to conform to", () => {
+  it("shows a claim as a claim", () => {
+    const doc = blank();
+    doc.xmp = { bytes: 1718, conformance: ["PDF/A-3B"], unread: false };
+
+    const row = conformanceRows(doc.xmp)[0];
+    expect(row?.name).toBe("States conformance");
+    expect(row?.value).toContain("PDF/A-3B");
+    // The whole posture of this readout: nothing here validates anything, and
+    // a row that read "PDF/A-3B" alone would be taken as tpdf agreeing.
+    expect(row?.value).toContain("does not check");
+  });
+
+  it("lists every standard a document claims", () => {
+    const doc = blank();
+    doc.xmp = { bytes: 900, conformance: ["PDF/A-2A", "PDF/UA-1"], unread: false };
+
+    expect(conformanceRows(doc.xmp)[0]?.value).toContain("PDF/A-2A, PDF/UA-1");
+  });
+
+  it("says nothing for a document that claims nothing", () => {
+    // Most documents. A row on every one of them is noise, and the absence of
+    // a claim is not a finding -- so the silence here is deliberate and this is
+    // what stops it being restored by somebody tidying up.
+    const doc = blank();
+    doc.xmp = { bytes: 3000, conformance: [], unread: false };
+    expect(conformanceRows(doc.xmp)).toEqual([]);
+
+    doc.xmp = null;
+    expect(conformanceRows(doc.xmp)).toEqual([]);
+  });
+
+  it("speaks up when a packet is there and could not be read", () => {
+    // The one case that always speaks: this is tpdf failing, not the document
+    // declining to say anything, and those must not read the same.
+    const doc = blank();
+    doc.xmp = { bytes: 2_000_000, conformance: [], unread: true };
+
+    const row = conformanceRows(doc.xmp)[0];
+    expect(row?.warn).toBe(true);
+    expect(row?.value).toContain("unknown");
+  });
+
+  it("puts a claim in the file section of the readout", () => {
+    const doc = blank();
+    doc.xmp = { bytes: 1718, conformance: ["PDF/UA-1"], unread: false };
+
+    const file = sections(doc).find((s) => s.title === "File");
+    expect(file?.rows.some((r) => r.value.includes("PDF/UA-1"))).toBe(true);
+  });
+
+  it("puts no verdict word in a line built from a document's own claim", () => {
+    // The hostile case, and it is a real one: the conformance string is copied
+    // out of the packet, so a document can write anything it likes there.
+    const doc = blank();
+    doc.xmp = {
+      bytes: 900,
+      conformance: ["PDF/A-1B, valid and verified, genuine"],
+      unread: false,
+    };
+
+    for (const row of conformanceRows(doc.xmp)) {
+      for (const word of VERDICT_WORDS) {
         expect(row.name.toLowerCase()).not.toContain(word);
       }
     }

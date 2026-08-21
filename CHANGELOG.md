@@ -101,6 +101,21 @@ have the binary.)
 - Still not a verdict: what a certificate says its key is for is the issuer's
   own word, and tpdf builds no chain to an issuer it trusts, so the disclaimer
   under every signature now names that too.
+
+### Added: what a document claims to conform to
+
+- **A document that says it is PDF/A, PDF/UA or PDF/X now says so in the
+  properties dialog.** That claim lives in the XMP metadata packet and nowhere
+  else in a PDF, so until now nothing in tpdf could show it --- of 41 documents
+  to hand, 24 carry such a packet and 8 state a conformance level.
+- **It is shown as the document's claim, not as a finding.** tpdf does not
+  check a document against PDF/A and the row says so; a file stating PDF/A-3B
+  may break it in twenty ways.
+- A document claiming more than one standard has all of them listed. A document
+  claiming none says nothing, which is most of them.
+- **A metadata packet that could not be read is reported as unread.** That is
+  tpdf failing rather than the document declining to describe itself, and the
+  two never share a line.
 - **PDFium reads the same signatures independently, and now the two are
   compared.** `signature-probe` puts our reading of a document's signatures next
   to PDFium's own --- the count, the encoding, the reason, the signing time, the

@@ -773,6 +773,36 @@ limit. Absent is the reassuring branch, which is the direction a silent failure 
 And what an extension states is still the issuer's word --- the constraint binds the key, and
 only a chain to a trusted issuer makes it mean anything, so `NOT_CHECKED` now says that too.
 
+**A fifth route, and a third parser: tpdf reads XMP as of 2026-08-21.** The catalog's
+`/Metadata` is an RDF/XML packet the document chose, and `xmp::scan` hands it to `quick-xml`.
+That crate was **already in the tree** through Tauri's `plist` dependency, so this compiled no
+new code into the binary --- but it is newly reachable from attacker-chosen bytes, which is the
+only question that matters here. Four bounds, and the fourth is the one worth reading:
+
+- **It runs in the worker.** Reached through `Request::Properties` like everything else that
+  parses a document, so it is behind the T1 boundary and needed no new mechanism.
+- **The packet is capped** at `xmp::MAX_PACKET` (1 MiB against real packets of 0.4--40 kB),
+  nesting at 64 levels, and each value at 4 KiB --- with the value bound applied **while the
+  value accumulates**, not to the finished string, since clipping at the end means holding
+  whatever the document sent first. Every one of those is *reported* through `Xmp::unread`
+  rather than answered with a packet that claimed nothing.
+- **The stream is decompressed under the document's existing `MAX_DECODE`**, so a compressed
+  `/Metadata` is no different from any other stream bomb.
+- **Entity expansion is structurally impossible, not merely bounded.** `quick-xml` delivers
+  every `&...;` as its own `GeneralRef` event and expands nothing; `unescape` resolves the five
+  predefined names and character references, and refuses everything else. Nothing here calls
+  `unescape_with`, which is the only door a custom entity could come through. So a
+  billion-laughs declaration costs a dropped `DocType` event --- asserted by a test that
+  distinguishes *not expanded* from *expanded quickly*, since a test asserting only that the
+  parse terminated would pass on both.
+
+**And the honest limit.** A conformance claim is a claim. tpdf does not validate a document
+against PDF/A, PDF/UA or PDF/X, and the string shown is copied out of the packet --- so a
+document may write anything it likes there, including the word *valid*. The row says *the
+document's own claim, which tpdf does not check*, and `properties.test.ts` asserts that a
+hostile conformance string cannot put a verdict word into a label tpdf wrote. Same posture as
+the signature rows, same reason.
+
 #### T6.5 — The frontend names the mark's kind, added 2026-08-18
 
 **A reader can now choose Highlight, Underline or Strike out, so the kind travels on the

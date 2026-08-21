@@ -11865,3 +11865,77 @@ that run here. A leak checker (`valgrind --leak-check`, macOS `leaks`) sees it; 
 long run sees it; a fuzz corpus of many-extension certificates makes it a memory-growth curve.
 The repository has none of those, so the guard is the reviewer noticing `Box::leak` in a parser
 --- which is why it is written down rather than fixed and forgotten.
+
+### `trim_text` trims each event, and a value with an entity in it arrives as several
+
+Reading a value out of XML looks like one event and is not. `quick-xml` delivers every `&...;`
+as a **separate** `GeneralRef` event, so `PDF/X-4 &amp; later` reaches the reader as five:
+
+```
+TEXT      "PDF/X-4 "
+GENREF    "amp" -> unescape Ok("&")
+TEXT      " later"
+```
+
+Two independent bugs follow from that, and each is correct for every value with no entity in
+it --- which is nearly all of them, so neither shows up until it matters.
+
+**Taking the first text event reports `PDF/X-4` for a document stating `PDF/X-4 & later`.** A
+plausible wrong answer, which is the dangerous kind: the value is a real prefix of the real
+value, so nothing about it looks truncated.
+
+**`trim_text(true)` trims each fragment, so the spaces beside the entity disappear.** The same
+document then reads `PDF/X-4&later`. The setting is the obvious one to reach for --- it exists
+to stop indentation whitespace becoming text --- and it silently corrupts every value it is
+combined with accumulation over. The fix is to leave it off and trim the assembled value once,
+where it is stored.
+
+**And the repair that looks right and breaks ordinary documents: refusing every `GeneralRef`.**
+The security property being protected is that a custom entity must never expand --- but
+`&#233;` is a `GeneralRef` too, so a blanket refusal drops the `é` out of any value that spells
+one that way, and marks a perfectly ordinary packet unreadable. The correct rule is narrower:
+reconstruct `&{name};` and hand it to `unescape`, which resolves the five predefined names and
+character references and returns `UnrecognizedEntity` for anything else. That is one call, and
+it is the whole difference between *bounded* expansion and *no* expansion.
+
+Measured rather than reasoned about: printing the event stream for
+`<a>AT&amp;T caf&#233; and &lol9; end</a>` answers all three questions in one run, and is what
+turned a test asserting the wrong outcome into three tests asserting the right ones.
+
+### A stale binary answered for a source file that was never written
+
+A measuring probe was rewritten and re-run, and printed the *previous* version's output. The
+command was:
+
+```
+cd src-tauri && cat > examples/probe.rs <<'RUST'
+...new source...
+RUST
+cargo run --release --example probe -- ~/Downloads/*.pdf
+```
+
+The shell's working directory was **already** `src-tauri` from an earlier call, so `cd
+src-tauri` failed, `&&` short-circuited, and the heredoc never ran. `cargo run` then rebuilt
+nothing and executed the old binary, whose output was plausible data of the right shape.
+
+**The failure is silent in both halves.** A failed `cd` prints one line that scrolls past among
+compiler output, and a stale binary produces no error at all --- it produces *results*. The tell
+was `cargo build` reporting `Finished in 0.15s`, which is not a build.
+
+Two habits, and the first is the cheap one:
+
+- **Absolute paths for every file write.** The working directory persists across calls in this
+  harness and is not visible in the command you are writing.
+- **When a rebuild is part of the measurement, read the build line.** `Finished in 0.15s` after
+  editing a source file means the edit did not land, and it says so before the numbers do.
+
+The same session produced the other half of the same confusion, and it leaves a mess rather
+than a wrong reading: `mkdir -p src-tauri/examples` run from inside `src-tauri` **succeeds**,
+creating `src-tauri/src-tauri/examples/`. `cd` at least fails; `mkdir -p` is defined to make
+whatever is missing, so it builds the nested tree in silence and the file lands somewhere
+nothing will look for it. It surfaced as an untracked directory at commit time, which is late
+but is at least a place it surfaces.
+
+Same family as the `$?`-after-a-command-substitution entry and the `time`-as-a-pipeline-stage
+one: a step that did no work reporting success, with the next step's output standing in for
+evidence that it ran.

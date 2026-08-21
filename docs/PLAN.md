@@ -7853,6 +7853,53 @@ times, which no real certificate does. Its all-bits control beneath is what catc
 since every assertion in the loop is over a one-element list; a mutation reordering two whole
 rows proves that half separately.
 
+#### What the document says about itself in XMP
+
+**Done 2026-08-21, and the scope was decided by measurement.** The catalog's `/Metadata` is an
+RDF/XML packet, and `xmp.rs` reads **one thing** out of it: a conformance claim. PDF/A, PDF/UA
+and PDF/X are declared in XMP or nowhere, so this is a fact about a document that nothing else
+in tpdf could see.
+
+The numbers, over 41 real PDFs in `~/Downloads`:
+
+| | |
+|---|---|
+| carry an XMP packet | **24** |
+| state a conformance level | **8** --- seven PDF/UA-1, one PDF/A-3B |
+| written as child elements / as attributes | **5 / 3** |
+| XMP and `/Info` disagreeing on title, author or producer | **0** |
+| XMP stating a title, author or producer that `/Info` omits | **0** |
+| packets this reader could not read | **0** |
+
+**The last two rows removed a feature.** The module was first written to compare XMP's title,
+author and producer against `/Info`'s --- PDF 2.0 deprecates `/Info` in favour of XMP, so a
+disagreement means two viewers show different things, and it is the same shape as the
+signer-name disagreement the panel already reports. It occurred zero times, and XMP supplying
+a value `/Info` lacks occurred zero times as well. Three fields were parsed and then deleted;
+the measurement is what this increment produced there, and it is worth more than the code
+would have been.
+
+**The 5/3 split is why attributes are read at all.** `<pdfaid:part>3</pdfaid:part>` and
+`<rdf:Description pdfuaid:part="1"/>` are the same claim, and an element-only reader is silent
+about three of the eight --- silent being indistinguishable from the great majority of
+documents, which claim nothing. A mutation deleting the attribute path then **survived**, and
+correctly: the fixture used a self-closing element, which is `Event::Empty`, while the deleted
+call was in the `Event::Start` arm. Two paths, one tested. The gap was real and is closed.
+
+**Matching is by namespace URI, not by prefix.** `pdfaid` is a convention; RDF names a property
+by its namespace, and a producer may bind that URI to any prefix. Asserted in both directions:
+an unconventional prefix over the right URI **is** a claim, and the conventional prefix over
+some other URI is **not**.
+
+**A claim is a claim.** Nothing validates a document against PDF/A, and the string shown is
+copied out of the packet --- so the row says *the document's own claim, which tpdf does not
+check*, and a test asserts that a hostile conformance string cannot put a verdict word into a
+label tpdf wrote.
+
+**Not done, and deliberately.** Sensitivity labels (`pdfx:MSIP_Label_*`, 2 of 24 --- a Microsoft
+Purview label whose GUID means nothing without the tenant), `xmpMM:DocumentID`, and the dates.
+None of them has a reader question it answers.
+
 **Nearly shipped: an attacker-sized leak, with every gate green.** The obvious bound for the
 extension decoder is `T: der::Decode<'static>`, which compiles and is satisfiable from borrowed
 bytes only by `Box::leak` --- one leak per extension per signature, inside the sandboxed

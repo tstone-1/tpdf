@@ -2956,6 +2956,152 @@ MUTATIONS += [
         "each_key_usage_bit_is_named_by_the_name_rfc_5280_gives_it",
     ),
     Mutation(
+        # Read only child elements, not attributes. Three of the eight claims in
+        # a 41-document corpus are written as attributes, and a document that
+        # claims nothing is the overwhelming majority -- so the silence this
+        # produces looks exactly like an ordinary file.
+        "xmp: read a conformance claim only when it is a child element",
+        "src/xmp.rs",
+        """                read_attributes(
+                    &reader,
+                    &element,
+                    &mut out,
+                    &mut pdfa_part,
+                    &mut pdfa_conformance,
+                );
+                stack.push(property);""",
+        "                stack.push(property);",
+        "a_claim_written_as_attributes_is_read_as_the_same_claim",
+    ),
+    Mutation(
+        # Match the conventional prefix instead of the namespace URI. Right
+        # about every document a producer wrote conventionally, wrong in both
+        # directions on the ones that did not.
+        "xmp: identify a property by its prefix rather than its namespace",
+        "src/xmp.rs",
+        '        (NS_PDFAID, "part") => Some(Property::PdfaPart),',
+        '        (_, "part") => Some(Property::PdfaPart),',
+        "a_claim_is_identified_by_its_namespace_and_not_by_its_prefix",
+    ),
+    Mutation(
+        # Take the first text event as the whole value. Correct for every value
+        # with no entity in it, which is most of them, and silently truncating
+        # for the rest.
+        "xmp: take the first fragment of a value as the whole value",
+        "src/xmp.rs",
+        """                if let Some((_, _, buffer)) = &mut pending {
+                    append(buffer, &value, &mut out.unread);
+                }
+            }
+            Ok(Event::GeneralRef(reference)) => {""",
+        """                if let Some((_, _, buffer)) = &mut pending {
+                    if buffer.is_empty() {
+                        append(buffer, &value, &mut out.unread);
+                    }
+                }
+            }
+            Ok(Event::GeneralRef(reference)) => {""",
+        "a_value_arriving_in_pieces_is_put_back_together",
+    ),
+    Mutation(
+        # Resolve an entity this module does not know, which is the shape of the
+        # attack the refusal exists to stop. The point is not that a resolver
+        # would expand it -- it is that the refusing branch is load-bearing
+        # rather than decoration.
+        "xmp: resolve an entity this module does not know",
+        "src/xmp.rs",
+        """                let Ok(resolved) = quick_xml::escape::unescape(&spelled) else {
+                    out.unread = true;
+                    continue;
+                };""",
+        """                let resolved = quick_xml::escape::unescape(&spelled)
+                    .unwrap_or(std::borrow::Cow::Borrowed("lol"));""",
+        "a_billion_laughs_packet_is_neither_expanded_nor_followed",
+    ),
+    Mutation(
+        # Drop the nesting bound, so a chain a document chose the depth of is
+        # followed to the end.
+        "xmp: follow a packet's nesting to whatever depth it claims",
+        "src/xmp.rs",
+        "                if stack.len() >= MAX_DEPTH {",
+        "                if stack.len() >= usize::MAX {",
+        "nesting_past_the_bound_stops_and_is_reported",
+    ),
+    Mutation(
+        # Abandon an oversized packet in silence, so it reads as a document that
+        # says nothing about itself.
+        "xmp: drop an oversized packet without saying so",
+        "src/xmp.rs",
+        """    if packet.len() > MAX_PACKET {
+        out.unread = true;
+        return out;
+    }""",
+        """    if packet.len() > MAX_PACKET {
+        return out;
+    }""",
+        "a_packet_larger_than_the_cap_is_reported_rather_than_dropped",
+    ),
+    Mutation(
+        # Bound the finished string rather than the accumulation, so a document
+        # can make this hold whatever it likes and then clip it.
+        "xmp: let a value grow without bound and clip it at the end",
+        "src/xmp.rs",
+        """    if buffer.len() >= MAX_VALUE {
+        *unread = true;
+        return;
+    }""",
+        "",
+        "a_value_assembled_past_the_cap_stops_accumulating_and_says_so",
+    ),
+    Mutation(
+        # Report a malformed packet as a document that claims nothing, dropping
+        # what was read before the damage as well as the notice.
+        "xmp: read a malformed packet as a document claiming nothing",
+        "src/xmp.rs",
+        """            Err(_) => {
+                out.unread = true;
+                break;
+            }""",
+        """            Err(_) => {
+                out = Xmp {
+                    bytes: out.bytes,
+                    ..Xmp::default()
+                };
+                break;
+            }""",
+        "a_packet_that_stops_making_sense_keeps_what_it_had_and_says_so",
+    ),
+    Mutation(
+        # Require a conformance letter beside the part. PDF/A-4 dropped it, so
+        # this reports nothing for the newest standard in the family.
+        "xmp: require a conformance letter beside a PDF/A part",
+        "src/xmp.rs",
+        "    if !pdfa_part.is_empty() {",
+        "    if !pdfa_part.is_empty() && !pdfa_conformance.is_empty() {",
+        "a_part_with_no_conformance_letter_is_still_a_claim",
+    ),
+    Mutation(
+        # Stop consulting the catalog's /Metadata, so every document reports no
+        # packet -- which is true of most of them.
+        "docinfo: report every document as carrying no metadata packet",
+        "src/docinfo.rs",
+        "        xmp: catalog.and_then(|c| read_xmp(&document, c)),",
+        "        xmp: catalog.and_then(|_| None),",
+        "a_conformance_claim_in_the_metadata_stream_reaches_the_readout",
+    ),
+    Mutation(
+        # Read only unfiltered streams. The specification prefers those and most
+        # producers write them, so this is right about the common case and blind
+        # to Acrobat's.
+        "docinfo: read a metadata stream only when it carries no filter",
+        "src/docinfo.rs",
+        """    let packet = stream
+        .decompressed_content()
+        .unwrap_or_else(|_| stream.content.clone());""",
+        "    let packet = stream.content.clone();",
+        "a_conformance_claim_in_the_metadata_stream_reaches_the_readout",
+    ),
+    Mutation(
         # Report a key usage naming nothing as no extension at all, which turns
         # "this key is for nothing" into "no limit was placed on this key".
         "docinfo: read an empty key usage as an absent one",

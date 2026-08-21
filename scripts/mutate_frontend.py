@@ -3802,6 +3802,51 @@ MUTATIONS += [
         "  if (false) {",
         "reports an extension it could not read rather than one that said nothing",
     ),
+    Mutation(
+        # Show a conformance claim as a bare standard name. It then reads as
+        # tpdf agreeing that the document is PDF/A, which it has not checked and
+        # cannot.
+        "conformance: state a claim without saying it is unchecked",
+        "src/lib/properties.ts",
+        '      value: `${xmp.conformance.join(", ")} --- the document\'s own claim, which tpdf does not check`,',
+        '      value: xmp.conformance.join(", "),',
+        "shows a claim as a claim",
+    ),
+    Mutation(
+        # Show only the first standard a document claims, so a file stating both
+        # PDF/A and PDF/UA is reported as stating one.
+        "conformance: show only the first standard a document claims",
+        "src/lib/properties.ts",
+        '${xmp.conformance.join(", ")}',
+        '${xmp.conformance[0]}',
+        "lists every standard a document claims",
+    ),
+    Mutation(
+        # Say something on every document, which is noise on the great majority
+        # that claim nothing at all.
+        "conformance: emit a row for a document that claims nothing",
+        "src/lib/properties.ts",
+        "  if (xmp.conformance.length > 0) {",
+        "  if (xmp.conformance.length >= 0) {",
+        "says nothing for a document that claims nothing",
+    ),
+    Mutation(
+        # Read an unreadable packet as a document that says nothing about
+        # itself, which is tpdf's failure reported as the document's silence.
+        "conformance: say nothing about a packet that could not be read",
+        "src/lib/properties.ts",
+        "  if (xmp.unread) {",
+        "  if (false) {",
+        "speaks up when a packet is there and could not be read",
+    ),
+    Mutation(
+        # Build the rows and drop them, so the readout never carries a claim.
+        "conformance: leave the claim out of the readout",
+        "src/lib/properties.ts",
+        "  rows.push(...conformanceRows(properties.xmp));",
+        "",
+        "puts a claim in the file section of the readout",
+    ),
 ]
 
 

@@ -52,6 +52,7 @@ pub mod sweep;
 pub mod text;
 pub mod textbox;
 pub mod worker;
+pub mod xmp;
 // The four modules `worker.rs` was split into at 2,861 lines. Public, and
 // re-exported by `worker` itself, so both the defining path and the path every
 // caller already used resolve --- a split that renamed a path would have had to
