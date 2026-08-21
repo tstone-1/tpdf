@@ -974,6 +974,19 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # Draw a comment's covered words in the same face as a body somebody
+        # wrote. The marks panel's twin, one panel over: every word on the row is
+        # right and the flag beside it is right, and what goes is the only thing
+        # on screen saying whose sentence it is. The fake DOM resolves no styles,
+        # so this half needs a real window.
+        "commentlist: draw the covered words in the author's own face",
+        "src/lib/commentlist.ts",
+        '      (line.own ? "" : "opacity:0.6;font-style:italic;");',
+        '      "";',
+        "a mark nobody wrote on is listed by the words it covers",
+        runner="viewer",
+    ),
+    Mutation(
         # Hand the marks panel no words at all. The rectangles are unchanged, so
         # every check about where a mark goes still passes and the panel still
         # lists it --- saying "No note" for a highlight over a paragraph, which

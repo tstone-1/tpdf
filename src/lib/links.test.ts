@@ -285,6 +285,30 @@ describe("linkRunsIn", () => {
     ]);
   });
 
+  it("does not give an unplaced character to a link at the page's corner", () => {
+    // PDFium reports a character it could not place as four zeroes, whose centre
+    // is (0, 0) --- inside any rectangle touching the top-left corner. A link on
+    // the first line of a page is exactly such a rectangle, so every unplaced
+    // character on the page used to be announced as part of it. `text.ts`'s
+    // `centreOfCharacter` answers `null` for a box with no area, which is what
+    // stops it.
+    const unplaced = [0, 0, 0, 0, ...boxes.slice(4)];
+    const corner = over([0, 0, 40, 114]);
+    const runs = linkRunsIn(whole, unplaced, [corner]);
+    expect(shape(runs)).toEqual([
+      [null, 1],
+      [0, 2],
+      [null, 2],
+    ]);
+    // The control, and it is the whole test: with a real box the *same*
+    // rectangle does claim that first character, so the difference is the
+    // zeroes rather than the link. Before this, both readings were `[0, 3]`.
+    expect(shape(linkRunsIn(whole, boxes, [corner]))).toEqual([
+      [0, 3],
+      [null, 2],
+    ]);
+  });
+
   it("keeps two links apart even where they point at the same page", () => {
     // Adjacent runs are merged when they are the *same link*, not when they have
     // the same destination: two cross-references to one chapter are two links,

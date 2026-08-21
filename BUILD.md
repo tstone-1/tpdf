@@ -2404,6 +2404,44 @@ mark nothing was typed on is listed by the words it covers"* with the covered-wo
 | `links` | 285 | 28 | 282/28 | 11 |
 | `links-cropped` | 220 | 93 | 217/93 | 8 |
 
+**Re-measured the same day after the comments panel: the same 317 check names on every one,
+no failing check anywhere, 680 s.** Four names were added --- *"a mark nobody wrote on is
+listed by the words it covers"*, *"and they are the words the fixture's generator says are
+there"*, *"and those words are really on the page it is on"*, and the control *"a comment
+with a body is still listed by what its author wrote"*.
+
+| corpus | ran | skipped | earlier that day | s |
+|---|---|---|---|---|
+| `text-heavy` | 268 | 49 | 268/45 | 25 |
+| `outline-simple` | 276 | 41 | 276/37 | 10 |
+| `outline-hostile` | 276 | 41 | 276/37 | 10 |
+| `vector-heavy` | 174 | 143 | 174/139 | 149 |
+| `vector-multi` | 214 | 103 | 214/99 | 339 |
+| `rotated-90` | 261 | 56 | 261/52 | 9 |
+| `columns` | 265 | 52 | 265/48 | 9 |
+| `tagged` | 240 | 77 | 240/73 | 38 |
+| `multilingual` | 257 | 60 | 257/56 | 39 |
+| `encodings` | 258 | 59 | 258/55 | 9 |
+| `mixed` | 265 | 52 | 265/48 | 9 |
+| `comments` | 282 | 35 | 278/35 | 15 |
+| `links` | 285 | 32 | 285/28 | 11 |
+| `links-cropped` | 220 | 97 | 220/93 | 8 |
+
+**Twelve corpora are `+0` ran and `+4` skipped, and the two carrying annotations are `+4`
+ran and `+0` skipped.** That is the whole check on the run: the covered-words checks need a
+markup annotation nobody wrote on, so on every fixture without one they must stand down by
+name rather than vanish, and `comments` and `links` are exactly the two that have one.
+
+**The first attempt at this run was red, and it is the reason the split above is worth
+reading.** `commentChecks` returns early on four paths --- the comments could not be read,
+the document has none, no comment has a rectangle on the page, the last one has no row ---
+and the new checks were called after all of them. So twelve corpora neither ran nor skipped
+them: `comments` and `links` reported 317 names and everything else reported 313, and each
+of those runs passed on its own. A single-corpus run said `282/282 checks passed` and looked
+perfect. Only the cross-corpus name-set diff can see a check that is **absent** rather than
+failing, which is what `viewer_sweep.py` is for. The names are a module constant with a
+`skipCoveredWords(why)` helper now, called at each of the four returns.
+
 **The previous column is there because the way the splits moved is the check on the run.**
 Twelve corpora are `+3` ran and `+0` skipped; `vector-heavy` and `vector-multi` are `+2` and
 `+1`, and those two are the documents with no text to select --- so the check that compares

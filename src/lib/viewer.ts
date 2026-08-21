@@ -3984,6 +3984,29 @@ export class Viewer {
     return out;
   }
 
+  /**
+   * A page's text as the document displays it, fetching it if it is not here.
+   *
+   * The asking counterpart of {@link TextCache.peekUnturned}, which answers only
+   * from the cache. Unturned for the same reason as there: a caller reading a
+   * comment's `/QuadPoints` has rectangles in the page's own space, and matching
+   * them against boxes in the reader's rotation would find the words of a
+   * different part of the page every time the window was turned.
+   *
+   * Waits on `load` and then reads the cache rather than using `load`'s own
+   * answer, because that one is turned into the view. Reading it back is safe
+   * against nothing: the page could be evicted between the two, which is why
+   * `null` is a real outcome here rather than a formality.
+   *
+   * Deliberately **not** used by anything on the paint path. It queues an
+   * extraction behind the tiles, so a caller wanting many pages should ask for
+   * one at a time --- `App.svelte`'s comment-words loop is the worked example.
+   */
+  async unturnedText(page: number): Promise<PageText | null> {
+    await this.text.load(page);
+    return this.text.peekUnturned(page);
+  }
+
   /** Draws the marks, the search highlights and the selection. */
   private paintOverlay(): void {
     const ctx = this.overlayCtx;

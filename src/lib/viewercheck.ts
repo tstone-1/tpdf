@@ -40,7 +40,7 @@ import { INK_WIDTH, TEXT_INSET, TEXT_LEADING, TEXT_SIZE } from "./markband";
 import { DEFAULT_SWATCH, PALETTE, swatch } from "./markcolors";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
-import type { Comment, Comments } from "./comments";
+import { needsWords, wordsForPage, type Comment, type Comments } from "./comments";
 import type { Link, Links } from "./links";
 import { allRows, isNavigable, type Outline, type Row } from "./outline";
 import { Palette } from "./palette";
@@ -325,6 +325,8 @@ async function run(path: string): Promise<void> {
    * which this harness cannot reach at all --- the command probe stubs it.
    */
   const marksCovered = new Map<number, string>();
+  /** Every tab the sidebar has reported showing, in order. */
+  const tabsSeen: string[] = [];
   const panel = document.createElement("div");
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
@@ -362,6 +364,11 @@ async function run(path: string): Promise<void> {
       // view's own menu from appearing over it.
       onContextMenu: (slot) => menus.push(slot),
     },
+    // Recorded, not acted on. In the application this is what starts the
+    // comments panel's covered-words lookup, so that the extraction is paid for
+    // by a reader who opened the tab; here the phase drives that lookup itself,
+    // and what is left to check is that selecting a tab reports it at all.
+    onTab: (tab) => tabsSeen.push(tab),
   });
 
   const viewer = new Viewer(root, {
@@ -1730,6 +1737,28 @@ async function manifestOf(): Promise<ReadingManifest | null> {
   if (!raw) return null;
   try {
     return JSON.parse(raw) as ReadingManifest;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What this fixture's generator says is in it, or `null` if it says nothing.
+ *
+ * The entry for the open document, already selected by `corpus_manifest` --- one
+ * generator writes several fixtures, and the process that knows which is open is
+ * the backend. `null` covers three different absences (no sidecar, no entry for
+ * this fixture, nothing that parses) and every one of them has to read as
+ * "nothing to compare against" rather than as a pass.
+ */
+async function corpusEntry(): Promise<Record<string, unknown> | null> {
+  const raw = await invoke<string | null>("corpus_manifest").catch(() => null);
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
@@ -4896,6 +4925,7 @@ async function commentChecks(
   } catch (e) {
     check("reads the document's comments", false, String(e));
     for (const name of names) skip(name, "the comments could not be read");
+    skipCoveredWords("the comments could not be read");
     return;
   }
   check(
@@ -4909,6 +4939,7 @@ async function commentChecks(
 
   if (comments.items.length === 0) {
     for (const name of names) skip(name, "the document has no comments");
+    skipCoveredWords("the document has no comments");
     return;
   }
 
@@ -4943,6 +4974,10 @@ async function commentChecks(
     for (const name of names.slice(2)) {
       skip(name, "no comment has a rectangle on the page");
     }
+    // The covered-word checks need a bare mark with rectangles, not a mark the
+    // press phase can reach, so they are stood down separately rather than being
+    // folded into the loop above.
+    skipCoveredWords("no comment has a rectangle on the page");
     return;
   }
 
@@ -5017,6 +5052,7 @@ async function commentChecks(
   const row = far ? sidebar.comments.elementFor(far.id) : null;
   if (!far || !row) {
     skip("activating a row opens that comment's note", "the comment has no row");
+    skipCoveredWords("the comment has no row");
     return;
   }
   viewer.goToStart();
@@ -5032,6 +5068,139 @@ async function commentChecks(
   );
   // Left closed, so nothing after this runs with a note over the page.
   viewer.closeComment();
+
+  await coveredWordChecks(viewer, sidebar, comments.items);
+}
+
+/**
+ * The four checks {@link coveredWordChecks} records, for the skip paths.
+ *
+ * A module constant rather than a local, because `commentChecks` returns early
+ * on **four** paths --- unreadable comments, a document with none, no comment
+ * with a rectangle, and no row for the last one --- and each of those has to skip
+ * these by name. Written as a local first, and `viewer_sweep.py` caught it: the
+ * names appeared on `comments` and `links` and on nowhere else, so twelve corpora
+ * neither ran nor skipped them. A check that is absent is not a check that
+ * passed, and the name-set invariant exists for exactly this.
+ */
+const COVERED_WORD_CHECKS = [
+  "a mark nobody wrote on is listed by the words it covers",
+  "and those words are really on the page it is on",
+  "a comment with a body is still listed by what its author wrote",
+  "and they are the words the fixture's generator says are there",
+];
+
+/** Stands the covered-word checks down, with one reason for all four. */
+function skipCoveredWords(why: string): void {
+  for (const name of COVERED_WORD_CHECKS) skip(name, why);
+}
+
+/**
+ * Whether a mark nobody wrote on is listed by the words it is over.
+ *
+ * The end-to-end half of the covered-words work. What the unit tests cannot
+ * reach is the chain: `annots.rs` reading `/QuadPoints` out of a real file,
+ * `page_text` extracting the page it sits on, `coveredText` matching the two,
+ * and the panel rewriting a row that was already drawn. Every link is in a
+ * different language or process from the one before it.
+ *
+ * **The oracle is the backend's own search, not this bundle's reader.** Asking
+ * whether the listed words appear anywhere on the comment's page goes through
+ * `search.rs`, which shares no code with `reading.ts` --- so a covered-text
+ * reader that returned the wrong part of the page fails here, where comparing
+ * against anything derived from `coveredIndices` would agree with itself.
+ *
+ * **And the exact wording is asserted where the generator states it.**
+ * `make_comments_pdf.py` writes `bare_mark_covers` into `comments-corpus.json`
+ * from the same row it draws the band over, and `corpus_manifest` hands this
+ * check that entry --- so the string being compared was written by a different
+ * program, in a different language, before the document existed. A fixture with
+ * no such sidecar gets the search assertion alone and says so.
+ */
+async function coveredWordChecks(
+  viewer: Viewer,
+  sidebar: Sidebar,
+  items: readonly Comment[],
+): Promise<void> {
+  const names = COVERED_WORD_CHECKS;
+  const bare = items.find((item) => needsWords(item));
+  if (!bare) {
+    skipCoveredWords("no comment is bare with rectangles");
+    return;
+  }
+
+  // The control, read *before* the words are asked for: a row that already said
+  // something would make "it says words now" true of a panel that did nothing.
+  const before = sidebar.comments.rowText(bare.id).body;
+
+  const words = await wordsForPage(items, bare.page, (page: number) => viewer.unturnedText(page));
+  sidebar.setCommentWords(words);
+  const after = sidebar.comments.rowText(bare.id);
+  check(
+    names[0] as string,
+    before !== after.body && after.body.length > 0 && !after.own,
+    `#${bare.id} on page ${bare.page + 1}: ${JSON.stringify(before)} -> ` +
+      `${JSON.stringify(after.body.slice(0, 60))}, own=${after.own}`,
+  );
+
+  // Read at `pages.<n>`, where the generator writes it, and keyed by the page
+  // the mark is actually on rather than by a constant --- the first version read
+  // it off the top of the entry, found nothing, and **skipped**, which is the
+  // quiet way a check about a wrong path reads as a check about a fixture.
+  const stated = await corpusEntry();
+  const pages = stated?.["pages"];
+  const onPage =
+    typeof pages === "object" && pages !== null
+      ? (pages as Record<string, unknown>)[String(bare.page)]
+      : null;
+  const said =
+    typeof onPage === "object" && onPage !== null
+      ? (onPage as Record<string, unknown>)["bare_mark_covers"]
+      : null;
+  const wanted = typeof said === "string" ? said : null;
+  if (wanted === null) {
+    skip(names[3] as string, "this fixture's generator states no covered words");
+  } else {
+    check(
+      names[3] as string,
+      after.body === wanted,
+      `${JSON.stringify(after.body.slice(0, 70))} against the generator's ` +
+        `${JSON.stringify(wanted.slice(0, 70))}`,
+    );
+  }
+
+  if (after.body === before || after.body.length === 0) {
+    skip(names[1] as string, "the row was not relisted, so there is nothing to look for");
+  } else {
+    // A prefix rather than the whole line: the row is one line and the words
+    // may have been clipped into it by CSS, and a search is for a phrase the
+    // page contains rather than for the row's exact contents.
+    const needle = after.body.slice(0, 24);
+    viewer.search(needle);
+    const found = await eventually(
+      names[1] as string,
+      () => viewer.searchMatches.some((hit) => hit.page === bare.page),
+      () =>
+        `${JSON.stringify(needle)} -> ${viewer.searchMatches.length} matches, ` +
+        `pages ${JSON.stringify([...new Set(viewer.searchMatches.map((h) => h.page + 1))])}`,
+    );
+    // `eventually` reports the check itself, pass or fail.
+    void found;
+    // Cleared, so no later phase inherits this query.
+    viewer.search("");
+  }
+
+  const written = items.find((item) => item.body.trim().length > 0 && !item.hidden);
+  if (!written) {
+    skip(names[2] as string, "no comment has a body");
+  } else {
+    const line = sidebar.comments.rowText(written.id);
+    check(
+      names[2] as string,
+      line.body === written.body.replace(/\s+/g, " ").trim() && line.own,
+      `#${written.id}: ${JSON.stringify(line.body.slice(0, 60))}, own=${line.own}`,
+    );
+  }
 }
 
 /**

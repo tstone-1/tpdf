@@ -95,6 +95,7 @@ function comment(rect: [number, number, number, number]): Comment {
     subject: "",
     date: null,
     rect,
+    quads: [],
     reply_to: null,
     hidden: false,
   };

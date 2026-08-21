@@ -42,12 +42,13 @@ describe("Sidebar keyboard activation", () => {
     dom.restore();
   });
 
-  function tree(navigated: number[]): Sidebar {
+  function tree(navigated: number[], tabs: string[] = []): Sidebar {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
       onNavigate: (page: number) => navigated.push(page),
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
       marks: { onPick: () => {}, onRemove: () => {}, coveredFor: () => "" },
+      onTab: (tab) => tabs.push(tab),
       pages: {
         doc: 1,
         pageCount: 40,
@@ -61,6 +62,19 @@ describe("Sidebar keyboard activation", () => {
     bar.setOutline(outline(5));
     return bar;
   }
+
+  it("reports the tab that is showing, including the first one", () => {
+    // The seam `App.svelte` hangs the comments panel's word lookup off. The
+    // initial `outline` is reported too, so a caller sees every state the tab
+    // is ever in rather than every state but the one it starts in.
+    const tabs: string[] = [];
+    const bar = tree([], tabs);
+    expect(tabs).toEqual(["outline"]);
+    bar.selectTab("comments");
+    bar.selectTab("marks");
+    expect(tabs).toEqual(["outline", "comments", "marks"]);
+    expect(bar.tab).toBe("marks");
+  });
 
   it("activates the row the key reached, not the one it last tracked", () => {
     // The same defect the page strip had, in the class beside it: `focused` is
@@ -99,6 +113,7 @@ describe("Sidebar keyboard activation", () => {
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
       marks: { onPick: () => {}, onRemove: () => {}, coveredFor: () => "" },
+      onTab: () => {},
       pages: {
         doc: 1,
         pageCount: 40,

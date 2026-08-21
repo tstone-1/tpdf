@@ -85,6 +85,15 @@ def main() -> int:
     if os.path.exists(geometry):
         env["TPDF_GEOMETRY_MANIFEST"] = geometry
 
+    # And a `-corpus.json` sidecar states what a generator put in the fixture ---
+    # the words the one bare mark is drawn over, among other things. Keyed by
+    # file name inside, because one generator writes several fixtures, so the
+    # check looks itself up by basename rather than taking the whole file as
+    # being about the document that is open.
+    corpus = os.path.splitext(args.pdf)[0] + "-corpus.json"
+    if os.path.exists(corpus):
+        env["TPDF_CORPUS_MANIFEST"] = corpus
+
     # Launched rather than run, so that something can look at the process *while*
     # it holds a document open. `communicate` below gives back the timeout and
     # partial-transcript behaviour `run` had, which the comments underneath are

@@ -61,6 +61,7 @@
 
 import {
   charQuad,
+  coveredIndices,
   type IndexRange,
   type PageText,
   type Quad,
@@ -893,6 +894,41 @@ export function readingTextOf(text: PageText, from: number, to: number): string 
   for (let at = 0; at < wanted.length; at += 4096) {
     out += String.fromCodePoint(
       ...wanted.slice(at, at + 4096).map((index) => text.codes[index] ?? 0),
+    );
+  }
+  return out;
+}
+
+/**
+ * The words a set of rectangles covers, in the order the page reads them.
+ *
+ * What a highlight, an underline, a squiggly or a strike-out is *about*. The
+ * annotation itself carries only geometry --- `/QuadPoints`, one rectangle per
+ * line of text it was dragged across --- so the words have to be recovered from
+ * the page, and this is the only place that is done.
+ *
+ * Two decisions, and both are borrowed rather than made here:
+ *
+ * - **Which characters** comes from {@link coveredIndices}, whose containment
+ *   rule is the one `links.ts` states at length. A character is covered when its
+ *   box's centre is inside a rectangle, never when the boxes overlap.
+ * - **In what order** comes from {@link readingOrder}, the same permutation the
+ *   copy path and the screen reader use. So a highlight dragged across a gutter
+ *   reads column by column, exactly as copying the same drag does --- rather than
+ *   one line from each column in turn, which is what the file's own order gives.
+ *
+ * The two-step is deliberate: filtering the reading order by a set is what makes
+ * the order the page's rather than the annotation's, and an annotation's quads
+ * arrive in whatever sequence its producer wrote them.
+ */
+export function coveredText(text: PageText, quads: readonly number[]): string {
+  const wanted = new Set(coveredIndices(text, quads));
+  if (wanted.size === 0) return "";
+  const order = readingOrder(text).filter((index) => wanted.has(index));
+  let out = "";
+  for (let at = 0; at < order.length; at += 4096) {
+    out += String.fromCodePoint(
+      ...order.slice(at, at + 4096).map((index) => text.codes[index] ?? 0),
     );
   }
   return out;

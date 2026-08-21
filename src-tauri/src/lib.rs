@@ -1646,6 +1646,38 @@ fn geometry_manifest() -> Option<String> {
     std::fs::read_to_string(spike_env("TPDF_GEOMETRY_MANIFEST")?).ok()
 }
 
+/// What a corpus's generator says is in it, if the fixture has such a sidecar.
+///
+/// The third of these, on the same arrangement and separate for the same reason.
+/// `<fixture>-corpus.json` is written by `make_comments_pdf.py` and states, among
+/// other things, the words the one bare mark in the corpus is drawn over --- so
+/// the comments panel's covered-words check compares against a string a
+/// different program wrote, rather than against anything derived from the reader
+/// it is testing.
+///
+/// It carried that expectation for one commit with nothing reading it, which is
+/// a claim written down and not enforced. The first hand-written version of it
+/// named the wrong line.
+///
+/// Keyed here rather than in the webview, because the sidecar covers **several**
+/// fixtures --- one generator writes `comments.pdf` and `comments-rotated.pdf`
+/// --- and the process that knows which one is open is this one. The key is the
+/// file name of [`viewercheck_path`], so a check reading this is looking at the
+/// entry for the document it has in front of it and cannot silently assert one
+/// fixture's expectations against another's.
+///
+/// `None` where there is no sidecar, no entry for this fixture, or nothing
+/// readable --- all of which a check must report as "nothing to compare
+/// against" rather than as a pass.
+#[tauri::command]
+fn corpus_manifest() -> Option<String> {
+    let raw = std::fs::read_to_string(spike_env("TPDF_CORPUS_MANIFEST")?).ok()?;
+    let all: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let path = viewercheck_path()?;
+    let name = std::path::Path::new(&path).file_name()?.to_str()?;
+    Some(all.get(name)?.to_string())
+}
+
 /// Path to time a cold open of on startup, from `TPDF_STARTUP` (spike 0.2).
 #[tauri::command]
 fn startup_path() -> Option<String> {
@@ -2047,6 +2079,7 @@ pub fn run() {
             autobench_path,
             viewercheck_path,
             reading_manifest,
+            corpus_manifest,
             geometry_manifest,
             sessioncheck_mode,
             opencheck_mode,

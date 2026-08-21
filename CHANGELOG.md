@@ -31,6 +31,22 @@ have the binary.)
   dead child instead. Reported on Windows against 26.8.6; the same thing happened
   on macOS, where it had simply never been tried on a document that fails.
 
+### The comments panel lists a highlight by the words it covers
+
+- A document somebody reviewed used to open with rows reading "Highlight, no
+  comment" --- the file records that a rectangle was drawn and not one word of
+  what is under it. A markup annotation nobody typed on is now listed by the
+  words it sits on.
+- The body still wins wherever somebody wrote one. Covered words are drawn
+  dimmed and italic, so a sentence a reviewer wrote is never confused with a
+  sentence the document did.
+- Finding the words is a text extraction per page, so it is paid for by a reader
+  who opens the comments tab and by nobody else --- one page at a time, so it
+  never queues in front of the page being read, and the rows fill in from the
+  front of the document.
+- A highlight dragged across a gutter reads column by column, exactly as copying
+  the same drag does.
+
 ### The marks panel lists a highlight by the words it covers
 
 - A highlight, underline, squiggly underline or strikeout that nobody typed a

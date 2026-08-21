@@ -27,7 +27,7 @@
 
 import { onPage as placedOnPage, turnedFor as placedTurnedFor } from "./comments";
 import { isNavigable, reasonFor, type Target } from "./outline";
-import type { IndexRange } from "./text";
+import { centreOfCharacter, coversPoint, type IndexRange } from "./text";
 
 /** One clickable rectangle, mirroring `links.rs`'s `Link`. */
 export interface Link {
@@ -329,27 +329,19 @@ function linkOfCharacter(
   boxes: readonly number[],
   at: number,
 ): Link | null {
-  const base = at * 4;
-  const left = boxes[base];
-  const top = boxes[base + 1];
-  const right = boxes[base + 2];
-  const bottom = boxes[base + 3];
-  if (
-    left === undefined ||
-    top === undefined ||
-    right === undefined ||
-    bottom === undefined
-  ) {
-    return null;
-  }
-  const x = (left + right) / 2;
-  const y = (top + bottom) / 2;
+  // The centre, and the containment below, both come from `text.ts` --- one
+  // definition of "this character is inside that rectangle", shared with the
+  // covered-words reader that answers the same question for a highlight. Two
+  // copies of it would be free to disagree about a glyph on the boundary, and
+  // the symptom would be a screen reader and a comments panel naming different
+  // words for the same span.
+  const centre = centreOfCharacter(boxes, at);
+  if (!centre) return null;
 
-  const candidates = index.get(Math.floor(y / BAND_PT));
+  const candidates = index.get(Math.floor(centre.y / BAND_PT));
   if (!candidates) return null;
   for (const link of candidates) {
-    const [l, t, r, b] = link.rect;
-    if (x >= l && x <= r && y >= t && y <= b) return link;
+    if (coversPoint(link.rect, 0, centre.x, centre.y)) return link;
   }
   return null;
 }

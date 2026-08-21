@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { MarkList, rowLine } from "./marklist";
+import { MarkList } from "./marklist";
 import { markRows, PageMap, unedited, type MarkKind, type MarkView } from "./pages";
 import { installFakeDom, type FakeDom } from "./testdom";
 
@@ -356,28 +356,5 @@ describe("MarkList", () => {
     const list = panel();
     show(list, [mark({ id: 4, kind: "ink" })]);
     expect(list.rowText(4)).toMatchObject({ note: "No note", own: false });
-  });
-});
-
-describe("rowLine", () => {
-  it("returns what the reader typed, flattened, as their own", () => {
-    expect(rowLine("two\nlines", "covered")).toEqual({
-      text: "two lines",
-      own: true,
-    });
-  });
-
-  it("falls back to the covered words, flattened, as not their own", () => {
-    // Flattened for the same reason a note is: the words a mark covers run over
-    // the lines of the page they came off, and a row is one line high.
-    expect(rowLine("   ", "over\ntwo   lines")).toEqual({
-      text: "over two lines",
-      own: false,
-    });
-  });
-
-  it("says nothing was typed when there is neither", () => {
-    expect(rowLine("", "")).toEqual({ text: "No note", own: false });
-    expect(rowLine(" \n ", "\t")).toEqual({ text: "No note", own: false });
   });
 });

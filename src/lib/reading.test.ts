@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   axesFor,
+  coveredText,
   cutWidth,
   hasSideBySideLines,
   readingBlocks,
@@ -792,5 +793,73 @@ describe("a combining mark", () => {
     // disappears into the line above.
     const text = page([...word("ab", 60, 100), ...word("12", 60, 140)]);
     expect(linesAs(text)).toEqual(["ab", "12"]);
+  });
+});
+
+describe("coveredText", () => {
+  /** Two words on one line, with a second line under them. */
+  function marked(): PageText {
+    return page([...word("alpha", 100, 700), ...word("beta", 100, 720)]);
+  }
+
+  it("reads the characters whose centres are inside the rectangle", () => {
+    // The rectangle covers the first line and nothing else. `alpha` is five
+    // 10-point characters from x=100, so it ends at 150.
+    expect(coveredText(marked(), [100, 700, 150, 712])).toBe("alpha");
+  });
+
+  it("takes a character whose centre is inside and leaves one that only overlaps", () => {
+    // Cut through the middle of the third character: `l` and `p` have centres
+    // at 115 and 135, and the rectangle reaches 130. Overlap would take `p`
+    // too, and that is the whole difference this rule exists for --- a
+    // highlight's rectangle routinely touches the words either side of it.
+    expect(coveredText(marked(), [100, 700, 130, 712])).toBe("alp");
+  });
+
+  it("reads several rectangles as one phrase, in the page's order", () => {
+    // One quad per line, which is the shape a real `/QuadPoints` has --- and
+    // handed in bottom line first, so the answer cannot be the order they came.
+    expect(
+      coveredText(marked(), [100, 720, 140, 732, 100, 700, 150, 712]),
+    ).toBe("alphabeta");
+  });
+
+  it("reads a highlight across a gutter column by column, not line by line", () => {
+    // The case that makes this worth doing through `readingOrder` rather than
+    // by sorting the covered indices. The file is written a line at a time
+    // across both columns, so index order is `oneAAAtwoBBB` --- the columns
+    // interleaved --- and reading order is `onetwoAAABBB`.
+    //
+    // Both columns are covered on purpose. A rectangle over one column alone
+    // yields the same string either way, so a fixture that highlighted only the
+    // left column would pass whichever rule ran.
+    const two = page([
+      ...word("one", 100, 700),
+      ...word("AAA", 400, 700),
+      ...word("two", 100, 720),
+      ...word("BBB", 400, 720),
+    ]);
+    expect(coveredText(two, [90, 690, 500, 740])).toBe("onetwoAAABBB");
+  });
+
+  it("is empty for no rectangles, and for rectangles over nothing", () => {
+    expect(coveredText(marked(), [])).toBe("");
+    expect(coveredText(marked(), [400, 400, 500, 450])).toBe("");
+  });
+
+  it("does not take a character the page placed nowhere", () => {
+    // Four zeroes is PDFium's "not placed", and its centre is the page's
+    // top-left corner --- inside any rectangle anchored there. A highlight on
+    // the first line of a page is exactly such a rectangle.
+    //
+    // **The unplaced character goes last, and the first draft had it first,
+    // where this test could not fail.** `fragmentsOf` re-attaches a character it
+    // could not place to the one *before* it, and a leading one has nothing
+    // before it --- measured, it is dropped from `readingOrder` altogether, so
+    // `coveredText` could never have emitted it whatever the rule under test
+    // did. Caught by the mutation harness, which reported the edit red in
+    // `links.test.ts` and green here.
+    const withGap = page([...word("hi", 0, 0), ["x", null]]);
+    expect(coveredText(withGap, [0, 0, 20, 12])).toBe("hi");
   });
 });
