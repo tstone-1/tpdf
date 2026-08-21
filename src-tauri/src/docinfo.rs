@@ -2383,6 +2383,13 @@ mod tests {
     /// That is now asserted directly --- every named fixture must be examined,
     /// not merely one of them --- which is stronger than the count it replaces
     /// and says nothing at all when the family is absent.
+    ///
+    /// **What makes that silence safe is that it is not the only check.** Since
+    /// 2026-08-21 both workflows install pyhanko and run
+    /// `ci_fixtures.py --signed`, which asserts each artifact exists after the
+    /// generator returns and exits non-zero otherwise --- proved both ways. So
+    /// a runner that failed to build them goes red at the step that built them,
+    /// before a gate runs, rather than green through a suite that skipped.
     fn none_generated(names: &[&str]) -> bool {
         !names
             .iter()
