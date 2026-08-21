@@ -395,6 +395,89 @@ def sign_twice(source: bytes, out_path: str) -> bool:
     return True
 
 
+
+def build_nested_field(blob: bytes) -> bytes:
+    """A document whose signature field hangs two levels down an `/AcroForm` tree.
+
+    `/AcroForm /Fields` is a *tree*: an entry may be a field, or a node whose
+    `/Kids` hold fields, and a fully qualified field name is the `/T` values
+    joined down the chain. Producers that group fields --- Acrobat among them ---
+    write it that way, and every signature fixture here put its field directly in
+    `/Fields`, so `read_signatures`'s recursion and its depth bound were reached
+    by nothing.
+
+    **The signature is structurally real and cryptographically meaningless.** The
+    `/Contents` blob is copied from an already-signed fixture, so both readers
+    parse a genuine certificate out of it and can be compared; the `/ByteRange`
+    describes a span of this file that the blob was never computed over. Nothing
+    in tpdf verifies a signature, so this fixture cannot mislead it --- but do not
+    reach for this file to test anything about validity, because there is none.
+    """
+    pdf = Pdf()
+    page_id = pdf.reserve()
+    pages_id = pdf.reserve()
+    parent_id = pdf.reserve()
+    middle_id = pdf.reserve()
+    leaf_id = pdf.reserve()
+    sig_id = pdf.reserve()
+
+    font = pdf.add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    content = pdf.stream(
+        b"<< >>",
+        b"BT /F1 18 Tf 60 %d Td (%s) Tj ET"
+        % (HEIGHT - 80, escape("a signature field nested under /Kids")),
+    )
+    pdf.put(
+        page_id,
+        b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
+        b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R "
+        b"/Annots [ %d 0 R ] >>"
+        % (pages_id, WIDTH, HEIGHT, font, content, leaf_id),
+    )
+    pdf.put(
+        pages_id,
+        b"<< /Type /Pages /Kids [ %d 0 R ] /Count 1 >>" % page_id,
+    )
+
+    # Two nodes above the field, so a walk that handles one level and stops is
+    # distinguishable from one that recurses.
+    pdf.put(parent_id, b"<< /T (top) /Kids [ %d 0 R ] >>" % middle_id)
+    pdf.put(middle_id, b"<< /T (group) /Parent %d 0 R /Kids [ %d 0 R ] >>" % (parent_id, leaf_id))
+    pdf.put(
+        leaf_id,
+        b"<< /FT /Sig /T (Signature1) /Parent %d 0 R /V %d 0 R "
+        b"/Type /Annot /Subtype /Widget /F 4 /P %d 0 R /Rect [60 60 260 120] >>"
+        % (middle_id, sig_id, page_id),
+    )
+    pdf.put(
+        sig_id,
+        b"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached "
+        b"/Name (Nested Signer) /M (D:20260821120000+02'00') "
+        b"/ByteRange [0 400 900 500] /Contents <" + blob.hex().upper().encode("ascii") + b"> >>",
+    )
+
+    catalog = pdf.add(
+        b"<< /Type /Catalog /Pages %d 0 R "
+        b"/AcroForm << /Fields [ %d 0 R ] /SigFlags 3 >> >>" % (pages_id, parent_id)
+    )
+    return pdf.serialize(catalog)
+
+
+def signature_blob(path: str) -> "bytes | None":
+    """The `/Contents` bytes of the first signature in an already-signed file."""
+    import re
+
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+    except OSError:
+        return None
+    found = re.search(rb"/Contents\s*<([0-9A-Fa-f]+)>", raw)
+    if found is None:
+        return None
+    return bytes.fromhex(found.group(1).decode("ascii"))
+
+
 def main(argv: "list[str] | None" = None) -> int:
     """Writes every fixture and a manifest describing what each one is for."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -515,6 +598,27 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[OK] incr-two-signers.pdf ({os.path.getsize(two_path)} bytes)")
     else:
         print("[SKIP] incr-two-signers.pdf: pyhanko not installed")
+
+    nested_path = os.path.join(args.outdir, "signed-nested-field.pdf")
+    blob = signature_blob(os.path.join(args.outdir, "incr-signed.pdf"))
+    if blob is None:
+        print("[SKIP] signed-nested-field.pdf: incr-signed.pdf has no blob to borrow")
+    else:
+        with open(nested_path, "wb") as handle:
+            handle.write(build_nested_field(blob))
+        manifest["signed-nested-field.pdf"] = {
+            "role": "the only fixture whose signature field hangs under /Kids, "
+            "two levels down the /AcroForm field tree -- the recursion in "
+            "read_signatures is reached by nothing else. Its /Contents is "
+            "borrowed from incr-signed.pdf, so the certificate is real and the "
+            "signature is cryptographically meaningless",
+            "pages": 1,
+            "bytes": os.path.getsize(nested_path),
+            "xref": "table",
+            "docmdp": None,
+            "signatures": 1,
+        }
+        print(f"[OK] signed-nested-field.pdf ({os.path.getsize(nested_path)} bytes)")
 
     manifest_path = os.path.join(args.outdir, "incr-manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as handle:

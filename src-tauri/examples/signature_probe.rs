@@ -50,6 +50,24 @@
 //! `each_signed_fixture_carries_its_own_certificate` is what actually catches
 //! that mutation.
 //!
+//! ## `--mode nested` asserts a disagreement rather than agreement
+//!
+//! `/AcroForm /Fields` is a *tree*, and **PDFium's signature enumeration does
+//! not walk it** --- it reads the array's entries and stops, so a signature field
+//! sitting under a `/Kids` node is invisible to `FPDF_GetSignatureCount`.
+//! `docinfo.rs` recurses and finds it.
+//!
+//! That was established by control rather than inferred: `signed-nested-field.pdf`
+//! and a variant differing **only** in whether the leaf sits directly in
+//! `/Fields` or two `/Kids` nodes down --- same signature dictionary, byte for
+//! byte --- give PDFium 1 and 0 respectively. `qpdf --check` passes the fixture.
+//!
+//! So on that document the two readers *must* disagree, and `--mode agree` would
+//! report a count mismatch that reads like a defect in us. This mode asserts the
+//! disagreement instead: one signature here, none there, and a certificate we can
+//! still read. **It goes red if PDFium ever starts recursing**, which is the point
+//! of writing a known limitation down as an assertion rather than as a comment.
+//!
 //! ## `--mode clean` is not optional
 //!
 //! Two readers that both find nothing agree perfectly. On a document with no
@@ -58,7 +76,7 @@
 //! agreement on every unsigned file in the corpus and look like coverage.
 //!
 //! Usage:
-//!   signature-probe <file.pdf> [--mode read|agree|clean] [--lib DIR]
+//!   signature-probe <file.pdf> [--mode read|agree|nested|clean] [--lib DIR]
 
 use std::path::{Path, PathBuf};
 
@@ -71,6 +89,7 @@ enum Mode {
     Read,
     Agree,
     Clean,
+    Nested,
 }
 
 struct Args {
@@ -97,6 +116,7 @@ fn parse_args() -> Result<Args, String> {
                     "read" => Mode::Read,
                     "agree" => Mode::Agree,
                     "clean" => Mode::Clean,
+                    "nested" => Mode::Nested,
                     other => return Err(format!("unknown mode: {other}")),
                 }
             }
@@ -138,6 +158,7 @@ fn run(args: &Args) -> Result<bool, String> {
         }
         Mode::Agree => Ok(agree(&ours, &theirs)),
         Mode::Clean => Ok(clean(&ours, &theirs)),
+        Mode::Nested => Ok(nested(&ours, &theirs)),
     }
 }
 
@@ -430,6 +451,51 @@ fn strip_padding(blob: &[u8]) -> &[u8] {
         Some(last) => &blob[..=last],
         None => &[],
     }
+}
+
+/// The known disagreement, asserted so it cannot expire in silence.
+///
+/// See the module note: PDFium does not recurse into `/Kids` when enumerating
+/// signatures and `docinfo.rs` does, so on a nested-field document the correct
+/// outcome is a *difference*. Asserting it means the day PDFium changes, this
+/// says so instead of a comment quietly becoming wrong.
+fn nested(ours: &Properties, theirs: &[Theirs]) -> bool {
+    let mut report = Report {
+        passed: 0,
+        failed: 0,
+    };
+    let signed: Vec<_> = ours.signatures.iter().filter(|s| s.signed).collect();
+
+    report.check(
+        "docinfo walks the field tree and finds the nested signature",
+        signed.len() == 1,
+        &format!(
+            "{} signed of {} field(s)",
+            signed.len(),
+            ours.signatures.len()
+        ),
+    );
+    report.check(
+        "PDFium does not, which is the limitation under assertion",
+        theirs.is_empty(),
+        &format!(
+            "{} signature(s) --- if this is 1, PDFium now recurses and this mode is obsolete",
+            theirs.len()
+        ),
+    );
+    report.check(
+        "and the certificate is still read out of the nested field",
+        signed
+            .first()
+            .and_then(|signature| signature.certificate.as_ref())
+            .is_some_and(|certificate| !certificate.subject_cn.is_empty()),
+        &match signed.first().and_then(|s| s.certificate.as_ref()) {
+            Some(certificate) => certificate.subject_cn.clone(),
+            None => "no certificate".into(),
+        },
+    );
+    println!("\n{} passed, {} failed", report.passed, report.failed);
+    report.failed == 0
 }
 
 /// The control: on an unsigned document both readers must report nothing.

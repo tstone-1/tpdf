@@ -175,6 +175,18 @@ done
 cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
     testdata/tagged.pdf --mode clean
 
+# --mode nested asserts a DISAGREEMENT, and is the odd one out here on purpose.
+# /AcroForm /Fields is a tree; PDFium's signature enumeration reads the array and
+# stops, while docinfo.rs recurses. So a field under /Kids gives PDFium 0 and us
+# 1, and --mode agree on that fixture reports a count mismatch that reads like a
+# defect in us. Established by control: the same document with the leaf flat
+# instead of nested gives PDFium 1, same signature dictionary byte for byte, and
+# qpdf --check passes both. The mode says in its own output "if this is 1, PDFium
+# now recurses and this mode is obsolete", so the limitation expires loudly.
+#   signed-nested-field --mode nested   3/3
+cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
+    testdata/signed-nested-field.pdf --mode nested
+
 # Marks: does a highlight a reader makes land on the words they made it from?
 # Run ALL FOUR modes, and run them on BOTH geometry fixtures -- that is not
 # thoroughness, it is the only way two of the checks can fail at all. Measured by

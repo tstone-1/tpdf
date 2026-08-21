@@ -7772,8 +7772,36 @@ and the basic-constraints CA flag are all there in the DER and none is shown; wh
 worth showing without a trust store to interpret them against is a real question rather than
 an oversight. A timestamp token, which is a whole second CMS structure inside an unsigned
 attribute, is not read either, so a document signed with one shows only the signer's claimed
-date. No fixture nests a signature field under `/Kids`, so the recursion in `read_signatures`
-is still reached by nothing.
+date.
+
+**The `/Kids` recursion is reached now, and finding a fixture for it turned up something about
+PDFium.** `signed-nested-field.pdf` puts a signature field two levels down the `/AcroForm`
+tree, which is how a producer that groups fields writes one. `docinfo.rs` finds it. **PDFium
+reports zero signatures on that document**, because `FPDF_GetSignatureCount` reads the
+`/Fields` array's entries and does not walk into `/Kids`.
+
+Established by control rather than inferred, which mattered because the obvious reading is that
+the fixture is malformed: two files differing in exactly one thing --- whether the leaf sits
+directly in `/Fields` or two `/Kids` nodes down, with the same page and the same signature
+dictionary byte for byte --- give PDFium **1** and **0**. `qpdf --check` passes the nested one.
+
+So the limitation is written down as an assertion rather than a comment.
+`signature-probe --mode nested` asserts the *disagreement* and prints *"if this is 1, PDFium now
+recurses and this mode is obsolete"*, so the day it ends the check goes red. And it bounds what
+the differential can ever prove: every check `--mode agree` makes is one PDFium is *able* to
+make, so a nested field is one of the few shapes where the reading stands on the specification
+alone. The mutation that stops us recursing is caught by a unit test and by nothing else,
+because PDFium's own answer under it is the mutated one.
+
+**The depth bound is exercised too, in both directions** --- seven levels walked, nine refused,
+and the refusal *counted* through `limits.unreadable`, because a signature dropped without a
+word is indistinguishable from a document that has none. A `/Kids` chain is attacker-shaped and
+nothing had ever reached that bound.
+
+**Not done.** A fully qualified field name is the `/T` values joined down the chain, and
+`signature.field` reports the leaf's `/T` alone --- `Signature1` where Acrobat would say
+`top.group.Signature1`. Harmless on every fixture here because the leaf names are unique, and
+wrong on a document that reuses a leaf name under two groups.
 
 ### Phase 3 --- Redaction
 

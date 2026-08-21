@@ -77,6 +77,11 @@ have the binary.)
   signer, so nothing could tell a reader that lists them correctly from one that
   hands both signatures the same name --- which is what happens when the wrong
   certificate is picked out of a signature that carries a chain.
+- **A signature grouped inside a form is found.** A PDF form arranges its
+  fields in a tree, and a signature can sit two or three levels down it --- which
+  is how Acrobat writes one when the fields are grouped. tpdf walks the tree.
+  Chrome's PDF engine does not, so a document like that shows no signature at
+  all there and its signature here.
 - **PDFium reads the same signatures independently, and now the two are
   compared.** `signature-probe` puts our reading of a document's signatures next
   to PDFium's own --- the count, the encoding, the reason, the signing time, the
