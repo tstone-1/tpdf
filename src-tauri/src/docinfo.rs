@@ -1658,6 +1658,45 @@ mod tests {
 
     // ------------------------------------------------- against another writer
 
+    /// The bytes a signature's `/Contents` occupies, angle brackets included.
+    ///
+    /// Found by scanning the file rather than by asking `lopdf`, so that a check
+    /// comparing this against `/ByteRange` is comparing two readings and not one
+    /// reading against itself.
+    ///
+    /// **`/Contents` is also a page key**, naming the content stream, and the
+    /// first version of this counted those as well: it took the next `<` after
+    /// every occurrence, which on a page dictionary is some later dictionary
+    /// entirely. It over-counted by 181 bytes on `incr-signed.pdf` and the check
+    /// went red for a reason that had nothing to do with signatures. Only a
+    /// `/Contents` followed immediately by a hex string is a signature's.
+    fn contents_span(bytes: &[u8]) -> u64 {
+        let needle = b"/Contents";
+        let mut total = 0u64;
+        let mut at = 0usize;
+        while let Some(found) = bytes[at..]
+            .windows(needle.len())
+            .position(|window| window == needle)
+        {
+            let after = at + found + needle.len();
+            at = after;
+            let open = match bytes[after..]
+                .iter()
+                .position(|byte| !byte.is_ascii_whitespace())
+            {
+                Some(offset) if bytes[after + offset] == b'<' => after + offset,
+                // A page's content stream, or anything else wearing the name.
+                _ => continue,
+            };
+            let Some(close) = bytes[open..].iter().position(|byte| *byte == b'>') else {
+                continue;
+            };
+            total += close as u64 + 1;
+            at = open + close;
+        }
+        total
+    }
+
     /// Reads the certification level off four documents **pyhanko** signed.
     ///
     /// Every other test here builds its subject with `lopdf` and reads it with
@@ -1671,26 +1710,37 @@ mod tests {
     /// So this is the one test here whose passing says the reading is right
     /// rather than merely self-consistent.
     ///
-    /// The numbers come from `qpdf --json` on each file, which is a third
-    /// independent reader.
+    /// **It pinned a file size and a byte count, and those are not stable.**
+    /// Both came from `qpdf --json`, which really is a third reader --- and a
+    /// number read off one machine's fixture is a fact about that machine's
+    /// pyhanko. Two runs *here* give the same size and different bytes, which
+    /// is what made the size look safe; both CI runners give **8097** where
+    /// this laptop gives **8128**, on the same commit. So the cross-check moved
+    /// rather than went: the coverage is now derived in this test, from the raw
+    /// bytes, by a route `docinfo` does not take.
+    ///
+    /// `covered_bytes` comes from `/ByteRange`; the sum below comes from where
+    /// the `/Contents` hex actually sits. A whole-file signature covers
+    /// everything except that span, so the two must agree, and they are read
+    /// from different keys by different code. What cannot be asserted is any
+    /// absolute number, because the next machine mints a different key.
     #[test]
     fn the_docmdp_levels_of_four_documents_another_program_signed() {
         let cases = [
-            ("incr-signed.pdf", 0u8, 8128u64, 3054 + 668u64),
-            ("incr-certified-1.pdf", 1, 8275, 3082 + 787),
-            ("incr-certified-2.pdf", 2, 8275, 3082 + 787),
-            ("incr-certified-3.pdf", 3, 8275, 3082 + 787),
-            ("incr-certified-3-indirect.pdf", 3, 8214, 3016 + 792),
+            ("incr-signed.pdf", 0u8),
+            ("incr-certified-1.pdf", 1),
+            ("incr-certified-2.pdf", 2),
+            ("incr-certified-3.pdf", 3),
+            ("incr-certified-3-indirect.pdf", 3),
         ];
 
         let mut examined = 0;
-        for (name, level, size, covered) in cases {
+        for (name, level) in cases {
             let path = std::path::Path::new("../testdata").join(name);
             let Ok(bytes) = std::fs::read(&path) else {
                 println!("[SKIP] {name}: not generated");
                 continue;
             };
-            assert_eq!(bytes.len() as u64, size, "{name} is not the file measured");
 
             let properties = scan(&bytes, 1).expect("a signed fixture must parse");
             assert_eq!(properties.signatures.len(), 1, "{name} has one signature");
@@ -1701,10 +1751,15 @@ mod tests {
             assert_eq!(signature.handler, "Adobe.PPKLite", "{name}");
             assert_eq!(signature.kind, "adbe.pkcs7.detached", "{name}");
             assert_eq!(signature.certification, level, "{name} is DocMDP {level}");
-            assert_eq!(signature.covered_bytes, covered, "{name}");
             assert!(
                 signature.covers_whole_file,
                 "{name}: the range ends at the file's last byte"
+            );
+            assert_eq!(
+                signature.covered_bytes,
+                bytes.len() as u64 - contents_span(&bytes),
+                "{name}: /ByteRange and the /Contents span must agree about \
+                 which bytes are signed"
             );
             // Every one of them is an incremental update over a base document,
             // which is what makes them a signed-then-appended shape without

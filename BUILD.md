@@ -664,12 +664,14 @@ exist`; with pyhanko present it exits 0 and writes all nine. That hard failure i
 tests' own `[SKIP]`-when-absent safe --- a runner that failed to build them goes red at the step
 that built them, not green through a suite that skipped.
 
-**The fixtures are not byte-reproducible, and CI generates them fresh every run.** Two
-consecutive runs of the generator produce nine files of identical *size* and differing *bytes*:
-pyhanko mints a new key pair and serial each time. So a test may pin a size and must never pin a
-serial, a date or a digest out of one --- the trap of that name is about exactly this, found
-when a serial transcribed from `openssl` went stale locally and `[SKIP]`ped on CI. The suite was
-re-run against a freshly generated set: **702 passed, 0 failed**.
+**The fixtures are not reproducible, and CI generates them fresh every run.** Two consecutive
+runs *on one machine* produce nine files of identical size and differing bytes, because pyhanko
+mints a new key pair and serial each time. **Across machines the size moves too**: both CI
+runners build an `incr-signed.pdf` of **8,097** bytes where this laptop builds **8,128**, on the
+same commit. So nothing absolute may be pinned out of one --- not a digest, not a serial, not a
+date, and **not a size**, which is the one that looked safe after the local pair agreed and went
+red on both runners at the first push. What replaced the pinned numbers is a quantity derived
+from the file at test time, by a route `docinfo` does not take.
 
 Three tests reading them ended with `assert!(examined > 0)` until the same day, which is red on
 exactly the machines that cannot have the files --- measured by hiding `testdata/incr-*.pdf`:

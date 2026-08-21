@@ -3278,6 +3278,27 @@ MUTATIONS += [
 # --- indefinite lengths, and where a signature blob ends -------------------
 MUTATIONS += [
     Mutation(
+        # Read the coverage from the first range pair only. On a signature the
+        # answer is then the bytes before the blob and not the ones after it,
+        # which is most of a document -- and the check that sees it derives the
+        # same quantity from where the /Contents hex sits, by a route this code
+        # does not take. That derivation replaced a number transcribed from
+        # `qpdf --json`, which was a real third reader and a fact about one
+        # machine's pyhanko: both CI runners build a file 31 bytes smaller.
+        "docinfo: count only the first pair of a signature's byte range",
+        "src/docinfo.rs",
+        """        out.covered_bytes = numbers
+            .chunks_exact(2)
+            .map(|pair| u64::try_from(pair[1]).unwrap_or_default())
+            .sum();""",
+        """        out.covered_bytes = numbers
+            .chunks_exact(2)
+            .map(|pair| u64::try_from(pair[1]).unwrap_or_default())
+            .next()
+            .unwrap_or_default();""",
+        "the_docmdp_levels_of_four_documents_another_program_signed",
+    ),
+    Mutation(
         # Stop counting a blob whose structure will not walk. The two readings
         # are opposite --- absent is about the file, unread is about tpdf ---
         # and this is the direction that makes tpdf's own failure look like the
