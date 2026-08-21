@@ -11341,3 +11341,47 @@ general shape, for the next harness that edits a tree in place: **measure what e
 watching that tree.** A file-watcher, a language server, a sync client and a backup daemon all
 answer a write, and a harness that writes thousands of times pays each of them thousands of
 times --- while every number you take reads as the cost of your own work.
+
+### Narrowing a run made a shape the output parser had assumed away
+
+`mutate_frontend.py` was changed on 2026-08-21 to run only the test file holding the test
+each mutation names, instead of all twenty. The first full run afterwards reported one
+mutation of 322 as
+
+```
+[FAIL] search: let the plain search match case: no summary line -- the run did not finish
+```
+
+which is this harness's most alarming verdict: it means the run produced nothing readable,
+and the usual cause is a transform error. The run had in fact taken **16 s** and the mutation
+had been caught perfectly --- two tests red, exactly the one it named among them.
+
+The parser was reading vitest's count with
+`^\s*Tests\s+(?:(\d+) failed)?.*?(\d+) passed`, and that had been correct for every run it had
+ever seen. Narrowing broke it in a way narrowing was bound to: with twenty files in the run
+something always passed, and with one file where *every* test fails the line reads
+
+```
+      Tests  2 failed (2)
+```
+
+with no `passed` segment at all. The regex matched nothing, and "no summary" is reported as a
+broken run rather than as a parse failure --- which is the right default and is exactly what
+makes this hard to read.
+
+**The general shape: a parser encodes properties of the runs it has seen, not of the format.**
+Any change that makes the input *smaller* --- one file instead of twenty, one test instead of
+607, one page instead of a document --- can produce a shape the wider run never took: an empty
+list, a missing section, a zero where there was always a number. Ask what the narrowed input
+can now print that the wide one never did, before reading its first result as a finding.
+
+The fix keeps the strict half deliberately. The count is now read out of the line's body, but
+the line still has to contain `failed` or `passed` to count as a summary at all, so a
+transform error printing `Tests  no tests` stays unreadable rather than parsing as zero
+failures --- which would report SURVIVED for a run that never executed a test. Proved on five
+shapes including both of those, and on `Test Files  1 failed (1)`, which must not match.
+
+And the diagnosis order is the point: the run was the first with the change in it, so *"is
+this failure mine?"* came before *"is this a defect?"*. It was mine, and the answer took one
+reproduction and one hand-applied mutation --- against a full re-run of the table, which would
+have reproduced the symptom and explained nothing.

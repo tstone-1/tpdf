@@ -2715,11 +2715,16 @@ suspended while the session is locked, so the document never opens and every men
 item stays greyed, which reads exactly like an application ignoring its own menu.
 The check reads `CGSSessionScreenIsLocked` first and exits 2 saying so.
 
-Every step of it was measured by hand on 26.8.6 before it was written --- a
-rotation and a Save changed the bytes, a highlight and a Save changed them again,
-Save was withheld at rest, and no stray was left --- but **the script as a whole
-has not yet completed a run**, because the screen locked while it was being
-written. Run it once before trusting a green line from it.
+First full run 2026-08-21, on 26.8.6 plus that day's commits: **10 checks, all green,
+25 s** --- Save withheld at rest, a rotation offering it, the file changing (10731 -> 10400
+bytes), `qpdf` reading it back, Save withheld again after the reopen, a highlight saving too
+(-> 14542 bytes), and nothing left beside the document. Its failure path was proved
+separately by pointing a phase at a menu item that does not exist: `[FAIL] this check drives
+a menu item that is not there`, exit 2, and no claim about saving either way.
+
+So **the reported save symptom is not reproduced** by this route on this machine. What that
+narrows it to is a message rather than silence, or a document this fixture is not --- the
+refusals in `save.rs` all need a condition a clean local file does not have.
 
 ### Checking the menu bar
 
@@ -3018,6 +3023,23 @@ starts at 0 and increments within the month.
    mutations**, 0 survivors, 2 skipped, and **zero** fallbacks to the full suite. That is the
    number to plan against; every older figure in this file is from before the two changes and
    is left as a statement about its own date.
+
+   **What the front-end table costs, and why it did not fall as far.** `mutate_frontend.py`
+   got the same narrowing --- it runs the test *file* holding the mutation's own test, chosen
+   from the file vitest prints beside every test in the control run's listing, with the same
+   fallback to all twenty files whenever the narrow run finds nothing red. That took it from
+   5.8 s to about 4.9 s per mutation, and no further, because the cost is vitest's own
+   startup: **4.6 s for a single small file**, and measured the same through `npx` or `node`
+   directly, forks pool or threads. The full table is **1570 s for 322 mutations**.
+
+   Getting materially below that means keeping one vitest process warm in watch mode and
+   attributing each re-run to the mutation that triggered it. That is worth roughly 26 minutes
+   down to ten, against a harness that can mis-attribute a run --- deliberately not built yet.
+
+   One thing the narrowing did break, and it is recorded as a trap: with one file in the run,
+   a summary line can read `Tests  2 failed (2)` with no `passed` segment, which the count
+   regex required. One mutation of 322 reported `no summary line -- the run did not finish`
+   for a mutation its test had caught. Fixed, and proved on five summary shapes.
 
 8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run

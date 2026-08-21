@@ -3296,8 +3296,23 @@ TEST_FILES = [
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
-TEST_NAME = re.compile(r"^\s*[✓x×]\s+\S+\.test\.ts\s*>\s*(.*?)(?:\s+\d+ms)?$", re.M)
-SUMMARY = re.compile(r"^\s*Tests\s+(?:(\d+) failed)?.*?(\d+) passed", re.M)
+TEST_NAME = re.compile(r"^\s*[✓x×]\s+(\S+\.test\.ts)\s*>\s*(.*?)(?:\s+\d+ms)?$", re.M)
+#: vitest's own count, and it must not require anything to have PASSED.
+#:
+#: This read `(?:(\d+) failed)?.*?(\d+) passed` until 2026-08-21, which was
+#: true of every run it had ever seen and stopped being true the moment the run
+#: was narrowed to one file: `Tests  2 failed (2)` has no `passed` segment at
+#: all, because in that file nothing did. The regex then matched nothing, the
+#: harness reported `no summary line -- the run did not finish`, and a mutation
+#: its test had caught perfectly read as a broken run.
+#:
+#: The lookahead is the strict half and is deliberate: a transform error prints
+#: `Tests  no tests` and must stay unreadable rather than parse as zero
+#: failures, which would report SURVIVED for a run that never executed.
+SUMMARY = re.compile(r"^\s*Tests\s+(?=.*(?:failed|passed))(.+)$", re.M)
+
+#: The failing count inside that line, absent when everything passed.
+SUMMARY_FAILED = re.compile(r"(\d+) failed")
 
 
 def npx() -> str:
@@ -3305,10 +3320,22 @@ def npx() -> str:
     return shutil.which("npx") or "npx"
 
 
-def run_tests() -> tuple[set[str], int | None, str]:
-    """Runs the suite, returning the failed test names, the summary's count and the log."""
+def run_tests(files: list[str] | None = None) -> tuple[set[str], int | None, str]:
+    """Runs the suite, returning the failed test names, the summary's count and the log.
+
+    `files` narrows the run to the file the mutation's own test lives in, which
+    vitest is told by name rather than by any table kept here -- the control
+    run's verbose listing prints the file beside every test, and that mapping is
+    what the caller passes back in. The whole file rather than `-t <name>`, so a
+    mutation that reddens three tests in it still reports three.
+
+    The caller runs every file anyway whenever the narrow run finds nothing red.
+    That is the case where the answer matters most: SURVIVED and "a test in
+    another file caught it" are different findings, and only the full set can
+    tell them apart.
+    """
     done = subprocess.run(
-        [npx(), "vitest", "run", *TEST_FILES],
+        [npx(), "vitest", "run", *(files or TEST_FILES)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -3323,12 +3350,15 @@ def run_tests() -> tuple[set[str], int | None, str]:
     # Split on the marker and take the rest of the line -- never a fixed column.
     names = {m.strip() for m in FAILED_TEST.findall(out) if m.strip()}
     summary = SUMMARY.search(out)
-    counted = int(summary.group(1) or 0) if summary else None
+    counted = None
+    if summary:
+        failed = SUMMARY_FAILED.search(summary.group(1))
+        counted = int(failed.group(1)) if failed else 0
     return names, counted, out
 
 
-def all_test_names() -> set[str]:
-    """Every test name the suite defines, from the verbose reporter."""
+def all_test_names() -> dict[str, str]:
+    """Every test the suite defines, mapped to the file it is in."""
     done = subprocess.run(
         [npx(), "vitest", "run", "--reporter=verbose", *TEST_FILES],
         cwd=ROOT,
@@ -3340,8 +3370,14 @@ def all_test_names() -> set[str]:
     )
     out = done.stdout + done.stderr
     # `✓ src/lib/x.test.ts > describe > name 3ms` -- split on the marker and take
-    # the rest, never a fixed column.
-    return {m.strip() for m in TEST_NAME.findall(out) if m.strip()}
+    # the rest, never a fixed column. The file comes back too: it is printed
+    # right there, and deriving it beats a second table that can drift from the
+    # one above.
+    return {
+        name.strip(): file.strip()
+        for file, name in TEST_NAME.findall(out)
+        if name.strip()
+    }
 
 
 def main() -> int:
@@ -3441,7 +3477,20 @@ def main() -> int:
                 if crlf:
                     mutated = mutated.replace("\n", "\r\n")
                 target.write_bytes(mutated.encode("utf-8"))
-                names, counted, out = run_tests()
+                # The file holding the test this mutation names, and only it.
+                # Nearly every mutation is caught there, and running the other
+                # nineteen files to find that out cost 5.8 s a time -- 31
+                # minutes over this table, measured 2026-08-21 before this.
+                aimed = sorted(
+                    {file for name, file in known.items() if mutation.expect in name}
+                )
+                names, counted, out = run_tests(aimed or None)
+                narrow = bool(aimed)
+                if counted is not None and not names and narrow:
+                    # Nothing in that file noticed. Whether anything else did is
+                    # exactly the question, so now every file runs.
+                    names, counted, out = run_tests()
+                    narrow = False
             finally:
                 target.write_bytes(backup.read_bytes())
 
@@ -3464,8 +3513,15 @@ def main() -> int:
                 continue
             hit = any(mutation.expect in name for name in names)
             mark = "[OK]  " if hit else "[FAIL]"
+            # Which files were run, because `1 red` out of one file and `1 red`
+            # out of twenty are not the same statement.
+            scope = (
+                ", ".join(Path(f).name for f in aimed)
+                if narrow
+                else f"{len(TEST_FILES)} files"
+            )
             print(
-                f"{mark} {mutation.name}: {counted} red"
+                f"{mark} {mutation.name}: {counted} red in {scope}"
                 + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
             )
             if not hit:
