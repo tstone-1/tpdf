@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.7] - Unreleased
+## [26.8.7] - 2026-08-21
 
 ### Added: a document properties dialog
 
@@ -186,6 +186,13 @@ have the binary.)
   front of the document.
 - A highlight dragged across a gutter reads column by column, exactly as copying
   the same drag does.
+- Covered words are drawn dimmed and italic, and a window check now asserts that
+  --- against a row whose author really did write something, in the same paint.
+  The unit tests cannot reach it: the DOM they run against resolves no styles at
+  all, so `own` was the most they could ever assert, and asserting `own` is not
+  asserting what a reader sees. The marks panel has had that check since its own
+  covered-words work; this panel shipped without it, and a mutation that removes
+  the italics survived for want of it.
 
 ### The marks panel lists a highlight by the words it covers
 

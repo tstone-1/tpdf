@@ -983,8 +983,25 @@ MUTATIONS = [
         "src/lib/commentlist.ts",
         '      (line.own ? "" : "opacity:0.6;font-style:italic;");',
         '      "";',
-        "a mark nobody wrote on is listed by the words it covers",
-        runner="viewer",
+        "and a lifted sentence is not drawn as one somebody wrote",
+        # `viewer-comments`, not `viewer`: this check is one of the five in
+        # `COVERED_WORD_CHECKS`, which run on the comments corpus and SKIP
+        # everywhere else. Registered against `viewer` when it was written, which
+        # made the WHOLE table refuse to start -- correctly, since a mutation
+        # aimed at a skipped check reports SURVIVED and reads as a gap in the
+        # checks rather than as a fixture that does not exercise them. Caught by
+        # the baseline validation on 2026-08-21, cutting 26.8.7, and by nothing
+        # before it: a `--runner` run validates only its own runner's mutations,
+        # so all three probe runners passed with this in the tree.
+        #
+        # It then SURVIVED, which was the second and larger finding: it named a
+        # check about the WORDS while the edit changes only the FACE they are
+        # drawn in, and the comments panel had no check for that at all. The
+        # marks panel has had its twin since its own covered-words work. The
+        # check named here was written to close that, and this mutation is what
+        # says it can go red -- it fired `lifted row #4 normal, authored row #0
+        # normal` before the name below was corrected to point at it.
+        runner="viewer-comments",
     ),
     Mutation(
         # Hand the marks panel no words at all. The rectangles are unchanged, so

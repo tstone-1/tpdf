@@ -257,17 +257,34 @@ jobs:
           printed, written back into the file you opened with *Save*, or written
           out to a new file with *Save a copy*.
 
-          **What it is not, yet.** Stamps, inserting pages, true redaction,
-          forms and text editing are not built. See the roadmap in
-          `docs/PLAN.md`.
+          **What it tells you about a document.** *Document properties*, in the
+          palette and at the foot of the File menu, shows what a file says
+          about itself: its title, author, producer and dates, its page count,
+          size and PDF version, whether it is encrypted and which operations it
+          permits, and any standard it claims to conform to. Where a document
+          is signed, tpdf reads the signature and the certificate behind it —
+          who signed, who issued that certificate, when, and whether a
+          timestamp authority attested to it.
+
+          **What it does not check.** Nothing about a signature is verified. No
+          certificate chain is built, no issuer is trusted, no revocation is
+          looked up, and the signature is never checked against the bytes it
+          covers. What the dialog shows is what the document claims, and every
+          row says so. The one thing tpdf does establish for itself is whether
+          the signed byte range reaches the end of the file — a document signed
+          and then appended to says so plainly.
+
+          **What it is not, yet.** Signature verification, stamps, inserting
+          pages, true redaction, forms and text editing are not built. See the
+          roadmap in `docs/PLAN.md`.
 
           **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
           the `-setup.exe` if you prefer an installer that asks fewer
           questions — either one installs the same application.
 
-          **Updating.** From this release on, tpdf checks for a newer version
-          once per launch and offers it in the toolbar; nothing is downloaded
-          or installed until you click. Every update is signed, and a copy
+          **Updating.** tpdf checks for a newer version once per launch and
+          offers it in the toolbar; nothing is downloaded or installed until
+          you click. Every update is signed, and a copy
           already installed accepts only payloads signed with the key baked
           into it. The `.app.tar.gz`, `.sig` and `latest.json` files are how
           that works — you do not need to download them by hand.
