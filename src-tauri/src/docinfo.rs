@@ -63,6 +63,7 @@
 use lopdf::{Dictionary, Document, LoadOptions, Object};
 
 use crate::annots::decode_text_string;
+use crate::ber;
 use crate::encoding::resolve;
 
 /// Ceiling on decompressed stream size, as everywhere else that parses.
@@ -1034,22 +1035,24 @@ fn read_certificate_bounded(
     }
 }
 
-/// One signature's `/Contents` blob, trimmed of its padding and bounded.
+/// One signature's `/Contents` blob, ended where its structure ends and bounded.
 ///
 /// A signature is written by reserving a fixed span and filling it, so the blob
 /// is right-padded with zeros to whatever the writer reserved. Those are not
-/// part of the DER and a decoder is entitled to reject them.
+/// part of the encoding and a decoder is entitled to reject them.
 ///
 /// All zeros is a reserved-but-unwritten placeholder, not a failure --- so that
 /// case leaves the counter alone, and a mutation that increments there is
-/// caught by `an_untouched_placeholder_is_absent_rather_than_unread`.
+/// caught by `an_untouched_placeholder_is_absent_rather_than_unread`. It has to
+/// be answered **before** the walk, which would otherwise read the leading
+/// `00 00` as a well-formed empty value.
 ///
-/// **The trim is by trailing zero and that is a known limitation**, recorded
-/// rather than fixed: a DER blob whose last byte is legitimately `0x00` loses
-/// it, which is roughly 1 in 256 signatures, and a **BER indefinite-length**
-/// blob loses its end-of-contents markers, which is worse because those blobs
-/// are not readable here anyway. Reading the outer TLV's length instead would
-/// fix the first exactly. See the trap of that name.
+/// [`ber::to_definite_length`] decides where the blob ends by reading its
+/// structure, which is what closed the two defects the trailing-zero scan this
+/// replaced had: a value ending in a legitimate `0x00` lost it, and a BER blob
+/// lost its end-of-contents markers. It also rewrites indefinite lengths, so a
+/// signature no parser here could read now reaches one. See the traps of those
+/// names.
 fn signature_contents(
     document: &Document,
     sig: &Dictionary,
@@ -1060,14 +1063,19 @@ fn signature_contents(
         .get(b"Contents")
         .ok()
         .and_then(|o| resolve(document, o).as_str().ok())?;
-    let last = raw.iter().rposition(|b| *b != 0)?;
-    let trimmed = &raw[..=last];
+    if raw.iter().all(|byte| *byte == 0) {
+        return None;
+    }
+    let Some(blob) = ber::to_definite_length(raw) else {
+        *unread += 1;
+        return None;
+    };
 
-    if trimmed.len() > bound {
+    if blob.len() > bound {
         *unread += 1;
         return None;
     }
-    Some(trimmed.to_vec())
+    Some(blob)
 }
 
 /// The DER half of [`read_certificate`], split out so a test can hand it bytes.
@@ -1705,11 +1713,17 @@ mod tests {
             examined += 1;
         }
 
+        let names: Vec<&str> = cases.iter().map(|case| case.0).collect();
+        if none_generated(&names) {
+            println!("[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)");
+            return;
+        }
         // Five SKIP lines and a pass look identical, and this is the check that
         // separates them --- see the same guard in `crate::print`.
-        assert!(
-            examined > 0,
-            "no fixture was examined --- generate testdata/ (BUILD.md, Test fixtures)"
+        assert_eq!(
+            examined,
+            cases.len(),
+            "every signed fixture that exists must be read --- generate testdata/ (BUILD.md, Test fixtures)"
         );
     }
 
@@ -2353,6 +2367,28 @@ mod tests {
     /// next time somebody follows `BUILD.md`. What is stable is the name the
     /// generator hardcodes, the shape of a serial, and --- the discriminating
     /// part --- that the five serials are five *different* serials, which a
+    /// Whether *none* of a set of fixtures is present, which is a different
+    /// state from one of them missing and needs a different answer.
+    ///
+    /// A hosted runner has no signed fixture at all: they need pyhanko, and
+    /// `scripts/ci_fixtures.py` records in its own docstring which families a
+    /// runner deliberately does not get. So `assert!(examined > 0)` beneath a
+    /// loop over them is red on every machine that is not a development
+    /// checkout --- measured: hiding `testdata/incr-*.pdf` reddens three tests
+    /// here. It is the same shape as the `corpora` gate that demanded on a
+    /// runner exactly what the repository had already written down as absent.
+    ///
+    /// The state that guard is *for* is the other one: some present and one
+    /// missing, where every read is a `[SKIP]` and the run looks like a pass.
+    /// That is now asserted directly --- every named fixture must be examined,
+    /// not merely one of them --- which is stronger than the count it replaces
+    /// and says nothing at all when the family is absent.
+    fn none_generated(names: &[&str]) -> bool {
+        !names
+            .iter()
+            .any(|name| std::path::Path::new("../testdata").join(name).exists())
+    }
+
     /// parser returning a cached or constant answer could not manage.
     #[test]
     fn each_signed_fixture_carries_its_own_certificate() {
@@ -2406,8 +2442,16 @@ mod tests {
             examined += 1;
         }
 
+        if none_generated(&cases) {
+            println!("[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)");
+            return;
+        }
         // Five SKIP lines and a pass look identical without this.
-        assert!(examined > 0, "no signed fixture was read; generate them");
+        assert_eq!(
+            examined,
+            cases.len(),
+            "every signed fixture that exists must be read, not merely one"
+        );
         assert_eq!(
             serials.len(),
             examined,
@@ -2422,6 +2466,37 @@ mod tests {
     /// limit rather than as a quiet `None`.
     #[test]
     fn a_blob_that_is_not_der_is_reported_as_unread_rather_than_absent() {
+        let mut limits = Limits::default();
+        let mut document = Document::with_version("1.7");
+        // A well-formed value that is not a CMS `ContentInfo`. It has to be
+        // well formed: `ber::to_definite_length` refuses a blob it cannot walk
+        // and counts that itself, so a *malformed* blob reaches the same
+        // counter without ever reaching the arm under test --- which is what
+        // made a mutation of that arm survive when the walk was put in front of
+        // it. One input per mechanism, and the other one is below.
+        let sig = dictionary! {
+            "Type" => "Sig",
+            "Filter" => "Adobe.PPKLite",
+            "SubFilter" => "adbe.pkcs7.detached",
+            "Contents" => Object::String(vec![0x30, 0x03, 0x02, 0x01, 0x41], lopdf::StringFormat::Hexadecimal),
+        };
+        let id = document.add_object(Object::Dictionary(sig.clone()));
+        let _ = id;
+
+        assert!(read_certificate(&document, &sig, &mut limits).is_none());
+        assert_eq!(limits.certificates_unread, 1, "and it says so");
+        assert!(limits.any(), "so the panel shows the notice");
+    }
+
+    /// The other mechanism: a blob whose *structure* cannot be walked at all.
+    ///
+    /// `30 82 FF FF 01` is a SEQUENCE claiming 65,535 bytes with one byte
+    /// present. Nothing here can parse it and nothing should try; the point is
+    /// that it is counted rather than reported as a signature with no
+    /// certificate, the same as the parse failure above and by a different
+    /// route.
+    #[test]
+    fn a_blob_whose_structure_will_not_walk_is_reported_as_unread() {
         let mut limits = Limits::default();
         let mut document = Document::with_version("1.7");
         let sig = dictionary! {
@@ -3843,5 +3918,112 @@ mod tests {
         };
 
         assert_eq!(attribute_text(&attribute), "Müller GmbH");
+    }
+
+    /// The pair that makes a check of [`ber::to_definite_length`] discriminate.
+    ///
+    /// `incr-ber.pdf` is `incr-signed.pdf` with every constructed value in its
+    /// signature blob rewritten in BER's indefinite form and **nothing else**
+    /// changed --- the file is the same length, byte for byte identical outside
+    /// the `/Contents` span. So two blobs that come out equal can only have
+    /// done so by the length form being normalised away.
+    #[test]
+    fn a_ber_blob_and_its_der_twin_arrive_identical() {
+        let (Ok(der), Ok(ber)) = (
+            std::fs::read("../testdata/incr-signed.pdf"),
+            std::fs::read("../testdata/incr-ber.pdf"),
+        ) else {
+            println!("[SKIP] incr-signed.pdf / incr-ber.pdf: not generated");
+            return;
+        };
+        assert_ne!(der, ber, "the fixtures must differ, or this tests nothing");
+        assert_eq!(
+            timestamped_blob(&der),
+            timestamped_blob(&ber),
+            "the same signature written two ways must read as the same bytes"
+        );
+    }
+
+    /// The same document, read the whole way through rather than as bytes.
+    #[test]
+    fn a_ber_signature_names_the_same_signer_as_its_der_twin() {
+        let read = |name: &str| -> Option<Properties> {
+            let bytes = std::fs::read(std::path::Path::new("../testdata").join(name)).ok()?;
+            scan(&bytes, 1).ok()
+        };
+        let (Some(der), Some(ber)) = (read("incr-signed.pdf"), read("incr-ber.pdf")) else {
+            println!("[SKIP] incr-signed.pdf / incr-ber.pdf: not generated");
+            return;
+        };
+        let named = |properties: &Properties| {
+            properties
+                .signatures
+                .first()
+                .and_then(|signature| signature.certificate.as_ref())
+                .map(|certificate| certificate.subject_cn.clone())
+        };
+        assert!(named(&der).is_some(), "the DER twin must name a signer");
+        assert_eq!(named(&der), named(&ber));
+        assert_eq!(der.limits.certificates_unread, 0);
+        assert_eq!(ber.limits.certificates_unread, 0);
+    }
+
+    /// A blob that is already DER must survive the walk untouched, because it
+    /// now goes through it on the way to every parser here.
+    ///
+    /// The old trailing-zero scan is the oracle, and it is a fair one *for
+    /// these fixtures*: every one ends in a non-zero byte, which is the case
+    /// the scan gets right. It is not a fair one in general, which is why it
+    /// was replaced.
+    #[test]
+    fn a_der_signature_blob_is_returned_byte_for_byte() {
+        let names = [
+            "incr-signed.pdf",
+            "incr-timestamped.pdf",
+            "incr-two-signers.pdf",
+        ];
+        let mut examined = 0;
+        let mut files = 0;
+        for name in names {
+            let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata").join(name)) else {
+                continue;
+            };
+            files += 1;
+            let document = Document::load_mem(&bytes).expect("the fixture must parse");
+            for field in document
+                .objects
+                .values()
+                .filter_map(|object| object.as_dict().ok())
+                .filter(|dict| dict.has(b"ByteRange"))
+            {
+                let raw = field
+                    .get(b"Contents")
+                    .ok()
+                    .and_then(|object| resolve(&document, object).as_str().ok())
+                    .expect("a signed field carries its blob");
+                let last = raw
+                    .iter()
+                    .rposition(|byte| *byte != 0)
+                    .expect("not a placeholder");
+                let mut unread = 0;
+                let read = signature_contents(&document, field, MAX_SIG_BLOB, &mut unread)
+                    .expect("a walkable blob");
+                assert_eq!(read, raw[..=last], "{name}: DER must come back unchanged");
+                assert_eq!(unread, 0);
+                examined += 1;
+            }
+        }
+        if none_generated(&names) {
+            println!("[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)");
+            return;
+        }
+        assert_eq!(
+            files, names.len(),
+            "every signed fixture that exists must be read --- generate testdata/ (BUILD.md, Test fixtures)"
+        );
+        assert!(
+            examined > files,
+            "incr-two-signers.pdf carries two signatures"
+        );
     }
 }

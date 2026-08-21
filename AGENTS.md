@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 415 entries
+The one thing this file does *not* carry in full is the trap list --- 418 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -514,7 +514,7 @@ is and is not built here.
 
 **Since 2026-08-21 that module also parses the signer's certificate**, which is a second ASN.1
 parser on attacker-chosen bytes and is bounded and sandboxed accordingly --- see
-`docs/THREAT-MODEL.md` §T6.4 and *Who signed it* in `docs/PLAN.md`. The route stays `lopdf`
+`docs/THREAT-MODEL.md` §T6.8 and *Who signed it* in `docs/PLAN.md`. The route stays `lopdf`
 plus `cms` rather than PDFium for the same reason and one more: `FPDFSignatureObj_GetCert`
 hands back the DER of the signer's certificate and nothing above it, so the chain length and
 the `matched_signer` distinction would be unavailable through it.
@@ -576,10 +576,26 @@ never does.
 signature's `/Contents`, `x509-cert` for the certificate inside it, and `der` underneath both.
 Nine packages in total (563 to 572), every one `Apache-2.0 OR MIT` except `flagset`, which is
 `Apache-2.0` alone. They matter to the threat model as much as to the licence: this is a
-**second ASN.1 parser on attacker-chosen bytes**, and `docs/THREAT-MODEL.md` §T6.4 records
+**second ASN.1 parser on attacker-chosen bytes**, and `docs/THREAT-MODEL.md` §T6.8 records
 what bounds it --- it runs in the worker, the blob is capped at `MAX_SIG_BLOB` before the
 parser sees it, and exceeding that is reported rather than passed off as a document with no
 certificate.
+
+**Nothing reads those bytes directly, and since 2026-08-21 nothing reads them as they arrive.**
+`src-tauri/src/ber.rs` walks a signature's `/Contents` first and hands the parsers a value in
+definite-length form, dropping whatever follows it. It is **no dependency at all** --- about 150
+lines, because the alternative was a general BER library for one length rule --- and it exists
+because the specification and reality disagree. RFC 5652 requires DER; a signer that streams its
+output cannot know a value's length before writing the value, so it writes the indefinite form,
+and `der` refuses that outright with *indefinite length disallowed*. Measured on a real signed
+contract: five indefinite values nineteen levels deep, and every reader here saw nothing. It
+also decides **where the blob ends**, which is the same question and was the larger half --- the
+trailing-zero scan it replaced could not tell zero padding from a two-byte end-of-contents
+marker, and ate three of them. What it deliberately does **not** do is canonicalise: a `SET OF`
+out of order or a constructed string in segments comes out as it went in and is refused by the
+parser after it, which is reported as unread. Its own bounds are in `docs/THREAT-MODEL.md` §T6.8,
+and the property that lets it sit in front of *every* signature rather than only the ones that
+need it --- a DER blob comes back byte-identical --- is asserted against the real fixtures.
 
 Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) --- the
@@ -1054,8 +1070,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 415 of them and the full text
-was 93% of this file --- an instruction budget spent on the 414 traps that are not
+titles. Only the titles are here, because there are 418 of them and the full text
+was 93% of this file --- an instruction budget spent on the 417 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1188,7 +1204,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `lopdf` silently drops encryption on save
 - An incremental save is cheap on disk, not in memory --- and its cost is the parse
 - An object a prior revision overwrote is reachable by no parser
-- A signature blob is trimmed by trailing zero, and BER ends in zeros (1 in 256 DER blobs loses its last byte; a real CAdES signature loses its terminators, and `der` refuses indefinite length anyway)
+- A signature blob is trimmed by trailing zero, and BER ends in zeros (1 in 256 DER blobs loses its last byte; a real CAdES signature loses its terminators, and `der` refuses indefinite length anyway --- closed 2026-08-21, and both halves went together because where a blob ends and what length form it uses are one question)
 - A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
 - A shortcut can produce the right answer and lose the report
 - An empty answer from a whole-document scan cannot say whether it looked
@@ -1236,6 +1252,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `trim_text` trims each event, and a value with an entity in it arrives as several (two bugs correct for every value with no `&` in it, and the obvious repair breaks `&#233;`)
 - A stale binary answered for a source file that was never written (a `cd` into the directory you are already in, `&&`, and a heredoc that never ran; `Finished in 0.15s` is not a build)
 - A guard whose neighbour refuses the same input cannot be tested by it (three survivors, three different reasons the input never reached the line; ask what your input reaches, not whether your assertion is strong)
+- Putting a guard in front of a parser disarms the parser's own guard, and the test still passes (the mirror of the entry above, and the news is the direction: it was covered, and an unrelated change that only made things stricter took the cover away)
 
 ### Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -1251,7 +1268,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A check that defers to a cheaper one it supersedes cannot be tested, and refuses what it should forgive (the digest comparison was 0 red before the fix and 2 red after, with no new test written for it)
 - A guard's last look should compare against the moment of the first look, not the moment of the open (the false refusal arrives after the document has been closed; and one of the three anchors it moved became ambiguous rather than absent)
 - One refusal message, two moments, and it told the reader to do something they no longer could (the tell is a caller that has to append to the message it was given)
-- A wait built on a program the machine does not have returns instantly, and every check after it reads as a pass (`pgrep` is absent here, so `until ! pgrep ...` was satisfied on its first evaluation and certified 2 corpora out of 13)
+- A wait built on a program the machine does not have returns instantly, and every check after it reads as a pass (`pgrep` is absent **under Git Bash on Windows** --- it is `/usr/bin/pgrep` on the Macs, and this line said "absent here" until 2026-08-21, which is the index dropping the one word that makes the claim checkable --- so `until ! pgrep ...` was satisfied on its first evaluation and certified 2 corpora out of 13)
 - Two runs failing different checks is variance; the same check twice is a defect (a 41% spread in runtime on identical code, and the control is a `git worktree`, not a `git stash`)
 - A test that changes the working directory silences every other test that reads a relative path (the tell is a skip count that moved, not a failure; widening the window on purpose is what proved it)
 - A refusal that names a fallback has to keep the fallback open, and this one closed it (a passing test encoded the dead end, and its doc comment argued for it)
@@ -1362,6 +1379,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Two synthetic marks addressed by page land on top of each other on a one-page corpus (two subjects that must be distinguishable, separated on one axis a corpus is free to collapse; found by the sweep and by nothing else)
 - A getter that answers from the rows it was handed cannot see a panel that drew one (the mutation SURVIVED because the check's two operands were one value under two names; the correct version of the same rule sat three lines below it, and the defect was inherited along with an unfalsifiable check in the panel it was copied from)
 - Removing the second copy is what made the differential unable to fail (8 red before the deduplication and 2 after; a comparison between subsystems that share an implementation is true by construction, and nothing goes red at the moment it stops testing anything)
+- A differential's most important check was hard-coded to pass when both readers failed (`7 passed, 0 failed` on a contract neither reader could read a certificate from; the correct argument was written down one function away, three months earlier)
+- A test helper that builds its fixture with the encoder under test (16 red of 701 and not the one named for it --- that output is the diagnostic, and it means something different from a mutation reddening nothing)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1491,7 +1510,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Moving a binary out of the installer moves it out of the gate that links it
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 - A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it (15/15 green for sixteen commits while an example did not compile; one type error reads as four broken gates)
-- A gate that refuses on a precondition of running is red on every machine that is not running (the gate demanded fixtures the repository had already written down as deliberately absent)
+- A gate that refuses on a precondition of running is red on every machine that is not running (the gate demanded fixtures the repository had already written down as deliberately absent --- and again in three unit tests, unpushed, where `examined > 0` would have reddened CI the day the signature work landed; ask what a guard says on the machine with the fewest inputs)
 - Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong (the second was wrong too; `gh release view <tag>` cannot tell them apart, and `gh api .../releases` answers 200 with `[]`)
 - `$?` read in the same word as a command substitution is the substitution's status (all three controls agreed, which is the tell)
 - A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work (five probe runners dead on Windows since the day they were written; the wrapper's own `echo` supplied the exit 0 that hid it)
