@@ -7767,12 +7767,24 @@ moved onto the synthetic `cms_blob`, where the test chooses the bytes; the fixtu
 assert the generator's hardcoded name, the *shape* of a serial, and that the five fixtures
 report five different ones. `docs/TRAPS.md` has it.
 
-**Not done.** The certificate's *extensions* are not read --- key usage, extended key usage
+~~**Not done.** The certificate's *extensions* are not read --- key usage, extended key usage
 and the basic-constraints CA flag are all there in the DER and none is shown; whether they are
 worth showing without a trust store to interpret them against is a real question rather than
 an oversight. A timestamp token, which is a whole second CMS structure inside an unsigned
 attribute, is not read either, so a document signed with one shows only the signer's claimed
-date.
+date.~~
+
+**Both closed the same day, and this note survived them by four sections** --- *Done
+2026-08-21* below reads three extensions, and the one after it reads the timestamp token.
+Found while reviewing the threat model before cutting `26.8.7`, which is to say by a person
+reading rather than by anything that could go red. That is the **fourth** recorded instance
+in this file --- the mtime watch, the highlight's `/QuadPoints`, the certificate itself, and now
+this --- and the reason is structural rather than careless:
+the commit that closes one describes what it built, in its own new section, and has no cause
+to go looking for the older paragraph that said it was missing. The rule the file already
+states --- close the note in the commit that closes the work --- is the only guard there is,
+and this is what it costs when it is skipped. The two halves are struck rather than deleted so
+the count stays honest.
 
 **The `/Kids` recursion is reached now, and finding a fixture for it turned up something about
 PDFium.** `signed-nested-field.pdf` puts a signature field two levels down the `/AcroForm`

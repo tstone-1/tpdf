@@ -1924,12 +1924,18 @@ scripts/viewer_sweep.py --list          # the 14 corpora, and every fixture excl
 scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf
 ```
 
-> **Not yet re-measured with the properties checks.** The properties dialog added five
-> names to every corpus on 2026-08-21, and the sweep below is a run from before it --- so
-> the totals in the table are five short of what the next run will print, and the invariant
-> the sweep asserts is the *agreement* between corpora rather than any particular number.
-> Written down rather than left to be noticed, because the table looks measured either way
-> and a stale total reads exactly like a current one.
+> **Not yet re-measured, and the shortfall has grown.** The properties dialog added five
+> names to every corpus on 2026-08-21, and the comments panel's covered-words face added a
+> sixth later the same day --- so the totals in the table are **six** short of what the next
+> run will print, and the invariant the sweep asserts is the *agreement* between corpora
+> rather than any particular number. Written down rather than left to be noticed, because the
+> table looks measured either way and a stale total reads exactly like a current one.
+>
+> The current figure, measured cutting `26.8.7`: **324 names**, all distinct, byte-identical
+> between `comments.pdf` and `text-heavy.pdf`. Take the names from the harness's own
+> `CHECK-NAMES-JSON` line, never by splitting the printed columns --- this page records that a
+> `\s{2,}` split matched 175 of 189 lines, and reaching for it again is what produced a diff
+> full of per-corpus *detail* differences that looked like missing names.
 
 Every run reports the same check names; what differs is how many are `[SKIP]` with a reason,
 and a name that goes missing rather than skipping is the bug this arrangement exists to catch.
@@ -3091,18 +3097,86 @@ starts at 0 and increments within the month.
    (`worker-probe`, `backend-probe`, and `worker-bench --mode engine|authority` after any
    PDFium bump). The half no probe covers is reading each claim and naming the line that
    keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
-7. Re-run the three mutation harnesses if any of the code they cover changed. They are not
-   gates --- they rebuild per mutation and two of them need a window --- and they are the only
-   thing that says the tests can fail:
+7. Re-run the mutation harnesses. They are not gates --- they rebuild per mutation and two of
+   them need a window --- and they are the only thing that says the tests can fail.
+
+   **How much of them to run is a decision, and this step used to duck it.** It read *"if any
+   of the code they cover changed"*, which is true of nearly every release and therefore meant
+   the full 735 in practice: about 1 hour 40 minutes, of which the viewer table alone is 55.
+   Measured over the `26.8.7` cut, that whole spend produced **one** finding. Steps are only
+   ever added to a checklist --- this is the first one this file has ever narrowed --- so the
+   narrowing states its own trigger rather than leaving it to whoever is tired:
+
+   **Run the FULL tables when any one of these is true.** The first two are the ones that have
+   actually paid:
+
+   - the diff touches `src/lib/viewercheck.ts`, or a harness-covered module by more than
+     ~100 lines --- `git diff --stat <last tag>..HEAD -- src-tauri/src src/lib`
+   - a module joined `FILTERS` or the mutation table since the last release, or a runner did
+   - the release adds a capability rather than fixing one
+   - nobody has run the full tables in a month
+
+   **Otherwise run the narrow pass**, which is minutes rather than hours:
+
+   ```
+   scripts/mutate_rust.py --since <last tag>        # only the mutations whose FILE moved
+   scripts/mutate_viewer.py --runner structure      # the three that need no window,
+   scripts/mutate_viewer.py --runner search         # about 24 s a mutation
+   scripts/mutate_viewer.py --runner encodings
+   ```
+
+   ⚠ **The narrow pass is genuinely partial, in two named ways, and neither is a detail.**
+   `--since` exists on `mutate_rust.py` **only** --- `mutate_frontend.py` and
+   `mutate_viewer.py` have `--only` and `--runner`, which need you to know the names --- so the
+   front-end table is all-or-nothing at about 30 minutes and the 67 window mutations are
+   all-or-nothing at about 50. Giving those two a `--since` is the obvious next piece of work
+   and would make this split real rather than lopsided. And `--since`'s reach is shorter than
+   its scope even where it exists: a change in one module can stop a mutation in another from
+   being caught, which is why the full table is still the thing before a release that qualifies
+   above.
+
+   ⚠ **A `--runner` run validates only that runner's mutations.** So the narrow pass cannot
+   report a mutation registered against the wrong runner --- which is exactly what `26.8.7`
+   shipped and what the full table refused to start over. If the narrow pass is what you ran,
+   the table's own consistency is unverified, and `scripts/gates.py`'s `anchors` gate covers
+   the anchors but not the runner assignment.
+
+   **The full tables:**
 
    ```
    scripts/mutate_rust.py          # the modules in FILTERS, `cargo test --lib`
    scripts/mutate_frontend.py      # the modules under src/lib, `vitest`
    scripts/mutate_viewer.py        # every runner below, in one pass
 
-   # The Rust table is 405 s for all 229 runnable mutations, measured
-   # 2026-08-21 -- see "What the Rust table costs" below, and read it before
-   # believing any older figure in this file. A backgrounded run is still worth
+   # What each costs, measured 2026-08-21 when 26.8.7 was cut. Scale by the
+   # PER-MUTATION figure, never by the total -- the totals move whenever
+   # somebody writes a mutation, and `--list` is the only authority on them:
+   #
+   #   mutate_rust.py       292 mutations, ~2.9 s each  -> about 14 minutes
+   #   mutate_frontend.py   368 mutations, ~4.9 s each  -> about 30 minutes
+   #   mutate_viewer.py      75 mutations               -> 50 min (3010 s measured)
+   #                        8 of those need no screen at 23-24 s each; the
+   #                        other 67 rebuild the bundle at 37 s each, plus
+   #                        78 s per runner for its baseline and clean rebuild
+   #
+   # A whole-table viewer run validates ALL TEN baselines first, in
+   # alphabetical order, before it mutates anything -- so the first seven to
+   # ten minutes print only "Baseline: building and running the <name>
+   # harness" and no [CAUGHT] line at all. That is the run working, not the
+   # run stuck, and it is worth knowing before somebody kills it: a harness
+   # that has not reached its first mutation looks exactly like one that
+   # cannot.
+   #
+   # The Rust figure is wall clock over the whole run INCLUDING its one cold
+   # build, and it disagrees with the 405 s / 229 measured below -- 2.9 s
+   # against 1.8 s, unexplained, on the same machine two hours apart. The
+   # front-end one is that section's per-mutation figure and was NOT
+   # re-measured here. Both are said plainly rather than averaged into one
+   # confident number: a timing whose provenance is a mixture is worth less
+   # than either of the two it came from.
+   #
+   # See "What the Rust table costs" below, and read it before believing any
+   # older figure in this file. A backgrounded run is still worth
    # waiting on by the signal the job emits rather than by asking the process
    # table whether it is alive:
    #
@@ -3155,13 +3229,27 @@ starts at 0 and increments within the month.
    --- but only after `--`. `cargo test --lib a:: b::` is cargo's own argument error, which
    reads like the feature being unsupported.
 
-   `mutate_viewer.py` drives seven runners, chosen per mutation and filterable with
+   `mutate_viewer.py` drives **ten** runners, chosen per mutation and filterable with
    `--runner`. The `structure`, `search` and `encodings` ones need no webview and no bundle, so
    they neither wait for one nor require an unlocked screen; each rebuilds one example and runs
-   it, at about 15 s a mutation. All six print the same `[FAIL] <name>` lines and the same
-   summary, so the cross-check, the byte restore and the name validation are shared rather than
-   copied. `RUNNERS` in the script is the list; the three probe runners share `search-probe`
-   and differ only in the fixture they open.
+   it, at a measured **23--24 s** a mutation. Every runner prints the same `[FAIL] <name>` lines
+   and the same summary, so the cross-check, the byte restore and the name validation are
+   shared rather than copied. `RUNNERS` in the script is the list; the three probe runners
+   share `search-probe` and differ only in the fixture they open.
+
+   **That said seven and "all six" in one paragraph, and both were wrong** --- corrected
+   2026-08-21 by asking the script rather than by reading the page:
+
+   ```
+   python3 -c "import re,pathlib; print(re.findall(r'\"([a-z-]+)\"\s*:', re.search(r'RUNNERS\s*[:=].*?\n\}', pathlib.Path('scripts/mutate_viewer.py').read_text(), re.S).group(0))[::3])"
+   scripts/mutate_viewer.py --runner <name> --list | grep -c 'expects:'
+   ```
+
+   Two numbers in one sentence disagreeing with each other is the cheapest possible tell that
+   neither was measured, and it sat here through several increments that added runners. The
+   split as of 2026-08-21: `viewer` 47, `viewer-tagged` 12, `viewer-mixed` 3, `viewer-encodings`
+   2, `viewer-comments` 1, `crop-rotated` 1, `crop-content` 1 --- 67 needing a window --- against
+   `structure` 4, `search` 2, `encodings` 2, which do not. Read it from `--list`, not from here.
 
    `viewer-tagged` is the viewer harness against `tagged.pdf`, and it exists because the two
    tagged-reading-order checks `[SKIP]` on every other corpus. `viewer-mixed` was added on
@@ -3175,7 +3263,9 @@ starts at 0 and increments within the month.
    explicitly, alongside the zero-match and ambiguous-prefix ones.
 
    The viewer runner is different in kind and slower for it: it rebuilds the bundle and runs
-   `viewer_check.py` per mutation (~20 s each), because what it covers --- the application's
+   `viewer_check.py` per mutation --- a measured **37 s**, with a further **78 s** per runner for
+   its baseline build and the clean rebuild afterwards --- a whole-table run measured **3010 s**,
+   50 minutes for all 75 --- because what it covers --- the application's
    own command list, the window shortcuts, and the search behaviour that only shows up
    against a real document --- is reachable from neither `cargo test` nor `vitest`. It needs
    an unlocked, unoccluded screen for the same reason `viewer_check.py` does. It reads check
@@ -3241,7 +3331,10 @@ starts at 0 and increments within the month.
 
    So a Windows run of that table reports 176 and a macOS run reports 178, and the two rows
    the difference names are printed rather than absent. Do not "fix" the 176 into a 178.
-   (Those are counts of that date's table, which has since grown to 231.)
+   (Those are counts of that date's table, which was 231 on 2026-08-21 and **292** later the
+   same day, after the signature work. A parenthetical carrying a count is the shape this file
+   keeps getting wrong; `--list` is the authority, and the three tables measured **292 Rust,
+   368 front-end, 75 viewer** when `26.8.7` was cut.)
 
    **What the Rust table costs, and what it used to cost.** On 2026-08-21 a full run was
    measured at **69 s per mutation**, which for 231 of them is 4.4 hours --- a figure nobody
@@ -3270,13 +3363,21 @@ starts at 0 and increments within the month.
    number to plan against; every older figure in this file is from before the two changes and
    is left as a statement about its own date.
 
+   **And this one is now such a statement too.** The table was 229 runnable when that was
+   measured and is **292** as of `26.8.7`, which reported *all 290 caught, 2 skipped as not
+   runnable on macos*. Per-mutation cost is what to carry forward from a timing, never the
+   total --- the total moves every time somebody writes a mutation, and nothing goes red when
+   it does.
+
    **What the front-end table costs, and why it did not fall as far.** `mutate_frontend.py`
    got the same narrowing --- it runs the test *file* holding the mutation's own test, chosen
    from the file vitest prints beside every test in the control run's listing, with the same
    fallback to all twenty files whenever the narrow run finds nothing red. That took it from
    5.8 s to about 4.9 s per mutation, and no further, because the cost is vitest's own
    startup: **4.6 s for a single small file**, and measured the same through `npx` or `node`
-   directly, forks pool or threads. The full table is **1570 s for 322 mutations**.
+   directly, forks pool or threads. The full table was **1570 s for 322 mutations**; it is
+   **368** as of `26.8.7`, all caught, so scale that by the per-mutation figure rather than
+   reading the total.
 
    Getting materially below that means keeping one vitest process warm in watch mode and
    attributing each re-run to the mutation that triggered it. That is worth roughly 26 minutes
@@ -3292,6 +3393,25 @@ starts at 0 and increments within the month.
    `print-probe` (§8), which is the only check that reaches a real spooler.
 
    On macOS also `scripts/menu_check.py` and `scripts/save_check.py` against the bundle.
+   **They do not take the same arguments, and naming them in one breath is what made this
+   worth writing down.** `save_check.py` takes the **binary** and a document, like
+   `viewer_check.py`; `menu_check.py` takes the **`.app`** and no document at all --- the menu
+   is built before anything is opened, and it launches the app with `open` deliberately, so
+   that it reads a bar built by a process with no stdout rather than one a harness supplied.
+   Handed a binary and a PDF it fails with *"tpdf is not running, so there is no menu to
+   read"*, which reads as an application that would not start:
+
+   ```
+   python3 scripts/menu_check.py --self-test    # the duplicate rule, both directions
+   python3 scripts/menu_check.py                # the release bundle at the default path
+   python3 scripts/save_check.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf \
+       "$PWD/testdata/text-heavy.pdf"
+   ```
+
+   Run the `--self-test` first. It replays the application menu as measured before and after
+   the duplicate `About tpdf` was removed, so it shows the rule calling one a defect and the
+   other clean --- a check that has only ever passed is not known to be able to fail, and this
+   one costs a second.
    Between them they read the two surfaces no test in either language can: the menu bar as
    the reader sees it --- a duplicate label shipped in 26.8.6 and reached a reader before
    anything here noticed --- and the file on disk after a Save, which nothing else in the

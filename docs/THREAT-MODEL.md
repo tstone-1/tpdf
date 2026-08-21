@@ -1153,6 +1153,21 @@ either the reader's own note or the literal "No note". Nothing about the mitigat
 --- `marklist.ts` assigns it through `textContent` like everything else, and the invariant
 below is what makes that sufficient rather than a promise about this one call site.
 
+**A fifth source the same day, and it is the widest: the properties dialog.** A document's
+`/Info` strings, its custom keys --- where the *label* is attacker-chosen too --- and a
+signature's stated name, reason and location all reach the DOM through
+`propertiesdialog.ts`. §T6.8 is the worked-out version and is not repeated here; what
+matters at this level is that it needed no new mechanism, because the invariant below is a
+property of the frontend rather than a promise about each call site.
+
+**What does *not* belong on that list, checked rather than assumed: the sentence a document
+that will not open now shows.** `progressive::open_failure` returns one of five literals we
+wrote, chosen by PDFium's error code and carrying no byte of the document, and `refuse`
+answers every later request with that same string. It is the same shape as
+`outline::Target::Refused`, and it is worth stating because the obvious next edit --- naming
+the file, or passing PDFium's own message through --- would put attacker-chosen text on a
+path that has none today.
+
 The mitigation survived the change, and it is a **better** one than the sentence it replaces,
 because it is a property of the code rather than an absence of features: every one of those
 strings is assigned through **`textContent`**, which sets character data and never parses

@@ -5197,7 +5197,7 @@ const PROPERTIES_CHECKS = [
 
 
 /**
- * The four checks {@link coveredWordChecks} records, for the skip paths.
+ * The five checks {@link coveredWordChecks} records, for the skip paths.
  *
  * A module constant rather than a local, because `commentChecks` returns early
  * on **four** paths --- unreadable comments, a document with none, no comment
@@ -5212,6 +5212,7 @@ const COVERED_WORD_CHECKS = [
   "and those words are really on the page it is on",
   "a comment with a body is still listed by what its author wrote",
   "and they are the words the fixture's generator says are there",
+  "and a lifted sentence is not drawn as one somebody wrote",
 ];
 
 /** Stands the covered-word checks down, with one reason for all four. */
@@ -5293,7 +5294,8 @@ async function coveredWordChecks(
     );
   }
 
-  if (after.body === before || after.body.length === 0) {
+  const relisted = after.body !== before && after.body.length > 0;
+  if (!relisted) {
     skip(names[1] as string, "the row was not relisted, so there is nothing to look for");
   } else {
     // A prefix rather than the whole line: the row is one line and the words
@@ -5317,6 +5319,7 @@ async function coveredWordChecks(
   const written = items.find((item) => item.body.trim().length > 0 && !item.hidden);
   if (!written) {
     skip(names[2] as string, "no comment has a body");
+    skip(names[4] as string, "no comment has a body to contrast a lifted sentence against");
   } else {
     const line = sidebar.comments.rowText(written.id);
     check(
@@ -5324,6 +5327,36 @@ async function coveredWordChecks(
       line.body === written.body.replace(/\s+/g, " ").trim() && line.own,
       `#${written.id}: ${JSON.stringify(line.body.slice(0, 60))}, own=${line.own}`,
     );
+
+    // The visual half, and the marks panel has had its twin since that panel's
+    // own covered-words work --- *"a panel that drew them alike would pass every
+    // test there is and still tell a reader they wrote something they did not"*.
+    // The comments panel shipped without it, and nothing said so until a
+    // mutation of `commentlist.ts` that removes the dimmed italic face SURVIVED
+    // while every other check here stayed green: the words are right, `own` is
+    // right, and the only thing separating a reader's own sentence from one
+    // lifted off the page is gone.
+    //
+    // It has to be a window check. The fake DOM the unit tests run against
+    // resolves no styles at all, so `getComputedStyle` there answers about
+    // nothing --- which is why `own` was the most a unit test could ever assert,
+    // and why asserting `own` is not asserting what a reader sees.
+    if (!relisted) {
+      skip(names[4] as string, "the row was not relisted, so no lifted sentence was drawn");
+    } else {
+      const face = (id: number): string => {
+        const row = sidebar.comments.elementFor(id);
+        const body = row?.querySelector('[data-part="body"]');
+        return body ? getComputedStyle(body).fontStyle : "no row";
+      };
+      const lifted = face(bare.id);
+      const authored = face(written.id);
+      check(
+        names[4] as string,
+        lifted === "italic" && authored !== lifted,
+        `lifted row #${bare.id} ${lifted}, authored row #${written.id} ${authored}`,
+      );
+    }
   }
 }
 
