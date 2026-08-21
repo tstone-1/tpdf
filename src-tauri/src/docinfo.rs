@@ -143,7 +143,9 @@ pub struct Encryption {
 /// **No field here is a verdict.** See the module note.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Signature {
-    /// The field's name, `/T`. Empty when it has none.
+    /// The field's **fully qualified** name --- its ancestors' `/T` values and
+    /// its own, joined with a period, as PDF 32000-1 §12.7.3.2 defines it and as
+    /// Acrobat displays it. Empty when nothing in the chain is named.
     pub field: String,
     /// Whether the field carries a signature at all, or is an empty placeholder.
     pub signed: bool,
@@ -391,6 +393,16 @@ fn name_of(document: &Document, dict: &Dictionary, key: &[u8]) -> String {
         .ok()
         .and_then(|o| resolve(document, o).as_name().ok())
         .map(|name| String::from_utf8_lossy(name).into_owned())
+        .unwrap_or_default()
+}
+
+/// One text string entry, decoded. Empty when the key is absent or is not a
+/// string --- the same shape as [`name_of`], for the same reason.
+fn text_of(document: &Document, dict: &Dictionary, key: &[u8]) -> String {
+    dict.get(key)
+        .ok()
+        .and_then(|o| resolve(document, o).as_str().ok())
+        .map(decode_text_string)
         .unwrap_or_default()
 }
 
@@ -734,12 +746,13 @@ fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<S
     };
 
     let mut out: Vec<Signature> = Vec::new();
-    let mut queue: Vec<(&Object, u32)> = fields.iter().map(|f| (f, 0u32)).collect();
+    let mut queue: Vec<(&Object, u32, String)> =
+        fields.iter().map(|f| (f, 0u32, String::new())).collect();
     // Reversed so the queue pops in document order, which is the order a reader
     // sees the fields in every other application.
     queue.reverse();
 
-    while let Some((entry, depth)) = queue.pop() {
+    while let Some((entry, depth, prefix)) = queue.pop() {
         if out.len() >= MAX_SIGNATURES {
             limits.signatures_dropped += 1;
             continue;
@@ -748,6 +761,8 @@ fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<S
             limits.unreadable += 1;
             continue;
         };
+
+        let name = qualified_name(&prefix, &text_of(document, field, b"T"));
 
         // A node with kids is a group; a node with `/FT /Sig` is a field. Both
         // at once is legal and means a field that also has widget children.
@@ -760,7 +775,7 @@ fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<S
             // could cost time. A tree deeper than this is a document trying to.
             if depth < 8 {
                 for kid in kids.iter().rev() {
-                    queue.push((kid, depth + 1));
+                    queue.push((kid, depth + 1, name.clone()));
                 }
             } else {
                 limits.unreadable += 1;
@@ -771,28 +786,39 @@ fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<S
             continue;
         }
 
-        out.push(read_signature(document, field, size, limits));
+        out.push(read_signature(document, field, name, size, limits));
     }
 
     out
+}
+
+/// A field's fully qualified name: its ancestors' partial names and its own,
+/// joined with a period --- PDF 32000-1 §12.7.3.2.
+///
+/// A node with no `/T` contributes nothing and is **not** a level in the name,
+/// which is what the specification says and is not merely tidier: a widget
+/// annotation merged into its field is such a node, and so is the group a
+/// document uses purely to hold kids together. Skipping them is what makes the
+/// name Acrobat shows and the name reported here the same string.
+fn qualified_name(prefix: &str, partial: &str) -> String {
+    match (prefix.is_empty(), partial.is_empty()) {
+        (_, true) => prefix.to_string(),
+        (true, false) => partial.to_string(),
+        (false, false) => format!("{prefix}.{partial}"),
+    }
 }
 
 /// Reads one signature field.
 fn read_signature(
     document: &Document,
     field: &Dictionary,
+    name: String,
     size: u64,
     limits: &mut Limits,
 ) -> Signature {
-    let text = |dict: &Dictionary, key: &[u8]| -> String {
-        dict.get(key)
-            .ok()
-            .and_then(|o| resolve(document, o).as_str().ok())
-            .map(decode_text_string)
-            .unwrap_or_default()
-    };
+    let text = |dict: &Dictionary, key: &[u8]| -> String { text_of(document, dict, key) };
     let mut out = Signature {
-        field: text(field, b"T"),
+        field: name,
         ..Signature::default()
     };
 
@@ -2360,7 +2386,10 @@ mod tests {
         );
         let signature = &properties.signatures[0];
         assert!(signature.signed);
-        assert_eq!(signature.field, "Signature1", "the leaf's own /T");
+        assert_eq!(
+            signature.field, "top.group.Signature1",
+            "the two groups it hangs under are levels of its name, not scenery"
+        );
         assert_eq!(signature.kind, "adbe.pkcs7.detached");
         assert!(
             signature
@@ -2370,6 +2399,107 @@ mod tests {
             "and its certificate is read like any other"
         );
         assert_eq!(properties.limits.unreadable, 0, "nothing was walked past");
+    }
+
+    /// Builds a document whose `/AcroForm /Fields` is the tree described --- one
+    /// chain per entry, each element a node's `/T` and the last of them the
+    /// signature field itself --- and returns the names reported for it. `None`
+    /// is a node carrying no `/T` at all.
+    fn field_names(chains: &[&[Option<&str>]]) -> Vec<String> {
+        let mut document = Document::with_version("1.7");
+        let mut roots: Vec<Object> = Vec::new();
+        for chain in chains {
+            let sig = document.add_object(Object::Dictionary(dictionary! {
+                "Type" => "Sig",
+                "Filter" => "Adobe.PPKLite",
+                "SubFilter" => "adbe.pkcs7.detached",
+            }));
+            let (leaf, above) = chain.split_last().expect("a chain ends in a field");
+            let mut node = dictionary! {
+                "FT" => "Sig",
+                "V" => Object::Reference(sig),
+            };
+            if let Some(name) = leaf {
+                node.set("T", Object::string_literal(*name));
+            }
+            let mut id = document.add_object(Object::Dictionary(node));
+            for name in above.iter().rev() {
+                let mut parent = dictionary! {
+                    "Kids" => vec![Object::Reference(id)],
+                };
+                if let Some(name) = name {
+                    parent.set("T", Object::string_literal(*name));
+                }
+                id = document.add_object(Object::Dictionary(parent));
+            }
+            roots.push(Object::Reference(id));
+        }
+        let form = document.add_object(Object::Dictionary(dictionary! {
+            "Fields" => roots,
+        }));
+        let pages = document.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => Object::Array(vec![]),
+            "Count" => 0,
+        }));
+        let catalog = document.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages),
+            "AcroForm" => Object::Reference(form),
+        }));
+        document.trailer.set("Root", Object::Reference(catalog));
+        let mut out = Vec::new();
+        document.save_to(&mut out).expect("a writable document");
+        scan(&out, 0)
+            .expect("the document must parse")
+            .signatures
+            .iter()
+            .map(|signature| signature.field.clone())
+            .collect()
+    }
+
+    /// Two fields may share a partial name, and the tree is what tells them
+    /// apart.
+    ///
+    /// This is the whole reason a qualified name exists rather than being
+    /// tidiness: `/T` is unique only among *siblings*, so a form that groups its
+    /// fields is free to have a `Signature1` under each group, and a reader
+    /// showing the leaf's own name shows one string for two fields. Every
+    /// fixture here happens to have unique leaf names, so nothing else can tell
+    /// the two readings apart.
+    #[test]
+    fn two_fields_with_the_same_leaf_name_are_told_apart_by_the_groups_above_them() {
+        let names = field_names(&[
+            &[Some("payer"), Some("Signature1")],
+            &[Some("payee"), Some("Signature1")],
+        ]);
+        assert_eq!(names, vec!["payer.Signature1", "payee.Signature1"]);
+    }
+
+    /// A node with no `/T` is not a level of the name.
+    ///
+    /// PDF 32000-1 §12.7.3.2 says so, and it is not a detail: a widget
+    /// annotation merged into its own field is exactly such a node, and so is a
+    /// group written only to hold kids together. Joining unconditionally would
+    /// put an empty component in the middle of every name that has one ---
+    /// `top..Signature1` --- which is a string no other reader shows.
+    #[test]
+    fn a_node_with_no_name_of_its_own_is_not_a_level_of_the_name() {
+        assert_eq!(
+            field_names(&[&[Some("top"), None, Some("Signature1")]]),
+            vec!["top.Signature1"],
+            "the unnamed group in the middle contributes nothing"
+        );
+        assert_eq!(
+            field_names(&[&[Some("top"), Some("group"), None]]),
+            vec!["top.group"],
+            "and neither does an unnamed leaf, which is then named by its parents"
+        );
+        assert_eq!(
+            field_names(&[&[None, None]]),
+            vec![""],
+            "a chain naming nothing is reported as having no name, not as a dot"
+        );
     }
 
     /// The field tree is walked to eight levels and no further.

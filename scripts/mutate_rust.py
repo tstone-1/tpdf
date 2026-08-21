@@ -2876,14 +2876,43 @@ MUTATIONS += [
         "src/docinfo.rs",
         """            if depth < 8 {
                 for kid in kids.iter().rev() {
-                    queue.push((kid, depth + 1));
+                    queue.push((kid, depth + 1, name.clone()));
                 }
             } else {""",
         """            if false {
                 for kid in kids.iter().rev() {
-                    queue.push((kid, depth + 1));
+                    queue.push((kid, depth + 1, name.clone()));
                 }
             } else {""",
+        "a_signature_field_under_kids_is_found_rather_than_walked_past",
+    ),
+    Mutation(
+        # Report the leaf's own `/T` rather than the fully qualified name. Every
+        # fixture but one has unique leaf names, so this is right about all of
+        # them and wrong about what it means: `/T` is unique among siblings only.
+        "docinfo: name a field by its own /T alone",
+        "src/docinfo.rs",
+        "        let name = qualified_name(&prefix, &text_of(document, field, b\"T\"));",
+        "        let name = text_of(document, field, b\"T\");",
+        "two_fields_with_the_same_leaf_name_are_told_apart_by_the_groups_above_them",
+    ),
+    Mutation(
+        # Give an unnamed node a level of the name anyway, which puts an empty
+        # component in the middle -- `top..Signature1`, a string no other reader
+        # shows -- and gives a wholly unnamed chain the name ".".
+        "docinfo: make an unnamed field node a level of the name",
+        "src/docinfo.rs",
+        "        (_, true) => prefix.to_string(),",
+        "        (_, true) => format!(\"{prefix}.\"),",
+        "a_node_with_no_name_of_its_own_is_not_a_level_of_the_name",
+    ),
+    Mutation(
+        # Hand each kid an empty prefix instead of its parent's name, so the
+        # ancestry is walked and then thrown away one level at a time.
+        "docinfo: forget the ancestry when descending into kids",
+        "src/docinfo.rs",
+        "                    queue.push((kid, depth + 1, name.clone()));",
+        "                    queue.push((kid, depth + 1, String::new()));",
         "a_signature_field_under_kids_is_found_rather_than_walked_past",
     ),
     Mutation(
