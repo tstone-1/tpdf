@@ -47,6 +47,19 @@ import type { MarkRow } from "./pages";
 export interface MarkListOptions {
   /** Called when a row is activated, with the mark's id. */
   onPick: (id: number) => void;
+  /**
+   * Called when a row's remove control is used, with the mark's id.
+   *
+   * **This is the one place a mark is named by anything but the open note**,
+   * and `App.svelte`'s `removeMark` says why that rule exists: two ways to say
+   * which mark a command means is how they come to disagree. The exception is
+   * not a convenience, it is the only route for part of this list. A mark whose
+   * `page` is `null` cannot be opened --- there is no page to show it on --- so
+   * every existing removal path, which goes through the box the note opens in,
+   * cannot reach it. Listing a mark that can never be taken off is worse than
+   * not listing it.
+   */
+  onRemove: (id: number) => void;
 }
 
 /** Side of the colour swatch, in CSS pixels. */
@@ -293,7 +306,37 @@ export class MarkList {
       "white-space:nowrap;";
 
     text.append(note, kind);
-    element.append(swatch, page, text);
+
+    // Named for the kind rather than "Remove": a screen reader walking the list
+    // hears "Remove highlight", which says which row it is on. `nameOf` is the
+    // same source the second line uses, so the two cannot drift -- and lowered
+    // the way `markpopup.ts` lowers it for its own Remove button, so the two
+    // ways a mark comes off are one phrase rather than two spellings of one.
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.dataset.part = "remove";
+    // The name literal stays on the call's own line: `check_webview_sinks.py`
+    // reads these a line at a time and flags a call whose arguments it cannot
+    // parse, which is the right behaviour and which wrapping this defeated.
+    const label = `Remove ${nameOf(mark.kind).toLowerCase()}`;
+    remove.setAttribute("aria-label", label);
+    remove.textContent = "\u00d7";
+    remove.style.cssText =
+      "flex:none;border:0;background:none;cursor:pointer;padding:0 0.2rem;" +
+      "font-size:1.1em;line-height:1;opacity:0.55;color:inherit;";
+    // Two listeners, and the split is deliberate. `click` carries Enter and
+    // Space on a button for free, which is what makes this reachable from the
+    // keyboard without a third route. `pointerdown` only stops the event: the
+    // row's own `pointerdown` below would otherwise fire first and open the
+    // note of the mark being taken off, which is a flash and, worse, an edit
+    // aimed through a box that is closing.
+    remove.addEventListener("pointerdown", (event) => event.stopPropagation());
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.opts.onRemove(mark.id);
+    });
+
+    element.append(swatch, page, text, remove);
 
     if (row.page === null) {
       // Listed rather than dropped, and marked rather than left looking
@@ -350,6 +393,13 @@ export class MarkList {
     // The event's target is authoritative and the mirror is the fallback: a
     // window without system focus moves `activeElement` without delivering
     // `focusin`, and every key then operates on a row the reader is not on.
+    // A key on the remove control is the control's. Without this, Enter there
+    // reads as Enter on the row -- `idOf` finds no id on the button, so the
+    // fallback hands it the focused row and the note opens instead of the mark
+    // coming off.
+    const part = (event.target as HTMLElement | null)?.dataset?.part;
+    if (part === "remove") return;
+
     const from = idOf(event.target) ?? this.focused;
     if (from !== null && from !== this.focused && this.elements.has(from)) {
       this.focus(from);
@@ -374,6 +424,13 @@ export class MarkList {
         // because the two routes in are two listeners. A row with nowhere to go
         // that answered the keyboard would scroll the reader nowhere.
         if (from !== null && this.placed(from)) this.opts.onPick(from);
+        break;
+      case "Delete":
+      case "Backspace":
+        // Deliberately NOT guarded on `placed`. Enter refuses an unplaced row
+        // because there is nowhere to scroll to; this is the one thing such a
+        // row can still do, and the reason `onRemove` exists at all.
+        if (from !== null) this.opts.onRemove(from);
         break;
       default:
         return;

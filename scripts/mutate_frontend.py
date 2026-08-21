@@ -3162,6 +3162,46 @@ MUTATIONS += [
         "refuses to navigate to a mark that is on no page",
     ),
     Mutation(
+        # Guard Delete the way Enter is guarded. Enter refuses an unplaced row
+        # because there is nowhere to scroll to, and copying that reasoning onto
+        # removal is the plausible mistake: it would strand every mark the model
+        # could not place, which is the whole reason this control exists.
+        "marklist: refuse to take off a mark that is on no page",
+        "src/lib/marklist.ts",
+        "        if (from !== null) this.opts.onRemove(from);",
+        "        if (from !== null && this.placed(from)) this.opts.onRemove(from);",
+        "removes with Delete and with Backspace, including a mark on no page",
+    ),
+    Mutation(
+        # Let a key on the control reach the list's own handler. `idOf` finds no
+        # id on a button, so the fallback aims it at the focused row and Enter
+        # opens the note instead of taking the mark off.
+        "marklist: let a key on the remove control fall through to the row",
+        "src/lib/marklist.ts",
+        '    if (part === "remove") return;',
+        "    if (false) return;",
+        "leaves a key pressed on the control to the control",
+    ),
+    Mutation(
+        # Give the control to placed rows only. The row still lists the mark and
+        # still says it is on no page; there is simply no way left to remove it.
+        "marklist: give the remove control to placed rows only",
+        "src/lib/marklist.ts",
+        "    element.append(swatch, page, text, remove);",
+        "    element.append(swatch, page, text);\n    if (row.page !== null) element.append(remove);",
+        "offers the control on a mark that is on no page, which nothing else can reach",
+    ),
+    Mutation(
+        # Name the control with the kind as the second line spells it. The
+        # popup's own button lowers it, so this is the drift that makes one
+        # affordance read as two.
+        "marklist: name the remove control in the second line's case",
+        "src/lib/marklist.ts",
+        "    const label = `Remove ${nameOf(mark.kind).toLowerCase()}`;",
+        "    const label = `Remove ${nameOf(mark.kind)}`;",
+        "names the control for the kind of mark it is on",
+    ),
+    Mutation(
         # Keep a selection whose mark has gone. Ids are the model's and it hands
         # them out again, so the row that lights up next is whichever mark
         # inherits the number.

@@ -51,10 +51,12 @@ describe("markRows", () => {
 describe("MarkList", () => {
   let dom: FakeDom;
   let picked: number[];
+  let removed: number[];
 
   beforeEach(() => {
     dom = installFakeDom();
     picked = [];
+    removed = [];
   });
 
   afterEach(() => {
@@ -64,6 +66,7 @@ describe("MarkList", () => {
   function panel(): MarkList {
     return new MarkList(dom.root as unknown as HTMLElement, {
       onPick: (id) => picked.push(id),
+      onRemove: (id) => removed.push(id),
     });
   }
 
@@ -161,6 +164,83 @@ describe("MarkList", () => {
       list.elementFor(3) as unknown as { dispatch: (t: string, e: object) => void }
     )?.dispatch("pointerdown", {});
     expect(picked).toEqual([3]);
+  });
+
+  /** A row's remove control, found by its part rather than by position. */
+  function removeControl(
+    list: MarkList,
+    id: number,
+  ): {
+    dispatch: (t: string, e: object) => void;
+    getAttribute: (n: string) => unknown;
+  } {
+    const row = list.elementFor(id) as unknown as {
+      children: { dataset?: { part?: string } }[];
+    };
+    const found = row.children.find((child) => child.dataset?.part === "remove");
+    expect(found).toBeDefined();
+    return found as never;
+  }
+
+  it("takes a mark off from its row, without also opening it", () => {
+    const list = panel();
+    show(list, [mark({ id: 3 }), mark({ id: 4 })]);
+    removeControl(list, 4).dispatch("click", {});
+    expect(removed).toEqual([4]);
+    // Note what this does NOT prove: the fake DOM does not bubble, so the
+    // `stopPropagation` that stops a real browser firing the row's own
+    // `pointerdown` first is not under test here. That is `viewer_check.py`'s,
+    // against a DOM that bubbles.
+    expect(picked).toEqual([]);
+  });
+
+  it("offers the control on a mark that is on no page, which nothing else can reach", () => {
+    // The whole reason `onRemove` exists. `page: null` is a mark the model could
+    // not place; Enter and the pointer both refuse such a row, because there is
+    // nowhere to scroll to -- so if this control refused it too, a reader could
+    // see the mark listed for ever and never take it off.
+    const list = panel();
+    show(list, [mark({ id: 7, page: 99 })]);
+    expect(list.rowText(7).page).toBe("—");
+    removeControl(list, 7).dispatch("click", {});
+    expect(removed).toEqual([7]);
+  });
+
+  it("names the control for the kind of mark it is on", () => {
+    const list = panel();
+    show(list, [mark({ id: 1, kind: "strikeout" })]);
+    expect(removeControl(list, 1).getAttribute("aria-label")).toBe(
+      "Remove strikeout",
+    );
+  });
+
+  it("removes with Delete and with Backspace, including a mark on no page", () => {
+    const list = panel();
+    show(list, [mark({ id: 0, quads: [10, 10, 20, 20] }), mark({ id: 1, page: 99 })]);
+    dom.root.children[1]?.dispatch("keydown", {
+      key: "Delete",
+      target: list.elementFor(0),
+    });
+    dom.root.children[1]?.dispatch("keydown", {
+      key: "Backspace",
+      target: list.elementFor(1),
+    });
+    expect(removed).toEqual([0, 1]);
+    expect(picked).toEqual([]);
+  });
+
+  it("leaves a key pressed on the control to the control", () => {
+    // Enter on the button reaches the list's own handler too, and `idOf` finds
+    // no id on a button -- so without the guard the fallback hands it the
+    // focused row and the note opens instead of the mark coming off.
+    const list = panel();
+    show(list, [mark({ id: 5, quads: [10, 10, 20, 20] })]);
+    dom.root.children[1]?.dispatch("keydown", {
+      key: "Enter",
+      target: removeControl(list, 5),
+    });
+    expect(picked).toEqual([]);
+    expect(removed).toEqual([]);
   });
 
   it("marks one row as selected at a time", () => {

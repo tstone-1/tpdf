@@ -314,6 +314,8 @@ async function run(path: string): Promise<void> {
   const drags: [number, number][] = [];
   /** Every right-click the page strip reported, as the slot it landed on. */
   const menus: number[] = [];
+  /** Every mark the panel's remove control asked to take off. */
+  const marksRemoved: number[] = [];
   const panel = document.createElement("div");
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
@@ -321,7 +323,13 @@ async function run(path: string): Promise<void> {
     onNavigate: (target, top) => viewer.goToDestination(target, top),
     results: { onPick: (index) => viewer.showMatch(index) },
     comments: { onPick: (id) => viewer.showComment(id) },
-    marks: { onPick: (id) => viewer.showMark(id) },
+    marks: {
+      onPick: (id) => viewer.showMark(id),
+      // Recorded rather than driven: this harness opens one document and every
+      // later phase reads the marks it made, so a phase that actually took one
+      // off would change what the phases after it are looking at.
+      onRemove: (id) => marksRemoved.push(id),
+    },
     pages: {
       doc: doc.id,
       pageCount: doc.page_count,
@@ -547,7 +555,7 @@ async function run(path: string): Promise<void> {
   await markColorChecks(viewer, markEdits);
   // Under the same constraint again --- it presses a mark on the page through
   // `screenPoint`, which does not apply the view's own rotation.
-  await markPanelChecks(root, viewer, sidebar, doc);
+  await markPanelChecks(root, viewer, sidebar, doc, marksRemoved);
   await linkChecks(root, viewer, doc, problems);
   await thumbnailChecks(root, viewer, sidebar, doc, page, drags, menus);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
@@ -4460,6 +4468,7 @@ const MARK_PANEL_CHECKS = [
   "activating a row opens that mark's note and goes to it",
   "pressing a mark on the page selects its row",
   "closing the note clears the panel's selection",
+  "a row's remove control asks for that mark and does not open it",
 ];
 
 /**
@@ -4484,6 +4493,7 @@ async function markPanelChecks(
   viewer: Viewer,
   sidebar: Sidebar,
   doc: DocumentInfo,
+  removed: number[],
 ): Promise<void> {
   // The *last* page, and low down it. Two things this has to survive, both of
   // which the corpus sweep found by failing:
@@ -4592,6 +4602,35 @@ async function markPanelChecks(
     sidebar.marks.selectedId === -1,
     `selected=${sidebar.marks.selectedId} with no note open`,
   );
+
+  // The remove control, and this is the half no unit test can reach: the fake
+  // DOM does not bubble, so the `stopPropagation` that keeps the row's own
+  // `pointerdown` from firing first -- opening the note of the mark being taken
+  // off -- has no failing case there. Here the events bubble, so "the note did
+  // not open" is a real assertion rather than a property of the test double.
+  const removeRow = sidebar.marks.elementFor(here.id);
+  const control = removeRow
+    ? ([...removeRow.children] as HTMLElement[]).find(
+        (child) => child.dataset.part === "remove",
+      )
+    : undefined;
+  if (!control) {
+    skip(MARK_PANEL_CHECKS[5] ?? "", "the row has no remove control to press");
+  } else {
+    const asked = removed.length;
+    const openBefore = viewer.markOpen;
+    control.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    control.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await frame();
+    check(
+      MARK_PANEL_CHECKS[5] ?? "",
+      removed.length === asked + 1 &&
+        removed.at(-1) === here.id &&
+        viewer.markOpen === openBefore,
+      `${removed.length - asked} ask(s), last=${removed.at(-1)} for #${here.id}, ` +
+        `markOpen=${viewer.markOpen} (was ${openBefore})`,
+    );
+  }
 
   viewer.setMarks([]);
   sidebar.setMarks([]);

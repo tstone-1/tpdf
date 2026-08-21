@@ -1584,6 +1584,13 @@
           // the route that deliberately does not --- there the reader is
           // stepping rather than writing, and taking focus would strand them.
           onPick: (id) => viewer?.showMark(id),
+          // The mark named by id, which nothing else in this file does --- see
+          // `removeMark` above for the rule this breaks and `marklist.ts` for
+          // why it has to. A mark the model could not place is listed here and
+          // nowhere else, so the open note cannot name it and this is its only
+          // way off. `applyEdit` is the same path every other edit takes, so it
+          // journals, undoes and refreshes the panel exactly as they do.
+          onRemove: (id) => void applyEdit((e) => e.unmark(id)),
         },
         pages: {
           doc: doc.id,

@@ -19,6 +19,16 @@ have the binary.)
 
 ## [26.8.7] - Unreleased
 
+### Take a mark off from the marks panel
+
+- Each row in the marks panel now carries a remove control, and Delete or
+  Backspace on a row does the same thing. Until now the only way to take a mark
+  off was to open its note on the page and use the button there.
+- That matters most for a mark tpdf could not place on any page. The panel lists
+  those --- it says "N marks are not on any page" --- and every removal path went
+  through the note box, which such a mark has no page to open on. They could be
+  listed for ever and never removed.
+
 ### Fixed: the application menu listed "About tpdf" twice
 
 - The macOS application menu carried two items with that name, one above the
