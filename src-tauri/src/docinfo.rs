@@ -906,7 +906,13 @@ fn read_certificate_bounded(
 }
 
 /// The DER half of [`read_certificate`], split out so a test can hand it bytes.
-fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
+///
+/// Public for `signature-probe`, which parses the blob **PDFium** handed it and
+/// compares the result against what this module produced from `lopdf`'s. Two
+/// readers reaching the same certificate is a statement neither module's own
+/// tests can make, and the failure it guards against --- picking a different
+/// signature's blob, and so showing the wrong signer --- is the worst one here.
+pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
     use cms::cert::CertificateChoices;
     use cms::content_info::ContentInfo;
     use cms::signed_data::{SignedData, SignerIdentifier};

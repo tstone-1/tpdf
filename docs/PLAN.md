@@ -7709,14 +7709,42 @@ handed it an oversized piece of garbage, and refusing a blob and parsing one and
 produce the same `None` and the same counted limit. The test could not fail. It offers the
 same **real** blob twice now, once under a bound it clears and once under one it does not.
 
+**The differential is built --- `signature-probe`, 2026-08-21.** `docinfo.rs` walks
+`/AcroForm /Fields` with `lopdf`; PDFium implements that same walk in C++ and exports the
+result through `FPDF_GetSignatureCount` and friends. Neither knows about the other, which is
+what makes this a second **reader** rather than a second writer --- the gap the five pyhanko
+fixtures do not close, because `AGENTS.md`'s rule is that a writer and its own reader agree
+about a document that is wrong.
+
+Seven comparisons per signature: how many signatures, `/SubFilter`, `/Reason`, `/M` compared
+digit for digit (ours is reformatted for a reader, PDFium's is raw), the DocMDP level, the
+signed byte count, and the certificate. **The last is the one that matters**, and it is why
+`parse_certificate` is public: PDFium's own `/Contents` blob is parsed and the result compared
+with the one `docinfo` produced from `lopdf`'s blob, by subject and serial. Reaching a
+different signature's blob means showing a reader the wrong signer, and every other assertion
+here would still pass on a document whose signatures share a subfilter and a date.
+
+**35 comparisons across the five signed fixtures, all agreeing --- which on its own proves
+nothing**, so five mutations were run and each reddened exactly the check it belongs to:
+summing the byte-range offsets (11,357 against 3,869), never reporting a DocMDP level (0
+against 2), reading `/Filter` as the subfilter (`Adobe.PPKLite` against
+`adbe.pkcs7.detached`), misspelling the `/Contents` key (docinfo read none, PDFium's blob read
+one), and not recognising `/FT /Sig` at all (0 of 0 fields against 1). The file was restored
+byte-for-byte after each and re-run green.
+
+**`--mode clean` and `--mode agree` refuse each other's input**, which is the anti-vacuity
+guard: two readers that both find nothing agree perfectly, so `agree` exits 1 on an unsigned
+document rather than reporting a clean sweep of zero comparisons, and `clean` exits 1 on a
+signed one. Measured in all four combinations.
+
 **Not done.** The certificate's *extensions* are not read --- key usage, extended key usage
 and the basic-constraints CA flag are all there in the DER and none is shown; whether they are
 worth showing without a trust store to interpret them against is a real question rather than
 an oversight. A timestamp token, which is a whole second CMS structure inside an unsigned
 attribute, is not read either, so a document signed with one shows only the signer's claimed
-date. And PDFium exports all eight `FPDF*Signature*` symbols, so a **differential** between
-the two readers is available and is not built --- the same instrument `links-probe --mode
-agree` is, and the one that found a destination bug on its first run.
+date. And every signed fixture carries exactly **one** signature, so the differential's
+per-signature *pairing* --- ours zipped against theirs in order --- has never been exercised
+on a document where the order could differ.
 
 ### Phase 3 --- Redaction
 
