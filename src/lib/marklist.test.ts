@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { MarkList } from "./marklist";
+import { MarkList, rowLine } from "./marklist";
 import { markRows, PageMap, unedited, type MarkKind, type MarkView } from "./pages";
 import { installFakeDom, type FakeDom } from "./testdom";
 
@@ -52,11 +52,14 @@ describe("MarkList", () => {
   let dom: FakeDom;
   let picked: number[];
   let removed: number[];
+  /** What the panel is told each mark covers, by id. Empty unless a test says. */
+  const covers = new Map<number, string>();
 
   beforeEach(() => {
     dom = installFakeDom();
     picked = [];
     removed = [];
+    covers.clear();
   });
 
   afterEach(() => {
@@ -67,6 +70,7 @@ describe("MarkList", () => {
     return new MarkList(dom.root as unknown as HTMLElement, {
       onPick: (id) => picked.push(id),
       onRemove: (id) => removed.push(id),
+      coveredFor: (id) => covers.get(id) ?? "",
     });
   }
 
@@ -92,6 +96,7 @@ describe("MarkList", () => {
       note: "wrong figure",
       kind: "Strikeout",
       page: "3",
+      own: true,
     });
   });
 
@@ -297,5 +302,82 @@ describe("MarkList", () => {
       target: list.elementFor(0),
     });
     expect(picked).toEqual([]);
+  });
+
+  it("lists a mark nobody typed on by the words it covers", () => {
+    // The whole point of the feature: nine highlights all reading "No note" tell
+    // a reader nothing about which is which.
+    const list = panel();
+    covers.set(4, "the sandbox is the boundary");
+    show(list, [mark({ id: 4, kind: "highlight" })]);
+    const row = list.rowText(4);
+    expect(row.note).toBe("the sandbox is the boundary");
+    // Not the reader's words, and the row has to say so: the styling below is
+    // the same dimmed italic "No note" is drawn in, which is what separates a
+    // sentence they wrote from a sentence the document did.
+    expect(row.own).toBe(false);
+    const note = list.elementFor(4)?.children[2]?.children[0] as unknown as {
+      style: Record<string, string>;
+    };
+    expect(note.style.cssText).toContain("font-style:italic");
+  });
+
+  it("prefers what the reader typed over what the mark covers", () => {
+    // Both present, and the note wins. A highlight noted "check this against §4"
+    // listed by the sentence it sits on would be the reader's own words thrown
+    // away in favour of the document's.
+    const list = panel();
+    covers.set(4, "the sandbox is the boundary");
+    show(list, [mark({ id: 4, kind: "highlight", note: "check this against §4" })]);
+    const row = list.rowText(4);
+    expect(row.note).toBe("check this against §4");
+    expect(row.own).toBe(true);
+    const note = list.elementFor(4)?.children[2]?.children[0] as unknown as {
+      style: Record<string, string>;
+    };
+    expect(note.style.cssText).not.toContain("font-style:italic");
+  });
+
+  it("asks for each row's words by that row's id", () => {
+    // Two rows, two answers. A panel asking by anything else --- the index, the
+    // page --- gets the right string for one of these and the wrong one for the
+    // other, and with a single row it would get both right.
+    const list = panel();
+    covers.set(4, "the first");
+    covers.set(9, "the second");
+    show(list, [mark({ id: 4, page: 1 }), mark({ id: 9, page: 2 })]);
+    expect(list.rowText(4).note).toBe("the first");
+    expect(list.rowText(9).note).toBe("the second");
+  });
+
+  it("still says nothing was typed when there are no words either", () => {
+    // Every kind that covers no text --- a note, a box, a drawing --- and every
+    // mark read back out of a file. The row says what it always said.
+    const list = panel();
+    show(list, [mark({ id: 4, kind: "ink" })]);
+    expect(list.rowText(4)).toMatchObject({ note: "No note", own: false });
+  });
+});
+
+describe("rowLine", () => {
+  it("returns what the reader typed, flattened, as their own", () => {
+    expect(rowLine("two\nlines", "covered")).toEqual({
+      text: "two lines",
+      own: true,
+    });
+  });
+
+  it("falls back to the covered words, flattened, as not their own", () => {
+    // Flattened for the same reason a note is: the words a mark covers run over
+    // the lines of the page they came off, and a row is one line high.
+    expect(rowLine("   ", "over\ntwo   lines")).toEqual({
+      text: "over two lines",
+      own: false,
+    });
+  });
+
+  it("says nothing was typed when there is neither", () => {
+    expect(rowLine("", "")).toEqual({ text: "No note", own: false });
+    expect(rowLine(" \n ", "\t")).toEqual({ text: "No note", own: false });
   });
 });

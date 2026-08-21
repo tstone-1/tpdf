@@ -961,6 +961,31 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # Draw a sentence lifted off the page in the same face as one the reader
+        # typed. Every word on the row is right and the flag beside it is right;
+        # what goes is the only thing on screen that says whose sentence it is.
+        # The fake DOM the unit tests run against resolves no styles, so this is
+        # the half of the rule that needs a real window.
+        "marklist: draw the covered words in the reader's own face",
+        "src/lib/marklist.ts",
+        '      (line.own ? "" : "opacity:0.6;font-style:italic;");',
+        '      "";',
+        "a mark nothing was typed on is listed by the words it covers",
+        runner="viewer",
+    ),
+    Mutation(
+        # Hand the marks panel no words at all. The rectangles are unchanged, so
+        # every check about where a mark goes still passes and the panel still
+        # lists it --- saying "No note" for a highlight over a paragraph, which
+        # is what this whole increment was to stop.
+        "viewer: take the selection's rectangles without its words",
+        "src/lib/viewer.ts",
+        '      const said = this.selection.textFrom(page, text) ?? "";',
+        '      const said = "";',
+        "and the words they cover are the words that are selected",
+        runner="viewer",
+    ),
+    Mutation(
         # List the first mark only. The panel is not empty, which is the point:
         # a reader with one mark sees a correct list, and the check that says
         # otherwise has to count rows against the marks it was handed.

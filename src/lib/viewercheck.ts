@@ -316,6 +316,15 @@ async function run(path: string): Promise<void> {
   const menus: number[] = [];
   /** Every mark the panel's remove control asked to take off. */
   const marksRemoved: number[] = [];
+  /**
+   * What the panel is told each mark covers, by id.
+   *
+   * The application fills this from the selection that made the mark; here the
+   * marks are synthetic, so a phase writes the words it wants to see and reads
+   * the row back. What that leaves untested is `markSelection`'s recording,
+   * which this harness cannot reach at all --- the command probe stubs it.
+   */
+  const marksCovered = new Map<number, string>();
   const panel = document.createElement("div");
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
@@ -329,6 +338,7 @@ async function run(path: string): Promise<void> {
       // later phase reads the marks it made, so a phase that actually took one
       // off would change what the phases after it are looking at.
       onRemove: (id) => marksRemoved.push(id),
+      coveredFor: (id) => marksCovered.get(id) ?? "",
     },
     pages: {
       doc: doc.id,
@@ -555,7 +565,7 @@ async function run(path: string): Promise<void> {
   await markColorChecks(viewer, markEdits);
   // Under the same constraint again --- it presses a mark on the page through
   // `screenPoint`, which does not apply the view's own rotation.
-  await markPanelChecks(root, viewer, sidebar, doc, marksRemoved);
+  await markPanelChecks(root, viewer, sidebar, doc, marksRemoved, marksCovered);
   await linkChecks(root, viewer, doc, problems);
   await thumbnailChecks(root, viewer, sidebar, doc, page, drags, menus);
   await rotationChecks(root, viewer, sidebar, doc, page, seen);
@@ -1231,6 +1241,10 @@ async function markQuadChecks(
       "and they do not move when the view is rotated",
       "nothing is selected, so there are no rectangles to compare",
     );
+    skip(
+      "and the words they cover are the words that are selected",
+      "nothing is selected, so there are no words to compare",
+    );
     return;
   }
 
@@ -1241,6 +1255,29 @@ async function markQuadChecks(
     "a mark's rectangles come from the page's own text",
     upright.length > 0 && upright.every((page) => page.quads.length % 4 === 0),
     `${upright.length} page(s), ${upright.reduce((n, p) => n + p.quads.length / 4, 0)} quad(s)`,
+  );
+
+  // The words that come out beside the rectangles, which is what the marks
+  // panel lists a highlight by when nobody typed a note on it.
+  //
+  // Two routes to one string, which is what makes this a comparison rather than
+  // a restatement: this one is per page and off `peekUnturned`, and
+  // `selectedText` is the whole selection off `peek` --- the view's text, which
+  // on a rotated page is a different `PageText` object. They agree because a
+  // rotation renumbers no character. Select-all takes one page, so the join is
+  // exact rather than approximately right.
+  //
+  // What it cannot see is a text taken from the *view's* space, since the two
+  // agree with the view upright; the rotation check below is what covers that,
+  // and it covers it now that the words travel in the record it compares.
+  const said = upright.map((page) => page.text).join("\n");
+  const whole = viewer.selectedText;
+  check(
+    "and the words they cover are the words that are selected",
+    said.length > 0 && said === whole,
+    `${said.length} char(s) over ${upright.length} page(s) against ` +
+      `${whole.length} selected: ${JSON.stringify(said.slice(0, 40))} against ` +
+      `${JSON.stringify(whole.slice(0, 40))}`,
   );
 
   const before = viewer.rotation;
@@ -1255,7 +1292,8 @@ async function markQuadChecks(
     viewer.rotation === before &&
       JSON.stringify(turned) === JSON.stringify(upright),
     turned.length === upright.length
-      ? `${turned.length} page(s), first quad ${JSON.stringify(turned[0]?.quads.slice(0, 4))} against ${JSON.stringify(upright[0]?.quads.slice(0, 4))}`
+      ? `${turned.length} page(s), first quad ${JSON.stringify(turned[0]?.quads.slice(0, 4))} against ${JSON.stringify(upright[0]?.quads.slice(0, 4))}, ` +
+        `${turned[0]?.text.length} char(s) against ${upright[0]?.text.length}`
       : `${turned.length} page(s) rotated against ${upright.length} upright`,
   );
 }
@@ -4469,6 +4507,7 @@ const MARK_PANEL_CHECKS = [
   "pressing a mark on the page selects its row",
   "closing the note clears the panel's selection",
   "a row's remove control asks for that mark and does not open it",
+  "a mark nothing was typed on is listed by the words it covers",
 ];
 
 /**
@@ -4494,6 +4533,7 @@ async function markPanelChecks(
   sidebar: Sidebar,
   doc: DocumentInfo,
   removed: number[],
+  covers: Map<number, string>,
 ): Promise<void> {
   // The *last* page, and low down it. Two things this has to survive, both of
   // which the corpus sweep found by failing:
@@ -4631,6 +4671,49 @@ async function markPanelChecks(
         `markOpen=${viewer.markOpen} (was ${openBefore})`,
     );
   }
+
+  // The words a highlight sits on, standing in for the note nobody typed.
+  //
+  // **Two rows in one paint, and the noted one is the control.** The unit tests
+  // already assert the substitution rule and the flag; what they cannot assert
+  // is that the two rows come out *looking* different, because the fake DOM
+  // they run against resolves no styles at all. A reader's own sentence and a
+  // sentence lifted off the page are both text in the same column, and the only
+  // thing separating them is that one is dimmed and italic -- so a panel that
+  // drew them alike would pass every test there is and still tell a reader they
+  // wrote something they did not.
+  //
+  // The bare mark is a copy of the noted one with a fresh id, so both are on the
+  // same page at the same band. They overlap, which would matter if anything
+  // here pressed them; nothing does.
+  const bare = { ...here, id: here.id + 2, note: "" };
+  const words = "the words this highlight sits on";
+  covers.set(bare.id, words);
+  const both = [here, bare];
+  viewer.setMarks(both);
+  sidebar.setMarks(markRows(both, unedited(doc.page_count)));
+  await frame();
+  const bareText = sidebar.marks.rowText(bare.id);
+  const notedText = sidebar.marks.rowText(here.id);
+  const style = (id: number): string => {
+    const row = sidebar.marks.elementFor(id);
+    const line = row?.querySelector('[data-part="note"]');
+    return line ? getComputedStyle(line).fontStyle : "no row";
+  };
+  const bareStyle = style(bare.id);
+  const notedStyle = style(here.id);
+  check(
+    MARK_PANEL_CHECKS[6] ?? "",
+    bareText.note === words &&
+      !bareText.own &&
+      notedText.own &&
+      bareStyle === "italic" &&
+      notedStyle !== bareStyle,
+    `covered row ${JSON.stringify(bareText.note)} own=${bareText.own} ` +
+      `${bareStyle}, noted row ${JSON.stringify(notedText.note)} ` +
+      `own=${notedText.own} ${notedStyle}`,
+  );
+  covers.delete(bare.id);
 
   viewer.setMarks([]);
   sidebar.setMarks([]);

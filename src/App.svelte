@@ -108,6 +108,34 @@
    */
   let markColor = $state<Swatch>(DEFAULT_SWATCH);
   /**
+   * The words each mark covers, by the model's id for it.
+   *
+   * **Not `$state`, and not in the model.** The panel is imperative DOM that is
+   * repainted by hand, so nothing here has to be reactive; and the model holds
+   * what the document will become, which this is not --- a saved PDF has no
+   * entry for the text a highlight sits on, so this could never be read back
+   * and would be a field `save.rs` had to remember to ignore.
+   *
+   * Filled by {@link markSelection}, which is the only way a mark that covers
+   * words is made. Kept until the document changes rather than pruned against
+   * the live marks: an undone mark comes back under the same id --- the id is
+   * in the journalled command --- so a map pruned on undo would have redo show
+   * the reader "No note" for a highlight whose words it had just been
+   * displaying. The cost of that choice is an entry per mark removed and not
+   * redone, each capped at {@link COVERED_CHARS}.
+   */
+  const covered = new Map<number, string>();
+  /**
+   * Longest covered text kept per mark, in characters.
+   *
+   * The row is one line and the CSS ellipsis cuts it far shorter than this, so
+   * nothing visible is lost. What it bounds is a reader who selects a hundred
+   * dense pages and highlights them: the whole of every page would otherwise be
+   * held here, beside the copy `TextCache` is already holding under its own
+   * bound.
+   */
+  const COVERED_CHARS = 200;
+  /**
    * The degraded-state words currently on screen, or `null` for none.
    *
    * State rather than a `$derived`, because the decision reads the clock: a
@@ -273,8 +301,27 @@
    */
   async function markSelection(kind: MarkKind): Promise<void> {
     const marks = viewer?.selectionQuadsByPage() ?? [];
-    for (const { page, quads } of marks) {
+    for (const { page, quads, text } of marks) {
+      // Which ids existed before, so the one that appears can be identified by
+      // difference --- `addComment` below gives the argument for asking it this
+      // way rather than taking the last mark or the highest id.
+      const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
       await applyEdit((e) => e.mark(kind, page, quads, [], "", markColor.rgb));
+      const made = (edits?.state.marks ?? []).find(
+        (mark) => !before.has(mark.id),
+      );
+      // Absent when the model refused. Nothing to record and nothing to say ---
+      // `applyEdit` has already shown the refusal.
+      if (made) covered.set(made.id, text.slice(0, COVERED_CHARS));
+    }
+    // `applyEdit` painted the panel already --- but it painted it *before* this
+    // loop knew which id to file the words under, so every row it drew says
+    // nothing was typed on the mark. One repaint here rather than one inside
+    // the loop after each `covered.set`: a selection over four pages makes four
+    // marks, and the three intermediate paints would each be replaced within
+    // the millisecond by the next `applyEdit`.
+    if (marks.length > 0 && edits) {
+      sidebar?.setMarks(markRows(edits.state.marks, edits.map));
     }
   }
 
@@ -1591,6 +1638,9 @@
           // way off. `applyEdit` is the same path every other edit takes, so it
           // journals, undoes and refreshes the panel exactly as they do.
           onRemove: (id) => void applyEdit((e) => e.unmark(id)),
+          // What the selection said when the mark was made, or "" --- see
+          // `covered` above for why this is held here and not in the model.
+          coveredFor: (id) => covered.get(id) ?? "",
         },
         pages: {
           doc: doc.id,
@@ -1639,6 +1689,9 @@
       const opening = new Edits(doc.id, doc.page_count);
       edits = opening;
       dirty = false;
+      // Mark ids start again with the model, so an entry kept from the last
+      // document would put its words on this one's first highlight.
+      covered.clear();
       void opening.refresh().then(
         (state) => {
           // The model this reply belongs to, not whichever one is open when it

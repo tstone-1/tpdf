@@ -19,6 +19,21 @@ have the binary.)
 
 ## [26.8.7] - Unreleased
 
+### The marks panel lists a highlight by the words it covers
+
+- A highlight, underline, squiggly underline or strikeout that nobody typed a
+  note on used to appear in the marks panel as "No note". It is now listed by
+  the words it sits on, so nine highlights read as nine different phrases
+  instead of nine identical rows.
+- What the reader typed still wins wherever they typed anything. The covered
+  words are drawn dimmed and italic --- the way "No note" was already drawn ---
+  so a sentence the reader wrote is never confused with a sentence the document
+  did.
+- The words are taken from the selection at the moment the mark is made, which
+  is the only moment they are known: a PDF has no entry for the text a highlight
+  sits on, so a mark that came back from a saved file has none and says "No
+  note" as before.
+
 ### Take a mark off from the marks panel
 
 - Each row in the marks panel now carries a remove control, and Delete or

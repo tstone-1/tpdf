@@ -6092,10 +6092,31 @@ choose between them. This increment writes the full rewrite every time --- corre
 on every document, including the encrypted ones it refuses, and 239 ms rather than
 29 ms on the largest fixture here. There is no save-mode classification, and
 nothing preserves a signature's trust, which §5 says plainly cannot be preserved
-at all. Also
-unchanged: nothing warns the reader that the file changed on disk *before* they
-try to save --- the page-count check catches the case it can, at the moment of
-saving, and §5's identity-plus-mtime watch is not here.
+at all.
+
+⚠ **The paragraph ended here with a second *Not done* that stopped being true on
+2026-08-19 and was still being read on 2026-08-21.** It said: *"nothing warns the
+reader that the file changed on disk before they try to save --- the page-count
+check catches the case it can, at the moment of saving, and §5's
+identity-plus-mtime watch is not here."* The last clause is false. §5's
+*External modification* section records that watch as **built 2026-08-19**:
+`fingerprint.rs` holds the file's length, mtime and a streamed SHA-256 from open,
+it rides on `Plan`, and three separate checks refuse a save or a copy planned
+against a file that has moved --- with a Reload the refusal offers and
+`recovery.ts` makes reachable. It was left where it was because the work landed
+in another section, and nothing links a *Not done* to the increment that closes
+it.
+
+The cost was not hypothetical: on 2026-08-21 it was read as the ranked next piece
+of work and recommended as such, on the grounds that a reader could still
+overwrite somebody else's change. They cannot --- the save is refused. **A
+document contradicting itself is worse than one saying nothing**, and this is the
+shape that does it: a claim of absence, written truthfully, that no later commit
+has any reason to revisit.
+
+What is genuinely still absent is narrower and is not a data-loss risk: nothing
+**watches** the file while it is open, so the reader learns at the moment they
+press Save rather than while they are working. Nothing is overwritten either way.
 
 #### A rectangle a reader draws --- done 2026-08-19
 
@@ -7397,11 +7418,80 @@ fire the row underneath it --- the fake DOM does not bubble, so `stopPropagation
 absence are indistinguishable there. The window check that catches it is *"a row's remove
 control asks for that mark and does not open it"*, and it takes the harness to 311 names.
 
-**Not done:** the text a text-markup mark *covers*, which is the row content a reader would
-actually recognise and needs extraction per mark rather than the note; grouping or filtering
-by kind, page or colour; and a count, deliberately --- a status line saying "9 marks" is
-derivable from the rows, so a check asserting the two agree would be the panel agreeing with
-itself.
+**Listing a mark by the words it covers, built 2026-08-21.** A highlight, underline,
+squiggly or strikeout with no note used to be a row reading *"No note"*, which is what nine
+of them read together; it is now the phrase the mark sits on. The reader's own note still
+wins wherever there is one, and the covered words are drawn in the dimmed italic *"No note"*
+already used --- the one thing on the row separating a sentence they wrote from a sentence
+the document did.
+
+**This entry asked for extraction per mark and that would have been the wrong build.** It
+assumed the words have to be recovered from the page, which is true of a comment
+`annots.rs` reads out of a file and false here: `Doc::open` takes a page count and nothing
+else, so the model's marks are only ever the ones made in this session, and a saved file
+reopened puts its annotations in the *comments* panel rather than this one. So there is no
+mark in this list whose creation tpdf did not watch --- and at that moment `markSelection`
+is holding the selection that produced the quads. The words come out beside the rectangles,
+from the same range, in one line.
+
+What extraction would have cost is worth naming, because it is what the "obvious" build
+buys: a second answer to *which characters does this rectangle cover*, drifting from the one
+that made the rectangle; a page-text request per marked page, queued in front of the tiles a
+reader is waiting on, for pages `TextCache` may have evicted; and a panel whose rows fill in
+at different times. None of that exists.
+
+`textFrom` rather than a raw range slice, so a highlight across two columns reads in the
+order a copy of the same selection produces. The words are held in `App.svelte` by mark id,
+not in the model: nothing in a PDF records the text a highlight sits on, so a field for it
+would be one `save.rs` had to remember to ignore. The map is capped at 200 characters a mark
+--- the row is one line and the CSS ellipsis cuts it far shorter --- and is **not** pruned
+against the live marks, because an undone mark comes back under the same id and a pruned map
+would have redo show *"No note"* for a highlight whose words it had just been displaying.
+
+**One thing the distinction does not survive is being read aloud.** Dimmed italic is
+visual, and `dataset.own` is not in the accessibility tree, so a screen reader announces
+*"the sandbox is the boundary, Highlight"* with nothing saying the first half is the
+document's rather than the reader's. That is a smaller loss than it sounds --- the row used
+to announce *"No note, Highlight"*, so the phrase is new information either way --- but it
+is a gap rather than a decision, and closing it means a visually-hidden word in the row, not
+a cleverer style.
+
+Three unit mutations cover the substitution rule --- the two candidates the wrong way round,
+the flag that says whose words they are, and a lookup by page instead of by id --- and two
+window mutations cover what a unit test cannot: blanking the words at the selection, and
+drawing them in the same face as the reader's own, which the fake DOM cannot see at all
+because it resolves no styles. The two new window checks are *"and the words they cover are
+the words that are selected"*, which compares two routes to one string (per page off
+`peekUnturned`, whole selection off `peek`), and *"a mark nothing was typed on is listed by
+the words it covers"*, which paints a noted row beside a bare one and reads both back ---
+the noted row being the control, since a panel calling every line the document's passes one
+half and fails the other. The harness is at 313 names.
+
+**The whole corpus was re-swept: all fourteen green**, the same 313 names on every one, in
+686 s. The way the splits moved is the useful half rather than the greenness --- twelve
+corpora are `+3` ran and `+0` skipped against the last table, and `vector-heavy` and
+`vector-multi` are `+2`/`+1`, those two being the documents with no text to select, so the
+selection-words check skips there exactly as its sibling already did. Three names arriving
+and every corpus accounting for all three in the pattern its own contents predict says more
+than fourteen `[OK]` lines. `BUILD.md` carries the table.
+
+**Not done, and the first of these is the extraction after all --- in the other panel.** Save
+and reopen, and these marks are gone from this list: they are the file's annotations now, so
+`commentlist.ts` has them, and a highlight with no body reads there as *"Highlight, no
+comment"* --- the same empty row this increment removed from the panel next to it. Closing
+that one **does** need extraction per comment, because nothing watched those marks being made
+and the file records no words under them; it is the program the trap above describes, wanted
+for a reason and against a cost, rather than reached for by reflex.
+
+And it needs more than the page's characters: `annots.rs` reads `/Rect` and **not**
+`/QuadPoints` --- checked, because the sentence here first said the opposite --- and a
+`/Rect` is the bounding box of every line a highlight covers, so a containment test against
+it would take in the whole paragraph between the first line and the last. That is a backend
+piece of work, and it starts with a field nothing currently reads.
+
+Also not done: grouping or filtering by kind, page or colour; and a count, deliberately --- a
+status line saying "9 marks" is derivable from the rows, so a check asserting the two agree
+would be the panel agreeing with itself.
 
 ### Phase 3 --- Redaction
 

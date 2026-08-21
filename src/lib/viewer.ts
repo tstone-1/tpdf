@@ -3943,15 +3943,30 @@ export class Viewer {
    * Empty when nothing is selected, and empty for a page whose text has not
    * arrived. Not requested here: the copy path already loads what it needs, and
    * asking from a command would queue an extraction the reader is waiting on.
+   *
+   * **The words come out beside the rectangles**, because this is the one
+   * moment they are both known and free. A highlight is the reader marking a
+   * phrase, and the phrase is what they would recognise it by in a list --- but
+   * a saved file records no such thing, so anything reading it back off the
+   * page would be a second answer to "which characters does this rectangle
+   * cover", drifting from the one that made the rectangle. `marklist.ts` says
+   * what is done with it.
+   *
+   * `textFrom` rather than `textOf` over the same range: it reads in the order
+   * the page reads rather than the order the file was written in, which is what
+   * a copy of the same selection produces. Two spellings of the selected text
+   * would differ on exactly the documents where the difference matters ---
+   * columns.
    */
-  selectionQuadsByPage(): { page: number; quads: number[] }[] {
+  selectionQuadsByPage(): { page: number; quads: number[]; text: string }[] {
     if (!this.selection) return [];
-    const out: { page: number; quads: number[] }[] = [];
+    const out: { page: number; quads: number[]; text: string }[] = [];
     for (const page of this.selection.pages()) {
       const text = this.text.peekUnturned(page);
       if (!text) continue;
       const range = this.selection.rangeOn(page);
       if (!range) continue;
+      const said = this.selection.textFrom(page, text) ?? "";
       const quads = runsFor(text, range.from, range.to).flatMap((quad) => [
         quad.left,
         quad.top,
@@ -3963,7 +3978,7 @@ export class Viewer {
       // cropped space would be written where the crop was rather than where the
       // words are, the moment the reader changed the crop or took it off.
       if (quads.length > 0) {
-        out.push({ page, quads: outOfCrop(quads, this.cropAt(page)) });
+        out.push({ page, quads: outOfCrop(quads, this.cropAt(page)), text: said });
       }
     }
     return out;

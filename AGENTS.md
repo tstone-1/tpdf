@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 400 entries
+The one thing this file does *not* carry in full is the trap list --- 402 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,7 +997,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 400 of them and the full text
+titles. Only the titles are here, because there are 402 of them and the full text
 was 93% of this file --- an instruction budget spent on the 399 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1450,6 +1450,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
 - A checklist step nothing can perform, and a comment promising a mechanism that does not exist (both said the version was reachable in-app; nothing in the application reported one at all)
+- The plan said the words had to be extracted, and the model had never let them be lost (a *Not done* line names the outcome and guesses the method; second time in two increments, both wrong the same way, and one signature settled it)
+- A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
 
 ## Repository facts
 

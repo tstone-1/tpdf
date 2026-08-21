@@ -38,6 +38,11 @@
  * point it is whatever was in the file --- so it is treated as document text
  * throughout: `textContent` and nothing else. `docs/THREAT-MODEL.md` T8, and
  * `scripts/check_webview_sinks.py` is the gate.
+ *
+ * The words a mark *covers* need no such argument: they are the document's from
+ * the first frame, lifted off a page by `selectionQuadsByPage`. They take the
+ * same route as the note and for the same reason, which is why {@link rowLine}
+ * hands both to one `textContent` rather than treating one as trusted.
  */
 
 import { cssColor } from "./markcolors";
@@ -60,6 +65,20 @@ export interface MarkListOptions {
    * not listing it.
    */
   onRemove: (id: number) => void;
+  /**
+   * The words a mark covers, by id, or `""` where none were recorded.
+   *
+   * A lookup rather than a field on {@link MarkRow}, because this is not part
+   * of the mark: nothing in the model holds it and no byte of a saved file
+   * carries it. It is what the selection said at the moment the mark was made,
+   * kept by whoever made it --- see `App.svelte`'s `markSelection`.
+   *
+   * Empty for every kind that does not cover words, and empty for a mark read
+   * back out of a file. Neither is an error and neither is announced: the row
+   * falls back to saying nothing was typed on it, which is what it said before
+   * this existed.
+   */
+  coveredFor: (id: number) => string;
 }
 
 /** Side of the colour swatch, in CSS pixels. */
@@ -75,15 +94,43 @@ export function noticeFor(rows: readonly MarkRow[]): string {
 }
 
 /**
- * A row's first line: what the reader typed, or that they typed nothing.
+ * One line of whatever was handed in.
  *
- * Flattened, because a text box's note has real newlines in it and a row is one
- * line high --- the same treatment `summaryOf` gives a comment body, for the
- * same reason.
+ * A row is one line high and a text box's note has real newlines in it --- the
+ * same treatment `comments.ts` gives a comment body, for the same reason. Both
+ * of {@link rowLine}'s candidates go through it: the words a mark covers run
+ * over the lines of the page they were taken from, so they arrive with exactly
+ * the same problem.
  */
-export function summaryOf(note: string): string {
-  const flattened = note.replace(/\s+/g, " ").trim();
-  return flattened || "No note";
+function flatten(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * What a row's first line says, and whether the reader wrote it.
+ *
+ * Three cases in one order, and the order is the argument. **What the reader
+ * typed wins**, always: a note is the one thing on a row they chose, and a
+ * highlight noted "check this against §4" must not be listed by the sentence it
+ * sits on. Where they typed nothing, the words the mark covers are what they
+ * would recognise it by --- which is the whole point, because the alternative is
+ * a column of nine rows all reading "No note". And where there are neither, the
+ * row says so as it always did.
+ *
+ * `own` is false for both fallbacks, and the row draws it the way it already
+ * drew "No note": dimmed and italic. That is not decoration --- it is the only
+ * thing separating a sentence the reader wrote from a sentence the document
+ * did, in a panel whose subject is what the reader has done.
+ */
+export function rowLine(
+  note: string,
+  covered: string,
+): { text: string; own: boolean } {
+  const typed = flatten(note);
+  if (typed) return { text: typed, own: true };
+  const words = flatten(covered);
+  if (words) return { text: words, own: false };
+  return { text: "No note", own: false };
 }
 
 /** The marks panel: a row per mark the reader made, in walk order. */
@@ -174,15 +221,22 @@ export class MarkList {
    * aggregate `textContent` --- a selector-based reader returns "" there, which
    * is exactly what an empty row returns.
    */
-  rowText(id: number): { note: string; kind: string; page: string } {
+  rowText(id: number): {
+    note: string;
+    kind: string;
+    page: string;
+    own: boolean;
+  } {
     const row = this.elements.get(id);
-    if (!row) return { note: "", kind: "", page: "" };
+    if (!row) return { note: "", kind: "", page: "", own: false };
     const [, page, text] = [...row.children] as HTMLElement[];
     const [note, kind] = [...(text?.children ?? [])] as HTMLElement[];
     return {
       note: note?.textContent ?? "",
       kind: kind?.textContent ?? "",
       page: page?.textContent ?? "",
+      // Whether the first line is what the reader typed --- see {@link rowLine}.
+      own: note?.dataset?.own === "yes",
     };
   }
 
@@ -291,12 +345,18 @@ export class MarkList {
     const text = document.createElement("div");
     text.style.cssText = "flex:1;min-width:0;";
 
+    const line = rowLine(mark.note, this.opts.coveredFor(mark.id));
     const note = document.createElement("div");
     note.dataset.part = "note";
-    note.textContent = summaryOf(mark.note);
+    // Whose words these are, said rather than left to be inferred from the
+    // styling below. Both come off `line.own`, so they cannot disagree, and a
+    // reader of this row --- the check harness, a screen reader's user with a
+    // stylesheet of their own --- can ask the question without parsing CSS.
+    note.dataset.own = line.own ? "yes" : "no";
+    note.textContent = line.text;
     note.style.cssText =
       "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
-      (mark.note.trim() ? "" : "opacity:0.6;font-style:italic;");
+      (line.own ? "" : "opacity:0.6;font-style:italic;");
 
     const kind = document.createElement("div");
     kind.dataset.part = "kind";
