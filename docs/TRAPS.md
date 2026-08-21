@@ -11300,3 +11300,44 @@ Two things worth carrying:
 
 The reason the empty case is a `[FAIL]` and not a `[SKIP]` in that script is this run: an
 empty read is the reassuring branch, and it was wrong both times it appeared.
+
+### A harness that edits source files pays for the editor watching them
+
+`mutate_rust.py` was measured on 2026-08-21 at **69 s per mutation**, which over a table of
+231 is 4.4 hours. The reader's objection was the right one --- nobody can pay that per feature
+--- and almost none of it was the mutations.
+
+**The larger half was the editor.** Every mutation writes a file under `src-tauri/src`, and
+VS Code with rust-analyzer open answers each write with `cargo check --workspace
+--all-targets`. That check takes the build directory's lock, so the mutation's own
+`cargo test` waits for a whole-workspace re-check before it can start. Cargo says so in as
+many words and the line is easy to miss in a harness that captures output:
+
+```
+Blocking waiting for file lock on build directory
+```
+
+Measured either side of it: a no-op `cargo test --lib --no-run` took **28.2 s** while the
+editor's check was running and **0.2 s** with it idle. The fix is one environment variable ---
+`CARGO_TARGET_DIR` pointed at a directory of the harness's own --- and it is better than
+asking a human to disable their tooling, because it holds whether or not they remember to.
+One cold build, 42 s, and it is warm from then on.
+
+**The smaller half was running 607 tests to check one assertion.** Each mutation names the
+single test it expects to redden; the harness ran the whole filtered suite regardless. Timing
+each module says where that went: `save::` 32.4 s, `print::` 32.3 s, `keylayout::` 17.0 s, and
+**the remaining fifteen modules 0.1 s between them**. Twelve tests reach macOS frameworks, and
+a `sample` of one shows it parked in `TISCopyCurrentKeyboardLayoutInputSource` for its entire
+run. So ~35 s of every mutation bought the same twelve framework waits over and over.
+
+Running the named test alone is safe **only with the fallback**, and the fallback is the
+interesting part: when the named test does *not* go red, the full suite still runs, because
+"nothing noticed" and "something else noticed" are different findings and the second one has
+to name what went red instead. It also covers a case the narrow run cannot see on its own ---
+a test whose outcome depends on its neighbours running.
+
+Both together: **405 s for all 229 runnable mutations**, 0 survivors, and zero fallbacks. The
+general shape, for the next harness that edits a tree in place: **measure what else is
+watching that tree.** A file-watcher, a language server, a sync client and a backup daemon all
+answer a write, and a harness that writes thousands of times pays each of them thousands of
+times --- while every number you take reads as the cost of your own work.
