@@ -2911,8 +2911,31 @@ starts at 0 and increments within the month.
    `constant TEXT_SIZE is never used`. 16/16 on the Mac, 15/16 on the runner, clippy the
    only red one --- found by the `v26.8.6-rc1` rehearsal tag at a cost of a 25-minute round
    trip. `-D warnings` is exactly what the `clippy` gate denies, so the two legs now agree
-   about what counts as a failure. See the trap of that name. About **8 s**
-   warm against a CI round trip of six minutes. One-time setup, which the script names in
+   about what counts as a failure. See the trap of that name.
+
+   **It has three costs, not one, and this file recorded only the middle one.** Measured
+   2026-08-21:
+
+   | tree state | cost |
+   |------------|------|
+   | nothing changed since the last run | **0.47 s** |
+   | local Rust changed, dependencies did not | the **~8 s** this file used to quote |
+   | after a dependency change | **2 min 58 s**, measured adding three crates |
+   | first run for the triple, or after `cargo clean` | **minutes**, and not cleanly measured |
+
+   The bottom two rows are where the surprise lives: clippy *compiles* the dependency tree
+   rather than checking it, and a `--target x86_64-pc-windows-msvc` build shares nothing with
+   the host one, so a fresh checkout, a `cargo clean` or a `Cargo.lock` bump pays for the whole
+   tree again. The 2 min 58 s is real and was taken with nothing else running --- it is what
+   adding `cms`, `x509-cert` and `der` cost on 2026-08-21. **The last row is a ceiling rather
+   than a measurement**: the run that reached fourteen minutes had a second copy of itself
+   contending for cargo's build lock, which is the caveat that matters more than the number.
+   Only ever run one at a time; the script captures cargo's output and prints at the end, so
+   `Blocking waiting for file lock` is swallowed and two runs look exactly like one slow one.
+
+   Schedule from the third row, not the first: start it when the Windows-relevant work is
+   done and let it run while you do something else. Against a CI round trip of six minutes.
+   One-time setup, which the script names in
    full if anything is missing rather than failing four times in a row:
 
    ```

@@ -124,6 +124,21 @@ NOT_WINDOW: list[tuple[str, str]] = [
         "scan, which comments-probe reads directly",
     ),
     ("hostile-*", "sanitation fixtures, read by sanitize-* rather than opened"),
+    (
+        "incr-signed",
+        # Named ahead of the `incr-*` rule below because its reason is no longer
+        # the same one. Since 2026-08-21 this is the ONLY file in the tree that
+        # can make the properties dialog draw a certificate, so "not the viewer"
+        # had stopped being the whole truth. It stays out anyway: a new corpus
+        # has to satisfy the sample points all 109 checks hardcode (see the trap
+        # of that name), and what a window run would add over
+        # `properties.test.ts` is that the dialog prints rows it already prints
+        # for every other section. Worth revisiting if the certificate rows ever
+        # gain behaviour of their own rather than being text.
+        "the only signed fixture, and deliberately still not a window corpus --- "
+        "its certificate rows are covered by properties.test.ts, and a 1-page "
+        "8 KB document does not meet the sample points the other checks pin",
+    ),
     ("incr-*", "incremental-save fixtures for the document model, not the viewer"),
     (
         "text-base14",

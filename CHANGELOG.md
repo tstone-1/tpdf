@@ -49,6 +49,30 @@ have the binary.)
   than as absent. The security summary is still shown, because the encryption
   dictionary is plaintext by necessity.
 
+### Added: the certificate a document was signed with
+
+- **The signer's certificate is read**, not just the name typed beside it. The
+  dialog now shows the certificate's subject, who issued it, its serial number
+  and the dates it runs between. Until now tpdf showed the `/Name` entry from
+  the signature dictionary, which is free text --- and which a great many signed
+  documents leave empty, so the line was blank for files that name their signer
+  plainly one level down.
+- **When the two names disagree, it says so.** The name in the certificate and
+  the name typed into the document come from different places and can differ;
+  that comparison is the one thing a reader could not make by eye from the rows
+  above it.
+- **A self-issued certificate is reported as self-issued** and not as a problem.
+  Every root certificate in every trust store is self-issued, and so is one
+  somebody made for themselves this morning; telling those apart needs a trust
+  store, which tpdf has not got.
+- **Reading a certificate is not checking one, and the dialog says which.** tpdf
+  does not build a chain to an issuer it trusts, look for a revocation, ask
+  whether the certificate was in date when it was used, or test the signature
+  against the bytes it covers. The disclaimer under every signature now names
+  all four.
+- Verified field by field against `openssl pkcs7 -print_certs`, which shares no
+  code with the parser, across all five pyhanko-signed fixtures.
+
 
 ### Fixed: a document that will not open now says why
 

@@ -16,13 +16,18 @@
  * ## Nothing here may say a signature is valid
  *
  * `docs/TRAPS.md` is explicit, and the reason is worth restating where the words
- * are actually chosen: this application has no certificate parser and no trust
- * store, so it does not know whether a signature verifies. What it knows is what
- * the document *claims* and one structural fact it can check itself.
+ * are actually chosen. tpdf now *parses* certificates --- it reads the subject,
+ * the issuer, the serial and the validity dates out of the PKCS#7 blob --- and
+ * that is a smaller thing than it sounds. It has **no trust store**, does not
+ * build a chain, does not check a revocation list, and never tests the signature
+ * against the bytes it covers. So it knows what the document claims, what the
+ * certificate claims, and two structural facts it checked itself.
  *
- * The vocabulary carries that. A signer's name, reason, location and date are
- * introduced as claimed; the only unhedged sentence in the whole section is the
- * byte-range one, which is the only thing that was measured.
+ * Reading a certificate is not verifying one, and the gap between those is
+ * exactly where a reader would be misled. The vocabulary carries it: a signer's
+ * name, reason, location and date are introduced as claimed, and so is
+ * everything the certificate says. The only unhedged sentences in the section
+ * are the byte-range one and `self_issued`, which are the two things measured.
  * [`NOT_CHECKED`] is shown whenever a signature is, and
  * `properties.test.ts` asserts that no rendered line ever uses a word that would
  * read as a verdict.
@@ -62,6 +67,26 @@ export interface Signature {
   covers_whole_file: boolean;
   covered_bytes: number;
   certification: number;
+  certificate: Certificate | null;
+}
+
+/**
+ * What the signing certificate says.
+ *
+ * Mirrors `docinfo::Certificate`. Nothing here is verified --- see
+ * [`NOT_CHECKED`], which is shown wherever these rows are.
+ */
+export interface Certificate {
+  subject: string;
+  subject_cn: string;
+  issuer: string;
+  issuer_cn: string;
+  serial: string;
+  from: string;
+  until: string;
+  self_issued: boolean;
+  chain: number;
+  matched_signer: boolean;
 }
 
 /** What could not be read. */
@@ -71,6 +96,7 @@ export interface Limits {
   values_clipped: number;
   signatures_dropped: number;
   unreadable: number;
+  certificates_unread: number;
 }
 
 /** Everything a document says about itself. Mirrors `docinfo::Properties`. */
@@ -112,9 +138,10 @@ export interface Section {
  * it is needed while staying in another.
  */
 export const NOT_CHECKED =
-  "tpdf reads what the signature says. It does not verify the certificate, " +
-  "check who issued it, or look for a revocation, so nothing here means the " +
-  "signature is valid.";
+  "tpdf reads what the signature and its certificate say. It does not check " +
+  "the signature against the bytes it covers, build a chain to an issuer it " +
+  "trusts, look for a revocation, or ask whether the certificate was in date " +
+  "when it was used, so nothing here means the signature is valid.";
 
 /**
  * Words that would read as a verdict on a signature.
@@ -188,6 +215,76 @@ export function coverageOf(signature: Signature, bytes: number): Row {
   };
 }
 
+/**
+ * The lines that come out of the signing certificate.
+ *
+ * Empty when the blob carried none, which is a fact about the document; that it
+ * could not be *read* is a fact about tpdf and is reported through
+ * `limits.certificates_unread` instead, in the notice at the foot of the dialog.
+ */
+export function certificateRows(signature: Signature): Row[] {
+  const certificate = signature.certificate;
+  if (!certificate) return [];
+
+  const rows: Row[] = [];
+  const named = certificate.subject_cn || certificate.subject;
+  rows.push({
+    name: "Certificate names",
+    value: named || "a certificate with no name in it",
+    warn: !named,
+  });
+
+  if (certificate.self_issued) {
+    rows.push({
+      name: "Issued by",
+      value: "itself --- self-issued, so no other party vouched for this name",
+    });
+  } else {
+    const by = certificate.issuer_cn || certificate.issuer;
+    if (by) rows.push({ name: "Issued by", value: by });
+  }
+
+  if (certificate.from && certificate.until) {
+    rows.push({
+      name: "Certificate runs",
+      value: `${certificate.from} to ${certificate.until}`,
+    });
+  }
+  if (certificate.serial) {
+    rows.push({ name: "Serial", value: certificate.serial });
+  }
+  if (certificate.chain > 1) {
+    rows.push({
+      name: "Certificates present",
+      value: `${certificate.chain}, of which this is the signer's`,
+    });
+  }
+  if (!certificate.matched_signer) {
+    rows.push({
+      name: "Certificates present",
+      value:
+        "one, and the signature does not point at it --- shown because there " +
+        "is nothing else it could be",
+      warn: true,
+    });
+  }
+
+  // Two names for one signer, from two places, that disagree. Neither is
+  // checked, so this is not an accusation --- it is the one thing a reader
+  // could not work out from the rows above without comparing them by eye.
+  const typed = signature.name.trim();
+  const inCert = (certificate.subject_cn || certificate.subject).trim();
+  if (typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {
+    rows.push({
+      name: "Names disagree",
+      value: `the certificate says ${inCert}, the document says ${typed}`,
+      warn: true,
+    });
+  }
+
+  return rows;
+}
+
 /** Every line of one signature. */
 export function signatureRows(signature: Signature, bytes: number): Row[] {
   if (!signature.signed) {
@@ -199,7 +296,13 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
     if (value) rows.push({ name, value });
   };
 
-  claimed("Signer says", signature.name);
+  // The certificate goes above what the signer typed, because a reader opening
+  // this asks who signed it and these are two different answers to that. Which
+  // is worth more depends on `self_issued` and is not ours to rank: a name in a
+  // self-issued certificate is exactly as self-asserted as `/Name` is.
+  rows.push(...certificateRows(signature));
+
+  claimed("Signer typed", signature.name);
   claimed("Reason given", signature.reason);
   claimed("Location given", signature.location);
   claimed("Date given", signature.when);
@@ -355,5 +458,13 @@ export function limitRows(limits: Limits): Row[] {
   say("Values", limits.values_clipped, "were shortened");
   say("Signature fields", limits.signatures_dropped, "were not read");
   say("Entries", limits.unreadable, "could not be read at all");
+  // Phrased as what tpdf could not do, not as something the document lacks ---
+  // a signature whose certificate went unread must not read like one that has
+  // none, which is the whole reason this is counted separately.
+  say(
+    "Certificates",
+    limits.certificates_unread,
+    "were present but could not be read",
+  );
   return rows;
 }
