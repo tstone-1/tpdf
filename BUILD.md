@@ -2700,9 +2700,13 @@ digest and through `qpdf --check`, which shares no code with anything here.
 `viewer_check.py` lists `file.save` as undriven with the reason (it would write
 over the corpus fixture the rest of that run is reading), `save.rs`'s tests build
 their plans directly, and `edits.test.ts` asserts the shape of the `invoke` call.
-So when saving was reported broken from the running application on 2026-08-20,
-no check here could say whether it was, and 26.8.6 shipped with the symptom
-unreproduced.
+So when the 26.8.6 release commit recorded saving as "reported broken from the
+running application", nothing here could test that claim --- and put to its
+author on 2026-08-21, it turned out he had never said it. The provenance is
+recorded rather than quietly deleted, because the lesson is not about saving: an
+unattributed sentence in a commit message became an open item, a paragraph in
+this file and two harness docstrings, and none of it could be checked until there
+was a check.
 
 The control runs first and is the reason the rest means anything: Save must be
 **withheld** on a document with no edits. It also asserts Save greys again after
@@ -2722,9 +2726,13 @@ bytes), `qpdf` reading it back, Save withheld again after the reopen, a highligh
 separately by pointing a phase at a menu item that does not exist: `[FAIL] this check drives
 a menu item that is not there`, exit 2, and no claim about saving either way.
 
-So **the reported save symptom is not reproduced** by this route on this machine. What that
-narrows it to is a message rather than silence, or a document this fixture is not --- the
-refusals in `save.rs` all need a condition a clean local file does not have.
+So there is **no defect to reproduce here**: saving over the open document works from the
+menu, twice in a row, for two different kinds of edit, in a scratch directory and in a
+TCC-protected one (`~/Downloads`), on this machine. That is a statement about this route and
+this fixture. Every refusal `save.rs` states needs a condition a clean local file does not
+have --- an encrypted document, a file changed under the open one, a missing baseline --- and
+each of those has tests of its own; what none of them can tell you is whether the refusal
+fires when it should not, which is what a real report of a spurious message would be for.
 
 ### Checking the menu bar
 
