@@ -323,6 +323,75 @@ fn main() {
         },
     );
 
+    // ------------------------------------------- a document that does not open
+    //
+    // The failure a reader actually meets, and until 2026-08-21 the one tpdf
+    // could not describe. PDFium refusing a document made `serve` return `Err`,
+    // so the worker printed its reason to stderr and exited 1 --- and a GUI
+    // process has no stderr, so the reader was shown
+    // `worker stopped answering (exited with 1 (0x00000001))` for a file whose
+    // problem `open_failure` had already diagnosed in their own words.
+    //
+    // Written here rather than as a `#[test]`, because the thing being tested is
+    // that a **process** answers instead of dying, and `Worker::spawn` re-execs
+    // `current_exe` --- which under `cargo test` is a test binary that does not
+    // serve. This probe is its own worker, so it is the only harness that can
+    // spawn one.
+    //
+    // Nine bytes of nothing rather than a real PDF, so no fixture is needed and
+    // the corpus is not enrolled in anything: `FPDF_ERR_FORMAT` is the same door
+    // as `FPDF_ERR_PASSWORD`, which is what the reported file most likely hit.
+    let mut refused_checks = |name: &str, ok: bool, detail: String| check(name, ok, detail);
+    let junk = std::env::temp_dir().join("tpdf-worker-probe-not-a-pdf.pdf");
+    match std::fs::write(&junk, b"not a pdf") {
+        Err(e) => {
+            refused_checks(
+                "a document PDFium refuses is answered rather than died on",
+                false,
+                format!("could not write {}: {e}", junk.display()),
+            );
+        }
+        Ok(()) => {
+            match Worker::spawn(&junk, &library_dir) {
+                Err(e) => refused_checks(
+                    "a document PDFium refuses is answered rather than died on",
+                    false,
+                    format!("no worker started: {e}"),
+                ),
+                Ok(mut refused) => {
+                    let reply = refused.call(&Request::Open {
+                        lazy_geometry: false,
+                    });
+                    // `Ok(_)` is the whole assertion: a reply at all means the
+                    // process was alive to send one. `Err` here is the defect,
+                    // and it carries the epitaph rather than the reason.
+                    refused_checks(
+                        "a document PDFium refuses is answered rather than died on",
+                        matches!(&reply, Ok(r) if !r.ok),
+                        describe(&reply),
+                    );
+                    // And the reason has to be the document's. The control for
+                    // the check above on its own is weak --- a worker that
+                    // answered every open with an empty error would satisfy it
+                    // --- so this asserts the message names a cause a reader can
+                    // act on and is not the parent's epitaph for a dead child.
+                    let said = match &reply {
+                        Ok(r) => r.error.clone(),
+                        Err(e) => e.clone(),
+                    };
+                    refused_checks(
+                        "and the reason names the document, not the worker",
+                        !said.is_empty()
+                            && !said.contains("stopped answering")
+                            && !said.contains("exited with"),
+                        format!("said {said:?}"),
+                    );
+                }
+            }
+            let _ = std::fs::remove_file(&junk);
+        }
+    }
+
     println!(
         "\n{}/{checks} checks passed, {skipped} not applicable to this platform",
         checks - failures

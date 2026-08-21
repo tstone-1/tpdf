@@ -11481,3 +11481,66 @@ The note is corrected rather than deleted, with what it said and why it was wron
 the sentence that remains true --- nothing *watches* the file while it is open, so the reader
 learns at the moment they press Save --- is a much smaller thing than the one it was read as,
 and the difference between the two is the whole lesson.
+
+### A refusal the reader needs, reported on a channel that does not exist
+
+`tpdf` shipped four sentences a reader can act on --- *"This document needs a password, and
+tpdf cannot ask for one yet"*, *"This document uses a security scheme tpdf cannot read"*,
+*"This file is not a PDF, or it is damaged beyond reading"*, *"This file could not be read
+from disk"*. `open_failure` in `progressive.rs` picks one from PDFium's error code, and it
+had been right about which one since it was written.
+
+None of them ever reached anybody. Reported 2026-08-21 against 26.8.6 on Windows, dropping a
+supplier's RoHS certificate onto the window:
+
+```
+worker stopped answering (exited with 1 (0x00000001))
+```
+
+**The mechanism is one `?`.** `worker_child::serve` opened the document with
+`RawDocument::open_bytes(bindings, bytes)?` above the request loop, so a refusal returned
+`Err` from `serve`; `main` wrote `[worker] <the good message>` to stderr and exited 1. The
+parent, waiting on its `Request::Open`, read a closed pipe and could say only what it knew:
+the epitaph. And **a GUI process has no stderr** --- already a trap in this file from
+2026-08-19, where it made the installed application unable to open any document at all --- so
+the one sentence that named the cause was written to a handle that is not connected to
+anything.
+
+Two things made it survive. `Workers::open` has carried
+`if !response.ok { return Err(response.error) }` from the beginning, and that branch is
+correct, complete and **unreachable for the failure a reader actually meets**: the worker
+cannot answer a request it dies before reading. And every harness that opens a document opens
+a *good* one, so nothing exercised the path at all.
+
+The fix is that a worker with no document answers rather than dies --- `refuse(&reason)`
+replies `Response::err(reason)` to each request until stdin closes, and exits 0, which lights
+up the branch that was already there.
+
+**It was never a Windows defect.** The code is `cfg`-free, and it reproduced on macOS in one
+command with two different causes:
+
+```
+$ qpdf --encrypt secret secret 256 -- testdata/comments.pdf locked.pdf
+$ worker-probe locked.pdf
+[worker] This document needs a password, and tpdf cannot ask for one yet.
+[FAIL] a sandboxed worker opens a document it has no path to  worker stopped answering (exited with code 1)
+```
+
+Windows is only where it is *visible*, because there the message goes nowhere. That is the
+general shape worth keeping: **a diagnostic written to a channel some deployments do not have
+is not a weaker diagnostic, it is an absent one**, and the deployment that has the channel is
+the one where you will do all your testing. The same reasoning is why the deploy-time
+diagnostic in the sibling repository goes in a response header rather than in the body.
+
+**The regression check is in `worker-probe` rather than in a `#[test]`, and that is forced
+rather than chosen.** What is being asserted is that a *process* answers instead of dying,
+and `Worker::spawn` re-execs `current_exe` --- which under `cargo test` is a test binary that
+does not serve `--render-worker`. The probe is its own worker, so it is the only harness that
+can spawn one. It writes nine bytes of `not a pdf` to a temp file, which needs no fixture and
+takes the same door a password does.
+
+Two checks, because the first alone is weak: *"a document PDFium refuses is answered rather
+than died on"* is satisfied by a worker that answers every open with an empty error, so
+*"and the reason names the document, not the worker"* asserts the message is non-empty and
+contains neither `stopped answering` nor `exited with`. Reverting the one line turns both red
+and prints, verbatim, the string the report quoted.

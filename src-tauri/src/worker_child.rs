@@ -155,7 +155,22 @@ fn serve(args: &[String]) -> Result<(), String> {
     // here is until the process exits.
     let bytes: &'static [u8] = unsafe { doc_shm.as_static() };
     std::mem::forget(doc_shm);
-    let document = RawDocument::open_bytes(bindings, bytes)?;
+    let document = match RawDocument::open_bytes(bindings, bytes) {
+        Ok(document) => document,
+        // **Answered, not died on.** `open_failure` writes the four reasons a
+        // document does not open in a reader's words --- it needs a password, it
+        // uses a scheme we cannot read, it is not a PDF, it could not be read ---
+        // and returning `Err` here threw every one of them away: the process
+        // exited 1, the message went to stderr, and the parent could only report
+        // the epitaph. A **GUI process has no stderr**, so what a reader saw was
+        // `worker stopped answering (exited with 1 (0x00000001))` for a file
+        // whose real problem tpdf had diagnosed correctly and could not say.
+        //
+        // Reported 2026-08-21 against 26.8.6 on Windows and reproduced here on
+        // macOS in one command, with two different causes --- so it was never a
+        // platform defect, only a platform where the message is invisible.
+        Err(reason) => return refuse(&reason),
+    };
 
     // The same state machine the in-process renderer uses, for the same reason:
     // a claim moves a request from queued to in flight under one lock, so a
@@ -240,6 +255,40 @@ fn establish_boundary() -> Result<(), String> {
     {
         Err("no process boundary is implemented on this platform".into())
     }
+}
+
+/// Answers every request with the reason the document would not open.
+///
+/// A worker with no document can do nothing, and the parent drops it as soon as
+/// the open fails --- so this loop serves exactly one request in practice. What
+/// it buys is that the request is *answered*: `Workers::open` already has an
+/// `if !response.ok { return Err(response.error) }` branch, and until now that
+/// branch was unreachable for the one failure a reader actually meets.
+///
+/// A withdrawal is skipped rather than answered, the same as on the ordinary
+/// path: it is not a request that has a reply, and answering it would leave the
+/// parent one reply ahead of itself for the rest of the worker's life.
+///
+/// Returns `Ok`, because a document PDFium refuses is a fact about the document
+/// and not a failure of this process. Exiting 0 is what keeps the two apart in
+/// the epitaph if anything ever does read it.
+fn refuse(reason: &str) -> Result<(), String> {
+    let mut out = std::io::stdout();
+    let stdin = BufReader::new(std::io::stdin());
+    for line in stdin.lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        if matches!(
+            serde_json::from_str::<Request>(&line),
+            Ok(Request::Withdraw { .. })
+        ) {
+            continue;
+        }
+        reply(&mut out, &Response::err(reason))?;
+    }
+    Ok(())
 }
 
 /// Reads requests from stdin until it closes.

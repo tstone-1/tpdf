@@ -19,6 +19,18 @@ have the binary.)
 
 ## [26.8.7] - Unreleased
 
+### Fixed: a document that will not open now says why
+
+- Dropping a PDF that tpdf cannot open --- one that needs a password, one that
+  uses a security scheme it cannot read, or one that is damaged --- reported
+  `worker stopped answering (exited with 1 (0x00000001))`. It now says which of
+  those it is.
+- tpdf had always worked out the right answer. It said it on the render worker's
+  standard error, which an application started from the desktop does not have,
+  so the sentence went nowhere and the reader was shown the parent's report of a
+  dead child instead. Reported on Windows against 26.8.6; the same thing happened
+  on macOS, where it had simply never been tried on a document that fails.
+
 ### The marks panel lists a highlight by the words it covers
 
 - A highlight, underline, squiggly underline or strikeout that nobody typed a

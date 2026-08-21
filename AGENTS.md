@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 402 entries
+The one thing this file does *not* carry in full is the trap list --- 403 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -997,8 +997,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 402 of them and the full text
-was 93% of this file --- an instruction budget spent on the 399 traps that are not
+titles. Only the titles are here, because there are 403 of them and the full text
+was 93% of this file --- an instruction budget spent on the 400 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1418,6 +1418,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A green gate list can sit beside a distributable that cannot be built
 - A bundled app that finds its library in the dev tree proves nothing about the bundle
 - A GUI process has no stderr, and every Windows check launched the app from a shell (the installed build could open no document at all, and no harness could reach the case)
+- A refusal the reader needs, reported on a channel that does not exist (the four good messages existed, were correct, and reached nobody; the branch that would have carried them was unreachable, and it was never a Windows defect)
 - Three ways to look for a macOS recent-documents list, and all three say nothing is there (one real absence, one hung tool, and one permission error that `2>/dev/null` turned into `total 0` --- and the wrong conclusion they supported was the MODEST one)
 - Moving a binary out of the installer moves it out of the gate that links it
 - `cargo fmt` was blamed for mangling a string, and it was innocent
