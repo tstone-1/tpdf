@@ -11,10 +11,13 @@ directly, and `edits.test.ts` asserts the shape of the `invoke` call. So the one
 thing no check covered was the whole path: a reader edits a document, chooses
 Save, and the bytes on disk change.
 
-That gap became a bug report. Saving was reported broken from the running
-application on 2026-08-20, and no harness in the repository could say whether it
-was: the release went out with the symptom unreproduced, because reproducing it
-by hand is the only instrument there was.
+That gap is why a doubt about saving could not be settled. The 26.8.6 release
+commit records saving as "reported broken from the running application" and
+neither reproduced nor fixed --- and when that line was put to its author on
+2026-08-21 the answer was that he had never said saving broke. Which is the
+point: a repository with no check over this path cannot answer the question in
+either direction, so an unattributed line in a commit message stood as the only
+evidence and could not be tested against anything.
 
 **The menu is the instrument.** macOS exposes the whole menu bar through
 accessibility, so an edit and a Save can be driven exactly as a reader drives
