@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 411 entries
+The one thing this file does *not* carry in full is the trap list --- 413 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -474,6 +474,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite; still wanted for preserving encryption and for object streams |
 | macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** --- paginates and runs the panel; also the independent parser every print job is read back with |
 | Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** --- reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
+| XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** --- reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
 | Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** --- reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building. PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
 
 The PDFium pin is `chromium/7881`, installed by `scripts/fetch_pdfium.py` and verified by
@@ -560,6 +561,16 @@ by the certificate reader's 9 --- a number in prose with no gate behind it, whic
 failure this file already records about the trap count and then repeated here. The authority
 is the command: `cargo metadata --format-version 1 | python3 -c 'import json,sys;
 print(len(json.load(sys.stdin)["packages"]))'`.
+
+**One crate reads XMP, added 2026-08-21, and it adds no package.** `quick-xml` (MIT) was
+already in the tree through Tauri's `plist` dependency, so declaring it direct changed the
+count by nothing --- checked with `cargo metadata` before and after rather than assumed, which
+is the standing rule and the one case where it produced a genuinely surprising answer. What it
+does change is the trust boundary: an XML parser is newly reachable from attacker-chosen bytes.
+`docs/THREAT-MODEL.md` carries the four bounds, and the one worth knowing here is that entity
+expansion is **structurally** impossible rather than bounded --- `quick-xml` hands every
+`&...;` back as its own event and expands nothing unless you supply a resolver, which this
+never does.
 
 **Three crates read certificates, added 2026-08-21**: `cms` for the CMS `SignedData` in a
 signature's `/Contents`, `x509-cert` for the certificate inside it, and `der` underneath both.
@@ -1043,8 +1054,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 411 of them and the full text
-was 93% of this file --- an instruction budget spent on the 410 traps that are not
+titles. Only the titles are here, because there are 413 of them and the full text
+was 93% of this file --- an instruction budget spent on the 412 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1221,6 +1232,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `evict_page` can dangle a live `RawPage`, and the borrow checker allows it
 - A mechanical insert before a declaration can land between an attribute and its item
 - A `Decode<'static>` bound is satisfiable by leaking, and nothing goes red (an attacker-sized leak inside the sandbox, with 16/16 gates green; the signature is the thing to change, not the body)
+- `trim_text` trims each event, and a value with an entity in it arrives as several (two bugs correct for every value with no `&` in it, and the obvious repair breaks `&#233;`)
+- A stale binary answered for a source file that was never written (a `cd` into the directory you are already in, `&&`, and a heredoc that never ran; `Finished in 0.15s` is not a build)
 
 ### Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect

@@ -82,6 +82,7 @@ tauri-plugin-updater = "2.10.1"
 cms = { version = "0.2.3", default-features = false }
 der = { version = "0.7", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
+quick-xml = "0.41"
 
 # The macOS print dialog. PDFKit paginates the document and builds the
 # NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,

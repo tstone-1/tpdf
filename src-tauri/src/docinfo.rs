@@ -320,6 +320,12 @@ pub struct Properties {
     pub language: String,
     /// How many files are embedded in it, where that could be counted.
     pub attachments: Option<usize>,
+    /// The XMP metadata packet, when the document carries one.
+    ///
+    /// `None` is a document with no `/Metadata`, which is a fact about it;
+    /// `Some` with [`crate::xmp::Xmp::unread`] set is one whose packet could
+    /// not be read, which is a fact about tpdf. The two are never the same row.
+    pub xmp: Option<crate::xmp::Xmp>,
     /// What could not be read.
     pub limits: Limits,
     /// Time spent scanning, in milliseconds.
@@ -401,6 +407,7 @@ pub fn scan(bytes: &[u8], page_count: u32) -> Result<Properties, String> {
         tagged: catalog.map(|c| c.has(b"StructTreeRoot")),
         language,
         attachments: catalog.map(|_| count_attachments(&document)),
+        xmp: catalog.and_then(|c| read_xmp(&document, c)),
         limits,
         scan_ms: started.elapsed().as_secs_f64() * 1000.0,
     })
@@ -578,6 +585,33 @@ fn permissions(revision: i64, p: i64) -> Vec<Permission> {
 }
 
 /// Reads the `/Info` dictionary, standard keys first.
+/// The catalog's XMP packet, decoded.
+///
+/// A `/Metadata` stream is *usually* stored uncompressed --- the specification
+/// wants a packet readable by a tool that does not parse PDF at all --- but a
+/// filter is legal and Acrobat writes one, so this decompresses when it must.
+/// A stream that will not decode is reported as an unread packet rather than as
+/// an absent one, which is the same distinction [`crate::xmp::Xmp::unread`]
+/// exists for one level down.
+fn read_xmp(document: &Document, catalog: &Dictionary) -> Option<crate::xmp::Xmp> {
+    let object = catalog.get(b"Metadata").ok()?;
+    let stream = resolve(document, object).as_stream().ok()?;
+    // `decompressed_content` fails on a stream with no filter, which is the
+    // common case here, so falling back to the raw content is the normal path
+    // rather than an error path.
+    let packet = stream
+        .decompressed_content()
+        .unwrap_or_else(|_| stream.content.clone());
+    if packet.is_empty() {
+        return Some(crate::xmp::Xmp {
+            bytes: 0,
+            unread: true,
+            ..Default::default()
+        });
+    }
+    Some(crate::xmp::scan(&packet))
+}
+
 fn read_fields(document: &Document, limits: &mut Limits) -> Vec<Field> {
     let Some(dict) = document
         .trailer
@@ -2809,6 +2843,119 @@ mod tests {
         );
         assert_eq!(certificate.authority, Some(false), "CA:FALSE, stated");
         assert_eq!(certificate.extensions_unread, 0);
+    }
+
+    /// A document whose catalog points at the XMP packet given.
+    fn with_metadata(packet: &[u8], compress: bool) -> Vec<u8> {
+        let mut document = Document::with_version("1.7");
+        let mut stream = lopdf::Stream::new(
+            dictionary! {
+                "Type" => "Metadata",
+                "Subtype" => "XML",
+            },
+            packet.to_vec(),
+        );
+        if compress {
+            stream.compress().expect("a compressible stream");
+        }
+        let metadata = document.add_object(Object::Stream(stream));
+        let pages = document.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => Object::Array(vec![]),
+            "Count" => 0,
+        }));
+        let catalog = document.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages),
+            "Metadata" => Object::Reference(metadata),
+        }));
+        document.trailer.set("Root", Object::Reference(catalog));
+        let mut out = Vec::new();
+        document.save_to(&mut out).expect("a writable document");
+        out
+    }
+
+    /// A PDF/A claim in the packet reaches the readout.
+    ///
+    /// The end-to-end half of `xmp.rs`'s own tests, which take bytes: this is
+    /// what proves the catalog is consulted, the stream is fetched and the
+    /// packet handed over. All three are things a unit test over the parser is
+    /// structurally unable to check.
+    #[test]
+    fn a_conformance_claim_in_the_metadata_stream_reaches_the_readout() {
+        let packet = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" rdf:about="">
+   <pdfaid:part>3</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+
+        let plain = scan(&with_metadata(packet, false), 0).expect("must parse");
+        let xmp = plain.xmp.as_ref().expect("the catalog names a packet");
+        assert_eq!(xmp.conformance, vec!["PDF/A-3B"]);
+        assert!(!xmp.unread);
+
+        // And the same packet behind a filter. The specification wants a packet
+        // readable by a tool that does not parse PDF, so uncompressed is the
+        // common case -- which is exactly why the compressed one is the path
+        // that would ship unexercised.
+        let squeezed = scan(&with_metadata(packet, true), 0).expect("must parse");
+        assert_eq!(
+            squeezed.xmp.as_ref().map(|x| x.conformance.clone()),
+            Some(vec!["PDF/A-3B".to_string()]),
+            "a filtered stream states the same thing as an unfiltered one"
+        );
+    }
+
+    /// No `/Metadata` is `None`, which is not the same as an unread packet.
+    #[test]
+    fn a_document_with_no_metadata_stream_reports_no_packet_at_all() {
+        let properties = scan(&with_no_metadata(), 0).expect("must parse");
+        assert!(
+            properties.xmp.is_none(),
+            "a document that carries no packet is not a document whose packet \
+             could not be read"
+        );
+    }
+
+    /// A document with a catalog and no `/Metadata`.
+    fn with_no_metadata() -> Vec<u8> {
+        let mut document = Document::with_version("1.7");
+        let pages = document.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => Object::Array(vec![]),
+            "Count" => 0,
+        }));
+        let catalog = document.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages),
+        }));
+        document.trailer.set("Root", Object::Reference(catalog));
+        let mut out = Vec::new();
+        document.save_to(&mut out).expect("a writable document");
+        out
+    }
+
+    /// The one fixture carrying a real packet is read, and claims nothing.
+    ///
+    /// A file written by the hostile-document generator rather than by these
+    /// tests, so it exercises the byte layout a real producer emits ---
+    /// `<?xpacket?>` wrappers included. It states a `dc:title` and no
+    /// conformance, which is what most documents with XMP look like, so this is
+    /// the control against a reader that finds a claim in anything.
+    #[test]
+    fn the_fixture_with_a_real_packet_is_read_and_claims_nothing() {
+        let Ok(bytes) = std::fs::read("../testdata/hostile-metadata.pdf") else {
+            println!("[SKIP] hostile-metadata.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 1).expect("the fixture must parse");
+        let xmp = properties.xmp.as_ref().expect("it carries a packet");
+
+        assert!(xmp.conformance.is_empty(), "it claims no standard");
+        assert!(!xmp.unread, "and all of it was read");
+        assert!(xmp.bytes > 100, "its size is reported: {}", xmp.bytes);
     }
 
     /// Every key usage bit, on its own, against the name RFC 5280 gives it.

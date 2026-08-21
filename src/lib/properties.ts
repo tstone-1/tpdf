@@ -123,8 +123,21 @@ export interface Properties {
   tagged: boolean | null;
   language: string;
   attachments: number | null;
+  xmp: Xmp | null;
   limits: Limits;
   scan_ms: number;
+}
+
+/**
+ * The XMP metadata packet, as `xmp.rs` reports it.
+ *
+ * `null` is a document with no packet. `unread` on a packet that is there is
+ * tpdf's failure, not the document's silence, and the two never share a row.
+ */
+export interface Xmp {
+  bytes: number;
+  conformance: string[];
+  unread: boolean;
 }
 
 /** One line of the readout. */
@@ -236,6 +249,45 @@ export function coverageOf(signature: Signature, bytes: number): Row {
  * could not be *read* is a fact about tpdf and is reported through
  * `limits.certificates_unread` instead, in the notice at the foot of the dialog.
  */
+/**
+ * What the XMP packet claims about the standards the document conforms to.
+ *
+ * Nothing else in a PDF says this: PDF/A, PDF/UA and PDF/X are declared in XMP
+ * or not at all. Measured at 8 of 41 real documents, seven PDF/UA-1 and one
+ * PDF/A-3B, which is why this is the one thing read out of the packet.
+ *
+ * **A claim, not a verdict**, and the wording carries that: tpdf does not
+ * validate a document against PDF/A, and a file stating PDF/A-3B may break it
+ * in twenty ways. The row says *states*, in the same voice as the signature
+ * rows and for the same reason.
+ *
+ * Silence is deliberate for the common case. Most documents claim nothing, and
+ * most carry no packet at all; a row saying so on every document is noise. The
+ * one thing that always speaks is a packet that could not be read, because that
+ * is tpdf failing rather than the document declining to say anything.
+ */
+export function conformanceRows(xmp: Xmp | null): Row[] {
+  if (!xmp) return [];
+
+  const rows: Row[] = [];
+  if (xmp.conformance.length > 0) {
+    rows.push({
+      name: "States conformance",
+      value: `${xmp.conformance.join(", ")} --- the document's own claim, which tpdf does not check`,
+    });
+  }
+  if (xmp.unread) {
+    rows.push({
+      name: "Metadata",
+      value:
+        "the document carries an XMP packet that could not be read, so what it " +
+        "states about itself is unknown",
+      warn: true,
+    });
+  }
+  return rows;
+}
+
 export function certificateRows(signature: Signature): Row[] {
   const certificate = signature.certificate;
   if (!certificate) return [];
@@ -472,6 +524,7 @@ export function sections(properties: Properties): Section[] {
       value: `${properties.attachments} embedded file${properties.attachments === 1 ? "" : "s"}`,
     });
   }
+  rows.push(...conformanceRows(properties.xmp));
   const file: Section = { title: "File", rows };
 
   const missed = limitRows(properties.limits);

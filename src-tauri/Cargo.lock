@@ -4812,6 +4812,7 @@ dependencies = [
  "parking_lot",
  "pdfium-render",
  "png 0.17.16",
+ "quick-xml",
  "regex",
  "serde",
  "serde_json",
