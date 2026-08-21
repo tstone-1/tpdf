@@ -127,15 +127,18 @@ NOT_WINDOW: list[tuple[str, str]] = [
     (
         "incr-signed",
         # Named ahead of the `incr-*` rule below because its reason is no longer
-        # the same one. Since 2026-08-21 this is the ONLY file in the tree that
-        # can make the properties dialog draw a certificate, so "not the viewer"
-        # had stopped being the whole truth. It stays out anyway: a new corpus
+        # the same one. On 2026-08-21 this became the first file in the tree that
+        # could make the properties dialog draw a certificate, so "not the
+        # viewer" had stopped being the whole truth. It said "the ONLY file"
+        # until later the same day, by which point five others could --- a claim
+        # of uniqueness with nothing asserting it, in the file that exists
+        # because the list of corpora had no home. It stays out anyway: a new corpus
         # has to satisfy the sample points all 109 checks hardcode (see the trap
         # of that name), and what a window run would add over
         # `properties.test.ts` is that the dialog prints rows it already prints
         # for every other section. Worth revisiting if the certificate rows ever
         # gain behaviour of their own rather than being text.
-        "the only signed fixture, and deliberately still not a window corpus --- "
+        "signed, and deliberately still not a window corpus --- "
         "its certificate rows are covered by properties.test.ts, and a 1-page "
         "8 KB document does not meet the sample points the other checks pin",
     ),

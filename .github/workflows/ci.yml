@@ -109,8 +109,29 @@ jobs:
       # step entirely -- so the release gate ran weaker than this one until a tag
       # push made the same assertion fire again on 2026-08-03. One script, two
       # callers, and adding a fixture reaches both.
-      - name: Generate the dependency-free test fixtures
-        run: python -u scripts/ci_fixtures.py
+      # A pinned interpreter, so that `pip install` below has somewhere to
+      # install to. The image's own `python` may be an externally-managed
+      # Homebrew build, where PEP 668 refuses a plain `pip install` outright ---
+      # and that would fail on one runner and not the other, which is the
+      # platform-shaped failure this repository keeps writing traps about. It is
+      # placed here rather than at the top so that every step above it keeps
+      # using the interpreter it has been using.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7 (v7.0.0)
+        with:
+          python-version: '3.13'
+
+      # pyhanko writes the signed fixtures, and it is the one Python package a
+      # gate run needs. Without it `make_incremental_pdf.py` produces nothing
+      # signed and exits 0, so every test over a real signature would `[SKIP]`
+      # and the run would look identical to one where they all passed --- the
+      # failure this whole fixture step exists for. `ci_fixtures.py` turns that
+      # into a hard error: it asserts each artifact exists after the generator
+      # returns, proved both ways before this step was written.
+      - name: Install pyhanko, for the signed fixtures
+        run: python -m pip install --disable-pip-version-check pyhanko pyhanko-certvalidator
+
+      - name: Generate the test fixtures a runner can build
+        run: python -u scripts/ci_fixtures.py --signed
 
       - name: Quality gates
         run: python -u scripts/gates.py

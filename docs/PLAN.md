@@ -8025,15 +8025,37 @@ blob using them is still refused --- by the parser rather than by the walk, and 
 document to hand uses one, and writing the code for a case with no fixture would be untested
 code in the one module here that reads attacker-chosen bytes with no third party in between.
 
-**Also not done, and it is a decision rather than an omission: CI does not test any of this.**
-No signed fixture exists on a hosted runner --- they need pyhanko, and `ci_fixtures.py` builds
-only the dependency-free four --- so every test over a real signature `[SKIP]`s there, this
-one included. Three of them *asserted* instead of skipping, which would have turned CI red the
-day the signature work was pushed; that is fixed and has its own trap, but the gap it exposed
-is real. Closing it means installing pyhanko on the runner and teaching the generator to skip
-what needs qpdf and a 550 MB write, in **both** workflows because the parity gate compares them
-step for step. Worth doing; not worth doing blind, since a workflow's last step is its
-least-tested code and this one cannot be rehearsed locally.
+**CI tested none of this, and now does --- closed the same day.** No signed fixture existed on
+a hosted runner: they need pyhanko, and `ci_fixtures.py` built only the dependency-free four,
+so every test over a real signature `[SKIP]`ped there. Three of them *asserted* instead of
+skipping, which would have turned CI red the day the signature work was pushed.
+
+**The blocker was not pyhanko, which is one `pip install`. It was qpdf.**
+`make_incremental_pdf.py` called it with `check=True` and nothing else, so a machine without it
+raised `FileNotFoundError` --- before a single signed fixture, none of which needs qpdf. One
+fixture depends on it and eleven do not, and one unguarded `subprocess.run` made that eleven
+zero. The generator skips it now.
+
+Both workflows install pyhanko and call `ci_fixtures.py --signed`; the parity gate compares
+them step for step, which is what makes "both" a fact rather than an intention. The interpreter
+is pinned with `actions/setup-python` for one reason worth stating: an image's own `python` may
+be an externally-managed Homebrew build where PEP 668 refuses `pip install` outright, and that
+would have failed on one runner and passed on the other.
+
+Proved both ways before the step was written --- fixtures moved aside, pyhanko absent:
+`ci_fixtures.py --signed` exits **1** naming the missing artifact; pyhanko present: exits 0 with
+all nine. **What that hard failure buys is the tests' silence.** They `[SKIP]` when the family
+is absent, which is right for a local checkout and would be a hole on a runner if nothing else
+checked; the workflow step is what checks, and it runs before the gates.
+
+**One thing the fixtures are not: reproducible.** Two runs give nine files of identical size and
+differing bytes, because pyhanko mints a new key and serial each time. CI will therefore build a
+different set from anyone's local one every run --- so a test may pin a size and must never pin a
+serial, a date or a digest, which the trap of that name already records from the other
+direction. The suite was re-run against a freshly generated set: 702 passed, 0 failed.
+
+**Still not rehearsed on a runner.** A workflow's last step is its least-tested code, and the tag
+glob accepts an `-rcN` suffix for exactly this.
 
 ### Phase 3 --- Redaction
 

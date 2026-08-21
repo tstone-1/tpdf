@@ -705,33 +705,46 @@ def main(argv: "list[str] | None" = None) -> int:
         }
         print(f"[OK] incr-xrefstream.pdf ({os.path.getsize(xref_path) / 1e6:.1f} MB)")
 
+    # qpdf is the only external program this script needs, and it is needed for
+    # exactly one fixture. It used to be called with `check=True` and nothing
+    # else, so a machine without it died here with a FileNotFoundError naming a
+    # program rather than a fixture -- and died BEFORE the signed fixtures below,
+    # which need only pyhanko. A hosted runner is such a machine, which is why
+    # none of the signature work could be tested there. Skipping keeps the rest.
     plain_path = os.path.join(args.outdir, "incr-encrypted-pw.pdf")
     base_plain = build_plain(2, "encrypted")
     unencrypted = plain_path + ".plain"
     with open(unencrypted, "wb") as handle:
         handle.write(base_plain)
-    subprocess.run(
-        [
-            "qpdf",
-            "--encrypt",
-            "--user-password=swordfish",
-            "--owner-password=swordfish",
-            "--bits=256",
-            "--",
-            unencrypted,
-            plain_path,
-        ],
-        check=True,
-    )
-    os.remove(unencrypted)
-    manifest["incr-encrypted-pw.pdf"] = {
-        "role": "AES-256 behind a real user password",
-        "pages": 2,
-        "bytes": os.path.getsize(plain_path),
-        "xref": "table",
-        "password": "swordfish",
-    }
-    print(f"[OK] incr-encrypted-pw.pdf ({os.path.getsize(plain_path)} bytes)")
+    try:
+        subprocess.run(
+            [
+                "qpdf",
+                "--encrypt",
+                "--user-password=swordfish",
+                "--owner-password=swordfish",
+                "--bits=256",
+                "--",
+                unencrypted,
+                plain_path,
+            ],
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as why:
+        # The half-written input goes either way: leaving it turns a skipped
+        # fixture into a stray file that looks like a fixture.
+        os.remove(unencrypted)
+        print(f"[SKIP] incr-encrypted-pw.pdf: qpdf did not run ({why})")
+    else:
+        os.remove(unencrypted)
+        manifest["incr-encrypted-pw.pdf"] = {
+            "role": "AES-256 behind a real user password",
+            "pages": 2,
+            "bytes": os.path.getsize(plain_path),
+            "xref": "table",
+            "password": "swordfish",
+        }
+        print(f"[OK] incr-encrypted-pw.pdf ({os.path.getsize(plain_path)} bytes)")
 
     inline = build_plain(2, "signed")
     indirect = build_plain(2, "signed", indirect_annots=True)

@@ -649,19 +649,34 @@ cannot make it.
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
 300 MB file is near-instant" can be tested at 300 MB.
 
-**None of its signed fixtures exists on a hosted runner**, because it needs pyhanko and
-`scripts/ci_fixtures.py` builds only the dependency-free four. Three tests reading them ended
-with `assert!(examined > 0)` until 2026-08-21, which is red on exactly the machines that cannot
-have the files --- measured by hiding `testdata/incr-*.pdf`: three failures, each telling a
-runner to generate what the repository has written down as deliberately absent. They now assert
-that **every** named fixture was examined, behind an early return when none of them exists,
-which is stronger on a development machine and silent on a runner. Both directions proved: no
-signed fixture gives 702 passed, 0 failed; hiding exactly one gives two red.
+**Its signed fixtures did not exist on a hosted runner until 2026-08-21**, so CI tested none
+of the signature reader. Both workflows now install pyhanko and call
+`scripts/ci_fixtures.py --signed`, which builds the nine of them. Two things had to change for
+that to be possible, and the first is why it had never worked: `make_incremental_pdf.py` called
+**qpdf** with `check=True` and nothing else, so a machine without qpdf died there with a
+`FileNotFoundError` naming a program rather than a fixture --- and died *before* every signed
+fixture, none of which needs qpdf at all. It skips that one fixture now. The second is
+`--scan-pages` with no values, which is the existing switch for not writing 550 MB.
 
-The consequence to decide on rather than inherit: **CI does not test the signature reader at
-all.** Making it do so means installing pyhanko on the runner and teaching the generator to skip
-the parts that need qpdf and a 550 MB write, in both workflows because `check_workflow_parity.py`
-compares them step for step. That is a piece of work of its own, not a line in this one.
+Proved both ways before the step was written: with the fixtures moved aside and pyhanko absent,
+`ci_fixtures.py --signed` exits **1** with `exited 0 but testdata/incr-signed.pdf does not
+exist`; with pyhanko present it exits 0 and writes all nine. That hard failure is what makes the
+tests' own `[SKIP]`-when-absent safe --- a runner that failed to build them goes red at the step
+that built them, not green through a suite that skipped.
+
+**The fixtures are not byte-reproducible, and CI generates them fresh every run.** Two
+consecutive runs of the generator produce nine files of identical *size* and differing *bytes*:
+pyhanko mints a new key pair and serial each time. So a test may pin a size and must never pin a
+serial, a date or a digest out of one --- the trap of that name is about exactly this, found
+when a serial transcribed from `openssl` went stale locally and `[SKIP]`ped on CI. The suite was
+re-run against a freshly generated set: **702 passed, 0 failed**.
+
+Three tests reading them ended with `assert!(examined > 0)` until the same day, which is red on
+exactly the machines that cannot have the files --- measured by hiding `testdata/incr-*.pdf`:
+three failures, each telling a runner to generate what the repository had written down as
+deliberately absent. They now assert that **every** named fixture was examined, behind an early
+return when none of them exists. Both directions proved: no signed fixture gives 702 passed, 0
+failed; hiding exactly one gives two red.
 
 `make_comments_pdf.py` is the only fixture carrying annotations, and it is also one of the
 three `scripts/ci_fixtures.py` builds on a hosted runner --- it needs nothing but the standard

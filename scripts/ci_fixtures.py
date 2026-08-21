@@ -44,8 +44,14 @@ discovered:
     and needs pyhanko.
 
 Tests wanting those still skip on a runner and are covered locally, per
-`BUILD.md`. The three below are the dependency-free ones and cost about half a
-second. `make_comments_pdf.py` imports `make_text_pdf.py` for its PDF writer and
+`BUILD.md`. The four scripts below are the dependency-free ones and cost about
+half a second. ("The three" until 2026-08-21, which had been wrong since
+`make_links_pdf.py` joined them --- a count in prose with nothing asserting it.)
+
+`--signed` adds a fifth group, and it is the one that needs something installed:
+`make_incremental_pdf.py` and pyhanko, for the nine fixtures carrying a real
+signature. Without that flag nothing here needs anything but the standard
+library, which is what the paragraph above promises. `make_comments_pdf.py` imports `make_text_pdf.py` for its PDF writer and
 is still dependency-free: that module reaches for fonttools inside the function
 that embeds a font, which nothing here calls. `make_links_pdf.py` imports it
 for the same writer and is dependency-free for the same reason.
@@ -87,11 +93,42 @@ FIXTURES: list[tuple[str, list[str]]] = [
     ),
 ]
 
+#: The signed fixtures, which need **pyhanko** and are behind `--signed`.
+#:
+#: Kept apart from the list above because that one is dependency-free and this
+#: one is not: a caller must install pyhanko first, and the flag is what says so
+#: out loud rather than leaving a runner to discover it as an ImportError. What
+#: does *not* differ is where the list lives --- adding a signed fixture reaches
+#: both workflows from here, which is the rule the release job broke once by
+#: being written from CI's file rather than calling the same script.
+#:
+#: Every one comes from a single run of `make_incremental_pdf.py`, and two of its
+#: outputs are deliberately not asked for: `incr-scan-*.pdf` is hundreds of
+#: megabytes (`--scan-pages` with no values skips it) and `incr-encrypted-pw.pdf`
+#: needs qpdf, which a hosted runner has no more than it has pyhanko. The
+#: generator skips that one now instead of dying on it --- it used to raise
+#: `FileNotFoundError` before reaching a single signed fixture, which is why
+#: none of the signature work could be tested on a runner at all.
+SIGNED: list[tuple[str, list[str]]] = [
+    (f"testdata/{name}.pdf", ["testdata/make_incremental_pdf.py", "testdata", "--scan-pages"])
+    for name in (
+        "incr-signed",
+        "incr-certified-1",
+        "incr-certified-2",
+        "incr-certified-3",
+        "incr-certified-3-indirect",
+        "incr-timestamped",
+        "incr-two-signers",
+        "incr-ber",
+        "signed-nested-field",
+    )
+]
 
-def check() -> int:
+
+def check(wanted: list[tuple[str, list[str]]]) -> int:
     """Reports which fixtures are present. Non-zero if any is missing."""
     missing = 0
-    for artifact, _ in FIXTURES:
+    for artifact, _ in wanted:
         path = ROOT / artifact
         if path.exists():
             print(f"[OK]   {artifact} ({path.stat().st_size:,} bytes)")
@@ -101,14 +138,21 @@ def check() -> int:
     return 1 if missing else 0
 
 
-def generate() -> int:
+def generate(wanted: list[tuple[str, list[str]]]) -> int:
     """Runs every generator. A generator that fails stops the run."""
-    for artifact, argv in FIXTURES:
+    ran: set[tuple[str, ...]] = set()
+    for artifact, argv in wanted:
         print(f"[..]   {artifact}", flush=True)
-        result = subprocess.run([sys.executable, *argv], cwd=ROOT, check=False)
-        if result.returncode != 0:
-            print(f"[FAIL] {argv[0]} exited {result.returncode}")
-            return result.returncode
+        # One script may write several artifacts, and nine of them come from one
+        # run. Each is still checked for on its own below --- what is skipped is
+        # re-running a command that has already run in this invocation, not the
+        # question of whether it produced the file.
+        if tuple(argv) not in ran:
+            result = subprocess.run([sys.executable, *argv], cwd=ROOT, check=False)
+            ran.add(tuple(argv))
+            if result.returncode != 0:
+                print(f"[FAIL] {argv[0]} exited {result.returncode}")
+                return result.returncode
         path = ROOT / artifact
         if not path.exists():
             # A generator that exits 0 without writing its artifact is the
@@ -128,8 +172,14 @@ def main() -> int:
         action="store_true",
         help="report which fixtures exist instead of generating them",
     )
+    parser.add_argument(
+        "--signed",
+        action="store_true",
+        help="include the signed fixtures, which need pyhanko installed",
+    )
     args = parser.parse_args()
-    return check() if args.check else generate()
+    wanted = FIXTURES + SIGNED if args.signed else FIXTURES
+    return check(wanted) if args.check else generate(wanted)
 
 
 if __name__ == "__main__":

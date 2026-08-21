@@ -12144,3 +12144,41 @@ A mutation reddening *nothing* says something else entirely — the input never 
 The fix is four lines of hand-written length encoding in the helper, covering only what the
 fixtures need and panicking on anything else. A test helper may share a *type* with production
 code; it must not share the transformation it exists to check.
+
+### One unguarded call to an external program made eleven fixtures that need nothing unbuildable
+
+`make_incremental_pdf.py` writes twelve fixtures. Eleven need only pyhanko; one needs **qpdf**,
+to encrypt a two-page document. That one was written like this:
+
+```python
+subprocess.run(["qpdf", "--encrypt", ...], check=True)
+```
+
+On a machine without qpdf that raises `FileNotFoundError` — and it sits above every signed
+fixture in the file, so the script died there having produced *none* of them. A hosted runner is
+such a machine, which is why CI tested no part of the signature reader: not the certificate, not
+its extensions, not the timestamp, not the BER walk. Five increments of work, checked on one
+laptop.
+
+The reading that hides it is that the missing thing is the *fixture*. It is not: the missing
+thing is everything sequenced after the fixture. **An optional step that can throw is a
+mandatory step for everything below it in the same script**, and the cost is not proportional to
+what depends on it — here one dependant made eleven independents unreachable.
+
+Two more things came out of building the fix, and both are about the instrument.
+
+**A "did it generate?" check is satisfied by files that were already there.** `ci_fixtures.py`
+runs a generator and then asserts the artifact exists, which is the right assertion and says
+nothing on a machine that already has it. The first run of the new path took **0.65 s** and
+reported nine fixtures `[OK]` — with pyhanko not installed, on files from an earlier run. It
+proved nothing. The measurement that means something is taken with the artifacts moved aside:
+pyhanko absent gives exit **1** and `exited 0 but testdata/incr-signed.pdf does not exist`;
+pyhanko present gives exit 0 and nine files.
+
+**The fixtures are not byte-reproducible, and nothing said so.** Two consecutive runs produce
+nine files of identical *size* and differing *bytes* — pyhanko mints a fresh key pair and serial
+each time. So CI builds a different set from any local one on every run, and a test may pin a
+size and must never pin a serial, a date or a digest. That is the trap *"A test pinned a random
+value out of a generated fixture"* arriving from the other side: there it was found by a stale
+local file, here by diffing two runs of the generator. The suite was re-run against a
+freshly-generated set before the change was trusted: 702 passed, 0 failed.

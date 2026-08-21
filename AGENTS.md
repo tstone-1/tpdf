@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 418 entries
+The one thing this file does *not* carry in full is the trap list --- 419 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1070,8 +1070,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 418 of them and the full text
-was 93% of this file --- an instruction budget spent on the 417 traps that are not
+titles. Only the titles are here, because there are 419 of them and the full text
+was 93% of this file --- an instruction budget spent on the 418 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1511,6 +1511,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 - A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it (15/15 green for sixteen commits while an example did not compile; one type error reads as four broken gates)
 - A gate that refuses on a precondition of running is red on every machine that is not running (the gate demanded fixtures the repository had already written down as deliberately absent --- and again in three unit tests, unpushed, where `examined > 0` would have reddened CI the day the signature work landed; ask what a guard says on the machine with the fewest inputs)
+- One unguarded call to an external program made eleven fixtures that need nothing unbuildable (CI tested no part of the signature reader because one fixture wanted qpdf; plus a "did it generate?" check satisfied by files already there, and fixtures that are not byte-reproducible)
 - Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong (the second was wrong too; `gh release view <tag>` cannot tell them apart, and `gh api .../releases` answers 200 with `[]`)
 - `$?` read in the same word as a command substitution is the substitution's status (all three controls agreed, which is the tell)
 - A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work (five probe runners dead on Windows since the day they were written; the wrapper's own `echo` supplied the exit 0 that hid it)
