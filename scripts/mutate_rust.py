@@ -200,8 +200,8 @@ MUTATIONS = [
         # the same guard one function down.
         "save: refuse a copy from a source that changed, stranding the reader",
         "src/save.rs",
-        "    let copy = planned_bytes(source, plan, OnChange::Proceed)?;",
-        "    let copy = planned_bytes(source, plan, OnChange::Refuse)?;",
+        "    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;",
+        "    let copy = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;",
         "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(
@@ -210,8 +210,8 @@ MUTATIONS = [
         # asymmetry is the whole design and a single word carries it.
         "save: let a save in place tolerate a changed file, as a copy does",
         "src/save.rs",
-        "    let planned = planned_bytes(source, plan, OnChange::Refuse)?;",
-        "    let planned = planned_bytes(source, plan, OnChange::Proceed)?;",
+        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;",
+        "    let planned = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;",
         "a_save_in_place_is_refused_when_the_file_changed_under_it",
     ),
     Mutation(
@@ -681,8 +681,8 @@ MUTATIONS = [
         # over byte for byte and the reader's rearrangement never reaches paper.
         "edits: read a plan's length and turns as meaning it is the file on disk",
         "src/edits.rs",
-        "                .all(|(at, page)| page.source as usize == at && page.turns % 4 == 0)",
-        "                .all(|(_at, page)| page.turns % 4 == 0)",
+        "                *source as usize == at && turns % 4 == 0 && crop.is_none()",
+        "                let _ = at;\n                turns % 4 == 0 && crop.is_none()",
         "a_plan_after_a_move_is_out_of_document_order",
     ),
     Mutation(
@@ -701,8 +701,8 @@ MUTATIONS = [
         # invisible, because every turn is zero.
         "save: aim each turn at the page after the one the plan named",
         "src/save.rs",
-        "        .filter_map(|page| Some((*pages.get(page.source as usize)?, page.turns)))",
-        "        .filter_map(|page| Some((*pages.get(page.source as usize + 1)?, page.turns)))",
+        "                *pages.get(page.source as usize)?,",
+        "                *pages.get(page.source as usize + 1)?,",
         "a_turn_on_a_page_after_the_deleted_one_lands_where_it_was_aimed",
     ),
     Mutation(
@@ -763,8 +763,8 @@ MUTATIONS = [
         # original bytes, and the reader's deletions and turns are not on paper.
         "edits: report an edited document as the file on disk",
         "src/edits.rs",
-        "            .all(|(at, page)| page.source as usize == at && page.turns % 4 == 0)",
-        "            .all(|(at, page)| page.source as usize == at || page.turns % 4 == 0)",
+        "                *source as usize == at && turns % 4 == 0 && crop.is_none()",
+        "                (*source as usize == at || turns % 4 == 0) && crop.is_none()",
         "only_an_unedited_document_is_the_file_on_disk",
     ),
     Mutation(
@@ -840,8 +840,8 @@ MUTATIONS = [
         # file next to the reader's document under a name they never chose.
         "save: stage a save in place before its guards have run",
         "src/save.rs",
-        "    let planned = planned_bytes(source, plan, OnChange::Refuse)?;",
-        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan, OnChange::Refuse)?;\n    let _ = early;",
+        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;",
+        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;\n    let _ = early;",
         "a_refused_save_in_place_stages_nothing",
     ),
     Mutation(
@@ -3522,6 +3522,57 @@ MUTATIONS += [
         """        let dx = if dx.is_finite() { dx } else { 0.0 };
         let dy = if dy.is_finite() { dy } else { 0.0 };""",
         "a_move_by_a_non_finite_offset_is_refused_rather_than_ignored",
+    ),
+]
+
+
+#: Printing what the reader sees: the crop, the marks, and the view rotation.
+MUTATIONS += [
+    Mutation(
+        # Stop asking about the crop, which is the clause that was missing. A
+        # cropped document then reports itself as the file on disk and the
+        # printer is handed the uncropped original.
+        "identity: read a cropped document as the file on disk",
+        "src/edits.rs",
+        "                *source as usize == at && turns % 4 == 0 && crop.is_none()",
+        "                let _ = crop;\n                *source as usize == at && turns % 4 == 0",
+        "a_cropped_document_is_not_the_file_on_disk",
+    ),
+    Mutation(
+        # Never answer `Working`, which is the state printing was in: everything
+        # that was not handed over byte for byte went through `build`, and
+        # `build` has no marks and no crops.
+        "print: send every job that is not the file through the range builder",
+        "src/print.rs",
+        """    if explicit || plan.is_none() {
+        return Route::Range(job);
+    }
+    Route::Working""",
+        "    Route::Range(job)",
+        "a_cropped_or_marked_document_is_built_rather_than_handed_over",
+    ),
+    Mutation(
+        # Drop the reader's own rotation on the working route. It SURVIVED when
+        # first run: the route test asserts which producer is chosen and says
+        # nothing about what it produces, and every rotation test beside it
+        # drives the *other* producer. A reader viewing sideways would have
+        # printed upright.
+        "print: drop the view rotation from a job built by the save writer",
+        "src/save.rs",
+        "                (page.turns + view % 4) % 4,",
+        "                page.turns,",
+        "a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document",
+    ),
+    Mutation(
+        # Let the view replace a page's own turn rather than composing with it.
+        # This one SURVIVED too, and the fixture was the reason rather than the
+        # assertion: with no page carrying an edit turn the two expressions are
+        # the same number. The test rotates one page now.
+        "print: let the view rotation replace a page's own instead of composing",
+        "src/save.rs",
+        "                (page.turns + view % 4) % 4,",
+        "                view % 4,",
+        "a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document",
     ),
 ]
 

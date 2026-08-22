@@ -1365,13 +1365,22 @@ async fn print_document(
     // module that owns `Pages`, where its tests are under the same filter as the
     // rest of them.
     let plan = doc.map(|doc| edits.plan(doc)).transpose()?;
-    let job = print::Job {
-        pages: print::select(plan.as_ref(), pages),
-        turns,
-    };
-    let expected = match &job.pages {
-        print::Pages::Only(wanted) => Some(wanted.len()),
-        print::Pages::All => None,
+    let route = print::route(plan.as_ref(), pages, turns);
+    // How many pages the readback should find. `None` for the passthrough, where
+    // the answer is "whatever the file has" and there is no count to compare
+    // against --- see `expect_pages`, which treats `None` as "everything".
+    let expected = match (&route, &plan) {
+        (print::Route::Passthrough, _) => None,
+        (print::Route::Working, Some(plan)) => Some(plan.pages.len()),
+        // Unreachable: `route` answers `Working` only with a plan in hand. Kept
+        // as the safe arm rather than an `unwrap`, because what a panic would
+        // replace is a *count that is not compared*, which is the outcome the
+        // passthrough already produces.
+        (print::Route::Working, None) => None,
+        (print::Route::Range(job), _) => match &job.pages {
+            print::Pages::Only(wanted) => Some(wanted.len()),
+            print::Pages::All => None,
+        },
     };
     // Read before `source` is moved onto the pool; the name is wanted whether or
     // not the build succeeds, and cloning the path to keep it would be carrying
@@ -1380,9 +1389,26 @@ async fn print_document(
         || "Document".to_owned(),
         |n| n.to_string_lossy().into_owned(),
     );
+    // **The working document goes through the writer a save uses**, which is what
+    // puts the reader's marks and crops on the paper --- see `print::Route`. The
+    // plan is moved onto the pool with it, so nothing here holds the model's lock
+    // while a 337 MB document is parsed.
+    //
     // A panicking build would otherwise surface as a command that returned
     // nothing, which is indistinguishable from a panel the reader dismissed.
-    let bytes = tauri::async_runtime::spawn_blocking(move || print::build(&source, &job))
+    let build = move || -> Result<Vec<u8>, String> {
+        match route {
+            print::Route::Passthrough => {
+                std::fs::read(&source).map_err(|e| format!("could not read {source:?}: {e}"))
+            }
+            print::Route::Working => {
+                let plan = plan.ok_or("the working document has no plan to print")?;
+                save::print_bytes(&source, &plan, turns).map_err(|refused| refused.message)
+            }
+            print::Route::Range(job) => print::build(&source, &job),
+        }
+    };
+    let bytes = tauri::async_runtime::spawn_blocking(build)
         .await
         .map_err(|e| format!("the print job could not be built: {e}"))??;
     present_job(&app, bytes, title, expected)

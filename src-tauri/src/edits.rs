@@ -972,11 +972,27 @@ pub struct PlannedMark {
 impl Plan {
     /// Whether this describes the file exactly as it is on disk.
     ///
-    /// Every baseline page present, in order, unturned. It is what lets the print
-    /// path hand the file over byte for byte rather than rewriting it to produce
-    /// the same document --- a rewrite drops encryption silently and reflows
-    /// structure, so "nothing was edited" is worth recognising rather than
-    /// approximating with `dirty`, which is `true` after a turn and a turn back.
+    /// Every baseline page present, in order, unturned and uncropped, with no
+    /// mark on any of them. It is what lets the print path hand the file over
+    /// byte for byte rather than rewriting it to produce the same document --- a
+    /// rewrite drops encryption silently and reflows structure, so "nothing was
+    /// edited" is worth recognising rather than approximating with `dirty`,
+    /// which is `true` after a turn and a turn back.
+    ///
+    /// **Every field of [`PageView`] that a reader can change has to appear
+    /// here, and the crop did not until 2026-08-22.** A cropped document
+    /// answered `true`: the marks were empty, every page was present in order,
+    /// and nothing asked about the box. So printing a page a reader had cropped
+    /// handed the printer the *uncropped* file, and the panel showed it that way
+    /// too. Measured, not deduced --- a plan carrying `crop: Some(...)` reported
+    /// `is_identity = true` and `select` answered `Pages::All`.
+    ///
+    /// The shape of the mistake is worth more than the missing clause: this
+    /// predicate is a **list of the ways a document can differ from its file**,
+    /// and a list like that is wrong the moment a new way is added, silently and
+    /// in the reassuring direction. `a_plan_that_differs_in_any_one_field_is_not
+    /// _the_file` walks the fields rather than naming them, so the next one has
+    /// to be classified rather than forgotten.
     #[must_use]
     pub fn is_identity(&self) -> bool {
         // A mark is a change the file does not have, so a plan carrying one is
@@ -986,11 +1002,27 @@ impl Plan {
         // and confusingly, without the highlights.
         self.marks.is_empty()
             && self.pages.len() == self.baseline as usize
-            && self
-                .pages
-                .iter()
-                .enumerate()
-                .all(|(at, page)| page.source as usize == at && page.turns % 4 == 0)
+            && self.pages.iter().enumerate().all(|(at, page)| {
+                // **Destructured so that a new field cannot be forgotten.** The
+                // crop was, for as long as pages could be cropped, and the reason
+                // is structural rather than careless: this predicate is a list of
+                // the ways a document can differ from its file, and a list like
+                // that is wrong the moment somebody adds a way --- silently, and
+                // in the direction that reads as "nothing was edited".
+                //
+                // Written this way round, a tenth field on `PageView` is
+                // `error[E0027]` here until whoever added it says which half it
+                // is in. `id` is the only one that is deliberately ignored: it is
+                // the model's name for the page and says nothing about whether
+                // the page differs from the file.
+                let PageView {
+                    id: _,
+                    source,
+                    turns,
+                    crop,
+                } = page;
+                *source as usize == at && turns % 4 == 0 && crop.is_none()
+            })
     }
 }
 
@@ -1592,6 +1624,41 @@ mod tests {
         assert!(
             !plan.is_identity(),
             "a save cannot hand this file over unchanged"
+        );
+    }
+
+    #[test]
+    fn a_cropped_document_is_not_the_file_on_disk() {
+        // **The clause that was missing, and what it cost.** A cropped page kept
+        // its position, its turn and its lack of marks, so `is_identity`
+        // answered `true` and the print path handed the printer the file as it
+        // is on disk --- uncropped. Measured before the fix: a plan carrying
+        // `crop: Some(...)` reported `is_identity = true` and `print::select`
+        // answered `Pages::All`.
+        //
+        // Beside `only_an_unedited_document_is_the_file_on_disk` rather than
+        // inside it, because that test walks a sequence of edits and this is
+        // about one field being consulted at all --- and a test that grows a
+        // fifth `assert!` is a test whose name stops describing it.
+        let edits = opened();
+        let first = edits.state(7).expect("open").pages[0].id;
+        assert!(edits.plan(7).expect("plan").is_identity(), "the control");
+
+        edits
+            .crop(7, first, Some([100.0, 100.0, 400.0, 500.0]))
+            .expect("crop");
+        assert!(
+            !edits.plan(7).expect("plan").is_identity(),
+            "a crop is a change to what the page shows, so the file is not this document"
+        );
+
+        // And back, which is what says the predicate reads the crop rather than
+        // counting commands --- the same control the reorder test above states
+        // for the order.
+        edits.crop(7, first, None).expect("uncrop");
+        assert!(
+            edits.plan(7).expect("plan").is_identity(),
+            "cleared, so the page shows what the file shows again"
         );
     }
 

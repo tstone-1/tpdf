@@ -12396,3 +12396,60 @@ The general rule, and it is one this repository keeps re-learning from new angle
 **an untested instrument is worth less than no instrument, because it invites the
 conclusion it cannot support.** A green line from a harness whose failing path has
 never been observed says only that the harness printed something.
+
+---
+### Two writers for one document, and the printer got the older one
+
+Printing a document a reader had marked up produced paper with no marks on it,
+and printing a page they had cropped produced the page at its full size. Both
+had been true since marks existed. Found by reading the print path and then
+**measured before anything was changed**: a job built from a plan carrying one
+mark and one crop came back with **no page carrying `/Annots` and none carrying
+`/CropBox`**, and a plan whose only change was a crop reported
+`is_identity() == true`, so `print::select` answered `Pages::All` and the file
+went to the printer untouched.
+
+Two independent causes, and it is worth separating them because only one is the
+trap in the title.
+
+**`Plan::is_identity` was a list of the ways a document can differ from its
+file, and the crop was not on it.** Marks, page count, order, turns --- four
+clauses, all correct, written before a page could be cropped. A list like that is
+wrong the moment somebody adds a fifth way, silently, and in the direction that
+reads as *nothing was edited*. The clause is there now, and so is the mechanism
+that makes the next one impossible to forget: the closure destructures
+`PageView`, so a tenth field is `error[E0027]` until whoever added it says which
+half it is in. **A predicate over a struct should destructure it**, and the cost
+of not doing so is a defect nobody can see in a diff.
+
+**`print::build` and `save::planned_bytes` were two implementations of "produce
+the working document".** Printing came first and needed a subset --- pages,
+order, turns --- so it grew its own page walk. `save.rs` later learned to write
+marks and crops. Nothing compared the two, and nothing could: they take different
+arguments and return different types, and every test either module has passes
+with the other one broken. This is the *two copies of a distinction drift* entry
+arriving between modules rather than within one, and the tell was there to be
+read --- `print::build` never mentions `plan.marks` at all.
+
+The fix is one writer. `save::print_bytes` is `planned_bytes` with the one input
+a print job has and a save does not: the reader's own rotation. `print::Route`
+names the three producers, so which one a job uses is a pure function that can be
+exercised without a document open --- a check inside a Tauri command has no
+failing case a test can reach.
+
+**Routing through the other writer silently dropped a guarantee, and a mutation
+is what said so.** Deleting the view rotation from `print_bytes` left every test
+green: the route test asserts *which* producer is chosen and says nothing about
+what it produces, and every rotation test beside it drives `build`, which is now
+the other producer. So moving work between two implementations moves its coverage
+too, and the coverage does not follow by itself. Ask, for each property the old
+path guaranteed, which test would go red if the new path stopped guaranteeing it.
+
+**And the test written for that survived its own second mutation.** Letting the
+view rotation *replace* a page's own turn rather than composing with it passed,
+because the fixture had a mark and no edit turn --- so `page.turns + view` and
+`view` were the same number. Every ingredient was present except the one that
+discriminates. `rotated.pdf` is the only fixture whose pages carry four different
+rotations, which is what makes "each page a quarter past where the file had it"
+an assertion rather than a tautology; adding an edit turn on one page is what
+made the composition observable.
