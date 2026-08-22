@@ -12488,3 +12488,254 @@ speed at all: a document in a synced folder is not re-uploaded, the disk is not 
 the previous revision stays byte for byte inside the new file so a validator can still show
 what a signature covered. When a measurement kills the headline reason for a piece of work,
 the question is whether a different reason survives it --- not whether the work does.
+
+---
+### A field documented as the caller's last look, and read by nobody
+
+`Appended::verified` held a full `Fingerprint` of the source as it was when the update
+section was built against it. Its doc comment said, in as many words, that *"the caller's
+last look before it writes goes through this field, and a `None` arm could only be written
+as 'skip the check'"* --- which is why it is not an `Option`. `append_bytes` populated it on
+every call. `append_in_place` never read it.
+
+What actually guarded the write was `metadata(source).len() != appended.was`. A length, and
+only a length, on a path whose whole hazard is that a document can be replaced by a
+different one of the same size --- which this repository already had a trap about under
+*Equal length is not no change*, and which `fingerprint.rs` argues at length in its own
+header.
+
+**Three things pointed at the guard and none of them was the guard**, and that combination
+is what let it stand for as long as it did:
+
+- the field's type, which cannot express "unchecked";
+- the field's doc comment, which describes a check;
+- and a comment at the call site in `lib.rs` explaining why no second look was needed there
+  --- on the grounds that comparing a length is *"a sharper answer"* than comparing a length
+  and a modification time. It is the wrong way round. Two files in the same crate said so.
+
+The mechanical tell is cheap and would have found it in one command: **a `pub` field with no
+consumer.** `grep -rn '\.verified' src-tauri/src` returns the rewrite path's use and nothing
+for the append. A field that only ever gets written is either dead or a guard nobody makes,
+and the second is worse, because the type and the prose both go on claiming otherwise.
+
+The general shape, which is not about saving: **a value carried to a call site is not a check
+performed at it.** Plumbing evidence to where a decision is made feels like most of the work
+and is none of it. If the decision does not read the value, the plumbing is decoration that
+reads as diligence --- and reviews, including several of this file's own, will keep pointing
+at the plumbing.
+
+---
+### A guard that looks a pathname up again is not a guard on the file you are writing
+
+The fix for the entry above was not only *which bytes* but *which file*. `append_in_place`
+opened the file, wrote to it, read it back by calling `Document::load(source)`, and rolled
+back by reopening `source` and truncating it. Four operations, four separate lookups of one
+name, and a rename between any two of them puts a different file under the later ones.
+
+The costly one is the roll-back: a save that fails after a rename lands `set_len` on whatever
+now has that name --- a file this process never opened, never checked and was never asked to
+touch, truncated to the length of a document it has nothing to do with.
+
+**A pathname is a lookup, not a file.** Everything now goes through one descriptor: the
+fingerprint comparison reads `file.metadata()`, the writes append to it, the verification
+seeks it to zero and reads it, and the roll-back is `file.set_len` on it. `Fingerprint`
+grew `agrees_with_metadata` for the first of those, sharing one body with `agrees_shallowly`
+so the two cannot drift about what "the same file" means.
+
+Two things worth knowing beyond the mechanics.
+
+**The window is inside the function, so the seam has to be an argument.** Between `open` and
+the first write there is nothing a test can plant into, because both are statements in one
+body. `append_through(&mut File, ...)` is the whole fix for that: the test opens the handle,
+lets something else rename over the pathname, and then calls the function. Same shape as
+*A guard written inline with an FFI call is reachable by nothing*.
+
+**The intruder in that test must not be a valid PDF.** With a valid one, verifying through
+the handle and verifying by name both succeed, so the check stops discriminating and a
+mutation that swaps one for the other survives. With unparseable bytes at the pathname the
+two routes diverge --- and the by-name route additionally rolls *our* file back, which the
+test's last assertion catches. Whatever a fixture is meant to discriminate, it needs the two
+cases to produce different observables, not merely different intentions.
+
+**One handle is not one set of rights, and the platform that cannot be tested is where that
+bites.** The obvious way to write this is `OpenOptions::new().read(true).append(true)`, and
+it is wrong on Windows: Rust maps append mode there to
+`FILE_GENERIC_WRITE & !FILE_WRITE_DATA` (`std::sys::fs::windows`, `get_access_mode`), while
+`File::set_len` is `SetFileInformationByHandle(FileEndOfFileInfo)`, which needs exactly the
+right that mode removes. Every write would have succeeded and every roll-back failed with
+*access denied* --- on the platform this repository cannot run a test from, which is where
+such a thing survives. `read(true).write(true)` plus an explicit `seek(End(0))` is correct on
+both, and it is also the better semantics for the job: the trailer has to land immediately
+after the body, which a file offset says and `O_APPEND` does not.
+
+Worth noticing where the risk came from: the code being replaced was *safe* here, by
+accident of its defect. It opened one handle in append mode to write and a **second** one in
+write mode to truncate --- the by-name reopen that this whole entry is about --- so each
+operation happened to hold the right it needed. Collapsing four lookups into one handle is
+the fix, and it is also what made one handle have to satisfy four different requirements at
+once. A consolidation inherits the union of what it consolidates.
+
+The general form: **a mode is a set of rights, not a verb.** "Append" reads as *what I intend
+to do* and is really *what the OS will let me do*, and the two come apart the moment a second
+operation on the same handle needs a right the first did not. Read the platform's mapping
+before assuming one handle covers write, truncate and read.
+
+**And the last question is about the name, deliberately answered last and without a
+roll-back.** If the pathname stopped naming our file, the reader's edits are complete and
+correct in the file that had the name when the save began --- which is either unreachable or
+living under another name, and truncating it in that second case would destroy the only copy
+of the work. So it reports and touches nothing. `FileId` is `st_dev`/`st_ino` on Unix and
+`GetFileInformationByHandle` on Windows; `std::os::windows::fs::MetadataExt::file_index`
+would answer it too and is unstable behind `windows_by_handle`, which a pinned stable
+toolchain cannot use.
+
+---
+### One temporary name for every save, written with a call that truncates
+
+Every atomic write in `save.rs` staged to `out.with_extension("tpdf-partial")` and wrote it
+with `std::fs::write`. One predictable name derived from the destination, and a call that
+creates-or-truncates and follows symlinks. Three consequences, all of them writes outside
+the file the reader named:
+
+- saving `report.pdf` **destroyed** any existing `report.tpdf-partial` beside it;
+- a **symlink** planted at that path sent the bytes wherever it pointed;
+- two saves aimed at one destination **shared** a staging file, so the second truncated the
+  first's bytes and either could rename or delete the other's work.
+
+And the cleanup made it worse rather than better: on failure it removed the path whether or
+not this call had created it.
+
+`create_new(true)` is the whole fix, and it is worth naming what it buys rather than treating
+it as a stylistic preference: it is `O_CREAT | O_EXCL`, so it **fails instead of truncating**
+and it **refuses a symlink at the path** rather than resolving it. A name that is taken is
+skipped and the next counter value tried, because a collision is not an error --- it means
+another save got there first, which is what the counter exists for. The name appends rather
+than replacing the extension (`report.pdf.tpdf-partial-<pid>-<n>`), so it cannot collide with
+a document somebody happened to name `report.tpdf-partial`.
+
+The general rule: **a temporary file is a file, and every rule about not writing over things
+the user did not name applies to it.** "It is only a temporary" is the reasoning that puts a
+truncating call on a predictable path in somebody else's directory.
+
+The `sync_data` before the rename went in with it. Without it the atomicity claim is about
+the directory entry only: a crash after the rename can leave the new name pointing at a file
+of zeros, which is worse than either outcome the staging split exists to guarantee.
+
+---
+### Four assertions became unfalsifiable without being touched
+
+Four tests asserted `!out.with_extension(PARTIAL).exists()` --- no staging file left beside
+the destination. Every one of them was correct, load-bearing, and had been passing for weeks.
+The moment the staging name gained a pid and a counter they became assertions about a path
+**no code can produce**, so they are satisfied by a directory full of leftovers.
+
+The usual version of this trap is an assertion written wrongly. This is the other direction:
+the assertion never changed, the code moved out from under it, and nothing went red at the
+moment it stopped testing anything --- because becoming impossible to fail is not a failure.
+
+The tell was not in the test files at all. It was in the diff: **a constant that had been the
+whole of a name became one part of it.** Any assertion built from the old shape is worth
+re-reading whenever a name gains structure, and the repair is to derive the observable
+instead of spelling it out --- `partials_beside(out)` lists what is actually there, whatever
+the naming rule becomes next.
+
+The same edit produced its mirror one file away, and it is worth noticing that both arrived
+together: the mutation `save: write straight to the destination rather than renaming into it`
+was aimed at `let partial = out.with_extension(PARTIAL);`, a line that no longer exists, so
+the anchor gate caught it immediately. **The gate covers the mutation table and nothing
+covers the assertions**, which is why one of the two was found in a second and the other by
+reading.
+
+---
+### A parity check that compares steps is blind to the authority they run with
+
+`check_workflow_parity.py` compares the two `gates` jobs step for step: every `uses:` with
+its pinned SHA and every `run:` body, in order. It was written after a release workflow lost
+a whole step in a copy, and it does that job.
+
+It cannot see `permissions:`, and it cannot see a `with:` block. Its own docstring said so
+and framed the difference as deliberate --- CI and release *should* differ on triggers and
+authority. That framing is right about the workflow and wrong about the job, and an outside
+review found what fell through it: `release.yml` declared `contents: write` at workflow
+level, every job inherited it, and the `gates` job then checked out with the default
+credential-persisting `actions/checkout` and ran `pip install pyhanko pyhanko-certvalidator`
+--- unpinned, resolved from PyPI at the moment the job started --- **before** any gate ran.
+So the newest release of a third-party package executed first, with a token that can write to
+the repository.
+
+Each ingredient looks reasonable alone. A release workflow needs write. A checkout persists
+credentials by default. `pip install <name>` is what every README says. The composition is
+the finding, and no check in the repository was looking at compositions.
+
+Three properties close it, all now asserted by the same script: the gates job declares
+`contents: read` of its own (or the workflow does), its checkout sets
+`persist-credentials: false`, and its Python install names a committed requirements file
+rather than package names. All four failure modes were proved by mutation before the script
+was trusted, including the one that matters most --- **deleting the install step entirely**,
+which without that check passes exactly like a clean run.
+
+The generalisation: **when a check exists to stop two things drifting, ask what it compares
+and write down what it therefore cannot see.** This script's docstring listed the exclusions
+correctly and treated the list as a design note rather than as a gap register. A stated
+exclusion is where the next defect lives.
+
+---
+### A test cannot see a change to a profile it does not run under
+
+`docs/THREAT-MODEL.md` gained a disclosure that a parser panic on the save path reaches the
+reader as a refusal rather than closing their document. That is true, and it is true only
+while the crate unwinds: `spawn_blocking` hands a panic back as a `JoinError`, and
+`panic = "abort"` would turn the same panic into process death taking the unsaved journal
+with it.
+
+The obvious way to pin it is a test that panics inside a blocking task and asserts the error
+comes back. It passes. It would also pass with `panic = "abort"` in `[profile.release]`,
+because **`cargo test` builds under the test profile, which does not inherit it.** The test
+aimed at the exact property is structurally unable to see the exact change that removes it.
+
+So the assertion with teeth is a source-level one --- read the crate manifest, refuse any
+`panic` key --- and the runtime half stays as the control that the mechanism is what the
+disclosure says it is. Proved by planting `[profile.release] panic = "abort"` and watching it
+go red, which is the only thing that distinguishes this from the version that could not fail.
+
+The general form is worth carrying past Rust: **a check runs in a configuration, and a claim
+about a different configuration is not something it can make.** Debug versus release,
+test-profile versus ship-profile, the dev server versus the bundle --- this repository has
+now been caught by that four times, in four different vocabularies.
+
+---
+### The only document nobody re-reads is the one strangers read
+
+`README.md` said editing had *just begun*, listed ink, shapes, text boxes and squiggly
+under **Not built yet** while all four were registered commands with keyboard shortcuts,
+and stated that *the open file is never modified in place* --- six weeks and one shipped
+Save-in-place after that stopped being true. It also carried five exact counts (crates, npm
+packages, PDFium libraries, cargo packages, traps) and every one of them had drifted.
+
+Nothing in this repository was in a position to notice. Seventeen gates, four mutation
+harnesses, a threat model re-read at every release, a trap index with a set-diff behind it
+--- all of them aimed at the documents the people writing the code read. The README is the
+one written *for* somebody else, which is exactly why it is never opened while working, and
+its errors are the ones with a consequence outside the repository: a stranger deciding
+whether to download this was being told it was materially less capable than the binary.
+
+**Prose is not checkable, but one shape of claim is: an assertion of absence.** "This
+feature exists and works as described" has no mechanical test. "This feature does not exist"
+does, provided the claim names the thing whose existence can be looked up. So every bullet
+under *Not built yet* now carries `<!-- not-built: edit.foo -->`, and `check_readme_claims.py`
+refuses any of those that is registered. Claiming a feature is missing costs you naming its
+absence in a form the registry can contradict.
+
+Two things to copy rather than the specific mechanism.
+
+**Check the half that can be checked and say out loud that the rest is not.** The status
+paragraph --- the sentence that was most wrong --- has no gate and cannot have one, and the
+tempting move is a keyword list approximating one. That would be a second inventory, drifting
+the same way the first did. It went in `BUILD.md`'s release checklist instead, with the gate's
+docstring naming the boundary. `docs/TRAPS.md` already records that a checklist is the weaker
+instrument; naming which half is weak beats implying both are strong.
+
+**Delete a count rather than correcting it, wherever something else already owns it.** Every
+number removed from the README is in a generated file or one `grep -c` away. A count in prose
+has no gate by construction, and this repository has now been caught by that three times in
+three documents.

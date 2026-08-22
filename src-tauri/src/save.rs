@@ -67,7 +67,7 @@ use lopdf::{dictionary, Dictionary, Object, ObjectId};
 
 use crate::docmodel::MarkKind;
 use crate::edits::{Plan, PlannedMark};
-use crate::fingerprint::Fingerprint;
+use crate::fingerprint::{FileId, Fingerprint};
 use crate::pagetree::{
     agreed_turns, apply_crops, apply_turns, displayed_page, drop_outline, drop_pages,
     ordered_pages, reorder_pages, DisplayedPage,
@@ -75,12 +75,21 @@ use crate::pagetree::{
 use crate::print::MAX_DECODE;
 use crate::textbox;
 
-/// Extension of the file the bytes are written to before the rename.
+/// The middle of the name of the file bytes are written to before the rename.
 ///
 /// Sibling rather than in the system temp directory, because a rename across
 /// filesystems is not atomic and the temp directory is routinely on another
-/// one.
+/// one. The full name is `<destination>.tpdf-partial-<pid>-<attempt>`: see
+/// [`stage`] for why every part of that is load-bearing.
 const PARTIAL: &str = "tpdf-partial";
+
+/// How many names [`stage`] will try before giving up.
+///
+/// A collision means another save of the same destination is in flight in this
+/// process, or a stale leftover from a run whose pid has since been reused.
+/// Either way the next attempt index is free. Sixteen in a row is a directory
+/// somebody is fighting us for, and reporting that beats looping.
+const STAGING_ATTEMPTS: u32 = 16;
 
 /// Why a save was refused, and whether the file having changed is the reason.
 ///
@@ -635,14 +644,22 @@ pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), Refusa
 /// document is untouched and afterwards it is complete. An append has no such
 /// instant. It puts bytes on the end of the file the reader has.
 ///
-/// Three things bound that, and none of them is a promise that a crash is
+/// Four things bound that, and none of them is a promise that a crash is
 /// impossible.
 ///
-/// **The length is checked first.** The update names byte offsets into the
-/// previous revision and chains its `/Prev` to that revision's `startxref`, so
-/// appending it to a file of any other length produces a cross-reference table
-/// pointing at the wrong bytes. A file that grew or shrank since the update was
-/// built is refused rather than appended to.
+/// **The file is identified first, through the handle it will be written to.**
+/// The update names byte offsets into the previous revision and chains its
+/// `/Prev` to that revision's `startxref`, so appending it to any other file
+/// produces a cross-reference table pointing at the wrong bytes. The length has
+/// to match --- it is what those offsets are measured from --- but a length is
+/// not evidence that the file is the same one, so the check is the whole of
+/// [`Fingerprint::agrees_with_metadata`]: length and modification time, read
+/// through the open handle rather than by looking the pathname up again.
+///
+/// It said "the length is checked first" until 2026-08-22, and so did the code.
+/// `Appended::verified` carried a full fingerprint the whole time and nothing
+/// read it, while the caller's comment claimed a length was a *sharper* answer
+/// than a length and a timestamp. See `docs/TRAPS.md`.
 ///
 /// **The trailer goes in its own write.** The update ends with `startxref`, an
 /// offset and `%%EOF`, and a reader looking for the current revision scans
@@ -656,7 +673,17 @@ pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), Refusa
 /// **Anything that fails cuts the file back.** The length before the write is
 /// what it is truncated to, so a refused or failed append leaves the file
 /// exactly as it found it --- including the case where the *verification* below
-/// refuses, which is a file this function wrote and then took back.
+/// refuses, which is a file this function wrote and then took back. The
+/// truncation goes through the same handle as the writes, so it cannot land on
+/// a file that merely acquired the name in between.
+///
+/// **And the name is checked last, without a roll-back.** Everything above is
+/// about the file the handle holds; this is the one question about the pathname.
+/// If another program renamed something over it mid-save, the edits are complete
+/// and correct in the file that was there when the save began --- unreachable
+/// now, or living under another name, and truncating it in that second case
+/// would destroy the only copy of work the reader asked to keep. So it reports
+/// that the save did not land where it was asked and touches neither file.
 ///
 /// The verification is a genuine re-read: the file is parsed again and asked for
 /// its page count. A rewrite gets that for free by verifying the staged copy
@@ -669,18 +696,76 @@ pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), Refusa
 /// the truncation fails; or the appended file cannot be parsed or has the wrong
 /// number of pages.
 pub fn append_in_place(appended: &Appended, source: &Path) -> Result<(), String> {
-    use std::io::Write as _;
+    // **Opened once, and everything below goes through this handle.** The check,
+    // the writes, the read-back and the roll-back are all about *this* file, not
+    // about whatever the pathname resolves to at the moment each of them runs.
+    // Reopening by name between them is how a rename lands the roll-back on a
+    // file that was never ours to truncate.
+    // **`write`, not `append`, and that is a portability fix rather than a
+    // preference.** Rust maps `append(true)` on Windows to
+    // `FILE_GENERIC_WRITE & !FILE_WRITE_DATA` (`std::sys::fs::windows`,
+    // `get_access_mode`), and `File::set_len` there is
+    // `SetFileInformationByHandle(FileEndOfFileInfo)`, which needs exactly the
+    // right that mode removes. An append-mode handle would therefore write
+    // happily and fail every roll-back with *access denied* --- on the platform
+    // this cannot be tested from, which is where such a thing survives.
+    //
+    // It is also the more correct semantics for what this does: the trailer has
+    // to land immediately after the body, and the file offset says that, where
+    // `O_APPEND` says "wherever the end is now".
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(source)
+        .map_err(|e| format!("could not open {source:?} to save it: {e}"))?;
+    append_through(&mut file, appended, source)
+}
 
-    let now = std::fs::metadata(source)
-        .map_err(|e| format!("could not measure {source:?}: {e}"))?
-        .len();
-    if now != appended.was {
-        return Err(format!(
-            "{source:?} is {now} bytes and the edits were prepared against {} --- \
-             nothing was written, so the file on disk is untouched",
-            appended.was
-        ));
-    }
+/// [`append_in_place`] with the handle supplied.
+///
+/// **A seam, not a convenience.** Everything this function guarantees is about
+/// the difference between a handle and a pathname, and the window where they can
+/// disagree opens *inside* [`append_in_place`] --- between its `open` and its
+/// first write --- where no test can plant anything. Taking the handle as an
+/// argument moves that window to the caller, so a test can open the file, let
+/// something else rename a different file over the pathname, and then ask this
+/// function what it does. `docs/TRAPS.md`, *A guard written inline with an FFI
+/// call is reachable by nothing --- the fix is a seam, not a harness*.
+fn append_through(
+    file: &mut std::fs::File,
+    appended: &Appended,
+    source: &Path,
+) -> Result<(), String> {
+    // Which file this is, taken before a byte is written and compared after the
+    // last one. See `FileId`, and the failure it reports at the end.
+    let writing_to = FileId::of(file).ok_or_else(|| {
+        format!(
+            "tpdf could not tell which file {source:?} is, so it cannot promise a save would \
+             land there --- nothing was written. Use Save a copy."
+        )
+    })?;
+
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("could not measure {source:?}: {e}"))?;
+    // **Length *and* modification time, against the file as it was when the
+    // update section was built against it.** The length is what the update's
+    // byte offsets and `/Prev` depend on, so it is the one that has to match ---
+    // but it is not evidence of identity on its own, and the repository has a
+    // trap of its own about believing that it is. A file replaced by a distinct
+    // revision of the same length would take this update's offsets into an
+    // object graph they were never computed for.
+    //
+    // This is the consumer of `Appended::verified`, which had none until
+    // 2026-08-22: the field was populated, documented as the caller's last look,
+    // and read by nobody, so the guard was a length comparison wearing a
+    // fingerprint's clothes.
+    appended
+        .verified
+        .agrees_with_metadata(&meta, source)
+        .map_err(|why| {
+            format!("{why} --- nothing was written, so the file on disk is untouched")
+        })?;
 
     // The split point: the last `startxref` in the update section. Found in the
     // bytes rather than computed from a length, because what has to be in the
@@ -691,55 +776,120 @@ pub fn append_in_place(appended: &Appended, source: &Path) -> Result<(), String>
         find_last(&appended.update, b"\nstartxref").map_or(appended.update.len(), |at| at + 1);
     let (body, trailer) = appended.update.split_at(split);
 
-    let cut_back = |why: String| -> String {
-        match std::fs::OpenOptions::new().write(true).open(source) {
-            Ok(file) => match file.set_len(appended.was) {
-                Ok(()) => format!("{why} --- the file has been put back as it was"),
-                Err(also) => format!("{why} --- and it could not be put back: {also}"),
-            },
+    let cut_back = |file: &std::fs::File, why: String| -> String {
+        match file.set_len(appended.was) {
+            Ok(()) => format!("{why} --- the file has been put back as it was"),
             Err(also) => format!("{why} --- and it could not be put back: {also}"),
         }
     };
 
-    let write = || -> std::io::Result<()> {
-        let mut file = std::fs::OpenOptions::new().append(true).open(source)?;
-        file.write_all(body)?;
-        file.flush()?;
-        // Before the trailer, so the body is on the platter by the time the
-        // bytes that make it the current revision are written. Without it the
-        // ordering above is a statement about this process's buffers rather than
-        // about the file.
-        file.sync_data()?;
-        file.write_all(trailer)?;
-        file.flush()?;
-        file.sync_data()
-    };
-    if let Err(e) = write() {
-        return Err(cut_back(format!("could not append to {source:?}: {e}")));
+    if let Err(e) = write_in_two(file, body, trailer) {
+        return Err(cut_back(
+            file,
+            format!("could not append to {source:?}: {e}"),
+        ));
     }
 
-    // The re-read, and the reason the rollback above is reachable rather than
+    // The re-read, and the reason the roll-back above is reachable rather than
     // theoretical. `lopdf` is the writer's own reader, which is weaker than the
     // rewrite path's third parser and is what is available here --- and what it
     // can see is a file that no longer parses or has lost pages, which is
     // exactly what a mis-chained cross-reference produces.
-    match Document::load_with_options(
-        source,
+    //
+    // Read through the handle rather than from the path, for this function's
+    // one reason: a read by name would parse whichever file has that name now,
+    // so a replacement would be checked in place of the file we wrote.
+    let expected = usize::try_from(appended.was).unwrap_or(0) + appended.update.len();
+    let bytes = match read_whole(file, expected) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(cut_back(
+                file,
+                format!("the saved file could not be read back: {e}"),
+            ))
+        }
+    };
+    match Document::load_mem_with_options(
+        &bytes,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
             ..Default::default()
         },
     ) {
-        Ok(after) if after.get_pages().len() == appended.pages => Ok(()),
-        Ok(after) => Err(cut_back(format!(
-            "the saved file has {} page(s) and should have {}",
-            after.get_pages().len(),
-            appended.pages
-        ))),
-        Err(e) => Err(cut_back(format!(
-            "the saved file could not be read back: {e}"
-        ))),
+        Ok(after) if after.get_pages().len() == appended.pages => {}
+        Ok(after) => {
+            return Err(cut_back(
+                file,
+                format!(
+                    "the saved file has {} page(s) and should have {}",
+                    after.get_pages().len(),
+                    appended.pages
+                ),
+            ))
+        }
+        Err(e) => {
+            return Err(cut_back(
+                file,
+                format!("the saved file could not be read back: {e}"),
+            ))
+        }
     }
+
+    // **Last, and deliberately not rolled back.** Everything above is about the
+    // file this handle holds; this is the one question about the *name*. If
+    // another program renamed something over it while the writes were in flight,
+    // the edits are complete and correct in the file that was there when the
+    // save began --- which is either unreachable now or living under some other
+    // name, and in the second case truncating it would destroy the only copy of
+    // work the reader asked to keep. So it says what happened and leaves both
+    // files alone.
+    if FileId::at(source) != Some(writing_to) {
+        // Covers a deletion as well as a rename: `at` answers `None` for a name
+        // that resolves to nothing, and both mean the same thing here --- this
+        // handle's file is no longer what that name reaches.
+        return Err(format!(
+            "{source:?} stopped being the file it was while it was being saved --- \
+             something else renamed or removed it. The edits were written to the file that \
+             had that name when the save began, and nothing that has the name now was touched."
+        ));
+    }
+    Ok(())
+}
+
+/// Writes the body, gets it on the platter, then writes the trailer.
+///
+/// The two-write split is [`append_in_place`]'s second bound and the reason it
+/// is a separate function is the same as ever: a closure capturing the handle
+/// mutably cannot coexist with the roll-back that needs to read it.
+///
+/// The `sync_data` between the halves is what makes the ordering a statement
+/// about the file rather than about this process's buffers.
+fn write_in_two(file: &mut std::fs::File, body: &[u8], trailer: &[u8]) -> std::io::Result<()> {
+    use std::io::{Seek as _, Write as _};
+    // The handle is not in append mode --- see `append_in_place` for why --- so
+    // where the body goes is this seek and nothing else. It is also what makes
+    // the second write land against the first: after `write_all` the offset is
+    // exactly the end of the body, wherever the file's end has since moved to.
+    file.seek(std::io::SeekFrom::End(0))?;
+    file.write_all(body)?;
+    file.flush()?;
+    file.sync_data()?;
+    file.write_all(trailer)?;
+    file.flush()?;
+    file.sync_data()
+}
+
+/// Reads a whole open file from the beginning, through the handle it is given.
+///
+/// `capacity` is a hint, not a bound: `lopdf`'s own path-based loader passes the
+/// file's length for the same reason, and getting it wrong costs a reallocation
+/// rather than a wrong answer.
+fn read_whole(file: &mut std::fs::File, capacity: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read as _, Seek as _};
+    file.seek(std::io::SeekFrom::Start(0))?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// The last position of `needle` in `hay`, or `None`.
@@ -2264,21 +2414,97 @@ fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
     commit(&staged, out)
 }
 
-/// Writes `bytes` to the sibling temporary file for `out`, and names it.
+/// Writes `bytes` to a fresh sibling temporary file for `out`, and names it.
 ///
 /// One definition of where the partial file goes, read by both save paths ---
 /// the in-place one stages and commits with the document's close between them,
-/// and a second copy of `with_extension(PARTIAL)` is how the two halves would
-/// come to disagree about which file the other meant.
+/// and a second copy of this is how the two halves would come to disagree about
+/// which file the other meant.
+///
+/// **The name is fresh for each call in flight and the file is created
+/// exclusively**, and both halves of that matter. Until 2026-08-22 this staged at
+/// `out.with_extension(PARTIAL)` --- one fixed name, derived from the
+/// destination and reused by every save --- and wrote it with `std::fs::write`,
+/// which truncates whatever is at that path and follows a symlink there. Saving
+/// `report.pdf` therefore destroyed any existing `report.tpdf-partial` beside it,
+/// two saves to one destination shared a staging file and could rename or delete
+/// each other's work, and the cleanup on failure removed the path whether or not
+/// this call had created it. That is silent destruction outside the file the
+/// reader asked to write, which is the one thing this module exists not to do.
+///
+/// `create_new` is what makes the name a claim rather than a guess: it is
+/// `O_CREAT | O_EXCL`, so it fails rather than truncating, and it refuses a
+/// symlink at that path outright. A collision is retried at the next attempt
+/// index rather than reported, because a collision is not an error --- it means
+/// another save of this destination got there first, which is exactly the case
+/// the index is for.
+///
+/// The name appends rather than replacing the extension, so `report.pdf` stages
+/// beside itself as `report.pdf.tpdf-partial-<pid>-<n>` and can never collide
+/// with a document somebody named `report.tpdf-partial`. See [`staging_name`]
+/// for why `n` counts attempts rather than saves.
+/// The file name [`stage`] tries on its `attempt`-th try, for a destination
+/// called `stem`.
+///
+/// **Deterministic per destination, deliberately, and it was a process-wide
+/// counter for about an hour first.** With a counter, the name a given call
+/// picks depends on how many other saves have happened in this process --- which
+/// no test can know, because `cargo test` runs them in parallel and several of
+/// them stage. A test planting a file at "the next name" would then sometimes
+/// plant at a name nothing was going to use, pass, and stop testing the thing it
+/// is named for. `docs/TRAPS.md` is largely about that failure, so shipping a
+/// fresh instance of it to close a review finding would have been poor.
+///
+/// Starting every destination at zero costs nothing: a name that is taken is a
+/// save of the same file already in flight, or a leftover, and `create_new` sends
+/// this to the next index either way.
+fn staging_name(stem: &std::ffi::OsStr, attempt: u32) -> std::ffi::OsString {
+    let mut name = stem.to_os_string();
+    name.push(format!(".{PARTIAL}-{}-{attempt}", std::process::id()));
+    name
+}
+
 fn stage(out: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
-    let partial = out.with_extension(PARTIAL);
-    std::fs::write(&partial, bytes).map_err(|e| {
-        // Nothing to remove: the failure is the write itself, and a file that
-        // may or may not exist is removed below rather than guessed about here.
-        let _ = std::fs::remove_file(&partial);
-        format!("could not write {partial:?}: {e}")
-    })?;
-    Ok(partial)
+    use std::io::Write as _;
+
+    let dir = out.parent().filter(|p| !p.as_os_str().is_empty());
+    let dir = dir.unwrap_or(Path::new("."));
+    let stem = out
+        .file_name()
+        .ok_or_else(|| format!("{out:?} does not name a file to save to"))?;
+
+    for attempt in 0..STAGING_ATTEMPTS {
+        let partial = dir.join(staging_name(stem, attempt));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("could not create {partial:?}: {e}")),
+        };
+        // Removed on any failure, and this call created it, so removing it
+        // cannot take anything that was not ours.
+        let written = file
+            .write_all(bytes)
+            .and_then(|()| file.flush())
+            // So that the rename swaps in a file whose contents are on the
+            // platter. Without it the atomicity is a claim about the directory
+            // entry only: a crash after the rename can leave the new name
+            // pointing at a file of zeros, which is worse than either outcome
+            // the split is meant to guarantee.
+            .and_then(|()| file.sync_data());
+        if let Err(e) = written {
+            drop(file);
+            let _ = std::fs::remove_file(&partial);
+            return Err(format!("could not write {partial:?}: {e}"));
+        }
+        return Ok(partial);
+    }
+    Err(format!(
+        "could not find an unused temporary name beside {out:?} after {STAGING_ATTEMPTS} tries"
+    ))
 }
 
 /// Renames a staged file over `out`, removing it if that fails.
@@ -2388,6 +2614,35 @@ mod tests {
     use crate::print_macos as os_pdf;
     #[cfg(not(target_os = "macos"))]
     use crate::print_win as os_pdf;
+
+    /// Every staging file left beside `out`, whatever its counter.
+    ///
+    /// **Written the day the staging name stopped being predictable, because
+    /// the four assertions it replaces became unable to fail.** They read
+    /// `!out.with_extension(PARTIAL).exists()`, which was the exact name
+    /// `stage` used to produce; it now produces `<name>.tpdf-partial-<pid>-<n>`,
+    /// so that path is one no code writes and the assertion is satisfied by a
+    /// directory full of leftovers. `docs/TRAPS.md`, *A property that holds by
+    /// construction cannot test the thing it resembles*.
+    fn partials_beside(out: &Path) -> Vec<PathBuf> {
+        let dir = out.parent().unwrap_or(Path::new("."));
+        let Some(name) = out.file_name().and_then(|n| n.to_str()) else {
+            return Vec::new();
+        };
+        let prefix = format!("{name}.{PARTIAL}");
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&prefix))
+            })
+            .collect()
+    }
 
     /// A scratch directory that removes itself.
     struct Scratch(PathBuf);
@@ -3424,7 +3679,7 @@ mod tests {
             !out.exists(),
             "a refusal writes nothing, not even a temporary"
         );
-        assert!(!out.with_extension(PARTIAL).exists());
+        assert!(partials_beside(&out).is_empty(), "not even a temporary");
     }
 
     /// A one-page document carrying an `/Encrypt` entry in its trailer.
@@ -3619,7 +3874,7 @@ mod tests {
         // still in the journal, and Save a copy is the way to keep them.
         assert!(why.message.contains("another name"), "{why}");
         assert!(
-            !open.with_extension(PARTIAL).exists(),
+            partials_beside(&open).is_empty(),
             "and nothing is staged beside the document"
         );
     }
@@ -3932,7 +4187,7 @@ mod tests {
             .expect_err("must refuse");
         assert!(why.message.contains("changed since it was opened"), "{why}");
         assert!(
-            !open.with_extension(PARTIAL).exists(),
+            partials_beside(&open).is_empty(),
             "no partial file is left beside the document"
         );
         assert_eq!(
@@ -3961,6 +4216,101 @@ mod tests {
         assert!(out.exists());
     }
 
+    /// The name `stage` tries on its `attempt`-th try for `out`.
+    ///
+    /// Calls the production function rather than reproducing the format: a
+    /// second copy of the naming rule would go on passing after the real one
+    /// changed, which is the hazard this file's staging fix is about.
+    fn staging_path(out: &Path, attempt: u32) -> PathBuf {
+        out.parent()
+            .unwrap_or(Path::new("."))
+            .join(staging_name(out.file_name().expect("a file name"), attempt))
+    }
+
+    #[test]
+    fn staging_never_writes_over_a_file_that_is_already_there() {
+        // **The second blocker: every save staged to one predictable name and
+        // wrote it with `std::fs::write`.** Saving `report.pdf` staged at
+        // `report.tpdf-partial` --- so it truncated any file already there,
+        // followed a symlink at that path, and deleted it on failure whether or
+        // not this save had created it. That is destruction outside the file the
+        // reader asked to write.
+        //
+        // `create_new` is what fixes it: a name that is taken is skipped, never
+        // opened. The planted file is the control for that, and it is the next
+        // name `stage` would have chosen rather than a guess at one.
+        let scratch = Scratch::new("staging-collision");
+        let out = scratch.join("report.pdf");
+        let taken = staging_path(&out, 0);
+        std::fs::write(&taken, b"somebody else's work").expect("plant it");
+
+        let staged = stage(&out, b"%PDF-1.7 the new bytes").expect("stage");
+        assert_eq!(
+            staged,
+            staging_path(&out, 1),
+            "it must move on to the next attempt index, not reuse the taken one"
+        );
+        assert_eq!(
+            std::fs::read(&taken).expect("read"),
+            b"somebody else's work",
+            "and leave the one that was taken exactly as it found it"
+        );
+        assert_eq!(
+            std::fs::read(&staged).expect("read"),
+            b"%PDF-1.7 the new bytes"
+        );
+    }
+
+    #[test]
+    fn two_saves_to_one_destination_do_not_share_a_staging_file() {
+        // Two saves aimed at the same file used to stage to one path, so the
+        // second truncated the first's bytes and either one could rename or
+        // delete the other's work. Both files exist at once now, and hold what
+        // their own call wrote.
+        let scratch = Scratch::new("staging-concurrent");
+        let out = scratch.join("report.pdf");
+        let first = stage(&out, b"the first save").expect("stage");
+        let second = stage(&out, b"the second save").expect("stage");
+
+        assert_eq!(
+            (first.clone(), second.clone()),
+            (staging_path(&out, 0), staging_path(&out, 1))
+        );
+        assert_eq!(std::fs::read(&first).expect("read"), b"the first save");
+        assert_eq!(std::fs::read(&second).expect("read"), b"the second save");
+        assert_eq!(
+            partials_beside(&out).len(),
+            2,
+            "and both are really on disk"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_does_not_follow_a_symlink_left_at_its_name() {
+        // The sharper half of the same blocker. `std::fs::write` follows a
+        // symlink, so a link planted at the predictable staging name redirected
+        // a save's bytes into whatever it pointed at --- outside the directory,
+        // over a file the reader never named. `create_new` is `O_CREAT | O_EXCL`,
+        // which refuses a symlink at the path outright rather than resolving it.
+        let scratch = Scratch::new("staging-symlink");
+        let out = scratch.join("report.pdf");
+        let victim = scratch.join("someone-elses.txt");
+        std::fs::write(&victim, b"do not overwrite me").expect("plant the victim");
+        std::os::unix::fs::symlink(&victim, staging_path(&out, 0)).expect("plant the link");
+
+        let staged = stage(&out, b"%PDF-1.7 the new bytes").expect("stage");
+        assert_eq!(
+            std::fs::read(&victim).expect("read"),
+            b"do not overwrite me",
+            "the bytes went to a file of ours, not through the link"
+        );
+        assert_eq!(
+            std::fs::read(&staged).expect("read"),
+            b"%PDF-1.7 the new bytes"
+        );
+    }
+
     #[test]
     fn nothing_of_the_partial_file_survives_a_successful_write() {
         let Some(path) = fixture("rotated.pdf") else {
@@ -3972,7 +4322,7 @@ mod tests {
         write_copy(&path, &plan_of(&[1, 1, 1, 1]), &out).expect("write");
         assert!(out.exists());
         assert!(
-            !out.with_extension(PARTIAL).exists(),
+            partials_beside(&out).is_empty(),
             "the temporary was renamed, not copied"
         );
     }
@@ -4308,11 +4658,181 @@ mod tests {
         let meddled = std::fs::read(&at).expect("read");
 
         let refused = append_in_place(&appended, &at).expect_err("refused");
-        assert!(refused.contains("prepared against"), "{refused}");
+        // Derived from the fixture rather than transcribed, so a reworded
+        // message keeps this honest and a message naming the wrong length
+        // cannot pass: `docs/TRAPS.md`, *A test pinned a random value out of a
+        // generated fixture*.
+        assert!(
+            refused.contains(&appended.was.to_string())
+                && refused.contains(&meddled.len().to_string()),
+            "must name the length it was built against and the length it found: {refused}"
+        );
+        assert!(
+            refused.contains("nothing was written"),
+            "and must say the file is untouched: {refused}"
+        );
         assert_eq!(
             std::fs::read(&at).expect("read"),
             meddled,
             "and nothing was written on top of it"
+        );
+    }
+
+    /// The same bytes with one comment byte changed: a different document of
+    /// exactly the same length.
+    ///
+    /// PDF's second line is a binary comment by convention, and a comment runs
+    /// to end of line and means nothing to a parser --- so flipping a byte in it
+    /// leaves a file that loads, has the same pages and hashes differently. That
+    /// combination is the whole point: length alone cannot tell the two apart.
+    fn same_length_variant(bytes: &[u8]) -> Vec<u8> {
+        let line_two = bytes
+            .iter()
+            .position(|b| *b == b'\n')
+            .expect("a PDF has a header line")
+            + 1;
+        assert_eq!(
+            bytes[line_two], b'%',
+            "this fixture's second line is not a comment, so flipping a byte in \
+             it would not leave a valid document"
+        );
+        let mut other = bytes.to_vec();
+        other[line_two + 1] ^= 0xFF;
+        assert_ne!(other, bytes, "the variant has to differ");
+        assert_eq!(other.len(), bytes.len(), "and has to be the same length");
+        other
+    }
+
+    #[test]
+    fn an_append_refuses_a_replacement_that_kept_the_length() {
+        // **The blocker this file was carrying: `Appended::verified` held a full
+        // fingerprint and nothing read it.** The guard was `now != appended.was`
+        // --- a length, and only a length --- while the field's own doc comment
+        // said it was the caller's last look and `lib.rs` called comparing a
+        // length "a sharper answer" than comparing a length and a timestamp. A
+        // document replaced by a distinct revision of the same size would have
+        // had this update's byte offsets appended to an object graph they were
+        // never computed against, and the read-back cannot see that: it asks the
+        // page count, which a same-shape replacement keeps.
+        //
+        // The replacement here differs in one comment byte, so the *length* half
+        // of the check cannot fire and only the modification time can. Its
+        // sibling above covers the other half, where the length moves.
+        let scratch = Scratch::new("append-swapped");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let appended = append_bytes(&at, &plan).expect("build the update");
+        let was = std::fs::read(&at).expect("read");
+
+        // A different document of the same length and the same page count,
+        // stamped with a modification time that is definitely not the original's
+        // --- rather than trusting the clock to have moved between two writes,
+        // which is how this test would flake on a filesystem with a coarse one.
+        let other = same_length_variant(&was);
+        assert_eq!(
+            Document::load_mem(&other)
+                .expect("the variant loads")
+                .get_pages()
+                .len(),
+            Document::load_mem(&was)
+                .expect("the original loads")
+                .get_pages()
+                .len(),
+            "and has the same page count, so nothing downstream could tell them apart"
+        );
+        std::fs::write(&at, &other).expect("replace it");
+        let stamped = std::fs::File::options()
+            .write(true)
+            .open(&at)
+            .expect("open");
+        stamped
+            .set_times(
+                std::fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+                ),
+            )
+            .expect("stamp");
+        drop(stamped);
+
+        let refused = append_in_place(&appended, &at).expect_err("must refuse");
+        assert!(
+            refused.contains("nothing was written"),
+            "and must say so: {refused}"
+        );
+        assert_eq!(
+            std::fs::read(&at).expect("read"),
+            other,
+            "and the file that is there now is untouched"
+        );
+    }
+
+    #[test]
+    fn an_append_writes_through_its_handle_and_says_so_when_the_name_moves() {
+        // **What holding the handle buys, and it is the only test that can
+        // show it.** The window between opening the file and writing to it is
+        // inside `append_in_place`, where nothing can be planted --- which is
+        // why `append_through` takes the handle as an argument. Here the
+        // pathname is made to name a *different* file after the handle is open:
+        //
+        //  - the checks pass, because they ask the handle and the file it holds
+        //    has not changed. A check against the pathname would ask about the
+        //    replacement, which is the wrong file to have an opinion about.
+        //  - the update lands in the file that was opened, complete.
+        //  - the file that has the name now is not touched at all --- and the
+        //    old code would have appended to it, or truncated it in a roll-back.
+        //  - and the save reports that it did not land where it was asked to,
+        //    rather than reporting success.
+        let scratch = Scratch::new("append-renamed");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let appended = append_bytes(&at, &plan).expect("build the update");
+        let was = std::fs::metadata(&at).expect("measure").len();
+
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&at)
+            .expect("open the file this save is about");
+
+        // Something else moves our file aside and puts its own there.
+        let aside = scratch.join("moved-aside.pdf");
+        std::fs::rename(&at, &aside).expect("move ours aside");
+        // **Deliberately not a PDF**, and that is what makes this test able to
+        // see where the read-back reads from. The read-back asks whether the
+        // saved file still parses and still has its pages: through the handle it
+        // asks about ours, which does; through the pathname it would ask about
+        // this, which does not --- and would then roll *our* file back, which the
+        // last assertion below would catch. A valid intruder makes both routes
+        // answer the same way, and the check stops discriminating.
+        let intruder = b"this is not a PDF at all\n".repeat(64);
+        std::fs::write(&at, &intruder).expect("put a different file there");
+
+        let refused = append_through(&mut file, &appended, &at).expect_err("must report");
+        drop(file);
+        assert!(
+            refused.contains("renamed or removed it"),
+            "and must name what happened rather than a length: {refused}"
+        );
+        assert_eq!(
+            std::fs::read(&at).expect("read"),
+            intruder,
+            "the file that has the name now is byte-for-byte as it was"
+        );
+
+        let landed = std::fs::read(&aside).expect("read");
+        assert_eq!(
+            landed.len() as u64,
+            was + appended.len() as u64,
+            "and the update went to the file the handle held"
+        );
+        assert_eq!(
+            Document::load_mem(&landed).expect("load").get_pages().len(),
+            appended.pages,
+            "complete, not half written"
         );
     }
 

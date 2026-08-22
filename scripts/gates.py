@@ -158,6 +158,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a mutation is aimed at code that is gone, or a killed harness left its edit behind",
         ),
         (
+            "readme",
+            [sys.executable, str(REPO / "scripts" / "check_readme_claims.py")],
+            "README.md says a registered command is not built",
+        ),
+        (
             "corpora",
             [sys.executable, str(REPO / "scripts" / "viewer_sweep.py"), "--list"],
             "a testdata fixture is neither a window corpus nor excluded with a reason",

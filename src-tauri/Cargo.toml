@@ -144,6 +144,12 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_JobObjects",
     "Win32_System_Memory",
     "Win32_System_Pipes",
+    # `GetFileInformationByHandle`, which is the Windows answer to `st_dev` /
+    # `st_ino`: `fingerprint.rs` asks whether a pathname still names the file a
+    # save is writing through. `std::os::windows::fs::MetadataExt::file_index`
+    # would answer it too and is unstable behind `windows_by_handle`, which a
+    # pinned stable toolchain cannot use.
+    "Win32_Storage_FileSystem",
     # `GetProcessMemoryInfo`, so `tile-bench` can report a peak on Windows
     # instead of the `NaN` that stands in for "not measurable here".
     "Win32_System_ProcessStatus",

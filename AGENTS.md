@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 425 entries
+The one thing this file does *not* carry in full is the trap list --- 432 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -698,8 +698,9 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently sixteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
-workflow-parity check, a mutation-anchor check, a corpus-classification check, `cargo fmt --check`,
+Currently seventeen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+workflow-parity check, a mutation-anchor check, a README-claim check, a corpus-classification
+check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check,
 `npm run check`, `npm run test`, `npm run build`, and a third-party-notices check. Two of them are
@@ -707,7 +708,7 @@ ordered rather than merely present: `toolchain` runs **first**, because every re
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
 
-**All sixteen can be green on a Mac while the Windows tree does not compile**, and that is not
+**All seventeen can be green on a Mac while the Windows tree does not compile**, and that is not
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
@@ -751,6 +752,30 @@ platform, which is what `resolved` has --- needs no declaration. Proved three wa
 declaration fails, a wrong one fails, and a scan finding no gated module anywhere fails
 rather than passing everything in silence.
 
+**`readme` exists because the public README described an older product for weeks and
+nothing could see it.** An outside review compared it with the command registry on
+2026-08-22: it said editing had just begun, it said *the open file is never modified in
+place* --- false since Save in place shipped in `26.8.5` --- and its *Not built yet* list
+still named ink, shapes, text boxes and squiggly, all four registered commands with
+shortcuts. A prospective user was being told the product was materially less capable than
+the binary.
+
+The gate is deliberately one narrow claim rather than an attempt on the whole document.
+Each *Not built yet* bullet carries an HTML comment naming the command that would exist if
+it were built, and none of those may be registered --- so claiming a feature is absent means
+stating the absence in a form the registry can contradict. It refuses an empty scan on
+either side and a command claimed twice, and all four failure modes were proved before it
+was trusted, including a renamed section heading.
+
+What it does **not** check is everything else, including the status paragraph, which was the
+sentence most wrong. There is no honest mechanical test for "does this paragraph describe
+the product", and a keyword list approximating one would be a second inventory to drift.
+`BUILD.md`'s release checklist carries that half and is a checklist rather than a gate on
+purpose --- naming which half is weak beats implying both are strong. The volatile counts
+went out with the same commit: the README quoted 325 crates, four npm packages, fourteen
+PDFium libraries, 531 cargo packages and "over two hundred" traps against a tree holding
+382, 4, 16, 572 and 425. `THIRD-PARTY-NOTICES.md` is generated and carries its own.
+
 **`corpora` exists because the list of window corpora had no home.** It lived in whatever
 shell loop somebody typed, so on 2026-08-16 `links-rotated.pdf` was swept as a corpus and
 produced eight red checks, none of them a defect --- against a `BUILD.md` paragraph that
@@ -787,9 +812,22 @@ into `scripts/ci_fixtures.py` so both workflows call one line, and
 not compared, and a control proves it: rewording a label stays green while repointing a pin,
 weakening a gate command, deleting a step and renaming the job all go red. It refuses a job
 it cannot find and a job whose step scan came back empty, since both read exactly like two
-jobs that agree. What it does **not** compare is anything outside that job --- the triggers,
-permissions and the `release` job differ on purpose, and that difference is the fork threat
-model rather than drift.
+jobs that agree. What it does **not** compare is anything outside that job --- the triggers
+and the `release` job differ on purpose, and that difference is the fork threat model rather
+than drift.
+
+**It also asserts what authority a gates job holds, since 2026-08-22, and that half exists
+because comparing steps was blind to it.** An outside review found the composition: the
+release workflow declared `contents: write` at file level, every job inherited it, and the
+gates job then checked out with the default credential-persisting `actions/checkout` and ran
+`pip install pyhanko pyhanko-certvalidator` --- unpinned, resolved from PyPI at the moment
+the job started --- **before any gate ran**. Three properties close it, in both files because
+these two jobs are meant to be one job: `contents: read` declared on the job or the workflow,
+`persist-credentials: false` on the checkout, and a Python install that names
+`scripts/fixture-tools.txt` rather than package names. All four failure modes were proved by
+mutation, the load-bearing one being **deleting the install step**, which without that check
+passes exactly like a clean run. The exclusions this gate's docstring lists are where the
+next defect lives; that is now written there rather than left as a design note.
 
 **`pdfium` verifies the library, not the stamp beside it**, as of 2026-08-02. It compared the
 pin against a digest the installer itself had written, and its only fact about the tree was
@@ -1070,7 +1108,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 425 of them and the full text
+titles. Only the titles are here, because there are 432 of them and the full text
 was 93% of this file --- an instruction budget spent on the 424 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1185,6 +1223,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A pool that replaces a dead worker with the same bytes faults again, forever
 - A diagnosis placed after a liveness check inherits that check's race
 - A valid in-place rewrite is served silently, and a length check cannot see it
+- A field documented as the caller's last look, and read by nobody (a `pub` field with no consumer; the type, the doc comment and the call-site comment all pointed at a guard that was a bare length comparison)
+- A guard that looks a pathname up again is not a guard on the file you are writing (four lookups of one name, and the roll-back truncates whatever has it now; the window is inside the function, so the seam is an argument and the intruder must not parse)
+- One temporary name for every save, written with a call that truncates (a predictable sibling, `std::fs::write`, and a cleanup that deletes what it did not create --- `create_new` refuses a symlink too)
 - Writing a page's rotation "for completeness" flattens what a bounded walk could not read (the entry's own first mechanism was wrong, and the test could not fail)
 - Two page numbers can be one page object, and the second turn composes on the first (the two call sites need *different* fixes; the print one had been wrong since printing landed)
 - A page number is a position, and deleting a page renumbers every one after it (an existing test caught it, and only because its fixture keeps the first and *last* pages)
@@ -1292,6 +1333,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A control that is easier than the check certifies nothing
 - An OCR engine's bounding box is a detection, not a measurement
 - A property that holds by construction cannot test the thing it resembles
+- Four assertions became unfalsifiable without being touched (the assertion never changed; a constant that was a whole name became one part of it, and becoming impossible to fail is not a failure)
 - A fixture the library itself wrote cannot tell a passthrough from a rewrite
 - An oracle more forgiving than the thing it stands in for cannot fail
 - A writer and its own reader agree about a document that is wrong
@@ -1441,6 +1483,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A stream split done for the failing direction leaves the passing one where it was
 - Two budgets for one run, and the one that was raised is not the one that decides
 - A workflow copied from CI can lose a whole step, and then the release gate is the weaker one
+- A parity check that compares steps is blind to the authority they run with (unpinned PyPI code ran with a repo-writable token before any gate; each ingredient reasonable alone, and no check looked at compositions)
 - A step that signs before anything imports the certificate fails with the masked secret as its error
 - The verification step failed after everything it verifies had succeeded, because `mapfile` is bash 4
 - A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
@@ -1482,6 +1525,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A custom URI scheme is not spelled the same way on every platform
 - One constant standing for two platform distinctions breaks the moment they diverge
 - A release build is not a production build; a cargo *feature* decides that
+- A test cannot see a change to a profile it does not run under (the test aimed at the property could not see the one-line change that removes it; the assertion with teeth reads the manifest)
 - A guard that degrades to a no-op off its platform stops being a guard
 - Reaching for a constant *because* it is portable, and picking the one that is absent
 - The same platform refusal, a result in one scenario and a failure in the next
@@ -1547,7 +1591,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mitigation present and disclaimed is quieter than one claimed and absent
 - A checklist step nothing can perform, and a comment promising a mechanism that does not exist (both said the version was reachable in-app; nothing in the application reported one at all)
 - The plan said the words had to be extracted, and the model had never let them be lost (a *Not done* line names the outcome and guesses the method; second time in two increments, both wrong the same way, and one signature settled it)
-- A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
+- A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
+- The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated) (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
 
 ## Repository facts
 

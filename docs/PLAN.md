@@ -149,6 +149,28 @@ parallel". That does not work, and it is recorded in `AGENTS.md` as a corrected 
 
 Retrofitting a process boundary later is a rewrite, so it is Phase 0 work.
 
+**Not done: the surgery worker.** The right-hand box has never existed. Every path that
+writes a document --- `save_document`, `save_copy`, `extract_pages` --- parses the source
+with `lopdf` inside the coordinator, under `tauri::async_runtime::spawn_blocking`, which
+moves the work off the runtime's threads and not out of the process holding the window, the
+journal and the user's filesystem authority. Printing has been disclosed as the
+coordinator's parser exception since 2026-07-28; the edit writers joined it without the
+disclosure being widened, and an outside review is what caught that on 2026-08-22.
+`docs/THREAT-MODEL.md` §3 and residual risk 17 now say so.
+
+What is bounded today is decompression (`MAX_DECODE`), graph recursion
+(`sweep::MAX_NESTING`) and panics (unwinding, pinned by a test so a profile change cannot
+quietly remove it). What is not bounded is **time and memory**, because bounding either
+needs a process to enforce it against --- which is the whole argument for the box.
+
+The shape it needs, so the next person is not re-deriving it: the source and the destination
+reach the worker as **inherited handles**, not as paths, exactly as the render workers get
+their document; the worker answers with staged bytes or a verdict; the coordinator alone
+opens dialogs and performs the rename. It gets the render worker's deadline and its resource
+limits, and the same external evidence --- a module-table read proving the coordinator did
+not map what the worker did. It is not a generic job framework: one protocol, three
+messages.
+
 ### Worker processes — measured 2026-07-26
 
 `worker-bench` builds the shape above and measures it. The binary is both halves: the
@@ -1098,7 +1120,7 @@ path **settles the cell immediately** rather than leaving it unset, because a ce
 sets makes every later `plan` wait for ever; that control is a test, and it is the one whose
 failure mode would have been a hang rather than a red line.
 
-Three checks, and they are deliberately not the same check:
+Four checks, and they are deliberately not the same check:
 
 - **`planned_bytes`, before the parse.** Full comparison, digest included. Shared by
   `write_copy` and `stage_in_place`, so a copy is refused for the same reason a save is:
@@ -1115,6 +1137,42 @@ Three checks, and they are deliberately not the same check:
   to narrow a window measured in milliseconds is the wrong trade. It compares against what
   **staging** read, handed back in `Staged { path, verified }`, not against what the reader
   opened --- see below.
+- **Before an append, the same length and mtime, through the open handle.** The append has
+  no rename to sit behind, so its equivalent of the check above happens inside
+  `append_in_place`, against `Appended { was, verified }`. Two differences from the rewrite,
+  both forced by what an append is: it compares through the file descriptor it is about to
+  write to rather than by looking the pathname up again, and it asks one further question
+  after the write --- whether the pathname still names that file.
+
+**The append was doing none of that until 2026-08-22, and an outside review is what found
+it.** `Appended::verified` carried a full fingerprint, its doc comment called it *"the
+caller's last look before it writes"*, and no code read the field. What guarded the write
+was `metadata(source).len() != appended.was` --- a length, and only a length --- so a
+document replaced by a distinct revision of the same size had this update's byte offsets
+appended to an object graph they were never computed for, and the read-back could not see
+it, since a same-shape replacement keeps the page count. The comment at the call site in
+`lib.rs` defended the omission by calling a length *"a sharper answer"* than a length and a
+timestamp, which is the wrong way round and which this file and `docs/TRAPS.md` both
+already said was the wrong way round.
+
+The second half of the fix is about *which file* rather than *which bytes*. Everything now
+goes through one handle --- the check, the writes, the read-back and the roll-back --- so a
+rename landing on the pathname mid-save cannot redirect the roll-back onto a file that was
+never ours to truncate. `FileId` is what makes the last question answerable: `st_dev`/
+`st_ino` on Unix, `GetFileInformationByHandle` on Windows. When it reports a replacement the
+file is deliberately **not** cut back, because the edits are complete and correct in the file
+that had the name when the save began, and truncating it could destroy the only copy of work
+the reader asked to keep. What the reader is told is that the save did not land where they
+asked, which is the fact; nothing that has the name now is touched.
+
+**What this still does not catch, stated rather than left to be discovered:** a replacement
+that keeps both the length and the modification time. That is what `cp -p` and
+`rsync --times` do, and neither save path sees it --- the rewrite has had the same limit
+since it was written, for the reason the next paragraph gives. Catching it needs a third
+full read and a digest, which on the 337 MB fixture is 582 ms added to a 637 ms save. The
+append is deliberately held to the rewrite's standard rather than a stricter one, because
+two save paths disagreeing about what "unchanged" means is a worse defect than the one it
+would close.
 
 **An mtime is a hint, and the deep check does not consult it.** That was not the first
 design and the correction is worth the paragraph, because the first design was the obvious
