@@ -1087,14 +1087,38 @@ worker --- on macOS, 362.7 MB before the request and 1029.8 MB after, so the app
 667 MB on that document.
 
 **Measured on Windows 2026-08-22, and the margin is 4.3% rather than the 35% that was
-reasoned.** Two things to know before reading a run here. First, `[INFO]` **cannot print on
-Windows**: it is guarded on `Worker::footprint`, which is `phys_footprint`, which is `None` off
-macOS --- the same reason the footprint check prints `[SKIP]`. Asking a Windows run to "read the
-`[INFO]` line" asks for a line the build cannot emit. Second, the quantity the job object caps
-is *commit*, which the parent cannot poll, so it has to be read from outside the process:
-`PagefileUsage` / `PeakPagefileUsage` through PSAPI, over the children of the probe.
+reasoned.** The first measurement was taken from outside the process, because `[INFO]` could
+not print here at all: it was guarded on `Worker::footprint`, which is `phys_footprint`, which
+is `None` off macOS --- so a Windows run was told to read a line the build could not emit. That
+is fixed, and the fix is the point rather than the convenience. The quantity a job object caps
+is **commit**, and `Contained::peak_commit` reads it through the handle the parent already
+holds, so `Worker::peak_commit` is to Windows what `footprint` is to macOS and the probe prints
+whichever the platform has, named. The footprint check is no longer a `[SKIP]` here: it reads
+*"the parent can read what bounds the worker's memory"* and passes on both, so the probe now
+reports **17/17 with none not applicable** on either platform.
 
-Read that way, on `MOTHERSHIP` (x86_64):
+The probe's own reading on `incr-scan-40p.pdf`, which is the strongest form of the result
+because it is the same three numbers macOS printed:
+
+```
+[INFO] the append moved the worker's peak commit 359.5 -> 1027.8 MB (+668.3)
+[INFO] that is 95.7% of the 1024 MiB the job object allows, leaving 43.8 MiB
+[WARN] 43.8 MiB of headroom against the commit cap --- a larger document cannot
+       have its save prepared in the worker
+```
+
+macOS reads 362.7 -> 1029.8 (+667.0) for the same fixture. **Baseline, total and delta all
+agree**, which is what settles that the two metrics are measuring the same thing and that the
+delta was never the term to compare.
+
+The `[WARN]` fires whenever headroom falls under `THIN_HEADROOM_MIB` (128 MiB, roughly what a
+42 MB scan costs to prepare). It fires today on the largest fixture in the repository, and that
+is correct rather than noise --- it goes quiet when the append stops carrying a discarded copy
+of the previous revision, and not before.
+
+The sweep that bracketed the ceiling was read from outside the process the first time, through
+PSAPI's `PagefileUsage` / `PeakPagefileUsage` over the probe's children. On `MOTHERSHIP`
+(x86_64):
 
 ```
 fixture                    file   peak commit   of the 1 GiB cap   append built?
@@ -1136,9 +1160,14 @@ read: the probe gained three checks on 2026-08-22 --- a save's update section bu
 boundary, re-parsed after being appended, and compared against the length it was built for ---
 so a current Windows run reports **14 of 14 with one not applicable**, and nobody has taken one.
 A count in prose is a dated statement about a dated run; the probe's own output is the
-authority, and macOS measured 17/17 that day. The not-applicable one is the parent's memory poll: macOS has no
-rlimit and polls as a substitute, while here the job object caps commit in the kernel, so there
-is nothing to poll. It prints `[SKIP]` with that reason rather than vanishing.
+authority, and macOS measured 17/17 that day.
+
+**There is no not-applicable one any more, as of 2026-08-22.** It was the parent's memory poll,
+skipped here on the grounds that the job object caps commit in the kernel so there is nothing to
+poll --- true, and the wrong conclusion: a kernel bound makes the reading matter *more*, because
+what a reader needs is how close the worker came to being refused. What was missing was a way to
+look, not a reason. `Contained::peak_commit` is it, and both platforms now report **17/17 with
+none not applicable**.
 
 Two things that check does *not* cover, deliberately, because a `cargo test` child is the test
 harness and never answers: pipe **direction** and content. Both are the probe's job, measured

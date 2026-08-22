@@ -580,6 +580,46 @@ impl Contained {
             Err(e) => format!("could not be waited on: {e}"),
         }
     }
+
+    /// The child's peak commit charge in bytes, or `None` if it cannot be read.
+    ///
+    /// **The quantity [`WORKER_MEMORY_CAP`] actually bounds.** A
+    /// `ProcessMemoryLimit` is charged against *commit*, so a worker's headroom
+    /// is a question about `PeakPagefileUsage` and not about the working set
+    /// beside it --- that counts the document's file-backed mapping, and on the
+    /// 337 MB scan it runs ~343 MB higher for exactly that reason.
+    ///
+    /// A **peak**, which is what makes it usable at all here. The kernel refuses
+    /// the allocation rather than letting a poll observe the moment it would
+    /// have happened, so a sampler aimed at the current figure can miss the
+    /// burst entirely; a high-water mark cannot.
+    ///
+    /// Read through the handle rather than by pid, for the reason
+    /// [`crate::worker::Worker::pid`] gives about itself: a number can be reused
+    /// by an unrelated process and a handle cannot.
+    ///
+    /// The macOS counterpart is `worker::phys_footprint`, and on
+    /// `incr-scan-40p.pdf` the two agree to 0.2% --- 1027.9 MB here against
+    /// 1029.8 MB there. Close enough to compare and not the same quantity: a
+    /// footprint excludes *clean* file-backed pages, commit excludes all
+    /// file-backed pages. `docs/TRAPS.md` records the margin that was argued
+    /// from assuming they differed by the mapping, which is in neither. Say
+    /// which one a number came from whenever both appear in one table.
+    #[must_use]
+    pub fn peak_commit(&self) -> Option<u64> {
+        use windows_sys::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+
+        // SAFETY: a zeroed struct is the documented starting point; every field
+        // is an integer.
+        let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+        counters.cb = size_of_u32::<PROCESS_MEMORY_COUNTERS>();
+        // SAFETY: a handle this struct owns and closes, and the counters
+        // outlive the call with `cb` set to their own size as the API requires.
+        let ok = unsafe { GetProcessMemoryInfo(self.process, &raw mut counters, counters.cb) };
+        (ok != 0).then_some(counters.PeakPagefileUsage as u64)
+    }
 }
 
 impl Drop for Contained {
@@ -1444,6 +1484,70 @@ mod tests {
     /// `kill` goes through the job rather than the process, so this also pins
     /// that the job really does contain the child: terminating it ends a process
     /// the call never names.
+    /// A live child's peak commit is readable, and it is the *child's*.
+    ///
+    /// The first assertion alone would be a tautology dressed as a test: a call
+    /// that read this process's counters instead of the child's returns `Some`
+    /// and a large number too, and that is not a hypothetical mistake ---
+    /// `GetProcessMemoryInfo` takes a handle, `GetCurrentProcess()` is the
+    /// pseudo-handle for self, and `tile_bench` next door passes exactly that on
+    /// purpose. So what is asserted is that the two readings *differ*.
+    ///
+    /// Inequality rather than an ordering, deliberately. Which of a `cmd.exe`
+    /// and a test binary linking PDFium has the larger commit is a fact about
+    /// this machine's build, and a test that encodes it is one toolchain change
+    /// from being flaky for a reason that has nothing to do with what it checks.
+    /// Two unrelated processes reporting a byte-identical peak is possible and
+    /// is not something to design around.
+    #[test]
+    fn a_contained_childs_peak_commit_is_readable_and_is_the_childs() {
+        use windows_sys::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        let (their_stdin, my_stdin) = pipe().expect("a request pipe");
+        let (my_stdout, their_stdout) = pipe().expect("a reply pipe");
+        let stdio =
+            Stdio::with_inherited_stderr(their_stdin, their_stdout).expect("stdio for the child");
+        let child = spawn_contained(
+            "cmd.exe /c pause",
+            &[],
+            &Containment::default(),
+            Some(&stdio),
+        )
+        .expect("a contained child");
+        // Resumed, because a suspended process has allocated nothing yet and the
+        // question is what a *running* one has reached.
+        child.resume().expect("the child runs");
+
+        let theirs = child.peak_commit().expect("a live child's peak commit");
+        assert!(theirs > 0, "a live process has committed something");
+
+        // SAFETY: a zeroed struct is the documented starting point, `cb` is its
+        // own size, and the handle is the pseudo-handle for this process.
+        let mut mine: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+        mine.cb = size_of_u32::<PROCESS_MEMORY_COUNTERS>();
+        // SAFETY: as above; the struct outlives the call.
+        let ok = unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &raw mut mine, mine.cb) };
+        assert_ne!(ok, 0, "this process can read its own counters");
+        assert_ne!(
+            theirs, mine.PeakPagefileUsage as u64,
+            "the reading is this process's rather than the child's"
+        );
+
+        child.kill().expect("the child is killed");
+        let _ = child.wait_timeout(10_000);
+
+        // SAFETY: live handles this process owns and closes once.
+        unsafe {
+            CloseHandle(their_stdin);
+            CloseHandle(their_stdout);
+            CloseHandle(my_stdin);
+            CloseHandle(my_stdout);
+        }
+    }
+
     #[test]
     fn a_contained_child_reports_running_then_how_it_died() {
         // `pause` reads stdin and blocks, so the child stays alive on its own

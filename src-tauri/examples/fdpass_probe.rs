@@ -31,7 +31,7 @@
 //! not --- the same shape as the sliced render that must report having paused.
 //!
 //! ```text
-//! cargo run --release --bin fdpass-probe -- testdata/text-heavy.pdf
+//! cargo run --release --example fdpass-probe -- testdata/text-heavy.pdf
 //! ```
 
 // The body is macOS-only, and a `#![cfg]` at the crate root cannot express that

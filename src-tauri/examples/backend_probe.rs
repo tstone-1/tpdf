@@ -10,7 +10,7 @@
 //! only to keep the gate off 1,800 lines that are otherwise unchanged.
 //!
 //! ```text
-//! cargo run --release --bin backend-probe -- testdata/text-heavy.pdf
+//! cargo run --release --example backend-probe -- testdata/text-heavy.pdf
 //! ```
 
 // Not merely "does not build here": every claim this probe makes is about the

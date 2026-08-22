@@ -1052,6 +1052,33 @@ impl Worker {
         phys_footprint(self.pid())
     }
 
+    /// The worker's peak commit charge in bytes, where the kernel bounds it.
+    ///
+    /// The Windows counterpart to [`Self::footprint`], and the two are split
+    /// rather than merged into one "how much memory" accessor because they are
+    /// different measurements answering different questions. A footprint is a
+    /// poll, and it exists on macOS because there is no kernel bound to ask ---
+    /// it can only catch a leak, never a burst. This is a high-water mark
+    /// beside a limit the kernel enforces, so it says how close a worker came
+    /// to being refused rather than how large it was at the moment of asking.
+    ///
+    /// Merging them would need one name to mean both, and `docs/TRAPS.md`
+    /// already records what happens when one constant stands for two platform
+    /// distinctions.
+    ///
+    /// `None` off Windows, exactly as [`Self::footprint`] is `None` off macOS.
+    #[must_use]
+    pub fn peak_commit(&self) -> Option<u64> {
+        #[cfg(not(windows))]
+        {
+            None
+        }
+        #[cfg(windows)]
+        {
+            self.child.peak_commit()
+        }
+    }
+
     /// Kills the worker and reaps it.
     pub fn kill(&mut self) {
         let _ = self.child.kill();

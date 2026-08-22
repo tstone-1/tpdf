@@ -11,7 +11,7 @@
 //! Run with a fixture:
 //!
 //! ```text
-//! cargo run --release --bin worker-probe -- testdata/text-heavy.pdf
+//! cargo run --release --example worker-probe -- testdata/text-heavy.pdf
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -20,6 +20,14 @@ use std::time::Instant;
 use tpdf_lib::progressive::{self, RawDocument};
 use tpdf_lib::worker;
 use tpdf_lib::worker::{Request, Worker};
+
+/// Below this much headroom against the commit cap, the run says so.
+///
+/// A judgement, not a measurement, and it is a `[WARN]` rather than a `[FAIL]`
+/// for that reason. 128 MiB is roughly what 42 MB of scanned document costs a
+/// worker to prepare a save for, so it is the margin at which the next
+/// ordinary-sized document would not fit.
+const THIN_HEADROOM_MIB: f64 = 128.0;
 use tpdf_lib::worker_child;
 
 /// Tiles are compared at this size, which is inside the useful range AGENTS.md
@@ -338,11 +346,11 @@ fn main() {
     // on Windows, where the mapping itself is not, and the cap is a real bound
     // rather than a distant one. Nothing here can measure Windows; what this
     // gives is the size of the term to worry about.
-    let before_append = worker.footprint();
+    let before_append = memory_reading(&worker);
     let update = worker.call(&Request::Append {
         plan: highlight_plan(page_count),
     });
-    let after_append = worker.footprint();
+    let after_append = memory_reading(&worker);
     let built: Option<tpdf_lib::save::Update> = match &update {
         Ok(reply) if reply.ok => reply
             .json
@@ -350,19 +358,49 @@ fn main() {
             .and_then(|j| serde_json::from_value(j.clone()).ok()),
         _ => None,
     };
-    if let (Some(was), Some(now)) = (before_append, after_append) {
+    if let (Some((was, metric)), Some((now, _))) = (before_append, after_append) {
         // Not a check: it has no pass condition, because what a parse costs is a
         // property of the document rather than of the boundary. Reported so that
         // a run against a large fixture says the number out loud instead of
         // leaving it to be inferred from the file size, which the measurement in
         // `save.rs` shows is not the same thing.
+        //
+        // **Printed on both platforms since 2026-08-22, and it printed on
+        // neither but macOS before.** It was guarded on `Worker::footprint`,
+        // which is `None` off macOS, so the line silently did not exist on the
+        // one platform where a cap makes the number decide something --- while
+        // `BUILD.md` told a reader to run this and read it. The metric names
+        // itself for the reason `memory_reading` gives.
         println!(
-            "[INFO] the append moved the worker's footprint {:.1} -> {:.1} MB (+{:.1}), \
-             against a 1024 MB Windows commit cap",
+            "[INFO] the append moved the worker's {metric} {:.1} -> {:.1} MB (+{:.1})",
             was as f64 / 1e6,
             now as f64 / 1e6,
             (now as f64 - was as f64) / 1e6,
         );
+        // The headroom, where there is a bound to have headroom against. Said
+        // out loud rather than left to arithmetic because it is the number that
+        // decides whether the append can be built at all, and on the largest
+        // fixture in the repository it is 4.3%.
+        if let Some(cap) = memory_cap() {
+            let used = now as f64 / cap as f64 * 100.0;
+            let head = (cap as f64 - now as f64) / (1024.0 * 1024.0);
+            println!(
+                "[INFO] that is {used:.1}% of the {} MiB the job object allows, \
+                 leaving {head:.1} MiB",
+                cap / (1024 * 1024),
+            );
+            // A warning rather than a failure: the threshold is a judgement and
+            // the measurement is not, so a run that is close to the bound should
+            // say so without deciding on the reader's behalf that it is wrong.
+            // It fires today on `incr-scan-40p.pdf`, which is correct --- a
+            // 361.9 MB scan aborts here, and the fixture is 336.6 MB.
+            if head < THIN_HEADROOM_MIB {
+                println!(
+                    "[WARN] {head:.1} MiB of headroom against the commit cap --- \
+                     a larger document cannot have its save prepared in the worker"
+                );
+            }
+        }
     }
     check(
         "a save's update section is built across the boundary",
@@ -423,23 +461,31 @@ fn main() {
     // Printed as a skip with the reason rather than dropped, because AGENTS.md
     // records that a control which silently disappears on some inputs cannot be
     // told apart from one that ran.
-    if cfg!(target_os = "macos") {
-        let footprint = worker.footprint();
+    //
+    // **A real check on both platforms since 2026-08-22, where it was a `[SKIP]`
+    // on Windows.** The skip's stated reason was that the job object caps memory
+    // in the kernel so there is nothing to poll, which is true and was the wrong
+    // conclusion: a cap makes the reading matter *more*, since what a reader
+    // needs to know is how close the worker came to being refused. What was
+    // missing was not a reason to look but a way to --- `Contained::peak_commit`
+    // is it, and the quantity it reads is the one the cap is charged against.
+    if cfg!(any(target_os = "macos", windows)) {
+        let reading = memory_reading(&worker);
         check(
-            "the parent can read the worker's footprint",
-            footprint.is_some_and(|f| f > 0),
-            match footprint {
+            "the parent can read what bounds the worker's memory",
+            reading.is_some_and(|(bytes, _)| bytes > 0),
+            match reading {
                 // Zero reads exactly like a permissions problem and is usually
                 // the `proc_pid_rusage` pointer mistake AGENTS.md records.
-                Some(bytes) => format!("{:.1} MB", bytes as f64 / 1e6),
+                Some((bytes, metric)) => format!("{metric} {:.1} MB", bytes as f64 / 1e6),
                 None => "unavailable".into(),
             },
         );
     } else {
         skipped += 1;
         println!(
-            "[SKIP] {:52} not applicable --- the job object caps memory in the kernel here",
-            "the parent can read the worker's footprint"
+            "[SKIP] {:52} not applicable --- this platform neither polls nor caps",
+            "the parent can read what bounds the worker's memory"
         );
     }
 
@@ -583,6 +629,39 @@ fn distinct_values(bytes: &[u8]) -> usize {
 }
 
 /// A one-line summary of a reply.
+/// What this platform can say about a worker's memory, and which quantity it is.
+///
+/// **Two different measurements, and they are kept apart rather than merged
+/// behind one name.** macOS polls a physical footprint because its kernel
+/// refuses every relevant rlimit and a poll is the only thing left; Windows
+/// reads a peak commit charge because commit is what its job object refuses on.
+/// The string travels with the number so that a run says which it took --- on
+/// `incr-scan-40p.pdf` the two agree to 0.2%, which is close enough to invite
+/// treating them as one thing and is not a licence to.
+///
+/// Exactly one arm answers on each platform, so the order is not a preference.
+fn memory_reading(worker: &Worker) -> Option<(u64, &'static str)> {
+    if let Some(bytes) = worker.peak_commit() {
+        return Some((bytes, "peak commit"));
+    }
+    worker.footprint().map(|bytes| (bytes, "footprint"))
+}
+
+/// What the kernel refuses a worker at, where a kernel refuses one at all.
+///
+/// `None` on macOS, and that is the property rather than a gap: there is no
+/// bound to be near, which is why the footprint poll exists there at all.
+fn memory_cap() -> Option<u64> {
+    #[cfg(windows)]
+    {
+        Some(tpdf_lib::sandbox_win::WORKER_MEMORY_CAP as u64)
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 fn describe(result: &Result<tpdf_lib::worker::Response, String>) -> String {
     match result {
         Ok(r) if r.ok => {

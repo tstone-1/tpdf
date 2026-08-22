@@ -23,9 +23,9 @@
 //! would silently pass.
 //!
 //! ```text
-//! cargo run --release --bin print-probe
-//! cargo run --release --bin print-probe -- testdata/rotated.pdf
-//! cargo run --release --bin print-probe -- testdata/rotated.pdf "Microsoft Print to PDF"
+//! cargo run --release --example print-probe
+//! cargo run --release --example print-probe -- testdata/rotated.pdf
+//! cargo run --release --example print-probe -- testdata/rotated.pdf "Microsoft Print to PDF"
 //! ```
 //!
 //! The body is an inner `mod imp` rather than a `#![cfg]` at the crate root, for the
