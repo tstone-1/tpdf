@@ -53,7 +53,9 @@
     NO_PAGES,
     outlineIn,
     type MarkKind,
+    type PageId,
   } from "./lib/pages";
+  import { nameOf } from "./lib/markpopup";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import {
     clampPlace,
@@ -137,6 +139,26 @@
    * bound.
    */
   const COVERED_CHARS = 200;
+
+  /**
+   * What the status line calls the tool that is armed.
+   *
+   * `nameOf` is the one table of reader-facing kind names --- the note box and
+   * the marks panel read it too --- so this adds a verb rather than a second
+   * spelling: "Box" is what the thing is called and "Box — click and drag" is
+   * what a reader who armed it needs told. The two shape tools and the text box
+   * are dragged out; a comment is one press, which is the difference the whole
+   * placement change is about, so it is the one entry whose verb differs.
+   *
+   * `ink` cannot reach here --- `viewer.ts` reports a drawing through the field
+   * that counts strokes --- and it is left out of the table rather than given an
+   * unreachable entry, so the fallback is the honest one if that ever changes.
+   */
+  function armedLabel(kind: MarkKind): string {
+    return kind === "note"
+      ? `${nameOf(kind)} — click to place`
+      : `${nameOf(kind)} — click and drag`;
+  }
   /**
    * The degraded-state words currently on screen, or `null` for none.
    *
@@ -382,6 +404,23 @@
    * tells them the comment is theirs to type in rather than the document's.
    */
   async function addComment(at: ScreenPoint | null): Promise<void> {
+    // **With no point, this arms rather than places.** It used to place, at
+    // `commentAt`'s no-pointer answer --- the top-left of the visible page ---
+    // which is a defensible spot and reads as a command that ignored where the
+    // reader was looking. Reported from use: *"I would expect the cursor to
+    // become a speech bubble to place it, instead of adding it always to the top
+    // left."* So the palette and the menu bar now arm the tool, the next press
+    // on a page drops the bubble there, and the viewer paints a ghost of it
+    // under the pointer meanwhile --- and Enter still places it at the old spot,
+    // so a reader who reached the command from the keyboard is not left in a
+    // mode they cannot finish. See `Viewer.paintCommentGhost` and `placeComment`.
+    //
+    // A right-click keeps placing immediately. It already names a point, so
+    // arming would ask a reader who has just said *here* to say it again.
+    if (!at) {
+      viewer?.armDraw("note");
+      return;
+    }
     const where = viewer?.commentAt(at);
     if (!where) return;
     // Which ids existed before, so the one that appears can be identified by
@@ -416,7 +455,7 @@
    */
   async function drawn(
     kind: MarkKind,
-    page: number,
+    page: PageId,
     shape: Drawn,
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
@@ -1906,6 +1945,7 @@
         // through: which of its two halves is filled is the viewer's answer and
         // the model's rule, and restating it here would be a third copy.
         onDrawn: (kind, page, shape) => void drawn(kind, page, shape),
+        onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
         onErased: (mark, remove) => void applyEdit((e) => e.erase(mark, remove)),
         onStatus: (next) => {
           status = next;
@@ -2269,6 +2309,21 @@
             ? "Drawing — press and drag"
             : `Drawing: ${status.drawing} stroke${status.drawing === 1 ? "" : "s"}`}
           — Enter to finish, Esc to discard
+        </span>
+      {/if}
+      <!--
+        A tool armed and waiting for the gesture that spends it.
+        **Not a mode a reader can be stuck in --- one they can be lost in.** The
+        next press draws a box, or drops a comment, instead of selecting text,
+        and until this line existed the only sign of that was a crosshair. It
+        names Escape because a reader who has forgotten what they armed needs
+        the way out more than the reader who armed it deliberately.
+        `viewer.ts` keeps ink out of this field, so it cannot collide with the
+        drawing line above.
+      -->
+      {#if status.armed !== null}
+        <span class="stat" data-testid="armed">
+          {armedLabel(status.armed)} — Esc to cancel
         </span>
       {/if}
       <!--

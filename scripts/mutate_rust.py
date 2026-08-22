@@ -3417,6 +3417,114 @@ MUTATIONS += [
 
 
 
+
+#: Moving a mark: the command a reader's drag produces.
+MUTATIONS += [
+    Mutation(
+        # Move the rectangle and leave the strokes where they are. Every kind but
+        # ink has no strokes, so this is invisible on five of the six -- and the
+        # saved file then draws the line in the old place inside a `/Rect` in the
+        # new one, which is the underline defect's shape once more.
+        "displace: move a mark's rectangle and leave its strokes behind",
+        "src/docmodel.rs",
+        """        let strokes = self
+            .strokes_of(mark)
+            .iter()
+            .map(|stroke| Stroke {
+                points: stroke
+                    .points
+                    .iter()
+                    .map(|p| Point {
+                        x: p.x + dx,
+                        y: p.y + dy,
+                    })
+                    .collect(),
+            })
+            .collect();""",
+        "        let strokes = self.strokes_of(mark).to_vec();",
+        "moving_a_mark_carries_its_rectangle_and_its_strokes_together",
+    ),
+    Mutation(
+        # Move one corner of each rectangle rather than both, which is a resize
+        # wearing a move's name -- the failure the delta-not-a-geometry argument
+        # in `Doc::displace` is about, arriving from inside rather than over the
+        # wire.
+        "displace: move a rectangle's top-left corner and not its bottom-right",
+        "src/docmodel.rs",
+        """                right: q.right + dx,
+                bottom: q.bottom + dy,""",
+        """                right: q.right,
+                bottom: q.bottom,""",
+        "moving_a_mark_changes_where_it_is_and_nothing_else_about_it",
+    ),
+    Mutation(
+        # Refuse anything that is not ink, which is `reink`'s rule next door and
+        # is the wrong one here: geometry is geometry, and which kinds a reader
+        # is offered the drag on is a product rule one layer up.
+        "displace: refuse to move a mark that has no strokes",
+        "src/docmodel.rs",
+        "    pub fn displace(&mut self, mark: MarkId, dx: f32, dy: f32) -> Result<(), Refusal> {\n        self.now.live_mark(mark)?;",
+        "    pub fn displace(&mut self, mark: MarkId, dx: f32, dy: f32) -> Result<(), Refusal> {\n"
+        "        self.now.live_mark(mark)?;\n"
+        "        let kind = self.mark(mark).map_or(MarkKind::Highlight, |m| m.kind);\n"
+        "        if kind != MarkKind::Ink {\n"
+        "            return Err(Refusal::ShapeMismatch(kind));\n"
+        "        }",
+        "every_kind_can_be_moved_including_the_one_that_cannot_be_erased",
+    ),
+    Mutation(
+        # Write the new geometry into the body instead of journalling it. Every
+        # visible behaviour is identical until an undo, which then puts the mark
+        # back nowhere -- the whole reason a move is a command.
+        "displace: change where a mark is without journalling it",
+        "src/docmodel.rs",
+        "            .collect();\n"
+        "        let ink = self.issue_ink(Ink { strokes, quads });\n"
+        "        self.apply(Command::Reink { mark, ink })\n"
+        "    }\n"
+        "\n"
+        "    /// Replaces what a mark is drawn in",
+        "            .collect();\n"
+        "        if let Some(body) = self.marks.get_mut(&mark) {\n"
+        "            body.quads = quads;\n"
+        "            body.strokes = strokes;\n"
+        "        }\n"
+        "        Ok(())\n"
+        "    }\n"
+        "\n"
+        "    /// Replaces what a mark is drawn in",
+        "undoing_a_move_puts_the_mark_back_where_it_was",
+    ),
+    Mutation(
+        # Spend a version before the liveness check, so a refused move leaves an
+        # `Ink` body behind. Nothing a reader can see says so, which is why the
+        # accounting observable exists.
+        "displace: spend a version on a mark that is not there",
+        "src/docmodel.rs",
+        "    pub fn displace(&mut self, mark: MarkId, dx: f32, dy: f32) -> Result<(), Refusal> {\n        self.now.live_mark(mark)?;",
+        "    pub fn displace(&mut self, mark: MarkId, dx: f32, dy: f32) -> Result<(), Refusal> {\n"
+        "        self.issue_ink(Ink {\n"
+        "            strokes: Vec::new(),\n"
+        "            quads: Vec::new(),\n"
+        "        });\n"
+        "        self.now.live_mark(mark)?;",
+        "moving_a_mark_that_is_not_there_is_refused_before_a_version_is_spent",
+    ),
+    Mutation(
+        # Substitute zero for a non-finite offset, which is `channel`'s answer to
+        # the same shape of input and is the wrong one here: a drag that silently
+        # did nothing is indistinguishable from a viewer that has stopped working.
+        "displace: take a non-finite offset as no offset at all",
+        "src/edits.rs",
+        """        if !dx.is_finite() || !dy.is_finite() {
+            return Err(format!("a mark cannot be moved by ({dx}, {dy})"));
+        }""",
+        """        let dx = if dx.is_finite() { dx } else { 0.0 };
+        let dy = if dy.is_finite() { dy } else { 0.0 };""",
+        "a_move_by_a_non_finite_offset_is_refused_rather_than_ignored",
+    ),
+]
+
 def main() -> int:
     # Before anything prints. A redirected run is block-buffered otherwise, and
     # this harness takes the better part of an hour: on 2026-08-19 a full run's

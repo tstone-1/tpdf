@@ -45,6 +45,7 @@ import {
   ICON_SIZE,
   iconQuad,
   isEllipse,
+  isMovable,
   isIcon,
   isOutline,
   isPath,
@@ -111,6 +112,7 @@ import {
   unedited,
   type MarkKind,
   type MarkView,
+  type PageId,
   type PageView,
 } from "./pages";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
@@ -278,6 +280,23 @@ export interface ViewerStatus {
    * one belonged to.
    */
   erasing: number | null;
+  /**
+   * The one-shot tool waiting for a gesture, or `null` when none is.
+   *
+   * **The two above are modes a reader can be stuck in; this is one they can be
+   * *lost* in**, which is a different complaint and needs its own answer. A
+   * one-shot tool spends itself on the next gesture, so there is nothing to
+   * escape from --- but between arming it from the palette and making that
+   * gesture there is a crosshair and no words, and a reader who armed it and
+   * then looked away has nothing telling them what their next press will do.
+   * Naming it costs a line of chrome that comes and goes exactly as the two
+   * above already do.
+   *
+   * `ink` never appears here. It arms like the rest and then reports through
+   * {@link ViewerStatus.drawing} the moment it is armed, and two lines saying
+   * the same thing in different words is worse than one.
+   */
+  armed: MarkKind | null;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -399,7 +418,26 @@ export interface ViewerOptions {
    * Optional, so a viewer with no model behind it can still be driven. A drag
    * then draws its preview and commits nothing, which is what the harness does.
    */
-  onDrawn?: (kind: MarkKind, page: number, drawn: Drawn) => void;
+  onDrawn?: (kind: MarkKind, page: PageId, drawn: Drawn) => void;
+  /**
+   * The reader dragged one of their own marks somewhere else on its page.
+   *
+   * An offset in the page's **display** space, which is the space the model
+   * holds a mark's quads in --- not the view's, and not client pixels. The
+   * viewer is the only thing that can convert between them, because it is the
+   * only thing that knows the zoom, the crop and both rotations, and a consumer
+   * doing it would be a second copy of that conversion.
+   *
+   * Already clamped so that the mark stays on its page. `docmodel` cannot do it
+   * --- the page's size in points is the renderer's answer, not the model's ---
+   * so it happens here, in the same place and for the same reason `iconQuad` and
+   * `boxQuad` clamp the geometry they build.
+   *
+   * Optional for {@link onDrawn}'s reason: a viewer with no model behind it
+   * still has to be draggable, which is what lets the window check drive the
+   * gesture and read the preview without committing anything.
+   */
+  onMarkMoved?: (id: number, dx: number, dy: number) => void;
 
   /**
    * One sweep of the eraser: which drawing, and which of its strokes went.
@@ -590,6 +628,7 @@ function drawBubble(
   top: number,
   width: number,
   height: number,
+  stroke = BUBBLE_EDGE,
 ): void {
   // The tail hangs below the box, so the body takes the upper three quarters
   // and the point sits on the bottom edge of the rectangle the mark owns. That
@@ -613,7 +652,7 @@ function drawBubble(
   // stroke at 55% of the fill against black gives an edge in every combination
   // without introducing a second colour to keep in step with `MARK_COLORS`.
   ctx.save();
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.strokeStyle = stroke;
   ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.06);
   ctx.stroke();
   ctx.restore();
@@ -636,6 +675,25 @@ const SELECTION_FILL = "rgba(80, 140, 255, 0.35)";
  * at a glance.
  */
 const PREVIEW_STROKE = "rgba(80, 140, 255, 0.95)";
+/**
+ * The wash inside the comment tool's ghost bubble.
+ *
+ * {@link PREVIEW_STROKE}'s blue at a fifth, for {@link paintCommentGhost}'s
+ * reason: a dashed outline of a 20 pt icon is a handful of marks and is hard to
+ * see over a dense page, and anything more opaque hides the words the reader is
+ * choosing between.
+ */
+const GHOST_FILL = "rgba(80, 140, 255, 0.2)";
+/**
+ * The outline a committed comment's bubble is drawn with.
+ *
+ * A parameter of {@link drawBubble} with this as its default rather than a
+ * literal inside it, because the ghost the comment tool follows the pointer
+ * with is the same shape in a different colour --- and a second copy of the
+ * shape is how the preview and the mark come to disagree about where the tail
+ * hangs. See {@link paintCommentGhost}.
+ */
+const BUBBLE_EDGE = "rgba(0, 0, 0, 0.55)";
 const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
 const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
 
@@ -904,6 +962,45 @@ export class Viewer {
    * Constructed once, in the constructor, because it registers nothing until
    * {@link PointerDrag.start} takes a press --- an idle one costs a field.
    */
+  /**
+   * Where the pointer is, in the page's own space, while a tool is armed.
+   *
+   * Only the comment tool reads it, and only to paint the ghost bubble that says
+   * where a press would land --- {@link paintDrawing}. Recorded for every armed
+   * kind rather than for that one, because the cost is two numbers per pointer
+   * move and the alternative is a condition here that has to be kept in step
+   * with the condition that paints.
+   *
+   * `null` when nothing is armed, and when the pointer has left the surface: a
+   * ghost left behind at the last place the pointer was seen is a bubble drawn
+   * where a press cannot happen.
+   */
+  private armedAt: { slot: number; x: number; y: number } | null = null;
+
+  /**
+   * The mark being dragged to a new place, and how far it has come.
+   *
+   * `dx`/`dy` are in the page's own display space and are what the overlay adds
+   * to the mark's quads while the drag is live --- the mark is *not* moved in
+   * the model until the pointer comes up, so an Escape or a `pointercancel`
+   * puts it back by clearing this and nothing else. Same posture as
+   * {@link drawing}: what is on screen mid-gesture is a preview, and the model
+   * hears once.
+   *
+   * `slot` is where the mark is laid out, held so that the clamp has a page size
+   * to work against without asking which page the pointer has since wandered on
+   * to --- a mark belongs to one page, exactly as a box does.
+   */
+  private moving: {
+    id: number;
+    slot: number;
+    from: Point;
+    dx: number;
+    dy: number;
+  } | null = null;
+
+  private readonly moveDrag: PointerDrag;
+
   private readonly drawDrag: PointerDrag;
 
   private readonly life = new Lifetime();
@@ -1070,6 +1167,56 @@ export class Viewer {
 
     // The box's drag. Its three callbacks are the whole of the gesture; the
     // arithmetic they call is in `markband.ts`, which the file's writer mirrors.
+    // **Its own `PointerDrag`, not a mode inside the one below.** The two read
+    // the same events and mean opposite things: `drawDrag` refuses a press that
+    // lands on nothing armed, and this one refuses a press that does *not* land
+    // on a mark the reader may move. One instance would have to ask which it was
+    // at every callback, which is the shape of the "one predicate answering two
+    // questions" trap --- and `PointerDrag` deliberately allows only one live
+    // drag per instance, so two gestures need two of them.
+    this.moveDrag = new PointerDrag(root, {
+      begin: (_at: DragPoint) => {
+        // Never starts itself: `onSelectStart` decides which mark was pressed and
+        // sets `moving` before calling `start`, because that decision needs the
+        // hit-test ladder --- a comment of the document's outranks a mark of the
+        // reader's at a shared point --- and this callback sees only a pair of
+        // coordinates.
+        return this.moving !== null;
+      },
+      move: (at: DragPoint) => {
+        const live = this.moving;
+        if (!live) return;
+        // The page the *mark* is on, not the page under the pointer. A mark
+        // belongs to one page and cannot be dragged onto the next --- the same
+        // rule the box's drag states, and here it is stronger: an annotation
+        // moved across a page boundary would have to change which page object
+        // owns it, which is a different command from moving it.
+        const now = this.pointOn(live.slot, at);
+        const want = { dx: now.x - live.from.x, dy: now.y - live.from.y };
+        const bound = this.clampMove(live.id, live.slot, want);
+        if (bound.dx === live.dx && bound.dy === live.dy) return;
+        live.dx = bound.dx;
+        live.dy = bound.dy;
+        this.wake();
+      },
+      end: (_at: DragPoint, committed: boolean) => {
+        const live = this.moving;
+        this.moving = null;
+        this.wake();
+        if (!live || !committed) return;
+        // **A press that did not move is not a move.** It is how a reader opens
+        // a note, which `onSelectStart` has already done on the way in --- so a
+        // zero offset here would journal a command for a click, and undo would
+        // then step through every note the reader had ever opened.
+        if (live.dx === 0 && live.dy === 0) return;
+        // Into the model's space at the last possible moment. Everything above
+        // is laid-out points, because that is the space the reader's hand and
+        // the page's edge are both in; the model holds the file's.
+        const sent = this.fileDelta(live.slot, live.dx, live.dy);
+        this.opts.onMarkMoved?.(live.id, sent.dx, sent.dy);
+      },
+    });
+
     this.drawDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
         if (!this.drawKind && !this.erasing) return false;
@@ -1191,7 +1338,18 @@ export class Viewer {
           this.wake();
           return;
         }
-        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));
+        // **A comment is placed, not dragged out, so it reads the press and not
+        // the rectangle.** Every other armed kind needs two corners and refuses
+        // a click, which is right for a shape and wrong for a pin: a reader
+        // choosing *Add comment* has already said what they want and is only
+        // saying where. `live.from` rather than the release point, so a hand
+        // that slips a pixel between press and release still drops the bubble
+        // where it was aimed --- and so that the ghost the reader was watching
+        // is the mark they get.
+        const quad =
+          kind === "note"
+            ? iconQuad(live.from.x, live.from.y, this.laidSize(live.slot))
+            : boxQuad(live.from, live.to, this.laidSize(live.slot));
         const id = quad ? this.pages.idOf(live.slot) : undefined;
         if (!quad || id === undefined) {
           // **A click rather than a drag, and the tool stays armed.** Silent,
@@ -1264,6 +1422,7 @@ export class Viewer {
     // above. `dispose` ends a live drag without committing it, which is the
     // right answer for a document being closed mid-gesture: the model it would
     // have sent the box to is going away with it.
+    this.moveDrag.dispose();
     this.drawDrag.dispose();
     this.scroller.destroy();
     this.root.replaceChildren();
@@ -1501,6 +1660,10 @@ export class Viewer {
       selected: this.selectedCount(),
       drawing: this.drawnStrokes,
       erasing: this.sweptStrokes,
+      // Never while `drawing` is reporting. `drawnStrokes` answers `0` for an
+      // armed pen as well as for one mid-drawing, so the two would otherwise
+      // both name ink and the window would say it twice.
+      armed: this.drawnStrokes === null ? this.drawKind : null,
       search: this.searchStatus(),
     };
     const summary = [
@@ -1514,6 +1677,16 @@ export class Viewer {
       status.pending > 0,
       status.failed,
       status.selected,
+      // **The three mode fields, and they were missing.** This string is what
+      // decides whether `onStatus` fires at all, so a field absent from it is a
+      // field the window is told about only when something else happens to move
+      // --- and a tool being armed moves nothing else: no tile is pending, the
+      // selection is empty, the page and the zoom are where they were. So the
+      // line that exists to make a mode visible could be a frame late, or never
+      // arrive. Found while adding `armed`, which would have inherited it.
+      status.drawing,
+      status.erasing,
+      status.armed,
       status.search.query,
       status.search.options.matchCase,
       status.search.options.wholeWord,
@@ -2181,6 +2354,20 @@ export class Viewer {
       this.prevMatch();
     } else if (matches("find.next", event)) {
       this.nextMatch();
+    } else if (event.key === "Enter" && this.drawKind === "note") {
+      // **The comment tool's keyboard route, and it is not a convenience.** The
+      // tool is armed by a command a reader can reach from the palette and the
+      // menu bar with no pointer at all, and its gesture is a press on the page
+      // --- so without this, choosing *Add comment* from the keyboard arms a
+      // mode the keyboard cannot finish. Enter places it where {@link commentAt}
+      // puts a comment nobody pointed at: the top-left of what is on screen.
+      //
+      // Above the ink arm rather than below it, and the two cannot both be
+      // live: `armDraw` is what sets `drawKind`, and it is `inking`'s own
+      // finisher that clears it. The order is stated for the reason the Escape
+      // ladder below states its own --- it costs a comparison and stays right if
+      // that ever changes.
+      this.placeComment();
     } else if (event.key === "Enter" && this.inking) {
       // **First on the Enter ladder, and unlike the Escape one this ordering is
       // load-bearing.** A drawing in progress cannot co-exist with an open note
@@ -2235,7 +2422,14 @@ export class Viewer {
       // a mode a reader can be in with nothing on screen but the cursor --- the
       // exact state Escape exists for, and the one a guard listing only the
       // pen's fields leaves them stuck in.
-      if (
+      if (this.moving) {
+        // **First, and this one *is* load-bearing where the ordering below is
+        // defensive.** A move is live only while the pointer is down and a note
+        // box is open on the mark being dragged, so Escape during a move can
+        // genuinely reach two things --- and the mark springing back to where it
+        // was is what the reader pressed it for.
+        this.moveDrag.cancel();
+      } else if (
         this.drawKind !== null ||
         this.drawing ||
         this.inking ||
@@ -2817,6 +3011,83 @@ export class Viewer {
     };
   }
 
+  /**
+   * Where a point is on one named page, whatever page it is over.
+   *
+   * {@link pageAndPoint}'s twin, and the difference is the whole reason it
+   * exists: that one asks which page the pointer is on and answers in that
+   * page's space, which is right for starting a gesture and wrong for
+   * continuing one. A mark belongs to one page, so a drag that wanders below it
+   * has to keep being measured against the page the mark is on --- otherwise the
+   * offset jumps by a page height the moment the pointer crosses the gap.
+   */
+  private pointOn(slot: number, at: ScreenPoint): Point {
+    const bounds = this.root.getBoundingClientRect();
+    const origin = this.scroller.pageOrigin(slot);
+    return {
+      x: (at.clientX - bounds.left - origin.left) / this.zoom,
+      y: (at.clientY - bounds.top + this.scrollTop - origin.top) / this.zoom,
+    };
+  }
+
+  /**
+   * An offset in the laid-out space, as the model's display space sees it.
+   *
+   * **Two points through {@link fileRectOn} rather than one rectangle**, which
+   * is the same move {@link viewStrokesOf} makes and for the same reason: that
+   * conversion unturns and then un-crops, and a *vector* is not a rectangle --- a
+   * quarter turn swaps its components and negates one, and the crop does nothing
+   * to it at all. Mapping both ends and subtracting gets both of those right
+   * without a second copy of the rule, and a copy of that rule is what
+   * `docs/TRAPS.md` records drifting across eleven call sites once already.
+   */
+  private fileDelta(slot: number, dx: number, dy: number): { dx: number; dy: number } {
+    const at = this.fileRectOn(slot, { left: 0, top: 0, right: 0, bottom: 0 });
+    const to = this.fileRectOn(slot, { left: dx, top: dy, right: dx, bottom: dy });
+    return { dx: (to[0] ?? 0) - (at[0] ?? 0), dy: (to[1] ?? 0) - (at[1] ?? 0) };
+  }
+
+  /**
+   * An offset cut down so the mark it moves stays on its page.
+   *
+   * In the laid-out space, which is where the page has an edge a reader can see:
+   * the model holds a mark in the file's display space and does not know how big
+   * a page is at all, so a clamp there would have nothing to clamp against ---
+   * see `Doc::displace`.
+   *
+   * The bounding box of every quad, not each quad separately. A multi-quad mark
+   * moves as one thing, and clamping the rectangles one at a time would slide
+   * them relative to each other and take the mark apart.
+   *
+   * A mark larger than its page pins to the top-left rather than being refused,
+   * which is {@link iconQuad}'s answer to the same question and is not a case
+   * worth a branch.
+   */
+  private clampMove(
+    id: number,
+    slot: number,
+    want: { dx: number; dy: number },
+  ): { dx: number; dy: number } {
+    const mark = this.marks.find((item) => item.id === id);
+    const placed = mark ? this.viewQuadsOf(mark) : null;
+    if (!placed || placed.quads.length === 0) return want;
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const quad of placed.quads) {
+      left = Math.min(left, quad.left);
+      top = Math.min(top, quad.top);
+      right = Math.max(right, quad.right);
+      bottom = Math.max(bottom, quad.bottom);
+    }
+    const laid = this.laidSize(slot);
+    return {
+      dx: Math.min(Math.max(want.dx, -left), laid.width - right),
+      dy: Math.min(Math.max(want.dy, -top), laid.height - bottom),
+    };
+  }
+
   /** One page's links in the view's space, memoised across pointer moves. */
   private linksOn(page: number): Link[] {
     const { turns, width_pt, height_pt } = this.turnsOn(page);
@@ -2847,12 +3118,40 @@ export class Viewer {
    * event on a surface that is trying to hold 60 frames.
    */
   private readonly onHover = (event: PointerEvent): void => {
+    // **Before the link guard, which returns for a document with no links.**
+    // Putting it after would leave the comment tool's ghost bubble working on
+    // documents that happen to be linked and invisible on documents that are
+    // not, which is the shape of defect that gets reported as "it works on my
+    // other PDF".
+    this.trackArmed(event);
     if (this.linkItems.length === 0) return;
     const over = this.linkUnder(event) !== null;
     if (over === this.overLink) return;
     this.overLink = over;
     this.showCursor();
   };
+
+  /**
+   * Follows the pointer while a tool is armed, so the ghost can be painted.
+   *
+   * A frame is only asked for when the answer *moves*, which matters because
+   * this runs on every pointer event: repainting the overlay per event on a
+   * surface trying to hold 60 frames is the cost {@link onHover}'s own comment
+   * argues about for a single style write.
+   */
+  private trackArmed(event: { clientX: number; clientY: number }): void {
+    if (this.drawKind === null) {
+      if (this.armedAt === null) return;
+      this.armedAt = null;
+      this.wake();
+      return;
+    }
+    const { page, x, y } = this.pageAndPoint(event);
+    const was = this.armedAt;
+    if (was && was.slot === page && was.x === x && was.y === y) return;
+    this.armedAt = { slot: page, x, y };
+    this.wake();
+  }
 
   /**
    * Keeps an open note against the mark it belongs to.
@@ -2992,11 +3291,18 @@ export class Viewer {
       { ...first },
     );
     const origin = this.scroller.pageOrigin(placed.slot);
+    // The drag's offset, for {@link paintMarks}' reason and one of its own: the
+    // note box is open on the mark being dragged --- opening it is what the press
+    // did --- so an anchor that ignored the offset would leave the box pointing
+    // at the place the mark has left.
+    const shift = this.moving?.id === mark.id ? this.moving : null;
+    const ox = shift ? shift.dx * this.zoom : 0;
+    const oy = shift ? shift.dy * this.zoom : 0;
     return {
-      left: origin.left + box.left * this.zoom,
-      top: origin.top + box.top * this.zoom - this.scrollTop,
-      right: origin.left + box.right * this.zoom,
-      bottom: origin.top + box.bottom * this.zoom - this.scrollTop,
+      left: origin.left + box.left * this.zoom + ox,
+      top: origin.top + box.top * this.zoom - this.scrollTop + oy,
+      right: origin.left + box.right * this.zoom + ox,
+      bottom: origin.top + box.bottom * this.zoom - this.scrollTop + oy,
     };
   }
 
@@ -3044,8 +3350,15 @@ export class Viewer {
    * rectangle the reader can see --- and {@link fileRectOn} is the one step
    * back, shared with the box.
    */
-  commentAt(point: ScreenPoint | null): { page: number; quads: number[] } | null {
+  commentAt(point: ScreenPoint | null): { page: PageId; quads: number[] } | null {
     const slot = point ? this.pageAndPoint(point).page : this.currentPage();
+    // **The id, not the slot.** What comes back is handed to the model, and the
+    // model names pages by id --- see `Edits.mark`, whose parameter used to be a
+    // slot and which a drawn shape fed an id into for a fortnight. `undefined`
+    // is a slot that is not in the current order, which a caller must treat as
+    // "nowhere to put it" rather than as page zero.
+    const id = this.pages.idOf(slot);
+    if (id === undefined) return null;
     let x: number;
     let y: number;
     if (point) {
@@ -3058,7 +3371,7 @@ export class Viewer {
       y = Math.max(0, (this.scrollTop - origin.top) / this.zoom) + ICON_SIZE;
     }
     const quad = iconQuad(x, y, this.laidSize(slot));
-    return { page: slot, quads: this.fileRectOn(slot, quad) };
+    return { page: id, quads: this.fileRectOn(slot, quad) };
   }
 
   /**
@@ -3199,6 +3512,29 @@ export class Viewer {
   }
 
   /**
+   * Drops the armed comment where a reader with no pointer would want it.
+   *
+   * {@link commentAt}'s no-point answer --- the top-left of the part of the
+   * current page that is actually on screen, inset by the icon's own size ---
+   * routed through the same {@link ViewerOptions.onDrawn} a press produces, so
+   * the mark is made by one path however the reader asked for it. Two paths
+   * would be two answers to "what does placing a comment do", and the note box
+   * opening afterwards is the half that would drift first.
+   *
+   * Spends the tool, like a press does. A reader who has placed their comment is
+   * not still in placing mode, and Escape is not the way out of a thing that
+   * already happened.
+   */
+  private placeComment(): void {
+    const where = this.commentAt(null);
+    this.drawKind = null;
+    this.showCursor();
+    this.wake();
+    if (!where) return;
+    this.opts.onDrawn?.("note", where.page, { quads: where.quads, strokes: [] });
+  }
+
+  /**
    * Ends the drawing in progress and sends it as one mark.
    *
    * **Enter, and it had to be its own key.** Escape already means abandon, and
@@ -3277,6 +3613,20 @@ export class Viewer {
    * handlers each clearing the other, which is how a cursor gets stuck.
    */
   private showCursor(): void {
+    // **The ghost is dropped here, and here is the only place that can be
+    // trusted to do it.** Five sites clear `drawKind` --- arming, cancelling,
+    // finishing a drawing, spending a one-shot tool, and a `pointercancel` ---
+    // and every one of them calls this, because every one of them changes what
+    // the pointer means. Clearing at each instead would be five copies of one
+    // rule, and the sixth site is the one that forgets.
+    //
+    // Only when nothing is armed, and the condition is load-bearing rather than
+    // an optimisation: {@link onHover} calls this whenever the pointer crosses a
+    // link's edge, *after* recording the position, so an unconditional clear
+    // would blank the ghost for a frame every time the reader passed over a
+    // link. A stale position cannot survive a disarm, since a disarm is what
+    // this branch runs on.
+    if (this.drawKind === null) this.armedAt = null;
     this.surfaceHost.style.cursor = this.drawKind
       ? "crosshair"
       : this.overLink
@@ -3609,6 +3959,32 @@ export class Viewer {
       // it was --- the reader's typing has not been committed yet, and will not
       // be until the box closes.
       if (this.markNote.openId !== own.id) this.showMark(own.id);
+      // **And the press may also be the start of a move.** The note opens either
+      // way, on the press rather than on the release: a reader who clicks a mark
+      // wants its box now, and making them wait for the button to come up so
+      // that a drag could be told apart would make every note feel slow. The box
+      // follows the mark while it is dragged --- `syncMark` re-anchors it every
+      // frame --- so nothing is lost by opening first.
+      //
+      // Only the kinds a reader placed. A highlight is made of the words under
+      // it, and dragging one leaves a wash over a line it does not mark; see
+      // `isMovable`, which is where that rule is stated once.
+      if (isMovable(own.kind)) {
+        const placed = this.viewQuadsOf(own);
+        if (placed) {
+          this.moving = {
+            id: own.id,
+            slot: placed.slot,
+            from: this.pointOn(placed.slot, event),
+            dx: 0,
+            dy: 0,
+          };
+          // Refused only if a drag is somehow already live, in which case the
+          // press is not ours to take --- and `moving` must not be left set, or
+          // the overlay would offset a mark nothing is dragging.
+          if (!this.moveDrag.start(event)) this.moving = null;
+        }
+      }
       return;
     }
 
@@ -3958,10 +4334,14 @@ export class Viewer {
    * would differ on exactly the documents where the difference matters ---
    * columns.
    */
-  selectionQuadsByPage(): { page: number; quads: number[]; text: string }[] {
+  selectionQuadsByPage(): { page: PageId; quads: number[]; text: string }[] {
     if (!this.selection) return [];
-    const out: { page: number; quads: number[]; text: string }[] = [];
+    const out: { page: PageId; quads: number[]; text: string }[] = [];
     for (const page of this.selection.pages()) {
+      // `page` is a slot here, and what leaves is an id, for `commentAt`'s
+      // reason: the model names pages by id and a slot is not a name.
+      const id = this.pages.idOf(page);
+      if (id === undefined) continue;
       const text = this.text.peekUnturned(page);
       if (!text) continue;
       const range = this.selection.rangeOn(page);
@@ -3978,7 +4358,7 @@ export class Viewer {
       // cropped space would be written where the crop was rather than where the
       // words are, the moment the reader changed the crop or took it off.
       if (quads.length > 0) {
-        out.push({ page, quads: outOfCrop(quads, this.cropAt(page)), text: said });
+        out.push({ page: id, quads: outOfCrop(quads, this.cropAt(page)), text: said });
       }
     }
     return out;
@@ -4064,6 +4444,18 @@ export class Viewer {
       ctx.globalCompositeOperation = wash ? "multiply" : "source-over";
 
       const origin = this.scroller.pageOrigin(placed.slot);
+      // **The mark being dragged is painted where the hand has it, not where the
+      // model has it.** The model hears once, when the pointer comes up, so
+      // between the press and the release the offset lives only here --- which is
+      // also what makes Escape and a `pointercancel` free: clearing `moving` puts
+      // the mark back with no command to undo.
+      //
+      // Added in device pixels rather than to the quad in points, so that it
+      // reaches the strokes below by the same two numbers. Offsetting the quad
+      // instead would move the rectangle and leave a drawing's strokes behind.
+      const shift = this.moving?.id === mark.id ? this.moving : null;
+      const ox = shift ? shift.dx * this.zoom * dpr : 0;
+      const oy = shift ? shift.dy * this.zoom * dpr : 0;
       // **Ink is drawn from its strokes and never from its quad**, which is the
       // one rectangle in this loop that is not the shape of the mark: it is a
       // box round the drawing, so painting it would put a filled block where a
@@ -4091,13 +4483,13 @@ export class Viewer {
             if (!first) continue;
             ctx.beginPath();
             ctx.moveTo(
-              (origin.left + first.x * this.zoom) * dpr,
-              (origin.top + first.y * this.zoom - this.scrollTop) * dpr,
+              (origin.left + first.x * this.zoom) * dpr + ox,
+              (origin.top + first.y * this.zoom - this.scrollTop) * dpr + oy,
             );
             for (const point of rest) {
               ctx.lineTo(
-                (origin.left + point.x * this.zoom) * dpr,
-                (origin.top + point.y * this.zoom - this.scrollTop) * dpr,
+                (origin.left + point.x * this.zoom) * dpr + ox,
+                (origin.top + point.y * this.zoom - this.scrollTop) * dpr + oy,
               );
             }
             // One path per stroke, for the reason `save.rs` gives: a single
@@ -4110,8 +4502,8 @@ export class Viewer {
       }
       for (const quad of placed.quads) {
         const band = markBand(mark.kind, quad);
-        const left = (origin.left + band.left * this.zoom) * dpr;
-        const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr;
+        const left = (origin.left + band.left * this.zoom) * dpr + ox;
+        const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr + oy;
         const width = (band.right - band.left) * this.zoom * dpr;
         const height = (band.bottom - band.top) * this.zoom * dpr;
         if (isText(mark.kind)) {
@@ -4211,6 +4603,7 @@ export class Viewer {
     // have to stay on screen between them: a drawing is several strokes and the
     // reader is looking at the ones they have made while deciding on the next.
     this.paintInkPreview(ctx, dpr);
+    this.paintCommentGhost(ctx, dpr);
 
     const live = this.drawing;
     if (!live || this.drawKind === "ink") return;
@@ -4240,6 +4633,55 @@ export class Viewer {
     // Put back, or every later stroke on this context is dashed --- the mark
     // outlines above are painted on the same canvas on the next frame.
     ctx.setLineDash([]);
+  }
+
+  /**
+   * The bubble the comment tool would drop, following the pointer.
+   *
+   * **This is what the reader asked the cursor to become.** Arming a shape tool
+   * gives a crosshair and nothing else, which is enough for a shape --- the
+   * reader is about to drag out a rectangle and will watch it grow. A comment
+   * is one press, so between arming and pressing there is no feedback at all,
+   * and the command that used to drop the bubble at the top-left corner of the
+   * page reads as one that ignores where you are pointing. Reported from use.
+   *
+   * A cursor image was the obvious answer and is the worse one. It cannot show
+   * the *size* the icon will be, so it would not move with the zoom; it is drawn
+   * by the window server rather than by us, so it cannot sit under the page's
+   * own colours; and a `url(data:...)` in a `cursor` rule is an image load,
+   * which the application's `default-src 'self'` policy has an opinion about.
+   * This is a shape on our own canvas, in the same dashed preview blue as every
+   * other gesture in progress, and it goes exactly where the mark will go
+   * because {@link iconQuad} is what places both.
+   *
+   * Nothing is painted once the press begins: `drawing` being set means the
+   * bubble's position is decided, and a ghost still tracking the pointer would
+   * be a second bubble in a place the mark is not going.
+   */
+  private paintCommentGhost(ctx: CanvasRenderingContext2D, dpr: number): void {
+    if (this.drawKind !== "note" || this.drawing) return;
+    const at = this.armedAt;
+    if (!at) return;
+    if (!this.scroller.visiblePages().includes(at.slot)) return;
+
+    const quad = iconQuad(at.x, at.y, this.laidSize(at.slot));
+    const origin = this.scroller.pageOrigin(at.slot);
+    const left = (origin.left + quad.left * this.zoom) * dpr;
+    const top = (origin.top + quad.top * this.zoom - this.scrollTop) * dpr;
+    const width = (quad.right - quad.left) * this.zoom * dpr;
+    const height = (quad.bottom - quad.top) * this.zoom * dpr;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    // Filled faintly as well as outlined, because an outline alone at this size
+    // is a few dashes and reads as a smudge over text. The fill is the preview
+    // blue at a fifth, so what is underneath stays legible.
+    ctx.fillStyle = GHOST_FILL;
+    ctx.strokeStyle = PREVIEW_STROKE;
+    ctx.lineWidth = Math.max(1, OUTLINE_WIDTH * this.zoom * dpr);
+    ctx.setLineDash([5 * dpr, 3 * dpr]);
+    drawBubble(ctx, left, top, width, height, PREVIEW_STROKE);
+    ctx.restore();
   }
 
   /**

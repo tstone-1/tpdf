@@ -686,6 +686,25 @@ async fn annot_recolor(
     edits.recolor(doc, mark, color)
 }
 
+/// Moves one mark by an offset, in the page's display space.
+///
+/// An offset rather than a new rectangle, which is what makes it a move --- see
+/// [`docmodel::Doc::displace`]. The frontend clamps it against the page before
+/// sending, because the page's size in points is not something the model holds.
+///
+/// One call per drag, so one undo puts the mark back where it was rather than
+/// stepping it home a pointer event at a time.
+#[tauri::command]
+async fn annot_move(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+    dx: f32,
+    dy: f32,
+) -> Result<edits::EditState, String> {
+    edits.displace(doc, mark, dx, dy)
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 async fn edit_undo(
@@ -2074,6 +2093,7 @@ pub fn run() {
             annot_erase,
             annot_note,
             annot_recolor,
+            annot_move,
             edit_undo,
             edit_redo,
             edit_state,

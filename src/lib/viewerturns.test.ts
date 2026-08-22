@@ -26,6 +26,7 @@ import { Viewer } from "./viewer";
 import type { Comment } from "./comments";
 import type { Link } from "./links";
 import type { PageText } from "./text";
+import { pageId } from "./pages";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 const tiles = vi.hoisted(() => ({
@@ -174,7 +175,7 @@ describe("a rectangle on a page an edit turned", () => {
       viewer.setMarks([{
         id: 3,
         kind: "highlight",
-        page: 1,
+        page: pageId(1),
         quads: [...RECT],
         strokes: [],
         color: [1, 1, 0],
@@ -212,7 +213,7 @@ describe("a rectangle on a page an edit turned", () => {
       viewer.setMarks([{
         id: 3,
         kind: "highlight",
-        page: 1,
+        page: pageId(1),
         quads: [...RECT],
         strokes: [],
         color: [1, 1, 0],
@@ -289,7 +290,7 @@ describe("what a turned page does to a place in it", () => {
       viewer.setMarks([{
         id: 3,
         kind: "highlight",
-        page: 1,
+        page: pageId(1),
         quads: [...RECT],
         strokes: [],
         color: [1, 1, 0],

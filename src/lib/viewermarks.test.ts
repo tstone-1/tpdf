@@ -19,7 +19,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { markWalk, PageMap, unedited, type MarkView, type PageView } from "./pages";
+import { markWalk, PageMap, pageId, unedited, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
 
@@ -99,7 +99,7 @@ function mark(id: number, page: number, top: number): MarkView {
   return {
     id,
     kind: "highlight",
-    page,
+    page: pageId(page),
     quads: [100, top, 300, top + 14],
     strokes: [],
     color: [1, 0.9, 0.2],
@@ -286,9 +286,9 @@ describe("markWalk", () => {
     // changed. Ids ascend the other way, so a walk that read `mark.page` as a
     // position would produce exactly the reverse.
     const moved = new PageMap([
-      { id: 3, source: 2, turns: 0 },
-      { id: 1, source: 0, turns: 0 },
-      { id: 2, source: 1, turns: 0 },
+      { id: pageId(3), source: 2, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(2), source: 1, turns: 0 },
     ]);
     const walk = markWalk([mark(10, 1, 100), mark(11, 3, 100)], moved);
     expect(walk.map((item) => item.id)).toEqual([11, 10]);

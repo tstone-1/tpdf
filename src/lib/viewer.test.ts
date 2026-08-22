@@ -473,6 +473,51 @@ describe("Viewer status", () => {
     viewer.destroy();
   });
 
+  it("reports a status when a tool is armed, and again when it is dropped", async () => {
+    // **The three mode fields were absent from the summary, so this could not
+    // fire.** That string is what decides whether `onStatus` is called at all,
+    // and arming a tool moves nothing else in it: no tile becomes pending, the
+    // selection stays empty, the page and the zoom do not move. So the status
+    // line that exists to make a mode visible was told about it only when
+    // something unrelated happened to change --- or never.
+    //
+    // Both directions, because a version that reported the arming and not the
+    // cancel would leave the line on screen naming a tool that is no longer
+    // armed, which is worse than never showing it.
+    const viewer = build(dom, { onStatus: (s: ViewerStatus) => statuses.push(s) });
+    await quiesce(viewer, dom);
+    const before = statuses.length;
+
+    viewer.armDraw("square");
+    dom.runFrames();
+    expect(statuses.length).toBeGreaterThan(before);
+    expect(statuses[statuses.length - 1]?.armed).toBe("square");
+
+    const armed = statuses.length;
+    viewer.cancelDraw();
+    dom.runFrames();
+    expect(statuses.length).toBeGreaterThan(armed);
+    expect(statuses[statuses.length - 1]?.armed).toBe(null);
+    viewer.destroy();
+  });
+
+  it("names a drawing in one field, not two", async () => {
+    // The pen arms like every other tool, and the window already has a line for
+    // it that counts strokes. Reporting it here as well would put two lines on
+    // the status bar saying the same thing in different words --- so `armed`
+    // stays `null` for ink while `drawing` carries it, and this is the
+    // assertion that says so rather than a comment claiming it.
+    const viewer = build(dom, { onStatus: (s: ViewerStatus) => statuses.push(s) });
+    await quiesce(viewer, dom);
+
+    viewer.armDraw("ink");
+    dom.runFrames();
+    const last = statuses[statuses.length - 1];
+    expect(last?.drawing).toBe(0);
+    expect(last?.armed).toBe(null);
+    viewer.destroy();
+  });
+
   it("stays quiet when a frame changes nothing", async () => {
     // The control, and the two tests above are worth nothing without it: a
     // `report` that fired on every frame would satisfy them while telling a

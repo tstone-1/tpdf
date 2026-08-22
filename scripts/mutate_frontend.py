@@ -170,10 +170,14 @@ MUTATIONS = [
         # Spend the tool even when the box was refused. A slipped click then
         # costs the reader the command as well, with nothing on screen saying
         # why -- the shape this was written as first, and the test found it.
+        # **Re-aimed 2026-08-22**, when the comment tool made the quad a
+        # conditional: a comment is placed by a press and every other kind still
+        # needs two corners, so the one line this named is now three. The edit is
+        # the same one --- spend the tool before the refusal is decided.
         "viewer: spend the box tool on a click that drew nothing",
         "src/lib/viewer.ts",
-        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));",
-        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));\n        this.drawKind = null;",
+        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));",
+        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));\n        this.drawKind = null;",
         "refuses a click, and keeps the tool armed",
     ),
     Mutation(
@@ -2541,10 +2545,18 @@ MUTATIONS = [
         # a document nobody has rearranged, which is every document until
         # somebody moves a page -- and then a highlight lands on whichever page
         # took that slot, at the coordinates of the words it was made from.
+        #
+        # **Re-aimed 2026-08-22.** It named `page: id,` in the request, which was
+        # the line that translated a slot into an id; the parameter is a `PageId`
+        # now and there is no translation left to break, so the equivalent edit
+        # is to put the lookup back. The anchor gate is what said so, on the
+        # commit that removed it.
         "edits: send a mark's slot rather than its page id",
         "src/lib/edits.ts",
-        "          page: id,\n          quads,",
-        "          page,\n          quads,",
+        "    if (!this.current.pages.some((view) => view.id === page)) return this.current;",
+        "    const at = this.current.pages[page as number];\n"
+        "    if (!at) return this.current;\n"
+        "    page = at.id;",
         "sends the page's id rather than its slot when a mark is made",
     ),
     Mutation(
@@ -2601,8 +2613,8 @@ MUTATIONS = [
         # the case this translation exists for.
         "pages: answer the first slot for any mark id",
         "src/lib/pages.ts",
-        "  slotOfId(id: number): number | undefined {\n    for (let slot = 0; slot < this.views.length; slot++) {\n      if (this.views[slot]?.id === id) return slot;\n    }\n    return undefined;\n  }",
-        "  slotOfId(id: number): number | undefined {\n    return this.views.length > 0 ? 0 : undefined;\n  }",
+        "  slotOfId(id: PageId): number | undefined {\n    for (let slot = 0; slot < this.views.length; slot++) {\n      if (this.views[slot]?.id === id) return slot;\n    }\n    return undefined;\n  }",
+        "  slotOfId(id: PageId): number | undefined {\n    return this.views.length > 0 ? 0 : undefined;\n  }",
         "finds the slot a page identity is showing in",
     ),
     Mutation(
@@ -3466,6 +3478,17 @@ TEST_FILES = [
     # unlisted file is refused rather than run, and the refusal names the test,
     # not the file it could not find.
     "src/lib/marklist.test.ts",
+    # Added 2026-08-22 with dragging a mark to move it --- and *after* writing the
+    # mutations, which is the wrong order and is why it is worth a line: the run
+    # refused all seven with "no test here is named ...", correctly, because a
+    # file the harness was not told about is a file whose tests cannot go red.
+    # Eleventh time this list has grown, and the guard has caught the omission
+    # every time.
+    "src/lib/viewermove.test.ts",
+    # Beside it for the two status assertions the comment tool needed: the window
+    # reads `ViewerStatus` and the other viewer tests read the accessors, so this
+    # is the only file where a mutation to `report`'s own summary can go red.
+    "src/lib/viewer.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
@@ -3881,6 +3904,174 @@ MUTATIONS += [
         '  claimed("Date given", signature.when);',
         "",
         "puts the attested time under the signer's own date, not over it",
+    ),
+]
+
+#: Marks: which page one names, where a comment is placed, and moving one.
+#:
+#: The first three aim at the defect a reader reported as shapes vanishing: the
+#: viewer handed `onDrawn` a page **id**, `Edits.mark` took a **slot** and indexed
+#: `pages` by it, so a box drawn on the first page of an unedited document was
+#: written to the second and one drawn on the last page was dropped in silence.
+#: `PageId` is what makes that combination a type error now; these are the
+#: behavioural half, since a brand is erased at runtime and cannot be mutated.
+MUTATIONS += [
+    Mutation(
+        # Answer `commentAt` with the slot, which is what it did while
+        # `Edits.mark` translated. Correct for that caller and for no other.
+        "pageid: place a comment by slot rather than by id",
+        "src/lib/viewer.ts",
+        "    return { page: id, quads: this.fileRectOn(slot, quad) };",
+        "    return { page: slot as unknown as PageId, quads: this.fileRectOn(slot, quad) };",
+        "places a comment on the page by id too",
+    ),
+    Mutation(
+        # Report the drawn page by slot. The one-page fixtures every other test
+        # in that file uses cannot see this; the re-ordered one can.
+        "pageid: report the drawn page by slot rather than by id",
+        "src/lib/viewer.ts",
+        "        this.opts.onDrawn?.(kind, id, {",
+        "        this.opts.onDrawn?.(kind, live.slot as unknown as PageId, {",
+        "reports the drawn page by id, not by the slot it was drawn in",
+    ),
+    Mutation(
+        # Make a comment need a rectangle again, so a click commits nothing and
+        # the tool stays armed --- the state the reader reported as the command
+        # dropping the bubble in the corner.
+        "comment: require a drag rather than a press to place one",
+        "src/lib/viewer.ts",
+        "        const quad =\n"
+        '          kind === "note"\n'
+        "            ? iconQuad(live.from.x, live.from.y, this.laidSize(live.slot))\n"
+        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));",
+        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));",
+        "drops the bubble where the reader pressed, from a click alone",
+    ),
+    Mutation(
+        # Take Enter for any armed tool, which drops a zero-sized box on a
+        # keystroke the reader meant for something else.
+        "comment: place a mark on Enter whatever tool is armed",
+        "src/lib/viewer.ts",
+        '    } else if (event.key === "Enter" && this.drawKind === "note") {',
+        '    } else if (event.key === "Enter" && this.drawKind !== null) {',
+        "takes Enter only for the comment tool",
+    ),
+    Mutation(
+        # Leave the comment tool armed after it places one, so the reader's next
+        # press --- on a link, on a word --- becomes another bubble.
+        "comment: keep the tool armed after a bubble is placed",
+        "src/lib/viewer.ts",
+        "        // Spent, and cleared *before* the callback so that an `onDrawn` which\n"
+        "        // arms it again is not undone by this line.\n"
+        "        this.drawKind = null;",
+        "        // Spent, and cleared *before* the callback so that an `onDrawn` which\n"
+        "        // arms it again is not undone by this line.\n"
+        '        if (kind !== "note") this.drawKind = null;',
+        "spends the tool on that press, and takes no second comment",
+    ),
+    Mutation(
+        # Drop the three mode fields from the summary, which is what decides
+        # whether `onStatus` fires at all. The status line then hears about an
+        # armed tool only when something unrelated moves.
+        "status: leave the mode fields out of the summary that gates a report",
+        "src/lib/viewer.ts",
+        "      status.drawing,\n      status.erasing,\n      status.armed,\n",
+        "",
+        "reports a status when a tool is armed, and again when it is dropped",
+    ),
+    Mutation(
+        # Report ink as armed as well, so the window carries two lines saying
+        # the same thing in different words.
+        "status: name a drawing in the armed field as well as its own",
+        "src/lib/viewer.ts",
+        "      armed: this.drawnStrokes === null ? this.drawKind : null,",
+        "      armed: this.drawKind,",
+        "names a drawing in one field, not two",
+    ),
+    Mutation(
+        # Offer the drag on every kind, including the ones made of the words
+        # under them --- a highlight dragged off its line marks nothing.
+        "move: let a mark made of words be dragged like a placed one",
+        "src/lib/markband.ts",
+        '    case "highlight":\n'
+        '    case "underline":\n'
+        '    case "strikeout":\n'
+        '    case "squiggly":\n'
+        "      return false;",
+        '    case "highlight":\n'
+        '    case "underline":\n'
+        '    case "strikeout":\n'
+        '    case "squiggly":\n'
+        "      return true;",
+        "does not move a mark that is made of the words under it",
+    ),
+    Mutation(
+        # Offer it on the comment alone, which is the kind that was reported ---
+        # and is what a predicate written from the report rather than from the
+        # rule would say.
+        "move: offer the drag on the reported kind and no other",
+        "src/lib/markband.ts",
+        '    case "note":\n'
+        '    case "square":\n'
+        '    case "ellipse":\n'
+        '    case "textbox":\n'
+        '    case "ink":\n'
+        "      return true;",
+        '    case "note":\n'
+        "      return true;\n"
+        '    case "square":\n'
+        '    case "ellipse":\n'
+        '    case "textbox":\n'
+        '    case "ink":\n'
+        "      return false;",
+        "moves a box, an ellipse, a text box and a drawing",
+    ),
+    Mutation(
+        # Send the offset measured on screen. Identical on an upright page and
+        # sideways on a turned one, which is the whole reason the fixture turns.
+        "move: send the laid-out offset rather than the file's",
+        "src/lib/viewer.ts",
+        "        const sent = this.fileDelta(live.slot, live.dx, live.dy);\n"
+        "        this.opts.onMarkMoved?.(live.id, sent.dx, sent.dy);",
+        "        this.opts.onMarkMoved?.(live.id, live.dx, live.dy);",
+        "reports the offset in the file's space, not the reader's",
+    ),
+    Mutation(
+        # Drop the clamp, so a mark can be dragged off the paper and written
+        # with a `/Rect` other readers clip or place themselves.
+        "move: let a mark be dragged off its page",
+        "src/lib/viewer.ts",
+        "        const bound = this.clampMove(live.id, live.slot, want);",
+        "        const bound = want;",
+        "cuts the offset short at the page's edge",
+    ),
+    Mutation(
+        # Journal a command for a press that did not move, which is how a reader
+        # opens a note --- so undo would step back through every note ever opened.
+        "move: report a press that never moved as a move",
+        "src/lib/viewer.ts",
+        "        if (live.dx === 0 && live.dy === 0) return;",
+        "",
+        "reports nothing for a press that did not move",
+    ),
+    Mutation(
+        # Report on every pointer event, so one drag becomes a dozen commands
+        # and undo walks the mark home a step at a time.
+        "move: report once per pointer event rather than once per drag",
+        "src/lib/viewer.ts",
+        "        live.dx = bound.dx;\n        live.dy = bound.dy;\n        this.wake();",
+        "        live.dx = bound.dx;\n        live.dy = bound.dy;\n"
+        "        this.opts.onMarkMoved?.(live.id, bound.dx, bound.dy);\n        this.wake();",
+        "reports once for a drag, not once per pointer event",
+    ),
+    Mutation(
+        # Let Escape fall through to the drawing tools while a mark is being
+        # dragged, so the mark commits where the hand happened to be.
+        "move: take Escape away from a drag in progress",
+        "src/lib/viewer.ts",
+        "      if (this.moving) {",
+        "      if (false) {",
+        "throws the move away on Escape",
     ),
 ]
 

@@ -59,7 +59,7 @@ import {
 } from "./reading";
 import { TextCache, type PageText } from "./text";
 import type { EditState } from "./edits";
-import { markRows, unedited, type MarkKind, type MarkView } from "./pages";
+import { markRows, pageId, unedited, type MarkKind, type MarkView } from "./pages";
 import { Sidebar, SIDEBAR_CLASS } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor, type Thumbnails } from "./thumbnails";
@@ -4180,7 +4180,7 @@ function syntheticMark(
     // `pages.ts`. Sending 0 here would name no page and the mark would not be
     // drawn at all, which is the slot-for-identity confusion this type exists
     // to make visible.
-    page: 1,
+    page: pageId(1),
     quads: [
       size.width_pt * 0.15,
       size.height_pt * band,
@@ -4788,7 +4788,7 @@ function markOnPage(
   return {
     id,
     kind: "highlight",
-    page: slot + 1,
+    page: pageId(slot + 1),
     quads: [
       size.width_pt * 0.15,
       size.height_pt * band,
@@ -8754,7 +8754,7 @@ async function overlayInkChecks(
       {
         id: 7777,
         kind,
-        page: 1,
+        page: pageId(1),
         quads: quad,
         strokes,
         color: [0.85, 0.15, 0.15],
@@ -9208,7 +9208,7 @@ async function inkPreviewChecks(
     {
       id: 4243,
       kind: "highlight",
-      page: 1,
+      page: pageId(1),
       quads: [0, 0, size.width_pt, size.height_pt],
       strokes: [],
       color: [1, 0.9, 0.2],
@@ -9315,7 +9315,7 @@ async function erasePreviewChecks(
     {
       id: 4244,
       kind: "ink",
-      page: 1,
+      page: pageId(1),
       quads: [from, upper, to, lower],
       strokes: [
         [from, upper, to, upper],

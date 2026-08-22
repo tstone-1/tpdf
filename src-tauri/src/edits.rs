@@ -706,6 +706,42 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Moves one mark by an offset, addressed by identity.
+    ///
+    /// [`recolor`](Edits::recolor)'s shape, and its caveat too: what crosses the
+    /// boundary is the offset, because the [`Command`] carries an id only the
+    /// model may issue.
+    ///
+    /// **Refused rather than substituted when the offset is not finite**, which
+    /// is where this parts company with [`channel`] above. JSON has no `NaN`
+    /// literal, so serde refuses that --- but `1e40` is perfectly good JSON and
+    /// arrives as `f32::INFINITY`, and `save.rs` writes a rectangle with
+    /// `format!`, which spells that `inf`: three letters in the middle of a
+    /// `/Rect`. A colour has a total answer for the nonsense case, since zero is
+    /// a colour; an offset does not, because "do not move" is indistinguishable
+    /// to the reader from a drag that silently failed. No pointer can produce
+    /// one, so a sender that does is broken and is told so.
+    ///
+    /// The clamp that keeps a mark on its page is not here, for the reason
+    /// [`Doc::displace`] gives: the page's size in points is the renderer's
+    /// answer and neither this layer nor the model holds it.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the offset is not finite; the id names
+    /// no mark, or one that has already been removed.
+    pub fn displace(&self, doc: u32, mark: u64, dx: f32, dy: f32) -> Result<EditState, String> {
+        if !dx.is_finite() || !dy.is_finite() {
+            return Err(format!("a mark cannot be moved by ({dx}, {dy})"));
+        }
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .displace(MarkId::from_raw(mark), dx, dy)
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Applies a command and returns the state it produced.
     fn command(&self, doc: u32, cmd: Command) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
@@ -2058,6 +2094,48 @@ mod tests {
         // And every channel is finite, which is the property `format!` needs
         // and which a range check on its own does not state.
         assert!(color.iter().all(|c| c.is_finite()), "{color:?}");
+    }
+
+    #[test]
+    fn a_move_by_a_non_finite_offset_is_refused_rather_than_ignored() {
+        // The colour's trap on the other door, and the answer differs. `1e40` is
+        // valid JSON and is `f32::INFINITY` as an `f32`; added to a rectangle it
+        // makes one `save.rs` writes as `inf` with `format!`, which is three
+        // letters in the middle of a `/Rect`.
+        //
+        // **Refused where a colour is substituted**, because zero is a colour and
+        // "do not move" is not a move: a reader whose drag silently did nothing
+        // has no way to tell that from a broken viewer. No pointer can produce
+        // one, so a sender that does is broken and is told so.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        edits
+            .annotate(7, a_mark(id), stamped())
+            .expect("the mark is taken");
+        let mark = edits.state(7).expect("state").marks[0].id;
+        let home = edits.state(7).expect("state").marks[0].quads.clone();
+
+        for (dx, dy) in [
+            (f32::INFINITY, 0.0),
+            (0.0, f32::NEG_INFINITY),
+            (f32::NAN, 1.0),
+        ] {
+            let refused = edits.displace(7, mark, dx, dy);
+            assert!(refused.is_err(), "({dx}, {dy}) was taken: {refused:?}");
+        }
+        assert_eq!(
+            edits.state(7).expect("state").marks[0].quads,
+            home,
+            "and nothing moved"
+        );
+
+        // The control, and without it the loop above is satisfied by a method
+        // that refuses everything.
+        edits.displace(7, mark, 12.0, -3.0).expect("a real offset");
+        let moved = edits.state(7).expect("state").marks[0].quads.clone();
+        assert_eq!(moved[0], home[0] + 12.0);
+        assert_eq!(moved[1], home[1] - 3.0);
+        assert!(moved.iter().all(|v| v.is_finite()), "{moved:?}");
     }
 
     #[test]

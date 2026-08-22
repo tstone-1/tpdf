@@ -21,6 +21,7 @@ import {
   unedited,
   type MarkKind,
   type MarkView,
+  type PageId,
   type PageView,
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
@@ -237,16 +238,29 @@ export class Edits {
   }
 
   /**
-   * Marks `quads` on the page in slot `page`, with a mark of `kind`.
+   * Marks `quads` on the page `page` names, with a mark of `kind`.
    *
    * The quads are display-space rectangles --- see {@link MarkView} --- and they
    * must come from the page's *own* text rather than from the view's, which is
    * what `TextCache.peekUnturned` is for. Sending view-space quads would store a
    * mark that moves when the reader rotates the window.
    *
-   * Takes a slot and sends the id, as {@link rotate} does. What it does not do
-   * is decide whether the mark is acceptable: a mark covering nothing is refused
-   * by the model, and predicting that here would be a second copy of the rule.
+   * **Takes an id, where {@link rotate} takes a slot, and the difference is the
+   * one this method got wrong.** Every other command here is issued the moment a
+   * reader asks for it, so translating a slot at the boundary is safe; a mark is
+   * geometry lifted off the page at the *end of a gesture*, and the id is what
+   * pins it to the page that gesture happened on. `Viewer.onDrawn` said so and
+   * handed one over --- into a parameter that indexed `pages` by it, so a shape
+   * drawn on slot 0 of an unedited document was written to slot 1, and one drawn
+   * on the last page was silently dropped because there is no slot past the end.
+   * Nothing went red: an id and a slot are both `number`, and the two callers
+   * that did hold slots were right. {@link PageId} is a distinct type for that
+   * reason --- the mistake is now `error TS2345` rather than a mark on the wrong
+   * page.
+   *
+   * What it does not do is decide whether the mark is acceptable: a mark
+   * covering nothing is refused by the model, and predicting that here would be
+   * a second copy of the rule.
    *
    * **One method for all three kinds**, matching the one command behind it. The
    * three differ in a subtype, a colour and how the appearance is drawn, all of
@@ -260,20 +274,22 @@ export class Edits {
    */
   async mark(
     kind: MarkKind,
-    page: number,
+    page: PageId,
     quads: number[],
     strokes: number[][] = [],
     note = "",
     chosen: MarkColor | null = null,
   ): Promise<EditState> {
-    const id = this.current.pages[page]?.id;
-    if (id === undefined) return this.current;
+    // A page the model has never mentioned, or one that has gone since the
+    // gesture started. Nothing is sent, which is what the slot lookup used to
+    // give for free and has to be said now that no lookup happens.
+    if (!this.current.pages.some((view) => view.id === page)) return this.current;
     return this.adopt(
       await invoke<EditState>("annot_mark", {
         doc: this.doc,
         mark: {
           kind,
-          page: id,
+          page,
           quads,
           strokes,
           color: colorFor(kind, chosen),
@@ -296,6 +312,35 @@ export class Edits {
   async renote(mark: number, note: string): Promise<EditState> {
     return this.adopt(
       await invoke<EditState>("annot_note", { doc: this.doc, mark, note }),
+    );
+  }
+
+  /**
+   * Moves one mark by an offset, by the id a state reply gave it.
+   *
+   * An offset rather than a new rectangle, which is what makes it a *move*: one
+   * number pair applied to everything the mark owns cannot resize a box or
+   * reshape a drawing, where a geometry computed on this side and sent whole
+   * could do both through a defect in one line. See `Doc::displace`.
+   *
+   * In the page's **display** space, which the viewer converts to --- not the
+   * view's, and not client pixels. And clamped there, because keeping a mark on
+   * its page needs the page's size in points and the model does not hold one.
+   *
+   * The model journals whatever it is told, so a caller must not send a zero
+   * offset: that is a press without a drag, which is how a reader opens a note,
+   * and it would put an undo step in front of them for nothing. `viewer.ts`
+   * drops it, next to the gesture that produced it, exactly as `markpopup.ts`
+   * drops an unchanged note.
+   *
+   * **`displace` rather than `move`**, which is the reader's word and is already
+   * taken here by {@link Edits.move} --- that one moves a *page* in the order.
+   * The name is `Doc::displace`'s, so the two sides of the boundary say the same
+   * thing, and the window still calls it *Move* where a reader can see it.
+   */
+  async displace(mark: number, dx: number, dy: number): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("annot_move", { doc: this.doc, mark, dx, dy }),
     );
   }
 

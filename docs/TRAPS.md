@@ -12216,3 +12216,147 @@ assertion in the module that reads a generated fixture takes one script and find
 ones by inspection rather than by a fourth red run: two pinned strings, both safe — one over a
 certificate the test builds itself, one over a timestamp the generator pins on purpose. Three
 reds in a row is the signal to stop fixing instances and enumerate the population.
+
+---
+### An id and a slot are both `number`, so a mark drawn on the last page vanished
+
+Reported from use: *"I can draw an ellipse, but it will vanish after letting lose
+the LMB --- nothing stay in the PDF visually."*
+
+`Viewer.onDrawn` hands over the page's **id**, deliberately, and its doc comment
+says so and gives the reason: a drawing is committed at the *end* of a gesture, so
+the page has to be pinned by name rather than by position in case the order moved
+while the hand was down. `Edits.mark` took a **slot** and did
+`this.current.pages[page]?.id` with it.
+
+An unedited document numbers slot 0 as id 1, so the two are always one apart:
+
+- A shape drawn on any page but the last was written to the **next** page.
+- One drawn on the **last** page resolved to `pages[n]`, which is `undefined`, and
+  the method returned the state it already held --- no command, no refusal, no
+  message. The reader watched it vanish.
+
+**Nothing was red, at four layers.** `edits.test.ts` asserts that `mark` sends an
+id and it did; `viewerdraw.test.ts` asserts that `onDrawn` reports an id and it
+did; every window check passes because the check harness builds a `Viewer` with no
+model behind it, so a drag draws its preview and commits nothing. The defect lived
+only in the join, which is inside `App.svelte` --- a file no unit test imports and
+no harness constructs. That is the same blind spot the `wiring` gate was written
+for after `onDrawn` shipped unwired; the gate compares which callbacks are wired,
+and this was a callback wired to a function with the wrong *units*.
+
+Two fixes, and the second is the one that lasts:
+
+- `Edits.mark` takes a page id and sends it verbatim. There is no translation left
+  in that path to get wrong.
+- **`PageId` is a distinct type** --- `number & { readonly __pageId: unique symbol }`
+  in `pages.ts`, erased at runtime, minted only by `pageId()`. Feeding a slot to
+  anything that wants an id is `error TS2345` now, and the three call sites in
+  `App.svelte` were flagged the moment the parameter changed. Two of them were
+  right and one was the defect, which is exactly what a type is for.
+
+The fixture that can see it needs slots and ids to **disagree**: `viewerdraw.test.ts`
+re-orders a three-page document so slot 0 holds id 3, a number no slot in it has.
+It also has to `goToPage(0)` afterwards --- re-ordering keeps the reader on the page
+they were looking at *by identity*, so the view follows id 1 down to slot 1, and a
+press near the top of the window would land on the one page whose id equals its old
+slot. The first draft of that test did not, and reported 1 where it expected 3.
+
+Generalises past this repository: any two integer keys over the same domain ---
+a database id and a row number, a file descriptor and an index into a table, a
+1-based display position and a 0-based array position --- are one transposition away
+from a defect that no test in either module can see, because each module is right.
+
+---
+### A one-shot tool armed from the palette says nothing, and the reader is not stuck but lost
+
+Reported in the same message: *"edit -> add comment adds a speech bubble - but I
+can't drag it to move it. I would expect the cursor to become a speech bubble to
+place it, instead of adding it always to the top left."*
+
+`edit.addComment` had no gesture. It ran, `commentAt(null)` answered with the
+top-left of whatever of the page was on screen, and the mark was made --- a
+defensible spot, chosen deliberately and documented, and it reads as a command that
+ignored where the reader was pointing.
+
+Three things came out of fixing it, and only the first is about comments.
+
+**A comment is placed by a press, and every other armed tool refuses one.**
+`boxQuad` will not build a rectangle from two identical corners, which is right for
+a shape and wrong for a pin. The drag-end handler now reads `live.from` for a
+`note` and the two corners for everything else.
+
+**A cursor image was the obvious answer and is the worse one.** It cannot show the
+size the icon will be, so it would not move with the zoom; it is drawn by the
+window server, so it cannot sit under the page's own colours; and a
+`url(data:...)` in a `cursor` rule is an image load, which `default-src 'self'` has
+an opinion about. What the reader asked for is *feedback about where it will land*,
+and a dashed ghost of the actual bubble on the overlay canvas is that --- placed by
+`iconQuad`, the same function that places the mark, so the two cannot disagree.
+
+**The status line's own gate could not see a mode change.** `ViewerStatus` is
+reported every frame and `onStatus` fires only when a summary string moves ---
+and `drawing`, `erasing` and the new `armed` were all **absent from that string**.
+Arming a tool moves nothing else in it: no tile becomes pending, the selection
+stays empty, the page and the zoom are where they were. So the line that exists to
+make a mode visible was told about it only when something unrelated happened to
+change, or never. Found while adding a third field that would have inherited it.
+
+The general shape: **a computed digest that decides whether to notify is a second
+list of the fields that matter, and it goes stale silently.** Nothing goes red when
+a field is added and not listed --- the value is still correct in every reading, it
+just arrives late or not at all. If a struct is compared by a hand-written summary,
+the summary needs a test per field, or it needs to be derived from the struct.
+
+---
+### Moving a mark is a re-inking of it, and reusing the command beat adding one
+
+Dragging a mark to a new place needed a model command and there was none. The
+obvious shape is a new `Command` variant carrying new geometry --- and it would have
+been the wrong one.
+
+`Doc::quads_of` and `Doc::strokes_of` already answer *where a mark is now* by
+looking in `Working::ink_of` first and falling back to the mark's body. That
+indirection exists for the eraser: rubbing out a stroke changes both the strokes
+and the rectangle round them, so `Ink { strokes, quads }` carries the pair together
+and `Command::Reink` swaps versions of it. A move changes exactly the same pair.
+
+So `Doc::displace` translates both and issues a `Reink`. What that buys:
+
+- **One precedence rule.** A second variant would mean `quads_of` choosing between
+  three sources, and undo replaying whichever came last --- a rule that is right
+  today and drifts the first time somebody adds the fourth.
+- Undo, redo, snapshots and the save path all work unchanged, because nothing new
+  was added for them to not know about.
+
+Two decisions inside it are worth stating, because both could reasonably have gone
+the other way:
+
+- **It takes a delta, not a geometry.** The caller has the gesture and could send
+  rectangles --- it is what `annotate` takes. One offset applied here to everything
+  the mark owns cannot resize a box or reshape a drawing; a geometry computed on
+  the far side of the boundary can do both through one sign error, and the mutation
+  that moves a rectangle's top-left corner and not its bottom-right is in
+  `mutate_rust.py` because that is precisely what it looks like.
+- **Every kind, no shape check** --- `recolor`'s posture rather than `reink`'s, and
+  its neighbour refuses a highlight where this accepts one. Geometry is geometry;
+  *which* kinds a reader is offered the drag on is a product rule, and it lives in
+  `markband.ts`'s `isMovable` where the gesture is. Putting it in the model would
+  make that rule unchangeable without a commit in another language.
+
+The cost is a name that has widened: `Ink`, `InkId`, `inks` and `Reink` now carry
+every kind's geometry rather than a drawing's. Renaming was measured and refused ---
+261 hits across 18 files on a grep that also matches `MarkKind::Ink` and the PDF's
+own `/Ink`, which is the mechanical-edit-keyed-on-a-name trap this file already
+records. The paragraph on `Ink` says what it means now and why the name stands.
+
+**And the clamp is not in the model.** Keeping a mark on its page needs the page's
+size in points, and `docmodel` holds ids, turns and crops --- the size is the
+renderer's answer. So the viewer clamps the offset before sending it, in the same
+place and for the same reason `iconQuad` and `boxQuad` clamp the geometry they
+build. Which means the *offset* is in the page's display space and the *gesture* is
+in the laid-out space, and converting between them is two points through
+`fileRectOn` rather than one rectangle: a quarter turn swaps a vector's components
+and negates one, and the crop does nothing to it at all. The fixture that can see a
+viewer skipping that conversion is a turned page --- upright, the two spaces are the
+same two numbers and the assertion passes either way.

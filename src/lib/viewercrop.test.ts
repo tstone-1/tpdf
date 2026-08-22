@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Comment } from "./comments";
 import type { CropGeometry } from "./crop";
-import type { MarkView, PageView } from "./pages";
+import { pageId, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
 
@@ -79,8 +79,8 @@ function build(): Viewer {
 /** The pages of a two-page document, with page 1 cropped or not. */
 function pages(crop: boolean): PageView[] {
   return [
-    crop ? { id: 1, source: 0, turns: 0, crop: CROP } : { id: 1, source: 0, turns: 0 },
-    { id: 2, source: 1, turns: 0 },
+    crop ? { id: pageId(1), source: 0, turns: 0, crop: CROP } : { id: pageId(1), source: 0, turns: 0 },
+    { id: pageId(2), source: 1, turns: 0 },
   ];
 }
 
@@ -106,7 +106,7 @@ function mark(rect: [number, number, number, number]): MarkView {
   return {
     id: 10,
     kind: "highlight",
-    page: 1,
+    page: pageId(1),
     quads: [...rect],
     strokes: [],
     color: [1, 0.9, 0.2],
