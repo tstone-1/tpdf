@@ -12960,3 +12960,52 @@ now carries.
 **Before telling someone to read a line, check that the build they will run can print it.** A
 grep for the format string is enough, and it is cheaper than the round trip to the machine that
 finds out.
+
+### A `[SKIP]` whose stated reason is true can be the check you most need
+
+`worker-probe`'s memory check ran on macOS and printed this on Windows, from 2026-07-29 to
+2026-08-22:
+
+```
+[SKIP] the parent can read the worker's footprint   not applicable --- the job
+       object caps memory in the kernel here
+```
+
+Every word of that reason is true. macOS refuses every relevant rlimit, so the footprint poll
+there is a *substitute* for a bound it cannot have; Windows has the bound, so there is indeed
+nothing for a poll to add. The skip was written deliberately, with its reason attached, by
+someone who had just proved the cap works.
+
+The inference is inverted, and it took three weeks and a shipped feature to see it. **A poll
+stands in for a bound; a bound makes the reading matter more, not less** --- because the
+question a reader needs answered is not "how much is it using" but "how close did it come to
+being refused", and only the platform with a limit can answer that at all. So the one platform
+where the number decides something was the one reporting no number.
+
+What was missing was never a reason to look. It was a *way* to look, and it was four lines:
+`GetProcessMemoryInfo` through the process handle the parent already holds. Nobody went looking
+for it, because the skip read as settled.
+
+**The reason had a shelf life, and nothing was watching it.** It was written when no worker
+allocated anywhere near 1 GiB. Three weeks later an append landed that reaches **95.7%** of the
+cap on the largest fixture in the repository, and the sentence saying the reading was not
+applicable was not re-read --- there is no mechanism by which it would have been. The
+justification for a skip is a claim about the surrounding system, and the surrounding system
+moves.
+
+Two things worth taking, and the first is *not* "distrust skips".
+
+**The `[SKIP]` is what made this findable at all.** It stayed visible on every run, named its
+reason, and printed under the same check name as the platform that ran it. A check quietly
+omitted on one platform would have left nothing to re-read and no discrepancy to notice. This
+repository's rule that a control which disappears cannot be told from one that ran is what
+turned a three-week-old mistake into a five-minute one.
+
+**Read a skip's reason as explaining why the *mechanism* is absent, then ask separately whether
+the *question* is.** Here the mechanism really was inapplicable --- polling is the wrong
+instrument next to a kernel limit --- and the question was more applicable than on the platform
+that answered it. The two look like one thing in a single line of output, and they are not.
+
+Sibling of *An `[INFO]` line guarded on a macOS-only reading cannot print on Windows*, which is
+the same reading missing from the same run for a different reason: that one vanished silently
+and this one announced itself, and the silent one was the cheaper mistake to make.

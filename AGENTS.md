@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 439 entries
+The one thing this file does *not* carry in full is the trap list --- 440 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -174,6 +174,15 @@ its balloon has to write to every page it takes. That is why `Worker::footprint`
 `None` on Windows is not the gap it looks like --- there is a kernel bound there instead of a
 poll, and it is now the measured kind. (Nothing in production reads `footprint` on either
 platform; only `pool-bench` does.)
+
+**That paragraph was used to justify not looking, and on 2026-08-22 it cost three weeks.** The
+half about the bound is right. What does not follow is that nothing needed reading here: a poll
+substitutes for a bound, so a platform that *has* one is the platform where "how close did the
+worker come to being refused" is both answerable and decisive --- and for three weeks the probe
+answered it on macOS and printed `[SKIP]` here, while an append shipped that reaches 95.7% of
+the cap. `Worker::peak_commit` closes it, reading `PeakPagefileUsage` through the handle the
+parent already holds, so the probe now reports 17/17 with nothing not applicable on either
+platform. `docs/TRAPS.md` carries the entry.
 
 **And the render deadline is real on Windows as of the same day, having silently not been.**
 `kill_pid` was a `#[cfg(not(unix))]` no-op whose own comment predicted exactly this, and the
@@ -1116,7 +1125,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 439 of them and the full text
+titles. Only the titles are here, because there are 440 of them and the full text
 was 93% of this file --- an instruction budget spent on the 424 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1581,6 +1590,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work (five probe runners dead on Windows since the day they were written; the wrapper's own `echo` supplied the exit 0 that hid it)
 - A guard that answers by refusing the whole run turns two blocked mutations into 178 (the diagnosis was exactly right and the outcome exactly wrong; a dated measurement in `BUILD.md` had quietly expired)
 - An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
+- A `[SKIP]` whose stated reason is true can be the check you most need (the reason was true, the conclusion inverted, and the skip is what made it findable)
 
 ### Fixtures
 - The test fixtures are generated, not committed

@@ -23,8 +23,8 @@
 //! empty target. `backend_probe.rs` and `fdpass_probe.rs` carry the same note.
 //!
 //! ```text
-//! cargo run --release --bin win-sandbox-probe
-//! cargo run --release --bin win-sandbox-probe -- testdata/vector-heavy.pdf
+//! cargo run --release --example win-sandbox-probe
+//! cargo run --release --example win-sandbox-probe -- testdata/vector-heavy.pdf
 //! ```
 
 // Every claim this probe makes is about Win32 containment primitives, which do

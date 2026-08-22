@@ -2255,6 +2255,31 @@ MUTATIONS = [
         "                let _ = &mark;",
         "a_removed_drawing_forgets_which_version_it_was_on",
     ),
+    Mutation(
+        # Read this process's counters instead of the child's. The mistake the
+        # test exists for, and it is not hypothetical: `GetProcessMemoryInfo`
+        # takes a handle, `GetCurrentProcess()` is the pseudo-handle for self,
+        # and `tile_bench` passes exactly that on purpose two files away. A
+        # worker's headroom would then be reported as the app's.
+        "sandbox: read the parent's commit charge rather than the worker's",
+        "src/sandbox_win.rs",
+        "        let ok = unsafe { GetProcessMemoryInfo(self.process, &raw mut counters, counters.cb) };",
+        "        let ok = unsafe { GetProcessMemoryInfo(windows_sys::Win32::System::Threading::GetCurrentProcess(), &raw mut counters, counters.cb) };",
+        "a_contained_childs_peak_commit_is_readable_and_is_the_childs",
+        only_on="windows",
+    ),
+    Mutation(
+        # Lie about the struct's size. Win32 reads `cb` to decide which version
+        # of the counters it was handed, so a zero is refused -- and the refusal
+        # is the branch that produces `None`, which is what a caller reads as
+        # "this platform cannot measure that" rather than as a broken call.
+        "sandbox: hand GetProcessMemoryInfo a zero-length struct",
+        "src/sandbox_win.rs",
+        "        counters.cb = size_of_u32::<PROCESS_MEMORY_COUNTERS>();",
+        "        counters.cb = 0;",
+        "a_contained_childs_peak_commit_is_readable_and_is_the_childs",
+        only_on="windows",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.

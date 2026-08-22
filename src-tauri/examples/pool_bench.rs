@@ -24,9 +24,9 @@
 //! this is the reason not to keep one.
 //!
 //! ```text
-//! cargo run --release --bin pool-bench -- testdata/vector-heavy.pdf
-//! cargo run --release --bin pool-bench -- testdata/vector-heavy.pdf --tiles 6 --rounds 5
-//! cargo run --release --bin pool-bench -- testdata/vector-heavy.pdf --mode retire
+//! cargo run --release --example pool-bench -- testdata/vector-heavy.pdf
+//! cargo run --release --example pool-bench -- testdata/vector-heavy.pdf --tiles 6 --rounds 5
+//! cargo run --release --example pool-bench -- testdata/vector-heavy.pdf --mode retire
 //! ```
 
 use std::path::{Path, PathBuf};

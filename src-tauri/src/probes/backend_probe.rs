@@ -17,7 +17,7 @@
 //! scan can see one and the first check was not passing on a wrong substring.
 //!
 //! ```text
-//! cargo run --release --bin backend-probe -- testdata/text-heavy.pdf
+//! cargo run --release --example backend-probe -- testdata/text-heavy.pdf
 //! ```
 //!
 //! This is the macOS-only body of the `backend-probe` bin; the entry point that

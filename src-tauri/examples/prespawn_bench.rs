@@ -43,8 +43,8 @@
 //! as a warm-up outlier.
 //!
 //! ```text
-//! cargo run --release --bin prespawn-bench
-//! cargo run --release --bin prespawn-bench -- --rounds 8
+//! cargo run --release --example prespawn-bench
+//! cargo run --release --example prespawn-bench -- --rounds 8
 //! ```
 
 use std::path::{Path, PathBuf};
