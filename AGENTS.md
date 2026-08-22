@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 422 entries
+The one thing this file does *not* carry in full is the trap list --- 423 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1070,8 +1070,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 422 of them and the full text
-was 93% of this file --- an instruction budget spent on the 421 traps that are not
+titles. Only the titles are here, because there are 423 of them and the full text
+was 93% of this file --- an instruction budget spent on the 422 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1461,6 +1461,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mechanical edit keyed on a field name hits every occurrence of that name (six wrong insertions: a parameter list, a request payload, an assertion, a check table; make the field required and let the type-checker enumerate the real sites)
 - An AppleScript loop over a property list iterates a reference, and every menu reads as empty (an instrument failure wearing the shape of a finding; two causes, one symptom, six lines)
 - A harness that edits source files pays for the editor watching them (4.4 hours to 405 s; the language server held the build lock, and the suite ran 607 tests to check one assertion)
+- A harness written on a locked screen is a harness that has never run (the half needing no screen was proved instead, and the gap went into `BUILD.md` beside the invocation, with the mutation that would prove it can go red)
 - A documented cost measured warm is the wrong number for the run you are about to make (0.47 s, ~8 s, 2 min 58 s and longer are all the same command; the correction written first was wrong in both halves, and its long figure had a second copy of itself contending for the build lock)
 - A mutation block below the `__main__` guard is counted by the gate and run by nothing (251 anchors green, 241 registered, ten new mutations silently absent; the gate imports and a run executes, and undoing the control with `git checkout` discarded them a second time)
 - Narrowing a run made a shape the output parser had assumed away (with one file in the run nothing passed, and `Tests 2 failed (2)` read as a run that never finished)

@@ -64,6 +64,7 @@
     type Place,
     type Session,
   } from "./lib/session";
+  import { runMarkCheckIfRequested } from "./lib/markcheck";
   import { runSessionCheckIfRequested } from "./lib/sessioncheck";
   import { runOpenCheckIfRequested } from "./lib/opencheck";
   import { Serial } from "./lib/serial";
@@ -1612,6 +1613,33 @@
           // it would be testing a second implementation of the open.
           open: (path) => openPath(path),
           hasViewer: () => viewer !== null,
+        })
+      )
+        return;
+
+      // Before the session check, which ends the process, and after the open
+      // check for the same reason that one goes first: this needs a document
+      // open and that one asserts that nothing is.
+      //
+      // **Everything it is handed is a handle the application itself uses**, and
+      // that is the whole design --- see `markcheck.ts`. What the defect it was
+      // written for lived in is the object literal a few lines above this one,
+      // where the viewer's callbacks are bound to the functions that reach the
+      // model, so a check that reconstructed any of those would have rebuilt the
+      // very thing it is meant to observe.
+      if (
+        await runMarkCheckIfRequested({
+          // Through the registry, not the actions behind it: a reader reaches a
+          // command by its id, and the enablement guard is part of the chain.
+          run: (id) => commands.run(id),
+          viewer: () => viewer,
+          root: () => surface,
+          // The **model's** marks and pages, which is the independent end of
+          // every assertion the check makes: they came back over the IPC
+          // boundary from Rust, not from the viewer that produced the gesture.
+          marks: () => edits?.state.marks ?? [],
+          pages: () => edits?.state.pages ?? [],
+          path: () => openPathName,
         })
       )
         return;

@@ -1531,6 +1531,23 @@ fn opencheck_mode() -> Option<String> {
     spike_env("TPDF_OPENCHECK")
 }
 
+/// What the mark check should do this launch, from `TPDF_MARKCHECK`.
+///
+/// [`sessioncheck_mode`]'s posture rather than [`opencheck_mode`]'s, and for a
+/// sharper version of the same reason: what it checks is the *wiring* between a
+/// command, a gesture on the viewer, the edit model and the overlay --- all of
+/// which lives in `App.svelte` and none of which exists in a harness that builds
+/// its own `Viewer`. So the app boots normally and the check drives it through
+/// the same handles a reader's pointer reaches.
+///
+/// It exists because a shape drawn on the last page of a document was silently
+/// dropped for a fortnight while every gate stayed green: each side of that join
+/// asserted its own half and was right about it. See `src/lib/markcheck.ts`.
+#[tauri::command]
+fn markcheck_mode() -> Option<String> {
+    spike_env("TPDF_MARKCHECK")
+}
+
 /// What the session check should do this launch, from `TPDF_SESSIONCHECK`.
 ///
 /// Unlike the other spike entry points this one does *not* replace the
@@ -2126,6 +2143,7 @@ pub fn run() {
             geometry_manifest,
             sessioncheck_mode,
             opencheck_mode,
+            markcheck_mode,
             startup_path,
             scrollbench_config,
             startup_mark,

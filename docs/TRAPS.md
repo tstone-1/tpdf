@@ -12360,3 +12360,39 @@ in the laid-out space, and converting between them is two points through
 and negates one, and the crop does nothing to it at all. The fixture that can see a
 viewer skipping that conversion is a turned page --- upright, the two spaces are the
 same two numbers and the assertion passes either way.
+
+
+---
+### A harness written on a locked screen is a harness that has never run
+
+`scripts/mark_check.py` and `src/lib/markcheck.ts` were written on 2026-08-22 to
+close the gap that let a mark land on the wrong page: the chain from a command,
+through a gesture on the real viewer, to the edit model and back to the overlay,
+which nothing had ever executed with a document open.
+
+It has not run. `webview_guard` refused, correctly --- the screen was locked, and a
+locked macOS session cannot be unlocked from a script by design. So the harness
+sits in the state this file already records from the other direction: **a check
+that has never executed produces no failures, and neither does one that passes.**
+Nothing about it having been written carefully changes that.
+
+Two things were done about it rather than one, and the second is the useful one.
+
+**The half that needs no screen was proved.** The transcript reader has four
+independent grounds for refusal --- no summary line, a summary disagreeing with the
+exit code, a run that never opened a document, and the keystone check skipping ---
+and every one of them exists because the reassuring branch is the wrong answer.
+`--self-test` runs six refusals and one acceptance against hand-written
+transcripts, plus a control that the name lookup is not keyed on a column width.
+That is a real instrument on a real question, and it is available on any machine.
+
+**The gap went into `BUILD.md`, not only into a message.** Beside the invocation,
+where the next person reads it, with the mutation that would prove the harness can
+go red: reintroduce the slot lookup in `Edits.mark`, rebuild, and confirm the
+page-identity check fails. A note in a chat reply is read once; a note in the file
+that tells you how to run the thing is read every time somebody runs it.
+
+The general rule, and it is one this repository keeps re-learning from new angles:
+**an untested instrument is worth less than no instrument, because it invites the
+conclusion it cannot support.** A green line from a harness whose failing path has
+never been observed says only that the harness printed something.
