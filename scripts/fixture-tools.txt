@@ -1,0 +1,51 @@
+# The Python packages that write the signed fixtures, pinned exactly.
+#
+# WHY EXACT PINS. `ci.yml` and `release.yml` used to run
+# `pip install pyhanko pyhanko-certvalidator`, which resolves to whatever is
+# newest on PyPI at the moment the job runs. Two things follow and the second is
+# the one that matters:
+#
+#   * Fixture generation stops being deterministic. A signed fixture is an
+#     input to tests that compare byte offsets and certificate fields, so a new
+#     pyHanko release could redden a gate on a commit that changed nothing.
+#   * In `release.yml` that code ran with `contents: write` and a checkout that
+#     persists the repository token, BEFORE the quality gates. A compromised or
+#     simply incompatible newest release therefore executed first, with
+#     authority. The permission and the credential are fixed in the workflow;
+#     this file is the other half.
+#
+# WHAT THIS IS NOT. Not a hermetic lock. Versions are pinned, contents are not:
+# there are no `--hash` entries, so this does not defend against a re-uploaded
+# artifact under an existing version. Adding hashes means every wheel for every
+# platform the two runners use, regenerated on every bump, and `--require-hashes`
+# then also demands a hash for anything resolved that is not listed here --- of
+# which there is at least one, since `tzlocal` pulls `tzdata` on Windows and not
+# on macOS. That is the next rung, and it is deliberately not this one.
+#
+# HOW TO REGENERATE. In a throwaway virtualenv:
+#
+#     python -m venv v && ./v/bin/pip install pyhanko pyhanko-certvalidator
+#     ./v/bin/pip freeze | sort
+#
+# Resolved 2026-08-22 on macOS arm64 with Python 3.14. A platform-only
+# transitive that does not appear here still resolves freely, which is the gap
+# named above rather than an oversight.
+
+# What the fixture generator asks for.
+pyHanko==0.36.2
+pyhanko-certvalidator==0.31.4
+
+# Everything those two pull in.
+asn1crypto==1.5.1
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+cryptography==50.0.0
+idna==3.19
+lxml==6.1.2
+oscrypto==1.3.0
+pycparser==3.0
+requests==2.34.2
+tzlocal==5.4.4
+uritools==6.1.3
+urllib3==2.7.0

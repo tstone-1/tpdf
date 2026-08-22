@@ -923,13 +923,18 @@ async fn save_document(
                 .map_err(SaveFailure::after_close_by)?;
             save::commit_in_place(&staged.path, Path::new(&source))
         }
-        // No second look of its own, and it does not need one: `append_in_place`
-        // refuses a file whose length has moved since the update was built,
-        // which is the same question `verify_before_commit` asks and a sharper
-        // answer to it --- a rewrite compares a length and a timestamp, and this
-        // compares the one number the update section's byte offsets depend on.
-        // What it adds beyond that is a rollback, which the rename has no need
-        // of and no way to perform.
+        // No second look of its own because it takes its own, and it has to be
+        // its own: `verify_before_commit` compares against a *path*, and an
+        // append writes through a *handle*. `append_in_place` opens the file,
+        // asks `Appended::verified` the same length-and-timestamp question
+        // through that handle, writes, reads back and rolls back through it, and
+        // finally checks that the pathname still names it.
+        //
+        // This comment claimed the opposite until 2026-08-22 --- that comparing
+        // a length alone was "a sharper answer" than comparing a length and a
+        // timestamp --- and the code agreed with it. It is the wrong way round,
+        // `fingerprint.rs` says so in its own header, and `docs/TRAPS.md` has
+        // had *Equal length is not no change* since before either was written.
         Prepared::Append(appended) => save::append_in_place(appended, Path::new(&source)),
     };
     landed.map_err(|why| {
@@ -2405,6 +2410,64 @@ mod tests {
     /// Every one of the seven shares this failure and used to share the whole
     /// sentence, so an error persisted by `diag.rs` could say that a thread had
     /// stopped and nothing about what had been asked of it.
+    /// A parser panic inside a save must reach the reader as a refusal, not as a
+    /// closed window.
+    ///
+    /// **`docs/THREAT-MODEL.md` §3 and residual risk 17 rest on this**, and it
+    /// is a property of the build rather than of any code written here: `save`,
+    /// `save_copy` and `extract_pages` all parse attacker-controlled bytes with
+    /// `lopdf` inside the coordinator, under `spawn_blocking`. That containment
+    /// exists only while the crate unwinds. Adding `panic = "abort"` to a
+    /// release profile --- a one-line change made for binary size, with nothing
+    /// about parsing in view --- would turn every one of those into a process
+    /// death taking the reader's unsaved journal with it, and no other check
+    /// here would notice.
+    ///
+    /// So the disclosure is pinned rather than asserted. A claim about runtime
+    /// behaviour belongs in an experiment, not in a document, which
+    /// `docs/TRAPS.md` records under that name.
+    #[test]
+    fn a_panic_in_a_blocking_task_is_reported_rather_than_fatal() {
+        // The control first: the same call shape with no panic in it, so a
+        // runtime that lost every answer could not satisfy the assertion below.
+        let fine = block_on(tauri::async_runtime::spawn_blocking(|| 4711_u32));
+        assert_eq!(
+            fine.ok(),
+            Some(4711),
+            "the control: an ordinary task answers"
+        );
+
+        let panicked = block_on(tauri::async_runtime::spawn_blocking(|| {
+            panic!("a parser gave up on a document");
+        }));
+        assert!(
+            panicked.is_err(),
+            "a panicking blocking task must come back as an error rather than ending the process"
+        );
+
+        // **And the half that actually guards the disclosure.** The two
+        // assertions above run under the *test* profile, which does not inherit
+        // `[profile.release]` --- so a release-only `panic = "abort"`, a
+        // one-line change somebody makes for binary size with nothing about
+        // parsing in view, would leave them green while the shipped binary died
+        // on the panic they are about. A test that cannot see the change it
+        // exists to catch is the recurring subject of `docs/TRAPS.md`. This is
+        // the source-level half, and it is the one with teeth.
+        //
+        // Scope, stated rather than assumed: it reads the crate manifest. A
+        // `panic` key in a `.cargo/config.toml` or a workspace root would not be
+        // seen, and neither file exists in this repository.
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+        )
+        .expect("read the crate manifest");
+        assert!(
+            !manifest.contains("panic"),
+            "no profile may set a panic strategy: unwinding is what makes a parser panic on \
+             the save path a refusal instead of a closed window (THREAT-MODEL residual risk 17)"
+        );
+    }
+
     #[test]
     fn a_lost_reply_names_the_command_that_was_waiting_for_it() {
         // The control, and the reason the two below mean anything: a helper

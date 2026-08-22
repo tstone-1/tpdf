@@ -3072,8 +3072,8 @@ starts at 0 and increments within the month.
    the compiler never parses one: `print_win.rs`, `examples/print_probe.rs`,
    `examples/win_sandbox_probe.rs` and the Windows halves of `worker*.rs` are all outside
    what the gate list covers --- the two figures below are 15/15 because that is what the run
-   was at the time; it is 16/16 since 2026-08-19, and the gap is the same one whatever the
-   count. Cutting `26.8.3` proved the gap rather than predicted it --- the
+   was at the time, and it is 17/17 since 2026-08-22; the gap is the same one whatever the
+   count, which is why the figures are left as the runs reported them. Cutting `26.8.3` proved the gap rather than predicted it --- the
    page-move work changed `print::Pages::Only` from `Vec<u32>` to `Vec<PagePlan>` and missed
    the one Windows-only caller, and sixteen commits went by at 15/15 before a rehearsal tag
    turned both runner legs red. That leg reported *four* failures, since clippy, test and
@@ -3143,6 +3143,16 @@ starts at 0 and increments within the month.
    (`worker-probe`, `backend-probe`, and `worker-bench --mode engine|authority` after any
    PDFium bump). The half no probe covers is reading each claim and naming the line that
    keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
+
+   **And re-read `README.md` against `src/lib/appcommands.ts`**, which is the same job on
+   the document a stranger reads. The `readme` gate covers exactly one claim --- a bullet
+   under *Not built yet* naming a command that turns out to be registered --- and cannot
+   touch the status paragraph, which is where the worst of it was: on 2026-08-22 that
+   paragraph said editing had just begun and that *the open file is never modified in
+   place*, six weeks and one shipped Save-in-place after either was true, while four
+   shipped tools sat under *Not built yet*. Read the registry, then read the first three
+   paragraphs, then the two feature lists. Do not put a count in the prose: every one that
+   was there had drifted, and the files they describe carry their own.
 7. Re-run the mutation harnesses. They are not gates --- they rebuild per mutation and two of
    them need a window --- and they are the only thing that says the tests can fail.
 

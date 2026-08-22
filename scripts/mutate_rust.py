@@ -858,8 +858,8 @@ MUTATIONS = [
         # leaves a truncated PDF where the reader's file was.
         "save: write straight to the destination rather than renaming into it",
         "src/save.rs",
-        "    let partial = out.with_extension(PARTIAL);",
-        "    let partial = out.to_path_buf();",
+        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    let staged = stage(out, bytes)?;\n    commit(&staged, out)",
+        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    std::fs::write(out, bytes).map_err(|e| e.to_string())",
         "the_destination_is_replaced_whole_rather_than_written_through",
     ),
     Mutation(
@@ -1790,6 +1790,85 @@ MUTATIONS = [
         "    if !ok || !box_pt.iter().all(|value| value.is_finite()) {",
         "    if false || !box_pt.iter().all(|value| value.is_finite()) {",
         "a_crop_box_pdfium_would_not_answer_for_is_the_origin",
+    ),
+    Mutation(
+        # Keep the call and let it pass whenever the length matches, which is
+        # what `append_in_place` compared until 2026-08-22 while
+        # `Appended::verified` held a full fingerprint nothing read. A file
+        # replaced by a distinct revision of the same size is accepted, and this
+        # update's byte offsets go into an object graph they were never computed
+        # against.
+        "save: accept any file of the right length before appending",
+        "src/save.rs",
+        "    appended\n        .verified\n        .agrees_with_metadata(&meta, source)",
+        "    appended\n        .verified\n        .agrees_with_metadata(&meta, source)\n        .or_else(|e| if meta.len() == appended.was { Ok(()) } else { Err(e) })",
+        "an_append_refuses_a_replacement_that_kept_the_length",
+    ),
+    Mutation(
+        # Drop the guard entirely, so nothing is compared before the write. Its
+        # sibling above keeps the call and weakens it; this one proves the call
+        # is reached at all, which is the difference between a covered guard and
+        # a guard whose caller nothing tests.
+        "save: append without checking the file at all",
+        "src/save.rs",
+        "    appended\n        .verified\n        .agrees_with_metadata(&meta, source)\n        .map_err(|why| {",
+        "    Ok::<(), String>(())\n        .map_err(|why: String| {",
+        "an_append_refuses_a_replacement_that_kept_the_length",
+    ),
+    Mutation(
+        # Ask the pathname which file this is instead of asking the handle, so
+        # the identity check compares the replacement with itself and always
+        # agrees. The save then reports success for edits that went somewhere
+        # the reader cannot reach.
+        "save: identify the file by name rather than by the handle written to",
+        "src/save.rs",
+        "    let writing_to = FileId::of(file).ok_or_else(|| {",
+        "    let writing_to = FileId::at(source).ok_or_else(|| {",
+        "an_append_writes_through_its_handle_and_says_so_when_the_name_moves",
+    ),
+    Mutation(
+        # Read the saved file back by name rather than through the handle. What
+        # is verified is then whatever has that name, not what was written --- so
+        # a replacement is checked in place of the file the update went into, and
+        # a roll-back triggered by it truncates the wrong one.
+        "save: verify the saved file by name rather than through the handle",
+        "src/save.rs",
+        "    let bytes = match read_whole(file, expected) {",
+        "    let bytes = match std::fs::read(source) {",
+        "an_append_writes_through_its_handle_and_says_so_when_the_name_moves",
+    ),
+    Mutation(
+        # Write the update at the file offset the handle opens with, which is
+        # zero, rather than seeking to the end. It overwrites the previous
+        # revision's first bytes instead of adding to it -- and the reason this
+        # line exists at all is that the handle is no longer in append mode:
+        # append mode on Windows drops the access right `set_len` needs, so
+        # every roll-back there would have failed with access denied.
+        "save: write the update at the start of the file rather than the end",
+        "src/save.rs",
+        "    file.seek(std::io::SeekFrom::End(0))?;\n    file.write_all(body)?;",
+        "    file.write_all(body)?;",
+        "an_append_leaves_every_byte_of_the_previous_revision_where_it_was",
+    ),
+    Mutation(
+        # Truncate whatever is at the staging name, which is what
+        # `std::fs::write` did: it destroyed an unrelated file beside the
+        # destination and followed a symlink planted at that path.
+        "save: stage over whatever is already at the temporary name",
+        "src/save.rs",
+        "            .create_new(true)",
+        "            .create(true)\n            .truncate(true)",
+        "staging_never_writes_over_a_file_that_is_already_there",
+    ),
+    Mutation(
+        # Go back to one staging name per destination. Two saves aimed at one
+        # file share a temporary again, so the second truncates the first's bytes
+        # and either can rename or delete the other's work.
+        "save: give every save of a destination the same staging name",
+        "src/save.rs",
+        "    name.push(format!(\".{PARTIAL}-{}-{attempt}\", std::process::id()));",
+        "    name.push(format!(\".{PARTIAL}\"));",
+        "two_saves_to_one_destination_do_not_share_a_staging_file",
     ),
     Mutation(
         # Replace the page's `/Annots` rather than extending it. A page that had
@@ -3595,8 +3674,8 @@ MUTATIONS += [
         # revision, which is worse than either honest outcome.
         "append: say the file was put back without cutting it back",
         "src/save.rs",
-        "            Ok(file) => match file.set_len(appended.was) {",
-        "            Ok(file) => match Ok::<(), std::io::Error>(drop(file)) {",
+        "        match file.set_len(appended.was) {",
+        "        match Ok::<(), std::io::Error>(()) {",
         "an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was",
     ),
     Mutation(
@@ -3604,10 +3683,14 @@ MUTATIONS += [
         # the previous revision, so writing it after any other length produces a
         # cross-reference pointing at the wrong bytes -- a file that opens and is
         # wrong, which is the worst of the three outcomes.
+        #
+        # Aimed at the comparison rather than at a call site, because since
+        # 2026-08-22 both save paths reach it through `Fingerprint`: the length
+        # half of `agrees_with_metadata` and of `agrees_with` is this one line.
         "append: write the update after whatever length the file now has",
-        "src/save.rs",
-        "    if now != appended.was {",
-        "    if false {",
+        "src/fingerprint.rs",
+        "        if meta.len() != self.len {",
+        "        if false {",
         "an_append_to_a_file_that_changed_length_is_refused_and_writes_nothing",
     ),
     Mutation(
@@ -3630,8 +3713,8 @@ MUTATIONS += [
         # opens, and is empty.
         "append: accept a saved file that parses, whatever it has lost",
         "src/save.rs",
-        "        Ok(after) if after.get_pages().len() == appended.pages => Ok(()),",
-        "        Ok(_) => Ok(()),",
+        "        Ok(after) if after.get_pages().len() == appended.pages => {}",
+        "        Ok(_) => {}",
         "an_append_that_parses_and_has_lost_pages_is_also_put_back",
     ),
     Mutation(

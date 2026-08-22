@@ -140,8 +140,37 @@ impl Fingerprint {
     /// promised the opposite until 2026-08-19, and the shared advice it referred
     /// to was untrue at one of the two call sites.
     pub fn agrees_shallowly(&self, path: &Path) -> Result<(), String> {
-        let meta = self.len_agrees(path)?;
-        let now = modified_ns(&meta);
+        let meta = std::fs::metadata(path)
+            .map_err(|e| format!("{} could not be checked before saving: {e}", path.display()))?;
+        self.agrees_with_metadata(&meta, path)
+    }
+
+    /// [`Self::agrees_shallowly`] against metadata the caller already holds.
+    ///
+    /// **Split out so that a caller holding an open handle can ask the question
+    /// about the file it is holding**, rather than about whatever the pathname
+    /// names by the time it looks. `File::metadata` reads through the descriptor;
+    /// `std::fs::metadata` resolves the path again, and between the two a rename
+    /// can put a different file there. That is the whole difference, and it is
+    /// why `save::append_in_place` calls this one: it writes through a handle, so
+    /// a check against the path would be a check on a different file from the one
+    /// it is about to modify.
+    ///
+    /// Not a second copy of the comparison --- [`Self::agrees_shallowly`] is
+    /// this, with a `stat` in front. `docs/TRAPS.md`, *Two copies of a
+    /// distinction drift, and a mutation of one survives*.
+    ///
+    /// # Errors
+    ///
+    /// Either field differs. The message is the fact only, for the reason
+    /// [`Self::agrees_shallowly`] gives.
+    pub fn agrees_with_metadata(
+        &self,
+        meta: &std::fs::Metadata,
+        path: &Path,
+    ) -> Result<(), String> {
+        self.len_matches(meta, path)?;
+        let now = modified_ns(meta);
         // Both sides unknown is *not* agreement: see `modified_ns`. A platform
         // that cannot report the time gives no evidence either way, and the
         // digest comparison is what carries the answer there.
@@ -201,21 +230,111 @@ impl Fingerprint {
         Ok(now)
     }
 
-    /// The length comparison both public checks start with.
+    /// The length comparison, given a path rather than metadata.
     ///
-    /// Hands back the metadata it read, so [`Self::agrees_shallowly`] does not
-    /// stat the file twice for two fields of one call.
-    fn len_agrees(&self, path: &Path) -> Result<std::fs::Metadata, String> {
+    /// It handed the metadata back until 2026-08-22, so that
+    /// [`Self::agrees_shallowly`] could read two fields from one `stat`. That
+    /// caller now takes its own metadata --- or is handed it, which is the whole
+    /// point of [`Self::agrees_with_metadata`] --- so the only reader left
+    /// discards it.
+    fn len_agrees(&self, path: &Path) -> Result<(), String> {
         let meta = std::fs::metadata(path)
             .map_err(|e| format!("{} could not be checked before saving: {e}", path.display()))?;
+        self.len_matches(&meta, path)
+    }
+
+    /// The length comparison itself, against metadata already in hand.
+    ///
+    /// One body, so the two entry points cannot come to disagree about what
+    /// "the same length" means or about how the difference is worded.
+    fn len_matches(&self, meta: &std::fs::Metadata, path: &Path) -> Result<(), String> {
         if meta.len() != self.len {
             return Err(changed(
                 path,
                 &format!("its length went from {} to {}", self.len, meta.len()),
             ));
         }
-        Ok(meta)
+        Ok(())
     }
+}
+
+/// Which file a handle or a pathname refers to, as the filesystem sees it.
+///
+/// **A pathname is a lookup, not a file**, and the difference is what a save
+/// that writes through a handle has to be able to see. Between the moment
+/// `save::append_in_place` checks the file and the moment it finishes writing
+/// to it, another program can rename a different file over that name. Every
+/// byte this process writes still goes to the file it opened --- which is the
+/// point of holding the handle --- but that file no longer has the name the
+/// reader typed, so the save has not landed where they asked and saying it
+/// succeeded would be a lie.
+///
+/// A [`Fingerprint`] cannot answer this. It compares what a file *contains*;
+/// this compares *which file it is*, and the two questions come apart exactly
+/// when a rename is involved.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FileId {
+    /// The volume: `st_dev` on Unix, the volume serial number on Windows.
+    volume: u64,
+    /// The file on it: the inode number on Unix, the file index on Windows.
+    file: u64,
+}
+
+impl FileId {
+    /// Reads the identity of an already-open file.
+    ///
+    /// [`None`] where the platform could not answer, which is a failed system
+    /// call rather than a platform without the concept: both of the two this
+    /// runs on have one. Callers treat it as "could not tell", never as
+    /// "different" or as "the same" --- see `docs/TRAPS.md`, *When a check
+    /// cannot answer, make the failure path the SAFE one*.
+    #[must_use]
+    pub fn of(file: &File) -> Option<FileId> {
+        identity(file)
+    }
+
+    /// Reads the identity of whatever `path` names at this moment.
+    ///
+    /// Opens it, because the answer has to come from a handle on Windows and
+    /// going through one on both platforms keeps this a single body. The open
+    /// is read-only and the handle is dropped before this returns.
+    #[must_use]
+    pub fn at(path: &Path) -> Option<FileId> {
+        File::open(path).ok().as_ref().and_then(FileId::of)
+    }
+}
+
+#[cfg(unix)]
+fn identity(file: &File) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt as _;
+    let meta = file.metadata().ok()?;
+    Some(FileId {
+        volume: meta.dev(),
+        file: meta.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn identity(file: &File) -> Option<FileId> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    // The Windows counterpart of `st_dev`/`st_ino`, and the only route to it:
+    // `std::os::windows::fs::MetadataExt::file_index` exists but is unstable
+    // behind `windows_by_handle`, and this repository pins a stable toolchain.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `file` owns the handle for the whole call, and `info` is a live,
+    // correctly sized, correctly aligned structure this thread alone can reach.
+    let read = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) };
+    if read == 0 {
+        return None;
+    }
+    Some(FileId {
+        volume: u64::from(info.dwVolumeSerialNumber),
+        file: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+    })
 }
 
 /// The bare fact, with no advice about what to do next.

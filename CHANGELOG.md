@@ -19,6 +19,76 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Fixed: two ways a save could damage a file it was not asked to write
+
+Both found by an independent read-only review of the whole tree, and both are
+reachable without doing anything unusual.
+
+- **Saving over a document that had been replaced by a different one of the same
+  size appended to it anyway.** The guard before an append compared the file's
+  length and nothing else, while the data structure it was reading from carried a
+  full fingerprint --- length, modification time and a digest of every byte ---
+  that no code ever read. A sync client or another editor landing a distinct
+  revision of the same size between the moment you pressed Save and the moment
+  the bytes were written would have had this save's byte offsets appended to an
+  object graph they were never computed for, producing a file that opens and is
+  wrong. It now compares the length *and* the modification time recorded when the
+  save was prepared, through the open file rather than by looking the name up
+  again --- the same check a full rewrite has always made before its rename. A
+  replacement that preserves both, which is what `cp -p` does, is still not seen
+  by either path: catching it means reading and hashing the whole file a third
+  time, 582 ms of a 637 ms save on a 337 MB scan, and holding one save path to a
+  stricter standard than the other is a worse defect than the one it closes.
+- **A save could truncate an unrelated file beside the one you named.** Every
+  save staged its bytes at one predictable temporary name derived from the
+  destination, and wrote it with a call that overwrites whatever is there and
+  follows a symlink. Saving `report.pdf` therefore destroyed an existing
+  `report.tpdf-partial`; a link planted at that path sent the bytes elsewhere
+  entirely; two saves aimed at one destination shared a staging file and could
+  delete each other's work; and the cleanup removed that path whether or not the
+  save had created it. Staging now uses a fresh name per save and creates it
+  exclusively, so a name already taken is skipped rather than overwritten.
+
+Two smaller things went with them. Everything an in-place append does --- the
+check, the writes, reading the result back, and cutting the file back if anything
+fails --- now goes through one open file rather than four separate lookups of one
+name, so a rename arriving mid-save cannot land the recovery on a file that was
+never ours. And if the name does stop pointing at the file being written, the save
+says so instead of reporting success: the edits are complete in the file that had
+that name when the save began, and nothing that has it now is touched.
+
+### Changed: a staged save reaches the disk before the rename
+
+The temporary file is flushed to storage before it is renamed into place. Without
+that the atomicity was a claim about the directory entry only --- a crash just
+after the rename could leave the new name pointing at a file of zeros, which is
+worse than either outcome the staging split exists to guarantee.
+
+### Changed: release gates run with no authority to write
+
+The release workflow's quality-gate job installed and executed third-party Python
+from the network, resolved at the moment the job ran, before any gate --- with a
+repository token that could write. It now declares read-only access of its own,
+checks out without leaving a usable credential behind, and installs exactly the
+versions named in a committed file. The same pinning applies to ordinary CI, where
+it also makes fixture generation reproducible. The check that keeps the two
+workflows' gate jobs identical now asserts all three properties, having previously
+compared only what the steps executed.
+
+### Fixed: the README described an older product
+
+It said editing had just begun, listed drawing, shapes, text boxes and squiggly
+under *Not built yet*, and stated that the open file is never modified in place ---
+which stopped being true when Save in place shipped. Exact counts of traps, crates
+and bundled libraries have been removed rather than corrected; every one of them
+had drifted, and the files they describe carry their own.
+
+A new check refuses a *Not built yet* bullet that names a command the application
+actually registers, so that list cannot go on describing an older product. It is
+deliberately one narrow claim: an assertion that something is *absent* is the one
+kind of prose a registry can contradict, and the rest of the page is a step in the
+release checklist rather than a check that pretends to more than it does.
+
 ### Fixed: a drawn shape landed on the wrong page, or nowhere at all
 
 - **A box, an ellipse, a text box or a drawing was written to the page *after*

@@ -172,6 +172,45 @@ has no text API at all, so the Windows readback pins page count and rotation onl
 `print.rs` that used text to say *which* pages survived skips out loud there rather than
 quietly not existing.
 
+**Printing is not the only exception, and this document said it was until 2026-08-22.** An
+outside review found it: every path that *writes* a document parses it in the coordinator
+too, through `lopdf`, and each is one menu item away.
+
+- `save_document` → `save::append_bytes` or `save::stage_in_place` (`lib.rs`), on every save
+  over the open file.
+- `save_copy` → `save::write_copy`, on every Save a copy.
+- `extract_pages` → `save::write_copy` again, on every extraction.
+
+All three run under `tauri::async_runtime::spawn_blocking`, and it is worth being exact about
+what that does and does not buy, because the name invites the wrong reading: it moves the work
+off the async runtime's threads. It does not move it out of the process holding the window,
+the edit journal and the user's filesystem authority. "Off the async thread" is not "out of
+the trusted process", and the two were being treated as the same thing.
+
+Four things bound how much that is worth, and they are why this is a `[NOT MOVED]` rather
+than a blocker:
+
+- **`lopdf` is safe Rust.** T1 is about memory corruption in a C++ parser; that threat does
+  not transfer to this path. What does transfer is T3 — a document that makes the parser
+  allocate or spin.
+- **Every load on these paths is bounded.** All three pass `max_decompressed_size:
+  Some(MAX_DECODE)` (64 MB), and the two recursive graph walks refuse past
+  `sweep::MAX_NESTING` rather than descending until the stack runs out.
+- **A panic is caught rather than fatal**, and that is a property of how this is built rather
+  than a hope: the crate unwinds (no `panic = "abort"` in any profile), and a panic inside
+  `spawn_blocking` reaches the caller as a `JoinError` that each of these commands turns into
+  a refusal. `a_panic_in_a_blocking_task_is_reported_rather_than_fatal` in `lib.rs` pins it,
+  so setting `panic = "abort"` would turn a gate red rather than silently making a parser
+  panic close the reader's document.
+- **The bytes are the reader's own file**, opened deliberately, which is the same standing as
+  the printing path and weaker than a drive-by.
+
+What is **not** bounded is time or memory. There is no deadline on these parses and no
+resource limit, because both need a process to enforce them against — which is exactly what
+`docs/PLAN.md` §3's surgery worker is for and it is not built. A document crafted to make
+`lopdf` spin presents as an application that has stopped responding, not as a contained
+worker failure. See residual risk 17.
+
 What is bounded rather than moved: both graph walks the rewrite performs — `sweep::references`
 and `print::forget_in_object` — are recursive and now refuse past `sweep::MAX_NESTING` (256)
 rather than descending until the stack runs out. They **refuse** rather than truncate, which
@@ -1604,6 +1643,19 @@ which is what makes it evidence rather than a milestone.
     way "rotate" and "move" do not, and because it is now the *second* operation a reader
     could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
     built.
+
+17. **Save, Save a copy and Extract parse the document inside the coordinator** (§3), added
+    2026-08-22 after an outside review found this document naming printing as the only
+    coordinator-side parser while three edit writers had joined it. `lopdf` reads the source
+    bytes in the app process on every one of them, under `spawn_blocking`, which moves the
+    work off the async runtime and not out of the process. Decompression is bounded at
+    `MAX_DECODE`, graph recursion at `sweep::MAX_NESTING`, and a panic is reported rather
+    than fatal (pinned by a test, so the property cannot be lost to a profile change) --- but
+    there is no deadline and no memory bound, because enforcing either needs a separate
+    process. A document that makes the parser spin therefore wedges the application and takes
+    the unsaved journal with it, rather than costing a replaceable worker. The fix is the
+    surgery worker in `docs/PLAN.md` §3; until it lands this is disclosed rather than
+    mitigated, and it is reached by ⌘S on any open document.
 
 ## 8. How to re-verify any of this
 
