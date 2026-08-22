@@ -33,6 +33,41 @@ import type { OutlineItem, Target } from "./outline";
  * the reason the note above {@link PageView} gives: this module must not import
  * the module that talks to Tauri, and {@link MarkView} needs the type.
  */
+/**
+ * The model's name for a page, which is not its position on screen.
+ *
+ * **A `number` at runtime and a distinct type at compile time**, because the two
+ * page numbers in this application are both small integers and were told apart
+ * by nothing. A slot is where a page sits in the order the reader is looking at,
+ * counted from 0; an id is what the model calls that page, counted from 1 and
+ * unchanged by a deletion or a move. Every command the backend takes names a
+ * page by id.
+ *
+ * The confusion is not hypothetical. `Viewer.onDrawn` hands the id of the page a
+ * gesture happened on --- deliberately, so a re-order during the drag cannot
+ * move the mark --- and `Edits.mark` took a slot and indexed `pages` by it. So a
+ * box drawn on the first page of an unedited document was written to the second,
+ * and one drawn on the last page was dropped with no message, because there is
+ * no slot past the end. Every gate was green: `number` accepts `number`.
+ *
+ * {@link pageId} is the only way to make one, so the places that mint an id are
+ * countable --- `unedited` here, and the check harness building marks by hand.
+ * Everything else receives one from the model and passes it on.
+ */
+export type PageId = number & { readonly __pageId: unique symbol };
+
+/**
+ * Names a number as a page id.
+ *
+ * A cast with a name on it, which is all a branded type can offer: it cannot
+ * check that the caller was holding an id rather than a slot. What it buys is
+ * that the assertion is *visible* --- a slot reaching a model command now has to
+ * be written down as one, rather than passing silently because both are numbers.
+ */
+export function pageId(value: number): PageId {
+  return value as PageId;
+}
+
 export type MarkKind =
   | "highlight"
   | "underline"
@@ -68,7 +103,7 @@ export interface MarkView {
    */
   kind: MarkKind;
   /** The page it is on, by {@link PageView.id} --- never a slot. */
-  page: number;
+  page: PageId;
   /**
    * Four numbers per rectangle --- `left, top, right, bottom` --- in the page's
    * **display** space: points from the displayed page's top-left corner, after
@@ -127,7 +162,7 @@ export interface PageView {
    * that is a constraint on the allocator `docmodel.rs` says has yet to be
    * written rather than a property of this line.
    */
-  id: number;
+  id: PageId;
   /** Which page of the file supplies the content. Zero-based. */
   source: number;
   /** Quarter turns clockwise an edit has applied, on top of the page's own. */
@@ -225,7 +260,7 @@ export class PageMap {
    * from two different places, and conflating them would silently work until a
    * page moved.
    */
-  slotOfId(id: number): number | undefined {
+  slotOfId(id: PageId): number | undefined {
     for (let slot = 0; slot < this.views.length; slot++) {
       if (this.views[slot]?.id === id) return slot;
     }
@@ -238,7 +273,7 @@ export class PageMap {
   }
 
   /** The model's identity for the page in a slot, for sending a command back. */
-  idOf(slot: number): number | undefined {
+  idOf(slot: number): PageId | undefined {
     return this.views[slot]?.id;
   }
 
@@ -474,7 +509,7 @@ function targetIn(target: Target, pages: PageMap): Target {
 export function unedited(count: number): PageMap {
   return new PageMap(
     Array.from({ length: Math.max(0, count) }, (_unused, slot) => ({
-      id: slot + 1,
+      id: pageId(slot + 1),
       source: slot,
       turns: 0,
     })),

@@ -210,6 +210,47 @@ export function isPath(kind: MarkKind): boolean {
 }
 
 /**
+ * Whether a reader can drag a mark to somewhere else on the page.
+ *
+ * **The only predicate here that is not about drawing**, and it is a product
+ * rule rather than a geometric one: `Doc::displace` will move any mark, because
+ * every mark has a rectangle and moving one is arithmetic. What decides whether
+ * to *offer* it is what the mark is made of.
+ *
+ * A highlight, an underline, a strikeout and a squiggle are made **of words**.
+ * Their rectangles came off a text selection, so dragging one somewhere else
+ * leaves a wash sitting over a line it does not mark --- and the reader has no
+ * way to put it back except undo, since there is nothing to snap to. The mark to
+ * make there is a new one over the words that were meant.
+ *
+ * Everything else the reader placed: a comment they dropped, a box and an
+ * ellipse they dragged out, a text box they typed in, a drawing they made. None
+ * of those is anchored to anything, so where it sits is theirs to change --- and
+ * that a comment could not be moved is exactly what was reported.
+ */
+export function isMovable(kind: MarkKind): boolean {
+  // **Exhaustive on purpose, where every predicate above is an equality test.**
+  // Those answer a question about one kind and a new kind simply is not it; this
+  // answers a question about all of them, and a default would quietly decide it
+  // for whatever is added next --- in whichever direction the default happened
+  // to point. Written out, the ninth kind is a compile error here until somebody
+  // says which half it is in.
+  switch (kind) {
+    case "highlight":
+    case "underline":
+    case "strikeout":
+    case "squiggly":
+      return false;
+    case "note":
+    case "square":
+    case "ellipse":
+    case "textbox":
+    case "ink":
+      return true;
+  }
+}
+
+/**
  * How thick a freehand line is, in points, before any zoom.
  *
  * `INK_WIDTH` in `save.rs`. Heavier than {@link OUTLINE_WIDTH} for the reason

@@ -23,6 +23,7 @@ import {
   type PageSize,
   type ScrollerOptions,
 } from "./scroller";
+import { pageId } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 // The real class, not a stand-in supplied by the mock factory above: it
 // lives outside the mocked module precisely so `instanceof` means the same
@@ -737,9 +738,9 @@ describe("Scroller when the page order changes", () => {
         { width_pt: 600, height_pt: 1200 },
       ],
       order: [
-        { id: 1, source: 0, turns: 0 },
-        { id: 2, source: 1, turns: 0 },
-        { id: 3, source: 2, turns: 0 },
+        { id: pageId(1), source: 0, turns: 0 },
+        { id: pageId(2), source: 1, turns: 0 },
+        { id: pageId(3), source: 2, turns: 0 },
       ],
     };
   }
@@ -763,8 +764,8 @@ describe("Scroller when the page order changes", () => {
     // page 2 is deleted, and a request naming the slot asks for a picture of the
     // wrong page --- which looks like a rendering defect, not a bookkeeping one.
     scroller.setPages([
-      { id: 1, source: 0, turns: 0 },
-      { id: 3, source: 2, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(3), source: 2, turns: 0 },
     ]);
     tiles.fetchTile.mockClear();
     scroller.frame(0, performance.now());
@@ -784,8 +785,8 @@ describe("Scroller when the page order changes", () => {
     // which is why this fixture's are not.
     const tallBefore = scroller.pageBoxCssOf(2);
     scroller.setPages([
-      { id: 1, source: 0, turns: 0 },
-      { id: 3, source: 2, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(3), source: 2, turns: 0 },
     ]);
 
     const moved = scroller.pageBoxCssOf(1);
@@ -796,8 +797,8 @@ describe("Scroller when the page order changes", () => {
   it("carries a page's own turn with it", () => {
     scroller.setPageTurns(2, 1);
     scroller.setPages([
-      { id: 1, source: 0, turns: 0 },
-      { id: 3, source: 2, turns: 1 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(3), source: 2, turns: 1 },
     ]);
     expect(scroller.pageExtraTurns(1)).toBe(1);
     expect(scroller.pageExtraTurns(0)).toBe(0);
@@ -825,8 +826,8 @@ describe("Scroller when the page order changes", () => {
     expect(unmoved).toBeGreaterThanOrEqual(0);
 
     held.setPages([
-      { id: 1, source: 0, turns: 0 },
-      { id: 3, source: 2, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(3), source: 2, turns: 0 },
     ]);
 
     const bitmap = { close: vi.fn(), width: 64, height: 64 };
@@ -878,8 +879,8 @@ describe("Scroller when the page order changes", () => {
   it("reports a document that got shorter", () => {
     const before = scroller.documentHeight;
     scroller.setPages([
-      { id: 1, source: 0, turns: 0 },
-      { id: 3, source: 2, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(3), source: 2, turns: 0 },
     ]);
     expect(scroller.documentHeight).toBeLessThan(before);
     expect(scroller.pageBoxCssOf(2)).toEqual({ width: 0, height: 0 });

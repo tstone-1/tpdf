@@ -9,6 +9,7 @@ import {
   NO_PAGES,
   outlineIn,
   PageMap,
+  pageId,
   unedited,
   type PageView,
 } from "./pages";
@@ -16,7 +17,7 @@ import {
 /** A working document built by hand, as a state reply would describe it. */
 function map(...views: [id: number, source: number, turns?: number][]): PageMap {
   return new PageMap(
-    views.map(([id, source, turns]) => ({ id, source, turns: turns ?? 0 })),
+    views.map(([id, source, turns]) => ({ id: pageId(id), source, turns: turns ?? 0 })),
   );
 }
 
@@ -44,14 +45,14 @@ describe("PageMap", () => {
     // document nobody rearranged every id equals its slot plus one and any
     // answer at all looks right.
     const pages = map([3, 2], [1, 0], [4, 3]);
-    expect(pages.slotOfId(3)).toBe(0);
-    expect(pages.slotOfId(1)).toBe(1);
-    expect(pages.slotOfId(4)).toBe(2);
+    expect(pages.slotOfId(pageId(3))).toBe(0);
+    expect(pages.slotOfId(pageId(1))).toBe(1);
+    expect(pages.slotOfId(pageId(4))).toBe(2);
     // An id that is not on screen -- a deleted page's, or one nobody issued --
     // is nowhere rather than slot 0, which would draw its marks on whatever
     // page happens to be first.
-    expect(pages.slotOfId(2)).toBeUndefined();
-    expect(pages.slotOfId(99)).toBeUndefined();
+    expect(pages.slotOfId(pageId(2))).toBeUndefined();
+    expect(pages.slotOfId(pageId(99))).toBeUndefined();
   });
 
   it("says a deleted page is nowhere rather than answering with a slot", () => {
@@ -221,9 +222,9 @@ describe("PageMap", () => {
     it("numbers ids from one, as the model's baseline does", () => {
       const pages = unedited(3);
       expect(pages.pages).toEqual<PageView[]>([
-        { id: 1, source: 0, turns: 0 },
-        { id: 2, source: 1, turns: 0 },
-        { id: 3, source: 2, turns: 0 },
+        { id: pageId(1), source: 0, turns: 0 },
+        { id: pageId(2), source: 1, turns: 0 },
+        { id: pageId(3), source: 2, turns: 0 },
       ]);
     });
 

@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 419 entries
+The one thing this file does *not* carry in full is the trap list --- 422 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1070,8 +1070,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 419 of them and the full text
-was 93% of this file --- an instruction budget spent on the 418 traps that are not
+titles. Only the titles are here, because there are 422 of them and the full text
+was 93% of this file --- an instruction budget spent on the 421 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1194,6 +1194,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A permutation and a subset are the same document to every reader, and not the same file (the control has to read the tree's shape, because nothing about the pages differs)
 - A quirk documented as harmless becomes a defect the day its precondition is wired (one shared assumption, two subsystems, and only one left a tripwire)
 - The order a model inserts into is not the order its caller is looking at (one off-by-one, two symptoms --- a page one slot short, and a refusal on the shortest move there is)
+- An id and a slot are both `number`, so a mark drawn on the last page vanished (reported from use; four layers of tests green, because each module was right and only the join between them was wrong)
+- Moving a mark is a re-inking of it, and reusing the command beat adding one (a second variant would give one accessor three sources to choose between; the delta-not-a-geometry decision, and why the clamp is not in the model)
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
@@ -1236,6 +1238,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A status element that comes and goes rearranges the toolbar it sits beside
 - A menu item is a global key claim, not a label (the accelerator was derived correctly from the one binding table, and deriving it at all was the mistake)
 - A menu item's greying is a snapshot, so a guard that moves without an edit is stale for ever (the item was greyed at exactly the moment it applied, and every check drives commands through the palette, which evaluates live)
+- A one-shot tool armed from the palette says nothing, and the reader is not stuck but lost (a cursor image is the obvious answer and the worse one; and the summary string that gates a status report was missing every mode field)
 - A page's own turn is not the view's, and a rectangle drawn by one was found by the other (eleven call sites, and the mark subsystem was the one that was right --- which is what made the measurement decisive)
 - A size is learned once, so a page turned before it was seen keeps a transposed one (the quietest of the eleven, and the only one that does not correct itself)
 - A framework can abort your whole test binary, and 470 passing tests report nothing (a SIGABRT is not a red test; `cargo test` is the multi-threaded caller)

@@ -156,7 +156,12 @@ export interface AppActions {
    * unsayable rather than a comment warn about.
    *
    * The point is `null` from the palette and the menu bar, which have no
-   * pointer. Where that lands is the viewer's answer; see `commentAt`.
+   * pointer --- and with no point this **arms** the tool rather than placing
+   * anything: the reader's next press on a page is where the bubble goes. It
+   * used to place immediately, at `commentAt`'s no-pointer answer, which a
+   * reader reported as a command that ignored where they were looking. A
+   * right-click still places at once, since that gesture has already said
+   * where. See `Viewer.armDraw`, `paintCommentGhost` and `placeComment`.
    */
   addComment(at: { clientX: number; clientY: number } | null): void;
   /**
@@ -532,6 +537,15 @@ export function registerAppCommands(
       // "Add comment" rather than "Add note": the note is the *text* inside it,
       // and every mark has one of those. `markpopup.ts` uses the same word for
       // the same reason.
+      //
+      // **No ellipsis, and it was considered.** `edit.drawBox` carries one
+      // because it arms a tool and asks for a gesture next, and from the palette
+      // and the menu bar this now does exactly that. From the right-click menu
+      // it does not: that route names a point, so the comment is placed at once
+      // and there is nothing further to ask. One title serves all three, so an
+      // ellipsis would be a promise broken in the one place a reader has already
+      // said where. The status line names the armed tool instead, which is the
+      // route that needed telling.
       id: "edit.addComment",
       title: "Add comment",
       enabled: withDocument,

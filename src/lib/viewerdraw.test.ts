@@ -20,8 +20,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MIN_BOX } from "./markband";
-import type { MarkKind, MarkView, PageView } from "./pages";
+import { ICON_SIZE, MIN_BOX } from "./markband";
+import { pageId, type MarkKind, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer, type Drawn } from "./viewer";
 import { INK_SAMPLE } from "./markband";
@@ -57,7 +57,7 @@ afterEach(() => {
 
 /** A page that an edit has turned by `turns` quarter turns. */
 function turnedPage(turns: number): PageView[] {
-  return [{ id: 1, source: 0, turns }];
+  return [{ id: pageId(1), source: 0, turns }];
 }
 
 /** A one-page document, 600 by 800 points, optionally turned. */
@@ -86,7 +86,7 @@ function threeStrokes(id = 77): MarkView[] {
     {
       id,
       kind: "ink",
-      page: 1,
+      page: pageId(1),
       quads: [70, 98, 310, 502],
       strokes: [
         [80, 100, 300, 100],
@@ -117,6 +117,18 @@ function drag(
   if (release) {
     dom.root.dispatch("pointerup", { pointerId: 1, clientX: to.x, clientY: to.y });
   }
+}
+
+/** A key press, shaped the way `matches` reads a key event. */
+function press(key: string): void {
+  dom.root.dispatch("keydown", {
+    key,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    target: dom.root,
+  });
 }
 
 /** An Escape, shaped the way `matches` reads a key event. */
@@ -423,8 +435,8 @@ describe("a drag that wanders", () => {
       onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
     });
     viewer.setPages([
-      { id: 1, source: 0, turns: 0 },
-      { id: 2, source: 1, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(2), source: 1, turns: 0 },
     ]);
     await settle();
 
@@ -438,6 +450,192 @@ describe("a drag that wanders", () => {
     // And clamped to that page rather than running past its bottom edge.
     const [, , , bottom] = corners();
     expect(bottom).toBeLessThanOrEqual(800.001);
+  });
+});
+
+describe("placing a comment", () => {
+  /**
+   * A press with the comment tool armed, and nothing dragged.
+   *
+   * Written out rather than calling {@link drag}, because the whole of what is
+   * being tested is that a *click* commits: `drag` moves the pointer between
+   * press and release, and a comment that needed that movement would pass every
+   * assertion below while being unusable exactly as reported.
+   */
+  function click(x: number, y: number): void {
+    dom.root.dispatch("pointerdown", {
+      button: 0,
+      pointerId: 1,
+      clientX: x,
+      clientY: y,
+      target: dom.root,
+    });
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: x, clientY: y });
+  }
+
+  it("drops the bubble where the reader pressed, from a click alone", async () => {
+    // **The reported defect.** *Add comment* placed the bubble at the top-left
+    // of the visible page whatever the reader was pointing at, because the
+    // command had no gesture --- it made the mark the moment it ran. It arms
+    // now, and this is the press that spends it.
+    //
+    // A click, not a drag: every other armed tool refuses one, since `boxQuad`
+    // will not build a rectangle from two identical corners. That refusal is
+    // right for a shape and wrong for a pin.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("note");
+    click(200, 300);
+
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.kind).toBe("note");
+    const [left, top, right, bottom] = corners();
+    // Icon-sized, and the press is its top-left --- `iconQuad`'s contract, which
+    // the right-click route has always used and which this now shares.
+    expect(right - left).toBeCloseTo(ICON_SIZE, 6);
+    expect(bottom - top).toBeCloseTo(ICON_SIZE, 6);
+    // Somewhere in the middle of the page rather than at its corner, which is
+    // the whole complaint: a version that ignored the press would answer with
+    // `commentAt(null)`'s inset corner, at `ICON_SIZE` on both axes.
+    expect(left).toBeGreaterThan(ICON_SIZE * 2);
+    expect(top).toBeGreaterThan(ICON_SIZE * 2);
+    viewer.destroy();
+  });
+
+  it("spends the tool on that press, and takes no second comment", async () => {
+    // One-shot, like every tool but the pen and the eraser. A comment tool that
+    // stayed armed would turn the reader's next press --- on a link, on a word
+    // they meant to select --- into another bubble.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("note");
+    click(200, 300);
+    expect(viewer.drawArmed).toBe(null);
+    click(260, 360);
+
+    expect(drawn).toHaveLength(1);
+    viewer.destroy();
+  });
+
+  it("places it from the keyboard with Enter, where a pointer never went", async () => {
+    // The command is reachable from the palette and the menu bar, neither of
+    // which has a pointer, so arming without this would be a mode the keyboard
+    // cannot finish. The spot is `commentAt(null)`'s: inset from the top-left
+    // corner of what is on screen by the icon's own size.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("note");
+    press("Enter");
+
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.kind).toBe("note");
+    const [left, top] = corners();
+    expect(left).toBeCloseTo(ICON_SIZE, 6);
+    expect(top).toBeCloseTo(ICON_SIZE, 6);
+    // And spent, for the reason above: the comment is placed, so there is no
+    // mode left to be in.
+    expect(viewer.drawArmed).toBe(null);
+    viewer.destroy();
+  });
+
+  it("takes Enter only for the comment tool", async () => {
+    // The control for the arm above. Enter is not the finishing key for a shape
+    // --- those commit when the drag ends --- so a viewer that placed a mark on
+    // Enter for any armed kind would drop a zero-sized box on a keystroke the
+    // reader meant for something else.
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("square");
+    press("Enter");
+
+    expect(drawn).toEqual([]);
+    expect(viewer.drawArmed).toBe("square");
+    viewer.destroy();
+  });
+
+  it("cancels with Escape, like every other armed tool", async () => {
+    const viewer = build();
+    await settle();
+
+    viewer.armDraw("note");
+    escape();
+    expect(viewer.drawArmed).toBe(null);
+    click(200, 300);
+
+    expect(drawn).toEqual([]);
+    viewer.destroy();
+  });
+});
+
+describe("which page a mark names", () => {
+  /**
+   * A two-page document whose slots and ids disagree, which is the only fixture
+   * that can tell the two apart.
+   *
+   * An unedited document numbers slot 0 as id 1, so *every* assertion about a
+   * page here is off by one under either reading and both readings pass. Moving
+   * the last page to the front makes slot 0 hold id 3 --- a number no slot in a
+   * two-page document has, so a viewer answering with a slot cannot produce it
+   * by accident.
+   */
+  function reordered(): Viewer {
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 3,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
+    });
+    viewer.setPages([
+      { id: pageId(3), source: 2, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(2), source: 1, turns: 0 },
+    ]);
+    // **Back to the top, and it is not tidying.** Re-ordering keeps the reader
+    // on the page they were looking at *by identity*, so the view follows id 1
+    // down to slot 1 --- and a press near the top of the window would then land
+    // on the page whose id happens to equal its old slot, which is the one
+    // combination this fixture exists to avoid.
+    viewer.goToPage(0);
+    return viewer;
+  }
+
+  it("reports the drawn page by id, not by the slot it was drawn in", async () => {
+    // **The defect this fixture exists for.** `onDrawn` always said id and
+    // always meant it; what read the answer treated it as a slot and indexed
+    // `pages` by it, so a box drawn on the first page was written to the second
+    // and one drawn on the last was dropped in silence. Nothing went red,
+    // because an id and a slot were both `number` --- `PageId` is what makes
+    // that combination an error now, and this is the behavioural half.
+    const viewer = reordered();
+    await settle();
+
+    viewer.armDraw("square");
+    drag({ x: 100, y: 100 }, { x: 300, y: 300 });
+    viewer.destroy();
+
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.page).toBe(3);
+  });
+
+  it("places a comment on the page by id too", async () => {
+    // `commentAt` is the other producer of a page number the model is told, and
+    // it answered with a slot --- correct only because `Edits.mark` translated,
+    // which is the translation the drawn path did not want and could not have.
+    // One vocabulary now: everything that names a page to the model names it by
+    // id, and the translation happens where the slot is still a slot.
+    const viewer = reordered();
+    await settle();
+
+    const where = viewer.commentAt(null);
+    expect(where?.page).toBe(3);
+    // And through the pointer route, which is a separate branch of the same
+    // method and was the one a right-click takes.
+    expect(viewer.commentAt({ clientX: 100, clientY: 100 })?.page).toBe(3);
+    viewer.destroy();
   });
 });
 
@@ -745,8 +943,8 @@ describe("drawing freehand", () => {
     // which would put ink where nobody drew it.
     const viewer = build();
     viewer.setPages([
-      { id: 1, source: 0, turns: 0 },
-      { id: 2, source: 1, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(2), source: 1, turns: 0 },
     ]);
     await settle();
 
@@ -808,7 +1006,7 @@ describe("drawing freehand", () => {
     // goes through it once per point, so a mapping applied to the rectangle and
     // forgotten for the path is a defect no box could show.
     const viewer = build();
-    viewer.setPages([{ id: 1, source: 0, turns: 1 }]);
+    viewer.setPages([{ id: pageId(1), source: 0, turns: 1 }]);
     await settle();
 
     viewer.armDraw("ink");
@@ -915,7 +1113,7 @@ describe("the eraser", () => {
       {
         id: 77,
         kind: "highlight",
-        page: 1,
+        page: pageId(1),
         quads: [70, 98, 310, 502],
         strokes: [
           [80, 100, 300, 100],

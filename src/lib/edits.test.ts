@@ -21,6 +21,7 @@ import {
   type EditState,
   type MarkView,
 } from "./edits";
+import { pageId } from "./pages";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
@@ -33,7 +34,7 @@ function state(
 ): EditState {
   return {
     pages: Array.from({ length: count }, (_, at) => ({
-      id: at + 1,
+      id: pageId(at + 1),
       source: at,
       turns: turns[at] ?? 0,
     })),
@@ -49,7 +50,7 @@ function mark(id: number, page: number): MarkView {
   return {
     id,
     kind: "highlight",
-    page,
+    page: pageId(page),
     quads: [72, 100, 300, 118],
     strokes: [],
     color: [1, 0.9, 0.2],
@@ -79,7 +80,7 @@ describe("Edits", () => {
     const opened = state(3);
     const page = opened.pages[2];
     if (!page) throw new Error("fixture");
-    page.id = 4242;
+    page.id = pageId(4242);
     core.invoke.mockResolvedValueOnce(opened);
     const edits = new Edits(7);
     await edits.refresh();
@@ -110,7 +111,7 @@ describe("Edits", () => {
     const opened = state(3);
     const page = opened.pages[1];
     if (!page) throw new Error("fixture");
-    page.id = 77;
+    page.id = pageId(77);
     core.invoke.mockResolvedValueOnce(opened);
     const edits = new Edits(2);
     await edits.refresh();
@@ -321,12 +322,18 @@ describe("Edits", () => {
     // The same reason `rotate` sends an id, one degree sharper: a mark carries
     // *coordinates*, so a stale slot would put a reader's highlight on a
     // different page at the place the words used to be.
+    //
+    // **Takes an id and sends it verbatim.** It took a slot and looked the id
+    // up, which is the same answer for every caller that held a slot and the
+    // wrong answer for the one that held an id --- see `Edits.mark`. `pageId(3)`
+    // is the third page of an unedited document; a version that still indexed
+    // would send 4 here, and a slot 3 does not have.
     core.invoke.mockResolvedValueOnce(state(3));
     const edits = new Edits(9);
     await edits.refresh();
 
     core.invoke.mockResolvedValueOnce(state(3, {}, [mark(1, 3)]));
-    const after = await edits.mark("highlight", 2, [10, 20, 30, 40], [], "a note");
+    const after = await edits.mark("highlight", pageId(3), [10, 20, 30, 40], [], "a note");
     expect(core.invoke).toHaveBeenLastCalledWith("annot_mark", {
       doc: 9,
       mark: {
@@ -356,7 +363,7 @@ describe("Edits", () => {
     const sent: Record<string, [number, number, number]> = {};
     for (const kind of ["highlight", "underline", "strikeout"] as const) {
       core.invoke.mockResolvedValueOnce(state(3, {}, []));
-      await edits.mark(kind, 2, [10, 20, 30, 40]);
+      await edits.mark(kind, pageId(3), [10, 20, 30, 40]);
       const call = core.invoke.mock.lastCall as [string, { mark: { color: [number, number, number] } }];
       sent[kind] = call[1].mark.color;
     }
@@ -377,7 +384,7 @@ describe("Edits", () => {
     const green: [number, number, number] = [0.35, 0.8, 0.35];
     for (const kind of ["highlight", "underline", "note"] as const) {
       core.invoke.mockResolvedValueOnce(state(3, {}, []));
-      await edits.mark(kind, 2, [10, 20, 30, 40], [], "", green);
+      await edits.mark(kind, pageId(3), [10, 20, 30, 40], [], "", green);
       const call = core.invoke.mock.lastCall as [
         string,
         { mark: { color: [number, number, number] } },
@@ -386,14 +393,38 @@ describe("Edits", () => {
     }
   });
 
-  it("does not send a mark for a slot the model has never mentioned", async () => {
+  it("does not send a mark for a page the model has never mentioned", async () => {
     core.invoke.mockResolvedValueOnce(state(2));
     const edits = new Edits(9);
     await edits.refresh();
     core.invoke.mockClear();
 
-    await edits.mark("highlight", 7, [10, 20, 30, 40]);
+    await edits.mark("highlight", pageId(7), [10, 20, 30, 40]);
     expect(core.invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends a mark on the last page, which is where the slot lookup lost it", async () => {
+    // **The case that made the defect look like nothing happening at all.** A
+    // shape drawn anywhere but the last page was written one page further on,
+    // which a reader could at least find; on the last page the id was one past
+    // the end of `pages`, the lookup answered `undefined`, and the method
+    // returned the state it already held --- no command, no refusal, no message.
+    // The reader saw their ellipse vanish when they let go.
+    //
+    // Three pages, so `pageId(3)` is the last of them and is also the id the
+    // *old* code would have needed a fourth page to resolve.
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockClear();
+
+    core.invoke.mockResolvedValueOnce(state(3, {}, [mark(1, 3)]));
+    const after = await edits.mark("ellipse", pageId(3), [10, 20, 30, 40]);
+    expect(core.invoke).toHaveBeenCalledTimes(1);
+    expect(core.invoke.mock.lastCall?.[1]).toMatchObject({
+      mark: { kind: "ellipse", page: 3 },
+    });
+    expect(after.marks).toHaveLength(1);
   });
 
   it("sends the mark's own id when one is removed", async () => {

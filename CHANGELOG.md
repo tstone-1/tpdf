@@ -17,6 +17,51 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.8] - Unreleased
+
+### Fixed: a drawn shape landed on the wrong page, or nowhere at all
+
+- **A box, an ellipse, a text box or a drawing was written to the page *after*
+  the one it was drawn on --- and one drawn on the last page was dropped with no
+  message at all.** Reported from use as shapes vanishing when the button came
+  up. The viewer reports which page a gesture happened on by the model's own
+  name for it; the call that made the mark treated that name as a position in
+  the running order and looked the name up a second time. An unedited document
+  numbers the first page 1 and the first position 0, so the two were always one
+  apart, and past the end there was nothing to find.
+- Nothing was red at any layer: each side was right about its own half, and the
+  join between them lives in a file no unit test imports. A page's name is now a
+  distinct type from its position, so handing over the wrong one is a compile
+  error rather than a mark on the wrong page.
+
+### Changed: placing a comment asks where
+
+- **Add comment now arms the pointer instead of dropping a bubble in the
+  corner.** It used to place the comment at the top-left of whatever of the page
+  was on screen, which reads as a command that ignores where you are looking.
+  Choose it, and the next press on a page puts the comment there.
+- **A dashed ghost of the bubble follows the pointer** while the tool is armed,
+  at the size and place the comment will actually take, so there is no guessing.
+  Escape puts the tool away; Enter places the comment at the old spot, which is
+  what a reader who reached the command from the keyboard needs.
+- **The status line names the armed tool** --- *Comment --- click to place*,
+  *Box --- click and drag* --- and how to cancel it. Arming a tool used to change
+  nothing on screen but the cursor.
+- Right-clicking the page and choosing *Add comment* still places it at once,
+  since that gesture has already said where.
+
+### Added: drag a mark to move it
+
+- **A comment, a box, an ellipse, a text box or a drawing can be dragged to
+  somewhere else on its page.** Press it and move: the mark follows the pointer,
+  with its note box, and stops at the edge of the paper. Let go and it stays;
+  press Escape mid-drag and it springs back.
+- One undo puts a whole drag back, rather than stepping the mark home a fraction
+  at a time. A press that does not move still just opens the note.
+- **Highlights, underlines, strikeouts and squiggles are deliberately not
+  draggable.** Those are made of the words underneath them, so moving one leaves
+  a mark over a line it does not mark and nothing to put it back against.
+
 ## [26.8.7] - 2026-08-21
 
 ### Added: a document properties dialog

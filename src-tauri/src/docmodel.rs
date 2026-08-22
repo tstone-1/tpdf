@@ -345,17 +345,34 @@ pub struct InkId(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct ColorId(u32);
 
-/// What a drawing is now: its strokes, and the rectangle they occupy.
+/// Where a mark is now: its strokes, and the rectangles it occupies.
 ///
-/// **The two travel together so that they cannot disagree.** The rectangle is
-/// [`Stroke::bounds`] of the strokes and nothing else, derived once by
-/// [`Doc::reink`]; a caller reading the strokes from here and the rectangle
+/// **The two travel together so that they cannot disagree.** For a drawing the
+/// rectangle is [`Stroke::bounds`] of the strokes and nothing else, derived once
+/// by [`Doc::reink`]; a caller reading the strokes from here and the rectangle
 /// from the body would get a rectangle that still holds an erased stroke.
+///
+/// **Named for ink and no longer only ink's, which is a widening rather than a
+/// lie.** The eraser was the only thing that could replace a mark's geometry
+/// when this was written. Dragging a mark to move it is the second, and it
+/// applies to every kind --- so this now carries the geometry of whichever mark
+/// [`Working::ink_of`] names, with `strokes` empty for the five kinds that have
+/// none. [`Doc::displace`] is the writer.
+///
+/// The name stands because inside this codebase "ink" already means *how a mark
+/// is laid down* rather than the substance --- `Paint` in `save.rs`, `markBand`
+/// in the overlay, and `markpopup.ts` says so where it explains why a reader
+/// sees "Drawing". Renaming would touch [`InkId`], [`Command::Reink`],
+/// [`Doc::reink`], the table, the accessors and every test that names them, on a
+/// grep that also matches [`MarkKind::Ink`] and the PDF's own `/Ink` --- the
+/// mechanical-edit-keyed-on-a-name trap this repository has already paid for
+/// once. A paragraph is the cheaper and the more honest fix.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Ink {
-    /// What is still drawn.
+    /// What is still drawn. Empty for every kind but [`MarkKind::Ink`].
     pub strokes: Vec<Stroke>,
-    /// [`Stroke::bounds`] of them, padded as [`Doc::reink`] pads it.
+    /// [`Stroke::bounds`] of them, padded as [`Doc::reink`] pads it --- or, for a
+    /// mark that has no strokes, the rectangles it now occupies.
     pub quads: Vec<Quad>,
 }
 
@@ -1333,6 +1350,74 @@ impl Doc {
         self.apply(Command::Reink { mark, ink })
     }
 
+    /// Moves a mark by `(dx, dy)` in the page's display space.
+    ///
+    /// **A delta, not a new geometry, and that is what makes it a move.** The
+    /// caller holds the gesture and could compute the rectangles itself --- it is
+    /// what [`Doc::annotate`] takes --- but then "move this mark" and "put this
+    /// mark somewhere else entirely" would be one command, and a defect in the
+    /// arithmetic on the far side of the boundary could silently resize a mark
+    /// or reshape a drawing. One offset applied here to everything the mark owns
+    /// cannot do either: every rectangle keeps its size and every stroke keeps
+    /// its shape, by construction rather than by a check.
+    ///
+    /// **Clamping is the caller's, deliberately.** Keeping a mark on its page
+    /// needs the page's size in points, which this model does not hold --- pages
+    /// are ids, turns and crops here, and the size comes from the renderer. The
+    /// frontend clamps the delta against the laid-out page before sending it, in
+    /// the same place and for the same reason `iconQuad` and `boxQuad` clamp the
+    /// geometry they build.
+    ///
+    /// **Every kind, and no shape check** --- [`Doc::recolor`]'s posture rather
+    /// than [`Doc::reink`]'s. Geometry is geometry: a highlight has a rectangle
+    /// like everything else, and whether dragging one *means* anything to a
+    /// reader is a question about the product that the layer holding the gesture
+    /// answers. Today the viewer offers the drag on the kinds a reader places
+    /// and not on the ones made out of words.
+    ///
+    /// It journals as [`Command::Reink`], which is the eraser's command and is
+    /// now also this one: both replace what a mark is laid down as, both undo by
+    /// replaying whichever version came before, and a second variant would be a
+    /// second precedence rule for [`Doc::quads_of`] to get right. See [`Ink`] on
+    /// why the name stands.
+    ///
+    /// A zero offset is still a command, for the reason [`renote`](Doc::renote)
+    /// gives: whether a reader *meant* a no-op is a question about a gesture, and
+    /// the layer holding the gesture drops it.
+    ///
+    /// # Errors
+    ///
+    /// The id names no mark, or one already removed.
+    pub fn displace(&mut self, mark: MarkId, dx: f32, dy: f32) -> Result<(), Refusal> {
+        self.now.live_mark(mark)?;
+        let quads = self
+            .quads_of(mark)
+            .iter()
+            .map(|q| Quad {
+                left: q.left + dx,
+                top: q.top + dy,
+                right: q.right + dx,
+                bottom: q.bottom + dy,
+            })
+            .collect();
+        let strokes = self
+            .strokes_of(mark)
+            .iter()
+            .map(|stroke| Stroke {
+                points: stroke
+                    .points
+                    .iter()
+                    .map(|p| Point {
+                        x: p.x + dx,
+                        y: p.y + dy,
+                    })
+                    .collect(),
+            })
+            .collect();
+        let ink = self.issue_ink(Ink { strokes, quads });
+        self.apply(Command::Reink { mark, ink })
+    }
+
     /// Replaces what a mark is drawn in --- the swatch row's one command.
     ///
     /// **Every kind, and no shape check.** [`reink`](Doc::reink) is ink's alone
@@ -2289,6 +2374,131 @@ mod tests {
             held,
             "a refused erasure spends no version, the way a refused mark spends no id"
         );
+    }
+
+    #[test]
+    fn moving_a_mark_carries_its_rectangle_and_its_strokes_together() {
+        // **A drawing is the fixture on purpose.** Every other kind has quads and
+        // nothing else, so a `displace` that moved the rectangle and left the
+        // strokes where they were would pass for all five of them --- and the
+        // saved file would then draw the line in the old place inside a `/Rect`
+        // in the new one. Ink is the only kind that can see it.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let quads: Vec<Quad> = doc.quads_of(id).to_vec();
+        let strokes: Vec<Stroke> = doc.strokes_of(id).to_vec();
+
+        doc.displace(id, 40.0, -15.0).expect("moved");
+
+        for (was, now) in quads.iter().zip(doc.quads_of(id)) {
+            assert_eq!(now.left, was.left + 40.0);
+            assert_eq!(now.right, was.right + 40.0);
+            assert_eq!(now.top, was.top - 15.0);
+            assert_eq!(now.bottom, was.bottom - 15.0);
+        }
+        for (was, now) in strokes.iter().zip(doc.strokes_of(id)) {
+            for (before, after) in was.points.iter().zip(&now.points) {
+                assert_eq!(after.x, before.x + 40.0);
+                assert_eq!(after.y, before.y - 15.0);
+            }
+        }
+    }
+
+    #[test]
+    fn moving_a_mark_changes_where_it_is_and_nothing_else_about_it() {
+        // The property that makes this a *move* rather than a new geometry: one
+        // offset applied to everything the mark owns cannot resize a rectangle or
+        // reshape a drawing, which is why `Doc::displace` takes two numbers and
+        // not a list of quads. Asserted rather than argued, because the arithmetic
+        // is three lines and a sign error in one of them is a resize.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let sizes: Vec<(f32, f32)> = doc
+            .quads_of(id)
+            .iter()
+            .map(|q| (q.right - q.left, q.bottom - q.top))
+            .collect();
+        let kind = doc.mark(id).expect("body").kind;
+
+        doc.displace(id, -7.5, 22.0).expect("moved");
+
+        let after: Vec<(f32, f32)> = doc
+            .quads_of(id)
+            .iter()
+            .map(|q| (q.right - q.left, q.bottom - q.top))
+            .collect();
+        assert_eq!(after, sizes, "a move does not resize");
+        assert_eq!(doc.mark(id).expect("body").kind, kind);
+        assert_eq!(doc.strokes_of(id).len(), 3, "and takes no stroke away");
+    }
+
+    #[test]
+    fn every_kind_can_be_moved_including_the_one_that_cannot_be_erased() {
+        // `recolor`'s posture rather than `reink`'s, and stated here because the
+        // two neighbours disagree: geometry is geometry, and which kinds a reader
+        // is *offered* the drag on is `markband.ts`'s rule, one layer up where the
+        // gesture is. A model that refused a highlight here would make that rule
+        // unchangeable without a second commit in another language.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        assert_eq!(
+            doc.reink(id, vec![drawing_on(page).strokes[0].clone()]),
+            Err(Refusal::ShapeMismatch(MarkKind::Highlight)),
+            "the neighbour refuses it"
+        );
+        assert_eq!(doc.displace(id, 5.0, 5.0), Ok(()), "and this one does not");
+        assert_eq!(doc.quads_of(id)[0].left, 77.0);
+    }
+
+    #[test]
+    fn moving_a_mark_that_is_not_there_is_refused_before_a_version_is_spent() {
+        // `reink`'s neighbour test, and the same accounting observable: a refused
+        // move must leave no `Ink` body behind, because a version kept after the
+        // command naming it was discarded and one correctly dropped produce
+        // identical documents --- so nothing a reader can see would ever say.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        doc.apply(Command::Unannotate { mark: id })
+            .expect("removed");
+
+        let held = doc.ink_bodies();
+        assert_eq!(doc.displace(id, 5.0, 5.0), Err(Refusal::MarkRemoved(id)));
+        assert_eq!(doc.ink_bodies(), held);
+    }
+
+    #[test]
+    fn undoing_a_move_puts_the_mark_back_where_it_was() {
+        // The whole reason this journals as a command rather than editing the
+        // body in place. Two moves and two undos, because one of each cannot tell
+        // "restores the previous version" from "restores the original body" ---
+        // and the second is what a `Reink` that replayed the `Annotate` would do.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        let home = doc.quads_of(id)[0].left;
+
+        doc.displace(id, 10.0, 0.0).expect("moved");
+        doc.displace(id, 25.0, 0.0).expect("moved again");
+        assert_eq!(doc.quads_of(id)[0].left, home + 35.0);
+
+        doc.undo();
+        assert_eq!(doc.quads_of(id)[0].left, home + 10.0, "back one move");
+        doc.undo();
+        assert_eq!(
+            doc.quads_of(id)[0].left,
+            home,
+            "and back to where it started"
+        );
+        doc.redo();
+        assert_eq!(doc.quads_of(id)[0].left, home + 10.0, "and forward again");
     }
 
     #[test]

@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MarkList } from "./marklist";
-import { markRows, PageMap, unedited, type MarkKind, type MarkView } from "./pages";
+import { markRows, PageMap, pageId, unedited, type MarkKind, type MarkView } from "./pages";
 import { installFakeDom, type FakeDom } from "./testdom";
 
 /** One mark, with the fields a test is not about filled in plausibly. */
 function mark(over: Partial<MarkView> & { id: number }): MarkView {
   return {
     kind: "highlight",
-    page: 1,
+    page: pageId(1),
     quads: [100, 100, 300, 114],
     strokes: [],
     color: [1, 0.9, 0.2],
@@ -25,10 +25,10 @@ describe("markRows", () => {
     // and the keyboard walk have to agree about that, because a reader uses
     // both in the same minute.
     const moved = new PageMap([
-      { id: 3, source: 2, turns: 0 },
-      { id: 1, source: 0, turns: 0 },
+      { id: pageId(3), source: 2, turns: 0 },
+      { id: pageId(1), source: 0, turns: 0 },
     ]);
-    const rows = markRows([mark({ id: 10, page: 1 }), mark({ id: 11, page: 3 })], moved);
+    const rows = markRows([mark({ id: 10, page: pageId(1) }), mark({ id: 11, page: pageId(3) })], moved);
     expect(rows.map((row) => row.mark.id)).toEqual([11, 10]);
     expect(rows.map((row) => row.page)).toEqual([0, 1]);
   });
@@ -91,7 +91,7 @@ describe("MarkList", () => {
 
   it("shows the note, the kind and the page", () => {
     const list = panel();
-    show(list, [mark({ id: 7, page: 3, kind: "strikeout", note: "wrong figure" })]);
+    show(list, [mark({ id: 7, page: pageId(3), kind: "strikeout", note: "wrong figure" })]);
     expect(list.rowText(7)).toEqual({
       note: "wrong figure",
       kind: "Strikeout",
@@ -205,7 +205,7 @@ describe("MarkList", () => {
     // nowhere to scroll to -- so if this control refused it too, a reader could
     // see the mark listed for ever and never take it off.
     const list = panel();
-    show(list, [mark({ id: 7, page: 99 })]);
+    show(list, [mark({ id: 7, page: pageId(99) })]);
     expect(list.rowText(7).page).toBe("—");
     removeControl(list, 7).dispatch("click", {});
     expect(removed).toEqual([7]);
@@ -221,7 +221,7 @@ describe("MarkList", () => {
 
   it("removes with Delete and with Backspace, including a mark on no page", () => {
     const list = panel();
-    show(list, [mark({ id: 0, quads: [10, 10, 20, 20] }), mark({ id: 1, page: 99 })]);
+    show(list, [mark({ id: 0, quads: [10, 10, 20, 20] }), mark({ id: 1, page: pageId(99) })]);
     dom.root.children[1]?.dispatch("keydown", {
       key: "Delete",
       target: list.elementFor(0),
@@ -345,7 +345,7 @@ describe("MarkList", () => {
     const list = panel();
     covers.set(4, "the first");
     covers.set(9, "the second");
-    show(list, [mark({ id: 4, page: 1 }), mark({ id: 9, page: 2 })]);
+    show(list, [mark({ id: 4, page: pageId(1) }), mark({ id: 9, page: pageId(2) })]);
     expect(list.rowText(4).note).toBe("the first");
     expect(list.rowText(9).note).toBe("the second");
   });

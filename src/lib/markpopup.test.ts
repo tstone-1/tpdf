@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MarkPopup } from "./markpopup";
 import { DEFAULT_SWATCH, PALETTE } from "./markcolors";
-import type { MarkView } from "./pages";
+import { pageId, type MarkView } from "./pages";
 import type { Anchor } from "./popup";
 import { installFakeDom, type FakeDom } from "./testdom";
 
@@ -10,7 +10,7 @@ import { installFakeDom, type FakeDom } from "./testdom";
 function mark(over: Partial<MarkView> & { id: number }): MarkView {
   return {
     kind: "highlight",
-    page: 1,
+    page: pageId(1),
     quads: [72, 100, 300, 118],
     strokes: [],
     color: [1, 0.9, 0.2],
