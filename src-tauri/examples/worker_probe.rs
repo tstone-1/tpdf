@@ -26,6 +26,58 @@ use tpdf_lib::worker_child;
 /// measured (1024²--2048²) and small enough that a fixture renders quickly.
 const TILE: u16 = 512;
 
+/// A plan that adds one highlight to page 1 and changes nothing else.
+///
+/// Append-shaped by construction --- every baseline page kept, in order,
+/// unturned and uncropped --- because `save::append_update` refuses anything
+/// else, and a probe that got refused for the wrong reason would report a
+/// boundary failure that is really a plan defect.
+///
+/// The quad is **display** space --- points from the displayed page's top-left
+/// corner, y increasing *downwards* --- which is what the model holds and what
+/// `save.rs` maps into the page's own space as it writes. Written the other way
+/// round first, with `top` above `bottom` as a `/CropBox` has it, and the worker
+/// refused it: *"a mark on page 1 covers no area in that page's own space"*.
+/// That refusal is the probe working. Where the ink lands does not matter here;
+/// what is checked is that a worker can build an update section at all.
+fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
+    use tpdf_lib::docmodel::{MarkKind, Quad};
+    use tpdf_lib::edits::{PageView, PlannedMark};
+
+    let pages = u32::try_from(page_count).unwrap_or(u32::MAX);
+    tpdf_lib::edits::Plan {
+        baseline: pages,
+        // Never set here, and it could not be: `Plan::opened_as` is
+        // `#[serde(skip)]`, so a fingerprint cannot cross this boundary in
+        // either direction. The worker builds from bytes; the caller decides
+        // about files.
+        opened_as: None,
+        pages: (0..pages)
+            .map(|at| PageView {
+                id: u64::from(at) + 1,
+                source: at,
+                turns: 0,
+                crop: None,
+            })
+            .collect(),
+        marks: vec![PlannedMark {
+            kind: MarkKind::Highlight,
+            source: 0,
+            quads: vec![Quad {
+                left: 72.0,
+                top: 72.0,
+                right: 216.0,
+                bottom: 108.0,
+            }],
+            strokes: Vec::new(),
+            color: [1.0, 0.9, 0.2],
+            author: "worker-probe".to_string(),
+            note: String::new(),
+            made: "D:20260822120000Z".to_string(),
+        }],
+    }
+}
+
 fn main() {
     // This binary is also the worker: `Worker::spawn` re-execs `current_exe`.
     let args: Vec<String> = std::env::args().collect();
@@ -264,6 +316,76 @@ fn main() {
         matches!(&matches, Ok(r) if r.ok && r.json.is_some()),
         describe(&matches),
     );
+
+    // ------------------------------------------------------------ the append
+    //
+    // **The one request whose answer becomes a file**, and the reason it is
+    // checked here rather than only in a unit test: a unit test calls
+    // `save::append_update` in this process, which says nothing about whether a
+    // *worker* can build one. What is being shown is that a process with no
+    // filesystem authority, holding the document through a read-only mapping,
+    // produces bytes that are a real PDF revision.
+    //
+    // Asserted on the bytes rather than on `ok`, for the reason the tile
+    // comparison above exists: a sandbox that quietly starved the builder of
+    // something would still answer, and an update section that parses and keeps
+    // the page count cannot be faked by a reply that went wrong.
+    let update = worker.call(&Request::Append {
+        plan: highlight_plan(page_count),
+    });
+    let built: Option<tpdf_lib::save::Update> = match &update {
+        Ok(reply) if reply.ok => reply
+            .json
+            .as_ref()
+            .and_then(|j| serde_json::from_value(j.clone()).ok()),
+        _ => None,
+    };
+    check(
+        "a save's update section is built across the boundary",
+        built.as_ref().is_some_and(|u| !u.update.is_empty()),
+        match &built {
+            Some(u) => format!("{} bytes, {} pages", u.update.len(), u.pages),
+            None => describe(&update),
+        },
+    );
+    match &built {
+        Some(u) => {
+            let mut revised = std::fs::read(&document).unwrap_or_default();
+            let was = revised.len();
+            revised.extend_from_slice(&u.update);
+            let reread = lopdf::Document::load_mem(&revised);
+            check(
+                "and those bytes are a revision a parser accepts",
+                matches!(&reread, Ok(d) if d.get_pages().len() == u.pages),
+                match &reread {
+                    Ok(d) => format!(
+                        "{} + {} bytes, {} pages",
+                        was,
+                        u.update.len(),
+                        d.get_pages().len()
+                    ),
+                    Err(e) => format!("{e}"),
+                },
+            );
+            check(
+                "built against the document the worker was given",
+                u.built_against == was,
+                format!("{} against {was}", u.built_against),
+            );
+        }
+        None => {
+            check(
+                "and those bytes are a revision a parser accepts",
+                false,
+                "no update was built".into(),
+            );
+            check(
+                "built against the document the worker was given",
+                false,
+                "no update was built".into(),
+            );
+        }
+    }
 
     // ------------------------------------------------------------ containment
     //

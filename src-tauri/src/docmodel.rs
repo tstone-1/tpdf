@@ -192,7 +192,7 @@ impl MarkId {
 /// and what the overlay draws; `save.rs` maps it into the page's own space with
 /// [`crate::text::from_device`] at the moment it writes, where the crop box and
 /// `/Rotate` are in hand.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Quad {
     pub left: f32,
     pub top: f32,
@@ -220,7 +220,7 @@ impl Quad {
 /// expected would be plausible and wrong, and here the confusion is easy to make
 /// because a point *is* expressible as a rectangle of no size --- which is
 /// exactly the value [`Quad::covers_area`] exists to reject.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Point {
     pub x: f32,
     pub y: f32,
@@ -236,7 +236,7 @@ pub struct Point {
 /// **Two points is the minimum and it is a real one.** A single point is a
 /// stroke with no length, which draws nothing with a round cap and nothing at
 /// all without one --- the ink equivalent of the empty quad above.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Stroke {
     pub points: Vec<Point>,
 }

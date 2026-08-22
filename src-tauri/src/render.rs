@@ -394,6 +394,11 @@ pub(crate) enum Job {
         doc: u32,
         reply: Reply<Properties>,
     },
+    Append {
+        doc: u32,
+        plan: crate::edits::Plan,
+        reply: Reply<crate::save::Update>,
+    },
     Close {
         doc: u32,
         reply: Reply<()>,
@@ -779,6 +784,28 @@ impl RenderService {
         }
     }
 
+    /// Builds the update section for a save that only adds marks, on a service
+    /// thread.
+    ///
+    /// **The only request whose answer becomes a file**, and the reason it is a
+    /// request at all is that building it is a parse of attacker-controlled
+    /// bytes: doing it here puts it in the worker that already holds this
+    /// document, under the same sandbox, deadline and restart as every render.
+    /// What comes back is bytes and two numbers; every decision about the file
+    /// on disk stays with the caller. See `save::append_update` and
+    /// `docs/THREAT-MODEL.md` residual risk 17.
+    ///
+    /// Asked for **before** the document is closed, which is not a preference:
+    /// the worker builds this from the document it has mapped, so there is no
+    /// document to build it from afterwards. `save_document` in `lib.rs` already
+    /// had that order, for the unrelated reason that a rename over a mapped file
+    /// leaves the mapping serving the old inode.
+    pub fn append(&self, doc: u32, plan: crate::edits::Plan, reply: Reply<crate::save::Update>) {
+        if self.tx.send(Job::Append { doc, plan, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Withdraws a tile request by its `rid`.
     ///
     /// Safe to call at any point in the request's life, including after it has
@@ -866,6 +893,7 @@ pub(crate) trait Engine {
     fn links(&self, doc: u32) -> Result<Links, String>;
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn properties(&self, doc: u32) -> Result<Properties, String>;
+    fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 }
 
@@ -904,6 +932,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         Job::Properties { doc, reply } => reply(engine.properties(doc)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
+        Job::Append { doc, plan, reply } => reply(engine.append(doc, &plan)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
     }
 }
@@ -930,6 +959,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Links { reply, .. } => reply(Err(error.to_string())),
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
             Job::Properties { reply, .. } => reply(Err(error.to_string())),
+            Job::Append { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
         }
     }
@@ -1095,6 +1125,10 @@ impl Engine for InProcess {
 
     fn properties(&self, doc: u32) -> Result<Properties, String> {
         run_properties(open_slot(&self.docs.borrow(), doc)?)
+    }
+
+    fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
+        run_append(open_slot(&self.docs.borrow(), doc)?, plan)
     }
 
     /// Drops the document, which is what closes the Pdfium handle.
@@ -1360,6 +1394,18 @@ pub(crate) fn run_outline(document: &RawDocument) -> Outline {
 /// arrangement `run_mapping` has, and `annots::scan` is what it wraps.
 pub(crate) fn run_comments(document: &RawDocument) -> Result<Comments, String> {
     document.comments()
+}
+
+/// Builds a save's update section on the render thread.
+///
+/// The counterpart of `run_comments` and its siblings, and the one that produces
+/// bytes destined for a file rather than a fact about the document --- see
+/// `worker_proto::Request::Append` for why that belongs here anyway.
+pub(crate) fn run_append(
+    document: &RawDocument,
+    plan: &crate::edits::Plan,
+) -> Result<crate::save::Update, String> {
+    document.append(plan)
 }
 
 /// Reads a document's links on the render thread.

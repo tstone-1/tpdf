@@ -19,6 +19,32 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Changed: saving your marks no longer parses the document in the app process
+
+Every path that writes a document used to read it with `lopdf` inside the process
+holding your window, your unsaved edits and your filesystem access. A PDF is
+attacker-controlled input --- that is the premise this whole application is built
+on, and it is why rendering has run in a contained worker process since before
+there was a viewer --- so a document crafted to make that parser spin presented as
+an application that had stopped responding, and took the unsaved journal with it.
+
+The ordinary save --- adding highlights, comments, drawings, shapes --- is now
+prepared in the worker that already holds the document, which has no filesystem
+access, a deadline, a memory bound and a restart, and which had already parsed
+that document for its comments and links. What comes back is a few hundred bytes
+and two numbers; every decision about the file on disk stays where it was.
+
+Nothing about this is visible in use, which is the point. What is measurable is
+the boundary: `worker-probe` now has a contained worker build the update section
+for a 775-page document --- 865 bytes --- appends it to the file and re-reads the
+result as a 775-page PDF.
+
+A save that *rewrites* --- because you deleted, moved, turned or cropped a page ---
+still parses in the app process, and so do Save a copy and Extract. The obstacle
+there is the answer rather than the question: an update section is kilobytes and
+fits in a reply, and a rewritten document is the whole file. `docs/PLAN.md` §3
+records the three ways out and which is worth trying first.
+
 ### Fixed: two ways a save could damage a file it was not asked to write
 
 Both found by an independent read-only review of the whole tree, and both are

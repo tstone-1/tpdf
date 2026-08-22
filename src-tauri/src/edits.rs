@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
     Command, Doc, Mark, MarkId, MarkKind, PageId, Point, Quad, Rect, Refusal, Stroke,
@@ -84,7 +84,7 @@ struct Open {
 /// Field names are the Rust identifiers --- there is no `rename_all` here, for
 /// the same reason `render.rs` has none: `ipc.ts` mirrors these by hand and a
 /// rename that only one side hears about type-checks green on both.
-#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PageView {
     /// The model's identity for this page, opaque to the frontend.
     ///
@@ -181,7 +181,7 @@ pub struct MarkView {
 /// seven: **`made` is deliberately not in here.** The timestamp is the
 /// application's, taken from its own clock at the moment the command arrives, so
 /// a caller cannot choose what a mark claims about when it was made.
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct NewMark {
     /// Which kind of mark this is.
     ///
@@ -922,7 +922,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
 /// because both of them have to answer a question the page list cannot: *how many
 /// pages did the file have*. Without the baseline a save cannot tell three pages
 /// kept out of five from a five-page document that lost two under it.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Plan {
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
@@ -934,6 +934,16 @@ pub struct Plan {
     /// missing that every byte of it changed. `None` when the fingerprint could
     /// not be taken --- see `fingerprint.rs` on why that is refused for a save in
     /// place and tolerated for a copy.
+    ///
+    /// **Never crosses the worker boundary**, and the `skip` is the mechanism
+    /// rather than a note asking anyone to remember. A `Plan` is sent to the
+    /// worker so it can build an update section (`save::append_update`), and a
+    /// fingerprint is a fact about a *path* --- something the worker has no
+    /// access to and no business asserting. Skipping it means a deserialised
+    /// plan always carries `None`, so a worker cannot be handed one and cannot
+    /// send one back. `worker_proto.rs` states the same property for `Request`
+    /// generally: a request names nothing the worker could act on.
+    #[serde(skip)]
     pub opened_as: Option<Fingerprint>,
     /// The kept pages, in reading order.
     pub pages: Vec<PageView>,
@@ -951,7 +961,7 @@ pub struct Plan {
 /// it, and the difference is the one that matters here: this names the page by
 /// its position in the **baseline file**, because that is what a writer walking
 /// the page tree has. A `MarkView`'s page id means nothing to `lopdf`.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PlannedMark {
     pub kind: MarkKind,
     /// Which baseline page this goes on, zero-based.

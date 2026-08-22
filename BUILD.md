@@ -1084,7 +1084,12 @@ cargo build --release --example worker-probe
 
 **11/11 checks, 1 not applicable**, on `text-base14`, `text-cid`, `vector-heavy` and `rotated`
 --- tiles **pixel-identical** to the in-process render, plus text extraction, outlines and
-search across the boundary. The not-applicable one is the parent's memory poll: macOS has no
+search across the boundary. That is what the run measured on 2026-07-29 and is left as it was
+read: the probe gained three checks on 2026-08-22 --- a save's update section built across the
+boundary, re-parsed after being appended, and compared against the length it was built for ---
+so a current Windows run reports **14 of 14 with one not applicable**, and nobody has taken one.
+A count in prose is a dated statement about a dated run; the probe's own output is the
+authority, and macOS measured 17/17 that day. The not-applicable one is the parent's memory poll: macOS has no
 rlimit and polls as a substitute, while here the job object caps commit in the kernel, so there
 is nothing to poll. It prints `[SKIP]` with that reason rather than vanishing.
 

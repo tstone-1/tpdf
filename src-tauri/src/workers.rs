@@ -1488,6 +1488,10 @@ impl Engine for Workers {
         self.ask(doc, &Request::Properties)
     }
 
+    fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
+        self.ask(doc, &Request::Append { plan: plan.clone() })
+    }
+
     /// Drops the document, which kills every process holding it.
     ///
     /// **It waits for the pool to come home first**, and that wait is what keeps

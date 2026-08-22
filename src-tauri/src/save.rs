@@ -456,11 +456,49 @@ impl Appended {
 /// opened, or cannot be read, parsed or measured; it is encrypted; its page
 /// count is not the plan's baseline; or a mark maps to nothing.
 pub fn append_bytes(source: &Path, plan: &Plan) -> Result<Appended, Refusal> {
+    let ready = append_ready(source, plan)?;
+    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
+    appended(ready, append_update(&original, plan)?)
+}
+
+/// What the caller established about the file before anything parsed it.
+///
+/// The parent's half of an append, and the split is the boundary: everything in
+/// here is a question about a *path* --- has this file changed, how long is it ---
+/// and answering it needs filesystem authority and no parser. Everything in
+/// [`append_update`] is a parse of attacker-controlled bytes and needs no
+/// filesystem at all. `docs/THREAT-MODEL.md` §T6 and residual risk 17.
+#[derive(Debug)]
+pub struct Ready {
+    was: u64,
+    verified: Fingerprint,
+}
+
+impl Ready {
+    /// How long the file was when it was checked. For a caller reporting.
+    #[must_use]
+    pub fn len(&self) -> u64 {
+        self.was
+    }
+
+    /// Whether that length is zero, which no PDF is.
+    ///
+    /// Present because clippy asks for it beside `len`; a file of no bytes has
+    /// already been refused as unparseable long before this.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.was == 0
+    }
+}
+
+/// Checks the file an append is about to be built against, without parsing it.
+///
+/// # Errors
+///
+/// The plan is not append-shaped or has no fingerprint; the file changed since
+/// it was opened; or it cannot be measured.
+pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
     if !plan.only_adds_marks() {
-        // Not a reader-facing refusal: nothing offers this mode, `mode_for`
-        // chooses it, and a caller reaching here with the wrong plan has a
-        // defect rather than a document problem. Refused rather than
-        // debug-asserted, because the safe answer exists and is the rewrite.
         return Err("this document needs a full rewrite rather than an append".into());
     }
     let opened_as = plan.opened_as.as_ref().ok_or_else(|| {
@@ -469,31 +507,107 @@ pub fn append_bytes(source: &Path, plan: &Plan) -> Result<Appended, Refusal> {
             .to_string()
     })?;
     let verified = opened_as.agrees_with(source).map_err(Refusal::changed)?;
-
     let was = std::fs::metadata(source)
         .map_err(|e| format!("could not measure {source:?}: {e}"))?
         .len();
-    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
-    // **Measured after the bytes are in hand, and compared with what was read.**
-    // The length decides where the update is written and what a rollback cuts
-    // back to, so a file that grew between the `metadata` call and the read would
-    // give an update section built against one length and appended after another.
-    // The fingerprint above already refuses a file that changed since it was
-    // *opened*; this is the narrower window this function opens itself.
-    if original.len() as u64 != was {
+    Ok(Ready { was, verified })
+}
+
+/// Puts a builder's answer together with what the caller checked itself.
+///
+/// **The one place the two halves meet, and it is a comparison rather than a
+/// hand-off.** The update section's byte offsets and `/Prev` are measured from
+/// the length of the bytes it was built against; the caller separately measured
+/// and hashed a file. If those two lengths differ, the builder was looking at
+/// something other than the file the caller is about to write to --- a worker
+/// holding a stale mapping, or a file that changed between the two --- and the
+/// resulting cross-reference would point at the wrong bytes in a file that still
+/// opens. Neither half can see that alone, which is exactly why it is checked
+/// here.
+///
+/// Until 2026-08-22 there was nothing to compare: one function read the file and
+/// built the update from what it had read, so the two lengths were the same
+/// number by construction. That is no longer true once the parse happens in
+/// another process, and a property that used to hold by construction is the kind
+/// that needs an assertion the moment it stops.
+///
+/// # Errors
+///
+/// The builder worked from a different number of bytes than the caller checked.
+pub fn appended(ready: Ready, update: Update) -> Result<Appended, Refusal> {
+    if update.built_against as u64 != ready.was {
         return Err(Refusal::changed(format!(
-            "{source:?} changed while it was being read --- reopen it before saving"
+            "these edits were built against {} bytes and the file is {} --- \
+             reopen it before saving",
+            update.built_against, ready.was
         )));
     }
+    Ok(Appended {
+        update: update.update,
+        was: ready.was,
+        pages: update.pages,
+        verified: ready.verified,
+    })
+}
+
+/// What [`append_update`] produces: the bytes to add, and what they were built
+/// against.
+///
+/// **Crosses the worker boundary**, which is why it is a type of its own rather
+/// than an [`Appended`] with the file facts left blank. `Appended` carries a
+/// [`Fingerprint`] and a file length --- facts about a *path*, which the worker
+/// has no access to and no business asserting. What comes back from a process
+/// holding a hostile document is only what it built and what it says it built
+/// against, and the caller checks the second against what it fingerprinted
+/// itself.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Update {
+    /// The update section: objects, cross-reference and trailer.
+    pub update: Vec<u8>,
+    /// How many pages the document had. An append does not change it.
+    pub pages: usize,
+    /// How long the bytes this was built against were.
+    ///
+    /// **Stated by the builder and checked by the caller**, which is the point
+    /// of carrying it: the update's byte offsets and `/Prev` are measured from
+    /// this, so a caller that fingerprinted a file of a different length is
+    /// holding an update for a document it does not have.
+    pub built_against: usize,
+}
+
+/// Builds the update section for a plan that only adds marks, over bytes.
+///
+/// **Pure, and that is the whole point of it existing separately.** Everything
+/// here is parsing and serialising attacker-controlled bytes; nothing here opens
+/// a file, names a path, or knows one exists. That is what lets it run in the
+/// worker that already holds the document --- which parses it with `lopdf`
+/// already, for comments, links and properties --- instead of in the process
+/// holding the window and the reader's filesystem authority.
+/// `docs/THREAT-MODEL.md` §T6 and residual risk 17 carry what that changes.
+///
+/// # Errors
+///
+/// The plan is not append-shaped; the bytes cannot be parsed; the document is
+/// encrypted; its page count is not the plan's baseline; or a mark maps to
+/// nothing.
+pub fn append_update(original: &[u8], plan: &Plan) -> Result<Update, Refusal> {
+    if !plan.only_adds_marks() {
+        // Not a reader-facing refusal: nothing offers this mode, `mode_for`
+        // chooses it, and a caller reaching here with the wrong plan has a
+        // defect rather than a document problem. Refused rather than
+        // debug-asserted, because the safe answer exists and is the rewrite.
+        return Err("this document needs a full rewrite rather than an append".into());
+    }
+    let was = original.len() as u64;
 
     let prev = Document::load_mem_with_options(
-        &original,
+        original,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse {source:?}: {e}"))?;
+    .map_err(|e| format!("this document could not be parsed: {e}"))?;
 
     // The rewrite's refusal, for a different reason that lands in the same place.
     // A rewrite refuses because `lopdf` would silently drop the encryption; an
@@ -524,7 +638,7 @@ pub fn append_bytes(source: &Path, plan: &Plan) -> Result<Appended, Refusal> {
     let kept: Vec<u32> = (1..=u32::try_from(pages.len()).unwrap_or(u32::MAX)).collect();
     let sites = mark_sites(&prev, &pages, &kept, &plan.marks)?;
 
-    let mut incremental = IncrementalDocument::create_from(original, prev);
+    let mut incremental = IncrementalDocument::create_from(original.to_vec(), prev);
     // **Brought across before anything is written, and only what changes.** A
     // page whose `/Annots` is its own object contributes that array and nothing
     // else; a page with an inline list or none contributes its dictionary.
@@ -557,11 +671,10 @@ pub fn append_bytes(source: &Path, plan: &Plan) -> Result<Appended, Refusal> {
         .save_to(&mut sink)
         .map_err(|e| format!("could not build the update section: {e}"))?;
 
-    Ok(Appended {
+    Ok(Update {
         update: sink.tail,
-        was,
         pages: pages.len(),
-        verified,
+        built_against: original.len(),
     })
 }
 
@@ -4701,6 +4814,101 @@ mod tests {
         assert_ne!(other, bytes, "the variant has to differ");
         assert_eq!(other.len(), bytes.len(), "and has to be the same length");
         other
+    }
+
+    #[test]
+    fn an_update_built_against_a_different_length_is_refused() {
+        // **The seam's own check, and it exists because the property it asserts
+        // stopped holding by construction on 2026-08-22.** Until then one
+        // function read the file and built the update from what it had read, so
+        // "the length the update was built against" and "the length the caller
+        // checked" were one number under two names --- the shape `docs/TRAPS.md`
+        // records as a check whose operands are the same value.
+        //
+        // They are two numbers now: the parse happens in the worker holding the
+        // document, and the file measurement happens here. A worker on a stale
+        // mapping, or a file that moved between the two, produces an update whose
+        // byte offsets point into a document nobody has --- and the result would
+        // still open, which is what makes it worth refusing rather than
+        // detecting later.
+        let scratch = Scratch::new("append-mismatch");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let original = std::fs::read(&at).expect("read");
+        let ready = append_ready(&at, &plan).expect("check the file");
+        let update = append_update(&original, &plan).expect("build the update");
+
+        // The control: the two halves as they really are agree, so the refusal
+        // below is about the mismatch and not about the pair being unusable.
+        assert_eq!(update.built_against as u64, ready.len());
+        appended(
+            append_ready(&at, &plan).expect("check again"),
+            update.clone(),
+        )
+        .expect("the honest pair is accepted");
+
+        let stale = Update {
+            built_against: update.built_against + 1,
+            ..update
+        };
+        let refused = appended(append_ready(&at, &plan).expect("check again"), stale)
+            .expect_err("must refuse");
+        assert!(
+            refused.changed,
+            "and must say the file is the reason: {refused}"
+        );
+        assert!(
+            refused.message.contains(&ready.len().to_string()),
+            "naming the length it checked: {refused}"
+        );
+    }
+
+    #[test]
+    fn a_plan_that_crosses_the_worker_boundary_leaves_its_fingerprint_behind() {
+        // `Plan::opened_as` is `#[serde(skip)]`, and this is what says so
+        // outside the derive. A fingerprint is a fact about a path; the worker
+        // has neither a path nor any business asserting one, and `Request`'s
+        // standing property is that it names nothing the worker could act on.
+        //
+        // **The compiler is the primary guard, not this test**, and that is
+        // worth stating because it changes what this test is for. Deleting the
+        // `#[serde(skip)]` does not produce a wrong value --- it produces
+        // `error[E0277]`, because `Fingerprint` implements neither `Serialize`
+        // nor `Deserialize`, so the attribute is what makes `Plan` derivable at
+        // all. There is no mutation to write: the property is unexpressible
+        // rather than merely untaken. `docs/TRAPS.md` records the attempt.
+        //
+        // What this test still catches is the change the compiler would wave
+        // through: somebody adding serde to `Fingerprint` for an unrelated
+        // reason and dropping the skip in the same edit, which type-checks and
+        // silently puts a digest of the reader's file on the wire.
+        //
+        // The control is the rest of the plan: if serialisation dropped
+        // everything the assertion would pass for the wrong reason.
+        let Some(path) = fixture("text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let plan = plan_opened_as(&[0], &path);
+        assert!(
+            plan.opened_as.is_some(),
+            "the control: this plan really does carry one"
+        );
+
+        let wire = serde_json::to_string(&plan).expect("serialise");
+        assert!(
+            !wire.contains("opened_as"),
+            "the fingerprint must not be on the wire at all: {wire}"
+        );
+        let back: Plan = serde_json::from_str(&wire).expect("deserialise");
+        assert_eq!(back.opened_as, None, "and cannot come back carrying one");
+        assert_eq!(
+            (back.baseline, back.pages, back.marks),
+            (plan.baseline, plan.pages.clone(), plan.marks.clone()),
+            "while everything the builder needs survives the round trip"
+        );
     }
 
     #[test]
