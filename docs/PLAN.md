@@ -916,6 +916,42 @@ preserved exactly, and `/Prev` chains to the previous `startxref` in every case.
 appended cross-reference keeps the previous revision's *form* — a table stays a table, a
 stream stays a stream — which is required and is not automatic.
 
+⚠ **Built 2026-08-22, and the speed claim below does not survive being built.** The table
+in this section measures the *writer* in isolation and reports 8.2x at 337 MB. What a reader
+waits for is a **save**, and a save is dominated by something neither mode chooses: the
+open-time fingerprint's streamed SHA-256 of the whole file, timed separately at **582 ms of
+the append's 637** on that fixture. Both modes pay it, so the mode moves about 55 ms of a
+640 ms save. Measured by `save::tests::bench_append_against_rewrite`, interleaved A/B, best
+of three:
+
+| fixture | size | append | bytes | rewrite | bytes | ratio |
+|---|---|---|---|---|---|---|
+| text-heavy | 1.4 MB | 17.0 ms | 867 | 6.7 ms | 1,345,132 | **0.4x** |
+| scan, 5 pages | 42 MB | 88.2 ms | 824 | 81.9 ms | 42,078,652 | 0.9x |
+| scan, 20 pages | 168 MB | 322.0 ms | 830 | 324.8 ms | 168,312,340 | 1.0x |
+| scan, 40 pages | 337 MB | 637.4 ms | 839 | 672.5 ms | 336,624,052 | 1.1x |
+
+On a small document the append is **slower**, because it verifies its result by reparsing the
+file and the rewrite verifies nothing about what it produced.
+
+**The bytes-written claim survives completely, and it is the reason to append.** 839 bytes
+against 337 megabytes is what matters for a document in a synced folder --- where a rewrite
+re-uploads the whole scan on every save --- for the life of the disk, and because the previous
+revision survives byte for byte inside the new file, so what a signature covered stays exactly
+where it was. Speed is not the argument and this document should not be read as making it.
+
+**What is appended is narrower than what §5 classifies**, and the bound is the evidence rather
+than caution: a plan that adds *only marks* --- every page present, in order, unturned and
+uncropped --- is appended, and everything else is rewritten. Spike 0.6 put an appended
+annotation to four parsers. It never put an appended deletion, reorder, rotation or crop to
+any of them. `Plan::only_adds_marks` is that rule and `save::mode_for` is the choice.
+
+**And it is the one write in the codebase that is not an atomic rename**, which
+`docs/TRAPS.md` records along with the three things that bound it: the file's length is
+checked before the update goes on, the trailer goes in a write of its own so a partial write
+leaves the previous revision's as the last complete one, and every failure --- including the
+verification refusing --- cuts the file back to the length it had.
+
 **The speed claim is true, but only once the file is on disk.** In memory a full rewrite
 of a 336 MB scan costs 12.4 ms against the append's 12.3 ms, because `lopdf`'s rewrite is
 essentially a copy and the machine has the bandwidth for it. The distinction only appears

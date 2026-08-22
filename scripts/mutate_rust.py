@@ -800,8 +800,8 @@ MUTATIONS = [
         # land on whichever pages happen to be in those positions.
         "save: accept a plan of the wrong length",
         "src/save.rs",
-        "    if pages.len() != plan.baseline as usize {",
-        "    if false {",
+        "    let pages = ordered_pages(&doc);\n    if pages.len() != plan.baseline as usize {",
+        "    let pages = ordered_pages(&doc);\n    if false {",
         "a_plan_that_does_not_match_the_file_on_disk_is_refused",
     ),
     Mutation(
@@ -1798,8 +1798,8 @@ MUTATIONS = [
         # highlights anything.
         "save: replace a page's /Annots instead of extending it",
         "src/save.rs",
-        "        Some(Object::Array(mut array)) => {\n            array.push(Object::Reference(annotation));",
-        "        Some(Object::Array(mut array)) => {\n            array.clear();\n            array.push(Object::Reference(annotation));",
+        "            array.push(Object::Reference(annotation));\n            doc.get_object_mut(page)",
+        "            array.clear();\n            array.push(Object::Reference(annotation));\n            doc.get_object_mut(page)",
         "a_mark_is_written_whatever_shape_the_page_s_annots_is_in",
     ),
     Mutation(
@@ -1809,7 +1809,7 @@ MUTATIONS = [
         # counting objects passes.
         "save: write the mark object without listing it on the page",
         "src/save.rs",
-        "        let annotation = doc.add_object(dictionary);\n        attach(doc, page, annotation)?;",
+        "        let annotation = doc.add_object(dictionary);\n        attach(doc, page, annots, annotation)?;",
         "        let _annotation = doc.add_object(dictionary);",
         "a_marked_page_lists_the_mark_in_its_own_annots",
     ),
@@ -1850,8 +1850,8 @@ MUTATIONS = [
         # because what it printed is a perfectly good file.
         "edits: call a plan with marks in it the file itself",
         "src/edits.rs",
-        "        self.marks.is_empty()\n            && self.pages.len() == self.baseline as usize",
-        "        self.pages.len() == self.baseline as usize",
+        "        self.marks.is_empty() && self.pages_are_the_file()",
+        "        self.pages_are_the_file()",
         "a_plan_carrying_a_mark_is_not_the_file_on_disk",
     ),
     Mutation(
@@ -3573,6 +3573,80 @@ MUTATIONS += [
         "                (page.turns + view % 4) % 4,",
         "                view % 4,",
         "a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document",
+    ),
+]
+
+
+#: Saving by appending an update section rather than rewriting the document.
+MUTATIONS += [
+    Mutation(
+        # Call every plan with a mark appendable, so a deletion, a move, a turn
+        # or a crop is written as an update section --- edits an update section
+        # cannot express, and which spike 0.6 never put to any parser.
+        "append: append any plan that carries a mark",
+        "src/edits.rs",
+        "        !self.marks.is_empty() && self.pages_are_the_file()",
+        "        !self.marks.is_empty()",
+        "a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten",
+    ),
+    Mutation(
+        # Report the file as put back without truncating it. The reader is then
+        # told their document is untouched while it carries a half-written
+        # revision, which is worse than either honest outcome.
+        "append: say the file was put back without cutting it back",
+        "src/save.rs",
+        "            Ok(file) => match file.set_len(appended.was) {",
+        "            Ok(file) => match Ok::<(), std::io::Error>(drop(file)) {",
+        "an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was",
+    ),
+    Mutation(
+        # Append without checking the length. The update names byte offsets into
+        # the previous revision, so writing it after any other length produces a
+        # cross-reference pointing at the wrong bytes -- a file that opens and is
+        # wrong, which is the worst of the three outcomes.
+        "append: write the update after whatever length the file now has",
+        "src/save.rs",
+        "    if now != appended.was {",
+        "    if false {",
+        "an_append_to_a_file_that_changed_length_is_refused_and_writes_nothing",
+    ),
+    Mutation(
+        # Take the fingerprint as advisory. `stage_in_place` refuses a changed
+        # file and the two paths no longer share a function, so a refusal written
+        # once is a refusal on one of them.
+        "append: proceed over a file that changed since it was opened",
+        "src/save.rs",
+        "    let verified = opened_as.agrees_with(source).map_err(Refusal::changed)?;",
+        "    let verified = opened_as\n"
+        "        .agrees_with(source)\n"
+        '        .unwrap_or_else(|_| crate::fingerprint::Fingerprint::of(source).expect("fp"));',
+        "an_append_is_refused_when_the_file_changed_since_it_was_opened",
+    ),
+    Mutation(
+        # Accept any file that parses. It SURVIVED when first run: the rollback
+        # test plants a trailer pointing at nothing, so `load` errors and the
+        # count is never compared. The test that reaches this arm builds a real
+        # update section whose catalog names an empty page tree -- a file that
+        # opens, and is empty.
+        "append: accept a saved file that parses, whatever it has lost",
+        "src/save.rs",
+        "        Ok(after) if after.get_pages().len() == appended.pages => Ok(()),",
+        "        Ok(_) => Ok(()),",
+        "an_append_that_parses_and_has_lost_pages_is_also_put_back",
+    ),
+    Mutation(
+        # Rewrite the page dictionary even when its /Annots is its own object.
+        # The update is then larger than the edit, which is what `docs/PLAN.md`
+        # §5 records as the one document-shape dependency worth carrying -- and
+        # here it also breaks the file, because the cloned page keeps a reference
+        # to an array the update never brought across.
+        "append: bring the page across rather than its /Annots array",
+        "src/save.rs",
+        """            AnnotsSite::ArrayObject(array) => incremental
+                .opt_clone_object_to_new_document(*array)""",
+        """            AnnotsSite::ArrayObject(_) => incremental
+                .opt_clone_object_to_new_document(site.page)""",
+        "a_third_parser_reads_an_appended_document",
     ),
 ]
 

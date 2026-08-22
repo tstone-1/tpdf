@@ -50,6 +50,24 @@ have the binary.)
 - Right-clicking the page and choosing *Add comment* still places it at once,
   since that gesture has already said where.
 
+### Changed: saving a marked-up document adds to the file instead of rewriting it
+
+- **A save that adds nothing but marks now appends to the file**, leaving every
+  existing byte where it is. On a 337 MB scan that is **839 bytes written
+  instead of 337 megabytes.** A document in a synced folder is no longer
+  re-uploaded whole every time a highlight is added, and the revision that was
+  there before survives byte for byte inside the new file.
+- **It is not noticeably faster, and it was expected to be.** The plan predicted
+  8.2×; measured end to end it is 1.1× on that scan and slower on a small
+  document. Nearly all of a save's time on a large file goes on hashing it to
+  check it has not changed underneath, which both ways of saving pay. The
+  reason to append is what it writes, not how long it takes.
+- Anything else --- a deleted page, a page moved or turned or cropped --- is
+  written the way it always was, by rewriting the document. That boundary is
+  where the evidence stops rather than where caution does.
+- The appended file is read back and checked before the save is called done,
+  and anything that fails puts the file back exactly as it was.
+
 ### Fixed: printing now puts on paper what is on screen
 
 - **A highlight, a note, a box or anything else a reader marked never reached

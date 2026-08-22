@@ -862,9 +862,27 @@ async fn save_document(
     // records twice over. Nothing is read here: what the second look below needs
     // comes back from the staging, which is the moment it should be comparing
     // against rather than the moment the reader opened the file.
+    //
+    // **Two writers, and which one runs is the plan's answer.** A save that adds
+    // nothing but marks is written as an update section appended to the file,
+    // which leaves every existing byte where it is: on a 337 MB scan that is
+    // 29 ms and 723 bytes against 239 ms and a rewritten copy of the whole
+    // document. Anything else --- a deleted page, a move, a turn, a crop --- is
+    // reserialised, which is what every save did until 2026-08-22. See
+    // `save::mode_for`, and `docs/PLAN.md` §5 for the measurement.
+    //
+    // Both halves have the same shape and the same reason for it: prepare while
+    // the document is still open and nothing is at stake, then close, then
+    // apply. The document has to be closed in between either way --- a rename
+    // over a mapped file leaves the mapping serving the old inode on macOS, and
+    // an append to one is a file the worker's cached parse no longer describes.
+    let mode = save::mode_for(&plan);
     let staging = source.clone();
-    let staged = tauri::async_runtime::spawn_blocking(move || {
-        save::stage_in_place(Path::new(&staging), &plan)
+    let prepared = tauri::async_runtime::spawn_blocking(move || match mode {
+        save::Mode::Append => save::append_bytes(Path::new(&staging), &plan).map(Prepared::Append),
+        save::Mode::Rewrite => {
+            save::stage_in_place(Path::new(&staging), &plan).map(Prepared::Rewrite)
+        }
     })
     .await
     .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
@@ -883,28 +901,54 @@ async fn save_document(
     service.close(doc, reply);
     let closed = await_reply("save_document", rx).await;
 
-    // One more look before the rename, closing the window the split above opens.
-    // What it compares and why it compares against staging rather than against
-    // the open is on the function, where a test can reach it.
-    //
-    // `after_close`, and this is worth stating because the comment here said the
-    // opposite until 2026-08-19 while the code did what it does now. Nothing has
-    // been renamed, so it is tempting to call this a refusal that costs nothing
-    // --- but the close two statements up has already happened, so the reader's
-    // model and their journal are gone. `refused` would tell them their document
-    // is still open when it is not, which is the one thing that flag decides.
-    save::verify_before_commit(&staged, Path::new(&source)).map_err(SaveFailure::after_close_by)?;
-
     // Attempted whether or not the close was acknowledged. The model is gone
     // either way, so the reader is reopening either way, and a rename that the
     // mapping really did block reports that itself --- which is a better message
     // than one this end guesses from a close reply.
-    save::commit_in_place(&staged.path, Path::new(&source)).map_err(|why| {
+    let landed = match &prepared {
+        Prepared::Rewrite(staged) => {
+            // One more look before the rename, closing the window the split
+            // above opens. What it compares and why it compares against staging
+            // rather than against the open is on the function, where a test can
+            // reach it.
+            //
+            // `after_close`, and this is worth stating because the comment here
+            // said the opposite until 2026-08-19 while the code did what it does
+            // now. Nothing has been renamed, so it is tempting to call this a
+            // refusal that costs nothing --- but the close two statements up has
+            // already happened, so the reader's model and their journal are
+            // gone. `refused` would tell them their document is still open when
+            // it is not, which is the one thing that flag decides.
+            save::verify_before_commit(staged, Path::new(&source))
+                .map_err(SaveFailure::after_close_by)?;
+            save::commit_in_place(&staged.path, Path::new(&source))
+        }
+        // No second look of its own, and it does not need one: `append_in_place`
+        // refuses a file whose length has moved since the update was built,
+        // which is the same question `verify_before_commit` asks and a sharper
+        // answer to it --- a rewrite compares a length and a timestamp, and this
+        // compares the one number the update section's byte offsets depend on.
+        // What it adds beyond that is a rollback, which the rename has no need
+        // of and no way to perform.
+        Prepared::Append(appended) => save::append_in_place(appended, Path::new(&source)),
+    };
+    landed.map_err(|why| {
         SaveFailure::after_close(match closed {
             Ok(()) => why,
             Err(also) => format!("{why} --- and the document did not close cleanly: {also}"),
         })
     })
+}
+
+/// A save that has been prepared, by whichever writer the plan chose.
+///
+/// The two carry different things --- a rewrite carries a path to rename, an
+/// append carries bytes and the length they go after --- and an enum is what
+/// keeps the caller from having to know which fields mean anything. See
+/// `save::Mode`.
+enum Prepared {
+    Rewrite(save::Staged),
+    Append(save::Appended),
 }
 
 /// Writes the working document to a new file.
