@@ -207,10 +207,20 @@ on a 775-page document, re-read as 775 pages**, with the length it was built aga
 against the file's own (macOS, 2026-08-22, 17/17).
 
 What has **not** moved is the rewrite: a deletion, a move, a turn or a crop still reserialises
-the whole document in the coordinator, and so do Save a copy and Extract. The reason is the
-output rather than the input --- an update section is kilobytes and travels in a reply, while a
-rewrite is the whole file, up to hundreds of megabytes, and needs an output channel the worker
-protocol does not have. `docs/PLAN.md` §3 records the shape that needs.
+the whole document in the coordinator, and so do Save a copy and Extract. The reason is memory
+rather than the protocol, and it was measured on 2026-08-22 rather than assumed: a rewrite's
+output buffer is the size of the file, and a worker holding the 337 MB scan is already at
+1029.8 MB of footprint after answering an *append* --- 667 MB of which the append itself added.
+A Windows worker is capped at 1024 MB of commit. `docs/PLAN.md` §3 has the table, the three
+designs the measurement re-ranks, and the one open question it leaves.
+
+**That cap applies to the append this section is about**, which is worth saying plainly rather
+than leaving in the plan. On Windows the document's mapping is file-backed and not commit, so
+the number to compare is the 667 rather than the 1029.8, and that leaves a margin --- by
+reasoning, not by measurement. Nobody has run `worker-probe` against a large document on
+Windows. If the cap is reached the worker is killed and the save is refused, which is
+containment behaving as designed and a save the reader cannot complete; it is not data loss,
+since nothing has been written at that point.
 
 The three that remain run under `tauri::async_runtime::spawn_blocking`, and it is worth being exact about
 what that does and does not buy, because the name invites the wrong reading: it moves the work

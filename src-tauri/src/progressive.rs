@@ -483,7 +483,14 @@ impl RawDocument {
         let bytes = self
             .source_bytes()
             .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-        crate::save::append_update(&bytes, plan).map_err(|why| why.message)
+        // `into_owned` is the one copy this path makes, and it is the same copy
+        // the coordinator used to make with `std::fs::read`. The document
+        // arrives as a read-only mapping and `lopdf` needs an owned buffer, so
+        // the copy is `IncrementalDocument::create_from`'s requirement rather
+        // than a choice made here --- see the note beside it, including what
+        // `worker-probe` measured when this was moved from there to here and
+        // nothing changed.
+        crate::save::append_update(bytes.into_owned(), plan).map_err(|why| why.message)
     }
 
     /// Every link in the document, read at most once.

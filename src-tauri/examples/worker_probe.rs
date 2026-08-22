@@ -330,9 +330,19 @@ fn main() {
     // comparison above exists: a sandbox that quietly starved the builder of
     // something would still answer, and an update section that parses and keeps
     // the page count cannot be faked by a reply that went wrong.
+    // **What the append costs the worker, measured before and after.** The
+    // number matters beyond curiosity: a Windows worker is capped at 1 GB of
+    // commit by its job object, and `save::append_update` parses the document a
+    // second time --- `Document::load_mem` builds owned objects out of what is
+    // otherwise a read-only mapping. If that copy is large it is private commit
+    // on Windows, where the mapping itself is not, and the cap is a real bound
+    // rather than a distant one. Nothing here can measure Windows; what this
+    // gives is the size of the term to worry about.
+    let before_append = worker.footprint();
     let update = worker.call(&Request::Append {
         plan: highlight_plan(page_count),
     });
+    let after_append = worker.footprint();
     let built: Option<tpdf_lib::save::Update> = match &update {
         Ok(reply) if reply.ok => reply
             .json
@@ -340,6 +350,20 @@ fn main() {
             .and_then(|j| serde_json::from_value(j.clone()).ok()),
         _ => None,
     };
+    if let (Some(was), Some(now)) = (before_append, after_append) {
+        // Not a check: it has no pass condition, because what a parse costs is a
+        // property of the document rather than of the boundary. Reported so that
+        // a run against a large fixture says the number out loud instead of
+        // leaving it to be inferred from the file size, which the measurement in
+        // `save.rs` shows is not the same thing.
+        println!(
+            "[INFO] the append moved the worker's footprint {:.1} -> {:.1} MB (+{:.1}), \
+             against a 1024 MB Windows commit cap",
+            was as f64 / 1e6,
+            now as f64 / 1e6,
+            (now as f64 - was as f64) / 1e6,
+        );
+    }
     check(
         "a save's update section is built across the boundary",
         built.as_ref().is_some_and(|u| !u.update.is_empty()),

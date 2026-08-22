@@ -12825,3 +12825,65 @@ The generalisation, and it applies to any refactor that moves work across a boun
 two things stop being the same object, list what used to be true by construction.** Those
 facts do not announce themselves — they were never asserted, because nothing could have made
 them false. The moment a call becomes a message, every one of them is a claim.
+
+---
+### A clamped delta turned "the baseline moved" into "this cost nothing"
+
+A benchmark for how much memory a rewrite needs printed
+`peak.saturating_sub(before)` at three points, and reported **+0.0 MB** for reading and
+parsing a 337 MB file. Read literally that says a third of a gigabyte was free. What it
+actually says is that the delta was *negative* and the clamp flattened it: `phys_footprint`
+is what the process holds now, the allocator does not hand everything back at `drop`, and a
+later iteration can begin below where an earlier one ended.
+
+**The clamp chose the reassuring reading.** `saturating_sub` on unsigned integers is written
+everywhere as ordinary defensive arithmetic, and it is --- until the quantity is a
+*measurement*, where the case it silently absorbs is the one that says your instrument is
+wrong. A negative memory delta is not noise to be squashed; it is the baseline telling you it
+is not a baseline.
+
+Two habits, and the second is the one that generalises past memory.
+
+**Print absolutes at every point and let the reader see the shape.** `idle 772.3 -> parsed
+772.4 -> rewritten 1109.2` is legible: the parse fit inside memory already held, the rewrite
+did not. The delta form threw the first half of that away.
+
+**A per-iteration baseline in a long-lived process is not a baseline.** Anything accumulated
+by an earlier iteration is in it --- allocator arenas, caches, lazily-initialised statics. The
+fix is a fresh process per measurement, or an instrument that does not need one: here the real
+answer came from `worker-probe`, which reads the footprint of a *freshly spawned worker*
+before and after one request.
+
+---
+### The edit that moved a copy and reported it as removing one
+
+`save::append_update` took `&[u8]` and called `original.to_vec()` to satisfy
+`IncrementalDocument::create_from`, which wants an owned `Vec<u8>`. On a 337 MB document that
+is a 337 MB copy, and the sink beneath it discards every byte. Changing the signature to take
+`Vec<u8>` so the caller could *move* a buffer in looked like removing it, and a comment went in
+saying so, with the measured number attached.
+
+The re-measurement came back **+667.0 MB before and +667.0 MB after**, identical to four
+significant figures. The worker's document is a read-only mapping, so the caller's
+`into_owned()` costs precisely what the callee's `to_vec()` cost. The copy moved one stack
+frame and nothing else happened.
+
+**An edit that changes nothing is indistinguishable from an edit that works, unless you
+measure the same thing twice.** This repository already records that shape as a mutation that
+ANDs with true; it arrives just as easily in a hand-written optimisation, where the reasoning
+is sound at every step and the conclusion is still wrong because one term was never on the
+critical path.
+
+Two things worth taking from it.
+
+**Identical to four significant figures is a result, not a coincidence.** A real change to a
+memory measurement moves the low digits. When the digits do not move, suspect the edit before
+suspecting the instrument --- and suspect a stale binary before either, which is why the
+rebuild is part of the loop.
+
+**Read the library rather than guessing what it needs the buffer for.** `save_internal` uses
+the previous revision's bytes three times: it writes them to the target, adds their length to
+`bytes_written`, and looks at the last one to decide whether to emit a newline. So the 337 MB
+is carried to supply a number and a byte, and the copy is unavoidable only because
+`create_from` takes `Vec<u8>` and offers no way to say less. That is a much better thing to
+know than "the copy is necessary", and it is three minutes of reading.

@@ -176,23 +176,56 @@ Evidence: `worker-probe` builds an update section through a real contained worke
 to the fixture and re-parses the result --- **865 bytes on a 775-page document, re-read as 775
 pages** (macOS, 2026-08-22, 17/17).
 
-**What is left is the rewrite, and the obstacle is the output rather than the input.** A
+**What is left is the rewrite, and the obstacle is memory rather than the protocol.** A
 deletion, a move, a turn or a crop reserialises the whole document, and so do Save a copy and
-Extract. An update section is kilobytes and travels in a reply; a rewrite's answer is the
-entire file, up to hundreds of megabytes, and the worker protocol has no channel for that.
-Three shapes, in the order they are worth trying:
+Extract.
+
+The first thing to know is what these cost, because it rules an option out. Measured
+2026-08-22, `save::tests::bench_rewrite_footprint`:
+
+| fixture | file | rewrite output | footprint idle -> parsed -> rewritten |
+|---|---|---|---|
+| `text-heavy.pdf` | 1.4 MB | 1.3 MB | 11.1 -> 12.9 -> 13.5 MB |
+| `incr-scan-5p.pdf` | 42 MB | 42 MB | 97.8 -> 97.8 -> 140.0 MB |
+| `incr-scan-40p.pdf` | 337 MB | 337 MB | 772.3 -> 772.4 -> 1109.2 MB |
+
+**The output buffer is the file's size, and it is the whole cost of a rewrite.** The
+`idle -> parsed` step looks free, and that is the benchmark's baseline moving rather than a
+parse costing nothing --- read the worker measurement below for the honest number, and the trap
+about a clamped delta for how the first version of this table hid it.
+
+The worker measurement is the one that decides the design. `worker-probe` on
+`incr-scan-40p.pdf`, macOS, same day: a real contained worker holding that document sits at
+**362.7 MB**, and asking it for an *append* --- which parses the document and carries `lopdf`'s
+discarded copy of the previous revision --- takes it to **1029.8 MB**. A Windows worker is
+capped at **1024 MB of commit** by its job object.
+
+So a worker that had to hold a rewrite's output as well would need roughly another file's
+worth on top of that, and the cap makes it unreachable for anything like this fixture. Three
+shapes remain, re-ranked by that measurement:
 
 1. **A writable output mapping**, handed over the way a document already is --- `SCM_RIGHTS` on
    macOS, `DuplicateHandle` on Windows. The parent creates the staging file with the exclusive
-   create `save::stage` already performs, maps it, and hands the mapping across. The worker
-   never learns a path. This is the closest to the original sketch and the most work, because
-   the existing handover maps read-only in the child.
-2. **Streaming through the tile mapping.** `lopdf::save_to` takes a `Write`, so the worker can
-   fill the 16 MB mapping it already has, signal, and continue once the parent has drained it.
-   No new platform code at all; the cost is flow control inside one request, which nothing else
-   in the protocol does.
-3. **Bounding the answer.** Refuse a rewrite whose output exceeds what a reply can carry. Cheap
-   and wrong for exactly the documents that most want containment.
+   create `save::stage` already performs, maps it, and hands the mapping across; the worker
+   writes into it and never learns a path. **Now the only design that fits**, because a
+   file-backed mapping is not private commit: it takes the output term out of the cap
+   entirely. The cost is a second handover on two platforms, and the existing one maps
+   read-only in the child --- though `Shm::from_fd`/`from_handle` already take a `writable`
+   flag, so the mapping side is there.
+2. **Streaming through the tile mapping.** `lopdf::save_to` takes a `Write`, so the worker
+   could fill the 16 MB mapping it already has, signal, and continue once the parent has
+   drained it. No new platform code; the cost is flow control inside one request, which
+   nothing else in the protocol does. This was ranked first until the measurement, on the
+   strength of needing no platform code.
+3. **Holding the output and pulling it in chunks.** Ruled out: it is the term the cap cannot
+   take.
+
+**Open, and it needs a Windows machine.** Everything above is macOS `phys_footprint`, which
+counts dirty file-backed pages; Windows `ProcessMemoryLimit` counts private commit and the
+document's mapping is not commit there. The number to compare against 1024 MB is therefore the
+**667 MB the append added**, not the 1029.8 MB total --- which leaves a margin, by reasoning
+rather than by measurement. Run `worker-probe` on `incr-scan-40p.pdf` on Windows before
+trusting it, because the append already ships.
 
 What is bounded today on the paths that remain: decompression (`MAX_DECODE`), graph recursion
 (`sweep::MAX_NESTING`) and panics (unwinding, pinned by a test so a profile change cannot
