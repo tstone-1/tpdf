@@ -661,11 +661,26 @@ pub fn append_update(original: Vec<u8>, plan: &Plan) -> Result<Update, Refusal> 
     // like. The 667 is the sum of this buffer and the parsed object graph, and
     // both are `lopdf`'s rather than ours.
     //
-    // It matters because a Windows worker is capped at 1024 MB of *commit* by
-    // its job object. The mapping itself is file-backed and not commit there, so
-    // the number to compare is the 667 rather than the 1029.8 macOS footprint
-    // --- but nobody has measured it on Windows, and `docs/PLAN.md` §3 records
-    // that as the open question rather than assuming the margin.
+    // It matters because a Windows worker is capped at 1 GiB of *commit* by its
+    // job object, and **that reasoning was wrong, measured on Windows
+    // 2026-08-22.** What stood here compared the 667 rather than the 1029.8
+    // macOS footprint, on the grounds that the document's mapping is file-backed
+    // and not commit. The mapping half is right and the conclusion is not: macOS
+    // `phys_footprint` excludes *clean* file-backed pages, so the mapping is
+    // absent from the 1029.8 too, and the 362.7 MB baseline it was taken for is
+    // PDFium's own allocation --- private commit on Windows exactly as it is
+    // anonymous memory on macOS. The two metrics measure the same thing here and
+    // agree to 0.2%: `worker-probe` on this fixture peaks at **980.3 MiB of
+    // commit (1027.9 MB)** against the macOS 1029.8. So the whole footprint was
+    // the term to compare, and the margin is **43.7 MiB, 4.3%**, not the 35% the
+    // 667 suggested.
+    //
+    // Bracketed rather than extrapolated: a 345.0 MB scan saves at 98.1% of the
+    // cap, a 361.9 MB scan dies. Above roughly **350 MB an append cannot be
+    // built on Windows** --- the allocation fails, the worker aborts, and
+    // `save_document` refuses before it closes the document, so nothing is
+    // written and the reader keeps their edits. `BUILD.md` and `docs/PLAN.md`
+    // §3 carry the run.
     let mut incremental = IncrementalDocument::create_from(original, prev);
     // **Brought across before anything is written, and only what changes.** A
     // page whose `/Annots` is its own object contributes that array and nothing

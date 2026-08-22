@@ -1082,13 +1082,52 @@ cargo build --release --example worker-probe
 ./src-tauri/target/release/examples/worker-probe.exe testdata/text-base14.pdf
 ```
 
-**Run it against `incr-scan-40p.pdf` too, and read the `[INFO]` line.** It reports what a
-save's preparation costs the worker --- on macOS, 362.7 MB before the request and 1029.8 MB
-after, so the append itself adds 667 MB on that document. The job object caps a Windows worker
-at 1024 MB of *commit*, and commit does not count the document's file-backed mapping, so the
-number that matters there is the 667 and the margin should hold. **That is reasoning, and it
-has never been measured on Windows.** It is the one open question about the append that
-shipped on 2026-08-22; `docs/PLAN.md` §3 carries it.
+**Run it against `incr-scan-40p.pdf` too.** It reports what a save's preparation costs the
+worker --- on macOS, 362.7 MB before the request and 1029.8 MB after, so the append itself adds
+667 MB on that document.
+
+**Measured on Windows 2026-08-22, and the margin is 4.3% rather than the 35% that was
+reasoned.** Two things to know before reading a run here. First, `[INFO]` **cannot print on
+Windows**: it is guarded on `Worker::footprint`, which is `phys_footprint`, which is `None` off
+macOS --- the same reason the footprint check prints `[SKIP]`. Asking a Windows run to "read the
+`[INFO]` line" asks for a line the build cannot emit. Second, the quantity the job object caps
+is *commit*, which the parent cannot poll, so it has to be read from outside the process:
+`PagefileUsage` / `PeakPagefileUsage` through PSAPI, over the children of the probe.
+
+Read that way, on `MOTHERSHIP` (x86_64):
+
+```
+fixture                    file   peak commit   of the 1 GiB cap   append built?
+incr-scan-5p            42.1 MB    134.7 MiB    13.2%              yes, 16/16
+incr-scan-20p          168.3 MB    496.9 MiB    48.5%              yes, 16/16
+incr-scan-40p          336.6 MB    980.3 MiB    95.7%              yes, 16/16
+(41 pages, scratch)    345.0 MB   1004.4 MiB    98.1%              yes, 16/16
+(43 pages, scratch)    361.9 MB   1020.7 MiB    99.7%              NO,  12/16
+(48 pages, scratch)    404.0 MB   1020.5 MiB    99.7%              NO,  12/16
+```
+
+**The reasoning was wrong about which term to compare, not about the mapping.** The mapping
+really is file-backed and not commit --- peak working set runs ~343 MB above peak commit on the
+40-page scan, which is the document. But macOS `phys_footprint` excludes clean file-backed pages
+too, so the mapping is absent from the 1029.8 as well, and the 362.7 MB baseline taken for it is
+PDFium's own allocation, which is private commit here. The two metrics measure the same thing:
+**980.3 MiB = 1027.9 MB against the macOS 1029.8 MB, 0.2% apart.** The last two rows are their
+own control on the reading: commit stops at 1020 MiB and the allocator then fails, so the number
+being read is the number the kernel is enforcing.
+
+So `incr-scan-40p.pdf` --- the largest fixture in the repository --- sits **4.3% under the cap**,
+and the ceiling is bracketed rather than extrapolated: 345.0 MB saves, 361.9 MB does not. Above
+roughly **350 MB an append cannot be built on Windows.** The failure is the safe direction and
+worth stating exactly: the allocation fails, the worker aborts with `0xC0000409`, and the append
+is prepared *before* `save_document` closes the document --- so it is a `refused`, nothing is
+written, and the reader keeps their edits. What they are told is `worker stopped answering
+(exited with 3221226505 (0xC0000409))`, which names neither the size nor the cap.
+
+The asymmetry that makes this odd from a reader's chair: only the **append** runs in the worker.
+`save::Mode::Rewrite` goes through `spawn_blocking` in the app process, which is under no job
+object --- so on a 400 MB scan, highlighting a line cannot be saved while highlighting a line
+*and deleting a page* takes the uncapped path. `docs/PLAN.md` §3 carries the ranking this
+measurement now speaks to.
 
 **11/11 checks, 1 not applicable**, on `text-base14`, `text-cid`, `vector-heavy` and `rotated`
 --- tiles **pixel-identical** to the in-process render, plus text extraction, outlines and
