@@ -83,7 +83,7 @@ pub enum Pages {
 }
 
 /// What to print, and how it should be oriented.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Job {
     pub pages: Pages,
     /// Quarter-turns clockwise the *view* is rotated by, 0 to 3.
@@ -148,6 +148,63 @@ pub fn select(plan: Option<&Plan>, pages: Option<Vec<u32>>) -> Pages {
             })
             .collect(),
     )
+}
+
+/// Where a job's bytes come from.
+///
+/// **Three producers, and until 2026-08-22 the middle one did not exist** ---
+/// which is the whole of the defect this enum was added to close. Everything
+/// that was not handed over byte for byte went through [`build`], which grew its
+/// own page walk when printing came first and needed a subset of what saving
+/// does. The two then drifted exactly as `docs/TRAPS.md` describes two copies of
+/// a distinction drifting: `save.rs` learned to write marks and crops, this did
+/// not, and nothing compared them. A reader who highlighted a paragraph and
+/// pressed Print got paper with no highlight on it.
+///
+/// Naming the three rather than deciding inside the command is what makes the
+/// decision testable at all: a check inside a Tauri command has no failing case
+/// a test can reach, which this repository has paid for twice.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Route {
+    /// The file itself, unparsed. Only for a document nobody has changed.
+    Passthrough,
+    /// The working document --- pages, order, turns, crops **and marks** ---
+    /// produced by the same writer a save uses. `save::print_bytes`.
+    Working,
+    /// The pages the reader typed into a range, built by [`build`].
+    ///
+    /// It carries no plan, so it carries no marks and no crops: an explicit
+    /// range says nothing about edits, which is what [`select`] has always
+    /// documented. That is a gap and it is a narrower one than it was --- see
+    /// the *Not done* in `docs/PLAN.md` §8.
+    Range(Job),
+}
+
+/// Which producer a job should use.
+///
+/// Pure, and takes the same two inputs [`select`] does plus the view rotation,
+/// so the whole decision can be exercised without a document open.
+///
+/// The order of the arms is the order of the questions. A document nobody has
+/// changed is the file, whatever else is true --- that is the passthrough, and
+/// it is what keeps an encrypted document printable, since parsing one would
+/// refuse. A reader's explicit range wins next, because it is an instruction
+/// about pages and the working document is not. Everything else is the working
+/// document.
+#[must_use]
+pub fn route(plan: Option<&Plan>, pages: Option<Vec<u32>>, view: u8) -> Route {
+    let explicit = pages.is_some();
+    let job = Job {
+        pages: select(plan, pages),
+        turns: view,
+    };
+    if job.is_passthrough() {
+        return Route::Passthrough;
+    }
+    if explicit || plan.is_none() {
+        return Route::Range(job);
+    }
+    Route::Working
 }
 
 /// Produces the bytes to hand to the print system.
@@ -276,7 +333,7 @@ fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<PagePlan>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build, select, Job, PagePlan, Pages};
+    use super::{build, route, select, Job, PagePlan, Pages, Route};
     use crate::pagetree::{drop_pages, effective_rotation};
 
     /// A selection of pages, none of them turned by an edit.
@@ -301,6 +358,221 @@ mod tests {
         let edits = crate::edits::Edits::default();
         edits.open(1, 4, None);
         edits
+    }
+
+    /// A four-page model, and one mark on the page `at` names.
+    fn marked(edits: &crate::edits::Edits, at: usize) {
+        let pages = edits.state(1).expect("state").pages;
+        edits
+            .annotate(
+                1,
+                crate::edits::NewMark {
+                    kind: crate::docmodel::MarkKind::Highlight,
+                    page: pages[at].id,
+                    quads: vec![72.0, 100.0, 300.0, 118.0],
+                    strokes: Vec::new(),
+                    color: [1.0, 0.9, 0.2],
+                    author: String::new(),
+                    note: String::new(),
+                },
+                "D:20260822T120000Z".to_string(),
+            )
+            .expect("mark");
+    }
+
+    #[test]
+    fn a_cropped_or_marked_document_is_built_rather_than_handed_over() {
+        // **The defect, at the point where it was decided.** Both of these
+        // answered `Route::Passthrough` --- a crop because `is_identity` never
+        // asked about the box, and a mark because nothing between `select` and
+        // the printer knew marks existed. The file went to the printer
+        // unchanged, so a reader saw their highlight on screen and not on paper.
+        let cropped = modelled();
+        let pages = cropped.state(1).expect("state").pages;
+        cropped
+            .crop(1, pages[0].id, Some([100.0, 100.0, 400.0, 500.0]))
+            .expect("crop");
+        assert_eq!(
+            route(Some(&cropped.plan(1).expect("plan")), None, 0),
+            Route::Working,
+            "a cropped page has to be written, not handed over at its full size"
+        );
+
+        let marked_up = modelled();
+        marked(&marked_up, 1);
+        assert_eq!(
+            route(Some(&marked_up.plan(1).expect("plan")), None, 0),
+            Route::Working,
+            "a highlight the reader made belongs on the paper"
+        );
+    }
+
+    #[test]
+    fn a_document_nobody_has_touched_is_still_handed_over() {
+        // The control, and it is the expensive one to get wrong in the other
+        // direction: building a job for a document that is already the job
+        // rewrites it to produce itself, and `lopdf` drops encryption on the way
+        // through --- so an encrypted document nobody edited would print as an
+        // unencrypted one, or not at all.
+        let edits = modelled();
+        assert_eq!(
+            route(Some(&edits.plan(1).expect("plan")), None, 0),
+            Route::Passthrough,
+        );
+        // And with no model at all, which is what printing a document the reader
+        // has not edited through any route looks like.
+        assert_eq!(route(None, None, 0), Route::Passthrough);
+    }
+
+    #[test]
+    fn a_range_the_reader_typed_wins_over_the_working_document() {
+        // An explicit range is an instruction about pages and the working
+        // document is not, so the range decides --- which `select` has always
+        // documented and which this pins now that there is a second producer to
+        // pick between.
+        let edits = modelled();
+        marked(&edits, 0);
+        let chosen = route(Some(&edits.plan(1).expect("plan")), Some(vec![2, 3]), 0);
+        assert_eq!(
+            chosen,
+            Route::Range(Job {
+                pages: only(&[2, 3]),
+                turns: 0
+            }),
+        );
+    }
+
+    #[test]
+    fn the_view_rotation_alone_is_enough_to_need_building() {
+        // A reader looking at a document sideways and pressing Print asked for it
+        // sideways. `is_passthrough` has always said so --- this is the assertion
+        // that `route` did not lose it while gaining a third answer.
+        let edits = modelled();
+        assert_eq!(
+            route(Some(&edits.plan(1).expect("plan")), None, 1),
+            Route::Working,
+        );
+    }
+
+    #[test]
+    fn a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document() {
+        // **Written because a mutation survived.** Sending the working document
+        // through the save writer moved the view rotation onto a code path that
+        // nothing exercised: `the_view_rotation_alone_is_enough_to_need_building`
+        // asserts which producer is chosen and says nothing about what it
+        // produces, and every rotation test beside it drives `build`, which is
+        // now the *other* producer. Deleting the view turn from
+        // `save::print_bytes` left all of them green --- a reader looking at an
+        // annotated document sideways would have printed it upright.
+        //
+        // PDFKit rather than `lopdf`, for this module's standing reason: the
+        // rotation a page ends up at is resolved up its `/Parent` chain, and a
+        // writer asked what it wrote agrees with itself.
+        let path = Path::new("../testdata/rotated.pdf");
+        if !path.exists() {
+            println!("[SKIP] rotated.pdf: fixture not generated");
+            return;
+        }
+        let source = std::fs::read(path).expect("read");
+        let Some(before) = os_pdf::read(&source) else {
+            println!("[SKIP] rotated.pdf: the OS parser refused the source document");
+            return;
+        };
+        let edits = crate::edits::Edits::default();
+        let count = u32::try_from(before.pages.len()).expect("pages");
+        edits.open(1, count, None);
+        // A mark, so the plan is not the file and the working route is taken at
+        // all --- the fixture's own rotations are what make the turn observable.
+        marked(&edits, 0);
+        // **And an edit turn on one page, without which the fixture cannot tell
+        // the two rules apart.** Written without it first, and a mutation
+        // replacing `page.turns + view` with `view` alone SURVIVED every test in
+        // this module: with no page carrying an edit turn the two expressions are
+        // the same number. That is the trap about a fixture where the right rule
+        // and the wrong rule agree, and the ingredient it was missing is this
+        // line rather than a stronger assertion.
+        let turned = 1usize;
+        let pages = edits.state(1).expect("state").pages;
+        edits.rotate(1, pages[turned].id, 1).expect("rotate");
+
+        let plan = edits.plan(1).expect("plan");
+        assert_eq!(route(Some(&plan), None, 1), Route::Working, "the route");
+        let bytes = crate::save::print_bytes(path, &plan, 1).expect("print bytes");
+        let after = os_pdf::read(&bytes).expect("the OS parser reads the job");
+
+        assert_eq!(after.pages.len(), before.pages.len(), "every page is kept");
+        let want: Vec<i64> = before
+            .pages
+            .iter()
+            .enumerate()
+            .map(|(at, page)| {
+                // The view's quarter on every page, and the edit's quarter on one
+                // of them as well --- which is what "composed rather than
+                // replaced" means, and the only page where the two rules disagree.
+                let quarters = if at == turned { 2 } else { 1 };
+                (page.rotation + 90 * quarters).rem_euclid(360)
+            })
+            .collect();
+        let got: Vec<i64> = after.pages.iter().map(|page| page.rotation).collect();
+        assert_eq!(got, want, "each page a quarter past where the file had it");
+        // The control, and `rotated.pdf` is the only fixture that can supply it:
+        // its four pages carry 0/90/180/270, so a job that ignored the turn would
+        // come back equal to `before` and a job that applied it twice would not
+        // match either. Two of the four values differ from the source, which is
+        // what makes the comparison above an assertion rather than a tautology.
+        let unturned: Vec<i64> = before.pages.iter().map(|page| page.rotation).collect();
+        assert_ne!(got, unturned, "and not simply the rotations the file had");
+    }
+
+    #[test]
+    fn a_printed_job_carries_the_marks_and_the_crop() {
+        // **The measurement that found the defect, as an assertion.** A job built
+        // from a plan with one mark and one crop came back with no page carrying
+        // `/Annots` and none carrying `/CropBox`, because `build` had its own
+        // page walk and `save.rs` had the one that writes them.
+        //
+        // Read back with `lopdf`, which is the writer's own reader --- and that
+        // is enough *here* and would not be for a geometry claim: what is being
+        // asserted is the structural presence of two keys that were entirely
+        // absent, which a loader cannot hallucinate. Where the mark actually
+        // lands is `save.rs`'s own tests and `annot-probe`'s pixels.
+        let path = Path::new("../testdata/text-heavy.pdf");
+        if !path.exists() {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        }
+        let edits = crate::edits::Edits::default();
+        let source = std::fs::read(path).expect("read");
+        let count = Document::load_mem(&source).expect("load").get_pages().len();
+        edits.open(1, u32::try_from(count).expect("pages"), None);
+
+        let pages = edits.state(1).expect("state").pages;
+        edits
+            .crop(1, pages[0].id, Some([100.0, 100.0, 400.0, 500.0]))
+            .expect("crop");
+        marked(&edits, 1);
+
+        let plan = edits.plan(1).expect("plan");
+        assert_eq!(route(Some(&plan), None, 0), Route::Working, "the route");
+        let bytes = crate::save::print_bytes(path, &plan, 0).expect("print bytes");
+
+        let out = Document::load_mem(&bytes).expect("reload");
+        let table = out.get_pages();
+        let has = |number: u32, key: &[u8]| {
+            table
+                .get(&number)
+                .and_then(|id| out.get_object(*id).ok())
+                .and_then(|object| object.as_dict().ok())
+                .is_some_and(|dict| dict.has(key))
+        };
+        assert!(has(1, b"CropBox"), "the page the reader cropped");
+        assert!(has(2, b"Annots"), "the page the reader marked");
+        // And the two are on the pages they were put on rather than on whichever
+        // page the walk happened to reach --- an assertion that only one page
+        // carries each is what makes the two above about placement rather than
+        // about presence anywhere in the file.
+        assert!(!has(2, b"CropBox"), "and the crop is on page 1 alone");
+        assert!(!has(1, b"Annots"), "and the mark is on page 2 alone");
     }
 
     #[test]

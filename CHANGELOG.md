@@ -50,6 +50,22 @@ have the binary.)
 - Right-clicking the page and choosing *Add comment* still places it at once,
   since that gesture has already said where.
 
+### Fixed: printing now puts on paper what is on screen
+
+- **A highlight, a note, a box or anything else a reader marked never reached
+  the printer.** Nor did a crop: a page cropped to its content printed at its
+  full size, and the print preview showed it that way too. Both had been true
+  since marks existed.
+- Two causes. A cropped document reported itself as *unchanged from the file*,
+  so the file went to the printer byte for byte --- the check that decides that
+  listed marks, page count, order and turns, and had never been told about
+  crops. And printing built its pages with its own code rather than the code
+  that saves a document, which is the half that knows how to write a mark.
+- There is one writer now. A print job of the working document is produced by
+  the same code a save uses, plus the one thing a print job has and a save does
+  not: the rotation the reader is viewing at. A page range typed into the print
+  panel still means exactly the pages named, which is what it has always meant.
+
 ### Added: a check that a mark reaches the document
 
 - **`scripts/mark_check.py` drives the whole chain a mark travels** --- the

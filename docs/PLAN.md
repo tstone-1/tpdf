@@ -5029,6 +5029,34 @@ The page-tree surgery moved to `pagetree.rs`, shared by the two things that writ
 --- a second copy of either is the failure this repository has already recorded from other
 directions.
 
+⚠ **"Carries the edits" meant the page operations and not the marks, and read as though it
+meant both --- corrected 2026-08-22.** A reader who highlighted a paragraph and pressed Print
+got paper with no highlight on it; a page they had cropped printed at its full size. Both had
+been true since marks existed, and the paragraph below is what a reader of this document would
+have used to conclude otherwise.
+
+Two causes, and only the second is interesting. `Plan::is_identity` --- the predicate that
+decides whether the file goes to the printer byte for byte --- listed marks, page count, order
+and turns, and had never been told about crops, so a cropped document reported itself as the
+file. And `print::build` had its own page walk, grown when printing came first and needed a
+subset of what saving does; `save.rs` later learned to write marks and crops and nothing
+compared the two. Measured before anything changed: a job built from a plan carrying one mark
+and one crop came back with no page carrying `/Annots` and none carrying `/CropBox`.
+
+There is one writer now. `save::print_bytes` is the save path's `planned_bytes` plus the one
+input a print job has and a save does not --- the reader's own rotation --- and `print::Route`
+names the three producers so that which one a job uses is a pure function. `docs/TRAPS.md` has
+the entry, including the two mutations that survived on the way: routing through the other
+writer dropped the view rotation with every test still green, and the test written for *that*
+survived a second mutation because its fixture had no page carrying an edit turn.
+
+**Not done:** an explicit page range still carries no marks and no crops. `Pages::Only` says
+in its own documentation that a range says nothing about edits, and that was a smaller claim
+when nothing else did either. A reader who types "2-4" into the print panel of a marked-up
+document gets those pages without their marks. Closing it means composing a range with a plan
+rather than choosing between them, which is a decision about what the panel means and not only
+a change to the writer.
+
 **Printing carries the edits now, and did not before.** That was live from the day page
 rotation landed: a reader who turned page 3 and pressed print got page 3 as it is on disk.
 `print::Job` takes one entry per page rather than one rotation for the document, and

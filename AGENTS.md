@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 423 entries
+The one thing this file does *not* carry in full is the trap list --- 424 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1070,8 +1070,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 423 of them and the full text
-was 93% of this file --- an instruction budget spent on the 422 traps that are not
+titles. Only the titles are here, because there are 424 of them and the full text
+was 93% of this file --- an instruction budget spent on the 423 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1381,6 +1381,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A count of the tabs cannot see that one of them is clipped out of the panel (five labels want 293 px in a 260 px sidebar; the fifth was in the DOM, `role="tab"`, and unreachable by a pointer, while the check that counts tabs passed throughout)
 - Two synthetic marks addressed by page land on top of each other on a one-page corpus (two subjects that must be distinguishable, separated on one axis a corpus is free to collapse; found by the sweep and by nothing else)
 - A getter that answers from the rows it was handed cannot see a panel that drew one (the mutation SURVIVED because the check's two operands were one value under two names; the correct version of the same rule sat three lines below it, and the defect was inherited along with an unfalsifiable check in the panel it was copied from)
+- Two writers for one document, and the printer got the older one (a predicate over a struct should destructure it; moving work between implementations does not move its coverage; and the test written for that survived its own second mutation)
 - Removing the second copy is what made the differential unable to fail (8 red before the deduplication and 2 after; a comparison between subsystems that share an implementation is true by construction, and nothing goes red at the moment it stops testing anything)
 - A differential's most important check was hard-coded to pass when both readers failed (`7 passed, 0 failed` on a contract neither reader could read a certificate from; the correct argument was written down one function away, three months earlier)
 - A test helper that builds its fixture with the encoder under test (16 red of 701 and not the one named for it --- that output is the diagnostic, and it means something different from a mutation reddening nothing)

@@ -220,6 +220,46 @@ pub struct Staged {
     pub verified: Fingerprint,
 }
 
+/// What a save passes for the reader's own rotation: none.
+///
+/// Named rather than written as `0` at both call sites, because the parameter it
+/// fills is a quarter-turn count and a bare zero there reads as "no rotation at
+/// all" --- which is wrong: the plan's own per-page turns still apply. This says
+/// *the view adds nothing*, which is the fact. Saving stores the document, and
+/// how the reader happens to be holding it is not part of the document.
+const NO_VIEW_TURN: u8 = 0;
+
+/// The bytes of a print job built from the working document.
+///
+/// **The same writer a save uses, and that is the whole of this function.**
+/// `print::build` grew its own page walk --- selection, deletion, reorder, turns
+/// --- because printing came first and needed a subset of what saving does. The
+/// two then drifted in the way `docs/TRAPS.md` records as two copies of a
+/// distinction: this one gained marks and crops and that one did not, so a
+/// reader who highlighted a paragraph and pressed Print got paper with no
+/// highlight on it, and a page they had cropped printed at its full size.
+/// Measured before it was fixed: a job built from a plan carrying one mark and
+/// one crop came back with **no page carrying `/Annots` and none carrying
+/// `/CropBox`**.
+///
+/// `view` is the reader's own rotation, in quarter turns clockwise, which is the
+/// one input a print job has and a save does not.
+///
+/// **`OnChange::Proceed`, like a copy and unlike a save in place.** What is at
+/// stake is a sheet of paper: a document that changed on disk since it was
+/// opened is worth printing from what the reader is looking at, with the file
+/// left untouched either way. Refusing would take away the one operation that
+/// cannot lose anything.
+///
+/// # Errors
+///
+/// Everything [`planned_bytes`] refuses --- including an encrypted source, which
+/// printing reaches only when the reader has edited it, since an untouched one
+/// is handed over byte for byte and never parsed here.
+pub fn print_bytes(source: &Path, plan: &Plan, view: u8) -> Result<Vec<u8>, Refusal> {
+    Ok(planned_bytes(source, plan, OnChange::Proceed, view)?.bytes)
+}
+
 /// Writes the pages `plan` keeps, each with its own turn, from `source` to `out`.
 ///
 /// # Errors
@@ -237,7 +277,7 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<Copied, Refu
     // anchor ambiguous the moment this line gained a binding --- and an ambiguous
     // anchor is refused, so the mutation stops being able to fail. Distinct names
     // are the fix; a longer anchor is only the workaround.
-    let copy = planned_bytes(source, plan, OnChange::Proceed)?;
+    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;
     write_atomically(out, &copy.bytes)?;
     Ok(Copied {
         changed: copy.changed,
@@ -281,7 +321,7 @@ pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, Refusal> {
                 .into(),
         );
     }
-    let planned = planned_bytes(source, plan, OnChange::Refuse)?;
+    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;
     // Refused rather than unwrapped. It cannot fire --- `planned_bytes` derives
     // this from the same `plan.opened_as` the guard above just proved present ---
     // but the two are eight lines and one function call apart, and the failure a
@@ -367,7 +407,12 @@ pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
 /// the file does not have; two of its pages are one object and disagree about
 /// the turn or the crop, or one of them is dropped without the other; or a mark
 /// maps to nothing.
-fn planned_bytes(source: &Path, plan: &Plan, on_change: OnChange) -> Result<Planned, Refusal> {
+fn planned_bytes(
+    source: &Path,
+    plan: &Plan,
+    on_change: OnChange,
+    view: u8,
+) -> Result<Planned, Refusal> {
     if plan.pages.is_empty() {
         return Err("a document must keep at least one page".into());
     }
@@ -457,10 +502,25 @@ fn planned_bytes(source: &Path, plan: &Plan, on_change: OnChange) -> Result<Plan
         )));
     }
 
+    // **The reader's own rotation is added here, to every page.** It is the one
+    // thing a print job has that a save does not: rotating the *view* turns the
+    // whole document on screen and is not an edit, so it never reaches the
+    // model --- and a job that ignored it would print the document upright while
+    // the reader is looking at it sideways.
+    //
+    // Added into the same list the per-page turns go in rather than applied
+    // afterwards, because `agreed_turns` refuses one object asked for two
+    // different angles: a constant added to every entry keeps that property,
+    // where a second pass over the same objects would have to re-establish it.
     let turns: Vec<(lopdf::ObjectId, u8)> = plan
         .pages
         .iter()
-        .filter_map(|page| Some((*pages.get(page.source as usize)?, page.turns)))
+        .filter_map(|page| {
+            Some((
+                *pages.get(page.source as usize)?,
+                (page.turns + view % 4) % 4,
+            ))
+        })
         .collect();
 
     if kept.len() != pages.len() {
