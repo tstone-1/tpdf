@@ -876,7 +876,21 @@ async fn save_document(
     // apply. The document has to be closed in between either way --- a rename
     // over a mapped file leaves the mapping serving the old inode on macOS, and
     // an append to one is a file the worker's cached parse no longer describes.
-    let mode = save::mode_for(&plan);
+    // **Size decides too, since 2026-08-22.** An append is prepared inside a
+    // worker, and a worker is bounded -- by a job object on Windows and by the
+    // machine on macOS -- so past `save::APPEND_MAX_BYTES` the document is
+    // reserialised instead. That is slower and it loses the byte-for-byte
+    // previous revision; it is what makes a large document saveable at all,
+    // against a worker that would otherwise be refused the memory to prepare
+    // one and abort.
+    //
+    // **A file that cannot be measured takes the rewrite**, which is the arm
+    // with no memory bound over it and is correct for every plan. `AGENTS.md`
+    // records a migration whose `if (checked -and safe) {stop}` collapsed
+    // "checked, fine to proceed" with "could not check at all" and force-pushed
+    // on the second; the failure path here goes the safe way by construction
+    // rather than by ordering.
+    let mode = save::mode_for_source(&plan, Path::new(&source));
     let prepared = match mode {
         // **The append's parse happens in the worker**, which is the one
         // difference between the two arms and the reason they are not one

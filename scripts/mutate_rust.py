@@ -2280,6 +2280,38 @@ MUTATIONS = [
         "a_contained_childs_peak_commit_is_readable_and_is_the_childs",
         only_on="windows",
     ),
+    Mutation(
+        # Take the bound off. The plan condition still holds, so every marks-only
+        # save goes back to being prepared in the worker whatever the document
+        # weighs -- which is the state that shipped on 2026-08-22 and aborts a
+        # worker above roughly 350 MB.
+        "append: let a document of any size be prepared in the worker",
+        "src/save.rs",
+        "    if plan.only_adds_marks() && source_bytes <= APPEND_MAX_BYTES {",
+        "    if plan.only_adds_marks() && source_bytes <= u64::MAX {",
+        "a_marks_only_plan_is_rewritten_once_the_file_is_too_large_to_parse_twice",
+    ),
+    Mutation(
+        # Move the bound to 256 MB from 256 MiB. A 5% change, in the direction
+        # that is safe, and the point is that it is not silent: the value is
+        # pinned so that it moves in the test as well or not at all.
+        "append: move the size bound without saying so",
+        "src/save.rs",
+        "pub const APPEND_MAX_BYTES: u64 = 256 * 1024 * 1024;",
+        "pub const APPEND_MAX_BYTES: u64 = 256 * 1000 * 1000;",
+        "a_marks_only_plan_is_rewritten_once_the_file_is_too_large_to_parse_twice",
+    ),
+    Mutation(
+        # Read an unmeasurable file as empty rather than as unbounded. It then
+        # takes the append -- the arm with a memory bound over it -- on the one
+        # input nothing knows the size of, which is the "could not check" and
+        # "checked, fine" collapse this function exists to keep apart.
+        "append: treat a file that cannot be measured as small",
+        "src/save.rs",
+        "        std::fs::metadata(source).map_or(u64::MAX, |m| m.len()),",
+        "        std::fs::metadata(source).map_or(0, |m| m.len()),",
+        "a_document_whose_size_cannot_be_read_is_rewritten",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.
