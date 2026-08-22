@@ -1000,8 +1000,35 @@ impl Plan {
         // leaving it out would let the print path hand over the original bytes
         // for a document the reader has highlighted --- which prints, correctly
         // and confusingly, without the highlights.
-        self.marks.is_empty()
-            && self.pages.len() == self.baseline as usize
+        self.marks.is_empty() && self.pages_are_the_file()
+    }
+
+    /// Whether the only thing this adds to the file is marks.
+    ///
+    /// **The predicate that decides whether a save can be an append**, and it is
+    /// deliberately narrow: every page present, in order, unturned and
+    /// uncropped, and at least one mark. Adding an annotation touches the page's
+    /// `/Annots` and nothing else, which is the edit `docs/PLAN.md` §5 measured
+    /// through four independent parsers --- PDFium, QPDF, poppler and
+    /// CoreGraphics. A deletion, a move, a turn or a crop rewrites the page tree
+    /// or the page dictionary in ways that spike never put to them, so they
+    /// take the rewrite. Where the evidence stops, so does this.
+    ///
+    /// It shares [`Plan::is_identity`]'s page walk rather than repeating it,
+    /// because the two questions differ in exactly one clause --- and two copies
+    /// of a page walk is how one of them comes to disagree about the crop, which
+    /// is a thing that has already happened here once.
+    #[must_use]
+    pub fn only_adds_marks(&self) -> bool {
+        !self.marks.is_empty() && self.pages_are_the_file()
+    }
+
+    /// Whether the pages are the file's, in the file's order and shape.
+    ///
+    /// The half [`Plan::is_identity`] and [`Plan::only_adds_marks`] share. It
+    /// says nothing about marks, which is all that separates them.
+    fn pages_are_the_file(&self) -> bool {
+        self.pages.len() == self.baseline as usize
             && self.pages.iter().enumerate().all(|(at, page)| {
                 // **Destructured so that a new field cannot be forgotten.** The
                 // crop was, for as long as pages could be cropped, and the reason

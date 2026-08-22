@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 424 entries
+The one thing this file does *not* carry in full is the trap list --- 425 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1070,8 +1070,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 424 of them and the full text
-was 93% of this file --- an instruction budget spent on the 423 traps that are not
+titles. Only the titles are here, because there are 425 of them and the full text
+was 93% of this file --- an instruction budget spent on the 424 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1266,6 +1266,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A difference assertion is satisfied by any difference, including the one the defect produces (the two pages lay out at different zooms, so the wrong answer differs too)
 - A probe reading one edge of a box cannot see a mutation that clips the other three (and the write-up first said pixels could not see it at all, which one run disproved)
 - A check on the sign of a noisy quantity fires only when the noise falls one way
+- The append was 8.2x in the spike and 1.1x in the application, and the difference is a hash (a spike times a subsystem and a reader waits for a feature; the claim that survived was the one nobody was leading with)
 - A mean cannot test a claim about a minimum
 - A guard that reads the whole file does not belong on the path a reader waits on (452 ms cold on the 337 MB fixture, against a 300 ms budget, and a slow open reads as a big file)
 - A check that defers to a cheaper one it supersedes cannot be tested, and refuses what it should forgive (the digest comparison was 0 red before the fix and 2 red after, with no new test written for it)

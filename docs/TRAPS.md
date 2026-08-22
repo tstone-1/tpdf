@@ -12453,3 +12453,38 @@ discriminates. `rotated.pdf` is the only fixture whose pages carry four differen
 rotations, which is what makes "each page a quarter past where the file had it"
 an assertion rather than a tautology; adding an edit turn on one page is what
 made the composition observable.
+
+---
+### The append was 8.2x in the spike and 1.1x in the application, and the difference is a hash
+
+`docs/PLAN.md` §5 measured an incremental save at **29.1 ms against the rewrite's 239 ms** on
+a 337 MB scan and carried that 8.2x as the reason to build it. Built, and measured end to end
+in the same A/B shape, it comes out at **637 ms against 672 ms --- 1.1x**, and on a 1.4 MB
+document it is *slower* than the rewrite.
+
+Nothing was wrong with either measurement. They measure different things, and the gap between
+them is the whole lesson: **the spike timed the writer and the reader waits for the save.**
+
+Timed separately, the streamed SHA-256 the open-time fingerprint takes is **582 ms of the
+append's 637** on that fixture. Both modes pay it, so the mode chooses about 55 ms of a
+640 ms save. The remaining difference is smaller still: 21 ms reading the file, 6 ms parsing
+it, and 43 ms parsing it *again* to verify the result --- a check the rewrite does not perform
+at all, which is why the append loses on a small document where there is no write to save.
+
+Three things follow, and the third is the one that generalises.
+
+**A spike's number is a lower bound on a subsystem, never a prediction about a feature.** The
+spike had the file's bytes in hand before its timer started, because that is what isolating
+the writer means. The application has to get them, verify them, and verify what it wrote.
+
+**Measure the thing you are about to justify, before you justify it.** The 8.2x had been in
+the plan for a month and would have gone into a changelog as the reason for the work. What
+stopped it was running the A/B against the real path on the real fixtures, which took one
+`#[ignore]`d test.
+
+**The claim that survived is the one nobody was leading with.** The append writes **839 bytes
+where the rewrite writes 337 megabytes**, and that is worth having for reasons that are not
+speed at all: a document in a synced folder is not re-uploaded, the disk is not rewritten, and
+the previous revision stays byte for byte inside the new file so a validator can still show
+what a signature covered. When a measurement kills the headline reason for a piece of work,
+the question is whether a different reason survives it --- not whether the work does.

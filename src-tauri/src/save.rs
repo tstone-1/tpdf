@@ -61,7 +61,7 @@
 
 use std::path::{Path, PathBuf};
 
-use lopdf::Document;
+use lopdf::{Document, IncrementalDocument};
 
 use lopdf::{dictionary, Dictionary, Object, ObjectId};
 
@@ -336,6 +336,250 @@ pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, Refusal> {
     Ok(Staged { path, verified })
 }
 
+/// How a save should be written.
+///
+/// **The strictest mode present wins**, which `docs/PLAN.md` §5 states as the
+/// rule and which today has two answers rather than three: `Forbidden` is not
+/// here, because nothing yet refuses a save on a certified document --- §5 says
+/// plainly that a signature cannot survive an edit whatever the DocMDP level
+/// permits, and what to *do* about that is a decision about the product rather
+/// than a mode.
+///
+/// Chosen from the plan alone, so it can be exercised without a document open,
+/// and named rather than decided inside the command for the reason every guard
+/// in this module is out here: a branch inside a Tauri command has no failing
+/// case a test can reach.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mode {
+    /// Append an update section. Fast on a large file, and only for an edit that
+    /// touches nothing but annotations --- see [`Plan::only_adds_marks`].
+    Append,
+    /// Reserialise the whole document. Correct for every plan, and what every
+    /// save did until 2026-08-22.
+    Rewrite,
+}
+
+/// Which writer a plan needs.
+///
+/// The append is not merely a faster rewrite and the difference is not
+/// performance: an update section leaves the previous revision **byte for byte
+/// intact** inside the new file, so what was signed stays exactly where it was
+/// and a validator can still show it. A rewrite renumbers every object in the
+/// document.
+///
+/// The narrowness is deliberate and is bounded by evidence rather than by
+/// caution: spike 0.6 put an appended annotation to PDFium, QPDF, poppler and
+/// CoreGraphics across twelve fixtures. It never put an appended page deletion,
+/// reorder, rotation or crop to any of them. Those take the rewrite until
+/// somebody measures them.
+#[must_use]
+pub fn mode_for(plan: &Plan) -> Mode {
+    if plan.only_adds_marks() {
+        Mode::Append
+    } else {
+        Mode::Rewrite
+    }
+}
+
+/// A save that has been prepared as an append: the bytes to add, and the length
+/// they go after.
+///
+/// [`Staged`]'s counterpart for the other mode, and it carries a *length* where
+/// that carries a path. The distinction is the whole difference between the two
+/// modes: a rewrite produces a new file and renames it over the old one, and an
+/// append adds to the file that is already there --- so what has to be recorded
+/// is where the previous revision ended, both to write after it and to cut back
+/// to if anything goes wrong.
+///
+/// `verified` is not an `Option`, for exactly [`Staged`]'s reason: the caller's
+/// last look before it writes goes through this field, and a `None` arm could
+/// only be written as "skip the check".
+#[derive(Debug)]
+pub struct Appended {
+    /// The update section: objects, cross-reference and trailer.
+    update: Vec<u8>,
+    /// How long the file was when the update was built against it.
+    was: u64,
+    /// How many pages it has, which an append does not change: it adds
+    /// annotations. Carried rather than recomputed, because the verification
+    /// runs after the file has been written and re-deriving it would mean
+    /// parsing the document again to check the first parse.
+    pages: usize,
+    /// The source as it was when its bytes were read.
+    pub verified: Fingerprint,
+}
+
+impl Appended {
+    /// How many bytes the save will add. For a report, and for the tests.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.update.len()
+    }
+
+    /// Whether the update section is empty, which nothing produces.
+    ///
+    /// Present because clippy asks for it beside `len`, and answering honestly
+    /// is cheaper than an allow: `lopdf` always writes at least a cross-reference
+    /// and a trailer, so this is false for every value this type ever holds.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.update.is_empty()
+    }
+}
+
+/// Builds the update section for a plan that only adds marks.
+///
+/// **The whole of what makes an append fast is that the previous revision is
+/// never rewritten**, so nothing here reads or copies the file's existing bytes
+/// beyond the parse every edit has to pay. `docs/PLAN.md` §5 measured the
+/// difference where it shows: 29 ms against 239 ms on a 337 MB scan, and 723
+/// bytes written against 336,623,496.
+///
+/// Only the objects that actually change are written. Rewriting an object to
+/// hold the value it already had is still a change to a structural object, which
+/// matters to anything comparing revisions --- so a page whose `/Annots` is its
+/// own object never has its dictionary touched. Which shape a page has is
+/// [`AnnotsSite`]'s answer, read from the previous revision.
+///
+/// # Errors
+///
+/// The plan is empty or is not append-shaped; `source` changed since it was
+/// opened, or cannot be read, parsed or measured; it is encrypted; its page
+/// count is not the plan's baseline; or a mark maps to nothing.
+pub fn append_bytes(source: &Path, plan: &Plan) -> Result<Appended, Refusal> {
+    if !plan.only_adds_marks() {
+        // Not a reader-facing refusal: nothing offers this mode, `mode_for`
+        // chooses it, and a caller reaching here with the wrong plan has a
+        // defect rather than a document problem. Refused rather than
+        // debug-asserted, because the safe answer exists and is the rewrite.
+        return Err("this document needs a full rewrite rather than an append".into());
+    }
+    let opened_as = plan.opened_as.as_ref().ok_or_else(|| {
+        "tpdf could not record what this file looked like when it was opened, \
+         so it cannot tell whether saving over it is safe --- use Save a copy"
+            .to_string()
+    })?;
+    let verified = opened_as.agrees_with(source).map_err(Refusal::changed)?;
+
+    let was = std::fs::metadata(source)
+        .map_err(|e| format!("could not measure {source:?}: {e}"))?
+        .len();
+    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
+    // **Measured after the bytes are in hand, and compared with what was read.**
+    // The length decides where the update is written and what a rollback cuts
+    // back to, so a file that grew between the `metadata` call and the read would
+    // give an update section built against one length and appended after another.
+    // The fingerprint above already refuses a file that changed since it was
+    // *opened*; this is the narrower window this function opens itself.
+    if original.len() as u64 != was {
+        return Err(Refusal::changed(format!(
+            "{source:?} changed while it was being read --- reopen it before saving"
+        )));
+    }
+
+    let prev = Document::load_mem_with_options(
+        &original,
+        lopdf::LoadOptions {
+            max_decompressed_size: Some(MAX_DECODE),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("could not parse {source:?}: {e}"))?;
+
+    // The rewrite's refusal, for a different reason that lands in the same place.
+    // A rewrite refuses because `lopdf` would silently drop the encryption; an
+    // append would *preserve* it --- spike 0.6 measured the appended objects
+    // coming out encrypted with the original key --- but only when the document
+    // was loaded with its password, and there is still no way for a reader to
+    // type one. See `docs/PLAN.md` §5.
+    if prev.trailer.has(b"Encrypt") {
+        return Err(
+            "This document is encrypted, and saving would silently remove that. \
+             tpdf will not write it."
+                .into(),
+        );
+    }
+
+    let pages = ordered_pages(&prev);
+    if pages.len() != plan.baseline as usize {
+        return Err(Refusal::changed(format!(
+            "the document on disk has {} page(s) and the edits were made against {} --- it has \
+             changed since it was opened, so reopen it before saving",
+            pages.len(),
+            plan.baseline
+        )));
+    }
+
+    // Every page is kept --- `only_adds_marks` said so --- and the one-based
+    // numbering is `write_marks`' shared-object refusal's, not a page selection.
+    let kept: Vec<u32> = (1..=u32::try_from(pages.len()).unwrap_or(u32::MAX)).collect();
+    let sites = mark_sites(&prev, &pages, &kept, &plan.marks)?;
+
+    let mut incremental = IncrementalDocument::create_from(original, prev);
+    // **Brought across before anything is written, and only what changes.** A
+    // page whose `/Annots` is its own object contributes that array and nothing
+    // else; a page with an inline list or none contributes its dictionary.
+    // `opt_clone_object_to_new_document` is clone-*if-absent*, which is what
+    // makes two marks on one page safe: the second finds the first's work rather
+    // than replacing it with a fresh copy of the original.
+    for site in &sites {
+        match &site.annots {
+            AnnotsSite::ArrayObject(array) => incremental
+                .opt_clone_object_to_new_document(*array)
+                .map_err(|e| format!("could not bring this page's /Annots across: {e}"))?,
+            AnnotsSite::Inline(_) | AnnotsSite::Absent => incremental
+                .opt_clone_object_to_new_document(site.page)
+                .map_err(|e| format!("could not bring this page across: {e}"))?,
+        }
+    }
+
+    write_marks(&mut incremental.new_document, &plan.marks, &sites)?;
+
+    // **The previous revision is thrown away as it is written**, which is the
+    // point: `IncrementalDocument::save_to` writes the whole prior file through
+    // to the target before appending, and materialising that is exactly the copy
+    // an append exists not to make. On a 337 MB scan it is the entire cost.
+    let mut sink = Tail {
+        skip: usize::try_from(was).unwrap_or(usize::MAX),
+        seen: 0,
+        tail: Vec::with_capacity(4096),
+    };
+    incremental
+        .save_to(&mut sink)
+        .map_err(|e| format!("could not build the update section: {e}"))?;
+
+    Ok(Appended {
+        update: sink.tail,
+        was,
+        pages: pages.len(),
+        verified,
+    })
+}
+
+/// A sink that discards the first `skip` bytes and keeps the rest.
+///
+/// Spike 0.6's `TailSink`, and it is here for the same reason it was there: an
+/// append that first materialised a copy of the document would cost what a
+/// rewrite costs, which is the whole thing being avoided.
+struct Tail {
+    skip: usize,
+    seen: usize,
+    tail: Vec<u8>,
+}
+
+impl std::io::Write for Tail {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let start = self.skip.saturating_sub(self.seen).min(buf.len());
+        self.tail.extend_from_slice(&buf[start..]);
+        self.seen += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The last look before the rename, and the cleanup when it refuses.
 ///
 /// Split out of `save_document` rather than written inline there for the reason
@@ -381,6 +625,134 @@ pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), Refusa
         )));
     }
     Ok(())
+}
+
+/// Adds a prepared update section to the end of the file it was built against.
+///
+/// **The one write in this module that is not a rename**, and the difference is
+/// worth stating plainly rather than discovering: a rewrite builds a whole new
+/// file beside the old one and swaps it in, so until the rename the reader's
+/// document is untouched and afterwards it is complete. An append has no such
+/// instant. It puts bytes on the end of the file the reader has.
+///
+/// Three things bound that, and none of them is a promise that a crash is
+/// impossible.
+///
+/// **The length is checked first.** The update names byte offsets into the
+/// previous revision and chains its `/Prev` to that revision's `startxref`, so
+/// appending it to a file of any other length produces a cross-reference table
+/// pointing at the wrong bytes. A file that grew or shrank since the update was
+/// built is refused rather than appended to.
+///
+/// **The trailer goes in its own write.** The update ends with `startxref`, an
+/// offset and `%%EOF`, and a reader looking for the current revision scans
+/// backwards for the last `startxref` --- so a partial write that stopped inside
+/// the body leaves the previous revision's trailer as the last complete one, and
+/// the file still opens as it was. Splitting there means the moment the file
+/// becomes the new revision is a write of a few dozen bytes, which lands in one
+/// sector on any filesystem this runs on. It is not an atomic rename and it is
+/// not claimed to be.
+///
+/// **Anything that fails cuts the file back.** The length before the write is
+/// what it is truncated to, so a refused or failed append leaves the file
+/// exactly as it found it --- including the case where the *verification* below
+/// refuses, which is a file this function wrote and then took back.
+///
+/// The verification is a genuine re-read: the file is parsed again and asked for
+/// its page count. A rewrite gets that for free by verifying the staged copy
+/// before the rename; an append has to ask afterwards, and asking is what makes
+/// the rollback reachable rather than theoretical.
+///
+/// # Errors
+///
+/// The file changed length since the update was built; the write, the flush or
+/// the truncation fails; or the appended file cannot be parsed or has the wrong
+/// number of pages.
+pub fn append_in_place(appended: &Appended, source: &Path) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let now = std::fs::metadata(source)
+        .map_err(|e| format!("could not measure {source:?}: {e}"))?
+        .len();
+    if now != appended.was {
+        return Err(format!(
+            "{source:?} is {now} bytes and the edits were prepared against {} --- \
+             nothing was written, so the file on disk is untouched",
+            appended.was
+        ));
+    }
+
+    // The split point: the last `startxref` in the update section. Found in the
+    // bytes rather than computed from a length, because what has to be in the
+    // second write is the trailer and nothing else. An update with no
+    // `startxref` is not one `lopdf` produces; the whole thing then goes in one
+    // write, which is the conservative answer rather than a refusal.
+    let split =
+        find_last(&appended.update, b"\nstartxref").map_or(appended.update.len(), |at| at + 1);
+    let (body, trailer) = appended.update.split_at(split);
+
+    let cut_back = |why: String| -> String {
+        match std::fs::OpenOptions::new().write(true).open(source) {
+            Ok(file) => match file.set_len(appended.was) {
+                Ok(()) => format!("{why} --- the file has been put back as it was"),
+                Err(also) => format!("{why} --- and it could not be put back: {also}"),
+            },
+            Err(also) => format!("{why} --- and it could not be put back: {also}"),
+        }
+    };
+
+    let write = || -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().append(true).open(source)?;
+        file.write_all(body)?;
+        file.flush()?;
+        // Before the trailer, so the body is on the platter by the time the
+        // bytes that make it the current revision are written. Without it the
+        // ordering above is a statement about this process's buffers rather than
+        // about the file.
+        file.sync_data()?;
+        file.write_all(trailer)?;
+        file.flush()?;
+        file.sync_data()
+    };
+    if let Err(e) = write() {
+        return Err(cut_back(format!("could not append to {source:?}: {e}")));
+    }
+
+    // The re-read, and the reason the rollback above is reachable rather than
+    // theoretical. `lopdf` is the writer's own reader, which is weaker than the
+    // rewrite path's third parser and is what is available here --- and what it
+    // can see is a file that no longer parses or has lost pages, which is
+    // exactly what a mis-chained cross-reference produces.
+    match Document::load_with_options(
+        source,
+        lopdf::LoadOptions {
+            max_decompressed_size: Some(MAX_DECODE),
+            ..Default::default()
+        },
+    ) {
+        Ok(after) if after.get_pages().len() == appended.pages => Ok(()),
+        Ok(after) => Err(cut_back(format!(
+            "the saved file has {} page(s) and should have {}",
+            after.get_pages().len(),
+            appended.pages
+        ))),
+        Err(e) => Err(cut_back(format!(
+            "the saved file could not be read back: {e}"
+        ))),
+    }
+}
+
+/// The last position of `needle` in `hay`, or `None`.
+///
+/// Written out because there is no `rfind` for byte slices, and the alternative
+/// is a dependency or converting a PDF's bytes to a `String`, which they are not.
+fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len())
+        .rev()
+        .find(|&at| &hay[at..at + needle.len()] == needle)
 }
 
 /// Puts a file [`stage_in_place`] wrote where `source` is.
@@ -550,7 +922,11 @@ fn planned_bytes(
     // the mapping below reads the rotation the file has *now*. Turn the page
     // first and every quad is a quarter turn out, on exactly the pages a reader
     // rotated.
-    write_marks(&mut doc, &pages, &kept, &plan.marks)?;
+    // Read and written in two steps, which on this path is one document twice
+    // over --- the borrow checker will not have it both ways, and the append
+    // genuinely needs two. See `mark_sites`.
+    let sites = mark_sites(&doc, &pages, &kept, &plan.marks)?;
+    write_marks(&mut doc, &plan.marks, &sites)?;
 
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
     // rotation written onto a page that is about to go is work thrown away. The
@@ -644,12 +1020,63 @@ const WASH_ALPHA: f32 = 0.4;
 ///
 /// A mark naming a page the file does not have; a mark on a page object that
 /// more than one kept page number names; or a mark whose quads map to nothing.
-fn write_marks(
-    doc: &mut Document,
+/// Where one annotation goes, read out of the document it is measured against.
+///
+/// **Everything a mark needs from the *reader*, gathered before anything is
+/// written.** The two save paths write into different documents: a rewrite adds
+/// objects to the same `Document` it measured, and an append adds them to an
+/// update section while the geometry, the page boxes and the existing `/Annots`
+/// all live in the previous revision. Splitting the read from the write is what
+/// lets one implementation serve both --- and this repository has just paid for
+/// the alternative, where `print.rs` grew a second page walk and it silently
+/// stopped writing marks at all.
+///
+/// It is also the reason [`attach`] takes a site rather than re-reading the
+/// page: on the append path the page dictionary is frequently *not* in the
+/// document being written to, because a page whose `/Annots` is its own object
+/// never has to be rewritten.
+struct MarkSite {
+    /// The page object the annotation hangs off, in the previous revision.
+    page: ObjectId,
+    /// The page as it is displayed, for mapping the mark's quads into it.
+    shown: DisplayedPage,
+    /// Where this page keeps its annotation list.
+    annots: AnnotsSite,
+}
+
+/// The three shapes a page's `/Annots` comes in, and they are not equivalent.
+///
+/// Which one a page has decides **how large the edit is**, which matters only on
+/// the append path and matters a great deal there: extending an array that is
+/// its own object leaves the page dictionary untouched, and an inline array
+/// cannot be extended without rewriting the page. `docs/PLAN.md` §5 records that
+/// as the one document-shape dependency to carry into Phase 2, and it is
+/// measured rather than assumed --- the spike narrowed a signed document's
+/// complaint to two objects by preferring the array.
+enum AnnotsSite {
+    /// `/Annots 12 0 R` --- its own object, and the cheap case.
+    ArrayObject(ObjectId),
+    /// Written out inside the page dictionary, which therefore has to be
+    /// rewritten. The entries come along, because the writer does not have the
+    /// page to read them back from.
+    Inline(Vec<Object>),
+    /// No `/Annots` at all. The page is rewritten, as for an inline array.
+    Absent,
+}
+
+/// Reads what every mark needs, before anything is written.
+///
+/// # Errors
+///
+/// A mark naming a page the file does not have; a mark on a page object that
+/// more than one kept page number names.
+fn mark_sites(
+    read: &Document,
     pages: &[ObjectId],
     kept: &[u32],
     marks: &[PlannedMark],
-) -> Result<(), String> {
+) -> Result<Vec<MarkSite>, String> {
+    let mut sites = Vec::with_capacity(marks.len());
     for mark in marks {
         let page = *pages.get(mark.source as usize).ok_or_else(|| {
             format!(
@@ -676,7 +1103,51 @@ fn write_marks(
             ));
         }
 
-        let shown = displayed_page(doc, page);
+        let annots = match read
+            .get_object(page)
+            .and_then(Object::as_dict)
+            .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+            .get(b"Annots")
+        {
+            Ok(Object::Reference(array)) => AnnotsSite::ArrayObject(*array),
+            Ok(Object::Array(entries)) => AnnotsSite::Inline(entries.clone()),
+            // Anything else is a page whose `/Annots` is not a list --- a
+            // malformed document, and the same answer as having none: a list of
+            // our own replaces it. That is what the previous implementation did
+            // through its `_` arm, stated rather than inherited.
+            _ => AnnotsSite::Absent,
+        };
+
+        sites.push(MarkSite {
+            page,
+            shown: displayed_page(read, page),
+            annots,
+        });
+    }
+    Ok(sites)
+}
+
+/// Writes each mark as an annotation, into whichever document is being built.
+///
+/// `sites` is [`mark_sites`]'s answer for the same `marks`, in the same order.
+/// The pairing is positional, which is why neither is public and both are
+/// produced side by side at each of the two call sites.
+///
+/// # Errors
+///
+/// A mark whose quads map to nothing.
+fn write_marks(
+    doc: &mut Document,
+    marks: &[PlannedMark],
+    sites: &[MarkSite],
+) -> Result<(), String> {
+    for (mark, site) in marks.iter().zip(sites) {
+        let MarkSite {
+            page,
+            shown,
+            annots,
+        } = site;
+        let (page, shown) = (*page, *shown);
         let quads = user_quads(mark, shown);
         if quads.is_empty() {
             return Err(format!(
@@ -710,7 +1181,7 @@ fn write_marks(
         };
         let dictionary = mark_dictionary(mark, page, &quads, &strokes, rect, appearance);
         let annotation = doc.add_object(dictionary);
-        attach(doc, page, annotation)?;
+        attach(doc, page, annots, annotation)?;
     }
     Ok(())
 }
@@ -1667,35 +2138,49 @@ fn appearance_stream(
 /// The page is not a dictionary, or `/Annots` is a reference to something that
 /// is not an array. Both are malformed documents, and a mark written into one
 /// anyway would be a mark nothing displays.
-fn attach(doc: &mut Document, page: ObjectId, annotation: ObjectId) -> Result<(), String> {
-    let existing = doc
-        .get_object(page)
-        .and_then(Object::as_dict)
-        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
-        .get(b"Annots")
-        .ok()
-        .cloned();
-
-    match existing {
-        Some(Object::Reference(array_id)) => {
+fn attach(
+    doc: &mut Document,
+    page: ObjectId,
+    site: &AnnotsSite,
+    annotation: ObjectId,
+) -> Result<(), String> {
+    // **The site is read rather than re-read, and that is what makes this work
+    // on both paths.** It used to look the page up in `doc` --- correct for a
+    // rewrite, where `doc` is the whole document, and wrong for an append, where
+    // a page whose `/Annots` is its own object is deliberately *not* in the
+    // update section. Asking there would fail on exactly the documents the
+    // append is cheapest on.
+    match site {
+        AnnotsSite::ArrayObject(array_id) => {
             let array = doc
-                .get_object_mut(array_id)
+                .get_object_mut(*array_id)
                 .and_then(Object::as_array_mut)
                 .map_err(|e| format!("this page's /Annots is not an array: {e}"))?;
             array.push(Object::Reference(annotation));
         }
-        Some(Object::Array(mut array)) => {
+        // Both rewrite the page dictionary, and the entries come from the site
+        // because the document being written to may not hold the page to read
+        // them back from. A second mark on the same page finds the first through
+        // `doc` --- which is why the array is read from there when it is already
+        // present, and from the site when it is not.
+        AnnotsSite::Inline(_) | AnnotsSite::Absent => {
+            let existing = doc
+                .get_object(page)
+                .and_then(Object::as_dict)
+                .ok()
+                .and_then(|dict| dict.get(b"Annots").ok())
+                .and_then(|found| found.as_array().ok())
+                .cloned();
+            let mut array = match (existing, site) {
+                (Some(already), _) => already,
+                (None, AnnotsSite::Inline(entries)) => entries.clone(),
+                (None, _) => Vec::new(),
+            };
             array.push(Object::Reference(annotation));
             doc.get_object_mut(page)
                 .and_then(Object::as_dict_mut)
                 .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
                 .set("Annots", Object::Array(array));
-        }
-        _ => {
-            doc.get_object_mut(page)
-                .and_then(Object::as_dict_mut)
-                .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
-                .set("Annots", Object::Array(vec![Object::Reference(annotation)]));
         }
     }
     Ok(())
@@ -3664,6 +4149,474 @@ mod tests {
                 note: "a note".to_string(),
                 made: "D:20260818120000Z".to_string(),
             }],
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Saving by appending an update section
+    // -----------------------------------------------------------------
+
+    /// A copy of a fixture in scratch, with a plan fingerprinted against it.
+    ///
+    /// A copy rather than the fixture itself, and it is not tidiness: an append
+    /// writes to the file it is given, so a test that pointed at `testdata/`
+    /// would edit the corpus every other test reads.
+    fn appendable(scratch: &Scratch, name: &str) -> Option<(PathBuf, Plan)> {
+        let source = fixture(name)?;
+        let at = scratch.join(name);
+        std::fs::copy(&source, &at).expect("copy the fixture");
+        let count = page_count(&at);
+        let mut plan = plan_opened_as(&vec![0u8; count], &at);
+        plan.marks = vec![PlannedMark {
+            kind: MarkKind::Highlight,
+            source: 0,
+            quads: one_quad(),
+            strokes: Vec::new(),
+            color: [1.0, 0.9, 0.2],
+            author: "a reader".to_string(),
+            note: "a note".to_string(),
+            made: "D:20260822120000Z".to_string(),
+        }];
+        Some((at, plan))
+    }
+
+    #[test]
+    fn a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten() {
+        // The classification, and the negative half is the one with evidence
+        // behind it: spike 0.6 put an appended *annotation* to four independent
+        // parsers and never put an appended deletion, move, turn or crop to any
+        // of them. Each of those four is asserted rather than the rule being
+        // stated once, because what would ship is a predicate that let one
+        // through.
+        let mut marked = plan_of(&[0, 0, 0]);
+        marked.marks = plan_of_kind(MarkKind::Highlight, one_quad()).marks;
+        assert_eq!(mode_for(&marked), Mode::Append);
+
+        assert_eq!(
+            mode_for(&plan_of(&[0, 0, 0])),
+            Mode::Rewrite,
+            "a plan with no marks has nothing to append"
+        );
+
+        let mut turned = marked.clone();
+        turned.pages[1].turns = 1;
+        assert_eq!(mode_for(&turned), Mode::Rewrite, "a turn");
+
+        let mut cropped = marked.clone();
+        cropped.pages[1].crop = Some([10.0, 10.0, 100.0, 100.0]);
+        assert_eq!(mode_for(&cropped), Mode::Rewrite, "a crop");
+
+        let mut deleted = marked.clone();
+        deleted.pages.remove(1);
+        assert_eq!(mode_for(&deleted), Mode::Rewrite, "a deletion");
+
+        let mut moved = marked.clone();
+        moved.pages.swap(0, 1);
+        assert_eq!(mode_for(&moved), Mode::Rewrite, "a move");
+    }
+
+    #[test]
+    fn an_append_leaves_every_byte_of_the_previous_revision_where_it_was() {
+        // **The property the whole mode exists for.** A rewrite renumbers every
+        // object in the document; an append adds to the end, so what was there
+        // before is still there, at the same offsets --- which is what lets a
+        // validator show exactly what a signature covered, and is why this is
+        // not merely a faster rewrite.
+        let scratch = Scratch::new("append-prefix");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let before = std::fs::read(&at).expect("read before");
+
+        let appended = append_bytes(&at, &plan).expect("build the update");
+        append_in_place(&appended, &at).expect("append");
+
+        let after = std::fs::read(&at).expect("read after");
+        assert!(after.len() > before.len(), "something was written");
+        assert_eq!(
+            &after[..before.len()],
+            &before[..],
+            "the previous revision is byte for byte where it was"
+        );
+        assert_eq!(
+            after.len() - before.len(),
+            appended.len(),
+            "and the file grew by exactly the update section"
+        );
+        // Small, and it is the claim `docs/PLAN.md` §5 makes about the mode
+        // rather than a fact about this fixture: an update section is the
+        // objects that changed, so it does not scale with the document. Ten
+        // kilobytes is far above the measured 700-odd bytes and far below the
+        // 1.4 MB this fixture would cost to rewrite.
+        assert!(appended.len() < 10_000, "{} bytes", appended.len());
+    }
+
+    #[test]
+    fn an_appended_mark_is_listed_by_the_page_it_was_made_on() {
+        // The append is not merely accepted, it carries the edit. Read back
+        // through the same `subtypes_on` the rewrite path's tests use, so the
+        // two modes are asserted to produce the same thing rather than each
+        // being asserted to produce something.
+        let scratch = Scratch::new("append-mark");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let pages = page_count(&at);
+
+        let appended = append_bytes(&at, &plan).expect("build the update");
+        append_in_place(&appended, &at).expect("append");
+
+        assert_eq!(page_count(&at), pages, "no page was added or lost");
+        // Zero-based, which is `listed_on_page`'s own index into
+        // `ordered_pages` --- the mark is on `source: 0`, the file's first page.
+        let found = listed_on_page(&at, 0);
+        assert!(
+            found.iter().any(|name| name == "Highlight"),
+            "the first page lists the mark: {found:?}"
+        );
+        assert!(
+            listed_on_page(&at, 1).is_empty(),
+            "and the second lists nothing, so the mark is on the page it names"
+        );
+    }
+
+    #[test]
+    fn an_append_to_a_file_that_changed_length_is_refused_and_writes_nothing() {
+        // The update names byte offsets into the previous revision and chains
+        // `/Prev` to its `startxref`, so appending it after any other length
+        // produces a cross-reference pointing at the wrong bytes --- a file that
+        // opens and is wrong, which is the worst of the three outcomes.
+        let scratch = Scratch::new("append-moved");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let appended = append_bytes(&at, &plan).expect("build the update");
+
+        // Something else writes to the file in between.
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&at)
+                .expect("open");
+            file.write_all(b"% something else was here\n")
+                .expect("write");
+        }
+        let meddled = std::fs::read(&at).expect("read");
+
+        let refused = append_in_place(&appended, &at).expect_err("refused");
+        assert!(refused.contains("prepared against"), "{refused}");
+        assert_eq!(
+            std::fs::read(&at).expect("read"),
+            meddled,
+            "and nothing was written on top of it"
+        );
+    }
+
+    #[test]
+    fn an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was() {
+        // **The rollback, and it needs the failure planted rather than hoped
+        // for.** Every other outcome of `append_in_place` leaves the file valid,
+        // so a test that only ever appended good bytes would exercise the
+        // recovery path never --- which is the trap about a test for an atomic
+        // write that does not plant the intermediate it is meant to prove.
+        //
+        // The update section is replaced with bytes that are not one. They are
+        // appended, the re-read fails, and the file has to come back at exactly
+        // its previous length and content.
+        let scratch = Scratch::new("append-rollback");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let before = std::fs::read(&at).expect("read before");
+        let mut appended = append_bytes(&at, &plan).expect("build the update");
+        // A trailer that names an offset into nothing. It parses as far as
+        // `startxref` and then points at a cross-reference that is not there.
+        appended.update = b"\nstartxref\n999999999\n%%EOF\n".to_vec();
+
+        let refused = append_in_place(&appended, &at).expect_err("the re-read refuses");
+        assert!(refused.contains("put back"), "{refused}");
+        assert_eq!(
+            std::fs::read(&at).expect("read after"),
+            before,
+            "the file is exactly what it was"
+        );
+    }
+
+    #[test]
+    fn an_append_that_parses_and_has_lost_pages_is_also_put_back() {
+        // **Written because a mutation survived.** The verification has two
+        // failing arms --- the file does not parse, and the file parses with the
+        // wrong number of pages --- and the rollback test above reaches only the
+        // first: it plants a trailer pointing at nothing, so `Document::load`
+        // errors and the count is never compared. Replacing the count comparison
+        // with `Ok(_) => Ok(())` passed every test in this module.
+        //
+        // So the update section here is a *real* one, built by `lopdf` from the
+        // fixture and complete enough to parse, whose catalog names an empty page
+        // tree. That is what a mis-chained cross-reference looks like when it
+        // happens to land on something readable, and it is the outcome worth
+        // refusing: a file that opens, and is empty.
+        let scratch = Scratch::new("append-empty");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let before = std::fs::read(&at).expect("read before");
+        let mut appended = append_bytes(&at, &plan).expect("build the update");
+
+        // A second revision over the same file, which replaces the catalog's
+        // /Pages with a tree that has no kids.
+        let original = std::fs::read(&at).expect("read");
+        let prev = Document::load_mem(&original).expect("parse");
+        let catalog = prev
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .expect("a catalog");
+        let mut incremental = IncrementalDocument::create_from(original, prev);
+        let empty = incremental.new_document.add_object(dictionary! {
+            "Type" => "Pages",
+            "Kids" => Object::Array(Vec::new()),
+            "Count" => 0,
+        });
+        incremental
+            .opt_clone_object_to_new_document(catalog)
+            .expect("bring the catalog across");
+        incremental
+            .new_document
+            .get_object_mut(catalog)
+            .and_then(Object::as_dict_mut)
+            .expect("the catalog is a dictionary")
+            .set("Pages", Object::Reference(empty));
+        let mut sink = Tail {
+            skip: before.len(),
+            seen: 0,
+            tail: Vec::new(),
+        };
+        incremental
+            .save_to(&mut sink)
+            .expect("build the bad update");
+        appended.update = sink.tail;
+
+        let refused = append_in_place(&appended, &at).expect_err("the count refuses");
+        assert!(refused.contains("page(s) and should have"), "{refused}");
+        assert!(refused.contains("put back"), "{refused}");
+        assert_eq!(
+            std::fs::read(&at).expect("read after"),
+            before,
+            "the file is exactly what it was"
+        );
+    }
+
+    #[test]
+    fn an_append_is_refused_for_a_plan_that_needs_a_rewrite() {
+        // `mode_for` is what chooses, so this is unreachable from the command ---
+        // and it is the guard that stops a future caller getting it wrong
+        // quietly, by writing an update section for an edit an update section
+        // cannot express.
+        let scratch = Scratch::new("append-wrong-mode");
+        let Some((at, mut plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        let before = std::fs::read(&at).expect("read before");
+        plan.pages[0].turns = 1;
+
+        let refused = append_bytes(&at, &plan).expect_err("refused");
+        assert!(
+            refused.message.contains("full rewrite"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(
+            std::fs::read(&at).expect("read"),
+            before,
+            "and wrote nothing"
+        );
+    }
+
+    #[test]
+    fn an_append_is_refused_when_the_file_changed_since_it_was_opened() {
+        // The same guard `stage_in_place` has, and it has to be here too: the
+        // two paths no longer share a function, so a refusal written once is a
+        // refusal on one of them.
+        let scratch = Scratch::new("append-changed");
+        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            return;
+        };
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&at)
+                .expect("open");
+            file.write_all(b"% changed under the reader\n")
+                .expect("write");
+        }
+        let meddled = std::fs::read(&at).expect("read");
+
+        let refused = append_bytes(&at, &plan).expect_err("refused");
+        assert!(
+            refused.changed,
+            "it is a changed-file refusal: {}",
+            refused.message
+        );
+        assert_eq!(
+            std::fs::read(&at).expect("read"),
+            meddled,
+            "and wrote nothing"
+        );
+    }
+
+    #[test]
+    fn a_third_parser_reads_an_appended_document() {
+        // **The append's own third parser.** `lopdf` wrote the update and
+        // `lopdf` verifies it inside `append_in_place`, which is a writer
+        // agreeing with its own reader --- enough to catch a mis-chained
+        // cross-reference and not enough to say the file is one other software
+        // will open. Spike 0.6 put this to four parsers; this is the one of them
+        // that is linked into the test binary.
+        let scratch = Scratch::new("append-third");
+        let mut examined = 0;
+        for name in ["text-heavy.pdf", "rotated.pdf", "links.pdf", "mixed.pdf"] {
+            let Some((at, plan)) = appendable(&scratch, name) else {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            };
+            let source = std::fs::read(&at).expect("read source");
+            let Some(before) = os_pdf::read(&source) else {
+                println!("[SKIP] {name}: the OS parser refused the source document");
+                continue;
+            };
+
+            let appended = append_bytes(&at, &plan).expect("build the update");
+            append_in_place(&appended, &at).expect("append");
+
+            let after = os_pdf::read(&std::fs::read(&at).expect("read after"))
+                .expect("the OS parser reads the appended document");
+            assert_eq!(
+                after.pages.len(),
+                before.pages.len(),
+                "{name}: every page survives"
+            );
+            assert_eq!(
+                after.pages.iter().map(|p| p.rotation).collect::<Vec<_>>(),
+                before.pages.iter().map(|p| p.rotation).collect::<Vec<_>>(),
+                "{name}: and each at the rotation it had --- an append changes no page"
+            );
+            examined += 1;
+        }
+        assert!(examined > 0, "no fixture was examined");
+    }
+
+    /// What an append costs against a rewrite, and where a save's time goes.
+    ///
+    /// `#[ignore]`, so it runs only when asked --- it copies a 337 MB fixture
+    /// three times. Kept beside the code rather than as an example because the
+    /// numbers it produces are what decided the mode's design, and a measurement
+    /// nobody can re-run is a claim.
+    ///
+    /// ```text
+    /// cargo test --release --lib save::tests::bench_append -- --ignored --nocapture
+    /// ```
+    ///
+    /// **Measured 2026-08-22, release, M5 MacBook Pro, warm page cache.** The
+    /// A/B is interleaved per round rather than run as two blocks, which is this
+    /// repository's standing rule, and the best of three is reported because
+    /// what is being compared is the work rather than the scheduling noise.
+    ///
+    /// | fixture | size | append | bytes | rewrite | bytes | ratio |
+    /// |---|---|---|---|---|---|---|
+    /// | text-heavy   | 1.4 MB | 13.4 ms | 867 | 5.8 ms  | 1,345,132 | 0.4x |
+    /// | scan, 5 pages  | 42 MB  | 89.8 ms | 824 | 84.4 ms | 42,078,652 | 0.9x |
+    /// | scan, 20 pages | 168 MB | 336.9 ms | 830 | 344.9 ms | 168,312,340 | 1.0x |
+    /// | scan, 40 pages | 337 MB | 667.2 ms | 839 | 739.2 ms | 336,624,052 | 1.1x |
+    ///
+    /// **The wall-clock claim in `docs/PLAN.md` §5 does not survive this, and
+    /// the bytes-written claim survives it completely.** §5 records 8.2x at
+    /// 337 MB. What it measured is the *writer* in isolation; what a reader
+    /// waits for is a save, and a save is dominated by something neither mode
+    /// chooses: the open-time fingerprint's streamed SHA-256 of the whole file,
+    /// which this run times separately at **603 ms of the append's 667**. Both
+    /// modes pay it, so the mode moves about 64 ms of a 670 ms save.
+    ///
+    /// The rest of the append's own cost is 21 ms reading the file, 6 ms parsing
+    /// it and 43 ms parsing it again to verify the result --- a check the rewrite
+    /// does not perform at all, since it verifies the *source* before a rename
+    /// rather than the file it produced.
+    ///
+    /// So the reason to append is what it writes: **839 bytes rather than 337
+    /// megabytes**, which matters for a document in a synced folder, for the
+    /// life of the disk, and because the previous revision survives byte for
+    /// byte inside the new file. It is not the speed, and this file should not
+    /// be read as claiming it is.
+    #[test]
+    #[ignore]
+    fn bench_append_against_rewrite() {
+        for name in [
+            "text-heavy.pdf",
+            "incr-scan-5p.pdf",
+            "incr-scan-20p.pdf",
+            "incr-scan-40p.pdf",
+        ] {
+            let scratch = Scratch::new("bench");
+            let Some((at, plan)) = appendable(&scratch, name) else {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            };
+            let size = std::fs::metadata(&at).expect("stat").len();
+            let out = scratch.join("rewritten.pdf");
+            let mut appends: Vec<(f64, usize)> = Vec::new();
+            let mut rewrites: Vec<(f64, usize)> = Vec::new();
+            for round in 0..3 {
+                // A fresh copy per round: an append changes the file, so a
+                // second round over the same one would be measuring a document
+                // with a revision already on it.
+                let fresh = scratch.join(&format!("round-{round}.pdf"));
+                std::fs::copy(&at, &fresh).expect("copy");
+                let mut this = plan.clone();
+                this.opened_as =
+                    Some(crate::fingerprint::Fingerprint::of(&fresh).expect("fingerprint"));
+
+                let clock = std::time::Instant::now();
+                let update = append_bytes(&fresh, &this).expect("build the update");
+                let added = update.len();
+                append_in_place(&update, &fresh).expect("append");
+                appends.push((clock.elapsed().as_secs_f64() * 1000.0, added));
+
+                let clock = std::time::Instant::now();
+                let whole =
+                    planned_bytes(&at, &plan, OnChange::Proceed, NO_VIEW_TURN).expect("rewrite");
+                let wrote = whole.bytes.len();
+                write_atomically(&out, &whole.bytes).expect("write");
+                rewrites.push((clock.elapsed().as_secs_f64() * 1000.0, wrote));
+
+                let _ = std::fs::remove_file(&fresh);
+            }
+
+            // The fingerprint on its own, because it is most of both numbers and
+            // is the finding rather than an aside.
+            let clock = std::time::Instant::now();
+            let _ = crate::fingerprint::Fingerprint::of(&at).expect("fingerprint");
+            let hashing = clock.elapsed().as_secs_f64() * 1000.0;
+
+            let best =
+                |runs: &[(f64, usize)]| runs.iter().map(|run| run.0).fold(f64::MAX, f64::min);
+            println!(
+                "[bench] {name:18} {size:>10} B | append {:>7.1} ms {:>7} B | \
+                 rewrite {:>7.1} ms {:>12} B | {:.1}x | fingerprint {hashing:.1} ms",
+                best(&appends),
+                appends[0].1,
+                best(&rewrites),
+                rewrites[0].1,
+                best(&rewrites) / best(&appends),
+            );
         }
     }
 
