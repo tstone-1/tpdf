@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 440 entries
+The one thing this file does *not* carry in full is the trap list --- 441 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1125,7 +1125,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 440 of them and the full text
+titles. Only the titles are here, because there are 441 of them and the full text
 was 93% of this file --- an instruction budget spent on the 424 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1611,6 +1611,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A control that cannot discriminate is not a failure, and calling it one made a documented command red
 - A guard written inline with an FFI call is reachable by nothing (the fix is a seam, not a harness)
 - A request still in flight is not re-issued, so a mid-flight invalidation looks broken
+- A fixture no script writes gated ten guards, and the tests that skipped passed (the guards were correct; six SURVIVED mutations were one missing file, and the fix is not to obtain it)
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

@@ -646,6 +646,25 @@ an absent file reported as a broken bundle. `text-heavy.pdf` is deliberately not
 it is a real document rather than a generated one, and a machine that does not have it
 cannot make it.
 
+**What that was quietly costing, found 2026-08-22.** This limitation had been written
+down three times and every one of them discusses *corpora* --- a viewer sweep that cannot
+run all fourteen, a `prespawn-bench` check that skips, a 109-name re-run taken on six.
+All true, and none of them is where it hurt. **Ten `cargo test` tests over the save
+path's guards also asked for `text-heavy.pdf`**, and returned at their first line without
+it: here, and on both runners, which cannot have it either. A test that returns early is
+counted among the `753 passed`, and its `[SKIP]` goes to a stdout libtest discards for a
+passing test, so nothing in a green run said so. Every mutation aimed at those guards
+SURVIVED, which is the only instrument that could tell.
+
+They use `comments.pdf` now --- generated, appendable, and carrying `/Annots` of its own
+so the array-bearing branch is exercised too --- except the one whose control needs a page
+listing *nothing*, which takes `rotated.pdf`. All twelve `append` mutations and all 62
+`save` ones are now caught by the test named for them. The guards were correct throughout.
+
+The general form is worth carrying to the next "this machine cannot have X" note: the
+question is not whether it is true, it is **what else consumes X**. `docs/TRAPS.md` has
+the entry.
+
 `make_incremental_pdf.py` writes about **550 MB** on purpose, so that "appending to a
 300 MB file is near-instant" can be tested at 300 MB.
 

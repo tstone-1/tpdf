@@ -19,6 +19,21 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Fixed: ten tests over the save path had never run outside one machine
+
+No behaviour change, and the reason it is worth an entry is that it was invisible.
+Ten tests covering what stops a save from damaging a file --- the checks that the
+file is still the file, that an update was built against the length it is being
+written after, and that a failed append puts the file back --- asked for a
+fixture that no script produces. Without it they returned before their first
+assertion, on this machine and on both CI runners, and a test that returns early
+is counted as passing. Deleting the guards they cover left every one of them
+green.
+
+They now use a fixture the build can generate, so they run everywhere. The
+guards themselves were correct throughout; nothing was wrong with the code, and
+nothing outside one developer's machine could have told you that.
+
 ### Changed: a very large document saves the slow way instead of not at all
 
 Adding a highlight to a document over 256 MiB now rewrites it rather than

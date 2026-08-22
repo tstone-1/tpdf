@@ -4742,6 +4742,24 @@ mod tests {
     /// A copy rather than the fixture itself, and it is not tidiness: an append
     /// writes to the file it is given, so a test that pointed at `testdata/`
     /// would edit the corpus every other test reads.
+    /// A copy of a fixture in scratch, with a marks-only plan against it.
+    ///
+    /// **Callers pass `comments.pdf` rather than `text-heavy.pdf`, and that is a
+    /// coverage fix rather than a preference.** `text-heavy.pdf` is a real
+    /// document supplied by hand --- no script writes it, `scripts/ci_fixtures.py`
+    /// says so, and `BUILD.md` has recorded since 2026-07-30 that the Windows box
+    /// has never had it. What nobody had drawn from that is what it does to a
+    /// *unit test*: ten tests over this module's guards took their `else` arm and
+    /// returned, here and on both CI runners, and a test that returns early
+    /// passes exactly like one that ran. Every mutation aimed at those guards
+    /// SURVIVED for that reason and for no other.
+    ///
+    /// Nothing in these tests needs a real document. They are about lengths,
+    /// fingerprints and rollback, so what the fixture has to be is *appendable*
+    /// and generated. `comments.pdf` is both, is built by one of the
+    /// dependency-free scripts CI already runs, and carries `/Annots` of its own
+    /// --- which a plain text document does not, so the array-bearing branch of
+    /// `mark_sites` is now exercised as well.
     fn appendable(scratch: &Scratch, name: &str) -> Option<(PathBuf, Plan)> {
         let source = fixture(name)?;
         let at = scratch.join(name);
@@ -4889,8 +4907,8 @@ mod tests {
         // validator show exactly what a signature covered, and is why this is
         // not merely a faster rewrite.
         let scratch = Scratch::new("append-prefix");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let before = std::fs::read(&at).expect("read before");
@@ -4924,9 +4942,16 @@ mod tests {
         // through the same `subtypes_on` the rewrite path's tests use, so the
         // two modes are asserted to produce the same thing rather than each
         // being asserted to produce something.
+        // `rotated.pdf` rather than the `comments.pdf` its neighbours use,
+        // because the negative half below needs a page that lists *nothing* --
+        // and a fixture that ships its own comments cannot provide one. Asking
+        // instead whether page 1 gained a Highlight would not rescue it: this
+        // fixture's own marks include highlights, so the assertion could not
+        // tell "the mark went to the wrong page" from "the fixture was already
+        // like that". Annotation-free is the control, not a preference.
         let scratch = Scratch::new("append-mark");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "rotated.pdf") else {
+            println!("[SKIP] rotated.pdf: fixture not generated");
             return;
         };
         let pages = page_count(&at);
@@ -4955,8 +4980,8 @@ mod tests {
         // produces a cross-reference pointing at the wrong bytes --- a file that
         // opens and is wrong, which is the worst of the three outcomes.
         let scratch = Scratch::new("append-moved");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let appended = append_bytes(&at, &plan).expect("build the update");
@@ -5035,8 +5060,8 @@ mod tests {
         // still open, which is what makes it worth refusing rather than
         // detecting later.
         let scratch = Scratch::new("append-mismatch");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let original = std::fs::read(&at).expect("read");
@@ -5130,8 +5155,8 @@ mod tests {
         // of the check cannot fire and only the modification time can. Its
         // sibling above covers the other half, where the length moves.
         let scratch = Scratch::new("append-swapped");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let appended = append_bytes(&at, &plan).expect("build the update");
@@ -5196,8 +5221,8 @@ mod tests {
         //  - and the save reports that it did not land where it was asked to,
         //    rather than reporting success.
         let scratch = Scratch::new("append-renamed");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let appended = append_bytes(&at, &plan).expect("build the update");
@@ -5259,8 +5284,8 @@ mod tests {
         // appended, the re-read fails, and the file has to come back at exactly
         // its previous length and content.
         let scratch = Scratch::new("append-rollback");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let before = std::fs::read(&at).expect("read before");
@@ -5293,8 +5318,8 @@ mod tests {
         // happens to land on something readable, and it is the outcome worth
         // refusing: a file that opens, and is empty.
         let scratch = Scratch::new("append-empty");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let before = std::fs::read(&at).expect("read before");
@@ -5351,8 +5376,8 @@ mod tests {
         // quietly, by writing an update section for an edit an update section
         // cannot express.
         let scratch = Scratch::new("append-wrong-mode");
-        let Some((at, mut plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, mut plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let before = std::fs::read(&at).expect("read before");
@@ -5377,8 +5402,8 @@ mod tests {
         // two paths no longer share a function, so a refusal written once is a
         // refusal on one of them.
         let scratch = Scratch::new("append-changed");
-        let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         {
