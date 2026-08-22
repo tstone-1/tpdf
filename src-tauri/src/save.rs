@@ -458,7 +458,7 @@ impl Appended {
 pub fn append_bytes(source: &Path, plan: &Plan) -> Result<Appended, Refusal> {
     let ready = append_ready(source, plan)?;
     let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
-    appended(ready, append_update(&original, plan)?)
+    appended(ready, append_update(original, plan)?)
 }
 
 /// What the caller established about the file before anything parsed it.
@@ -590,7 +590,7 @@ pub struct Update {
 /// The plan is not append-shaped; the bytes cannot be parsed; the document is
 /// encrypted; its page count is not the plan's baseline; or a mark maps to
 /// nothing.
-pub fn append_update(original: &[u8], plan: &Plan) -> Result<Update, Refusal> {
+pub fn append_update(original: Vec<u8>, plan: &Plan) -> Result<Update, Refusal> {
     if !plan.only_adds_marks() {
         // Not a reader-facing refusal: nothing offers this mode, `mode_for`
         // chooses it, and a caller reaching here with the wrong plan has a
@@ -599,9 +599,10 @@ pub fn append_update(original: &[u8], plan: &Plan) -> Result<Update, Refusal> {
         return Err("this document needs a full rewrite rather than an append".into());
     }
     let was = original.len() as u64;
+    let built_against = original.len();
 
     let prev = Document::load_mem_with_options(
-        original,
+        &original,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
             ..Default::default()
@@ -638,7 +639,34 @@ pub fn append_update(original: &[u8], plan: &Plan) -> Result<Update, Refusal> {
     let kept: Vec<u32> = (1..=u32::try_from(pages.len()).unwrap_or(u32::MAX)).collect();
     let sites = mark_sites(&prev, &pages, &kept, &plan.marks)?;
 
-    let mut incremental = IncrementalDocument::create_from(original.to_vec(), prev);
+    // **Moved rather than copied, and this buys nothing --- it is written this
+    // way so that the one copy is visible at the caller instead of hidden here.**
+    //
+    // `IncrementalDocument` keeps the previous revision's bytes because
+    // `save_to` writes them through ahead of the update. `Tail` below throws
+    // every one of them away, so the buffer exists to be discarded, and reading
+    // `lopdf`'s writer shows it needs only two facts about it: the **length**,
+    // which is what advances `bytes_written` and therefore makes the update's
+    // offsets correct, and the **last byte**, which decides whether a newline is
+    // emitted before the appended revision. A 337 MB buffer is carried to supply
+    // a number and a byte, and `create_from` takes `Vec<u8>` so there is no way
+    // to hand it less.
+    //
+    // The signature took `&[u8]` and called `to_vec()` for a day. Changing it to
+    // move an owned buffer looked like removing that copy and did not: the
+    // worker's document is a read-only mapping, so `into_owned()` at the call
+    // site costs exactly what `to_vec()` cost here. `worker-probe` measured both
+    // and reported **+667.0 MB either way** on the 337 MB scan, to four
+    // significant figures --- which is what an edit that changed nothing looks
+    // like. The 667 is the sum of this buffer and the parsed object graph, and
+    // both are `lopdf`'s rather than ours.
+    //
+    // It matters because a Windows worker is capped at 1024 MB of *commit* by
+    // its job object. The mapping itself is file-backed and not commit there, so
+    // the number to compare is the 667 rather than the 1029.8 macOS footprint
+    // --- but nobody has measured it on Windows, and `docs/PLAN.md` §3 records
+    // that as the open question rather than assuming the margin.
+    let mut incremental = IncrementalDocument::create_from(original, prev);
     // **Brought across before anything is written, and only what changes.** A
     // page whose `/Annots` is its own object contributes that array and nothing
     // else; a page with an inline list or none contributes its dictionary.
@@ -674,7 +702,7 @@ pub fn append_update(original: &[u8], plan: &Plan) -> Result<Update, Refusal> {
     Ok(Update {
         update: sink.tail,
         pages: pages.len(),
-        built_against: original.len(),
+        built_against,
     })
 }
 
@@ -4838,7 +4866,7 @@ mod tests {
         };
         let original = std::fs::read(&at).expect("read");
         let ready = append_ready(&at, &plan).expect("check the file");
-        let update = append_update(&original, &plan).expect("build the update");
+        let update = append_update(original, &plan).expect("build the update");
 
         // The control: the two halves as they really are agree, so the refusal
         // below is about the mismatch and not about the pair being unusable.
@@ -5284,6 +5312,93 @@ mod tests {
     /// life of the disk, and because the previous revision survives byte for
     /// byte inside the new file. It is not the speed, and this file should not
     /// be read as claiming it is.
+    /// What a rewrite costs in memory, which is what decides where it can run.
+    ///
+    /// **Measured because a design rested on it.** Moving the rewrite into the
+    /// worker means the worker holds the serialised document, and a Windows
+    /// worker is capped at `sandbox_win::WORKER_MEMORY_CAP` --- 1 GB of commit.
+    /// Whether a rewrite of the largest fixture fits under that is the whole
+    /// question, and reasoning about it from the file size would have been a
+    /// guess: `lopdf` holds the parsed object graph *and* the output buffer, and
+    /// neither is the file's length.
+    ///
+    /// Reports the process footprint before and after, which on macOS excludes
+    /// clean file-backed pages --- so what it shows is what this rewrite made
+    /// dirty rather than what the fixture weighs on disk.
+    ///
+    /// ```text
+    /// cargo test --release --manifest-path src-tauri/Cargo.toml \
+    ///     -- --ignored --nocapture bench_rewrite_footprint
+    /// ```
+    #[test]
+    #[ignore]
+    fn bench_rewrite_footprint() {
+        let me = std::process::id();
+        for name in ["text-heavy.pdf", "incr-scan-5p.pdf", "incr-scan-40p.pdf"] {
+            let Some(path) = fixture(name) else {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            };
+            let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let count = page_count(&path);
+            let before = crate::worker::phys_footprint(me).unwrap_or(0);
+
+            // **The parse on its own first**, because the two terms have to be
+            // separated to choose a design. A worker that *streams* its output
+            // holds the object graph and never a full output buffer; a worker
+            // that hands one back holds both. Measuring only the pair cannot
+            // tell those apart, and the first version of this bench did exactly
+            // that and was read as ruling out streaming.
+            let source = std::fs::read(&path).expect("read");
+            let parsed = Document::load_mem_with_options(
+                &source,
+                lopdf::LoadOptions {
+                    max_decompressed_size: Some(MAX_DECODE),
+                    ..Default::default()
+                },
+            )
+            .expect("parse");
+            let graph = crate::worker::phys_footprint(me).unwrap_or(0);
+            drop(parsed);
+            drop(source);
+
+            let plan = plan_opened_as(&vec![0u8; count], &path);
+            let started = std::time::Instant::now();
+            let built = planned_bytes(&path, &plan, OnChange::Refuse, NO_VIEW_TURN)
+                .expect("rewrite the document");
+            let took = started.elapsed();
+            let peak = crate::worker::phys_footprint(me).unwrap_or(0);
+
+            // **Absolute footprints, not deltas, and that is a correction.**
+            // The first version printed `saturating_sub(before)` and reported
+            // **+0.0 MB** for reading and parsing a 337 MB file --- which is not
+            // a measurement, it is a *negative* delta clamped to zero. The
+            // baseline moves between iterations: `phys_footprint` is what the
+            // process holds now, the allocator does not return everything at
+            // `drop`, and a later iteration can start above where an earlier one
+            // ended. A clamp turned "the baseline moved" into "this cost
+            // nothing", which is the more reassuring of the two readings and the
+            // wrong one. Printed absolute, a decrease is visible as a decrease.
+            println!(
+                "[bench] {name:<20} file {bytes:>10} B | out {:>10} B | footprint \
+                 idle {:>7.1} -> parsed {:>7.1} -> rewritten {:>7.1} MB | {:>7.1} ms",
+                built.bytes.len(),
+                before as f64 / 1e6,
+                graph as f64 / 1e6,
+                peak as f64 / 1e6,
+                took.as_secs_f64() * 1e3,
+            );
+            drop(built);
+        }
+        // Named rather than read: `sandbox_win` is `#[cfg(windows)]`, so a Mac
+        // cannot ask it. Written as the constant's value with its name beside
+        // it, so a reader can check the one against the other -- which is the
+        // whole of what a number in a comment can offer.
+        println!(
+            "[bench] a Windows worker is capped at 1 GB of commit (sandbox_win::WORKER_MEMORY_CAP)"
+        );
+    }
+
     #[test]
     #[ignore]
     fn bench_append_against_rewrite() {

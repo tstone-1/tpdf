@@ -19,6 +19,23 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Measured: what preparing a save costs, and what that rules out
+
+No behaviour change. Moving the rewrite into the worker as well was the next
+step, and measuring first is what stopped it: a rewrite's output buffer is the
+size of the file, so a worker asked to hold one for a 337 MB scan would need
+roughly another file's worth on top of what it already holds --- and a Windows
+worker is capped at 1 GB of committed memory by its job object. The design that
+looked simplest, because it needed no platform-specific code, is the one the
+measurement rules out. `docs/PLAN.md` §3 has the table and the re-ranked options.
+
+The same measurement raised an open question about the save that *did* move, and
+it is recorded rather than answered: on macOS a worker holding that document
+reaches 1029.8 MB of footprint, of which the append adds 667 MB. Windows counts
+committed memory rather than footprint and does not count the document's mapping,
+so the margin should hold --- but that is reasoning, and nobody has run the probe
+against a large document on Windows. `BUILD.md` says so beside the command.
+
 ### Changed: saving your marks no longer parses the document in the app process
 
 Every path that writes a document used to read it with `lopdf` inside the process

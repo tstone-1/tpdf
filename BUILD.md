@@ -1082,6 +1082,14 @@ cargo build --release --example worker-probe
 ./src-tauri/target/release/examples/worker-probe.exe testdata/text-base14.pdf
 ```
 
+**Run it against `incr-scan-40p.pdf` too, and read the `[INFO]` line.** It reports what a
+save's preparation costs the worker --- on macOS, 362.7 MB before the request and 1029.8 MB
+after, so the append itself adds 667 MB on that document. The job object caps a Windows worker
+at 1024 MB of *commit*, and commit does not count the document's file-backed mapping, so the
+number that matters there is the 667 and the margin should hold. **That is reasoning, and it
+has never been measured on Windows.** It is the one open question about the append that
+shipped on 2026-08-22; `docs/PLAN.md` §3 carries it.
+
 **11/11 checks, 1 not applicable**, on `text-base14`, `text-cid`, `vector-heavy` and `rotated`
 --- tiles **pixel-identical** to the in-process render, plus text extraction, outlines and
 search across the boundary. That is what the run measured on 2026-07-29 and is left as it was
