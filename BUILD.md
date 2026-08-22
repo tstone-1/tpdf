@@ -2696,6 +2696,52 @@ What it does **not** cover: the command list `App.svelte` registers, and the Cmd
 opens the palette. The check builds its own registry, so it proves the palette works and
 not that the application's commands are wired to it.
 
+### Checking that a mark a reader makes reaches the document
+
+The chain a mark travels --- command, gesture on the viewer, callback, edit model,
+overlay --- had **nothing running over it end to end**, and a reader found the hole on
+2026-08-22: a shape drawn on the last page of a document was dropped with no command sent
+and no message shown, while all sixteen gates stayed green. Each half asserted its own side
+and was right; the join is an object literal in `App.svelte`, which no unit test imports
+and which `viewer_check.py` does not reach, because that harness builds its own `Viewer`
+with no model behind it.
+
+```
+scripts/mark_check.py \
+    src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf testdata/links.pdf
+```
+
+It takes the **binary**, not the bundle --- there is no Launch Services route here and the
+document is handed over in `argv`. Inside a bundle it must still be the one under
+`Contents/MacOS/`, because WKWebView needs the bundle identity or the page never runs.
+`src/lib/markcheck.ts` holds the checks and the argument for each; the one it exists for is
+*"and it is recorded on the page it was pressed on"*, which derives the expected page **id**
+from the model's own page list at the viewer's own slot and compares it with the id the
+model filed the mark under. Under the shipped defect those differed by one on every
+document.
+
+Every assertion reads the **model** --- marks that came back over the IPC boundary from
+Rust --- and never the viewer that produced the gesture, which is what keeps it from being a
+writer agreeing with its own reader. The single exception is the ink reading, whose job is
+the last hop a model assertion cannot see.
+
+⚠ **The launch half has never run.** It was written on a machine whose screen was locked,
+and `webview_guard` refuses rather than hanging --- correctly, since a suspended WebKit page
+does not run the check slowly, it does not run it at all. So **this harness is in the state
+`docs/TRAPS.md` warns about: one that has never executed produces no failures, and neither
+does one that passes.** What *is* proved is the transcript reader, which needs no screen:
+
+```
+scripts/mark_check.py --self-test
+```
+
+Seven cases, six of them refusals --- no summary line, a summary disagreeing with the exit
+code, a failing summary, a run that never opened a document, a skipped keystone check, and
+a name found by prefix rather than by column. Run the real thing on an unlocked screen
+before trusting a green line from it, and prove it can go red the way every other harness
+here was proved: reintroduce the slot lookup in `Edits.mark`, rebuild, and confirm the
+page-identity check fails.
+
 ### Checking session restore
 
 Reopening where the reader left off is a property of a *launch*, so it takes more than one:

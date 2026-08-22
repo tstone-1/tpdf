@@ -50,6 +50,19 @@ have the binary.)
 - Right-clicking the page and choosing *Add comment* still places it at once,
   since that gesture has already said where.
 
+### Added: a check that a mark reaches the document
+
+- **`scripts/mark_check.py` drives the whole chain a mark travels** --- the
+  command a reader chooses, the gesture on the real viewer, the callback, the
+  edit model and the overlay --- inside the running application, and asserts
+  against what the model holds rather than against the viewer that produced the
+  gesture. Nothing had ever run over that join with a document open, which is
+  how the page defect above shipped with every gate green.
+- Its transcript reader is proved by `--self-test`, six refusals and one
+  acceptance. **The launch half has not run yet**: it needs an unlocked screen,
+  and `BUILD.md` says so beside the invocation, along with the mutation that
+  would prove it can go red.
+
 ### Added: drag a mark to move it
 
 - **A comment, a box, an ellipse, a text box or a drawing can be dragged to
