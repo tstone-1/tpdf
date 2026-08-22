@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 437 entries
+The one thing this file does *not* carry in full is the trap list --- 439 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1116,7 +1116,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 437 of them and the full text
+titles. Only the titles are here, because there are 439 of them and the full text
 was 93% of this file --- an instruction budget spent on the 424 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1337,6 +1337,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `cargo test` is a debug build, and a debug number in a doc comment is a lie
 - PDFKit reports an annotation's bounds rotated and renders the page unrotated (a cross-check read in the wrong convention produced a confident wrong conclusion)
 - Reading the code predicted four call sites, and there were eleven (the finding was right and its scope was not; grep the symbol, not the shape of the call you have in mind)
+- The delta was the wrong term, because the mapping was already absent from both numbers (the argument's one checkable step was right, and the term it removed was in neither number)
 
 ### Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration
@@ -1579,6 +1580,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - `$?` read in the same word as a command substitution is the substitution's status (all three controls agreed, which is the tell)
 - A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work (five probe runners dead on Windows since the day they were written; the wrapper's own `echo` supplied the exit 0 that hid it)
 - A guard that answers by refusing the whole run turns two blocked mutations into 178 (the diagnosis was exactly right and the outcome exactly wrong; a dated measurement in `BUILD.md` had quietly expired)
+- An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
 
 ### Fixtures
 - The test fixtures are generated, not committed

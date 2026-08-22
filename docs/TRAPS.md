@@ -12887,3 +12887,76 @@ the previous revision's bytes three times: it writes them to the target, adds th
 is carried to supply a number and a byte, and the copy is unavoidable only because
 `create_from` takes `Vec<u8>` and offers no way to say less. That is a much better thing to
 know than "the copy is necessary", and it is three minutes of reading.
+
+### The delta was the wrong term, because the mapping was already absent from both numbers
+
+The append that shipped on 2026-08-22 parses the document a second time, and on the 337 MB scan
+`worker-probe` measured a macOS worker going from **362.7 MB** to **1029.8 MB** across the
+request. A Windows worker is capped at 1 GiB of commit by its job object, which is closer to the
+1029.8 than anyone wants, so the question was which of the two numbers the cap actually bounds.
+
+The answer written down was the **delta, 667 MB**, and the argument for it was correct in its
+one checkable step: `ProcessMemoryLimit` counts private commit, a read-only document mapping is
+file-backed, so the mapping is not commit and the 362.7 MB baseline it was taken for does not
+count against the cap. That leaves a 35% margin and the append was shipped on it.
+
+**Measured on Windows, the worker peaks at 980.3 MiB --- 1027.9 MB, which is the macOS 1029.8 to
+within 0.2%.** The margin is 4.3%, not 35%, and the largest fixture in the repository is 15 MB
+short of not saving at all.
+
+The error is one step earlier than where anyone was looking. `phys_footprint` excludes *clean*
+file-backed pages too, so the mapping was never in the 1029.8 either --- and the 362.7 MB
+baseline, taken for the mapping because it is close to the file's 337 MB, is PDFium's own
+allocation for a 40-page scan. Both metrics were already reporting the same quantity. The
+delta removed a term that was not in either number, and the coincidence of size is what made
+that look right.
+
+**When two platforms' metrics are said to differ, check the difference against a number they
+should agree on before reasoning from it.** Here that check is free and decisive: the totals
+agree to 0.2%, so there is nothing for the delta to correct for. It was available the whole
+time and nobody could take it, because taking it needs the Windows machine, which is exactly
+the condition under which reasoning gets written down as a substitute.
+
+Two smaller things worth keeping.
+
+**Working set minus commit is the mapping, and it is the observation that confirms the half of
+the argument that was right.** Peak working set runs ~343 MB above peak commit on the 337 MB
+scan. The mapping really is outside the cap; it just was not inside the number it was being
+subtracted from.
+
+**The cap and the reading were their own control.** At 362 MB and 404 MB the measured commit
+stops at 1020.5--1020.7 MiB and the allocator then fails, so the quantity being read from
+outside the process is demonstrably the quantity the kernel is enforcing. A memory figure that
+never approaches a limit cannot tell you it is the figure the limit is about.
+
+### An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
+
+`worker-probe` prints what the append costs the worker as an `[INFO]` line, and `BUILD.md` said,
+for the three weeks the question was open: *"Run it against `incr-scan-40p.pdf` too, and read
+the `[INFO]` line."* On Windows there is no such line and there never could have been.
+
+The line is inside `if let (Some(was), Some(now)) = (before_append, after_append)`, those come
+from `Worker::footprint`, and `phys_footprint` is `#[cfg(not(target_os = "macos"))] -> None`.
+The probe is not hiding the number, it has no number; the neighbouring check says so out loud
+with `[SKIP] the parent can read the worker's footprint --- not applicable`. So the instruction
+asked for the one output the build cannot emit, on the one platform the question was about.
+
+**A `[SKIP]` is a check declaring itself absent. A silently omitted `println!` is not**, and the
+two lived four lines apart in the same function. The check was written to survive its platform
+being wrong about it; the `[INFO]` was written as a convenience and inherited the same guard
+without the same care.
+
+What made it survive review is that the instruction is unfalsifiable from the platform that
+wrote it: on macOS the line prints, so the sentence is true where it was tested and false where
+it was aimed. The same shape as a harness that has never run on a platform --- it produces no
+failures there, and neither does one that passes.
+
+The fix is not to port `phys_footprint`. The quantity that matters on Windows is *commit*, which
+is what the job object caps, and a parent cannot poll it usefully anyway --- the kernel refuses
+the allocation rather than letting a poll observe the peak. It is read from outside the process
+instead, through PSAPI's `PeakPagefileUsage` over the probe's children, which is what `BUILD.md`
+now carries.
+
+**Before telling someone to read a line, check that the build they will run can print it.** A
+grep for the format string is enough, and it is cheaper than the round trip to the machine that
+finds out.

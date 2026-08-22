@@ -220,12 +220,36 @@ shapes remain, re-ranked by that measurement:
 3. **Holding the output and pulling it in chunks.** Ruled out: it is the term the cap cannot
    take.
 
-**Open, and it needs a Windows machine.** Everything above is macOS `phys_footprint`, which
-counts dirty file-backed pages; Windows `ProcessMemoryLimit` counts private commit and the
-document's mapping is not commit there. The number to compare against 1024 MB is therefore the
-**667 MB the append added**, not the 1029.8 MB total --- which leaves a margin, by reasoning
-rather than by measurement. Run `worker-probe` on `incr-scan-40p.pdf` on Windows before
-trusting it, because the append already ships.
+**Closed, measured on Windows 2026-08-22, and the reasoning it replaces was wrong.** What
+stood here: everything above is macOS `phys_footprint`, which counts dirty file-backed pages,
+while Windows `ProcessMemoryLimit` counts private commit and the document's mapping is not
+commit there --- so the number to compare against the cap is the **667 MB the append added**, not
+the 1029.8 MB total, which leaves a comfortable margin.
+
+The mapping half holds and the conclusion does not. `phys_footprint` excludes *clean*
+file-backed pages, and a read-only document mapping is clean, so the mapping is absent from the
+1029.8 as well; the 362.7 MB baseline taken for it is PDFium's own allocation, which is private
+commit on Windows exactly as it is anonymous memory on macOS. **The two metrics measure the same
+thing here, and they agree to 0.2%** --- `worker-probe` on `incr-scan-40p.pdf` peaks at 980.3 MiB
+of commit (1027.9 MB) against the macOS 1029.8 MB. The whole footprint was the term to compare,
+and the margin is **43.7 MiB, 4.3%**.
+
+The append still fits on the largest fixture in the repository --- 16/16 --- and it is close to
+the last size that does. Bracketed rather than extrapolated: a 345.0 MB scan saves at 98.1% of
+the cap, a 361.9 MB scan aborts, and so does a 404.0 MB one. **Above roughly 350 MB an append
+cannot be built on Windows.**
+
+Two consequences for the ranking above. The **writable output mapping** (option 1) was already
+the only design that fits and is now more so: it takes the *output* term out of the cap, and this
+measurement says the *input* term alone leaves 4% of headroom, so holding a rewrite's output in
+the worker is not merely unreachable for this fixture but unreachable at any size near it. And
+the cap does not bind the path a rewrite takes today --- `save::Mode::Rewrite` runs in the app
+process through `spawn_blocking`, under no job object --- so on a large scan the cheap path fails
+where the expensive one it replaced would not. What a reader gets is a refusal before the
+document is closed (nothing written, edits kept) carrying the text `worker stopped answering
+(exited with 3221226505 (0xC0000409))`, which names neither the size nor the cap. `BUILD.md` has
+the table and how commit was read from outside the process, since the probe's own `[INFO]` line
+is guarded on `phys_footprint` and cannot print off macOS.
 
 What is bounded today on the paths that remain: decompression (`MAX_DECODE`), graph recursion
 (`sweep::MAX_NESTING`) and panics (unwinding, pinned by a test so a profile change cannot
