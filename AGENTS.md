@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 432 entries
+The one thing this file does *not* carry in full is the trap list --- 435 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -187,7 +187,7 @@ that proves the fix.
 **A Windows worker now exists and works** (2026-07-29). `Worker::spawn` builds one on Windows:
 the child is created suspended, dropped to low integrity, assigned to the job object before it
 executes an instruction, and given two pipes and the document and tile sections as inherited
-handles named in argv. `worker-probe` is the evidence --- 11/11 checks on `text-base14`,
+handles named in argv. `worker-probe` is the evidence --- 11/11 checks as measured that day, on `text-base14`,
 `text-cid`, `vector-heavy` and `rotated`, including **pixel-identical** tiles against the
 in-process render, text extraction, outlines and search across the boundary. The font
 substitution that the macOS sandbox caused, and that `win_sandbox_probe` predicted would not
@@ -483,6 +483,14 @@ invalidates them until the two checks in `BUILD.md` are re-run.
 
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
+
+**Since 2026-08-22 the worker also *writes* with `lopdf`.** `Request::Append` builds the update
+section for a save that only adds marks, because doing so is a pure function of the document's
+bytes and the plan --- and those bytes are the attacker's. It runs where every other parse of
+them runs, which narrowed `docs/THREAT-MODEL.md` residual risk 17 from every writing path to
+the rewriting ones. The split is by authority: `save::append_ready` asks the coordinator's
+questions about a path, `save::append_update` asks none. A rewrite has not moved, and the
+obstacle is its output rather than its input --- see `docs/PLAN.md` §3.
 
 **Comments, links and a document's own properties are read through `lopdf`, not through
 PDFium, and that is a measurement rather than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
@@ -1108,7 +1116,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 432 of them and the full text
+titles. Only the titles are here, because there are 435 of them and the full text
 was 93% of this file --- an instruction budget spent on the 424 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1207,6 +1215,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - PDFium ships its loadable library in a different directory on Windows
 - A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
 - The linker's image table is an observable; a milestone of ours is a claim
+- Where the parse runs is not observable from a unit test (the same bytes from the same input, every test green before and after; the probe's first run failed on a `/CropBox`-shaped quad in a display-space type)
 - A Rust process absorbs the first SIGSEGV you send it
 - A released id must leave a hole, because removing it renumbers the rest
 - Two copies of a distinction drift, and a mutation of one survives
@@ -1223,6 +1232,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A pool that replaces a dead worker with the same bytes faults again, forever
 - A diagnosis placed after a liveness check inherits that check's race
 - A valid in-place rewrite is served silently, and a length check cannot see it
+- The check that could not exist while one function did both halves (two lengths that were one number under two names; when a call becomes a message, list what used to be true by construction)
 - A field documented as the caller's last look, and read by nobody (a `pub` field with no consumer; the type, the doc comment and the call-site comment all pointed at a guard that was a bare length comparison)
 - A guard that looks a pathname up again is not a guard on the file you are writing (four lookups of one name, and the roll-back truncates whatever has it now; the window is inside the function, so the seam is an argument and the intruder must not parse)
 - One temporary name for every save, written with a call that truncates (a predictable sibling, `std::fs::write`, and a cleanup that deletes what it did not create --- `create_new` refuses a symlink too)
@@ -1380,6 +1390,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A test whose failure is a hang reports a pass and a timeout in one breath
 - A check that cannot run is not a check, and a locked screen is enough to stop one
 - An unreachable guard is worth keeping if the type can carry it instead
+- A guard the type system already makes unexpressible has no mutation to write (`error[E0277]` reads exactly like a drifted anchor; delete the mutation rather than weakening the code so it compiles, and keep the test for the change the compiler *would* wave through)
 - A guard whose only reachable input is one the model forbids (build the malformed fixture by hand; the wire format cannot express the biconditional the model enforces)
 - An Escape ordering that no reachable input can distinguish (the surviving mutation was right and the comment claiming the ordering mattered was the defect)
 - A label rendered only from real ids cannot be tested on a combination none of them uses

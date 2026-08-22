@@ -877,16 +877,50 @@ async fn save_document(
     // over a mapped file leaves the mapping serving the old inode on macOS, and
     // an append to one is a file the worker's cached parse no longer describes.
     let mode = save::mode_for(&plan);
-    let staging = source.clone();
-    let prepared = tauri::async_runtime::spawn_blocking(move || match mode {
-        save::Mode::Append => save::append_bytes(Path::new(&staging), &plan).map(Prepared::Append),
-        save::Mode::Rewrite => {
-            save::stage_in_place(Path::new(&staging), &plan).map(Prepared::Rewrite)
+    let prepared = match mode {
+        // **The append's parse happens in the worker**, which is the one
+        // difference between the two arms and the reason they are not one
+        // `spawn_blocking`. `save::append_update` is a pure function of the
+        // document's bytes and the plan, and those bytes are the attacker's ---
+        // so it runs in the process that already holds this document under a
+        // sandbox, a deadline and a restart, and that has already parsed it with
+        // `lopdf` for its comments, links and properties. What comes back is
+        // bytes and two numbers. Every decision about the file stays here:
+        // `append_ready` measures and fingerprints it before the request, and
+        // `save::appended` refuses an answer built against a different length.
+        //
+        // Asked before the close below, which the order already required for an
+        // unrelated reason --- there is no document to build from afterwards.
+        save::Mode::Append => {
+            let checking = source.clone();
+            let asking = plan.clone();
+            let ready = tauri::async_runtime::spawn_blocking(move || {
+                save::append_ready(Path::new(&checking), &asking)
+            })
+            .await
+            .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
+            .map_err(SaveFailure::refused_by)?;
+
+            let (reply, rx) = reply_channel();
+            service.append(doc, plan, reply);
+            let update = await_reply("save_document", rx)
+                .await
+                .map_err(SaveFailure::refused)?;
+            save::appended(ready, update)
+                .map(Prepared::Append)
+                .map_err(SaveFailure::refused_by)?
         }
-    })
-    .await
-    .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
-    .map_err(SaveFailure::refused_by)?;
+        save::Mode::Rewrite => {
+            let staging = source.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                save::stage_in_place(Path::new(&staging), &plan)
+            })
+            .await
+            .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
+            .map(Prepared::Rewrite)
+            .map_err(SaveFailure::refused_by)?
+        }
+    };
 
     // Past this line every failure is an `after_close`: the reader's document is
     // being taken apart, and the honest thing to report is that they have to

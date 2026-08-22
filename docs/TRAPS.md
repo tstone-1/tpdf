@@ -12739,3 +12739,89 @@ instrument; naming which half is weak beats implying both are strong.
 number removed from the README is in a generated file or one `grep -c` away. A count in prose
 has no gate by construction, and this repository has now been caught by that three times in
 three documents.
+
+---
+### A guard the type system already makes unexpressible has no mutation to write
+
+`Plan::opened_as` is `#[serde(skip)]`, so a plan crossing into the worker cannot carry a
+fingerprint of the reader's file. The obvious way to prove that guard is covered is to
+delete the attribute and watch the test named for it go red. It does not go red. It does
+not compile: `error[E0277]`, because `Fingerprint` implements neither `Serialize` nor
+`Deserialize`, so the attribute is what makes `Plan` derivable at all.
+
+**That failure is the good outcome and it reads exactly like the bad one.** The harness
+reports `no summary line -- the run did not finish`, which is the same line it prints for a
+mutation aimed at code that has drifted, for a killed harness's leftover edit, and for an
+anchor that matched the wrong place. Read the compiler error before concluding anything:
+here it says the property is *unexpressible*, which is stronger than *tested*.
+
+Three things follow, and the second is the one that costs people time.
+
+**Delete the mutation rather than weakening the code to accommodate it.** The tempting fix
+is to derive serde on `Fingerprint` so the mutation compiles. That trades a compile-time
+guarantee for a runtime test of the same property, which is the wrong direction, and it
+would put a digest of the reader's file one careless field away from the wire.
+
+**Keep the test anyway, and say in it what it is for.** It no longer proves the attribute is
+present --- the compiler does that. What it catches is the change the compiler *would* wave
+through: somebody adding serde to `Fingerprint` for an unrelated reason and dropping the skip
+in the same edit. That is a real, reachable future commit, and nothing else would notice it.
+
+**A test with no mutation is not automatically decoration**, which is the reflex this
+repository has trained. Ask what would have to change for the assertion to fail, and whether
+that change is reachable. If it is reachable but not expressible as one search-and-replace,
+the honest record is a note in the test rather than a mutation that cannot land.
+
+---
+### Where the parse runs is not observable from a unit test
+
+Moving a save's preparation into the worker changes nothing a unit test can see. The same
+function produces the same bytes from the same input; `append_bytes` and `Request::Append`
+agree by construction, because the second calls the first's builder. Every test stayed green
+before and after, which is correct and says nothing at all about the thing that changed.
+
+The claim is about *which process* did the parsing, and this repository already knows how to
+evidence that: `backend-probe` reads the app process's own module table from outside it, and
+`worker-probe` provokes the boundary rather than inferring it. So the append got three checks
+in `worker-probe` --- an update section built by a real contained worker, appended to the
+fixture and **re-parsed** as a document with the right page count, and its stated build length
+compared with the file's own.
+
+Two things that made those checks worth having rather than ceremonial.
+
+**Assert on the bytes, not on `ok`.** A worker starved of something by its sandbox still
+answers; a reply that went wrong still sets `ok`. What cannot be faked is an update section
+that a parser accepts as a revision of that document. Same reasoning as the pixel comparison
+next to it, which exists because a sandboxed PDFium once returned `ok` while drawing a
+different typeface.
+
+**The first run failed, and the refusal was the probe working.** The fixture plan's quad was
+written with `top` above `bottom`, as a `/CropBox` has it. `Quad` is *display* space, y
+increasing downwards, and the worker refused: *"a mark on page 1 covers no area in that page's
+own space"*. Two rectangle conventions one flip apart, in a codebase that keeps them in
+separate types precisely because of this --- and the type could not help, because both are
+`Quad`, and only the values were wrong.
+
+---
+### The check that could not exist while one function did both halves
+
+`save::append_bytes` read a file and built an update section from what it had read. The
+update's byte offsets and `/Prev` are measured from the length of those bytes, and the caller
+later appends after a file it measured itself. Two lengths --- and while one function did both,
+they were one number under two names, so there was nothing to compare and no test could have
+found a discrepancy.
+
+Splitting the parse into the worker made them two numbers for real. A worker on a stale
+mapping, or a file that changed between the caller's measurement and the worker's build,
+produces an update whose cross-reference points into a document nobody has --- **in a file that
+still opens**, which is the failure this whole module is organised around.
+
+So `save::appended` exists to compare them, and it is the only thing that can: neither half
+sees the other's number. It is a small function whose entire body is one comparison, and it
+would look like ceremony to anyone reading the code without knowing that the property it
+asserts used to be structural.
+
+The generalisation, and it applies to any refactor that moves work across a boundary: **when
+two things stop being the same object, list what used to be true by construction.** Those
+facts do not announce themselves — they were never asserted, because nothing could have made
+them false. The moment a call becomes a message, every one of them is a claim.

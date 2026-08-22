@@ -464,6 +464,28 @@ impl RawDocument {
             .clone()
     }
 
+    /// The update section for a save that only adds marks.
+    ///
+    /// Deliberately **not** cached, where the comments, links, mapping and
+    /// properties beside it are. Those four are read-only facts about the
+    /// document: asked for repeatedly, identical every time. This is a function
+    /// of the *plan*, which differs on every save, so a cache keyed on the
+    /// document would answer a second save with the first save's bytes --- and
+    /// silently, because those bytes are a perfectly valid update section for a
+    /// document that no longer matches them.
+    ///
+    /// # Errors
+    ///
+    /// The document's bytes are unreadable, or [`crate::save::append_update`]
+    /// refuses --- see there for the reasons, all of which are about the document
+    /// or the plan rather than about this process.
+    pub fn append(&self, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
+        let bytes = self
+            .source_bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        crate::save::append_update(&bytes, plan).map_err(|why| why.message)
+    }
+
     /// Every link in the document, read at most once.
     ///
     /// A failure is kept as a failure, for the reason above: a document whose

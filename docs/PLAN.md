@@ -149,27 +149,56 @@ parallel". That does not work, and it is recorded in `AGENTS.md` as a corrected 
 
 Retrofitting a process boundary later is a rewrite, so it is Phase 0 work.
 
-**Not done: the surgery worker.** The right-hand box has never existed. Every path that
-writes a document --- `save_document`, `save_copy`, `extract_pages` --- parses the source
-with `lopdf` inside the coordinator, under `tauri::async_runtime::spawn_blocking`, which
-moves the work off the runtime's threads and not out of the process holding the window, the
-journal and the user's filesystem authority. Printing has been disclosed as the
-coordinator's parser exception since 2026-07-28; the edit writers joined it without the
-disclosure being widened, and an outside review is what caught that on 2026-08-22.
-`docs/THREAT-MODEL.md` §3 and residual risk 17 now say so.
+**Half done: the writers.** The right-hand box was never built as a box, and it turns out it
+did not need to be. Every path that writes a document --- `save_document`, `save_copy`,
+`extract_pages` --- parsed the source with `lopdf` inside the coordinator, under
+`tauri::async_runtime::spawn_blocking`, which moves the work off the runtime's threads and not
+out of the process holding the window, the journal and the user's filesystem authority.
+Printing had been disclosed as the coordinator's parser exception since 2026-07-28; the edit
+writers joined it without the disclosure being widened, and an outside review caught that on
+2026-08-22.
 
-What is bounded today is decompression (`MAX_DECODE`), graph recursion
+**The append moved that day, into the worker that already holds the document.** A save that
+only adds marks is `Request::Append`, answered by `save::append_update` --- a pure function of
+the document's bytes and the plan, running in a process that has no filesystem authority and
+has already parsed that document with `lopdf` for its comments, links and properties. It
+inherits the render worker's sandbox, deadline, resource limits and restart for free, which is
+the argument for not building a second process kind: the surgery worker's requirements are the
+render worker's requirements, and they were already met.
+
+The split is by *authority*, not by convenience. `save::append_ready` stays in the coordinator
+and asks only about a path --- has this file changed, how long is it. `save::appended` then
+compares what the builder says it built against with what the caller measured, which is a check
+that could not exist while one function did both halves: the two lengths were the same number
+under two names.
+
+Evidence: `worker-probe` builds an update section through a real contained worker, appends it
+to the fixture and re-parses the result --- **865 bytes on a 775-page document, re-read as 775
+pages** (macOS, 2026-08-22, 17/17).
+
+**What is left is the rewrite, and the obstacle is the output rather than the input.** A
+deletion, a move, a turn or a crop reserialises the whole document, and so do Save a copy and
+Extract. An update section is kilobytes and travels in a reply; a rewrite's answer is the
+entire file, up to hundreds of megabytes, and the worker protocol has no channel for that.
+Three shapes, in the order they are worth trying:
+
+1. **A writable output mapping**, handed over the way a document already is --- `SCM_RIGHTS` on
+   macOS, `DuplicateHandle` on Windows. The parent creates the staging file with the exclusive
+   create `save::stage` already performs, maps it, and hands the mapping across. The worker
+   never learns a path. This is the closest to the original sketch and the most work, because
+   the existing handover maps read-only in the child.
+2. **Streaming through the tile mapping.** `lopdf::save_to` takes a `Write`, so the worker can
+   fill the 16 MB mapping it already has, signal, and continue once the parent has drained it.
+   No new platform code at all; the cost is flow control inside one request, which nothing else
+   in the protocol does.
+3. **Bounding the answer.** Refuse a rewrite whose output exceeds what a reply can carry. Cheap
+   and wrong for exactly the documents that most want containment.
+
+What is bounded today on the paths that remain: decompression (`MAX_DECODE`), graph recursion
 (`sweep::MAX_NESTING`) and panics (unwinding, pinned by a test so a profile change cannot
-quietly remove it). What is not bounded is **time and memory**, because bounding either
-needs a process to enforce it against --- which is the whole argument for the box.
-
-The shape it needs, so the next person is not re-deriving it: the source and the destination
-reach the worker as **inherited handles**, not as paths, exactly as the render workers get
-their document; the worker answers with staged bytes or a verdict; the coordinator alone
-opens dialogs and performs the rename. It gets the render worker's deadline and its resource
-limits, and the same external evidence --- a module-table read proving the coordinator did
-not map what the worker did. It is not a generic job framework: one protocol, three
-messages.
+quietly remove it). What is not bounded is **time and memory**, because bounding either needs a
+process to enforce it against. `docs/THREAT-MODEL.md` §3 and residual risk 17 carry the
+disclosure.
 
 ### Worker processes — measured 2026-07-26
 

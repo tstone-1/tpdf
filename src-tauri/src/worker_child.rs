@@ -381,6 +381,10 @@ fn handle(
             Ok(properties) => Response::json(&properties),
             Err(e) => Response::err(e),
         },
+        Request::Append { plan } => match render::run_append(document, plan) {
+            Ok(update) => Response::json(&update),
+            Err(e) => Response::err(e),
+        },
     }
 }
 

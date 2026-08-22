@@ -1792,6 +1792,19 @@ MUTATIONS = [
         "a_crop_box_pdfium_would_not_answer_for_is_the_origin",
     ),
     Mutation(
+        # Accept an update section built against a different number of bytes than
+        # the caller measured. The two used to be one number by construction, and
+        # stopped being one when the parse moved into the worker: a stale mapping
+        # or a file that moved between the check and the build now produces a
+        # cross-reference pointing into a document nobody has, in a file that
+        # still opens.
+        "append: accept an update built against a different length",
+        "src/save.rs",
+        "    if update.built_against as u64 != ready.was {",
+        "    if false {",
+        "an_update_built_against_a_different_length_is_refused",
+    ),
+    Mutation(
         # Keep the call and let it pass whenever the length matches, which is
         # what `append_in_place` compared until 2026-08-22 while
         # `Appended::verified` held a full fingerprint nothing read. A file

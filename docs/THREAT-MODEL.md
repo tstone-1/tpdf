@@ -173,7 +173,7 @@ has no text API at all, so the Windows readback pins page count and rotation onl
 quietly not existing.
 
 **Printing is not the only exception, and this document said it was until 2026-08-22.** An
-outside review found it: every path that *writes* a document parses it in the coordinator
+outside review found it: every path that *writes* a document parsed it in the coordinator
 too, through `lopdf`, and each is one menu item away.
 
 - `save_document` → `save::append_bytes` or `save::stage_in_place` (`lib.rs`), on every save
@@ -181,7 +181,38 @@ too, through `lopdf`, and each is one menu item away.
 - `save_copy` → `save::write_copy`, on every Save a copy.
 - `extract_pages` → `save::write_copy` again, on every extraction.
 
-All three run under `tauri::async_runtime::spawn_blocking`, and it is worth being exact about
+**The first of those moved the same day.** A save that only *adds* marks --- the ordinary
+"keep my highlights" --- is prepared by `save::append_update`, which is a pure function of the
+document's bytes and the plan: it opens nothing, names no path, and knows none exists. It runs
+as `Request::Append` in the worker that already holds the document, under the same sandbox,
+deadline, resource limits and restart as every render, in the process that has already parsed
+that document with `lopdf` for its comments, links and properties. What crosses back is an
+update section and two numbers.
+
+The split is where the authority is, not where the code is convenient. `save::append_ready`
+stays in the coordinator and asks only questions about a *path* --- has this file changed since
+it was opened, how long is it --- which need filesystem authority and no parser.
+`save::appended` then refuses an update built against a different number of bytes than the
+caller measured, which is a check that did not exist and could not: the two lengths were one
+number by construction while one function did both halves.
+
+`Plan::opened_as` is `#[serde(skip)]`, so the fingerprint cannot cross in either direction ---
+and the compiler is what enforces that rather than the attribute alone, since `Fingerprint`
+implements neither `Serialize` nor `Deserialize`. `Request`'s standing property holds: it names
+nothing the worker could act on.
+
+Evidence, external to our own account of it: `worker-probe` builds an update section through a
+real contained worker and appends it to the fixture, then re-parses the result --- **865 bytes
+on a 775-page document, re-read as 775 pages**, with the length it was built against compared
+against the file's own (macOS, 2026-08-22, 17/17).
+
+What has **not** moved is the rewrite: a deletion, a move, a turn or a crop still reserialises
+the whole document in the coordinator, and so do Save a copy and Extract. The reason is the
+output rather than the input --- an update section is kilobytes and travels in a reply, while a
+rewrite is the whole file, up to hundreds of megabytes, and needs an output channel the worker
+protocol does not have. `docs/PLAN.md` §3 records the shape that needs.
+
+The three that remain run under `tauri::async_runtime::spawn_blocking`, and it is worth being exact about
 what that does and does not buy, because the name invites the wrong reading: it moves the work
 off the async runtime's threads. It does not move it out of the process holding the window,
 the edit journal and the user's filesystem authority. "Off the async thread" is not "out of
@@ -1470,8 +1501,9 @@ rung with a job is refused with `1455` (`ERROR_COMMITMENT_LIMIT`) and `1816`
 (`ERROR_NOT_ENOUGH_QUOTA`). `KILL_ON_JOB_CLOSE` is still only claimed — testing it means
 killing the probe itself.
 
-**Evidence that the whole path works, not just the pieces**: `worker-probe` passes 11/11 on
-`text-base14`, `text-cid`, `vector-heavy` and `rotated`, including **pixel-identical** tiles
+**Evidence that the whole path works, not just the pieces**: `worker-probe` passed 11/11 on
+2026-07-29 on `text-base14`, `text-cid`, `vector-heavy` and `rotated`, including
+**pixel-identical** tiles
 against an in-process render — so the font substitution the macOS sandbox caused did not
 recur here, as `win_sandbox_probe` predicted. `backend-probe` passes 38–40/42 across four
 corpora with byte-identical name sets. And the module check in §3 is external to the process,
@@ -1644,18 +1676,22 @@ which is what makes it evidence rather than a milestone.
     could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
     built.
 
-17. **Save, Save a copy and Extract parse the document inside the coordinator** (§3), added
-    2026-08-22 after an outside review found this document naming printing as the only
-    coordinator-side parser while three edit writers had joined it. `lopdf` reads the source
-    bytes in the app process on every one of them, under `spawn_blocking`, which moves the
-    work off the async runtime and not out of the process. Decompression is bounded at
+17. **A rewriting save, Save a copy and Extract parse the document inside the coordinator**
+    (§3), added 2026-08-22 after an outside review found this document naming printing as the
+    only coordinator-side parser while three edit writers had joined it. **Narrowed the same
+    day**: a save that only adds marks is prepared in the worker now (`Request::Append`), so
+    what is left is the rewriting save --- a deletion, a move, a turn, a crop --- and the two
+    copy paths. `lopdf` reads the source bytes in the app process on those, under
+    `spawn_blocking`, which moves the work off the async runtime and not out of the process. Decompression is bounded at
     `MAX_DECODE`, graph recursion at `sweep::MAX_NESTING`, and a panic is reported rather
     than fatal (pinned by a test, so the property cannot be lost to a profile change) --- but
     there is no deadline and no memory bound, because enforcing either needs a separate
     process. A document that makes the parser spin therefore wedges the application and takes
-    the unsaved journal with it, rather than costing a replaceable worker. The fix is the
-    surgery worker in `docs/PLAN.md` §3; until it lands this is disclosed rather than
-    mitigated, and it is reached by ⌘S on any open document.
+    the unsaved journal with it, rather than costing a replaceable worker. What the remaining
+    three need is not a second worker but an **output channel**: the append moved because its
+    answer is kilobytes and fits in a reply, and a rewrite's answer is the whole file.
+    `docs/PLAN.md` §3 records the shape. Until it lands this is disclosed rather than
+    mitigated, and it is reached by deleting a page and pressing ⌘S.
 
 ## 8. How to re-verify any of this
 

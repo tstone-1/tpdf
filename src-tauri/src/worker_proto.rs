@@ -128,6 +128,25 @@ pub enum Request {
     /// Document-level and the laziest of the three `lopdf` requests: nothing
     /// asks for it until a reader opens the properties dialog.
     Properties,
+    /// Build the update section for a save that only adds marks.
+    ///
+    /// **The one request that produces bytes for a file**, and it is here rather
+    /// than in the coordinator because it is a *parse*: `save::append_update` is
+    /// a pure function of the document's bytes and the plan, and the document's
+    /// bytes are attacker-controlled. Doing it here puts it behind the same
+    /// sandbox, deadline and restart as every other parse, in the process that
+    /// has already parsed this document with `lopdf` for its comments, links and
+    /// properties. `docs/THREAT-MODEL.md` residual risk 17 is what this narrows.
+    ///
+    /// It still names nothing the worker could act on, which is [`Request`]'s
+    /// standing property: a `Plan` is page positions, marks and geometry, and
+    /// its one field that is a fact about a *file* --- the fingerprint --- is
+    /// `#[serde(skip)]` on the type, so it cannot travel in either direction.
+    /// Every decision about the file on disk stays with the caller.
+    Append {
+        /// What to write. Never a path, never a destination.
+        plan: crate::edits::Plan,
+    },
 }
 
 /// A reply, one JSON object per line on the worker's stdout.
