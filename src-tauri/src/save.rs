@@ -354,10 +354,10 @@ pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, Refusal> {
 /// permits, and what to *do* about that is a decision about the product rather
 /// than a mode.
 ///
-/// Chosen from the plan alone, so it can be exercised without a document open,
-/// and named rather than decided inside the command for the reason every guard
-/// in this module is out here: a branch inside a Tauri command has no failing
-/// case a test can reach.
+/// Chosen from the plan and the file's size, so it can be exercised without a
+/// document open, and named rather than decided inside the command for the
+/// reason every guard in this module is out here: a branch inside a Tauri
+/// command has no failing case a test can reach.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     /// Append an update section. Fast on a large file, and only for an edit that
@@ -381,13 +381,82 @@ pub enum Mode {
 /// CoreGraphics across twelve fixtures. It never put an appended page deletion,
 /// reorder, rotation or crop to any of them. Those take the rewrite until
 /// somebody measures them.
+/// The largest document whose save may be prepared inside a worker.
+///
+/// **A bound on the input, because the parse is what costs.** [`append_update`]
+/// re-parses the document with `lopdf` and carries a discarded copy of the
+/// previous revision, which measures at roughly three times the file's size in
+/// private memory: 336.6 MB of scanned PDF takes a worker to **980.3 MiB**.
+///
+/// A Windows worker is capped at `sandbox_win::WORKER_MEMORY_CAP`, 1 GiB of
+/// commit, so past that the allocation is refused and the worker aborts.
+/// Measured 2026-08-22 on `MOTHERSHIP`: a 345.0 MB scan prepares at 98.1% of the
+/// cap, a 361.9 MB scan does not prepare at all, and the largest fixture in the
+/// repository sits at 95.7%. `BUILD.md` has the table.
+///
+/// **Applied on both platforms, and macOS is the reason rather than the
+/// exception.** It has no cap, and that is the worse case: `docs/THREAT-MODEL.md`
+/// T3 records that its worker has no memory bound at the kernel at all, so an
+/// unbounded parse there is bounded by the machine. One rule with one reason ---
+/// the parse is too large to do in a worker --- rather than a Windows constant
+/// leaking into a decision the other platform also needs.
+///
+/// 256 MiB leaves a worker at roughly 780 MiB of the 1 GiB. **A judgement, not a
+/// measurement**: the ceiling is one machine, one PDFium build and one
+/// document's mix of content, so this sits well under it rather than at it.
+pub const APPEND_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The bound stays under the largest document measured to prepare successfully.
+///
+/// 345,040,737 bytes is a 41-page synthetic scan that reached 98.1% of a Windows
+/// worker's commit cap on 2026-08-22; the 43-page one above it aborted. Checked
+/// when the crate is built rather than in a test, because it relates two
+/// constants and a run-time assertion between two constants is one that cannot
+/// fail --- which is a thing this repository refuses elsewhere and should refuse
+/// here. Raising `APPEND_MAX_BYTES` past a measured ceiling stops the build.
+const _: () = assert!(APPEND_MAX_BYTES < 345_040_737);
+
+/// **Size is the second condition, and it costs something real.** Above
+/// [`APPEND_MAX_BYTES`] a marks-only save is reserialised, which means the
+/// previous revision does *not* survive byte for byte --- so a signed revision
+/// that an append would have left intact for a validator to show is gone. That
+/// is a genuine loss and it is the better of the two outcomes available: the
+/// alternative is not an append, it is a save that cannot be completed at all,
+/// because the worker is refused the memory to prepare one. Saving a large
+/// document differently is worth more than failing to save it identically.
+///
+/// What would remove the trade rather than choose a side is making the parse
+/// cheaper --- `docs/PLAN.md` §3 --- at which point this bound rises and the
+/// question stops being asked of documents this size.
 #[must_use]
-pub fn mode_for(plan: &Plan) -> Mode {
-    if plan.only_adds_marks() {
+pub fn mode_for(plan: &Plan, source_bytes: u64) -> Mode {
+    if plan.only_adds_marks() && source_bytes <= APPEND_MAX_BYTES {
         Mode::Append
     } else {
         Mode::Rewrite
     }
+}
+
+/// [`mode_for`], measuring the file itself.
+///
+/// **A file that cannot be measured takes the rewrite.** That is the arm with no
+/// memory bound over it and it is correct for every plan, so an unreadable
+/// `metadata` costs a slower save rather than a worker refused the memory to
+/// prepare a fast one. `AGENTS.md` records a migration whose
+/// `if (checked -and safe) {stop}` collapsed "checked, fine to proceed" with
+/// "could not check at all" and force-pushed on the second; the same shape with
+/// the branches the other way round is this one.
+///
+/// Out here rather than in the command for the module's usual reason, and it is
+/// load-bearing rather than habitual: the `u64::MAX` below is the whole guard,
+/// and inside a Tauri command nothing could reach it to prove it still points
+/// the safe way.
+#[must_use]
+pub fn mode_for_source(plan: &Plan, source: &Path) -> Mode {
+    mode_for(
+        plan,
+        std::fs::metadata(source).map_or(u64::MAX, |m| m.len()),
+    )
 }
 
 /// A save that has been prepared as an append: the bytes to add, and the length
@@ -498,7 +567,16 @@ impl Ready {
 /// The plan is not append-shaped or has no fingerprint; the file changed since
 /// it was opened; or it cannot be measured.
 pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
-    if !plan.only_adds_marks() {
+    let was = std::fs::metadata(source)
+        .map_err(|e| format!("could not measure {source:?}: {e}"))?
+        .len();
+    // **Asks [`mode_for`] rather than repeating its rule.** This used to test
+    // `only_adds_marks` itself, which was one condition and therefore harmless
+    // to say twice; with a size bound beside it, two copies of the rule is two
+    // places for it to drift, and `docs/TRAPS.md` records what a second copy
+    // does to a differential. The measurement moved above the guard for the
+    // same reason --- the guard needs the number.
+    if mode_for(plan, was) != Mode::Append {
         return Err("this document needs a full rewrite rather than an append".into());
     }
     let opened_as = plan.opened_as.as_ref().ok_or_else(|| {
@@ -507,9 +585,6 @@ pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
             .to_string()
     })?;
     let verified = opened_as.agrees_with(source).map_err(Refusal::changed)?;
-    let was = std::fs::metadata(source)
-        .map_err(|e| format!("could not measure {source:?}: {e}"))?
-        .len();
     Ok(Ready { was, verified })
 }
 
@@ -4694,31 +4769,116 @@ mod tests {
         // of them. Each of those four is asserted rather than the rule being
         // stated once, because what would ship is a predicate that let one
         // through.
+        let small = 1_024;
         let mut marked = plan_of(&[0, 0, 0]);
         marked.marks = plan_of_kind(MarkKind::Highlight, one_quad()).marks;
-        assert_eq!(mode_for(&marked), Mode::Append);
+        assert_eq!(mode_for(&marked, small), Mode::Append);
 
         assert_eq!(
-            mode_for(&plan_of(&[0, 0, 0])),
+            mode_for(&plan_of(&[0, 0, 0]), small),
             Mode::Rewrite,
             "a plan with no marks has nothing to append"
         );
 
         let mut turned = marked.clone();
         turned.pages[1].turns = 1;
-        assert_eq!(mode_for(&turned), Mode::Rewrite, "a turn");
+        assert_eq!(mode_for(&turned, small), Mode::Rewrite, "a turn");
 
         let mut cropped = marked.clone();
         cropped.pages[1].crop = Some([10.0, 10.0, 100.0, 100.0]);
-        assert_eq!(mode_for(&cropped), Mode::Rewrite, "a crop");
+        assert_eq!(mode_for(&cropped, small), Mode::Rewrite, "a crop");
 
         let mut deleted = marked.clone();
         deleted.pages.remove(1);
-        assert_eq!(mode_for(&deleted), Mode::Rewrite, "a deletion");
+        assert_eq!(mode_for(&deleted, small), Mode::Rewrite, "a deletion");
 
         let mut moved = marked.clone();
         moved.pages.swap(0, 1);
-        assert_eq!(mode_for(&moved), Mode::Rewrite, "a move");
+        assert_eq!(mode_for(&moved, small), Mode::Rewrite, "a move");
+    }
+
+    /// The size condition, at the boundary rather than near it.
+    ///
+    /// **Both sides of one byte**, because a threshold tested with a small file
+    /// and a huge one passes for `<=`, for `<`, and for a comparison against a
+    /// number that is not this one at all. The interesting inputs of a bound are
+    /// the two either side of it, and `docs/TRAPS.md` records what a tolerance
+    /// picked loosely enough to always hold does to a check.
+    ///
+    /// The plan is held fixed and marks-only throughout, so the only thing
+    /// moving is the size --- otherwise a `Rewrite` here would be evidence about
+    /// `only_adds_marks` rather than about the bound.
+    #[test]
+    fn a_marks_only_plan_is_rewritten_once_the_file_is_too_large_to_parse_twice() {
+        let mut marked = plan_of(&[0, 0, 0]);
+        marked.marks = plan_of_kind(MarkKind::Highlight, one_quad()).marks;
+
+        assert_eq!(
+            mode_for(&marked, APPEND_MAX_BYTES),
+            Mode::Append,
+            "the threshold itself is small enough"
+        );
+        assert_eq!(
+            mode_for(&marked, APPEND_MAX_BYTES - 1),
+            Mode::Append,
+            "one byte under"
+        );
+        assert_eq!(
+            mode_for(&marked, APPEND_MAX_BYTES + 1),
+            Mode::Rewrite,
+            "one byte over is a rewrite, however little the plan changes"
+        );
+
+        // The value, pinned. Not because 256 MiB is sacred -- it is a judgement
+        // and `APPEND_MAX_BYTES` says so -- but because a bound that silently
+        // moved would leave every number in `BUILD.md` describing a different
+        // program, and the failure is a worker aborting on a document nobody
+        // tested. Changing it should be a deliberate edit in two places.
+        assert_eq!(APPEND_MAX_BYTES, 268_435_456, "256 MiB");
+
+        // The relation to the measured ceiling is checked at build time instead,
+        // beside the constant: it is a comparison between two constants, and one
+        // of those inside a `#[test]` is an assertion that cannot fail.
+    }
+
+    /// A file whose size cannot be read is rewritten, not appended.
+    ///
+    /// The failure path, and it is the whole reason [`mode_for_source`] is a
+    /// function rather than two lines inside the command. "Could not measure it"
+    /// and "measured it, it is small" are the same answer to `mode_for` unless
+    /// something decides otherwise, and what decides is a `u64::MAX` that no
+    /// test could reach if it lived at the call site.
+    ///
+    /// The plan is marks-only, so `Append` is what the *other* condition asks
+    /// for --- without that this would pass on a plan that could never be
+    /// appended anyway, which is the check-that-cannot-fail shape.
+    #[test]
+    fn a_document_whose_size_cannot_be_read_is_rewritten() {
+        let mut marked = plan_of(&[0, 0, 0]);
+        marked.marks = plan_of_kind(MarkKind::Highlight, one_quad()).marks;
+
+        let missing = std::env::temp_dir().join("tpdf-no-such-document-for-mode-for.pdf");
+        assert!(
+            !missing.exists(),
+            "the control needs a path that is really absent"
+        );
+        assert_eq!(
+            mode_for_source(&marked, &missing),
+            Mode::Rewrite,
+            "an unmeasurable file takes the arm with no memory bound over it"
+        );
+
+        // The control the assertion above needs: the same plan, through the same
+        // function, on a file that *can* be measured, is an append. Without it a
+        // `mode_for_source` that answered `Rewrite` for everything would pass.
+        let present = std::env::temp_dir().join("tpdf-mode-for-source-control.pdf");
+        std::fs::write(&present, b"%PDF-1.7\n").expect("a small file to measure");
+        assert_eq!(
+            mode_for_source(&marked, &present),
+            Mode::Append,
+            "a measurable small file is still an append"
+        );
+        let _ = std::fs::remove_file(&present);
     }
 
     #[test]

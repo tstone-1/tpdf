@@ -19,6 +19,43 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Changed: a very large document saves the slow way instead of not at all
+
+Adding a highlight to a document over 256 MiB now rewrites it rather than
+appending to it. That is slower and it loses a property worth naming --- an
+append leaves the previous revision byte for byte intact, so a validator can
+still show what an existing signature covered, and a rewrite does not. It is
+the better of the two outcomes actually available: measured on Windows, a
+361.9 MB scan could not be saved **at all**, because preparing the append needs
+about three times the file's size in memory and the worker holding the document
+is capped at 1 GiB. The bound applies on macOS too, where the worker has no
+memory limit at the kernel and an unbounded parse is bounded by the machine.
+
+256 MiB is a judgement rather than a measurement --- the ceiling measured here is
+around 350 MB on one machine with one PDF engine and one document's mix of
+content, so the bound sits well under it. It rises when the append stops
+carrying a discarded copy of the previous revision; `docs/PLAN.md` §3 has that.
+
+### Added: the worker's memory is readable on Windows, where the limit is real
+
+The check that reads how much memory a worker is using ran on macOS and was
+skipped on Windows, on the grounds that the job object caps memory in the kernel
+so there is nothing to poll. True, and backwards: a limit is what makes the
+reading worth taking, because the question is how close the worker came to being
+refused. It now reads the peak commit charge --- the quantity the limit is
+actually charged against --- and the probe reports the headroom, with a warning
+when it runs thin.
+
+### Measured: what the append costs a Windows worker, rather than what it should
+
+No behaviour change. The append shipped on a reasoned margin: the document's
+mapping is not private memory on Windows, so the figure to compare against the
+1 GiB limit looked like the 667 MB the append adds rather than the 1029.8 MB the
+worker reaches. Measured, the worker peaks at **1027.8 MB** and the margin is
+**4.3%**, not 35%. The mapping really is outside the limit; it was outside the
+macOS figure too, so subtracting it was subtracting a term that was in neither.
+Both platforms turn out to report the same three numbers to within 0.2%.
+
 ### Measured: what preparing a save costs, and what that rules out
 
 No behaviour change. Moving the rewrite into the worker as well was the next

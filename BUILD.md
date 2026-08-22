@@ -1116,6 +1116,13 @@ The `[WARN]` fires whenever headroom falls under `THIN_HEADROOM_MIB` (128 MiB, r
 is correct rather than noise --- it goes quiet when the append stops carrying a discarded copy
 of the previous revision, and not before.
 
+**The probe appends a document the application would not.** `save::APPEND_MAX_BYTES` bounds the
+production path at 256 MiB, so a 336.6 MB scan is reserialised rather than appended when a
+reader saves it. `worker-probe` asks the worker for the append directly and therefore still
+measures it, which is deliberate: the bound is a judgement placed under a measured ceiling, and
+it can only stay under it if something keeps measuring where the ceiling is. A run whose `[WARN]`
+disappears is the signal that the bound can rise.
+
 The sweep that bracketed the ceiling was read from outside the process the first time, through
 PSAPI's `PagefileUsage` / `PeakPagefileUsage` over the probe's children. On `MOTHERSHIP`
 (x86_64):

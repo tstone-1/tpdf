@@ -239,6 +239,22 @@ the last size that does. Bracketed rather than extrapolated: a 345.0 MB scan sav
 the cap, a 361.9 MB scan aborts, and so does a 404.0 MB one. **Above roughly 350 MB an append
 cannot be built on Windows.**
 
+**Bounded rather than left to fail, 2026-08-22.** `save::mode_for` now takes the file's size
+and answers `Rewrite` above `save::APPEND_MAX_BYTES` --- 256 MiB, chosen well under the ~350 MB
+ceiling because that ceiling is one machine, one PDFium build and one document's content mix.
+So a large marks-only save is reserialised in the app process instead of being prepared in the
+worker, which is slower and does not leave the previous revision byte for byte intact. That
+loss is real and it is the better half of the only choice available: the alternative is a save
+that cannot be completed. The bound applies on **both** platforms, and macOS is the reason
+rather than the exception --- it has no kernel bound at all (§T3), so an unbounded parse there
+is bounded by the machine.
+
+It is an interim answer, not the design. What removes the trade is making the parse cheaper:
+roughly half of the 668 MB is `IncrementalDocument::create_from` demanding an owned `Vec<u8>` of
+the previous revision, which `save.rs` shows is read for a length and a last byte. Removing it
+roughly doubles the ceiling, and needs `lopdf` to want less --- an upstream change or a shim.
+Until then the bound is what keeps a reader's document saveable.
+
 Two consequences for the ranking above. The **writable output mapping** (option 1) was already
 the only design that fits and is now more so: it takes the *output* term out of the cap, and this
 measurement says the *input* term alone leaves 4% of headroom, so holding a rewrite's output in
