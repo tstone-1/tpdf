@@ -13009,3 +13009,73 @@ that answered it. The two look like one thing in a single line of output, and th
 Sibling of *An `[INFO]` line guarded on a macOS-only reading cannot print on Windows*, which is
 the same reading missing from the same run for a different reason: that one vanished silently
 and this one announced itself, and the silent one was the cheaper mistake to make.
+
+### A fixture no script writes gated ten guards, and the tests that skipped passed
+
+Running the `append` mutation family on 2026-08-22 returned **six SURVIVED and one reddening
+two tests other than the one it named**, out of nine. Every one of them was aimed at a guard on
+the save path: refuse an update built against a different length, refuse a replacement file
+that kept the length, cut the file back when the append cannot be read afterwards, refuse a
+source that changed since it was opened. Freshly shipped code that writes to the reader's own
+document, and deleting its guards reddened nothing.
+
+The first job was to find out whether the change in the tree had caused it. Copy the three
+edited files aside, `git checkout --` them, re-run, restore, compare digests: **the same seven
+failed at `HEAD`**, with a byte-identical "red instead" list. Not the change.
+
+The cause is one line in each of ten tests:
+
+```rust
+let Some((at, plan)) = appendable(&scratch, "text-heavy.pdf") else {
+    println!("[SKIP] text-heavy.pdf: fixture not generated");
+    return;
+};
+```
+
+`text-heavy.pdf` is a **real document supplied by hand**. No script writes it,
+`scripts/ci_fixtures.py` says so in its own docstring, and `BUILD.md` has recorded since
+2026-07-30 that this machine "has never had it". So the ten tests returned before their first
+assertion --- here, and on **both CI runners**, which cannot have it either. The guards were
+correct all along; nothing anywhere could tell.
+
+**The limitation was known, and it was filed under the wrong heading.** Every place it is
+written down discusses corpora and benchmarks: a viewer sweep that cannot run all fourteen, a
+`prespawn-bench` check that skips, a 109-name re-run done on six corpora instead of seven. All
+true, all about *harnesses*. Nobody computed what the same absence does to `cargo test`, and
+that is the transferable part: **a documented limitation gets filed under the category it was
+discovered in, and its blast radius in every other category goes uncomputed.** The question to
+ask of any "this machine cannot have X" note is not whether it is true but what else consumes
+X.
+
+**`cargo test` cannot report this and does not pretend to.** The run says `753 passed`, and a
+test that returned at its first line is one of the 753. The skip prints to stdout, which libtest
+captures and discards for a passing test, so the count and the transcript agree that everything
+is fine. Only a mutation harness distinguishes them, and only because it asks a question the
+test's own result cannot: *if I break the code, does this go red?*
+
+**Read six SURVIVED naming six different tests as one cause, not six.** The instinct is to
+strengthen the assertions one at a time. What actually discriminates is cheap and structural:
+every one of the named tests contained the same early-return shape, on the same fixture name.
+One `grep` for the fixture answered it, where six readings of six assertions would each have
+concluded "this test looks fine" --- correctly, and uselessly.
+
+**The fix is not to obtain the fixture.** Copying `text-heavy.pdf` from the machine that has it
+would restore coverage on exactly one machine and leave CI where it was. The question is what
+the tests actually require, and it is not a real document: they are about lengths, fingerprints
+and rollback, so they need something *appendable* and *generated*. `comments.pdf` is both, is
+built by a dependency-free script CI already runs, and carries `/Annots` of its own, so the
+array-bearing branch is exercised too. After the swap all twelve `append` mutations are caught
+by the test named for them, and all 62 in the `save` family.
+
+**One of the ten needed the opposite fixture, and the failure said so immediately.**
+`an_appended_mark_is_listed_by_the_page_it_was_made_on` asserts the mark's page lists it *and
+the next page lists nothing* --- and a fixture shipping its own comments has no such page. The
+weaker repair is worse than it looks: asking whether page 1 gained a `Highlight` does not
+rescue it, because `comments.pdf`'s own marks include highlights, so the assertion could not
+separate "the mark went to the wrong page" from "the fixture was already like that". It takes
+`rotated.pdf`, which carries no annotations at all. **Whatever a fixture is meant to
+discriminate, it has to be able to supply the absence as well as the presence.**
+
+Sibling of *A test whose precondition is already satisfied never runs* and of *An empty
+transcript is what a running viewer check looks like*: the same silence, reached by a third
+route.
