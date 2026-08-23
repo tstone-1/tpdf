@@ -13408,3 +13408,62 @@ reader get here at all*. For a Tauri command, that is one grep over the callers.
 already in this file about a note outliving the work that closes it is the same family and the
 milder case: that one was true once. This one was written about a route that has had no reader
 in it since the day the command was added.
+
+### PDFium draws a comment's icon in its own colour, and the file is not wrong
+
+A reader picks blue for a comment. The overlay draws a blue icon. They save, reopen the file
+in tpdf, and the icon is **yellow**.
+
+Nothing in the save path is at fault, which is what makes this hard to find by reading.
+`save.rs` writes `/C` with the colour the reader chose, and writes **no appearance stream**,
+deliberately: the specification describes `/Name` as choosing an icon and expects readers to
+draw it, so a hand-drawn speech bubble of ours would look foreign in Acrobat and in Preview.
+The file says blue. PDFium's synthesised `/Text` appearance ignores `/C` and paints its own
+house style.
+
+**Measured, not inferred, and the control is the whole of it.** Sending blue read 224 degrees
+of hue on screen and **60** in the file; sending red read 0 on screen and **60** again. A
+reading that does not move when the input does is the file being ignored, and one run with one
+colour could not have told that from a mistake in what we wrote.
+
+It is the *"the mark changed under the reader"* failure the overlay phase was written for,
+arriving in the one kind that phase structurally cannot see --- it reads the overlay's alpha,
+not its colour, and the file's renderer is in another process.
+
+**The choice it leaves is not between right and wrong.** Writing an appearance stream makes
+tpdf agree with itself and disagree with every other reader's icon; leaving it makes tpdf
+disagree with itself and agree with readers that honour `/C`. Recorded in `docs/PLAN.md` §10
+question 8 as a decision rather than fixed as a defect.
+
+The general form is worth carrying past this kind: **an annotation with no appearance stream
+is a request, not a picture**, and what any given reader draws from it is that reader's
+business. A check comparing two renderers has to know which properties the file actually
+determines, and for a `/Text` annotation the colour is not one of them in PDFium.
+
+### A check reported `[OK]` with the reason it should have failed printed beside it
+
+The first run of a new phase printed this:
+
+```
+[OK]   the saved copy renders, so there are two pictures to compare invalid args `mark` for command `annot_m...
+```
+
+The verdict tested `after !== null` --- the copy did render. The detail line was built from a
+different variable, the error from the marks that had been refused a moment earlier, and it was
+true: the mark payload was `MarkView`'s shape rather than the command's, so every one of the
+nine was rejected and the "copy" was a copy of an unmarked document.
+
+**The name is what gives it away.** *"there are two pictures to compare"* was false --- the two
+pictures were identical --- and the condition tested something narrower than the name claimed.
+A detail line assembled from more state than the verdict reads is a check that can print its
+own refutation and still pass.
+
+Two habits, and the second is the one that costs nothing. **Put every variable the detail line
+mentions into the condition, or stop mentioning it.** And when writing the verdict, read the
+check's own name back as a sentence and ask what would have to be true for it: here, two
+pictures that differ.
+
+**What saved the run was a control, not the check.** `control: saving the marks changed what
+the file renders` went red on the same run, correctly, because nothing had been saved. The
+phase reported a green check and a red control about one event, which is the shape that says
+the green one is the one to distrust.

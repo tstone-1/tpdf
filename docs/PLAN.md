@@ -5485,6 +5485,78 @@ function, `applyPageOrder`, and the four lines around it. The harness runs *inst
 shell --- the same gap every shell action has, and the same one `opencheck.ts` states for the
 file dialog.
 
+#### The overlay against the file --- done 2026-08-23
+
+Two renderers draw every mark, and each was measured only against the model's own numbers.
+`viewer_check.py` reads the overlay's pixels; `annot-probe` reads the saved file's. Neither
+read the other, and `docs/PLAN.md` §10 question 8 named the residual exactly: colour, blend
+and inset, none of which any check compared.
+
+It is not a hypothetical seam. `markband.ts` is a deliberate second copy of `save.rs`'s
+geometry constants across a language boundary and its own module comment says so, and the
+reader sees drift as their document changing under them at the moment they save --- which is
+the defect that made the overlay phase exist in the first place.
+
+##### One sampler, two pictures, and no screenshot
+
+The question proposed a screenshot comparison. It does not need one: the overlay's pixels come
+off its canvas and a render of the saved file comes down the tile protocol, so both are already
+readable inside the window. The phase makes nine marks --- one of every kind, in nine bands down
+one page --- reads the overlay, saves a copy, opens it, renders the same page and reads that.
+
+**The file's ink is isolated by diffing renders, not by its colour.** The obvious classifier is
+"pixels whose hue matches what we sent", and it cannot be used here, because the hue is the
+thing under test: counting only hue-matching pixels and then comparing their mean hue is a check
+deriving its input from its own subject. So the page is rendered **before** any mark is made and
+again from the saved copy, and a file pixel counts as ink when the two differ. Page content
+cancels exactly, the classifier knows nothing about colour, and it makes the reading independent
+of what the mark sits on --- a highlight over dense type and one over blank paper are both
+measured by what the mark added.
+
+##### Two controls, and they are not decoration
+
+A diff of two identical pictures is empty, and an empty diff satisfies "the file covers about as
+much as the overlay" for every mark whose overlay reading is also empty --- so the comparison
+would pass on a save that wrote nothing. One control refuses that. Its mirror reads a band no
+mark was placed on and requires it to be **identical**, because a render that differs everywhere
+--- a different scale, a stale tile, a document laid out differently on reopening --- satisfies
+the first control and makes every reading meaningless.
+
+The first was not written for show: it went red on the first run, correctly. The mark payload
+was `MarkView`'s shape rather than the command's, every one of the nine was refused, and the
+copy was a copy of an unmarked document.
+
+##### What it measured
+
+**Eight of the nine kinds agree to 0 degrees of hue.** Coverage agrees within **2.7x**, which is
+the text box and is the largest legitimate disagreement in the set: both sides draw *type*, and
+by design not the same type --- the overlay uses whatever the system resolved, the file is set in
+Helvetica by our own metrics. The bound is 4, set above that with margin and an order of
+magnitude below the smallest defect it has to catch, since a wash and a rule differ by fourteen
+times and a frame and a filled box by ten.
+
+**The ninth is a gap in the product, and nothing else could have found it.** A comment's icon is
+the reader's colour on screen and PDFium's yellow in the file. The file is right --- `save.rs`
+writes `/C` with the chosen colour --- and deliberately carries no appearance stream, because
+every reader synthesises its own `/Text` icon. PDFium's ignores `/C`. Measured with a control
+rather than inferred: blue read 224 degrees on screen and 60 in the file, red read 0 on screen
+and 60 again. The kind is excluded from the hue comparison with that measurement as its reason,
+and the decision it leaves is in §10 question 8.
+
+##### Evidence
+
+Three mutations, all in `save.rs` rather than in the overlay, because what has to be proved is
+that the comparison reads the **saved file** --- a mutation of the overlay alone could be caught
+by a check that never opens one. A fixed appearance colour reddens the hue check; giving every
+kind the highlight's wash reddens the coverage check; padding every rectangle 120 points down
+the page reddens the untouched control.
+
+That third one **survived its first version**, which replaced the rectangle with the whole page.
+It reddened two other checks and not the control, because `bounds` works in the page's own space
+where y grows upward, so growing the box moved the ink away from the band below it. The survivor
+was a statement about the mutation and not about the control --- which is what the harness is
+for, and is why the fix was to aim it rather than to weaken anything.
+
 #### A page range, on the platform that could not take one --- done 2026-08-23
 
 A reader on macOS could print pages 2 to 4. A reader on Windows could print everything or
@@ -8634,14 +8706,39 @@ that it presented several genuinely unresolved questions as settled architecture
    reopened. The overlay cost nothing to add --- the canvas already composites the search
    hits and the selection with `multiply`, so a mark is a third fill in the same pass.
 
-   What the answer does *not* yet have is the visual regression test this question asks
-   for. `annot-probe --mode ink` measures the **saved** side against the quads the mark was
-   made from --- 90--96% of each quad covered, across ten fixtures --- and the overlay is
-   measured against nothing but the same numbers. That is a real gap and a narrow one: both
-   draw the rectangles the model holds, so they can only diverge in colour, blend and
-   inset, none of which any check compares. The comparison worth building is a screenshot
-   of the overlay against a render of the saved file, and it is only worth building once a
-   mark can be edited --- a highlight that never changes shape is the easy case.
+   ~~What the answer does *not* yet have is the visual regression test this question asks
+   for.~~ **Built 2026-08-23** --- `viewer_check.py`'s agreement phase, five checks, and the
+   paragraph below is what it found. The gap as stated was right: both renderers draw the
+   rectangles the model holds, so they can only diverge in colour, blend and inset, and no
+   check compared any of the three.
+
+   It is not a screenshot comparison, which is what this question proposed. The overlay's
+   pixels are already readable in the window and so is a render of the saved file --- one
+   through the canvas, one through the tile protocol --- so the phase makes nine marks, reads
+   the overlay, saves a copy, opens it, renders the same page and reads that. **The file's ink
+   is isolated by diffing that render against one taken before any mark was made**, so page
+   content cancels and the classifier knows nothing about colour; classifying by hue and then
+   comparing hue would be a check deriving its input from its own subject.
+
+   **Eight of the nine kinds agree exactly: 0 degrees of hue between the two renderers**, and
+   coverage within 2.7x, which is the text box and is the largest legitimate disagreement in
+   the set --- both sides draw *type*, and by design not the same type.
+
+   **The ninth is a real gap in the product, and this is what found it.** A comment's icon is
+   drawn in the reader's colour on screen and in PDFium's yellow in the file. `save.rs` is not
+   at fault and the file is right: it writes `/C` with the colour the reader chose, and
+   deliberately writes no appearance stream, because every reader synthesises its own `/Text`
+   icon. PDFium's synthesis ignores `/C` --- **measured, not inferred**: sending blue read 224
+   degrees on screen and 60 in the file, sending red read 0 on screen and 60 again. So a
+   reader who colours a comment sees their colour until they save and PDFium's yellow
+   afterwards, which is the "the mark changed under the reader" shape the overlay phase was
+   written for, arriving in the one kind that phase cannot see.
+
+   Closing it means writing an appearance stream for a comment, which `save.rs` argues against
+   on grounds that have nothing to do with this: a hand-drawn speech bubble looks foreign in
+   Acrobat and in Preview, and those readers use `/C` correctly. So the choice is between
+   agreeing with ourselves and agreeing with everyone else, and it is a decision rather than a
+   defect to fix. Recorded here rather than fixed.
 
    Two things generalise past a highlight and are worth stating before ink or a text box
    makes them urgent. **A mark held in display space and mapped at write time** keeps the

@@ -20,9 +20,11 @@ is true and cost an afternoon.)
 """
 
 import argparse
+import atexit
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -93,6 +95,22 @@ def main() -> int:
     corpus = os.path.splitext(args.pdf)[0] + "-corpus.json"
     if os.path.exists(corpus):
         env["TPDF_CORPUS_MANIFEST"] = corpus
+
+    # A writable path for the one phase that has to compare the overlay against
+    # the *file*: it saves a copy, opens it and renders it, and the webview has
+    # no filesystem of its own. Made here rather than in the app so the run owns
+    # the cleanup, and named after the fixture so a killed run leaves something
+    # attributable behind rather than an anonymous temp file.
+    scratch = os.path.join(
+        tempfile.gettempdir(),
+        f"tpdf-viewercheck-{os.path.basename(args.pdf)}-{os.getpid()}.pdf",
+    )
+    env["TPDF_VIEWERCHECK_SCRATCH"] = scratch
+    # `atexit` rather than a `finally`, because this function returns from five
+    # places including the timeout path, and a cleanup that has to be repeated at
+    # each of them is a cleanup that will be missed at one. A killed run leaves
+    # the file, which is why it is named after the fixture and the pid.
+    atexit.register(lambda: _discard(scratch))
 
     # Launched rather than run, so that something can look at the process *while*
     # it holds a document open. `communicate` below gives back the timeout and
@@ -166,6 +184,14 @@ def main() -> int:
         if "[WARN]" in line:
             print(line, file=sys.stderr)
     return _report_containment(watcher)
+
+
+def _discard(path: str) -> None:
+    """Removes the scratch copy, and says nothing if it was never written."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _watch_modules(process: "subprocess.Popen[str]"):
