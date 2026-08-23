@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 466 entries
+The one thing this file does *not* carry in full is the trap list --- 467 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1214,7 +1214,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 466 of them and the full text
+titles. Only the titles are here, because there are 467 of them and the full text
 was 93% of this file --- an instruction budget spent on the 460 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1615,6 +1615,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A step that signs before anything imports the certificate fails with the masked secret as its error
 - The verification step failed after everything it verifies had succeeded, because `mapfile` is bash 4
 - A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
+- A PATCH that sets only the body clears the draft's tag, and publishing then attaches it to nothing (the two commands most likely to be reached for both report it as normal; a draft's tag is a field, not a fact)
 - A draft release is invisible, and the tag beside it says the work shipped
 - A test that walks every prefix of a journal still could not see the snapshot rule (thoroughness is bounded by the constants a test happens to exceed; the harness's name cross-check is what turned a pass into a finding)
 - Two tests sharing a name make a mutation harness's two counts disagree (the guard was right about the symptom and cannot know the cause)

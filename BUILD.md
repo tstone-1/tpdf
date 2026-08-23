@@ -3939,6 +3939,25 @@ starts at 0 and increments within the month.
       https://github.com/tstone-1/tpdf/releases/download/vYY.M.MICRO/<asset>   # expect 200
     ```
 
+    **Read the body before publishing, and if you correct it, send `tag_name` with the
+    correction.** It is a literal in `release.yml`, so nothing can make it go stale except
+    nobody reading it, and on 2026-08-23 it listed *stamps* under "what it is not, yet" one
+    release after they shipped. A `PATCH` carrying only `body` resets the draft's `tag_name`
+    to `untagged-<hash>`, and publishing in that state attaches the release to no tag ---
+    while `gh release list` still shows it by name and `gh release view <tag>` cannot see a
+    draft at all, so neither of the two obvious instruments reports it. The GraphQL query
+    above prints `tagName` beside the asset count, which is why it is the one to use.
+
+    ```
+    gh api -X PATCH repos/tstone-1/tpdf/releases/<id> -f tag_name=vYY.M.MICRO --input body.json
+    gh api -X PATCH repos/tstone-1/tpdf/releases/<id> -f tag_name=vYY.M.MICRO -F draft=false
+    ```
+
+    The `latest.json` asset carries its own copy of that prose --- `tauri-action` fills its
+    `notes` from the body at build time --- and correcting the release page does not correct
+    it. Left alone deliberately: nothing in tpdf reads that field, so replacing an asset on a
+    published release to fix text no reader sees is the worse trade. See the trap.
+
     **The `curl` is the point, not ceremony.** `gh release list` reporting `Latest` is our
     own authenticated view; an unauthenticated fetch of a download URL is the reader's, and
     it is the only one of the two that can tell a published release from a draft we happen

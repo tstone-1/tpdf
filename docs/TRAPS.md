@@ -6898,6 +6898,42 @@ surfaced it earlier. And it is **invisible to CI**, because `viewer_check.py` ne
 window and a headless runner cannot run it at all --- so it sat under a green 13/13 gate run
 and two green CI jobs, and appeared on the first machine to open a window after the commit.
 
+### A PATCH that sets only the body clears the draft's tag, and publishing then attaches it to nothing
+
+Step 11 says to read the release body before publishing, because it is a literal in
+`release.yml` and can only ever be as current as the last person who read it. On 2026-08-23 it
+was stale --- it listed **stamps** under *What it is not, yet* one release after they shipped ---
+so the draft was corrected in place:
+
+    gh api -X PATCH repos/tstone-1/tpdf/releases/<id> --input patch.json   # {"body": "..."}
+
+The body changed, and so did something nobody asked to change. The response came back with
+`"tag_name": "untagged-53698856d15ecfb119ff"`, and GraphQL agreed: the release that had read
+`tagName: v26.8.8` a minute earlier was now attached to no tag at all. Publishing it in that
+state would have produced a release whose assets sit under `releases/download/untagged-<hash>/`
+--- exactly the URL shape the entry below describes for a *draft*, except public, permanent and
+next to a `v26.8.8` tag pointing at a commit with no release on it.
+
+**A draft has no tag until it is published**, so `tag_name` on one is a *field* rather than a
+fact, and GitHub treats a PATCH that omits it as a request to reset it. That is the half worth
+carrying: a partial update to a REST resource is only partial for the fields the server chooses,
+and the draft's tag is not one of them. Restoring it is one call --- `-f tag_name=v26.8.8` --- and
+publishing should carry it too, since the same reset applies to the call that flips `draft`:
+
+    gh api -X PATCH repos/tstone-1/tpdf/releases/<id> -f tag_name=v26.8.8 -F draft=false
+
+**Read it back with GraphQL, not with the response.** The response is authoritative here and it
+was, but `gh release list` still showed the draft under its name, and `gh release view v26.8.8`
+resolves through the REST endpoint that does not return drafts --- so the two commands most
+likely to be reached for both report the situation as normal. The GraphQL query step 11 already
+prescribes for counting assets prints `tagName` beside them, which makes it the one instrument
+that answers both questions at once.
+
+The `latest.json` asset is a separate copy of the same prose and was left alone deliberately:
+`tauri-action` fills its `notes` from the body at *build* time, so it still carries the stale
+sentence, and nothing in tpdf reads that field --- the updater shows only the version. Replacing
+a signed release's asset to correct text no reader sees is the worse trade.
+
 ### A draft release is invisible, and the tag beside it says the work shipped
 
 `v26.8.0` was tagged and pushed on 2026-08-03. The `Release` run went green on all four jobs
