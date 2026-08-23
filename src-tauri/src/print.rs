@@ -537,6 +537,7 @@ mod tests {
                 1,
                 crate::edits::NewMark {
                     kind: crate::docmodel::MarkKind::Highlight,
+                    stamp: None,
                     page: pages[at].id,
                     quads: vec![72.0, 100.0, 300.0, 118.0],
                     strokes: Vec::new(),

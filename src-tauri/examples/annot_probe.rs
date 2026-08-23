@@ -73,7 +73,7 @@
 use std::path::{Path, PathBuf};
 
 use tpdf_lib::annots::{self, Kind};
-use tpdf_lib::docmodel::{MarkKind, Quad};
+use tpdf_lib::docmodel::{MarkKind, Quad, StampName};
 use tpdf_lib::edits::{Edits, NewMark};
 use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
 use tpdf_lib::save;
@@ -116,6 +116,10 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         // a reader colours its own comment icon with, so this is the colour the
         // bubble comes out in everywhere else.
         MarkKind::Note => YELLOW,
+        // The lines' red, with the box: a stamp's ink is a stroked border and a
+        // filled word, both opaque, and `--mode outline` classifies pixels by
+        // the colour it asked for exactly as it does for a box.
+        MarkKind::Stamp => RULE_RED,
         // The lines' red, matching `MARK_COLORS` in `edits.ts`. A box's ink is
         // a stroke, and `--mode outline` classifies pixels by the colour it
         // asked for --- so a yellow box on white paper would be measured as an
@@ -168,6 +172,17 @@ enum Mode {
     Rule,
     /// That a box is a frame and not a filled rectangle, in pixels.
     Outline,
+    /// That a stamp is a border **and** a word, which is neither of its
+    /// neighbours.
+    ///
+    /// **The mode that exists because [`Mode::Outline`] cannot fail for this
+    /// kind**, in the shape [`Mode::Wave`] records one line below: a stamp is a
+    /// box with something inside it, so every reading `Outline` takes of a box
+    /// is satisfied by a stamp except the one it gets backwards --- it requires
+    /// an empty middle and a stamp's middle carries its word. Giving the new
+    /// kind the old one's expectations would have produced a check that reports
+    /// green for a stamp drawn as a plain rectangle.
+    Stamp,
     /// That a squiggle rises above where an underline's rule stops.
     ///
     /// **The mode that exists because [`Mode::Rule`] cannot fail for this
@@ -205,6 +220,8 @@ struct Args {
     mode: Mode,
     chars: usize,
     scale: f32,
+    /// Which standard stamp `--kind stamp` writes. Ignored by every other kind.
+    stamp: StampName,
     /// Where to leave the marked copy, for a human to open. Removed otherwise.
     keep: Option<PathBuf>,
     library: PathBuf,
@@ -237,6 +254,7 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Roundtrip => roundtrip(args, &document),
         Mode::Rule => rule(args, &document, bindings),
         Mode::Outline => outline(args, &document, bindings),
+        Mode::Stamp => stamp(args, &document, bindings),
         Mode::Wave => wave(args, &document, bindings),
         Mode::Strokes => strokes(args, &document, bindings),
         Mode::Ink | Mode::NoAp => ink(args, &document, bindings),
@@ -612,6 +630,11 @@ fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Qu
             DOC,
             NewMark {
                 kind: args.kind,
+                // The model refuses a name on any other kind and a stamp with
+                // none, so this is the biconditional restated at the one place
+                // that builds a mark here rather than a default that would be
+                // wrong for eight kinds out of nine.
+                stamp: (args.kind == MarkKind::Stamp).then_some(args.stamp),
                 page: id,
                 quads: quads
                     .iter()
@@ -741,6 +764,11 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
         // is the round trip saying `save.rs` emits it and `annots.rs` reads it
         // back rather than falling through to "some other annotation".
         MarkKind::Squiggly => Kind::Squiggly,
+        // Names that agree again, and it earns its arm for the squiggle's
+        // reason: `/Stamp` is a subtype tpdf could not write until this kind
+        // existed, so the round trip is what says `save.rs` emits it and
+        // `annots.rs` reads it back rather than reporting some other annotation.
+        MarkKind::Stamp => Kind::Stamp,
         // The one pair whose two names differ. `MarkKind::Note` is what a
         // reader calls it and `Kind::Text` is what the file calls it, so this
         // arm is the round trip that says `save.rs` wrote `/Text` and
@@ -811,9 +839,18 @@ fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
     // The ellipse is the fourth, and it is the box's route exactly: not a markup
     // subtype, so `is_text_markup` answers no for it and quads on it would be an
     // unlisted key claiming a run of words the mark does not cover.
+    // The stamp is the sixth and last, by the same route as the box and for the
+    // same reason: PDF 32000-1 lists `/QuadPoints` on the four markup subtypes
+    // and on nothing else, and a stamp's rectangle is the reader's rather than a
+    // run of words.
     let expected_quads = if matches!(
         args.kind,
-        MarkKind::Note | MarkKind::Square | MarkKind::Ink | MarkKind::Ellipse | MarkKind::TextBox
+        MarkKind::Note
+            | MarkKind::Square
+            | MarkKind::Ink
+            | MarkKind::Ellipse
+            | MarkKind::TextBox
+            | MarkKind::Stamp
     ) {
         0
     } else {
@@ -1801,6 +1838,12 @@ fn rule(
         // one of them, so thirds discriminate nothing. `--mode outline` is
         // where it is measured, and it takes this kind.
         MarkKind::Ellipse => unreachable!("refused above"),
+        // Refused above with the box, whose reason it shares and then some: a
+        // stamp's ink is a border round all three bands *and* a word across the
+        // middle one, so thirds discriminate nothing about it either.
+        // `--mode outline` measures the border, which is the part this mode's
+        // question is nearest to.
+        MarkKind::Stamp => unreachable!("refused above"),
         // Refused above, and for a reason none of the others has: a text box's
         // ink is wherever its words fall, which depends on how many there are.
         // A one-line box puts everything in the top third and a four-line box
@@ -1974,6 +2017,133 @@ fn wave(
 /// The inset is 25% of each side rather than a fixed number of points, so it
 /// scales with whatever quad the fixture's text produced, and at any plausible
 /// size it clears a 1.5 pt stroke by a wide margin.
+/// That a stamp is a border **and** a word, which is what makes it a stamp.
+///
+/// **`--mode outline` cannot do this, and reusing it would have been the
+/// mistake.** A stamp is a box with something in it, so every reading that mode
+/// takes of a box is also true of a stamp except one --- the middle, which that
+/// mode requires to be *empty* and this one requires to be inked. A stamp drawn
+/// as a plain rectangle would satisfy `outline` completely, and a stamp drawn as
+/// a bare word with no border would satisfy `legible`. Neither says what this
+/// kind is. The trap about a near-twin inheriting a predicate, avoided by
+/// reading the one thing that differs.
+///
+/// Three bands, and each of the three is needed:
+///
+/// - **the whole quad**, so a stamp that drew nothing is not reported as one
+///   with an empty middle;
+/// - **the middle**, which a box leaves empty and a stamp fills with its word;
+/// - **the top edge column**, which a text box leaves empty and a stamp strokes.
+///
+/// The two failure modes it is aimed at are therefore each other's opposite, and
+/// a single reading cannot catch both.
+fn stamp(
+    args: &Args,
+    document: &RawDocument,
+    bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    if !matches!(args.kind, MarkKind::Stamp) {
+        return Err(
+            "--mode stamp is for a stamp: pass --kind stamp. Every other kind draws \
+             either a border or a filling and not both, which is what --mode outline \
+             and --mode legible measure."
+                .to_string(),
+        );
+    }
+    let (out, quads) = mark_and_save(args, document)?;
+    if quads.len() != 1 {
+        return Err(format!(
+            "a stamp is one rectangle and this run made {}; --mode stamp cannot read \
+             a mark with several",
+            quads.len()
+        ));
+    }
+
+    // `outline`'s reason exactly: a border is OUTLINE_WIDTH thick, and at the
+    // default scale its antialiased edges are most of it.
+    let scale = args.scale.max(4.0);
+    if scale != args.scale {
+        println!("     rendering at {scale}x rather than {}x: a stroke {OUTLINE_WIDTH} pt thick needs pixels to be measured in", args.scale);
+    }
+    let (before, bw, bh) = render(bindings, &args.file, args.page, scale)?;
+    let (after, aw, ah) = render(bindings, &out, args.page, scale)?;
+    if args.keep.is_none() {
+        let _ = std::fs::remove_file(&out);
+    }
+    if (bw, bh) != (aw, ah) {
+        return Err(format!(
+            "the copy renders {aw}x{ah} where the source renders {bw}x{bh}, so no \
+             pixel comparison between them means anything"
+        ));
+    }
+
+    let quad = union(&quads);
+    let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
+    let whole = [quad[0], quad[1], quad[2], quad[3]];
+    // The middle third both ways, which is where the word is and where a box's
+    // stroke is not. A quarter in from each edge would also clear the border;
+    // a third is chosen so the band is comfortably inside the inset the word
+    // itself sits in, rather than a hair from it.
+    let middle = [
+        quad[0] + width / 3.0,
+        quad[1] + height / 3.0,
+        quad[2] - width / 3.0,
+        quad[3] - height / 3.0,
+    ];
+    // A column a tenth of the width, at the horizontal centre, over the top
+    // eighth. The border crosses it; the word does not reach it, because the
+    // word is centred on the middle and `STAMP_INSET` keeps it clear of the
+    // edge.
+    //
+    // **A tenth rather than one pixel, and the width is the reading.** The first
+    // version used `centre + 0.01`, which `rule_pixels` rounds to a single pixel
+    // column: a correct border then measured **5 px**, five above a bound of
+    // zero, and a check whose passing reading is five pixels is one antialiasing
+    // change away from flaking. A tenth of the width is the same question asked
+    // where the answer has room --- and it is still comfortably clear of the
+    // word, whose cap height is centred on the middle third.
+    let centre = (quad[0] + quad[2]) / 2.0;
+    let top = [
+        centre - width / 20.0,
+        quad[3] - height / 8.0,
+        centre + width / 20.0,
+        quad[3],
+    ];
+
+    let want = color_for(args.kind);
+    let frame = rule_pixels(&after, aw, ah, whole, scale, want);
+    let word = rule_pixels(&after, aw, ah, middle, scale, want);
+    let border = rule_pixels(&after, aw, ah, top, scale, want);
+    let control = rule_pixels(&before, bw, bh, whole, scale, want);
+    println!(
+        "stamp {width:.1}x{height:.1} pt: {frame} px in the whole quad, {word} in its \
+         middle third, {border} on its top edge, {control} on the source page"
+    );
+
+    let mut ok = true;
+    ok &= check(
+        "the source page has no stamp where the mark went (the control)",
+        control == 0,
+    );
+    ok &= check(
+        &format!("the renderer drew the stamp at all ({frame} px)"),
+        frame > 0,
+    );
+    // The discrimination against a box, which strokes an edge and fills nothing.
+    ok &= check(
+        &format!("the stamp says something in its middle ({word} px)"),
+        word > 0,
+    );
+    // And against a text box, which sets type and draws no border. Read at the
+    // top edge rather than anywhere on the frame, because the word could
+    // otherwise be mistaken for the border on a stamp whose type is large.
+    ok &= check(
+        &format!("the stamp has a border round it ({border} px)"),
+        border > 0,
+    );
+    Ok(ok)
+}
+
 fn outline(
     args: &Args,
     document: &RawDocument,
@@ -2285,6 +2455,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
         DOC,
         NewMark {
             kind: MarkKind::Highlight,
+            stamp: None,
             page: id,
             quads: vec![10.0, 10.0, 10.0, 40.0],
             strokes: Vec::new(),
@@ -2303,6 +2474,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
         DOC,
         NewMark {
             kind: MarkKind::Highlight,
+            stamp: None,
             page: id,
             quads: vec![10.0, 10.0, 40.0],
             strokes: Vec::new(),
@@ -2325,6 +2497,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
         DOC,
         NewMark {
             kind: MarkKind::Highlight,
+            stamp: None,
             page: id,
             quads: vec![10.0, 10.0, 200.0, 40.0],
             strokes: vec![vec![10.0, 10.0, 200.0, 40.0]],
@@ -2343,6 +2516,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
         DOC,
         NewMark {
             kind: MarkKind::Ink,
+            stamp: None,
             page: id,
             quads: Vec::new(),
             strokes: Vec::new(),
@@ -2367,6 +2541,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
         DOC,
         NewMark {
             kind: MarkKind::Ink,
+            stamp: None,
             page: id,
             quads: Vec::new(),
             strokes: vec![vec![50.0, 50.0, 50.0, 50.0, 50.0, 50.0]],
@@ -2385,6 +2560,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
         DOC,
         NewMark {
             kind: MarkKind::Ink,
+            stamp: None,
             page: id,
             quads: Vec::new(),
             strokes: vec![vec![10.0, 10.0, 40.0]],
@@ -2411,6 +2587,7 @@ fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
         DOC,
         NewMark {
             kind: MarkKind::Highlight,
+            stamp: None,
             page: id,
             quads: vec![10.0, 10.0, 200.0, 40.0],
             strokes: Vec::new(),
@@ -2446,6 +2623,7 @@ fn parse_args() -> Result<Args, String> {
         mode: Mode::Roundtrip,
         chars: DEFAULT_CHARS,
         scale: 2.0,
+        stamp: StampName::Approved,
         keep: None,
         library: PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR),
     };
@@ -2484,7 +2662,20 @@ fn parse_args() -> Result<Args, String> {
                     // serde name, which makes this the one kind where the name
                     // accepted here is also the one a reader would say.
                     "ellipse" => MarkKind::Ellipse,
+                    // The serde name, the PDF name and the reader's word, all
+                    // three the same for the third time. Which stamp it says is
+                    // `--stamp`, and defaults to `approved`.
+                    "stamp" => MarkKind::Stamp,
                     other => return Err(format!("unknown kind {other}")),
+                }
+            }
+            "--stamp" => {
+                parsed.stamp = match value.as_str() {
+                    "approved" => StampName::Approved,
+                    "confidential" => StampName::Confidential,
+                    "draft" => StampName::Draft,
+                    "final" => StampName::Final,
+                    other => return Err(format!("unknown stamp {other}")),
                 }
             }
             "--out" => parsed.keep = Some(PathBuf::from(value)),
@@ -2497,6 +2688,7 @@ fn parse_args() -> Result<Args, String> {
                     "strokes" => Mode::Strokes,
                     "ink" => Mode::Ink,
                     "noap" => Mode::NoAp,
+                    "stamp" => Mode::Stamp,
                     "legible" => Mode::Legible,
                     "refuse" => Mode::Refuse,
                     "preview" => Mode::Preview,

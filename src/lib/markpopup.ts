@@ -136,6 +136,9 @@ const NAMES: Record<MarkKind, string> = {
   // mark the note is a remark about something drawn; here it is the thing on the
   // page, so the field a reader types in is the mark itself.
   textbox: "Text box",
+  // "Stamp", the third kind whose PDF subtype, serde name and reader's word
+  // are one word --- after "Squiggly" and "Ellipse", and for their reason.
+  stamp: "Stamp",
   // "Drawing", never "Ink". `/Ink` is the file's spelling, `ink` is the serde
   // name, and inside this codebase "ink" already means how a mark is laid down
   // --- `Paint` in `save.rs`, `markBand` here. A reader who drew a line and

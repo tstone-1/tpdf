@@ -563,6 +563,87 @@ pub enum MarkKind {
     /// `save.rs`'s `Paint`, which is how a mark is laid down rather than which
     /// mark it is.
     Ink,
+    /// A standard stamp a reader placed, `/Stamp`.
+    ///
+    /// **The last markup kind, and the first whose content is a closed set.**
+    /// Every other kind's content comes from the reader: a selection, a
+    /// rectangle, a note they typed, strokes they drew. A stamp says one of a
+    /// fixed list of words, and which one is the whole of the mark ---
+    /// [`StampName`] is that list.
+    ///
+    /// **It needs an appearance stream, and that was measured rather than
+    /// assumed.** [`MarkKind::Note`] carries none because every reader
+    /// synthesises a `/Text` icon; a stamp looks like the same case and is not.
+    /// Rendering a `/Stamp` with `/Name /Approved` and no `/AP` through PDFium
+    /// draws **0** non-white pixels, against **336** for a `/Text` with no `/AP`
+    /// on the same page through the same code --- so the control is what makes
+    /// the zero mean "nothing was drawn" rather than "nothing was rendered". It
+    /// is on [`MarkKind::Square`]'s side of the line, not the comment's.
+    ///
+    /// `/Name` is written anyway. It is not what draws the stamp here, and it is
+    /// what a reader that *would* synthesise one draws from, which is why the
+    /// list is the specification's own rather than words we chose.
+    ///
+    /// It is placed by a drag, as [`MarkKind::Square`], [`MarkKind::Ellipse`]
+    /// and [`MarkKind::TextBox`] are, and carries no `/QuadPoints` for their
+    /// reason.
+    ///
+    /// The serde name is `stamp`, the PDF name is `/Stamp`, and the word a
+    /// reader sees is **Stamp** --- the third kind whose three spellings agree,
+    /// after [`MarkKind::Ellipse`] and [`MarkKind::Squiggly`], and for their
+    /// reason: there is no better everyday word.
+    Stamp,
+}
+
+/// Which standard stamp a [`MarkKind::Stamp`] is.
+///
+/// **A closed set, and the specification's own.** PDF 32000-1 Table 181 lists
+/// fourteen standard `/Name` values for a stamp annotation; these four are the
+/// ones whose meaning is unambiguous in everyday English, and the rest are a
+/// table entry away rather than a design change. Choosing words of our own
+/// instead would have made `/Name` unwritable --- a reader that synthesises a
+/// stamp appearance draws from that list and from nothing else.
+///
+/// **The word drawn and the `/Name` written are the same choice**, which is why
+/// this is one enum and not a name beside a string. A stamp whose appearance
+/// said `DRAFT` and whose `/Name` said `/Approved` would read differently in two
+/// readers and be right in neither.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StampName {
+    Approved,
+    Confidential,
+    Draft,
+    Final,
+}
+
+impl StampName {
+    /// The `/Name` value, which is the specification's spelling.
+    #[must_use]
+    pub fn pdf_name(self) -> &'static [u8] {
+        match self {
+            Self::Approved => b"Approved",
+            Self::Confidential => b"Confidential",
+            Self::Draft => b"Draft",
+            Self::Final => b"Final",
+        }
+    }
+
+    /// The word to draw, which is upper case because a stamp is.
+    ///
+    /// Latin-1 throughout, which is not a coincidence to rely on quietly:
+    /// `textbox.rs` writes Helvetica with `/WinAnsiEncoding` and refuses
+    /// anything outside it, so a name added here in another script would be
+    /// refused by the writer rather than drawn wrong.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Approved => "APPROVED",
+            Self::Confidential => "CONFIDENTIAL",
+            Self::Draft => "DRAFT",
+            Self::Final => "FINAL",
+        }
+    }
 }
 
 /// One mark a reader made, with everything a writer needs to put it in a file.
@@ -600,6 +681,19 @@ pub struct Mark {
     /// is not ink, and ink with nothing drawn. Both refusals have a test,
     /// because a rule with no failing case is a comment.
     pub strokes: Vec<Stroke>,
+    /// Which standard stamp this is. `Some` exactly for [`MarkKind::Stamp`].
+    ///
+    /// **The same arrangement as [`Mark::strokes`] above, and for its reason**:
+    /// putting the name inside the `MarkKind::Stamp` variant would carry the
+    /// biconditional in the type and would cost [`MarkKind`] its `Copy`, which
+    /// [`Command`] is built on. So it is a field, [`Doc::annotate`] refuses both
+    /// halves, and both refusals have a test.
+    ///
+    /// Unlike the note, it is fixed at the moment the mark is made. A reader who
+    /// wants a different word places a different stamp --- which is what a stamp
+    /// is, and it keeps this struct's "everything here is fixed at creation"
+    /// property intact.
+    pub stamp: Option<StampName>,
     /// Red, green and blue in 0..=1, as `/C` takes them.
     pub color: [f32; 3],
     /// `/T`. Empty when the reader has no name set.
@@ -775,6 +869,15 @@ pub enum Refusal {
     ///
     /// It carries the kind so a diagnostic can say which way round it went.
     ShapeMismatch(MarkKind),
+    /// A stamp name on a mark that is not a stamp, or a stamp without one.
+    ///
+    /// **Its own variant rather than a second meaning for
+    /// [`ShapeMismatch`](Refusal::ShapeMismatch)**, which is documented as one
+    /// variant for one rule about one field. Two fields with two biconditionals
+    /// are two rules, and a caller told only "shape mismatch" would have to
+    /// guess which. That is the trap about one predicate answering two
+    /// questions, refused here before it could be made.
+    StampMismatch(MarkKind),
 }
 
 /// Baseline plus the commands applied so far, materialized.
@@ -1260,6 +1363,12 @@ impl Doc {
         if mark.strokes.is_empty() != (mark.kind != MarkKind::Ink) {
             return Err(Refusal::ShapeMismatch(mark.kind));
         }
+        // The same shape for [`Mark::stamp`], and beside the one above rather
+        // than folded into it: they are two rules about two fields, and a mark
+        // can break either without breaking the other.
+        if mark.stamp.is_some() != (mark.kind == MarkKind::Stamp) {
+            return Err(Refusal::StampMismatch(mark.kind));
+        }
         // **Two questions, asked of the kind that can tell them apart.** For
         // every other kind "covers nothing" is a quad with no area; for ink it
         // is a stroke with no length, and its quad *always* covers area because
@@ -1679,6 +1788,7 @@ mod tests {
     fn mark_on(page: PageId) -> Mark {
         Mark {
             kind: MarkKind::Highlight,
+            stamp: None,
             page,
             quads: vec![Quad {
                 left: 72.0,
@@ -2235,6 +2345,7 @@ mod tests {
         }];
         Mark {
             kind: MarkKind::Ink,
+            stamp: None,
             page,
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
             strokes,
@@ -2263,6 +2374,7 @@ mod tests {
         ];
         Mark {
             kind: MarkKind::Ink,
+            stamp: None,
             page,
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
             strokes,
@@ -2682,6 +2794,39 @@ mod tests {
         // drawing. Without it, a model that refused every ink mark would pass
         // the first assertion and read as the rule working.
         assert!(doc.annotate(ink_on(page), String::new()).is_ok());
+        assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
+    }
+
+    #[test]
+    fn a_kind_and_a_stamp_name_that_disagree_are_refused_both_ways_round() {
+        // [`Mark::stamp`]'s biconditional, and its own test rather than a third
+        // case in the one above: they are two rules about two fields, and a
+        // mark can break either without breaking the other. A shared test would
+        // pass while one of them was unchecked.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+
+        let mut stamp_without = mark_on(page);
+        stamp_without.kind = MarkKind::Stamp;
+        assert_eq!(
+            doc.annotate(stamp_without, String::new()),
+            Err(Refusal::StampMismatch(MarkKind::Stamp))
+        );
+
+        let mut highlight_with = mark_on(page);
+        highlight_with.stamp = Some(StampName::Draft);
+        assert_eq!(
+            doc.annotate(highlight_with, String::new()),
+            Err(Refusal::StampMismatch(MarkKind::Highlight))
+        );
+
+        // The control, for the reason the test above gives: a model that
+        // refused every stamp would pass the first assertion and read as the
+        // rule working.
+        let mut real = mark_on(page);
+        real.kind = MarkKind::Stamp;
+        real.stamp = Some(StampName::Approved);
+        assert!(doc.annotate(real, String::new()).is_ok());
         assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
     }
 

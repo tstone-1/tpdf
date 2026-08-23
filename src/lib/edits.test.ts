@@ -50,6 +50,7 @@ function mark(id: number, page: number): MarkView {
   return {
     id,
     kind: "highlight",
+    stamp: null,
     page: pageId(page),
     quads: [72, 100, 300, 118],
     strokes: [],
@@ -341,6 +342,7 @@ describe("Edits", () => {
         page: 3,
         quads: [10, 20, 30, 40],
         strokes: [],
+        stamp: null,
         color: [1, 0.9, 0.2],
         author: "",
         note: "a note",

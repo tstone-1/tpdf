@@ -1790,6 +1790,16 @@ fn mark_dictionary(
     );
     dictionary.set("F", Object::Integer(4));
     dictionary.set("P", Object::Reference(page));
+    // Which standard stamp this is, in the specification's spelling.
+    //
+    // **Written even though it is not what draws the stamp here.** `/AP` wins in
+    // every reader that has one, and this file always writes one --- so this is
+    // for a reader that would synthesise an appearance instead, and that reader
+    // draws from PDF 32000-1's list and nothing else. Writing a name outside it
+    // would be worse than writing none.
+    if let Some(name) = mark.stamp {
+        dictionary.set("Name", Object::Name(name.pdf_name().to_vec()));
+    }
     if note {
         // The icon a reader sees. `/Comment` is the speech bubble in every
         // reader that draws these; `/Note` is the folded page, which is the
@@ -1876,6 +1886,8 @@ fn subtype(kind: MarkKind) -> &'static [u8] {
         // than anything about the words. A reader sees "Text box".
         MarkKind::TextBox => b"FreeText",
         MarkKind::Ink => b"Ink",
+        // `/Stamp`, and the one kind whose three spellings all agree.
+        MarkKind::Stamp => b"Stamp",
     }
 }
 
@@ -1952,12 +1964,24 @@ enum Paint {
     /// hand-drawn corner spikes, which reads as a rendering fault rather than as
     /// a style.
     Path,
+    /// A word inside a border, both in the mark's colour.
+    ///
+    /// **The second style whose content is not geometry**, after [`Paint::Text`]
+    /// --- and unlike that one the string is not the reader's. It is
+    /// [`StampName::word`], one of a closed list, which is what lets the size be
+    /// chosen to fit rather than wrapped: a stamp is one word and it should fill
+    /// the rectangle the reader dragged.
+    ///
+    /// It is a border *and* a word rather than either alone. A word with no
+    /// border reads as a text box, and a border with no word is a
+    /// [`Paint::Outline`]; what makes a stamp recognisable is both together.
+    Stamp,
     /// None of ours. The reader draws its own, which for `/Text` is the only
     /// way the icon can look like that reader's other comments.
     None,
 }
 
-/// Which of the six a kind uses.
+/// Which of the seven a kind uses.
 ///
 /// A `match` for [`subtype`]'s reason: adding a [`MarkKind`] has to be a compile
 /// error here rather than a mark that silently draws as a highlight.
@@ -1971,6 +1995,13 @@ fn paint(kind: MarkKind) -> Paint {
         MarkKind::TextBox => Paint::Text,
         MarkKind::Ink => Paint::Path,
         MarkKind::Note => Paint::None,
+        // **Not `Paint::None`, and the difference from the comment above was
+        // measured.** A `/Stamp` with `/Name /Approved` and no `/AP` renders 0
+        // non-white pixels through PDFium, against 336 for a `/Text` with no
+        // `/AP` on the same page --- so a stamp with no appearance of ours is an
+        // annotation that draws nothing at all, which is `MarkKind::Square`'s
+        // situation rather than the comment's.
+        MarkKind::Stamp => Paint::Stamp,
     }
 }
 
@@ -2145,6 +2176,9 @@ fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         // narrowing it would need a second enum whose only job is to say which
         // three those are.
         MarkKind::Ink => (bottom, full),
+        // Not reached, a sixth time: a stamp is a border and a word, both placed
+        // from its own rectangle by `Paint::Stamp`. The whole quad.
+        MarkKind::Stamp => (bottom, full),
         // Not reached, for the box's reason exactly: an ellipse is drawn from
         // its quad by `Paint::Ellipse` and has no band inside it either. The
         // whole quad a fifth time, which is the argument above getting stronger
@@ -2206,6 +2240,23 @@ const KAPPA: f64 = 0.5522847498307936;
 /// value here as readily as with a right one. `markband.ts` holds the same
 /// number for the overlay.
 pub const INK_WIDTH: f64 = 2.5;
+
+/// How far a stamp's word sits inside its border, in points.
+///
+/// Larger than [`textbox::INSET`] and deliberately: a text box's inset stops
+/// type touching an edge it has no border on, and a stamp's has to leave the
+/// border visible as a border rather than as an underline to the word.
+pub const STAMP_INSET: f64 = 4.0;
+
+/// A capital's height as a fraction of the font size, for Helvetica.
+///
+/// **Used to place a stamp's baseline and to bound its size, and it is a
+/// property of the face rather than a constant to tune.** Helvetica's capital
+/// height is 718 units of 1000, and every word a stamp draws is upper case ---
+/// so the ink's height is this and not the font size, which includes descender
+/// space no stamp uses. Centring on the size instead leaves a stamp visibly high
+/// in its box.
+pub const STAMP_CAP: f64 = 0.718;
 
 /// A box's path inside its quad: `[x, y, width, height]` in the page's space.
 ///
@@ -2439,6 +2490,52 @@ fn appearance_stream(
                     }
                     content.push_str(&format!("<{}> Tj\n", winansi_hex(line)));
                 }
+                content.push_str("ET\n");
+            }
+        }
+        // A border and one word, both in the mark's colour.
+        //
+        // **The size is computed rather than fixed**, which is the difference
+        // from `Paint::Text` above and the reason a stamp needs no wrapping. A
+        // stamp is one word and a reader who drags a large rectangle means a
+        // large stamp, so the size is whatever makes the word span the box
+        // between its insets --- bounded above by what the height can hold, so a
+        // wide flat rectangle gives a word that fits rather than one clipped by
+        // the /BBox.
+        //
+        // `advance` is the same Helvetica table `textbox.rs` wraps with, and
+        // `helvetica-probe` measures it against what PDFium actually inks. A
+        // stamp is the second consumer of it, which is worth noting because a
+        // wrong entry here is visible as a word that is off-centre rather than
+        // as a word in the wrong place.
+        Paint::Stamp => {
+            for quad in quads {
+                let Some(name) = mark.stamp else {
+                    continue;
+                };
+                let word = name.word();
+                let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;
+                let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;
+                let [x, y, width, height] = outline_path(*quad);
+                content.push_str(&format!("{x} {y} {width} {height} re S\n"));
+                if inner_w <= 0.0 || inner_h <= 0.0 {
+                    continue;
+                }
+                // The advance at one point, so the ratio is a division rather
+                // than a search. `max` guards a name that measured zero, which
+                // no entry in the list does and which a table edit could make
+                // true.
+                let unit = textbox::advance(word, 1.0).max(f64::EPSILON);
+                let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);
+                // Centred both ways. The baseline sits half a cap height below
+                // the middle, because `Td` places a baseline and a word centred
+                // *on* it hangs half its body below the box's middle.
+                let drawn = textbox::advance(word, size);
+                let left = quad[0] + ((quad[2] - quad[0]) - drawn) / 2.0;
+                let baseline = quad[1] + ((quad[3] - quad[1]) - size * STAMP_CAP) / 2.0;
+                content.push_str(&format!("BT /{TEXT_FONT} {size} Tf\n"));
+                content.push_str(&format!("{left} {baseline} Td\n"));
+                content.push_str(&format!("<{}> Tj\n", winansi_hex(word)));
                 content.push_str("ET\n");
             }
         }
@@ -4845,6 +4942,11 @@ mod tests {
             }],
             marks: vec![PlannedMark {
                 kind,
+                // The biconditional the model enforces, restated here because
+                // this builds a plan directly: a stamp with no name draws an
+                // empty border, which is a box, so a test written for a stamp
+                // would be measuring the wrong kind.
+                stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
                 source: 0,
                 quads,
                 strokes: Vec::new(),
@@ -4920,6 +5022,7 @@ mod tests {
         let mut plan = plan_opened_as(&vec![0u8; count], &at);
         plan.marks = vec![PlannedMark {
             kind: MarkKind::Highlight,
+            stamp: None,
             source: 0,
             quads: one_quad(),
             strokes: Vec::new(),
@@ -6095,6 +6198,7 @@ mod tests {
             ],
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
+                stamp: None,
                 source: 0,
                 quads: one_quad(),
                 strokes: Vec::new(),
@@ -6142,6 +6246,7 @@ mod tests {
                 .collect(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
+                stamp: None,
                 source: 2,
                 quads: one_quad(),
                 strokes: Vec::new(),
@@ -6480,6 +6585,76 @@ mod tests {
                 .filter_map(|object| object.as_dict().ok())
                 .all(|dictionary| dictionary.get(b"InkList").is_err()),
             "an /InkList on a highlight is as wrong as its absence on ink"
+        );
+    }
+
+    #[test]
+    fn a_stamp_is_a_border_and_a_word_rather_than_either_alone() {
+        // **Both halves, because each is a way of drawing a stamp that looks
+        // exactly like another kind.** A stamp with only its border is a
+        // `/Square`; a stamp with only its word is a `/FreeText`. Both would
+        // pass a check that asked for ink and nothing more, and `annot-probe
+        // --mode stamp` measures the same two things in pixels for the same
+        // reason.
+        let scratch = Scratch::new("annots-stamp");
+        let content = appearance_of(MarkKind::Stamp, &scratch);
+
+        assert!(content.contains(" re S"), "a stamp is bordered: {content}");
+        assert!(content.contains("Tj"), "a stamp says something: {content}");
+        // The word itself, hex-encoded as `winansi_hex` writes it --- `DRAFT`,
+        // which is what `plan_of_kind` gives a stamp. Asserted rather than left
+        // to "some text is drawn", because a stamp drawing the *note* instead
+        // of its name would satisfy every reading above and put the wrong word
+        // on the page.
+        assert!(
+            content.contains("<4452414654>"),
+            "a stamp draws its own name: {content}"
+        );
+    }
+
+    #[test]
+    fn a_stamp_fills_the_rectangle_it_was_dragged_out_at() {
+        // The size is computed from the rectangle, so a stamp dragged twice as
+        // wide is set twice as large. Two plans differing in nothing but the
+        // quad, compared by the `Tf` size each writes.
+        let scratch = Scratch::new("annots-stamp-size");
+        let small = appearance_of_plan(
+            &plan_of_kind(
+                MarkKind::Stamp,
+                vec![crate::docmodel::Quad {
+                    left: 72.0,
+                    top: 100.0,
+                    right: 172.0,
+                    bottom: 130.0,
+                }],
+            ),
+            &scratch,
+        );
+        let large = appearance_of_plan(
+            &plan_of_kind(
+                MarkKind::Stamp,
+                vec![crate::docmodel::Quad {
+                    left: 72.0,
+                    top: 100.0,
+                    right: 372.0,
+                    bottom: 190.0,
+                }],
+            ),
+            &scratch,
+        );
+        let size_of = |content: &str| -> f64 {
+            let at = content.find(" Tf").expect("a stamp sets a font size");
+            content[..at]
+                .rsplit(' ')
+                .next()
+                .expect("a size before Tf")
+                .parse()
+                .expect("the size is a number")
+        };
+        let (a, b) = (size_of(&small), size_of(&large));
+        assert!(
+            b > a * 1.5,
+            "a stamp three times as wide is set larger: {a} then {b}"
         );
     }
 

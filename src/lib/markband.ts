@@ -205,6 +205,35 @@ export function isText(kind: MarkKind): boolean {
  * and the reason that one is worth remembering is that the *file* was right
  * throughout.
  */
+/**
+ * Whether a kind is a stamp: a border round its quad and a word across it.
+ *
+ * **Its own predicate rather than `isOutline` plus a note**, because a stamp
+ * that answered `isOutline` would be drawn as an empty box and the file would
+ * be right --- which is the shape of the underline defect this file's own header
+ * describes, and the reason `--mode stamp` exists beside `--mode outline` in
+ * `annot-probe`. Two renderers, one of them wrong, nothing red.
+ */
+export function isStamp(kind: MarkKind): boolean {
+  return kind === "stamp";
+}
+
+/**
+ * A capital's height as a fraction of the font size, for Helvetica.
+ *
+ * `STAMP_CAP` in `save.rs`, and the same argument for it: every word a stamp
+ * draws is upper case, so the ink's height is the cap height and not the size,
+ * which includes descender space no stamp uses.
+ */
+export const STAMP_CAP = 0.718;
+
+/**
+ * How far a stamp's word sits inside its border, in points.
+ *
+ * `STAMP_INSET` in `save.rs`.
+ */
+export const STAMP_INSET = 4;
+
 export function isPath(kind: MarkKind): boolean {
   return kind === "ink";
 }
@@ -246,6 +275,9 @@ export function isMovable(kind: MarkKind): boolean {
     case "ellipse":
     case "textbox":
     case "ink":
+    // A stamp is placed by the reader and anchored to nothing, so it moves for
+    // the box's reason exactly.
+    case "stamp":
       return true;
   }
 }
@@ -583,6 +615,13 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // fit inside it. The overlay asks {@link isPath} first and paints the
       // strokes, so nothing reaches this arm --- it exists because the switch
       // is exhaustive, which is what makes a sixth kind a compile error here.
+      return quad;
+     case "stamp":
+      // The whole quad a sixth time. A stamp is a border on the quad's edge and
+      // a word across its middle, which is two things rather than a band --- the
+      // overlay asks {@link isStamp} and draws both. What this returns is the
+      // rectangle they are placed from, which is what the anchor and the hit
+      // test want.
       return quad;
   }
 }

@@ -56,6 +56,7 @@
     NO_PAGES,
     outlineIn,
     type MarkKind,
+    type StampName,
     type PageId,
   } from "./lib/pages";
   import { nameOf } from "./lib/markpopup";
@@ -319,6 +320,7 @@
     addComment: (at) => void addComment(at),
     drawBox: () => viewer?.armDraw("square"),
     drawEllipse: () => viewer?.armDraw("ellipse"),
+    stamp: (name) => viewer?.armDraw("stamp", name),
     drawTextBox: () => viewer?.armDraw("textbox"),
     draw: () => viewer?.armDraw("ink"),
     erase: () => viewer?.armErase(),
@@ -462,10 +464,11 @@
     kind: MarkKind,
     page: PageId,
     shape: Drawn,
+    stamp: StampName | null,
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
     await applyEdit((e) =>
-      e.mark(kind, page, shape.quads, shape.strokes, "", markColor.rgb),
+      e.mark(kind, page, shape.quads, shape.strokes, "", markColor.rgb, stamp),
     );
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
     if (made) viewer?.showMark(made.id);
@@ -1999,7 +2002,8 @@
         // is, and undo steps over it identically. The shape is handed straight
         // through: which of its two halves is filled is the viewer's answer and
         // the model's rule, and restating it here would be a third copy.
-        onDrawn: (kind, page, shape) => void drawn(kind, page, shape),
+        onDrawn: (kind, page, shape, stamp) =>
+          void drawn(kind, page, shape, stamp),
         onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
         onErased: (mark, remove) => void applyEdit((e) => e.erase(mark, remove)),
         onStatus: (next) => {

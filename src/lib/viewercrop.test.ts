@@ -106,6 +106,7 @@ function mark(rect: [number, number, number, number]): MarkView {
   return {
     id: 10,
     kind: "highlight",
+    stamp: null,
     page: pageId(1),
     quads: [...rect],
     strokes: [],

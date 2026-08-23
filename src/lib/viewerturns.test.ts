@@ -175,6 +175,7 @@ describe("a rectangle on a page an edit turned", () => {
       viewer.setMarks([{
         id: 3,
         kind: "highlight",
+        stamp: null,
         page: pageId(1),
         quads: [...RECT],
         strokes: [],
@@ -213,6 +214,7 @@ describe("a rectangle on a page an edit turned", () => {
       viewer.setMarks([{
         id: 3,
         kind: "highlight",
+        stamp: null,
         page: pageId(1),
         quads: [...RECT],
         strokes: [],
@@ -290,6 +292,7 @@ describe("what a turned page does to a place in it", () => {
       viewer.setMarks([{
         id: 3,
         kind: "highlight",
+        stamp: null,
         page: pageId(1),
         quads: [...RECT],
         strokes: [],
