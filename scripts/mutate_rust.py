@@ -531,6 +531,37 @@ MUTATIONS = [
         "the_version_files_agree_with_the_crate",
     ),
     Mutation(
+        # Say nothing about a close that failed. The reader is told the save did
+        # not land and not that their document is also gone, so the message they
+        # act on is missing the half that decides what they do next.
+        "save: drop the close's own failure from what the reader is told",
+        "src/lib.rs",
+        '            "{} --- and the document did not close cleanly: {also}",',
+        '            "{}{also:.0}",',
+        "a_failed_close_is_added_to_the_failure_the_reader_sees",
+    ),
+    Mutation(
+        # Add the note whether or not the close failed, so every ordinary
+        # refusal ends with a sentence about nothing going wrong.
+        "save: append a close note to a save whose close was clean",
+        "src/lib.rs",
+        "    if let Err(also) = closed {",
+        '    let also = closed.err().unwrap_or_else(|| "".into());\n    {',
+        "a_clean_close_adds_nothing_to_a_failure",
+    ),
+    Mutation(
+        # Rebuild the failure instead of decorating it, which drops `changed`.
+        # That field is what lets the window offer Reload for a file that moved
+        # under the reader, so this withdraws the one action that would help --
+        # and the message, which is all anybody reads, looks perfect.
+        "save: rebuild a decorated failure and lose the field Reload reads",
+        "src/lib.rs",
+        "fn with_close_note(mut why: SaveFailure, closed: Result<(), String>) -> SaveFailure {",
+        "fn with_close_note(why: SaveFailure, closed: Result<(), String>) -> SaveFailure {\n"
+        "    let mut why = SaveFailure::after_close(why.message);",
+        "a_close_note_changes_the_sentence_and_not_the_fields",
+    ),
+    Mutation(
         # Ask the layout for an action it does not define. A status other than
         # zero is the only thing standing between a garbage buffer and a label,
         # and the buffer is uninitialised on that path.

@@ -91,10 +91,16 @@ export interface Ranked {
   positions: number[];
 }
 
-/**
- * Weights. Only their *order* is meaningful --- a score is never displayed and
- * can go negative on a match that starts late in a long title, which is fine
- * because nothing compares one against a threshold.
+/*
+ * Weights for the four constants below. Only their *order* is meaningful --- a
+ * score is never displayed and can go negative on a match that starts late in a
+ * long title, which is fine because nothing compares one against a threshold.
+ *
+ * A plain block comment rather than a doc comment, deliberately: it documents a
+ * *group* and not the declaration under it, and a `/**` here would bind to
+ * nothing while looking exactly like `WORD_START`'s own. See the trap about
+ * orphaned doc comments; making that rule mechanical is what this spelling is
+ * for.
  */
 /** Score for a match at the start of a word, which is what people type. */
 const WORD_START = 12;

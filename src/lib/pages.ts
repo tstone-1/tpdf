@@ -26,14 +26,6 @@ import type { Link } from "./links";
 import type { OutlineItem, Target } from "./outline";
 
 /**
- * What kind of mark a reader made. The names are the wire format --- see
- * `MarkKind` in `docmodel.rs`, which is where the set is closed.
- *
- * Here rather than in `edits.ts`, where the command that sends one lives, for
- * the reason the note above {@link PageView} gives: this module must not import
- * the module that talks to Tauri, and {@link MarkView} needs the type.
- */
-/**
  * The model's name for a page, which is not its position on screen.
  *
  * **A `number` at runtime and a distinct type at compile time**, because the two
@@ -68,6 +60,14 @@ export function pageId(value: number): PageId {
   return value as PageId;
 }
 
+/**
+ * What kind of mark a reader made. The names are the wire format --- see
+ * `MarkKind` in `docmodel.rs`, which is where the set is closed.
+ *
+ * Here rather than in `edits.ts`, where the command that sends one lives, for
+ * the reason the note above {@link PageView} gives: this module must not import
+ * the module that talks to Tauri, and {@link MarkView} needs the type.
+ */
 export type MarkKind =
   | "highlight"
   | "underline"

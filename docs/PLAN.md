@@ -8981,12 +8981,35 @@ been closed.
 
 Two things to do, and they are separable:
 
-1. **Put it under `spawn_blocking`**, which every other coordinator-side parse
-   in `lib.rs` already is. The `match` producing `landed` runs on the async
-   runtime, so a document engineered to make the read-back spin stalls the
-   runtime rather than a blocking pool. This is the cheap half and the one with
-   a clear precedent; the obstacle is ownership, since `append_in_place` takes
-   `&Appended` and a `&Path` out of state the enclosing function borrows.
+1. ~~**Put it under `spawn_blocking`**, which every other coordinator-side parse
+   in `lib.rs` already is.~~ **Done 2026-08-23**, and it turned out to be wider
+   than the finding: the whole `landed` match was on the async runtime, so the
+   *rewrite* arm's `verify_before_commit` --- which hashes every byte of the
+   file --- was too. Both are on the blocking pool now. `prepared` is consumed
+   rather than borrowed, which is what lets it cross into the closure, and the
+   two error shapes are kept by having the closure return
+   `Result<(), SaveFailure>` rather than a bare message.
+
+   **One behaviour changed with it, deliberately.** The rewrite's first refusal
+   used to leave through `?` and skip the "and the document did not close
+   cleanly" note; that was an accident of where the early return sat, not a
+   decision, and both arms carry it now. The fields a program branches on ---
+   `reopen` and `changed` --- are untouched.
+
+   **The threading itself is untestable, and that is stated rather than papered
+   over.** No unit test can see which thread a call ran on, and a source-level
+   assertion that the match sits inside `spawn_blocking` would prove a shape and
+   not an ordering --- which this repository already has a trap about.
+
+   **The behaviour change that came with it is not, and it was extracted so it
+   has a failing case.** `with_close_note` is a free function now rather than a
+   closure inside an async Tauri command that no `cargo test` can call --- the
+   repository's own rule about a guard written inline in a command, arriving in
+   the function whose comments already cite it twice. Three tests and three
+   mutations: dropping the note, adding it to a clean close, and rebuilding the
+   failure instead of decorating it --- which loses `changed`, the field that
+   decides whether the window offers Reload, while leaving the message anybody
+   reads looking perfect.
 2. **Move the read-back into the worker**, which is the version that closes the
    entry rather than narrowing it. It is the same shape the preparation took ---
    the answer is a page count and a verdict, which fits in a reply --- but the
@@ -8998,6 +9021,111 @@ Not done on the day it was found, deliberately: rethreading the save path with
 no check that can observe the difference is the riskier of the two actions
 immediately before a tag. The document says what is true now, which is the
 standard that entry sets for itself.
+
+#### Back and Forward grey when there is nowhere to go --- done 2026-08-23
+
+The `wiring` gate has carried one exemption since it was written: `onNavigate`,
+declared on `ViewerOptions` so that a Back and Forward affordance could be
+re-enabled after a jump, and consumed by nothing. Its own entry said why ---
+*both commands are guarded on `withDocument` alone, so neither greys when there
+is nowhere to go* --- and that wiring the callback was the same piece of work as
+making them grey.
+
+`History` already had `canGoBack` and `canGoForward`, tested. What was missing
+was three joins: the viewer exposing them, the commands reading them, and the
+window hearing about a change.
+
+##### The third join is the one that was actually broken
+
+`goToDestination` is where a jump is *recorded*, and its own comment says why the
+push lives there rather than at its four callers: *"remember to record the jump"
+is a rule someone has to keep following, and the fifth caller is the one that
+forgets*. The announcement had been written at a caller anyway --- `followLink`
+called `onNavigate` after calling `goToDestination` --- so a jump from the
+outline, a search result or a comment recorded a place and told nobody.
+
+It is announced from the primitive now, by the argument the file already made
+about the push. And from `setLinks`, where a new document clears the history:
+without that Back stays live on a file with nowhere to go back to, which is the
+mirror case and the one a reader meets every time they open a second file.
+
+##### Why the announcement matters at all
+
+A menu item's enablement is a **pushed** map --- `menuEnablement` evaluates every
+guard once and `set_menu_enabled` sends the answers --- so a guard reading state
+that moves outside the push sites is wrong between them. That is a trap this
+repository has already paid for, with `edit.highlightSelection` greyed at exactly
+the moment there was something to highlight.
+
+The frame loop's push covers most of it, since a jump usually moves the page and
+`refreshMenu` runs when the status summary moves. What it does not cover is a
+jump *within* the page the reader is already on, and the clearing of the history
+on a new document. `onNavigate` covers both, and `refreshMenu` memoises, so a
+redundant announcement costs twenty closures and no message.
+
+##### Evidence
+
+Five mutations, each caught by the test named for it: withholding the
+announcement from a recorded jump and from a cleared history, offering Back on a
+document with nowhere to go, asking Back's question for Forward, and reaching
+through a closed document to a remembered answer. Nine tests --- five over the
+viewer's announcements including a control that says nothing is announced before
+the history moves, four over the guards including the no-document control.
+
+**One test corrected itself.** It asserted that a jump landing where the reader
+already is announces nothing, on the premise that `History.push` records nothing
+for it. `push` skips only when the *top of the stack* is that place --- two
+presses on the same cross-reference --- so a first jump to where you already are
+does record, and the assertion went red. What the test pins now is what was
+measured.
+
+The gate's exemption table is empty and stays as an empty `dict`: the next
+genuinely-unwired callback should be written against this reasoning rather than
+from scratch.
+
+#### Thirty-one doc comments that documented nothing --- done 2026-08-23
+
+`armErase`'s doc comment ran to twelve lines and bound to nothing: the crop tool
+had been inserted between it and the method, and two `/** */` blocks in a row
+bind only the second. TypeScript accepts that in silence --- no lint, no type
+error, and no test can assert on a comment.
+
+What made it expensive is what the orphan said. *"Only drawings are erasable ...
+making the eraser remove whole marks of any kind would be a second, much more
+destructive command wearing the same cursor"* --- a live design argument against
+the feature being built, attached to nothing, in the file where somebody would go
+looking for exactly that reasoning.
+
+A scan found **31** across twelve files, all repaired.
+`scripts/check_doc_comments.py` is the eighteenth gate.
+
+##### The rule is total because of a spelling, not an allowlist
+
+The objection that looks fatal is the group header: a block introducing several
+constants has exactly this shape and is right. The answer is that **a group
+header is a plain `/* */`, not a doc comment**. One existed, over `commands.ts`'s
+scoring weights, and it says so in its own text now. The module header at line 1
+is the single structural exception and is recognised by position; removing it is
+one of four controls that prove the gate fires, and it then reports all 22 of
+them.
+
+##### Proving a mass comment move
+
+A comment move has no compiler and no test behind it, so a mistake is silent.
+The mover asserts that **the file with every doc block stripped is
+byte-identical** before and after, which makes "only comments moved" provable
+rather than eyeballed.
+
+That is necessary and not sufficient, and two of the moves proved it: both landed
+a block on a declaration that already had one, so the stripped text matched and a
+*new* orphan appeared. Re-running the scan is what found them. The invariant says
+no code moved; only the scan says the comment landed on the right thing.
+
+**Not done:** the same rule for Rust, where it does not apply --- `///` lines
+merge into one block, so the failure mode does not exist. And a doc comment on
+the *wrong* declaration, one that binds and describes something else: nothing
+mechanical can see that, and the script says so rather than leaving it to be
+discovered.
 
 ### Phase 3 --- Redaction
 

@@ -189,7 +189,6 @@ export class ContextMenu {
   /** Where the open menu was asked for, for {@link onRun}. */
   private openedAt: At | null = null;
   private open_ = false;
-  /** Run after a command is chosen, so a caller can restore focus. */
   /**
    * Run after a command is chosen, with where the menu was opened.
    *

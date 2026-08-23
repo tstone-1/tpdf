@@ -216,6 +216,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a viewer callback is declared and not wired in App.svelte",
         ),
         (
+            "docs",
+            [sys.executable, str(REPO / "scripts" / "check_doc_comments.py")],
+            "a doc comment documents nothing: an insertion separated it from its declaration",
+        ),
+        (
             "check",
             [npm(), "run", "check"],
             "svelte-check or tsc found a type error",

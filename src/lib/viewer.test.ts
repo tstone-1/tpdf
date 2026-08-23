@@ -1013,6 +1013,116 @@ describe("Viewer history", () => {
     });
   }
 
+  /**
+   * A viewer that reports every history change, and the count of them.
+   *
+   * The window's menu is a *pushed* map --- `refreshMenu` sends every guard's
+   * answer once --- so a Back item guarded on the history is only honest while
+   * something announces that the history moved. That announcement is
+   * `onNavigate`, and until 2026-08-23 exactly one of its four causes fired it.
+   */
+  function build8Watching(): { viewer: Viewer; said: () => number } {
+    let count = 0;
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 8,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onNavigate: () => {
+        count += 1;
+      },
+    });
+    return { viewer, said: () => count };
+  }
+
+  it("says nothing until the history moves", () => {
+    // The control for the four below. Without it, a viewer that announced on
+    // every frame would satisfy all of them.
+    const { viewer, said } = build8Watching();
+    expect(viewer.canGoBack).toBe(false);
+    expect(viewer.canGoForward).toBe(false);
+    expect(said()).toBe(0);
+    viewer.destroy();
+  });
+
+  it("announces a jump, which is what makes Back live", () => {
+    // Through `goToDestination` rather than `followLink`, deliberately: this is
+    // the outline's and the search result's route, and it was the one that did
+    // *not* announce. The link's did, which is why the defect was invisible to
+    // anyone testing with a link.
+    const { viewer, said } = build8Watching();
+    viewer.goToDestination(2, 200);
+    expect(viewer.canGoBack).toBe(true);
+    expect(said()).toBe(1);
+    viewer.destroy();
+  });
+
+  it("announces the step back, and the step forward after it", () => {
+    // Each step moves both answers, so each has to be announced: after Back
+    // there is somewhere to go forward to, and the menu learns that from here.
+    const { viewer, said } = build8Watching();
+    viewer.goToDestination(2, 200);
+    const after = said();
+    expect(viewer.goBack()).toBe(true);
+    expect(viewer.canGoForward).toBe(true);
+    expect(said()).toBeGreaterThan(after);
+    const back = said();
+    expect(viewer.goForward()).toBe(true);
+    expect(viewer.canGoForward).toBe(false);
+    expect(said()).toBeGreaterThan(back);
+    viewer.destroy();
+  });
+
+  it("announces a new document emptying the history", () => {
+    // The mirror, and the one a reader meets every time they open a second
+    // file: without it Back stays live in the menu on a document with nowhere
+    // to go back to. `setLinks` is where a document's history is cleared.
+    const { viewer, said } = build8Watching();
+    viewer.goToDestination(2, 200);
+    const jumped = said();
+    expect(viewer.canGoBack).toBe(true);
+    viewer.setLinks([]);
+    expect(viewer.canGoBack).toBe(false);
+    expect(said()).toBeGreaterThan(jumped);
+    viewer.destroy();
+  });
+
+  it("announces every jump, including one the stack collapses", () => {
+    // **Written the other way round first, and the test corrected it.** The
+    // premise was that a jump landing where the reader already is records
+    // nothing, so it should announce nothing. `History.push` skips only when
+    // the *top of the stack* is that place --- two presses on the same
+    // cross-reference --- so a first jump to where you already are does record,
+    // and the assertion went red.
+    //
+    // What is true, and what this pins: the announcement is unconditional for
+    // any jump that is not a replay, and the stack collapses the repeat. That
+    // is deliberate rather than sloppy --- `refreshMenu` compares the map it
+    // built against the one it last pushed and returns early when they match,
+    // so a redundant announcement costs twenty closures and no message. Making
+    // the viewer answer "did the stack actually move" would mean `push`
+    // reporting it, which is a second statement of a rule that already lives in
+    // one place.
+    const { viewer, said } = build8Watching();
+    viewer.goToDestination(4, 100);
+    const first = said();
+    expect(viewer.canGoBack).toBe(true);
+    // Twice more to the same destination. What `push` records is the place
+    // being *left*, so the second jump records page 4 (a new place) and only
+    // the third finds it already on top and folds --- measured, after the first
+    // draft of this test asserted the fold one jump too early.
+    viewer.goToDestination(4, 100);
+    viewer.goToDestination(4, 100);
+    expect(said()).toBe(first + 2);
+    expect(viewer.historyDepths.back).toBe(2);
+    // And the reading the product actually uses agrees with it, twice down and
+    // then empty.
+    expect(viewer.goBack()).toBe(true);
+    expect(viewer.canGoBack).toBe(true);
+    expect(viewer.goBack()).toBe(true);
+    expect(viewer.canGoBack).toBe(false);
+    viewer.destroy();
+  });
+
   it("leaves air above a destination, and none above a recorded place", () => {
     // The control first: a destination really is placed `DESTINATION_MARGIN_PT`
     // above the point it names. Without this the assertion below would hold

@@ -7868,6 +7868,43 @@ the *process* rather than the file it runs, and better, **wait on a signal the j
 append `exit=$?` to the log and `until grep -q "^exit=" log; do sleep 60; done`, which nothing
 but the job finishing can satisfy.
 
+### A cross-check that counts names against a count of tests is wrong wherever two tests share a name
+
+`mutate_frontend.py` reads vitest's output twice and requires the two readings to agree: the
+per-test failing lines, and the `Tests  N failed` summary. That is the right shape --- if one
+of the two stops describing the run, the verdict beside it is worthless --- and it was
+comparing the wrong quantity. The failing lines went into a **set** of names, and the summary
+counts test *instances*, so the check held only while every failing name was unique.
+
+Thirteen names in `src/lib/*.test.ts` are defined in more than one file --- `closes on Escape`,
+`is one tab stop`, `normalises a negative turn`, `says nothing when nothing was cut` and nine
+others. So any mutation reddening two of them was condemned:
+
+    [FAIL] viewer: hit-test the page before letting the box tool have the press:
+           36 failing test lines but the summary says 37 -- this harness cannot read its own output
+
+Three of 412 on 2026-08-23, each off by exactly one, and every one of them a mutation the
+suite had caught perfectly. The verdict is the harness accusing itself, which is the reading
+least likely to be doubted --- and the least likely to be chased, because the natural next
+step is to go looking for a broken reporter rather than at the suite.
+
+**The same run already knew.** `all_test_names` returns `dict[str, list[str]]` and its
+docstring says why in as many words: `says nothing when nothing was cut` is in two files, so a
+`dict[str, str]` aimed the narrow run at the wrong one. That was learned on 2026-08-21 at the
+*listing* end of the run and never carried to the *failure* end, twenty lines away. A fact
+established about a data source is a fact about every reader of it.
+
+Fixed by returning the line count beside the set --- `len(lines)` for the cross-check, `set(lines)`
+for the name match --- so the check now compares instances with instances. Proved in both
+directions: the three mutations go from `[FAIL]` to `37 red`, `8 red` and `2 red` in
+`viewerdraw.test.ts`, and planting `[1:]` on the line list brings the failure straight back,
+which is what says the cross-check is still a check rather than a passed statement.
+
+The general form is worth more than the fix: **a check comparing two counts has to compare the
+same quantity, and a set is a different quantity from a list.** Deduplication anywhere between
+the measurement and the comparison turns a check into one that fires on the data rather than
+on the defect.
+
 ### A mutation harness knows only the tests it was told to run
 
 Both unit harnesses select their suite from a list they carry: `mutate_rust.py`'s `FILTERS`
@@ -13751,23 +13788,37 @@ much more destructive command wearing the same cursor"* --- a live design
 argument against the feature being built, attached to nothing, in the file where
 somebody would go looking for exactly that reasoning.
 
-**A scan finds them, and the tree had 26** (48 before excluding the module
-headers, which are the same shape and legitimate). Two lines of Python: a line
-that is exactly `*/`, whose next non-blank line starts `/**`, occurring after
-the file's first real code.
+**A scan finds them, and the tree had 31.** The first version of it found 26 and
+missed five, because it looked for a line that is exactly `*/` and a *single-line*
+`/** ... */` does not produce one --- which is worth more than the count: a scan
+for a defect can have the defect's own shape, and the fix was to track block
+starts rather than block ends.
 
 ```
 */ followed by /**   ->   the first block documents nothing
 ```
 
-The scan **over-reports on purpose and that is the hard part**: a block comment
-introducing a *group* of following constants is the same shape and is right ---
-`commands.ts`'s weights, `viewer.ts`'s colour constants. Separating the two needs
-a reader, or a heuristic on whether the orphan's first line reads as a
-declaration ("Whether a kind is...", "Runs one edit..."). So this is a scan to
-run and read, not a gate to add without designing it --- which is why the two
-found in the files this increment touched are fixed and the other 24 are
-reported rather than swept.
+The objection that looks fatal is the **group header**: a block introducing
+several constants is exactly this shape and is right. It is answered by a
+*spelling* rather than by an allowlist --- **a group header is a plain `/* */`,
+not a doc comment** --- so the rule needs no exceptions and no list to rot. There
+was one in the tree, over `commands.ts`'s scoring weights, and it now says so in
+its own text. The module header at line 1 is the single structural exception,
+recognised by position, and removing it is one of the four controls that prove
+the gate fires: it then reports all 22 of them.
+
+All 31 were repaired and `scripts/check_doc_comments.py` is a gate as of
+2026-08-23. The repair was made provable rather than eyeballed: a mover that
+takes a block by its first prose line and an anchor, and asserts that **the file
+with every doc block stripped is byte-identical** before and after. A mass
+comment move has no compiler and no test behind it, so without that assertion a
+mistake is silent --- which is this entry's own subject arriving in its fix.
+
+Two of the moves were wrong on the first attempt and the byte check did not
+catch them, because both landed a block on a declaration that already had one:
+the stripped text was identical and a *new* orphan appeared. The re-scan found
+them. So the invariant proves no code moved; only re-running the scan proves the
+comment landed on the right thing.
 
 The habit is cheaper than the scan: **when inserting a declaration above an
 existing one, look at what is directly above the insertion point.** If it is a

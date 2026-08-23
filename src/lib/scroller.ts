@@ -1520,14 +1520,6 @@ export class Scroller {
   }
 
   /**
-   * Which page of the file a slot draws.
-   *
-   * `undefined` for a slot that is not in the document, and nothing asks for a
-   * tile in that case. Deliberately not falling back to the slot number: that
-   * fallback is right for every unedited document and asks for the wrong page in
-   * exactly the case the order exists for.
-   */
-  /**
    * A slot's crop box, for the renderer, or `undefined` for the file's own.
    *
    * Carried on every tile request rather than set once on the document: a
@@ -1539,6 +1531,14 @@ export class Scroller {
     return this.pageCrops[slot];
   }
 
+  /**
+   * Which page of the file a slot draws.
+   *
+   * `undefined` for a slot that is not in the document, and nothing asks for a
+   * tile in that case. Deliberately not falling back to the slot number: that
+   * fallback is right for every unedited document and asks for the wrong page in
+   * exactly the case the order exists for.
+   */
   private sourceOf(slot: number): number | undefined {
     return this.order[slot]?.source;
   }

@@ -258,13 +258,6 @@ export function coverageOf(signature: Signature, bytes: number): Row {
 }
 
 /**
- * The lines that come out of the signing certificate.
- *
- * Empty when the blob carried none, which is a fact about the document; that it
- * could not be *read* is a fact about tpdf and is reported through
- * `limits.certificates_unread` instead, in the notice at the foot of the dialog.
- */
-/**
  * What the XMP packet claims about the standards the document conforms to.
  *
  * Nothing else in a PDF says this: PDF/A, PDF/UA and PDF/X are declared in XMP
@@ -303,6 +296,13 @@ export function conformanceRows(xmp: Xmp | null): Row[] {
   return rows;
 }
 
+/**
+ * The lines that come out of the signing certificate.
+ *
+ * Empty when the blob carried none, which is a fact about the document; that it
+ * could not be *read* is a fact about tpdf and is reported through
+ * `limits.certificates_unread` instead, in the notice at the foot of the dialog.
+ */
 export function certificateRows(signature: Signature): Row[] {
   const certificate = signature.certificate;
   if (!certificate) return [];

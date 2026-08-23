@@ -40,13 +40,6 @@ import type { Viewer } from "./viewer";
 import { MAX_ZOOM, MIN_ZOOM, parseZoomPercent, percentOf } from "./zoom";
 
 /**
- * Everything a command needs that is not the viewer.
- *
- * Deliberately not "the app": each member is one verb, so a check can record
- * which of them a command reached. A single `app` object with the whole
- * component behind it would make the seam untestable again.
- */
-/**
  * What each stamp is called in the palette.
  *
  * Title case rather than the upper case a stamp is *drawn* in: the drawn word
@@ -63,6 +56,13 @@ const STAMP_TITLES: Record<StampName, string> = {
   final: "Final",
 };
 
+/**
+ * Everything a command needs that is not the viewer.
+ *
+ * Deliberately not "the app": each member is one verb, so a check can record
+ * which of them a command reached. A single `app` object with the whole
+ * component behind it would make the seam untestable again.
+ */
 export interface AppActions {
   /**
    * The open document's surface, or null.
@@ -946,7 +946,17 @@ export function registerAppCommands(
       id: "nav.back",
       title: "Back",
       keys: label("nav.back"),
-      enabled: withDocument,
+      // **Greys when there is nowhere to go**, since 2026-08-23. Both of these
+      // were guarded on `withDocument` alone, so the menu offered Back on a
+      // document nobody had jumped in and the press did nothing --- and the
+      // viewer's `onNavigate` existed to fix exactly that and was consumed by
+      // nothing, which the wiring gate carried as its one exemption.
+      //
+      // `canGoBack` is `History`'s own answer, so the guard and the action read
+      // one fact. A predicate written here --- "has the reader followed a link"
+      // --- would be a second copy of the stack's state and would go stale the
+      // first time Forward was pressed.
+      enabled: () => withDocument() && (actions.viewer()?.canGoBack ?? false),
       run: () => {
         actions.viewer()?.goBack();
       },
@@ -955,7 +965,7 @@ export function registerAppCommands(
       id: "nav.forward",
       title: "Forward",
       keys: label("nav.forward"),
-      enabled: withDocument,
+      enabled: () => withDocument() && (actions.viewer()?.canGoForward ?? false),
       run: () => {
         actions.viewer()?.goForward();
       },

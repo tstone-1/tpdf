@@ -93,7 +93,6 @@ export interface Comments {
   scan_ms: number;
 }
 
-/** One row of the panel: a comment, and whether it is a reply. */
 /**
  * The least a thing needs to be placed on a page and hit-tested.
  *
@@ -115,6 +114,7 @@ export interface Placed {
   hidden?: boolean;
 }
 
+/** One row of the panel: a comment, and whether it is a reply. */
 export interface CommentRow {
   comment: Comment;
   /** 0 for a comment nobody replied to, 1 for a reply. */
@@ -421,15 +421,6 @@ export function needsWords(comment: Comment): boolean {
 }
 
 /**
- * The pages holding comments that want their covered words, lowest first.
- *
- * A page at a time is the unit because extracting text is a per-page request to
- * the backend, and one page answers every comment on it. Ordered so the reader
- * sees the front of the document fill in first, which is where they are looking
- * --- the alternative is answers arriving in whatever order the annotations were
- * written in the file, which is nobody's order.
- */
-/**
  * The words every comment on one page covers, keyed by id.
  *
  * The whole of the lookup, so that `App.svelte` and `viewercheck.ts` run the
@@ -459,6 +450,15 @@ export async function wordsForPage(
   return out;
 }
 
+/**
+ * The pages holding comments that want their covered words, lowest first.
+ *
+ * A page at a time is the unit because extracting text is a per-page request to
+ * the backend, and one page answers every comment on it. Ordered so the reader
+ * sees the front of the document fill in first, which is where they are looking
+ * --- the alternative is answers arriving in whatever order the annotations were
+ * written in the file, which is nobody's order.
+ */
 export function pagesNeedingWords(items: readonly Comment[]): number[] {
   const pages = new Set<number>();
   for (const comment of items) {
