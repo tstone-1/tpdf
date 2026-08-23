@@ -599,6 +599,10 @@ async function run(path: string): Promise<void> {
   // it paints marks of its own on the overlay and clears them again, so it
   // must not run while another phase is looking at what is drawn.
   await overlayInkChecks(root, viewer);
+  // After it, and for the same reason it runs where it does: it paints marks of
+  // its own and then saves them, so nothing that looks at the surface may run
+  // while it is going. It leaves the open document as it found it.
+  await markAgreementChecks(path, doc, viewer);
   await markCommandChecks(doc);
   await cropCommandChecks(doc);
   await printChecks(path, doc);
@@ -9192,6 +9196,457 @@ async function overlayInkChecks(
  * "not a rectangle" is read from a single diagonal stroke, whose box a rectangle
  * would outline and whose line crosses the middle instead.
  */
+/**
+ * How the phase names its results, keyed rather than indexed --- see
+ * {@link INK_CHECK} for what an index cost the check above it.
+ */
+const AGREE_CHECK = {
+  rendered: "the saved copy renders, so there are two pictures to compare",
+  changed: "control: saving the marks changed what the file renders",
+  untouched: "control: paper no mark was placed on renders identically",
+  covered: "each mark covers as much of its rectangle in the file as on screen",
+  hue: "each mark is the same colour in the file as on screen",
+} as const;
+
+const AGREE_CHECKS: string[] = Object.values(AGREE_CHECK);
+
+/**
+ * The overlay against the file, which is the one comparison nothing made.
+ *
+ * ## Why this exists
+ *
+ * Two renderers draw every mark. While the document is open the overlay paints
+ * it from `markband.ts`; once it is saved PDFium paints the appearance stream
+ * `save.rs` wrote. Each was measured --- {@link overlayInkChecks} reads the
+ * overlay's pixels, `annot-probe --mode ink|rule|outline` reads the file's ---
+ * and **each was measured against the model's own numbers, never against the
+ * other**. `docs/PLAN.md` §10 question 8 states the residual in one line: they
+ * can only diverge in colour, blend and inset, and no check compares any of the
+ * three.
+ *
+ * That is not a theoretical seam. `markband.ts` is a deliberate second copy of
+ * `save.rs`'s geometry constants across a language boundary, and its own module
+ * comment says so. A second copy is exactly the thing that drifts, and the
+ * reader sees the drift as their document changing under them at the moment
+ * they save.
+ *
+ * ## The file's ink is isolated by diffing renders, not by its colour
+ *
+ * The obvious classifier --- "pixels whose hue matches the colour we sent" ---
+ * cannot be used here, because the hue is the thing under test: counting only
+ * hue-matching pixels and then comparing their mean hue is a check deriving its
+ * input from its own subject, which this repository has a trap about.
+ *
+ * So the page is rendered **before** any mark is made and again from the saved
+ * copy, and a file pixel counts as ink when the two differ. Page content
+ * cancels exactly, the classifier knows nothing about colour, and the hue
+ * comparison afterwards is then a reading rather than a restatement. It also
+ * makes the check independent of what is under the mark: a highlight over dense
+ * type and one over blank paper are both measured by what the mark added.
+ *
+ * ## What the two controls are for
+ *
+ * A diff of two identical pictures is empty, and an empty diff satisfies "the
+ * file's coverage is not far from the overlay's" for every mark whose overlay
+ * reading is also empty --- so the comparison could pass on a save that wrote
+ * nothing at all. {@link AGREE_CHECK.changed} is what refuses that. Its mirror,
+ * {@link AGREE_CHECK.untouched}, reads a band of the page no mark was placed on
+ * and requires it to be **identical**: without it, a render that differs
+ * everywhere --- a different scale, a stale tile, a reopened document laid out
+ * differently --- would satisfy the first control and make every coverage
+ * reading meaningless.
+ */
+async function markAgreementChecks(
+  path: string,
+  doc: DocumentInfo,
+  viewer: Viewer,
+): Promise<void> {
+  const scratch = await invoke<string | null>("viewercheck_scratch");
+  if (!scratch) {
+    for (const name of AGREE_CHECKS) {
+      skip(name, "no scratch path was bound, so nothing can be saved and read back");
+    }
+    return;
+  }
+
+  const canvas = viewer.overlaySurface;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const size = viewer.pageSize(0);
+  if (!ctx || size.width_pt < 1 || size.height_pt < 1) {
+    for (const name of AGREE_CHECKS) {
+      skip(name, "the overlay has no 2d context, or the page has no size");
+    }
+    return;
+  }
+
+  viewer.goToPage(0);
+  await settle(() => viewer.idle);
+
+  // A whole page, at a scale that keeps the smaller dimension worth sampling.
+  // The marks are laid out down the page, so the *height* is what has to carry
+  // nine bands with enough pixels in each to measure --- a width-driven scale
+  // reads a landscape page at a third of the resolution it needs.
+  const scale = Math.min(4, Math.max(0.5, 900 / Math.max(size.width_pt, size.height_pt)));
+  const px = {
+    width: Math.round(size.width_pt * scale),
+    height: Math.round(size.height_pt * scale),
+  };
+  const tile = async (id: number): Promise<Uint8ClampedArray | null> =>
+    tileBytes({
+      doc: id,
+      page: 0,
+      scale,
+      x: 0,
+      y: 0,
+      width: px.width,
+      height: px.height,
+      format: "raw",
+    });
+
+  const before = await tile(doc.id);
+  if (!before || before.length < px.width * px.height * 4) {
+    for (const name of AGREE_CHECKS) {
+      skip(name, "the page did not render before any mark was made");
+    }
+    return;
+  }
+
+  // Nine bands down the page, one kind each, with a tenth left bare for the
+  // untouched control. Laid out rather than reusing one rectangle because two
+  // synthetic marks addressed by page land on top of each other on a one-page
+  // corpus --- the trap of that name --- and here they would also make every
+  // per-mark diff carry its neighbour's ink.
+  const KINDS = [
+    "highlight",
+    "underline",
+    "squiggly",
+    "strikeout",
+    "square",
+    "ellipse",
+    "ink",
+    "note",
+    "textbox",
+  ] as const;
+  const COLOR: [number, number, number] = [0.15, 0.35, 0.9];
+  const top = size.height_pt * 0.06;
+  const band = (size.height_pt * 0.78) / (KINDS.length + 1);
+  const left = size.width_pt * 0.12;
+  const right = size.width_pt * 0.88;
+  // Under a third of a band, so the gap between one mark and the next is more
+  // than twice the mark itself: a diff that bled into a neighbour would have to
+  // travel further than any antialiasing can.
+  const tall = Math.min(band * 0.3, 28);
+  if (tall * scale < 6 || (right - left) * scale < 40) {
+    for (const name of AGREE_CHECKS) {
+      skip(name, `the bands come out at ${(tall * scale).toFixed(1)} px, too small to sample`);
+    }
+    return;
+  }
+
+  const placed = KINDS.map((kind, at) => {
+    const y = top + band * at;
+    const box =
+      kind === "note"
+        ? [left, y, left + 20, y + 20]
+        : [left, y, right, y + tall];
+    const strokes =
+      kind === "ink"
+        ? [[box[0] ?? 0, (box[1] ?? 0) + 2, box[2] ?? 0, (box[3] ?? 0) - 2]]
+        : [];
+    const lines = kind === "textbox" ? ["the reader", "typed this"] : [];
+    return {
+      id: 9100 + at,
+      kind,
+      page: pageId(1),
+      quads: box,
+      strokes,
+      color: COLOR,
+      note: lines.join(" "),
+      lines,
+    };
+  });
+
+  // The overlay and the model are driven separately on purpose: this harness
+  // builds its own `Viewer` with no model behind it, which is the gap
+  // `markcheck.ts` exists to cover and is not this phase's subject. Both are
+  // built from `placed`, so the two renderers are given one description of one
+  // mark rather than two descriptions that could differ before either draws.
+  viewer.setMarks(placed);
+  await frame();
+  await frame();
+
+  const opened = await attempt("edit_state", { doc: doc.id });
+  const page = opened.state?.pages[0]?.id;
+  if (page === undefined) {
+    for (const name of AGREE_CHECKS) {
+      skip(name, opened.error || "the model reports no pages");
+    }
+    viewer.setMarks([]);
+    return;
+  }
+  let madeError = "";
+  // Aligned with `placed` by index, holding `undefined` where the model refused
+  // one --- pushing only the successes would silently shift every later mark
+  // onto its neighbour's reading, which is a defect that looks like a
+  // disagreement between the renderers.
+  const ids: (number | undefined)[] = [];
+  for (const mark of placed) {
+    // The command's own shape, which is not `MarkView`'s: the model mints the
+    // id, and `author` is a field the overlay has no use for. Spreading the
+    // overlay's object straight in was refused with `invalid args`, and the
+    // `changed` control is what reported it --- nothing was saved, so nothing
+    // moved in the file, which is exactly what that control is for.
+    const { kind, quads, strokes, note, lines } = mark;
+    const one = await attempt("annot_mark", {
+      doc: doc.id,
+      mark: { kind, page, quads, strokes, color: COLOR, author: "", note, lines },
+    });
+    madeError ||= one.error;
+    ids.push(one.state?.marks[one.state.marks.length - 1]?.id);
+  }
+
+  // Not through `attempt`, which is typed for the commands that answer with an
+  // `EditState`. This one answers with what it wrote.
+  let saveError = "";
+  try {
+    await invoke("save_copy", { doc: doc.id, source: path, path: scratch });
+  } catch (e) {
+    saveError = String(e);
+  }
+  const second = saveError
+    ? null
+    : await invoke<DocumentInfo>("open_document", { path: scratch }).catch(() => null);
+  const after = second ? await tile(second.id) : null;
+  // The mark errors are part of this verdict rather than only its detail line.
+  // The name is "there are two pictures to compare", and a run where the model
+  // refused every mark renders two *identical* pictures --- which is a state
+  // this phase cannot say anything from, and which passed here once with the
+  // refusal printed in its own detail beside the `[OK]`.
+  check(
+    AGREE_CHECK.rendered,
+    madeError === "" && after !== null && after.length === before.length,
+    saveError
+      ? preview(saveError)
+      : madeError
+        ? preview(madeError)
+        : after
+          ? `${px.width}x${px.height} px from both, ${ids.length} marks saved`
+          : "the saved copy did not render",
+  );
+  if (madeError || !after || after.length !== before.length) {
+    for (const name of AGREE_CHECKS.slice(1)) {
+      skip(name, "there is only one picture, so there is nothing to compare");
+    }
+    viewer.setMarks([]);
+    return;
+  }
+
+  /** Whether a pixel of the saved render differs from the same pixel before. */
+  const moved = (at: number): boolean =>
+    Math.abs((after[at] ?? 0) - (before[at] ?? 0)) +
+      Math.abs((after[at + 1] ?? 0) - (before[at + 1] ?? 0)) +
+      Math.abs((after[at + 2] ?? 0) - (before[at + 2] ?? 0)) >
+    24;
+
+  /** Coverage and mean hue of the ink the save added, over a page-space box. */
+  const inFile = (box: number[]): { covered: number; hue: number | null } => {
+    const x0 = Math.max(0, Math.round((box[0] ?? 0) * scale));
+    const y0 = Math.max(0, Math.round((box[1] ?? 0) * scale));
+    const x1 = Math.min(px.width, Math.round((box[2] ?? 0) * scale));
+    const y1 = Math.min(px.height, Math.round((box[3] ?? 0) * scale));
+    let hit = 0;
+    let seen = 0;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const at = (y * px.width + x) * 4;
+        seen++;
+        if (!moved(at)) continue;
+        hit++;
+        r += after[at] ?? 0;
+        g += after[at + 1] ?? 0;
+        b += after[at + 2] ?? 0;
+      }
+    }
+    return {
+      covered: seen === 0 ? 0 : hit / seen,
+      hue: hit === 0 ? null : hueOf(r / hit, g / hit, b / hit),
+    };
+  };
+
+  /** The same two readings taken off the overlay, over a mark's own anchor. */
+  const onScreen = (id: number): { covered: number; hue: number | null } | null => {
+    const at = viewer.markAnchor(id);
+    if (!at) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const x0 = Math.max(0, Math.round(at.left * dpr));
+    const y0 = Math.max(0, Math.round(at.top * dpr));
+    const x1 = Math.min(canvas.width, Math.round(at.right * dpr));
+    const y1 = Math.min(canvas.height, Math.round(at.bottom * dpr));
+    if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+    const { data } = ctx.getImageData(x0, y0, x1 - x0, y1 - y0);
+    let hit = 0;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let p = 0; p + 3 < data.length; p += 4) {
+      if ((data[p + 3] ?? 0) <= 8) continue;
+      hit++;
+      r += data[p] ?? 0;
+      g += data[p + 1] ?? 0;
+      b += data[p + 2] ?? 0;
+    }
+    const total = data.length / 4;
+    return {
+      covered: total === 0 ? 0 : hit / total,
+      hue: hit === 0 ? null : hueOf(r / hit, g / hit, b / hit),
+    };
+  };
+
+  // The bare band below the last mark. Identical, not merely similar: any
+  // difference here is the two renders disagreeing about something other than
+  // the marks, and every reading above is a difference between those renders.
+  const bare = [left, top + band * KINDS.length, right, top + band * KINDS.length + tall];
+  const spare = inFile(bare);
+  check(
+    AGREE_CHECK.untouched,
+    spare.covered < 0.01,
+    `${(spare.covered * 100).toFixed(2)}% of the bare band moved`,
+  );
+
+  const readings = placed.map((mark, at) => ({
+    kind: mark.kind,
+    file: inFile(mark.quads),
+    // The overlay is read only where the model also took the mark, so a
+    // coverage comparison is always between two renderings of one mark rather
+    // than between a drawing and an absence.
+    screen: ids[at] === undefined ? null : onScreen(mark.id),
+  }));
+  const measured = readings.filter((r) => r.screen !== null);
+  const somethingMoved = readings.filter((r) => r.file.covered > 0.01);
+  check(
+    AGREE_CHECK.changed,
+    somethingMoved.length === readings.length,
+    somethingMoved.length === readings.length
+      ? `all ${readings.length} kinds put ink in the file`
+      : `only ${somethingMoved.map((r) => r.kind).join(", ") || "none"} did`,
+  );
+
+  if (measured.length === 0) {
+    skip(AGREE_CHECK.covered, "no mark reported an anchor on screen");
+    skip(AGREE_CHECK.hue, "no mark reported an anchor on screen");
+    viewer.setMarks([]);
+    return;
+  }
+
+  // A ratio with a wide band, because the two renderers antialias differently
+  // and sample at different resolutions --- and wide is still decisive, since
+  // what this is aimed at is a kind drawn as the wrong *shape* in one of them.
+  // A wash over a quad and a rule along its bottom differ by about fourteen
+  // times, and a frame and a filled box by about ten.
+  //
+  // **Four, and the number is set by the text box rather than chosen.** Every
+  // other kind is a shape both renderers draw from the same rectangle; a text
+  // box is *type*, and by design not the same type --- the overlay draws what
+  // the system resolved and the file is set in Helvetica by our own metrics,
+  // which `docs/PLAN.md` says in as many words. Measured at 2.7x on `columns`,
+  // 2.3% on screen against 6.4% in the file, which is the largest legitimate
+  // disagreement in the set. The bound sits above it with margin and an order
+  // of magnitude below the smallest defect it has to catch.
+  const off = measured.map((r) => {
+    const screen = r.screen?.covered ?? 0;
+    const file = r.file.covered;
+    return {
+      kind: r.kind,
+      ratio: Math.max(screen, file) / Math.max(0.004, Math.min(screen, file)),
+      screen,
+      file,
+    };
+  });
+  const worst = off.reduce((a, b) => (a.ratio > b.ratio ? a : b));
+  check(
+    AGREE_CHECK.covered,
+    off.every((r) => r.ratio < 4),
+    `worst ${worst.kind}: ${(worst.screen * 100).toFixed(1)}% on screen against ` +
+      `${(worst.file * 100).toFixed(1)}% in the file (${worst.ratio.toFixed(1)}x)`,
+  );
+
+  // Hue and not the whole colour. The overlay hands back its own paint
+  // unpremultiplied; the file's reading is what a translucent mark composited
+  // over paper came to. Those differ in how pale they are by design, and agree
+  // on which colour it is --- which is the question a reader would ask.
+  //
+  // **The comment is excluded, and the reason is measured rather than assumed.**
+  // `save.rs` writes no appearance stream for a `/Text` annotation on purpose,
+  // because every reader synthesises its own icon --- so what PDFium paints here
+  // is PDFium's house style, not ours. Sending blue read 224 degrees on screen
+  // and **60** in the file; sending red read 0 on screen and **60** again. The
+  // file is not at fault: it carries `/C` with the colour the reader chose. The
+  // renderer ignores it, and no comparison between the two renderers can be
+  // made for this kind while that is true.
+  //
+  // That leaves a real gap rather than a tidy one, and it is stated in
+  // `docs/PLAN.md` §10 question 8: a reader who colours a comment sees their
+  // colour until they save, and PDFium's yellow afterwards. Closing it means
+  // writing an appearance stream for a comment, which `save.rs` argues against
+  // for reasons that have nothing to do with this check.
+  const hues = measured
+    .filter((r) => r.kind !== "note")
+    .map((r) => ({
+      kind: r.kind,
+      apart:
+        r.file.hue === null || r.screen?.hue === undefined || r.screen.hue === null
+          ? null
+          : Math.min(
+              Math.abs(r.file.hue - r.screen.hue),
+              360 - Math.abs(r.file.hue - r.screen.hue),
+            ),
+      file: r.file.hue,
+      screen: r.screen?.hue ?? null,
+    }))
+    .filter((r) => r.apart !== null);
+  if (hues.length === 0) {
+    skip(AGREE_CHECK.hue, "neither renderer put enough ink anywhere to have a colour");
+  } else {
+    const far = hues.reduce((a, b) => ((a.apart ?? 0) > (b.apart ?? 0) ? a : b));
+    check(
+      AGREE_CHECK.hue,
+      hues.every((r) => (r.apart ?? 360) < 25),
+      `worst ${far.kind}: ${far.screen?.toFixed(0)}deg on screen against ` +
+        `${far.file?.toFixed(0)}deg in the file, ${far.apart?.toFixed(0)}deg apart ` +
+        `(${hues.length} of ${KINDS.length} kinds read, the comment excluded)`,
+    );
+  }
+
+  viewer.setMarks([]);
+  for (const id of ids) {
+    if (id !== undefined) await attempt("annot_remove", { doc: doc.id, mark: id });
+  }
+  // The copy is closed and the marks are taken off, so the phases after this one
+  // meet the document this one was handed. `markCommandChecks` runs next and
+  // asserts the model holds exactly one mark after making one, which a leftover
+  // from here would break --- and it would break it as a failure in that phase,
+  // three hundred lines from the cause.
+  if (second) await invoke("close_document", { doc: second.id }).catch(() => undefined);
+}
+
+/** Hue in degrees, or `null` for a pixel with no colour to speak of. */
+function hueOf(r: number, g: number, b: number): number | null {
+  const high = Math.max(r, g, b);
+  const low = Math.min(r, g, b);
+  if (high - low < 12) return null;
+  const span = high - low;
+  const deg =
+    high === r
+      ? 60 * (((g - b) / span) % 6)
+      : high === g
+        ? 60 * ((b - r) / span + 2)
+        : 60 * ((r - g) / span + 4);
+  return (deg + 360) % 360;
+}
+
 async function inkPreviewChecks(
   root: HTMLElement,
   viewer: Viewer,

@@ -19,6 +19,22 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Added: a check that a mark looks the same after you save it
+
+Nothing compared the mark you see while a document is open with the mark that
+ends up in the file --- two different pieces of code draw them, and each was
+only ever checked against the numbers it was given rather than against the
+other. The check now makes one mark of every kind, reads what is on screen,
+saves the file, opens it again and reads that.
+
+Eight of the nine kinds come out exactly the same colour. The ninth is a
+comment, and it does not: the colour you pick is written into the file
+correctly, but tpdf's own page renderer draws comment icons in its own yellow
+and ignores it. So a comment you colour looks right until you save and reopen
+it. That is not fixed here --- fixing it means drawing our own icon, which then
+looks foreign in Acrobat and Preview --- but it is now known and written down
+rather than waiting to surprise somebody.
+
 ### Added: Windows can print a range of pages
 
 The print panel's **Pages** field was greyed out on Windows, so a print was the

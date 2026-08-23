@@ -149,6 +149,55 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # The file writes every mark in one colour, whatever the reader chose.
+        # The overlay still paints the reader's colour, so this is a divergence
+        # between the two renderers and nothing else: `annot-probe` measures the
+        # file against the model's own numbers and passes, the overlay phase
+        # measures the overlay against its own and passes, and the reader's mark
+        # changes colour the moment they save.
+        "save: write every mark's appearance in one fixed colour",
+        "src-tauri/src/save.rs",
+        "        r = mark.color[0],\n        g = mark.color[1],\n        b = mark.color[2],",
+        "        r = 0.9_f32,\n        g = 0.6_f32,\n        b = 0.1_f32,",
+        "each mark is the same colour in the file as on screen",
+        runner="viewer",
+    ),
+    Mutation(
+        # The shipped overlay defect, on the *file* side: every kind washed over
+        # its whole quad. It is the mirror of the mutation at the top of this
+        # table, and it is here rather than there because what has to be proved
+        # is that the comparison reads the saved file --- a mutation of the
+        # overlay alone could be caught by a check that never opens one.
+        "save: give every kind the highlight's wash in the file",
+        "src-tauri/src/save.rs",
+        "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Line,",
+        "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Wash,",
+        "each mark covers as much of its rectangle in the file as on screen",
+        runner="viewer",
+    ),
+    Mutation(
+        # Every annotation's rectangle padded 120 points down the page, which is
+        # the shape of a real defect --- `docs/TRAPS.md` has an entry about a
+        # rectangle padded to make one refusal legal. Ink then lands outside the
+        # rectangle the mark was made from and reaches the bare band the
+        # untouched control reads, which is the one failure that makes every
+        # other reading in the phase meaningless: a difference between the two
+        # renders that is not about the marks at all.
+        #
+        # **Down the page, not up.** The first version of this mutation replaced
+        # the whole rectangle with the page and SURVIVED --- it reddened two
+        # other checks and not this one, because `bounds` works in the page's own
+        # space where y grows upward, so growing the box moved the ink *away*
+        # from the band below. The survivor was a statement about the mutation
+        # rather than about the control.
+        "save: pad every mark's rectangle down the page",
+        "src-tauri/src/save.rs",
+        "                acc[1].min(q[1]),",
+        "                acc[1].min(q[1]) - 120.0,",
+        "control: paper no mark was placed on renders identically",
+        runner="viewer",
+    ),
+    Mutation(
         # Build the note box without its swatch row. The colour is then
         # unreachable by pointer --- the `Colour:` commands still work --- and
         # this is what says the window phase written for the row runs at all, in

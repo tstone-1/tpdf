@@ -1842,6 +1842,22 @@ fn viewercheck_path() -> Option<String> {
     spike_env("TPDF_VIEWERCHECK")
 }
 
+/// A writable path a check may save to, from `TPDF_VIEWERCHECK_SCRATCH`.
+///
+/// The webview has no filesystem, so a phase that wants to compare what the
+/// overlay draws against what the *file* renders has nowhere to put the file.
+/// `viewer_check.py` makes a temporary path, binds it here and deletes it after
+/// the run; a check that gets `None` says it had nowhere to write rather than
+/// passing.
+///
+/// Deliberately a path and not a directory: a check writing wherever it liked
+/// inside the app process is a wider authority than any of these need, and one
+/// name is the smallest thing that makes the comparison possible.
+#[tauri::command]
+fn viewercheck_scratch() -> Option<String> {
+    spike_env("TPDF_VIEWERCHECK_SCRATCH")
+}
+
 /// The reading-order expectations a check should assert against, if any.
 ///
 /// Returns the *contents* of the file named by `TPDF_READING_MANIFEST`, because
@@ -2305,6 +2321,7 @@ pub fn run() {
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,
+            viewercheck_scratch,
             reading_manifest,
             corpus_manifest,
             geometry_manifest,

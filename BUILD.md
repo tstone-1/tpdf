@@ -2116,11 +2116,33 @@ scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/
 > rather than any particular number. Written down rather than left to be noticed, because the
 > table looks measured either way and a stale total reads exactly like a current one.
 >
-> The current figure, measured cutting `26.8.7`: **324 names**, all distinct, byte-identical
-> between `comments.pdf` and `text-heavy.pdf`. Take the names from the harness's own
+> The current figure, measured 2026-08-23: **329 names**, all distinct --- 324 cutting
+> `26.8.7`, plus the five the overlay-against-the-file phase added. Take the names from the harness's own
 > `CHECK-NAMES-JSON` line, never by splitting the printed columns --- this page records that a
 > `\s{2,}` split matched 175 of 189 lines, and reaching for it again is what produced a diff
 > full of per-corpus *detail* differences that looked like missing names.
+
+#### The overlay against the file, and the one thing it needs from outside
+
+Five of those names are a phase comparing what the overlay draws with what the *saved file*
+renders --- the one comparison nothing made, since `viewer_check.py` measured the overlay
+against the model's numbers and `annot-probe` measured the file against the same numbers. It
+makes nine marks, reads the overlay, saves a copy, opens it, renders the same page and reads
+that; the file's ink is isolated by diffing that render against one taken before any mark was
+made, so page content cancels and the classifier knows nothing about the colour it is about to
+compare. `docs/PLAN.md` has the design and what it measured.
+
+**It needs a writable path, which the webview has none of.** `viewer_check.py` makes one under
+the system temp directory, binds it to `TPDF_VIEWERCHECK_SCRATCH`, and removes it at exit; the
+`viewercheck_scratch` command hands it to the page. A run that gets nothing there skips all
+five with that reason rather than passing. Running the harness by hand without the script is
+therefore a run with those five skipped --- which is correct, and worth knowing before reading
+a hand-run transcript as a full one.
+
+**The comment is excluded from the colour comparison**, with a measured reason: PDFium draws
+its own `/Text` icon and ignores the `/C` we write, so blue reads 224 degrees on screen and 60
+in the file, and red reads 0 and 60. See the trap of that name --- the file is right and the
+renderer is not ours.
 
 Every run reports the same check names; what differs is how many are `[SKIP]` with a reason,
 and a name that goes missing rather than skipping is the bug this arrangement exists to catch.
@@ -2271,23 +2293,27 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 222 | 45 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 230 | 37 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 230 | 37 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 132 | 135 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 172 | 95 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 217 | 50 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 219 | 48 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 194 | 73 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 211 | 56 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 212 | 55 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 221 | 46 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 232 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 239 | 28 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 174 | 93 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 279 | 50 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 287 | 42 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 287 | 42 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 185 | 144 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 225 | 104 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 272 | 57 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 276 | 53 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 251 | 78 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 268 | 61 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 269 | 60 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 276 | 53 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 294 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 296 | 33 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 231 | 98 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+
+**The rows above are the 2026-08-23 sweep's own output**, pasted: **329** names on all
+fourteen, 727 s in total, no failing check anywhere, and `vector-multi` and `vector-heavy` are
+74% of the time between them. Five of those names are the overlay-against-the-file phase.
 
 **Re-run 2026-08-18** with the crop: **267** names on all fourteen, seven more than the 260
-below, and the rows above are that sweep's. Every corpus gained seven *runs* and lost none.
+below. Every corpus gained seven *runs* and lost none.
 All seven are one backend phase, driving `page_content_box`, `page_geometry` and `page_crop`
 against the real backend --- which is the only place that can say the three commands are
 *registered*, the failure every layer below passes through. Its last check is the control: a

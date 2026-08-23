@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 453 entries
+The one thing this file does *not* carry in full is the trap list --- 455 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1185,8 +1185,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 453 of them and the full text
-was 93% of this file --- an instruction budget spent on the 452 traps that are not
+titles. Only the titles are here, because there are 455 of them and the full text
+was 93% of this file --- an instruction budget spent on the 454 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1258,6 +1258,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An outline can be infinite, and PDFium says so in its own documentation
 - PDFium cannot create digital signatures
 - PDFium's signature enumeration does not walk the field tree, and ours does (a nested field gives PDFium 0 and tpdf 1; proved by a flat/nested control differing in nothing else, and now asserted as a disagreement so the limitation expires loudly)
+- PDFium draws a comment's icon in its own colour, and the file is not wrong (`/C` says blue and the icon renders yellow; the control is sending a second colour and watching the reading not move --- an annotation with no appearance stream is a request, not a picture)
 
 ### Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
@@ -1520,6 +1521,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A differential's most important check was hard-coded to pass when both readers failed (`7 passed, 0 failed` on a contract neither reader could read a certificate from; the correct argument was written down one function away, three months earlier)
 - A test helper that builds its fixture with the encoder under test (16 red of 701 and not the one named for it --- that output is the diagnostic, and it means something different from a mutation reddening nothing)
 - A mock's default return value decides whether a mutation fails or hangs (`vi.fn()` resolves `undefined`, which is neither answer, so the loop spun until the runner died and the diagnosis read as broken vitest)
+- A check reported `[OK]` with the reason it should have failed printed beside it (the detail line was built from more state than the verdict read; the check's own name was the tell, and a control went red about the same event)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
