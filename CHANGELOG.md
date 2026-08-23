@@ -19,6 +19,33 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Changed: the eraser takes any mark, not only a drawing's strokes
+
+**Erase marks...** in the Edit menu and the right-click menu, renamed from *Erase
+drawing...*. Arm it and drag across the page: a drawing loses the strokes the nib
+crossed and keeps the rest, exactly as before, and every other kind --- a
+highlight, an underline, a strikeout, a squiggle, a box, an ellipse, a text box,
+a stamp, a comment you placed --- has no parts to lose, so the nib takes it whole.
+
+Until now those could be taken off by one route only: press the mark, wait for
+its note box, choose **Remove mark**. That still works and is still the precise
+one --- it acts on the mark you have named, which is what you want from a menu
+chosen with the pointer somewhere else. The eraser is the aimed one, and it is
+the only way to take a highlight off without opening a form first.
+
+What the nib takes is decided by the mark's rectangle rather than by its ink, so
+a box erases from anywhere inside it rather than only along its border. A press
+counts as a sweep of no length, so you can click a mark away without dragging.
+Nothing is sent until you lift the pointer, and Escape mid-sweep puts everything
+back --- while you drag, whatever the nib has taken simply stops being drawn, so
+the page shows you what you are about to lose.
+
+It reaches your own marks and nothing else. A comment that came with the file is
+never touched by it, because there is no command that could undo taking one.
+
+The status line counts both: *Erasing: 3 strokes, 2 marks* where it used to be
+able to say only strokes.
+
 ### Added: crop a page by dragging a rectangle
 
 **Crop page by dragging** in the Page menu, or from the command palette. Choose it

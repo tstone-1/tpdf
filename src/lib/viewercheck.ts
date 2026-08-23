@@ -8640,6 +8640,8 @@ const INK_CHECK = {
   second: "a second stroke joins the drawing rather than replacing it",
   erased: "a stroke the eraser has taken stops being drawn at once",
   spared: "and one the nib missed is still there",
+  taken: "a mark with no strokes the eraser has crossed stops being drawn whole",
+  left: "and one beside it the nib missed is still there",
   scrimOut: "a crop being dragged darkens the paper it would throw away",
   scrimIn: "and leaves the part it would keep clear",
 } as const;
@@ -9815,6 +9817,12 @@ async function inkPreviewChecks(
   viewer.cancelDraw();
   await frame();
   await erasePreviewChecks(root, viewer, inked, box);
+  // A sibling of the phase above rather than a tail call inside it, and that is
+  // not style. `erasePreviewChecks` returns early when the drawing did not
+  // render, skipping its own two names --- and a call after that return would
+  // print nothing at all on any corpus that took it, which the sweep reads as
+  // two names going missing rather than as two skips.
+  await wholeMarkPreviewChecks(root, viewer, inked, box);
   await cropPreviewChecks(root, viewer, inked, box);
 }
 
@@ -9980,6 +9988,106 @@ async function erasePreviewChecks(
     INK_CHECK.spared,
     (kept ?? 0) > 0.02,
     `${((kept ?? 0) * 100).toFixed(0)}% of the band the nib did not cross`,
+  );
+
+  viewer.cancelDraw();
+  viewer.setMarks([]);
+  await frame();
+}
+
+/**
+ * The same preview, for a mark that has no strokes to lose.
+ *
+ * The eraser takes a highlight, a box, a note or a stamp **whole**, so what the
+ * reader watches is the mark itself going rather than a drawing coming apart.
+ * The reading is the same one and so is the trap: *the band is empty* is
+ * satisfied by an overlay that stopped painting marks altogether, so the second
+ * highlight beside it is the control and not a formality.
+ *
+ * Two washes rather than a wash and a drawing, because the point under test is
+ * that this path is chosen by the kind: a fixture with ink in it would let a
+ * check pass on the stroke loop's behaviour.
+ */
+async function wholeMarkPreviewChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  inked: (l: number, t: number, r: number, b: number) => number | null,
+  box: { left: number; top: number; right: number; bottom: number },
+): Promise<void> {
+  const names = [INK_CHECK.taken, INK_CHECK.left];
+  const size = viewer.pageSize(0);
+  const width = box.right - box.left;
+  const height = box.bottom - box.top;
+  // Two washes across the page, a third of the way down and two thirds, each
+  // 20 points tall. Far enough apart that the nib cannot reach both.
+  const upper = size.height_pt * 0.35;
+  const lower = size.height_pt * 0.65;
+  const from = size.width_pt * 0.2;
+  const to = size.width_pt * 0.8;
+  viewer.setMarks([
+    {
+      id: 4245,
+      kind: "highlight",
+      stamp: null,
+      page: pageId(1),
+      quads: [from, upper - 10, to, upper + 10],
+      strokes: [],
+      color: [0.85, 0.15, 0.15],
+      note: "",
+      lines: [],
+    },
+    {
+      id: 4246,
+      kind: "highlight",
+      stamp: null,
+      page: pageId(1),
+      quads: [from, lower - 10, to, lower + 10],
+      strokes: [],
+      color: [0.85, 0.15, 0.15],
+      note: "",
+      lines: [],
+    },
+  ]);
+  await frame();
+  await frame();
+
+  /** A thin band across one of the two washes, in the root's coordinates. */
+  const band = (atY: number) => {
+    const y = box.top + (atY / size.height_pt) * height;
+    return [box.left + width * 0.25, y - 4, box.left + width * 0.75, y + 4] as const;
+  };
+  const before = inked(...band(upper));
+  if (before === null || before < 0.02) {
+    for (const name of names) {
+      skip(name, "the page is not on screen, or the washes drew nothing to erase");
+    }
+    viewer.setMarks([]);
+    await frame();
+    return;
+  }
+
+  viewer.armErase();
+  // Held, not released, for the reason the phase above gives: the reading is
+  // the preview, and a release would send the sweep to a model that does not
+  // hold these marks.
+  const y = box.top + (upper / size.height_pt) * height;
+  pointer(root, "pointerdown", box.left + width * 0.25, y);
+  pointer(root, "pointermove", box.left + width * 0.75, y);
+  await frame();
+  await frame();
+
+  const gone = inked(...band(upper));
+  const kept = inked(...band(lower));
+  check(
+    INK_CHECK.taken,
+    (gone ?? 1) < 0.02,
+    `${((before ?? 0) * 100).toFixed(0)}% of the wash before the nib, ` +
+      `${((gone ?? 0) * 100).toFixed(0)}% after it`,
+  );
+  check(
+    INK_CHECK.left,
+    (kept ?? 0) > 0.02,
+    `${((kept ?? 0) * 100).toFixed(0)}% of the wash the nib did not cross`,
   );
 
   viewer.cancelDraw();

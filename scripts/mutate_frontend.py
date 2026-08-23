@@ -3193,15 +3193,108 @@ MUTATIONS += [
         "sends nothing when Escape ends the sweep",
     ),
     Mutation(
-        # Erase every mark the nib passes over, not only the drawings. A sweep
-        # across a highlight then silently rewrites a mark that has no strokes,
-        # which the backend refuses -- so the reader gets an error from a
-        # gesture that looked like it was aimed at nothing.
-        "viewer: let the eraser take marks that are not drawings",
+        # Treat every mark as a drawing. A highlight then loses whichever of
+        # its (non-existent) strokes the nib crossed and stays on the page, so
+        # the eraser silently does nothing to every kind but ink -- which is
+        # exactly what it did before the whole-mark sweep landed, and the shape
+        # a reader reports as "the eraser does not work".
+        "viewer: treat every mark as a drawing in the eraser's sweep",
         "src/lib/viewer.ts",
-        "      if (!isPath(mark.kind)) continue;",
-        "      if (false) continue;",
-        "leaves a highlight alone",
+        "      if (!isPath(mark.kind)) {\n        const placed = this.viewQuadsOf(mark);",
+        "      if (false) {\n        const placed = this.viewQuadsOf(mark);",
+        "takes a highlight whole, and rubs no stroke out of it",
+    ),
+    Mutation(
+        # Take the mark only when the nib STOPS inside it. A sweep straight
+        # across a highlight -- which is the gesture, and is how anybody would
+        # use a rubber -- then leaves it there, and the tool works only if the
+        # reader remembers to lift the pointer on top of what they meant.
+        "markband: let the nib take a mark only where it comes to rest",
+        "src/lib/markband.ts",
+        "  // Closed: the last point repeats the first, so the left edge is a segment\n"
+        "  // like the other three rather than the gap between the ends of an open line.\n"
+        "  return strokeSwept(",
+        "  return false && strokeSwept(",
+        "takes one the nib crosses without stopping inside it",
+    ),
+    Mutation(
+        # Drop the containment test, so only the rectangle's EDGE takes a mark.
+        # A press in the middle of a large box then does nothing at all, which
+        # reads as an eraser that misses whatever it is aimed at.
+        "markband: measure the nib against a mark's edge and not its area",
+        "src/lib/markband.ts",
+        "  if (\n    from.x >= quad.left &&\n    from.x <= quad.right &&\n"
+        "    from.y >= quad.top &&\n    from.y <= quad.bottom\n  ) {\n    return true;\n  }",
+        "  if (false) {\n    return true;\n  }",
+        "takes a mark the nib is pressed on, without a drag",
+    ),
+    Mutation(
+        # Leave the rectangle's outline open, so its left edge is not a segment
+        # at all. Everything works except a nib arriving from the left, which is
+        # the direction a right-handed reader sweeps from.
+        "markband: leave a mark's outline open at the corner it started from",
+        "src/lib/markband.ts",
+        "      { x: quad.left, y: quad.bottom },\n      { x: quad.left, y: quad.top },\n    ],",
+        "      { x: quad.left, y: quad.bottom },\n    ],",
+        "takes one the nib enters from outside it",
+    ),
+    Mutation(
+        # A nib of no width. Every mark the sweep passes *near* survives, so the
+        # eraser demands a direct hit -- which for a one-point-wide box border
+        # is a gesture nobody can make.
+        "viewer: give the eraser's nib no width when it looks for a mark",
+        "src/lib/viewer.ts",
+        "    const nib = ERASER_RADIUS / this.zoom;",
+        "    const nib = 0;",
+        "takes one the nib passes within its own width of",
+    ),
+    Mutation(
+        # Take every mark on the page whether the nib went near it or not. One
+        # sweep anywhere clears the page, and the reader has one undo per mark
+        # to put it back.
+        "viewer: take every mark on the page the sweep started on",
+        "src/lib/viewer.ts",
+        "        if (placed.quads.some((quad) => quadSwept(quad, from, to, nib))) {",
+        "        if (true) {",
+        "leaves one the nib passes clear of",
+    ),
+    Mutation(
+        # Say nothing about the marks a sweep took whole. The preview shows them
+        # going, the pointer comes up, and they are all back -- because nothing
+        # ever reached the model.
+        "viewer: keep the marks a sweep took whole to itself",
+        "src/lib/viewer.ts",
+        "          for (const mark of swept.whole) this.opts.onUnmarked?.(mark);",
+        "          for (const mark of swept.whole) void mark;",
+        "takes a mark the nib is pressed on, without a drag",
+    ),
+    Mutation(
+        # Report no whole marks in the live count. The status line says "drag
+        # across a mark" while three of them are already gone from the page.
+        "viewer: leave whole marks out of what the sweep says it has taken",
+        "src/lib/viewer.ts",
+        "    return { strokes, marks: this.doomed?.whole.size ?? 0 };",
+        "    return { strokes, marks: 0 };",
+        "counts marks and strokes apart while the sweep is live",
+    ),
+    Mutation(
+        # Call every taken thing a stroke. A reader who swept up two highlights
+        # is told they took two strokes, which names a kind of mark they did not
+        # touch and cannot find.
+        "markband: report the marks a sweep took as strokes",
+        "src/lib/markband.ts",
+        '    parts.push(`${taken.marks} mark${taken.marks === 1 ? "" : "s"}`);',
+        '    parts.push(`${taken.marks} stroke${taken.marks === 1 ? "" : "s"}`);',
+        "leaves out the half that is zero",
+    ),
+    Mutation(
+        # Print both halves always, so the ordinary sweep reads "3 strokes, 0
+        # marks" -- a clause about nothing, in a line that comes and goes.
+        "markband: report the half of a sweep that took nothing",
+        "src/lib/markband.ts",
+        "  if (taken.marks > 0) {",
+        "  if (taken.marks >= 0) {",
+        "leaves out the half that is zero",
     ),
 ]
 
@@ -4064,7 +4157,11 @@ MUTATIONS += [
         # armed tool only when something unrelated moves.
         "status: leave the mode fields out of the summary that gates a report",
         "src/lib/viewer.ts",
-        "      status.drawing,\n      status.erasing,\n      status.armed,\n",
+        "      status.drawing,\n      // Both halves, because either can move on its own: a sweep across a\n"
+        "      // drawing and a highlight changes one number per mark it crosses, and a\n"
+        "      // field left out of this string is a field the window is told about only\n"
+        "      // when something else happens to move.\n"
+        "      status.erasing?.strokes ?? null,\n      status.erasing?.marks ?? null,\n      status.armed,\n",
         "",
         "reports a status when a tool is armed, and again when it is dropped",
     ),

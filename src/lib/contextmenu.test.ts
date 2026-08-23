@@ -67,7 +67,7 @@ function registry(open: Record<string, boolean> = {}): {
     make("edit.addComment", "Add comment"),
     make("edit.drawBox", "Draw a box..."),
     make("edit.draw", "Draw freehand..."),
-    make("edit.erase", "Erase drawing..."),
+    make("edit.erase", "Erase marks..."),
   );
   return { commands, fired };
 }

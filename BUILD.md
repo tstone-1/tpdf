@@ -2136,10 +2136,12 @@ scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/
 > rather than any particular number. Written down rather than left to be noticed, because the
 > table looks measured either way and a stale total reads exactly like a current one.
 >
-> The current figure, measured 2026-08-23: **340 names**, all distinct --- 324 cutting
+> The current figure, measured 2026-08-23: **342 names**, all distinct --- 324 cutting
 > `26.8.7`, plus five for the overlay-against-the-file phase, five for the stamp (its own
-> overlay reading and its four commands), and six for cropping by dragging (three backend
-> checks, its one palette command, and two reading the scrim off the overlay). Take the names from the harness's own
+> overlay reading and its four commands), six for cropping by dragging (three backend
+> checks, its one palette command, and two reading the scrim off the overlay), and two for
+> the eraser taking a mark whole (the wash the nib crossed, and the wash beside it that is
+> the control). Take the names from the harness's own
 > `CHECK-NAMES-JSON` line, never by splitting the printed columns --- this page records that a
 > `\s{2,}` split matched 175 of 189 lines, and reaching for it again is what produced a diff
 > full of per-corpus *detail* differences that looked like missing names.
@@ -2315,24 +2317,30 @@ them follows it.
 
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 279 | 50 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 287 | 42 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 287 | 42 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 185 | 144 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 225 | 104 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 272 | 57 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 276 | 53 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 251 | 78 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 268 | 61 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 269 | 60 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 276 | 53 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 294 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 296 | 33 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 231 | 98 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 292 | 50 | the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 300 | 42 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 300 | 42 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 198 | 144 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 238 | 104 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 285 | 57 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 289 | 53 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 264 | 78 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 281 | 61 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 282 | 60 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 289 | 53 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 307 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 309 | 33 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 244 | 98 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
 
-**The rows above are the 2026-08-23 sweep's own output**, pasted: **329** names on all
-fourteen, 727 s in total, no failing check anywhere, and `vector-multi` and `vector-heavy` are
-74% of the time between them. Five of those names are the overlay-against-the-file phase.
+**The rows above are the 2026-08-23 sweep's own output**, pasted: **342** names on all
+fourteen, 721 s in total, no failing check anywhere, and `vector-multi` and `vector-heavy` are
+73% of the time between them. Five of those names are the overlay-against-the-file phase, six
+are cropping by dragging, and two are the eraser taking a mark whole.
+
+**Re-run the same day** after the eraser and the crop drag: **329 -> 342**, every corpus
+gaining thirteen *runs* and losing none. Two sweeps in one day are worth one note --- the
+totals move whenever a check is added, so a row here is a statement about the run that
+produced it, and the invariant the sweep asserts is that all fourteen agree.
 
 **Re-run 2026-08-18** with the crop: **267** names on all fourteen, seven more than the 260
 below. Every corpus gained seven *runs* and lost none.

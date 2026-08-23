@@ -877,6 +877,30 @@ MUTATIONS = [
         "viewer",
     ),
     Mutation(
+        # Go on painting a mark the sweep has already taken. The preview here is
+        # the absence, so this leaves the reader watching nothing happen while
+        # the pointer is down and then seeing four marks vanish at once when it
+        # comes up -- which is the same gesture with no feedback in it.
+        "viewer: paint a mark the eraser has taken whole",
+        "src/lib/viewer.ts",
+        "      if (this.doomed?.whole.has(mark.id)) continue;",
+        "      if (false) continue;",
+        "a mark with no strokes the eraser has crossed stops being drawn whole",
+        runner="viewer",
+    ),
+    Mutation(
+        # Stop painting every mark while a sweep is live rather than the ones it
+        # took. The page clears under the nib, which satisfies "the mark went"
+        # perfectly -- and is the reason the mark beside it is a control rather
+        # than a formality.
+        "viewer: stop painting every mark while a sweep is live",
+        "src/lib/viewer.ts",
+        "      if (this.doomed?.whole.has(mark.id)) continue;",
+        "      if (this.doomed) continue;",
+        "and one beside it the nib missed is still there",
+        runner="viewer",
+    ),
+    Mutation(
         # Paint no scrim at all, leaving the dashed outline the box's drag
         # already gets. A reader dragging a crop then sees a rectangle and no
         # answer to "which side of it survives" --- which is the whole reason

@@ -60,6 +60,7 @@
     type PageId,
   } from "./lib/pages";
   import { nameOf } from "./lib/markpopup";
+  import { sweepLabel } from "./lib/markband";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import {
     clampPlace,
@@ -625,15 +626,6 @@
   }
 
   /**
-   * Runs one edit and moves the viewer to the state it produced.
-   *
-   * Every route in goes through here, which is the same reasoning that put the
-   * history recording inside `goToDestination` rather than at its four callers:
-   * the fifth caller is the one that forgets. What it must not become is a place
-   * where the *next* state is computed --- it is handed one, and its whole job
-   * is to redraw what differs.
-   */
-  /**
    * The edit that has been asked for and not yet answered.
    *
    * Recorded because one caller has to wait for it and the twenty that fire
@@ -645,6 +637,15 @@
    */
   let pendingEdit: Promise<void> = Promise.resolve();
 
+  /**
+   * Runs one edit and moves the viewer to the state it produced.
+   *
+   * Every route in goes through here, which is the same reasoning that put the
+   * history recording inside `goToDestination` rather than at its four callers:
+   * the fifth caller is the one that forgets. What it must not become is a place
+   * where the *next* state is computed --- it is handed one, and its whole job
+   * is to redraw what differs.
+   */
   function applyEdit(run: (edits: Edits) => Promise<EditState>): Promise<void> {
     pendingEdit = runEdit(run);
     return pendingEdit;
@@ -2066,6 +2067,11 @@
         onCropped: (page, rect) => void cropTo(page, rect),
         onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
         onErased: (mark, remove) => void applyEdit((e) => e.erase(mark, remove)),
+        // The same sweep's other half: a mark with no parts to lose goes whole.
+        // `unmark` is what the mark panel's own Remove already calls, so a mark
+        // taken by the nib and one taken from the list are one command and one
+        // undo, however the reader asked.
+        onUnmarked: (mark) => void applyEdit((e) => e.unmark(mark)),
         onStatus: (next) => {
           status = next;
           // Here rather than in a `$derived`, because this is the only moment
@@ -2453,9 +2459,7 @@
       -->
       {#if status.erasing !== null}
         <span class="stat" data-testid="erasing">
-          {status.erasing === 0
-            ? "Erasing — drag across a drawing"
-            : `Erasing: ${status.erasing} stroke${status.erasing === 1 ? "" : "s"}`}
+          {sweepLabel(status.erasing)}
           — Esc to stop
         </span>
       {/if}

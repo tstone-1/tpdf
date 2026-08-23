@@ -1024,6 +1024,13 @@ what size a crop makes it. That is the first pair of commands added since the vi
 that parse a document, and it is worth saying plainly rather than folding into the sentence
 above.
 
+**A third joined them on 2026-08-23**: `page_crop_box` loads the page to read its `/Rotate`
+and its `/CropBox`, so that a rectangle a reader dragged on screen can be turned into the box
+the model holds. It is the same shape as the two above and adds the same nothing --- a handle
+the frontend has, a page it knows, four numbers, and a parse in the worker that renders every
+tile. It exists because the frontend is deliberately never told a page's `/Rotate`, so the
+one place that can undo it is the backend.
+
 What they add is nothing. Both take the document handle the frontend already has and a page
 position in the file it already knows; neither takes a path, and the parse happens in the
 same sandboxed worker that renders every tile a reader has already caused. A caller able to
@@ -1194,6 +1201,33 @@ typed password in a local for the duration of the retry loop and drops it, and n
 served from Rust. The webview is the least trusted place in the application (residual risk
 7), so a password parked in component state for a document's lifetime would be the one hop
 worth avoiding, and it is avoided.
+
+#### T6.10 — Moving a mark, added 2026-08-23
+
+**No new authority, and it is the T6.2 shape.** `annot_move` takes a document handle, a mark
+identity and two numbers, mutates a `HashMap` in the app process, and opens no file, writes
+none and reaches no worker. `page_crop_box`, added in the same window, is the exception and
+is covered in §T6.6 rather than here, because what it does is a *crop* question.
+
+**Two numbers off the wire, and the two checks on them are in different places for
+different reasons.** `edits::displace` refuses a `dx` or `dy` that is not finite, at the
+wire boundary and before the model sees it --- which is the check that matters, because a
+`NaN` reaching a `/Rect` is written into a content stream by `format!` as the literal
+`inf`, and this repository has already paid for that once with an unchecked `f32`.
+
+The **page clamp** is deliberately not there. `docmodel` cannot bound the move --- the
+page's size in points is the renderer's answer and not the model's --- so the viewer clamps
+before it sends, exactly as it clamps the geometry of a mark being placed, and both layers
+say so in their doc comments. A caller bypassing the frontend can therefore move a mark off
+its page. That is a correctness defect in the file it produces rather than a reach: the
+value goes into a `/Rect` as a finite number, and a rectangle outside the media box renders
+as nothing in any reader. Listed rather than fixed because the fix belongs where the page
+size is known, and residual risk 7 already bounds who can call this at all.
+
+**Which marks it will move is a product rule and not a security one.** `isMovable` refuses
+the four kinds anchored to words a reader selected, because a wash dragged off its line
+marks nothing; the model will move any mark, and that asymmetry is deliberate and stated in
+`markband.ts`.
 
 ### T7 — Distribution and update
 
@@ -1756,10 +1790,30 @@ which is what makes it evidence rather than a milestone.
 17. **A rewriting save, Save a copy and Extract parse the document inside the coordinator**
     (§3), added 2026-08-22 after an outside review found this document naming printing as the
     only coordinator-side parser while three edit writers had joined it. **Narrowed the same
-    day**: a save that only adds marks is prepared in the worker now (`Request::Append`), so
-    what is left is the rewriting save --- a deletion, a move, a turn, a crop --- and the two
-    copy paths. `lopdf` reads the source bytes in the app process on those, under
-    `spawn_blocking`, which moves the work off the async runtime and not out of the process. Decompression is bounded at
+    day**: a save that only adds marks is *prepared* in the worker now (`Request::Append`).
+    So the writers left here are the rewriting save --- a deletion, a move, a turn, a crop ---
+    and the two copy paths, and `lopdf` reads the source bytes in the app process on those,
+    under `spawn_blocking`, which moves the work off the async runtime and not out of the
+    process.
+
+    ⚠ **The append is not off this list, and this entry said it was until 2026-08-23.** Its
+    *preparation* moved; its **verification** did not. `save::append_in_place` re-reads the
+    whole file it has just written and parses it with `lopdf` in the app process, to check
+    the cross-reference chained and the page count survived --- and the previous revision of
+    that file is the attacker's bytes verbatim, so this is a coordinator-side parse of
+    untrusted input on every append, which is the commonest save there is. It is bounded by
+    the same `MAX_DECODE`, and it is **not** under `spawn_blocking`: the `match` that calls
+    it runs directly on the async runtime, unlike the three writers above. So a document
+    engineered to make that read-back spin stalls the runtime rather than a blocking pool.
+
+    Disclosed rather than fixed, and the reason is timing rather than difficulty: this was
+    found by step 6 of the release checklist, and rethreading the save path with no check
+    that can observe the difference is the riskier of the two actions on the day a release
+    is cut. `docs/PLAN.md` ranks it. The general shape is the one this entry already
+    records --- **a mitigation that moved half a path reads exactly like one that moved the
+    path**, and the half that stayed is the one nobody writes down.
+
+    Decompression is bounded at
     `MAX_DECODE`, graph recursion at `sweep::MAX_NESTING`, and a panic is reported rather
     than fatal (pinned by a test, so the property cannot be lost to a profile change) --- but
     there is no deadline and no memory bound, because enforcing either needs a separate
