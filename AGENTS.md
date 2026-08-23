@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 457 entries
+The one thing this file does *not* carry in full is the trap list --- 461 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1185,7 +1185,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 457 of them and the full text
+titles. Only the titles are here, because there are 461 of them and the full text
 was 93% of this file --- an instruction budget spent on the 456 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1399,6 +1399,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A probe reading one edge of a box cannot see a mutation that clips the other three (and the write-up first said pixels could not see it at all, which one run disproved)
 - A check on the sign of a noisy quantity fires only when the noise falls one way
 - The append was 8.2x in the spike and 1.1x in the application, and the difference is a hash (a spike times a subsystem and a reader waits for a feature; the claim that survived was the one nobody was leading with)
+- A round trip is a composition, so it is blind to a symmetric error (four mutations red and one green; the comment written first claimed the opposite, and a one-sided deletion is what makes that reading feel right)
 - A mean cannot test a claim about a minimum
 - A guard that reads the whole file does not belong on the path a reader waits on (452 ms cold on the 337 MB fixture, against a 300 ms budget, and a slow open reads as a big file)
 - A check that defers to a cheaper one it supersedes cannot be tested, and refuses what it should forgive (the digest comparison was 0 red before the fix and 2 red after, with no new test written for it)
@@ -1594,6 +1595,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A probe copied from its neighbour inherits a starting point that may not apply (a working command measured as dead, and its sibling failed in the direction that looks like a pass)
 - The gate guarding the anchors reads the file differently from the harness that uses them (green on every anchor in the tree precisely where the harness could match none of the multi-line ones)
 - A mutation written on one platform names a test the other platform does not compile (198 mutations unrunnable on macOS, and the anchor gate was structurally unable to see it)
+- Adding a third drag made five existing mutations aim at nothing, or at two things (two anchors matched twice and three matched nothing; the gate's other value, which is not why it was written --- and the fix for an ambiguous one is a WIDER anchor, then a re-run)
 - A new test can make an existing mutation's anchor ambiguous, and the anchor never moved (nothing drifted and nothing was left behind; a second copy appeared in `#[cfg(test)]`, and the fix belongs in the test)
 - A new command turns the mutation harness's control red, one layer from where it reads (the control's failure is a statement about the tree, not about the mutation; two harnesses, two lists a new command has to join)
 - A new kind that is a near-twin inherits a predicate written when it had no twin (every bound the box's check sets is true of an ellipse; ask what reading is different, not whether the old predicate still holds)
@@ -1669,6 +1671,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 
 ### Fixtures
 - The test fixtures are generated, not committed
+- A fixture whose origin is zero makes an offset term unfalsifiable (the least conspicuous place a property can hold by construction: a constant at the top of a test module)
 - A stand-in glyph with a degenerate box measures the wrong rule
 - A fixture's self-check forbade its own finding
 - A square fixture cannot tell a rotation from an identity
@@ -1695,6 +1698,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - The plan said the words had to be extracted, and the model had never let them be lost (a *Not done* line names the outcome and guesses the method; second time in two increments, both wrong the same way, and one signature settled it)
 - A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
 - The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated) (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
+- A gate over claimed absences only catches the name the claim guessed (green while the README said stamps could not be made, one commit after they shipped as four differently-named commands; the invariant that would hold runs the other way)
 - A refusal a reader could answer, reported on a channel with no answer in it (a correct diagnosis is what made it invisible; grep for a message naming a capability tpdf lacks)
 - A *Not done* note can describe a route with no reader in it (the parameter's half was true and the reader's half never happened; it held the print subsystem's ranked gap for a week and aimed two sessions at the wrong place --- ask whether a reader can get there, which for a command is one grep over the callers)
 

@@ -579,6 +579,31 @@ async fn page_geometry(
     await_reply("page_geometry", rx).await
 }
 
+/// The crop box a rectangle the reader dragged out would produce.
+///
+/// The inverse of [`page_geometry`], and it exists for the same reason: the
+/// frontend has the rectangle in the file's **display** space --- which is where
+/// every rectangle in the frontend lives --- and a crop box is in the page's own
+/// unrotated space. Turning between them needs the page's `/Rotate`, which the
+/// frontend is deliberately never told, so a second copy of the rotation table
+/// there is the thing this command exists to avoid.
+///
+/// The answer goes straight into [`page_crop`], which is why it is in exactly
+/// the coordinates [`page_content_box`] answers in: a crop the reader dragged and
+/// a crop measured from the ink have to be the same kind of thing, or *Reset
+/// page crop* would mean two different amounts of undoing.
+#[tauri::command]
+async fn page_crop_box(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    page: u32,
+    rect: [f32; 4],
+) -> Result<[f32; 4], String> {
+    let (reply, rx) = reply_channel();
+    service.crop_box(doc, page, rect, reply);
+    await_reply("page_crop_box", rx).await
+}
+
 /// Removes one page from the working document, without touching the file.
 ///
 /// Named by identity like [`page_rotate`], and here that is not a nicety: the
@@ -2286,6 +2311,7 @@ pub fn run() {
             page_crop,
             page_content_box,
             page_geometry,
+            page_crop_box,
             page_delete,
             page_move,
             annot_mark,

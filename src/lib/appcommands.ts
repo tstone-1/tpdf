@@ -135,7 +135,7 @@ export interface AppActions {
    * `rotatePage` has and for the same reason: two entry points into one call is
    * where the second one drifts.
    */
-  cropPage(to: "content" | "reset"): void;
+  cropPage(to: "content" | "reset" | "drag"): void;
   /**
    * Move the page the reader is on `delta` slots along, in the document.
    *
@@ -750,14 +750,29 @@ export function registerAppCommands(
       run: () => actions.removeMark(),
     },
     {
-      // **Crop to content**, and there is still no crop-by-dragging --- but the
-      // reason has changed and is worth correcting rather than leaving. It used
-      // to be that a rectangle a reader draws needs a drag mode this
-      // application did not have; `drag.ts` and `edit.drawBox` are that mode
-      // now, so what is missing is only a second caller of it. Measuring the
-      // ink remains the better answer for the case a reader actually wants --- a
-      // scan, or an article whose margins are wider than its column --- which is
-      // why it is still the one that exists.
+      // **Crop by dragging.** The one page operation only the reader can decide:
+      // a figure out of a plate, one column of two, a scan with a hand in the
+      // corner. Measuring the ink cannot answer any of those, because there is
+      // nothing wrong with what it measures --- the reader simply wants less
+      // than all of it.
+      //
+      // First of the three, and that ordering is the recommendation: this is
+      // what "crop" means to somebody who has not read the other two, and a
+      // palette ranks by the order it is given for equal scores.
+      //
+      // It arms rather than acting, so it is the one crop command whose outcome
+      // the window harness can wait for --- the other two are IPC replies and
+      // are excused there for that reason. See `armCrop`.
+      id: "edit.cropToDrag",
+      title: "Crop page by dragging",
+      enabled: withDocument,
+      run: () => actions.cropPage("drag"),
+    },
+    {
+      // **Crop to content**, which is still the better answer for the case it
+      // fits --- a scan, or an article whose margins are wider than its column.
+      // It needs no gesture at all, which is why it exists beside the drag
+      // rather than being replaced by it.
       //
       // Measured from a low-resolution render rather than from the page's
       // objects, which is what makes it work on a scan at all: see `content.rs`,

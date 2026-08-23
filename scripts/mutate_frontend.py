@@ -379,7 +379,13 @@ MUTATIONS = [
         # a page is deleted or moved, and then marks land on the wrong page.
         "viewer: send a drawn box to the slot rather than to the page's id",
         "src/lib/viewer.ts",
+        # The `quad` line above it is what disambiguates: the crop's drag has an
+        # identical `const id = quad ? ...`, and it builds its quad with
+        # `boxQuad(live.from, live.to, ...)` unconditionally rather than choosing
+        # between an icon and a box.
+        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));\n"
         "        const id = quad ? this.pages.idOf(live.slot) : undefined;",
+        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));\n"
         "        const id = quad ? live.slot : undefined;",
         "carries the armed kind and the page's id",
     ),
@@ -389,7 +395,8 @@ MUTATIONS = [
         # and one across a link jumps to another page.
         "viewer: hit-test the page before letting the box tool have the press",
         "src/lib/viewer.ts",
-        "    if (this.drawDrag.start(event)) {\n      event.preventDefault();\n      return;\n    }",
+        "    if (this.cropDrag.start(event) || this.drawDrag.start(event)) {\n"
+        "      event.preventDefault();\n      return;\n    }",
         "",
         "goes to the drag when a tool is armed and not when one is not",
     ),
@@ -412,8 +419,13 @@ MUTATIONS = [
         # It was aimed at the wrong check first and the harness said so.
         "viewer: follow the pointer onto another page mid-drag",
         "src/lib/viewer.ts",
-        "        const { x, y } = this.pageAndPoint(at);\n        live.to = { x, y };",
-        "        const at2 = this.pageAndPoint(at);\n        live.slot = at2.page;\n        live.to = { x: at2.x, y: at2.y };",
+        # Disambiguated by the line after it: the crop's drag has the identical
+        # two lines and then wakes, where the box's goes on to sample for ink.
+        "        const { x, y } = this.pageAndPoint(at);\n        live.to = { x, y };\n"
+        "        // **Sampled, not every event.**",
+        "        const at2 = this.pageAndPoint(at);\n        live.slot = at2.page;\n"
+        "        live.to = { x: at2.x, y: at2.y };\n"
+        "        // **Sampled, not every event.**",
         "keeps the box on the page it started from",
     ),
     Mutation(
@@ -3165,7 +3177,8 @@ MUTATIONS += [
         # meant -- and it guesses the eraser, because that branch is first.
         "viewer: arm the eraser without putting the pen away",
         "src/lib/viewer.ts",
-        "    this.drawKind = null;\n    this.inking = null;\n    this.erasing = true;",
+        "    this.drawKind = null;\n    this.inking = null;\n"
+        "    this.cropping = false;\n    this.erasing = true;",
         "    this.erasing = true;",
         "puts the pen away, and the pen puts it away",
     ),
@@ -4060,8 +4073,11 @@ MUTATIONS += [
         # the same thing in different words.
         "status: name a drawing in the armed field as well as its own",
         "src/lib/viewer.ts",
-        "      armed: this.drawnStrokes === null ? this.drawKind : null,",
-        "      armed: this.drawKind,",
+        # Re-aimed 2026-08-23 when the crop joined this expression. It stays a
+        # mutation about ink -- the crop's ternary is kept so that the only thing
+        # removed is `drawnStrokes`, which is what decides ink's own line.
+        '      armed: this.cropping ? "crop" : this.drawnStrokes === null ? this.drawKind : null,',
+        '      armed: this.cropping ? "crop" : this.drawKind,',
         "names a drawing in one field, not two",
     ),
     Mutation(
@@ -4154,6 +4170,124 @@ MUTATIONS += [
         "throws the move away on Escape",
     ),
 ]
+
+MUTATIONS += [
+    # Crop by dragging, 2026-08-23. Eight mutations, one per test, each proved to
+    # redden the test named for it and no other -- except the first, which also
+    # reddens the ordering test, because a drag the tool never refused commits
+    # rectangles the ordering test then counts.
+    Mutation(
+        # Take any press. The tool is what decides, and without that a drag
+        # anywhere on a page crops it -- which is the worst failure this gesture
+        # has, because a crop removes something the reader can see.
+        "crop: start the crop drag whether or not the tool is armed",
+        "src/lib/viewer.ts",
+        "        if (!this.cropping) return false;",
+        "        if (false) return false;",
+        "reports nothing until the tool is armed",
+    ),
+    Mutation(
+        # Report the laid-out rectangle. On an uncropped, unturned page it is
+        # the right answer; on a page already cropped it walks the crop further
+        # in every time, which reads as a viewer that mis-draws rather than as a
+        # translation that never happened.
+        "crop: report the rectangle in the page's laid-out space",
+        "src/lib/viewer.ts",
+        "        this.opts.onCropped?.(id, this.fileRectOn(live.slot, quad));",
+        "        this.opts.onCropped?.(id, [quad.left, quad.top, quad.right, quad.bottom]);",
+        "reports the rectangle in the file's space and not the page's",
+    ),
+    Mutation(
+        # Leave the tool armed. Every drawing tool is one-shot and a crop has a
+        # stronger reason to be: a second crop replaces the first, so a reader
+        # who did not notice it was still armed loses the crop they just made.
+        "crop: leave the crop tool armed after a rectangle",
+        "src/lib/viewer.ts",
+        "        this.cropping = false;\n        this.showCursor();\n        this.opts.onCropped?.(",
+        "        this.showCursor();\n        this.opts.onCropped?.(",
+        "is spent by one rectangle",
+    ),
+    Mutation(
+        # Escape's ladder without the crop's two fields. It falls through to
+        # clearing the selection, so a reader who presses Escape mid-drag
+        # watches the rectangle stay and then commits it by letting go.
+        "crop: leave the crop out of what Escape can reach",
+        "src/lib/viewer.ts",
+        "        this.doomed ||\n        this.cropping ||\n        this.cropDrawing",
+        "        this.doomed",
+        "is dropped by Escape mid-drag, without cropping",
+    ),
+    Mutation(
+        # Build the rectangle without `boxQuad`, so `MIN_BOX` never refuses one.
+        # A click then crops the page to nothing, and the tool is spent doing it.
+        "crop: commit a click as a rectangle of no size",
+        "src/lib/viewer.ts",
+        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));\n"
+        "        const id = quad ? this.pages.idOf(live.slot) : undefined;",
+        "        const quad = {\n"
+        "          left: Math.min(live.from.x, live.to.x),\n"
+        "          top: Math.min(live.from.y, live.to.y),\n"
+        "          right: Math.max(live.from.x, live.to.x),\n"
+        "          bottom: Math.max(live.from.y, live.to.y),\n"
+        "        };\n"
+        "        const id = this.pages.idOf(live.slot);",
+        "keeps the tool armed when the reader clicks instead of dragging",
+    ),
+    Mutation(
+        # The corners in arrival order. Three of the four directions a reader can
+        # drag then produce an inside-out crop box, which the model refuses --
+        # so the tool works downhill and not uphill.
+        "crop: keep the corners in the order the drag reported them",
+        "src/lib/viewer.ts",
+        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));\n"
+        "        const id = quad ? this.pages.idOf(live.slot) : undefined;\n"
+        "        if (!quad || id === undefined) {",
+        "        const quad = {\n"
+        "          left: live.from.x,\n"
+        "          top: live.from.y,\n"
+        "          right: live.to.x,\n"
+        "          bottom: live.to.y,\n"
+        "        };\n"
+        "        const id = this.pages.idOf(live.slot);\n"
+        "        if (!quad || id === undefined) {",
+        "orders the corners whichever way the drag went",
+    ),
+    Mutation(
+        # Arm a drawing tool without putting the crop away. Both are then set,
+        # and `onSelectStart` asks the crop drag first -- so choosing the box
+        # tool crops the page instead.
+        "crop: let armDraw leave the crop tool armed",
+        "src/lib/viewer.ts",
+        "    this.erasing = false;\n    this.cropping = false;\n    this.drawKind = kind;",
+        "    this.erasing = false;\n    this.drawKind = kind;",
+        "puts the drawing tool away, and the drawing tool puts it away",
+    ),
+    Mutation(
+        # Fill `armed` from the drawing tool alone, which is what it did before
+        # the crop existed. The reader arms the crop from the palette, gets a
+        # crosshair and no words, and has nothing telling them what their next
+        # press will do -- the exact complaint the field was added for. The
+        # accessors all still answer correctly, so only a test reading the
+        # status can see it.
+        "crop: leave the armed crop out of the status the window reads",
+        "src/lib/viewer.ts",
+        '      armed: this.cropping ? "crop" : this.drawnStrokes === null ? this.drawKind : null,',
+        "      armed: this.drawnStrokes === null ? this.drawKind : null,",
+        "names the armed crop, which is not a mark kind",
+    ),
+    Mutation(
+        # The mirror: arm the crop without putting the drawing tool away. The
+        # crop drag wins the press, so the drawing tool is armed, invisible and
+        # unreachable until the reader presses Escape."""
+        "crop: let armCrop leave the drawing tool armed",
+        "src/lib/viewer.ts",
+        "    this.drawKind = null;\n    this.drawStamp = null;\n    this.inking = null;\n"
+        "    this.erasing = false;\n    this.cropping = true;",
+        "    this.inking = null;\n    this.erasing = false;\n    this.cropping = true;",
+        "puts the drawing tool away, and the drawing tool puts it away",
+    ),
+]
+
 
 
 def main() -> int:

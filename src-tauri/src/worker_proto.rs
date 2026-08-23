@@ -102,6 +102,14 @@ pub enum Request {
         #[serde(default)]
         crop: Option<[f32; 4]>,
     },
+    /// The crop box that would place a dragged rectangle where it was dragged.
+    ///
+    /// The inverse of [`Request::Geometry`], and here for the same reason: the
+    /// turn between the page's own space and the display's is the page's
+    /// `/Rotate`, which the frontend never sees. `rect` is in the file's display
+    /// space; the answer is in the page's own, which is the space a crop box is
+    /// stored and saved in.
+    CropBox { page: u32, rect: [f32; 4] },
     /// Read the document's outline.
     Outline,
     /// Read every comment in the document.

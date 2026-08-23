@@ -19,6 +19,38 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Added: crop a page by dragging a rectangle
+
+**Crop page by dragging** in the Page menu, or from the command palette. Choose it
+and the pointer becomes a crosshair; drag out the part of the page you want to
+keep, and that becomes the page. Escape puts the tool away, and a click that never
+moved leaves it armed rather than cropping to nothing.
+
+While you drag, everything outside the rectangle is darkened --- so what stays
+bright is exactly what the page becomes, rather than a dashed outline that leaves
+you to work out which side survives. Between arming the tool and pressing, the
+status line says *Crop --- drag out what to keep*, so choosing it from the palette
+and then looking away does not leave you with an unexplained crosshair.
+
+**Crop page to content** is unchanged and still the better answer when it fits: a
+scan, or an article whose margins are wider than its column. Dragging is for what
+a measurement cannot decide --- a figure out of a plate, one column of two, a scan
+with a hand in the corner.
+
+The crop is the same crop either way: undoable, carried when the page moves, and
+written into a saved file as a real `/CropBox`. A second crop replaces the first
+rather than cropping the crop, and **Reset page crop** puts the file's own box
+back whichever way the crop was made.
+
+### Fixed: the README said stamps could not be made, one day after they shipped
+
+The *Not built yet* list is checked by a gate for exactly this, and the gate could
+not see it: each entry names the command that would exist if the feature did, and
+stamps shipped as four commands (`edit.stamp.approved` and three siblings) rather
+than as the one name the entry had guessed. The crop entry was wrong the same way
+at the same moment. Both are corrected, and the README now says what that check
+does and does not cover.
+
 ### Added: stamps
 
 Mark a document APPROVED, CONFIDENTIAL, DRAFT or FINAL. Pick one from the Edit

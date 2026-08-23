@@ -2136,9 +2136,10 @@ scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/
 > rather than any particular number. Written down rather than left to be noticed, because the
 > table looks measured either way and a stale total reads exactly like a current one.
 >
-> The current figure, measured 2026-08-23: **334 names**, all distinct --- 324 cutting
-> `26.8.7`, plus five for the overlay-against-the-file phase and five for the stamp (its own
-> overlay reading and its four commands). Take the names from the harness's own
+> The current figure, measured 2026-08-23: **340 names**, all distinct --- 324 cutting
+> `26.8.7`, plus five for the overlay-against-the-file phase, five for the stamp (its own
+> overlay reading and its four commands), and six for cropping by dragging (three backend
+> checks, its one palette command, and two reading the scrim off the overlay). Take the names from the harness's own
 > `CHECK-NAMES-JSON` line, never by splitting the printed columns --- this page records that a
 > `\s{2,}` split matched 175 of 189 lines, and reaching for it again is what produced a diff
 > full of per-corpus *detail* differences that looked like missing names.

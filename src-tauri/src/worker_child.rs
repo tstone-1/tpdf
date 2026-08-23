@@ -463,6 +463,10 @@ fn handle(
             Ok(size) => Response::json(&size),
             Err(e) => Response::err(e),
         },
+        Request::CropBox { page, rect } => match render::crop_box_of(document, *page, *rect) {
+            Ok(want) => Response::json(&want),
+            Err(e) => Response::err(e),
+        },
         Request::Outline => Response::json(&render::run_outline(document)),
         Request::Comments => match render::run_comments(document) {
             Ok(comments) => Response::json(&comments),

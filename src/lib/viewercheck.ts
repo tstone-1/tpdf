@@ -3702,6 +3702,20 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      // **The one crop command that can be driven here**, and that is why it is
+      // a probe while its two neighbours are excused: it arms and returns, so
+      // its outcome is a field on the viewer rather than a chain of IPC replies
+      // the probe framework's frame-loop settle cannot wait for.
+      //
+      // What it reads is the same half every tool command's probe reads --- the
+      // command exists in the palette and reaches its own action. The gesture
+      // it arms is covered by `viewercrop.test.ts` against a fake DOM, and the
+      // mapping it ends in by `cropCommandChecks` against this backend.
+      id: "edit.cropToDrag",
+      ...shell("cropPage:drag"),
+      read: () => fired.join(","),
+    },
+    {
       // The ellipse, aimed separately for the reason the note below it gives
       // about the freehand tool: it arms the same primitive as the box with a
       // different argument, which is exactly the shape where a copy-and-paste
@@ -8626,6 +8640,8 @@ const INK_CHECK = {
   second: "a second stroke joins the drawing rather than replacing it",
   erased: "a stroke the eraser has taken stops being drawn at once",
   spared: "and one the nib missed is still there",
+  scrimOut: "a crop being dragged darkens the paper it would throw away",
+  scrimIn: "and leaves the part it would keep clear",
 } as const;
 
 const OVERLAY_INK_CHECKS: string[] = Object.values(INK_CHECK);
@@ -9799,6 +9815,82 @@ async function inkPreviewChecks(
   viewer.cancelDraw();
   await frame();
   await erasePreviewChecks(root, viewer, inked, box);
+  await cropPreviewChecks(root, viewer, inked, box);
+}
+
+/**
+ * What a reader sees *while* dragging a crop.
+ *
+ * **The only check on `paintCropPreview`, and the only one there can be.** A
+ * crop's preview exists between a press and a release and reaches no model, so
+ * `viewercrop.test.ts` --- which drives the same gesture against a fake DOM ---
+ * cannot see a pixel of it, and no phase reading the model or the saved file can
+ * either. The overlay is where it exists.
+ *
+ * **The two readings are one assertion, not one plus thoroughness.** The scrim
+ * is a darkening of everything *outside* the rectangle, so "the outside is
+ * covered" is satisfied by a blanket over the whole page --- which is the most
+ * likely way to get this wrong, and it would hide the page a reader is aiming
+ * with. What says it is a hole rather than a blanket is that the inside stays
+ * clear, and neither reading alone says that.
+ *
+ * Left mid-drag for exactly as long as the readings take, then cancelled: this
+ * phase, like the two above it, must hand the document on as it found it.
+ */
+async function cropPreviewChecks(
+  root: HTMLElement,
+  viewer: Viewer,
+  inked: (l: number, t: number, r: number, b: number) => number | null,
+  box: { left: number; top: number; right: number; bottom: number },
+): Promise<void> {
+  const names = [INK_CHECK.scrimOut, INK_CHECK.scrimIn];
+  const width = box.right - box.left;
+  const height = box.bottom - box.top;
+  if (width < 80 || height < 80) {
+    for (const name of names) skip(name, "page 1 is too small to drag a crop on");
+    return;
+  }
+  // The middle half of the page, so there is room outside it on all four sides
+  // for the scrim to be read in and room inside for the hole.
+  const x0 = box.left + width * 0.25;
+  const y0 = box.top + height * 0.25;
+  const x1 = box.left + width * 0.75;
+  const y1 = box.top + height * 0.75;
+
+  viewer.armCrop();
+  pointer(root, "pointerdown", x0, y0);
+  pointer(root, "pointermove", x1, y1);
+  await frame();
+  await frame();
+
+  // Outside the rectangle and inside the page: the band along the top, which
+  // the scrim covers wholly. Read above the rectangle rather than beside it
+  // because the top band is the full width of the page in the painter, so a
+  // partial reading there would be the painter's fault rather than the check's.
+  const outside = inked(box.left + 2, box.top + 2, box.right - 2, y0 - 2);
+  // Well inside the rectangle, clear of the dashed outline on every side.
+  const inside = inked(
+    x0 + width * 0.06,
+    y0 + height * 0.06,
+    x1 - width * 0.06,
+    y1 - height * 0.06,
+  );
+
+  // Cancelled before the checks are recorded, so that a check throwing cannot
+  // leave the tool armed for the phases after this one.
+  viewer.cancelDraw();
+  await frame();
+
+  check(
+    INK_CHECK.scrimOut,
+    outside !== null && outside > 0.9,
+    `${((outside ?? 0) * 100).toFixed(0)}% of the band above the rectangle is covered`,
+  );
+  check(
+    INK_CHECK.scrimIn,
+    inside !== null && inside < 0.02,
+    `${((inside ?? 0) * 100).toFixed(0)}% of the rectangle's middle is covered`,
+  );
 }
 
 /**
@@ -9937,6 +10029,9 @@ const CROP_CHECKS = [
   "the crop sits inside the file's own page",
   "clearing the crop puts the page back",
   "a crop that encloses nothing is refused in the reader's words",
+  "the backend maps a dragged rectangle into a crop box",
+  "a crop placed on screen and dragged back out is the crop it started as",
+  "a rectangle dragged past the paper crops to the paper",
 ];
 
 /**
@@ -10041,6 +10136,62 @@ async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
     CROP_CHECKS[5] ?? "",
     cleared.state?.pages[0]?.crop === undefined,
     cleared.error || `crop ${JSON.stringify(cleared.state?.pages[0]?.crop)}`,
+  );
+
+  // The new command, and then the differential worth having: `page_geometry`
+  // places a crop box on screen and `page_crop_box` takes a rectangle on screen
+  // back to a crop box, through two rotation tables (`to_device` and
+  // `from_device`) that a unit test can only exercise on turns it invents. Here
+  // the turn is the corpus's own --- which on `rotated.pdf` is not zero, and on
+  // every other corpus is the case that cannot tell a right table from a wrong
+  // one.
+  const dragged: [number, number, number, number] | null = at
+    ? [at.left, at.top, at.left + at.width_pt, at.top + at.height_pt]
+    : null;
+  let mapped: [number, number, number, number] | null = null;
+  let mappedWhy = "";
+  if (dragged) {
+    try {
+      mapped = await invoke<[number, number, number, number]>("page_crop_box", {
+        doc: doc.id,
+        page: first.source,
+        rect: dragged,
+      });
+    } catch (e) {
+      mappedWhy = String(e);
+    }
+  }
+  check(
+    CROP_CHECKS[7] ?? "",
+    mapped !== null,
+    mappedWhy || `sent ${JSON.stringify(dragged)}, got ${JSON.stringify(mapped)}`,
+  );
+  check(
+    CROP_CHECKS[8] ?? "",
+    !!mapped && mapped.every((value, index) => Math.abs(value - (found?.[index] ?? NaN)) < 0.05),
+    `placed ${JSON.stringify(dragged)}, back ${JSON.stringify(mapped)}, ` +
+      `started as ${JSON.stringify(found)}`,
+  );
+
+  // The bound, and it is the half a round trip structurally cannot see: a round
+  // trip is a composition, so it agrees with itself about a rectangle that never
+  // left the page. A reader's drag routinely does leave it --- one flick of the
+  // wrist at the edge --- and the answer has to stay inside the file's own box.
+  const past = await invoke<[number, number, number, number]>("page_crop_box", {
+    doc: doc.id,
+    page: first.source,
+    rect: [-4000, -4000, 8000, 8000],
+  }).catch(() => null);
+  check(
+    CROP_CHECKS[9] ?? "",
+    !!past &&
+      !!whole &&
+      past[2] - past[0] <= Math.max(whole.width_pt, whole.height_pt) + 0.05 &&
+      past[3] - past[1] <= Math.max(whole.width_pt, whole.height_pt) + 0.05 &&
+      past[2] > past[0] &&
+      past[3] > past[1],
+    `${JSON.stringify(past)} against a page of ` +
+      `${whole?.width_pt.toFixed(1)}x${whole?.height_pt.toFixed(1)}`,
   );
 
   // The control: corners the wrong way round enclose nothing, and the model has
