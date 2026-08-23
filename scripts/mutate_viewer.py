@@ -309,9 +309,30 @@ MUTATIONS = [
         # reopen -- the same shape of wrong as the mutation above.
         "viewer: fill a box on the overlay rather than stroking it",
         "src/lib/viewer.ts",
-        "          ctx.strokeRect(left, top, width, height);",
-        "          ctx.fillRect(left, top, width, height);",
+        # **The preceding line disambiguates, and it did not need to until the
+        # stamp arrived**: a stamp is bordered by the same `strokeRect` call, so
+        # the bare line now matches twice. The box's is the one that follows its
+        # own line width; the stamp's is followed by the word it draws.
+        "          ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;\n"
+        "          ctx.strokeRect(left, top, width, height);\n"
+        "        } else if (isEllipse(mark.kind)) {",
+        "          ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;\n"
+        "          ctx.fillRect(left, top, width, height);\n"
+        "        } else if (isEllipse(mark.kind)) {",
         "a box is a frame with its middle clear",
+        runner="viewer",
+    ),
+    Mutation(
+        # Draw a stamp as a plain box on the overlay: the border without the
+        # word. **The saved file stays correct**, so a reader sees an empty
+        # rectangle until they save and reopen, at which point the word appears
+        # --- the underline defect's shape for a fourth time, and the reading
+        # written for exactly it is the one that goes red.
+        "viewer: draw a stamp as an empty box on the overlay",
+        "src/lib/viewer.ts",
+        '          const word = mark.stamp ? stampWord(mark.stamp) : "";',
+        '          const word = "";',
+        "a stamp is a border with a word inside it",
         runner="viewer",
     ),
     Mutation(

@@ -34,7 +34,7 @@ import type { CommandRegistry } from "./commands";
 import { BINDINGS, inTextField, label, matches, type BoundCommand } from "./keys";
 import { describeRange, parsePageRange } from "./pageranges";
 import { PALETTE } from "./markcolors";
-import type { MarkKind } from "./pages";
+import type { MarkKind, StampName } from "./pages";
 import type { Tab } from "./sidebar";
 import type { Viewer } from "./viewer";
 import { MAX_ZOOM, MIN_ZOOM, parseZoomPercent, percentOf } from "./zoom";
@@ -46,6 +46,23 @@ import { MAX_ZOOM, MIN_ZOOM, parseZoomPercent, percentOf } from "./zoom";
  * which of them a command reached. A single `app` object with the whole
  * component behind it would make the seam untestable again.
  */
+/**
+ * What each stamp is called in the palette.
+ *
+ * Title case rather than the upper case a stamp is *drawn* in: the drawn word
+ * shouts because a stamp does, and a command list that shouted four of its
+ * entries would read as an error. `stampWord` in `pages.ts` is the drawn form,
+ * and the two being different spellings of one name is deliberate --- the same
+ * arrangement every `MarkKind` already has between its serde name, its PDF name
+ * and the word a reader sees.
+ */
+const STAMP_TITLES: Record<StampName, string> = {
+  approved: "Approved",
+  confidential: "Confidential",
+  draft: "Draft",
+  final: "Final",
+};
+
 export interface AppActions {
   /**
    * The open document's surface, or null.
@@ -185,6 +202,16 @@ export interface AppActions {
    * that is what makes them separate commands rather than separate modes.
    */
   drawEllipse(): void;
+  /**
+   * Arms the stamp tool for one of the four standard stamps.
+   *
+   * **One method taking the name, where the two shapes above are two methods.**
+   * The shapes differ in what is drawn and a stamp differs only in what it says,
+   * so four methods here would be four copies of one line --- and the four
+   * commands that call it already carry the distinction where a reader meets it,
+   * which is the palette. `edit.color.*` is the same arrangement.
+   */
+  stamp(name: StampName): void;
   /**
    * Arms the text box tool: the reader's next drag on a page draws one.
    *
@@ -588,6 +615,24 @@ export function registerAppCommands(
       enabled: withDocument,
       run: () => actions.drawEllipse(),
     },
+    ...(["approved", "confidential", "draft", "final"] as const).map(
+      (name) => ({
+        // **One command per stamp, and the alternative was one that asks.** The
+        // palette can take a value --- `nav.goToPage` does --- and a stamp is not
+        // that shape: the four are a menu of four things a reader picks between,
+        // not a parameter they supply, and typing "draft" into a prompt is
+        // slower than typing it into the palette that is already open. The same
+        // argument `edit.color.*` makes, and this follows its spelling so the
+        // two families read alike.
+        //
+        // The ellipsis is the shape tools': the command arms a tool, and what
+        // happens next is a drag the reader makes.
+        id: `edit.stamp.${name}`,
+        title: `Stamp ${STAMP_TITLES[name]}...`,
+        enabled: withDocument,
+        run: () => actions.stamp(name),
+      }),
+    ),
     {
       // The third tool that reads a drag, after the two shapes. Everything the
       // box's entry says about arming a mode applies unchanged.

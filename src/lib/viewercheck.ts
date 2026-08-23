@@ -59,7 +59,14 @@ import {
 } from "./reading";
 import { TextCache, type PageText } from "./text";
 import type { EditState } from "./edits";
-import { markRows, pageId, unedited, type MarkKind, type MarkView } from "./pages";
+import {
+  markRows,
+  pageId,
+  unedited,
+  type MarkKind,
+  type MarkView,
+  type StampName,
+} from "./pages";
 import { Sidebar, SIDEBAR_CLASS } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
 import { OVERSCAN, rowHeightFor, type Thumbnails } from "./thumbnails";
@@ -3059,6 +3066,7 @@ async function appCommandChecks(
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
     drawEllipse: () => fired.push("drawEllipse"),
+    stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
@@ -3749,6 +3757,16 @@ async function appCommandChecks(
       ...shell(`setMarkColor:${entry.id}`),
       read: () => fired.join(","),
     })),
+    // Every stamp, aimed separately, for the colours' reason exactly: four
+    // commands built by one `map`, all calling one action with an argument, so
+    // a copy-and-paste that left every entry passing "approved" would give a
+    // reader four commands that all stamp APPROVED and no single probe could
+    // see it. `stamp:<name>` is what says each reaches its own.
+    ...(["approved", "confidential", "draft", "final"] as const).map((name) => ({
+      id: `edit.stamp.${name}`,
+      ...shell(`stamp:${name}`),
+      read: () => fired.join(","),
+    })),
     {
       // The two other kinds, aimed separately. One action taking an argument,
       // which is the shape this file's own note about `movePage` warns about:
@@ -4101,9 +4119,22 @@ async function appCommandChecks(
     .search("")
     .map((ranked) => ranked.command.title);
 
+  // **From the registry, not from `palette.visible`, and the difference is a
+  // rendering cap.** This read the palette's rows until 2026-08-23, when the
+  // four stamp commands took the enabled count past `palette.ts`'s
+  // `.slice(0, 64)` and three commands fell off the end --- so
+  // `view.showThumbnails`, `view.showMarks` and `view.invertPages` were reported
+  // as *withheld from a reader* when they were merely off the bottom of a list.
+  // The question this check asks is which commands are offered, and a list
+  // truncated for display cannot answer it. It had been one command away from
+  // saying so for some time.
+  //
+  // The palette is still opened and closed, because the phase after this one
+  // asserts the viewer was left as it was found and an unbalanced open would
+  // break it somewhere else.
   palette.open();
-  const withDocument = palette.visible.slice();
   palette.close();
+  const withDocument = registry.search("").map((ranked) => ranked.command.title);
   const missing = registered.filter(
     (id) => !withDocument.includes(titleOf(id)),
   );
@@ -4180,6 +4211,7 @@ function syntheticMark(
     // and every kind reaches it identically. What differs between the three is
     // written by `save.rs` and read back by `annot-probe`.
     kind: "highlight",
+    stamp: null,
     // The *id* of the first page, which for an unedited document is 1 --- see
     // `pages.ts`. Sending 0 here would name no page and the mark would not be
     // drawn at all, which is the slot-for-identity confusion this type exists
@@ -4792,6 +4824,7 @@ function markOnPage(
   return {
     id,
     kind: "highlight",
+    stamp: null,
     page: pageId(slot + 1),
     quads: [
       size.width_pt * 0.15,
@@ -8582,7 +8615,13 @@ const INK_CHECK = {
   textbox: "a text box draws its words and not its rectangle",
   note: "a comment draws inside its own icon box",
   ink: "a drawing follows its strokes and does not fill its rectangle",
-  distinct: "the nine kinds do not all look the same",
+  stamp: "a stamp is a border with a word inside it",
+  // **No count in the name, and it used to carry one.** It read "the nine kinds
+  // do not all look the same", and a tenth kind renames it --- which changes the
+  // set of check names every corpus is diffed against, for a reason that is not
+  // about the check. `docs/TRAPS.md` has the entry: a test named for the
+  // population it covers is renamed by every kind you add.
+  distinct: "no two kinds look the same",
   preview: "a drawing in progress is previewed as a line, not as a rubber band",
   second: "a second stroke joins the drawing rather than replacing it",
   erased: "a stroke the eraser has taken stops being drawn at once",
@@ -8758,6 +8797,11 @@ async function overlayInkChecks(
       {
         id: 7777,
         kind,
+        // A stamp with no name draws an empty border, which is a box --- so the
+        // reading that separates the two would fail for the wrong reason. The
+        // model refuses a name on any other kind, so this is that biconditional
+        // rather than a default.
+        stamp: kind === "stamp" ? ("draft" as const) : null,
         page: pageId(1),
         quads: quad,
         strokes,
@@ -9074,6 +9118,21 @@ async function overlayInkChecks(
       INK_CHECK.ellipse,
       (r) => r.whole < 0.3 && r.core < 0.05 && r.edges === 4 && r.corners === 0,
     ],
+    // A border **and** a word, which is the box's reading with the one clause
+    // that separates them flipped. A box requires `core < 0.05` and a stamp
+    // requires ink there: a stamp drawn as a plain `strokeRect` --- which is what
+    // a missing `isStamp` gives, since `isOutline` is one branch away --- reads
+    // exactly like the box above and the saved file stays correct, which is the
+    // underline defect's shape for a fourth time.
+    //
+    // `edges === 4` is the other half and it is not redundant with it: a stamp
+    // drawn as *only* its word, which is what borrowing the text box's branch
+    // would give, has ink in the core and none on any side.
+    [
+      "stamp",
+      INK_CHECK.stamp,
+      (r) => r.edges === 4 && r.core > 0.02 && r.whole < 0.9,
+    ],
     // A bubble drawn inside a 20-point box. Loose on purpose: what shape it
     // should be is a drawing decision, and what a check can say is that
     // something of ours is there, at the centre, and it is not the whole
@@ -9326,6 +9385,7 @@ async function markAgreementChecks(
     "ink",
     "note",
     "textbox",
+    "stamp",
   ] as const;
   const COLOR: [number, number, number] = [0.15, 0.35, 0.9];
   const top = size.height_pt * 0.06;
@@ -9360,6 +9420,10 @@ async function markAgreementChecks(
       page: pageId(1),
       quads: box,
       strokes,
+      // The biconditional the model enforces, restated here because this phase
+      // builds the overlay's marks itself: a name on any other kind is refused
+      // and a stamp without one is too.
+      stamp: kind === "stamp" ? ("draft" as const) : null,
       color: COLOR,
       note: lines.join(" "),
       lines,
@@ -9396,10 +9460,10 @@ async function markAgreementChecks(
     // overlay's object straight in was refused with `invalid args`, and the
     // `changed` control is what reported it --- nothing was saved, so nothing
     // moved in the file, which is exactly what that control is for.
-    const { kind, quads, strokes, note, lines } = mark;
+    const { kind, quads, strokes, stamp, note, lines } = mark;
     const one = await attempt("annot_mark", {
       doc: doc.id,
-      mark: { kind, page, quads, strokes, color: COLOR, author: "", note, lines },
+      mark: { kind, page, quads, strokes, stamp, color: COLOR, author: "", note, lines },
     });
     madeError ||= one.error;
     ids.push(one.state?.marks[one.state.marks.length - 1]?.id);
@@ -9663,6 +9727,7 @@ async function inkPreviewChecks(
     {
       id: 4243,
       kind: "highlight",
+      stamp: null,
       page: pageId(1),
       quads: [0, 0, size.width_pt, size.height_pt],
       strokes: [],
@@ -9770,6 +9835,7 @@ async function erasePreviewChecks(
     {
       id: 4244,
       kind: "ink",
+      stamp: null,
       page: pageId(1),
       quads: [from, upper, to, lower],
       strokes: [

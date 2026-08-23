@@ -13467,3 +13467,60 @@ pictures that differ.
 the file renders` went red on the same run, correctly, because nothing had been saved. The
 phase reported a green check and a red control about one event, which is the shape that says
 the green one is the one to distrust.
+
+### A check read the palette's rendered rows, which are capped at 64
+
+*"With no document only the commands needing none are offered"* went red on a change that
+added four commands, and named three that had nothing to do with them:
+`view.showThumbnails`, `view.showMarks`, `view.invertPages` reported as **withheld from the
+reader**.
+
+They were not withheld. `palette.ts` renders `registry.search(query).slice(0, 64)`, and the
+check took its answer from `palette.visible` --- the titles of the rows that were drawn. Before
+the change 63 commands were enabled with a document open; after it, 67. Three fell off the
+bottom of a list, and a list truncated for display cannot answer the question *"is this command
+offered"*.
+
+**The check had been one command away from saying so for some time**, and nothing could have
+told anybody: it passed at 63 exactly as it passes at 5. There is no reading that distinguishes
+"just under a cap" from "nowhere near one", which is why a bound that a growing population
+approaches is a defect on a timer rather than a risk to weigh.
+
+The fix is one line and it is not raising the cap: ask `registry.search("")` rather than the
+palette. The cap is a rendering decision that belongs to the palette; the question belongs to
+the registry. The palette is still opened and closed, because the phase after this one asserts
+the viewer was left as it was found.
+
+**The general form: a check that reads a UI's *rendered* state is asking a different question
+from the one it is named for.** Rendered state is truncated, virtualised, scrolled, collapsed
+and animated, and every one of those is a way for a correct system to look wrong. Read the
+model the UI renders from, and let a separate check --- with its own name --- say the rendering
+matches it.
+
+### PDFium synthesises an appearance for `/Text` and not for `/Stamp`
+
+Both are annotations a reader *places* rather than draws, both are positioned by `/Rect` alone,
+and both have a `/Name` naming one of a standard list. The obvious inference is that they are
+the same case. They are not, and getting it wrong in either direction ships a mark nobody can
+see or a mark drawn twice.
+
+Measured before a line of the stamp was written, on one page through one code path:
+
+| annotation, no `/AP` | non-white pixels PDFium drew |
+|---|---|
+| none (the bare page) | 0 |
+| `/Stamp` with `/Name /Approved` | **0** |
+| `/Text` with `/Name /Comment` | **336** |
+
+So a stamp is on `/Square`'s side of the line --- we write the appearance or nothing appears ---
+and a comment is not, which is why `save.rs` deliberately writes none for it.
+
+**The two zeroes are why the third row exists.** A blank page reading 0 and a stamp reading 0
+are the same number, and a probe that rendered nothing at all produces both. The `/Text` row is
+the positive control, and without it the measurement establishes nothing whatever. It cost
+three lines.
+
+The generalisation worth carrying: **which annotations a renderer synthesises for is a list, not
+a rule**, and it differs per renderer. Do not infer it from the specification, from the
+annotation being "the kind a reader places", or from what a neighbouring subtype does. Render
+one and count the pixels.

@@ -23,6 +23,7 @@ import {
   type MarkView,
   type PageId,
   type PageView,
+  type StampName,
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
 
@@ -279,6 +280,7 @@ export class Edits {
     strokes: number[][] = [],
     note = "",
     chosen: MarkColor | null = null,
+    stamp: StampName | null = null,
   ): Promise<EditState> {
     // A page the model has never mentioned, or one that has gone since the
     // gesture started. Nothing is sent, which is what the slot lookup used to
@@ -292,6 +294,11 @@ export class Edits {
           page,
           quads,
           strokes,
+          // The biconditional the model enforces, and it is defaulted rather
+          // than required for the reason `NewMark::stamp` gives: every caller
+          // that predates stamps keeps working, and the model refuses a name on
+          // the wrong kind rather than drawing one.
+          stamp,
           color: colorFor(kind, chosen),
           author: "",
           note,

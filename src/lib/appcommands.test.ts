@@ -24,6 +24,7 @@ import {
 } from "./appcommands";
 import { CommandRegistry } from "./commands";
 import { PALETTE } from "./markcolors";
+import type { StampName } from "./pages";
 
 /**
  * A registry with every application command in it, and a record of what fired.
@@ -85,6 +86,7 @@ function harness(
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
     drawEllipse: () => fired.push("drawEllipse"),
+    stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
@@ -696,6 +698,7 @@ describe("the window shortcuts for editing", () => {
       addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
       drawBox: () => fired.push("drawBox"),
       drawEllipse: () => fired.push("drawEllipse"),
+      stamp: (name: StampName) => fired.push(`stamp:${name}`),
       drawTextBox: () => fired.push("drawTextBox"),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),

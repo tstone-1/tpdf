@@ -70,6 +70,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
             .collect(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
+            stamp: None,
             source: 0,
             quads: vec![Quad {
                 left: 72.0,

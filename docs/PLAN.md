@@ -5485,6 +5485,93 @@ function, `applyPageOrder`, and the four lines around it. The harness runs *inst
 shell --- the same gap every shell action has, and the same one `opencheck.ts` states for the
 file dialog.
 
+#### A stamp --- done 2026-08-23
+
+The last markup kind, and the tenth. `/Stamp` with a `/Name` from PDF 32000-1's standard list,
+placed by a drag exactly as the box, the ellipse and the text box are.
+
+##### It needs an appearance stream, and that was measured rather than reasoned
+
+A stamp looks like the comment's case: an annotation a reader *places* rather than draws,
+positioned by `/Rect` alone, with a `/Name` naming one of a standard list. `save.rs` writes no
+appearance for a comment on purpose, because every reader synthesises a `/Text` icon.
+
+That inference is wrong here, and the measurement took three lines. On one page through one
+code path, with no `/AP`: a bare page draws **0** non-white pixels, a `/Stamp` with `/Name
+/Approved` draws **0**, and a `/Text` with `/Name /Comment` draws **336**. So a stamp is on
+`MarkKind::Square`'s side of the line --- we write the appearance or nothing appears at all.
+
+**The `/Text` row is the whole measurement.** Two zeroes are also what a probe that rendered
+nothing produces, so without a positive control the reading establishes nothing. `/Name` is
+written regardless, because it is what a reader that *would* synthesise draws from --- which is
+why the list is the specification's own and not four words we chose.
+
+##### The name is a field, not a variant, and that is `strokes`'s argument
+
+`Mark::stamp` is `Option<StampName>`, non-`None` exactly for `MarkKind::Stamp`. Putting it
+inside the variant would carry the biconditional in the type and would cost `MarkKind` its
+`Copy`, which `Command` is built on --- the argument `Mark::strokes` already makes, applied to a
+second field.
+
+It gets its **own** refusal rather than a third case in `ShapeMismatch`, whose doc comment says
+in as many words that it is one variant for one rule about one field. Two fields with two
+biconditionals are two rules, and a caller told only "shape mismatch" would have to guess which.
+
+##### Four commands, not one that asks
+
+`edit.stamp.{approved,confidential,draft,final}`, built by one `map` --- the shape
+`edit.color.*` already has. The palette can take a value (`nav.goToPage` does) and a stamp is
+not that: four names a reader picks between are four commands, and typing "draft" into a prompt
+is slower than typing it into the palette that is already open.
+
+##### The size is computed, which is what makes it a stamp rather than a text box
+
+One word, set to whatever fills the rectangle the reader dragged, bounded by what the height can
+hold. `textbox::advance` is the same Helvetica table the text box wraps with, and a stamp is its
+second consumer; `STAMP_CAP` is Helvetica's capital height, 718 of 1000, because every word a
+stamp draws is upper case and centring on the font size instead leaves it visibly high.
+
+The overlay measures with `ctx.measureText` and the file computes from the table, so the two
+agree approximately rather than exactly --- the text box's situation, and the reason a stamp is
+one *word*: a word that overflows is visibly wrong, where a paragraph broken in a different
+place is not.
+
+##### Evidence
+
+**`annot-probe --mode stamp`, and it exists because `--mode outline` cannot fail for this
+kind.** A stamp is a box with something in it, so every reading that mode takes of a box is
+satisfied by a stamp except the one it has backwards --- it requires an empty middle and a
+stamp's middle carries its word. The new mode reads the whole quad, the middle third and the top
+edge: 11,309 px, 717 and 513 against a source page reading 0. The border band began one pixel
+wide and read **5 px**, which is a passing reading five above its bound; a tenth of the width
+reads 513.
+
+`--mode roundtrip` and `--mode preview` took the kind with a list entry each. The preview is the
+strongest: PDFKit --- an independent parser and renderer --- reads the annotation as `Stamp`,
+draws 1,306 px the source page does not, and draws them across the rectangle rather than into a
+corner of it.
+
+`viewer_check.py`: **281/281** on `columns`, with the overlay reading that separates a stamp
+from both its neighbours --- `edges === 4` (which a text box fails) and `core > 0.02` (which a
+box fails). The agreement phase from earlier the same day now covers ten kinds: all ten put ink
+in the file, and the worst hue disagreement across the nine it can compare is **1 degree**.
+
+Five mutations, each reddening the test named for it: a stamp drawn without its border, one
+drawing the reader's note instead of its own name, one set at the text box's fixed size, the
+model's biconditional switched off, and the overlay drawing an empty box.
+
+##### Two findings, neither about stamps
+
+**A check read the palette's rendered rows.** Adding four commands took the enabled count past
+`palette.ts`'s `.slice(0, 64)`, and three unrelated commands fell off the bottom of the list and
+were reported as *withheld from the reader*. The check now asks the registry. It had been one
+command away from that for some time and nothing could have said so --- 63 reads exactly like 5.
+
+**A blanket `prettier --write` over `src/**` reformatted 78 files this change never touched**,
+which is not this repository's formatter. Reverted and the edits re-applied by hand; the diff is
+the feature and nothing else. A formatter that has never been run over a tree is not a formatter
+that agrees with it.
+
 #### The overlay against the file --- done 2026-08-23
 
 Two renderers draw every mark, and each was measured only against the model's own numbers.

@@ -86,6 +86,7 @@ function threeStrokes(id = 77): MarkView[] {
     {
       id,
       kind: "ink",
+      stamp: null,
       page: pageId(1),
       quads: [70, 98, 310, 502],
       strokes: [
@@ -1113,6 +1114,7 @@ describe("the eraser", () => {
       {
         id: 77,
         kind: "highlight",
+        stamp: null,
         page: pageId(1),
         quads: [70, 98, 310, 502],
         strokes: [

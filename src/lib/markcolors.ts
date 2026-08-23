@@ -98,6 +98,12 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // type on white paper reads as an annotation rather than as part of the
   // document, which is the whole reason a reader puts a text box on a page.
   textbox: [0.85, 0.15, 0.15],
+  // The lines' red a fourth time, and it is the box's argument with one word
+  // added: a stamp is a stroked border *and* red type, so both halves of it are
+  // the reasons the box and the text box are red. A stamp is also the one kind
+  // whose whole purpose is to be seen from across the page, which rules out the
+  // wash's yellow more firmly than for any other kind here.
+  stamp: [0.85, 0.15, 0.15],
 };
 
 /**

@@ -262,8 +262,8 @@ MUTATIONS = [
         # did not ask to stay in.
         "viewer: keep the box tool armed after a box is drawn",
         "src/lib/viewer.ts",
-        "        this.drawKind = null;\n        this.showCursor();\n        this.opts.onDrawn?.(kind, id, {",
-        "        this.showCursor();\n        this.opts.onDrawn?.(kind, id, {",
+        "        this.drawKind = null;\n        this.drawStamp = null;\n        this.showCursor();",
+        "        this.drawStamp = null;\n        this.showCursor();",
         "is spent by one box",
     ),
     Mutation(
@@ -360,8 +360,8 @@ MUTATIONS = [
         # doing nothing rather than as a wire defect.
         "viewer: send a rectangle alongside a drawing's strokes",
         "src/lib/viewer.ts",
-        "    this.opts.onDrawn?.(\"ink\", id, {\n      quads: [],",
-        "    this.opts.onDrawn?.(\"ink\", id, {\n      quads: [0, 0, 1, 1],",
+        '      "ink",\n      id,\n      {\n        quads: [],',
+        '      "ink",\n      id,\n      {\n        quads: [0, 0, 1, 1],',
         "commits strokes and no rectangle",
     ),
     Mutation(
@@ -4006,8 +4006,8 @@ MUTATIONS += [
         # in that file uses cannot see this; the re-ordered one can.
         "pageid: report the drawn page by slot rather than by id",
         "src/lib/viewer.ts",
-        "        this.opts.onDrawn?.(kind, id, {",
-        "        this.opts.onDrawn?.(kind, live.slot as unknown as PageId, {",
+        "        this.opts.onDrawn?.(\n          kind,\n          id,",
+        "        this.opts.onDrawn?.(\n          kind,\n          live.slot as unknown as PageId,",
         "reports the drawn page by id, not by the slot it was drawn in",
     ),
     Mutation(
@@ -4037,8 +4037,8 @@ MUTATIONS += [
         # press --- on a link, on a word --- becomes another bubble.
         "comment: keep the tool armed after a bubble is placed",
         "src/lib/viewer.ts",
-        "        // Spent, and cleared *before* the callback so that an `onDrawn` which\n"
-        "        // arms it again is not undone by this line.\n"
+        "        // armed tool and must be spent together.\n"
+        "        const stamp = this.drawStamp;\n"
         "        this.drawKind = null;",
         "        // Spent, and cleared *before* the callback so that an `onDrawn` which\n"
         "        // arms it again is not undone by this line.\n"
@@ -4092,6 +4092,9 @@ MUTATIONS += [
         '    case "ellipse":\n'
         '    case "textbox":\n'
         '    case "ink":\n'
+        "    // A stamp is placed by the reader and anchored to nothing, so it moves for\n"
+        "    // the box's reason exactly.\n"
+        '    case "stamp":\n'
         "      return true;",
         '    case "note":\n'
         "      return true;\n"
@@ -4099,6 +4102,7 @@ MUTATIONS += [
         '    case "ellipse":\n'
         '    case "textbox":\n'
         '    case "ink":\n'
+        '    case "stamp":\n'
         "      return false;",
         "moves a box, an ellipse, a text box and a drawing",
     ),

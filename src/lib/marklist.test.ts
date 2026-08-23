@@ -8,6 +8,7 @@ import { installFakeDom, type FakeDom } from "./testdom";
 function mark(over: Partial<MarkView> & { id: number }): MarkView {
   return {
     kind: "highlight",
+    stamp: null,
     page: pageId(1),
     quads: [100, 100, 300, 114],
     strokes: [],

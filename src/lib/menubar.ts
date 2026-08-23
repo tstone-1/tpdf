@@ -156,6 +156,16 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // After the two shapes, because it is the third thing a drag can place and
       // a reader choosing between them is choosing what appears.
       "edit.addTextBox",
+      // The four stamps, immediately after the text box because a stamp is the
+      // other thing a drag puts *words* on the page --- the difference being
+      // whose words they are. Listed rather than folded behind one entry for the
+      // reason the colours below are listed: four names a reader picks between
+      // are four commands, and a menu offering "Stamp..." and then asking would
+      // be slower than the palette they are already in.
+      "edit.stamp.approved",
+      "edit.stamp.confidential",
+      "edit.stamp.draft",
+      "edit.stamp.final",
       // After the two shapes: all three arm a tool rather than acting on the
       // document, so they read as a run and a reader who found one has found
       // the others. Third rather than first because the shapes are one choice

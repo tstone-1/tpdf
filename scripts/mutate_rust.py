@@ -382,6 +382,48 @@ MUTATIONS = [
         "a_range_that_cannot_be_printed_is_refused_rather_than_clamped",
     ),
     Mutation(
+        # Drop the border and draw only the word. A stamp is then a `/FreeText`
+        # wearing a `/Stamp` subtype: every reader shows the word, `--mode
+        # roundtrip` still reads the kind back, and only the one check that asks
+        # for both halves can tell.
+        "save: draw a stamp's word without its border",
+        "src/save.rs",
+        '                content.push_str(&format!("{x} {y} {width} {height} re S\\n"));\n                if inner_w <= 0.0 || inner_h <= 0.0 {',
+        "                if inner_w <= 0.0 || inner_h <= 0.0 {",
+        "a_stamp_is_a_border_and_a_word_rather_than_either_alone",
+    ),
+    Mutation(
+        # Draw the reader's note instead of the stamp's own name. The stamp is
+        # still bordered, still says something, and says the wrong thing --- which
+        # is why the test asserts the encoded word rather than that any text was
+        # drawn.
+        "save: draw a stamp's note rather than the name it was made with",
+        "src/save.rs",
+        '                content.push_str(&format!("<{}> Tj\\n", winansi_hex(word)));',
+        '                content.push_str(&format!("<{}> Tj\\n", winansi_hex(&mark.note)));',
+        "a_stamp_is_a_border_and_a_word_rather_than_either_alone",
+    ),
+    Mutation(
+        # Fix the size instead of computing it from the rectangle, which is what
+        # a stamp dragged out large should get. `textbox::SIZE` is the value the
+        # obvious implementation would reach for.
+        "save: set every stamp at the text box's fixed size",
+        "src/save.rs",
+        "                let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);",
+        "                let size = textbox::SIZE;",
+        "a_stamp_fills_the_rectangle_it_was_dragged_out_at",
+    ),
+    Mutation(
+        # Accept a stamp with no name, and a name on anything else. Both halves
+        # are one rule and one `if`, so one mutation covers the pair --- the test
+        # asserts each direction separately.
+        "docmodel: let a kind and a stamp name disagree",
+        "src/docmodel.rs",
+        "        if mark.stamp.is_some() != (mark.kind == MarkKind::Stamp) {",
+        "        if false {",
+        "a_kind_and_a_stamp_name_that_disagree_are_refused_both_ways_round",
+    ),
+    Mutation(
         # Collapse the split back: put the way-out sentence into the bare fact,
         # which is where it lived until 2026-08-19. The pre-rename refusal then
         # tells a reader their edits are still here and to save them under
@@ -2635,8 +2677,12 @@ MUTATIONS += [
         # the box was drawn around.
         "save: fill a box rather than stroking its edge",
         "src/save.rs",
-        'content.push_str(&format!("{x} {y} {width} {height} re S',
-        'content.push_str(&format!("{x} {y} {width} {height} re f',
+        # **The trailing `}` is what makes this unambiguous, and it was not
+        # needed until the stamp arrived**: a stamp is bordered by the same
+        # `re S` line, so the bare string now matches twice. The box's is the one
+        # that ends its arm; the stamp's is followed by the word it draws.
+        'content.push_str(&format!("{x} {y} {width} {height} re S\\n"));\n            }',
+        'content.push_str(&format!("{x} {y} {width} {height} re f\\n"));\n            }',
         "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
     ),
     Mutation(

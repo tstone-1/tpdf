@@ -64,6 +64,7 @@ function mark(kind: MarkKind, id = 42): MarkView[] {
     {
       id,
       kind,
+      stamp: null,
       page: pageId(1),
       quads: [200, 300, 300, 400],
       strokes: kind === "ink" ? [[210, 310, 290, 390]] : [],

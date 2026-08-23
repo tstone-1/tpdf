@@ -390,6 +390,26 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode roundtrip --kind ellipse
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode preview --kind ellipse
+# The stamp. `--mode stamp` exists because `--mode outline` CANNOT FAIL for this
+# kind: a stamp is a box with a word in it, so every reading that mode takes of a
+# box is satisfied by a stamp except the one it has backwards -- it requires an
+# empty middle and a stamp's middle carries its word. The new mode reads three
+# bands, and each is a different way of drawing a stamp wrong: the whole quad
+# (nothing was drawn), the middle third (a box), and the top edge (a text box).
+# 4/4; the reference run reads 11,309 px in the quad, 717 in the middle and 513
+# on the top edge, against 0 on the source page.
+#
+# `--mode preview` is the strongest of the three and PDFKit is why: an
+# independent parser reads the annotation as `Stamp` and an independent RENDERER
+# draws 1,306 px across its rectangle, neither of them ours.
+#
+# `--stamp <name>` picks which of the four; it defaults to `approved`.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode stamp --kind stamp
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode roundtrip --kind stamp
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode preview --kind stamp --stamp draft
 # The squiggle and its control, and they are a PAIR for the corner check's exact
 # reason: `--mode wave` asserts that a squiggle puts ink in the strip above where
 # an underline's rule stops, and that an underline leaves that strip EMPTY.
@@ -2116,8 +2136,9 @@ scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/
 > rather than any particular number. Written down rather than left to be noticed, because the
 > table looks measured either way and a stale total reads exactly like a current one.
 >
-> The current figure, measured 2026-08-23: **329 names**, all distinct --- 324 cutting
-> `26.8.7`, plus the five the overlay-against-the-file phase added. Take the names from the harness's own
+> The current figure, measured 2026-08-23: **334 names**, all distinct --- 324 cutting
+> `26.8.7`, plus five for the overlay-against-the-file phase and five for the stamp (its own
+> overlay reading and its four commands). Take the names from the harness's own
 > `CHECK-NAMES-JSON` line, never by splitting the printed columns --- this page records that a
 > `\s{2,}` split matched 175 of 189 lines, and reaching for it again is what produced a diff
 > full of per-corpus *detail* differences that looked like missing names.

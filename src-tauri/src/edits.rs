@@ -48,7 +48,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
-    Command, Doc, Mark, MarkId, MarkKind, PageId, Point, Quad, Rect, Refusal, Stroke,
+    Command, Doc, Mark, MarkId, MarkKind, PageId, Point, Quad, Rect, Refusal, StampName, Stroke,
 };
 use crate::fingerprint::Fingerprint;
 
@@ -147,6 +147,13 @@ pub struct MarkView {
     /// them --- and for ink the quad is only the rectangle the drawing occupies,
     /// which is a box round the ink rather than the ink.
     pub strokes: Vec<Vec<f32>>,
+    /// Which standard stamp this is, for `MarkKind::Stamp` and nothing else.
+    ///
+    /// **The overlay needs it or it cannot draw a stamp at all**, which is
+    /// [`MarkView::strokes`]'s situation exactly: the quads say where the stamp
+    /// is and this says what it says. A stamp with no name would be an empty
+    /// border, and an empty border is a box.
+    pub stamp: Option<StampName>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     /// What the reader typed, which may be empty.
@@ -214,6 +221,14 @@ pub struct NewMark {
     /// "the highlight did nothing".
     #[serde(default)]
     pub strokes: Vec<Vec<f32>>,
+    /// Which standard stamp this is, for [`MarkKind::Stamp`] and nothing else.
+    ///
+    /// Defaulted for [`NewMark::strokes`]'s reason: every sender that predates
+    /// stamps keeps working, and a missing field is `None` rather than a
+    /// deserialisation failure a reader would see as the command doing nothing.
+    /// The model refuses the two ways this can disagree with `kind`.
+    #[serde(default)]
+    pub stamp: Option<StampName>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     pub author: String,
@@ -556,6 +571,7 @@ impl Edits {
                     page: PageId::from_raw(want.page),
                     quads,
                     strokes,
+                    stamp: want.stamp,
                     color: want.color.map(channel),
                     author: want.author,
                     made,
@@ -905,6 +921,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     // written from these.
                     quads: model.quads_of(*mark).to_vec(),
                     strokes: model.strokes_of(*mark).to_vec(),
+                    stamp: body.stamp,
                     color: model.color_of(*mark),
                     author: body.author.clone(),
                     note: model.note_of(*mark).to_string(),
@@ -973,6 +990,12 @@ pub struct PlannedMark {
     /// kind --- the biconditional is [`Mark::strokes`]'s and is
     /// enforced by the model before a mark can reach a plan.
     pub strokes: Vec<Stroke>,
+    /// Which standard stamp this is, for `MarkKind::Stamp` and nothing else.
+    ///
+    /// Carried to the writer for [`PlannedMark::strokes`]'s reason: it is what
+    /// gets drawn, and the model has already refused the two ways it can
+    /// disagree with the kind.
+    pub stamp: Option<StampName>,
     pub color: [f32; 3],
     pub author: String,
     pub note: String,
@@ -1085,6 +1108,12 @@ fn describe(why: Refusal) -> String {
         Refusal::ShapeMismatch(kind) => {
             format!("a {kind:?} mark cannot carry the strokes it was sent with")
         }
+        // The stamp half of the same situation, and worded so the two cannot be
+        // confused in a report: a stamp needs a name and nothing else may have
+        // one.
+        Refusal::StampMismatch(kind) => {
+            format!("a {kind:?} mark cannot carry the stamp name it was sent with")
+        }
     }
 }
 
@@ -1116,6 +1145,10 @@ fn snapshot(model: &Doc) -> EditState {
             MarkView {
                 id: id.get(),
                 kind: mark.kind,
+                // Off the body rather than through an accessor, unlike the
+                // geometry below: a stamp's name is fixed at the moment it is
+                // made, so there is no "what it is now" for the model to answer.
+                stamp: mark.stamp,
                 page: page.get(),
                 // **Through the model's accessors, not off the body**, because
                 // an eraser moves both: `Doc::quads_of` and `Doc::strokes_of`
@@ -1801,6 +1834,7 @@ mod tests {
     fn of_kind(kind: MarkKind, page: u64) -> NewMark {
         NewMark {
             kind,
+            stamp: None,
             page,
             quads: vec![72.0, 100.0, 300.0, 118.0],
             strokes: Vec::new(),
@@ -2039,6 +2073,7 @@ mod tests {
     fn a_drawing(page: u64, strokes: Vec<Vec<f32>>) -> NewMark {
         NewMark {
             kind: MarkKind::Ink,
+            stamp: None,
             page,
             quads: Vec::new(),
             strokes,

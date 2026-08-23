@@ -49,9 +49,12 @@ import {
   isIcon,
   isOutline,
   isPath,
+  isStamp,
   isText,
   isWave,
   LINE_FRACTION,
+  STAMP_CAP,
+  STAMP_INSET,
   TEXT_INSET,
   TEXT_LEADING,
   TEXT_SIZE,
@@ -109,9 +112,11 @@ import { DESTINATION_MARGIN_PT } from "./outline";
 import {
   markWalk,
   PageMap,
+  stampWord,
   unedited,
   type MarkKind,
   type MarkView,
+  type StampName,
   type PageId,
   type PageView,
 } from "./pages";
@@ -418,7 +423,12 @@ export interface ViewerOptions {
    * Optional, so a viewer with no model behind it can still be driven. A drag
    * then draws its preview and commits nothing, which is what the harness does.
    */
-  onDrawn?: (kind: MarkKind, page: PageId, drawn: Drawn) => void;
+  onDrawn?: (
+    kind: MarkKind,
+    page: PageId,
+    drawn: Drawn,
+    stamp: StampName | null,
+  ) => void;
   /**
    * The reader dragged one of their own marks somewhere else on its page.
    *
@@ -885,6 +895,8 @@ export class Viewer {
    * stays armed is the obvious next step and is a decision, not an oversight.
    */
   private drawKind: MarkKind | null = null;
+  /** Which stamp an armed stamp tool will place. `null` for every other kind. */
+  private drawStamp: StampName | null = null;
   /**
    * The rectangle being dragged, in the slot's laid-out space.
    *
@@ -1360,13 +1372,19 @@ export class Viewer {
           return;
         }
         // Spent, and cleared *before* the callback so that an `onDrawn` which
-        // arms it again is not undone by this line.
+        // arms it again is not undone by this line. The stamp is read out first
+        // for the same reason and cleared with the kind: the two describe one
+        // armed tool and must be spent together.
+        const stamp = this.drawStamp;
         this.drawKind = null;
+        this.drawStamp = null;
         this.showCursor();
-        this.opts.onDrawn?.(kind, id, {
-          quads: this.fileRectOn(live.slot, quad),
-          strokes: [],
-        });
+        this.opts.onDrawn?.(
+          kind,
+          id,
+          { quads: this.fileRectOn(live.slot, quad), strokes: [] },
+          stamp,
+        );
       },
     });
 
@@ -3387,13 +3405,18 @@ export class Viewer {
    * box over the paper *and* commit whatever was in the field on the next press
    * anywhere.
    */
-  armDraw(kind: MarkKind): void {
+  armDraw(kind: MarkKind, stamp: StampName | null = null): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
     // Two tools, one hand. Arming a pen puts the eraser away, so the states
     // cannot both be set and no gesture has to ask which one meant it.
     this.erasing = false;
     this.drawKind = kind;
+    // Held beside the kind rather than in the caller, so that what a drag
+    // commits comes from one place. A second copy in `App.svelte` would be a
+    // piece of state that can disagree with `drawKind` about which tool is
+    // armed.
+    this.drawStamp = stamp;
     this.showCursor();
     this.wake();
   }
@@ -3531,7 +3554,14 @@ export class Viewer {
     this.showCursor();
     this.wake();
     if (!where) return;
-    this.opts.onDrawn?.("note", where.page, { quads: where.quads, strokes: [] });
+    // Never a stamp: a comment is placed by a click and a stamp by a drag, so
+    // this path cannot be reached with a stamp armed.
+    this.opts.onDrawn?.(
+      "note",
+      where.page,
+      { quads: where.quads, strokes: [] },
+      null,
+    );
   }
 
   /**
@@ -3561,9 +3591,12 @@ export class Viewer {
     // whatever moved into that slot, which is the same reasoning `Annotate`
     // carries a page *id* for.
     if (id === undefined) return;
-    this.opts.onDrawn?.("ink", id, {
-      quads: [],
-      strokes: made.strokes.map((stroke) =>
+    this.opts.onDrawn?.(
+      "ink",
+      id,
+      {
+        quads: [],
+        strokes: made.strokes.map((stroke) =>
         stroke.flatMap((point) => {
           const mapped = this.fileRectOn(made.slot, {
             left: point.x,
@@ -3573,8 +3606,11 @@ export class Viewer {
           });
           return [mapped[0], mapped[1]];
         }),
-      ),
-    });
+        ),
+      },
+      // Never a stamp: ink is finished with Enter and a stamp with a drag.
+      null,
+    );
   }
 
   /**
@@ -4549,6 +4585,39 @@ export class Viewer {
           ctx.lineWidth = pen;
           traceSquiggle(ctx, left, top, width, height, pen);
           ctx.stroke();
+        } else if (isStamp(mark.kind)) {
+          // A border and one word, which is both of the two branches around
+          // this one and neither of them alone. Drawn as a box would be, plus
+          // the word a box has no room for.
+          //
+          // **The size is measured here and computed in `save.rs`**, and the two
+          // cannot be made to agree exactly: the file is set in Helvetica by our
+          // own table and this is whatever font the system resolved. That is the
+          // text box's situation, and it is why a stamp is one *word* --- a word
+          // that overflows is visibly wrong, where a paragraph broken in a
+          // different place is not.
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
+          ctx.strokeRect(left, top, width, height);
+          const word = mark.stamp ? stampWord(mark.stamp) : "";
+          const innerW = width - STAMP_INSET * 2 * this.zoom * dpr;
+          const innerH = height - STAMP_INSET * 2 * this.zoom * dpr;
+          if (word && innerW > 0 && innerH > 0) {
+            ctx.fillStyle = markInk(mark.color, false);
+            ctx.textBaseline = "alphabetic";
+            // One measurement at a nominal size, scaled: `measureText` is linear
+            // in the font size, so this is one call rather than a search.
+            ctx.font = "100px Helvetica, Arial, sans-serif";
+            const unit = Math.max(ctx.measureText(word).width / 100, 1e-6);
+            const size = Math.max(1, Math.min(innerW / unit, innerH / STAMP_CAP));
+            ctx.font = `${size}px Helvetica, Arial, sans-serif`;
+            const drawn = ctx.measureText(word).width;
+            ctx.fillText(
+              word,
+              left + (width - drawn) / 2,
+              top + (height + size * STAMP_CAP) / 2,
+            );
+          }
         } else if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);
         else if (isOutline(mark.kind)) {
           // Stroked, not filled, which is the whole of what a box is --- and

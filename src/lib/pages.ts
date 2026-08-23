@@ -77,7 +77,32 @@ export type MarkKind =
   | "square"
   | "ellipse"
   | "textbox"
-  | "ink";
+  | "ink"
+  | "stamp";
+
+/**
+ * Which standard stamp a `"stamp"` mark is.
+ *
+ * `StampName` in `docmodel.rs`. Four of the fourteen names PDF 32000-1 lists,
+ * chosen there rather than here --- a name outside that list could not be
+ * written as `/Name`, which is what a reader that synthesises its own stamp
+ * appearance draws from.
+ */
+export type StampName = "approved" | "confidential" | "draft" | "final";
+
+/** The word a stamp draws, which is upper case because a stamp is. */
+export function stampWord(name: StampName): string {
+  switch (name) {
+    case "approved":
+      return "APPROVED";
+    case "confidential":
+      return "CONFIDENTIAL";
+    case "draft":
+      return "DRAFT";
+    case "final":
+      return "FINAL";
+  }
+}
 
 /**
  * One mark a reader made, as the backend reports it.
@@ -119,6 +144,16 @@ export interface MarkView {
    * than the drawing. The overlay paints from here when it is non-empty.
    */
   strokes: number[][];
+  /**
+   * Which standard stamp this is, for `"stamp"` and nothing else.
+   *
+   * `StampName` in `docmodel.rs`, where the set is closed. The overlay needs it
+   * or it cannot draw a stamp at all: the quads say where the mark is and this
+   * says what it says, which is {@link MarkView.strokes}'s situation exactly.
+   * `null` for every other kind, and the backend refuses the two ways this can
+   * disagree with {@link MarkView.kind}.
+   */
+  stamp: StampName | null;
   color: [number, number, number];
   /**
    * What the reader typed, which may be empty.

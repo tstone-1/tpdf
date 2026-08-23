@@ -99,6 +99,7 @@ function mark(id: number, page: number, top: number): MarkView {
   return {
     id,
     kind: "highlight",
+    stamp: null,
     page: pageId(page),
     quads: [100, top, 300, top + 14],
     strokes: [],

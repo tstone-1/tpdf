@@ -19,6 +19,17 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Added: stamps
+
+Mark a document APPROVED, CONFIDENTIAL, DRAFT or FINAL. Pick one from the Edit
+menu or the command palette, then drag out where it goes --- the same gesture as
+a box or a text box. The word is set to fill the rectangle you dragged, so a
+large stamp is a large word.
+
+They are written as real `/Stamp` annotations, so Acrobat and Preview show them
+as stamps rather than as a drawing, and they carry the standard name for the
+word as well as the picture.
+
 ### Added: a check that a mark looks the same after you save it
 
 Nothing compared the mark you see while a document is open with the mark that
