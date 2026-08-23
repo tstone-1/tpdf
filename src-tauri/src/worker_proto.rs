@@ -147,6 +147,27 @@ pub enum Request {
         /// What to write. Never a path, never a destination.
         plan: crate::edits::Plan,
     },
+    /// Try the document again with a reader's password.
+    ///
+    /// **The one request that carries a secret**, which is worth stating against
+    /// this type's standing property rather than leaving to be noticed. It does
+    /// not break it: a password names nothing the worker could act on, and it
+    /// widens the worker's authority by nothing at all --- the bytes are already
+    /// mapped into this process, and a key to bytes you are holding is not a new
+    /// reach. What it buys is that they stop being noise.
+    ///
+    /// It travels on stdin, which is the private pipe the parent already writes
+    /// every request down, and never in argv, which any process on the machine
+    /// can read out of the process table.
+    ///
+    /// Answered by every worker, not only a locked one: a reader who typed a
+    /// password for a document that did not need one gets it accepted rather
+    /// than getting an error about the file. See `worker_child::unlock`.
+    Unlock {
+        /// The reader's password, verbatim. Not logged, and not carried past the
+        /// load it is for.
+        password: String,
+    },
 }
 
 /// A reply, one JSON object per line on the worker's stdout.
@@ -168,6 +189,19 @@ pub struct Response {
     /// and a caller that painted this as blank would erase content it had.
     #[serde(default)]
     pub abandoned: bool,
+    /// Set when the document is encrypted and the password it was given --- which
+    /// may have been none --- did not open it.
+    ///
+    /// Distinct from an error, on the same reasoning [`abandoned`](Self::abandoned)
+    /// is: nothing is wrong with the file. A caller that painted this as a
+    /// failure would tell a reader their document is damaged when it is merely
+    /// locked, and send them looking for a better copy of a file that is fine.
+    ///
+    /// It says nothing about *whether a password was tried*, because the worker
+    /// cannot tell: PDFium answers `FPDF_ERR_PASSWORD` for both. Whoever is
+    /// holding the conversation knows, and words it.
+    #[serde(default)]
+    pub locked: bool,
     /// JSON for a structured reply --- geometry, text, matches, an outline.
     #[serde(default)]
     pub json: Option<serde_json::Value>,
@@ -186,6 +220,17 @@ impl Response {
         Self {
             ok: false,
             error: message.into(),
+            ..Default::default()
+        }
+    }
+
+    /// A refusal a reader can answer: the document is locked.
+    #[must_use]
+    pub fn locked(message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            error: message.into(),
+            locked: true,
             ..Default::default()
         }
     }
@@ -428,5 +473,67 @@ mod tests {
             read_reply_line(&mut empty, 64),
             Err(ReplyError::Closed)
         ));
+    }
+
+    /// A password survives the wire, unchanged, on one line.
+    ///
+    /// The protocol is one JSON object per line in each direction, and the
+    /// worker reads a password with `read_line`. So the two things that would
+    /// break it are a variant that does not serialise and a value that could
+    /// carry a newline through --- and a password is the one request field whose
+    /// content is entirely a stranger's choice, quotes, backslashes and all.
+    ///
+    /// The awkward characters are the test rather than an aside: `serde_json`
+    /// escapes them and this asserts it, because a password truncated at an
+    /// embedded newline would be *refused*, which reads to a reader as their own
+    /// typing being wrong.
+    #[test]
+    fn a_password_crosses_the_wire_on_one_line_and_arrives_unchanged() {
+        for password in [
+            "swordfish",
+            "with \"quotes\" and \\backslashes\\",
+            "with\na newline",
+            "  leading and trailing  ",
+            "\u{1F510} an astral one",
+            "",
+        ] {
+            let line = serde_json::to_string(&Request::Unlock {
+                password: password.to_string(),
+            })
+            .expect("a request serialises");
+            assert!(!line.contains('\n'), "a request must be one line: {line:?}");
+
+            let back: Request = serde_json::from_str(&line).expect("and parses back");
+            let Request::Unlock { password: got } = back else {
+                panic!("an unlock came back as something else: {line}");
+            };
+            assert_eq!(got, password, "the password did not survive {line}");
+        }
+    }
+
+    /// `locked` is its own field, and defaults to false where it is absent.
+    ///
+    /// Two properties in one, and both are about the same mistake --- reading a
+    /// refusal as more or less answerable than it is. A reply that says nothing
+    /// about encryption is not a locked document, and a locked one is not an
+    /// ordinary failure.
+    #[test]
+    fn a_reply_is_locked_only_when_it_says_so() {
+        let plain: Response = serde_json::from_str(r#"{"ok":false,"error":"broken"}"#)
+            .expect("a reply with no locked field parses");
+        assert!(!plain.locked, "absent must mean not locked");
+
+        let locked = Response::locked("This document is locked, and needs a password.");
+        assert!(!locked.ok);
+        assert!(locked.locked);
+        let round: Response =
+            serde_json::from_str(&serde_json::to_string(&locked).expect("serialises"))
+                .expect("parses back");
+        assert!(round.locked, "the flag did not survive the wire");
+        assert_eq!(round.error, locked.error);
+
+        // And the control, which is what stops "everything is locked" passing:
+        // an ordinary failure built the ordinary way carries none of it.
+        assert!(!Response::err("broken").locked);
     }
 }

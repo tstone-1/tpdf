@@ -1643,9 +1643,55 @@ MUTATIONS = [
         # damaged, and the reader goes looking for another copy of a good file.
         "progressive: give every open failure the same reason",
         "src/progressive.rs",
-        '        err::PASSWORD => "This document needs a password, and tpdf cannot ask for one yet.".into(),',
+        '        err::PASSWORD => "This document is locked, and needs a password.".into(),',
         '        err::PASSWORD => "This file is not a PDF, or it is damaged beyond reading.".into(),',
         "each_reason_says_something_different",
+    ),
+    Mutation(
+        # Keep the flag out of the reply. The reason still crosses and still
+        # reads correctly, so what a reader loses is only the prompt --- they are
+        # told, accurately, about a document they can no longer open.
+        "worker_proto: stop sending whether a refusal is one a reader can answer",
+        "src/worker_proto.rs",
+        "    #[serde(default)]\n    pub locked: bool,",
+        "    #[serde(default, skip_serializing)]\n    pub locked: bool,",
+        "a_reply_is_locked_only_when_it_says_so",
+    ),
+    Mutation(
+        # The parent's half of the same distinction, which is the copy that
+        # drifts: `docs/TRAPS.md` records two copies of one distinction, and a
+        # mutation of one surviving.
+        "workers: drop the answerability when a worker's refusal reaches the engine",
+        "src/workers.rs",
+        "        locked: response.locked,",
+        "        locked: false,",
+        "a_locked_reply_reaches_the_engine_as_a_locked_refusal",
+    ),
+    Mutation(
+        # Widen the one refusal a reader can answer to nearly every one. A
+        # document that is not a PDF then asks for a password it has none for,
+        # and the reader retypes into a dialog that can never accept anything.
+        "progressive: treat almost every open failure as answerable",
+        "src/progressive.rs",
+        "            locked: code == err::PASSWORD,",
+        "            locked: code != err::FORMAT,",
+        "only_a_password_refusal_is_one_a_reader_can_answer",
+    ),
+    Mutation(
+        # The other direction, through the widening `?` uses. Every ordinary
+        # failure inside an open --- a page with no size, a path that is not
+        # UTF-8 --- would then be shown as a locked document.
+        "progressive: let a failure that arrived as prose claim it is locked",
+        "src/progressive.rs",
+        """        Self {
+            reason,
+            locked: false,
+        }""",
+        """        Self {
+            reason,
+            locked: true,
+        }""",
+        "a_refusal_widened_from_prose_is_not_locked",
     ),
     Mutation(
         # Report success as the reason. Reachable --- PDFium can return a null

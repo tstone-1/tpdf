@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 441 entries
+The one thing this file does *not* carry in full is the trap list --- 446 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -500,6 +500,24 @@ them runs, which narrowed `docs/THREAT-MODEL.md` residual risk 17 from every wri
 the rewriting ones. The split is by authority: `save::append_ready` asks the coordinator's
 questions about a path, `save::append_update` asks none. A rewrite has not moved, and the
 obstacle is its output rather than its input --- see `docs/PLAN.md` §3.
+
+**Since 2026-08-23 a reader can open a document behind a password.** Until then an encrypted
+PDF could be chosen from the file dialog and then not opened by any route --- `open_failure`
+said so, in a sentence ending *"and tpdf cannot ask for one yet"*, which is a to-do that
+reads as a decision. The worker asks and retries the load **in place**, which is legal
+because a failed load poisons nothing: measured on `testdata/incr-encrypted-pw.pdf`, four
+loads of one buffer in one process open on both correct passwords and refuse on both others.
+
+Two consequences are not guessable from the feature. **PDFium answers the same error for a
+document given no password and one given the wrong password**, so the sentence a reader sees
+on a retry is chosen in `worker_child::unlock`, the only place that knows one was tried. And
+**the password is held for the document's lifetime on `Held::password`**, because every
+worker after the first --- pool growth and crash replacement alike --- maps the same bytes and
+meets the same encryption; without it a locked document renders the page a reader is looking
+at and refuses the next. `docs/THREAT-MODEL.md` §T6.9 states what holding it costs.
+
+Saving one is still refused. That refusal is narrower than it reads and `docs/PLAN.md` §5
+says what closing it involves.
 
 **Comments, links and a document's own properties are read through `lopdf`, not through
 PDFium, and that is a measurement rather than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
@@ -1125,8 +1143,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 441 of them and the full text
-was 93% of this file --- an instruction budget spent on the 424 traps that are not
+titles. Only the titles are here, because there are 446 of them and the full text
+was 93% of this file --- an instruction budget spent on the 445 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1170,6 +1188,8 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - An error message that names no cause is not vague, it is a wrong diagnosis
 - A fallback is in the coordinate system of whoever wrote it (PDFium was right and the first write-up of this entry blamed it; the corner survived for months and the size did not)
 - Two handles to one cached page are aliases, and a reading taken after a change describes the change (the impossible number is the only reason it was caught)
+- PDFium answers the same error for no password and for the wrong one (so the second sentence a reader sees is chosen in the loop that tried one; and a failed load poisons nothing, which is what lets the worker retry in place)
+
 
 ### PDFium: text, coordinates and outlines
 - A byte scan cannot verify a document with a Type0 font
@@ -1256,6 +1276,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - The order a model inserts into is not the order its caller is looking at (one off-by-one, two symptoms --- a page one slot short, and a refusal on the shortest move there is)
 - An id and a slot are both `number`, so a mark drawn on the last page vanished (reported from use; four layers of tests green, because each module was right and only the join between them was wrong)
 - Moving a mark is a re-inking of it, and reusing the command beat adding one (a second variant would give one accessor three sources to choose between; the delta-not-a-geometry decision, and why the clamp is not in the model)
+- A password that unlocks the first worker unlocks nothing else (the page you are looking at renders and the next one refuses; and a probe for it has to FORCE the pool to grow rather than hope it does)
+- Wrapping stdin in a `BufReader` eats the first request of the session (the rule was already written down beside the other handover, two hundred lines away)
+
 
 ### The document model: saving, structure, signatures
 - Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
@@ -1451,6 +1474,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Removing the second copy is what made the differential unable to fail (8 red before the deduplication and 2 after; a comparison between subsystems that share an implementation is true by construction, and nothing goes red at the moment it stops testing anything)
 - A differential's most important check was hard-coded to pass when both readers failed (`7 passed, 0 failed` on a contract neither reader could read a certificate from; the correct argument was written down one function away, three months earlier)
 - A test helper that builds its fixture with the encoder under test (16 red of 701 and not the one named for it --- that output is the diagnostic, and it means something different from a mutation reddening nothing)
+- A mock's default return value decides whether a mutation fails or hangs (`vi.fn()` resolves `undefined`, which is neither answer, so the loop spun until the runner died and the diagnosis read as broken vitest)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1619,6 +1643,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - The plan said the words had to be extracted, and the model had never let them be lost (a *Not done* line names the outcome and guesses the method; second time in two increments, both wrong the same way, and one signature settled it)
 - A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
 - The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated) (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
+- A refusal a reader could answer, reported on a channel with no answer in it (a correct diagnosis is what made it invisible; grep for a message naming a capability tpdf lacks)
 
 ## Repository facts
 
@@ -1640,3 +1665,4 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
   ever lives elsewhere.
 - `gh auth switch --user tstone-1` before pushing.
 - Default branch: `main`.
+

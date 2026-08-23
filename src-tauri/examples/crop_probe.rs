@@ -59,7 +59,7 @@ fn main() {
     };
 
     let bindings = bind(&library);
-    let doc = match RawDocument::open(bindings, &file) {
+    let doc = match RawDocument::open(bindings, &file, None) {
         Ok(doc) => doc,
         Err(why) => {
             println!("[FAIL] {}: {why}", file.display());

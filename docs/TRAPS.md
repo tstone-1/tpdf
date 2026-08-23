@@ -13079,3 +13079,119 @@ discriminate, it has to be able to supply the absence as well as the presence.**
 Sibling of *A test whose precondition is already satisfied never runs* and of *An empty
 transcript is what a running viewer check looks like*: the same silence, reached by a third
 route.
+
+### A refusal a reader could answer, reported on a channel with no answer in it
+
+`open_failure` has said *"This document needs a password, and tpdf cannot ask for one
+yet"* since the day it was written, and every word of it was true. It was also the whole
+implementation: a PDF behind a user password could be chosen from the file dialog, was
+diagnosed exactly right, and could not be opened by any route in the application. The
+sentence documented the dead end so precisely that it read as a decision.
+
+**The shape to notice is that a correct diagnosis is what made it invisible.** A wrong
+message gets reported --- somebody opens a file, is told it is damaged, and says so. This
+one told the reader the truth, so nobody filed anything, and the gap survived every
+review of the code around it because reading that line always confirmed it was right.
+The same increment that had made the state *visible* --- the properties dialog, which
+reports `locked` --- did not make it answerable, and the two are easy to conflate.
+
+**The generalisation: a message naming a capability tpdf lacks is a to-do with no
+ticket.** Grep for one. `progressive.rs` had "cannot ask for one yet"; `save.rs` still
+has "tpdf will not write it" for the same documents, and that one is now the narrower
+statement it looks like rather than the flat refusal it reads as.
+
+### PDFium answers the same error for no password and for the wrong one
+
+`FPDF_GetLastError` is `FPDF_ERR_PASSWORD` (4) in both cases --- measured across four
+loads of one AES-256 fixture in one process, not inferred from the header. So nothing
+downstream of the load can tell a reader who has not been asked yet from a reader who
+just mistyped, and the two need different sentences: one says the document is locked, the
+other says *that* password did not open it.
+
+The consequence is where the wording has to live. It cannot be in `open_failure`, which
+sees only the code; it has to be in the loop that knows it supplied a password, which is
+`worker_child::unlock`. A design that put both sentences next to the code would have to
+invent a distinction PDFium does not report, and the natural way to invent it --- assume
+the first refusal is the un-asked one --- is wrong for the second worker of a document,
+which is asked and refused before any reader sees it.
+
+**The check that proves the retry happened is that the two sentences differ**, and it has
+to assert both are present as well as unequal: `Option` inequality is also satisfied by
+one of them being absent, which is a refusal that never arrived rather than one worded
+differently.
+
+**And a failed load poisons nothing**, which is the other half of the same measurement
+and the one that decided the architecture. Loading the same bytes with no password, the
+right password, a wrong one and the right one again opens on both correct attempts and
+refuses on both others, in one process --- so a wrong password costs a reply rather than a
+process, and the worker retries in place instead of being respawned.
+
+### A password that unlocks the first worker unlocks nothing else
+
+A pool exists, so "open the document" is not one event. The first worker is built in
+`Workers::open`; every worker after it --- the one `checkout` grows under contention, and
+every replacement for one that crashed --- is built by `spawn_into` from the *same
+mapping*, which means it meets the same encryption and has to be told the same password.
+
+The failure this produces is worth stating exactly, because it is not "the document does
+not open". It is: **the document opens, the page the reader is looking at renders, and
+the next one refuses.** Measured by mutation, with the password removed from `spawn_into`
+alone: `8 served, then: This document is locked, and needs a password.` Everything else
+in `password-probe` stayed green, including the check that a tile renders with ink in it.
+
+Two things follow. The password has to live on the *document's* slot rather than in the
+open that acquired it, which is what `Held::password` is for. And a probe for this has to
+**force** the pool to grow rather than hope it does: a tiny fixture renders in
+microseconds, so tiles issued one after another never overlap, `checkout` always finds an
+idle worker, and the check passes having exercised exactly one process. `grow` issues
+eight tiles per thread across `pool_size()` threads for that reason, and prints the count
+so a run that did not grow reads as such rather than as a pass.
+
+Sibling of *A check bound to one caller covers only that caller*, arriving through a
+different door: here every caller goes through one function, and the defect is a caller
+that was never given what it needed to pass on.
+
+### Wrapping stdin in a `BufReader` eats the first request of the session
+
+`worker_child::refuse` may wrap `std::io::stdin()` in a `BufReader`, and does. `unlock`
+may not, and the difference is not style: `refuse` never hands the stream on to anybody,
+and `unlock` returns an opened document into the ordinary serve loop, whose reader thread
+reads through `std::io::stdin()` and its own shared buffer.
+
+A private `BufReader` reads ahead. Whatever arrived promptly behind the password --- which
+on the startup path is the `Open` request, sitting in the pipe microseconds later --- is
+pulled into that buffer, and the buffer is dropped when `unlock` returns. The request is
+simply gone, and the symptom is a worker that opened the document and then never answers,
+which reads as a hang in the pool rather than as a read that consumed too much.
+
+The rule was already written down, in `wait_for_document`'s own doc comment on the
+Windows side, for exactly this reason. It transferred here only because that comment
+existed to be read --- and the two functions are far enough apart in the file that nothing
+would have connected them. **A buffering decision is part of a stream's contract with
+whoever reads it next**, so it belongs beside the handover, not beside the read.
+
+### A mock's default return value decides whether a mutation fails or hangs
+
+`openWithPassword` loops until the document opens or the reader declines, and three of its
+tests assert that the ask function is **never called**. Written the obvious way, that mock
+is `vi.fn()` --- which resolves `undefined`.
+
+`undefined` is neither a password nor a decline. So the moment a mutation made the loop
+reach that mock, it asked, got `undefined`, retried with `undefined`, and did that until
+the vitest worker died: `Worker exited unexpectedly`, `Tests (7)` with no counts, 23
+seconds. The mutation *was* detected, in the sense that the run was not green --- and it
+was detected as a broken runner, which is the diagnosis that sends you to look at vitest.
+
+**The fix is one word in the test and it is not a workaround.** `vi.fn().mockResolvedValue(null)`
+makes the mock able to *end* the loop even in the test that asserts it is never entered, so
+the mutation now fails `expect(ask).not.toHaveBeenCalled()` in 2 ms. The general form:
+**a double standing in for something that terminates a loop has to be able to terminate
+it**, including in the tests that expect it never to run --- because those are exactly the
+tests a mutation reaches first.
+
+The reason this is worth its own entry beside *a test whose failure is a hang reports a
+pass and a timeout in one breath* is where the defect lives. There the code under test
+hangs; here the code is fine and the **test double** supplies the non-terminating value.
+Nothing about the assertion, the loop or the mutation looks wrong, and reading any of them
+would not find it --- running the mutation is what found it, which is the whole argument
+for running them rather than reasoning about them.

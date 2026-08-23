@@ -242,7 +242,7 @@ fn run(document: &Path, rounds: usize, reps: usize, page: u32, scale: f32) -> Re
     // than left for a module scan to turn up as a surprise.
     let pdfium = progressive::bind(&library_dir)?;
     let bindings = progressive::bindings_of(pdfium);
-    let doc = RawDocument::open(bindings, document)?;
+    let doc = RawDocument::open(bindings, document, None)?;
     let pages = doc.page_count();
     if page >= pages {
         return Err(format!("--page {page} but the document has {pages}"));

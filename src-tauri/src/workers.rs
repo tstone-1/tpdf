@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use crate::annots::Comments;
 use crate::links::Links;
 use crate::outline::Outline;
-use crate::progressive::CancelToken;
+use crate::progressive::{CancelToken, Refusal};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{
     dispatch, not_open, open_slot_mut, DocumentInfo, Engine, Job, PageSize, Tile, TileFormat,
@@ -447,6 +447,25 @@ struct Held {
     /// the way to read that file again is to open it again --- which builds a
     /// new mapping, in a new slot, with no latch on it.
     outlived: Option<String>,
+    /// The password this document was opened with, if it needed one.
+    ///
+    /// **Held for the document's lifetime because the pool outlives the open.**
+    /// Every worker maps the same bytes, so every worker meets the same
+    /// encryption --- the second one the pool grows under contention, and every
+    /// replacement for one that crashed. Without this, a locked document would
+    /// render its first page and then refuse the second, and a crash would end
+    /// the session; asking the reader again for each is not a design, it is the
+    /// absence of one.
+    ///
+    /// It lives in the app process rather than in a worker because the workers
+    /// are the disposable half. It is not written anywhere, not logged, and goes
+    /// when [`Workers::close`] drops the slot.
+    ///
+    /// `docs/THREAT-MODEL.md` §T6 states what that costs: a password is in this
+    /// process's memory while the document is open, which is also true of every
+    /// page of the decrypted document, and is not defended against a reader of
+    /// this process's memory --- who has already won.
+    password: Option<String>,
 }
 
 /// Documents parsed in sandboxed child processes, several per document.
@@ -663,8 +682,12 @@ impl Workers {
                 // the last worker.
                 held.spawned += 1;
                 let bytes = held.doc.clone();
+                // Cloned under the lock with the bytes, because the two go
+                // together: a worker handed these bytes cannot open them without
+                // this. See `Held::password`.
+                let password = held.password.clone();
                 drop(docs);
-                return self.spawn_into(doc, bytes);
+                return self.spawn_into(doc, bytes, password);
             }
             // At capacity and all of them busy. Waiting is right rather than
             // queueing another request: this thread has nothing else to do, and
@@ -719,24 +742,67 @@ impl Workers {
         Some(reason)
     }
 
+    /// Returns a reservation [`checkout`] took, after the worker it was for
+    /// failed to arrive.
+    ///
+    /// Without it the pool shrinks by one every time a spawn or an unlock fails,
+    /// and eventually deadlocks at zero with every waiter still waiting.
+    fn give_back(&self, doc: u32) {
+        let mut docs = self.lock();
+        if let Ok(held) = open_slot_mut(&mut docs, doc) {
+            held.spawned = held.spawned.saturating_sub(1);
+        }
+        drop(docs);
+        self.returned.notify_all();
+    }
+
     /// Spawns a worker against a reservation already taken by [`checkout`].
-    fn spawn_into(&self, doc: u32, bytes: Arc<Shm>) -> Result<Worker, String> {
+    ///
+    /// **Every worker after the first goes through here, replacements included**,
+    /// which is why the password does: the bytes carry the encryption, so a
+    /// second worker meets exactly what the first did. A pool that unlocked only
+    /// its first worker would serve page one and refuse page two.
+    fn spawn_into(
+        &self,
+        doc: u32,
+        bytes: Arc<Shm>,
+        password: Option<String>,
+    ) -> Result<Worker, String> {
         // Outside the lock: a spawn is ~12 ms, and holding the table for that
         // would stall every other document as well as this one's other threads.
-        let worker = match Worker::spawn_shared(bytes, &self.library_dir) {
+        let mut worker = match Worker::spawn_shared(bytes, &self.library_dir) {
             Ok(worker) => worker,
             Err(e) => {
                 // Give the reservation back, or the pool shrinks by one every
                 // time a spawn fails and eventually deadlocks at zero.
-                let mut docs = self.lock();
-                if let Ok(held) = open_slot_mut(&mut docs, doc) {
-                    held.spawned = held.spawned.saturating_sub(1);
-                }
-                drop(docs);
-                self.returned.notify_all();
+                self.give_back(doc);
                 return Err(e);
             }
         };
+
+        // Before the worker is published, so nothing can check out one that is
+        // still sitting in `worker_child::unlock`. The reservation is given back
+        // on failure for the same reason it is above --- an unlock that fails
+        // here is a worker that will never serve anything.
+        if let Some(password) = password {
+            let sent = self
+                .watched(&mut worker, |worker| {
+                    worker.call(&Request::Unlock { password })
+                })
+                .0
+                .and_then(|response| {
+                    if response.ok {
+                        Ok(())
+                    } else {
+                        Err(response.error)
+                    }
+                });
+            if let Err(e) = sent {
+                let e = format!("a replacement worker could not unlock the document: {e}");
+                self.give_back(doc);
+                return Err(e);
+            }
+        }
 
         let mut docs = self.lock();
         let Ok(held) = open_slot_mut(&mut docs, doc) else {
@@ -1305,6 +1371,19 @@ fn payload_length(
     Ok(stated)
 }
 
+/// Reads a worker's refusal back into the type the engine boundary speaks.
+///
+/// A [`Response`] carries the distinction as a flag and the engine carries it as
+/// a field; this is the one place they meet, so nothing else has to know that a
+/// refusal has two halves. Deliberately not a `From` impl: a `Response` is a
+/// reply of any kind, and most of them are successes.
+fn refusal_of(response: Response) -> Refusal {
+    Refusal {
+        reason: response.error,
+        locked: response.locked,
+    }
+}
+
 impl Engine for Workers {
     /// Spawns the document's first worker and asks it for the geometry.
     ///
@@ -1312,7 +1391,12 @@ impl Engine for Workers {
     /// that is opened and read one page at a time costs exactly one process. The
     /// spawn is on the critical path to the first page and what it costs is
     /// measured rather than assumed --- see PLAN §9.
-    fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String> {
+    fn open(
+        &self,
+        path: &Path,
+        lazy_geometry: bool,
+        password: Option<&str>,
+    ) -> Result<DocumentInfo, Refusal> {
         let t0 = Instant::now();
         // Mapped here rather than inside the spawn, because this is the copy
         // every later worker for this document will be handed. The file is read
@@ -1368,6 +1452,23 @@ impl Engine for Workers {
         // published into the pool where the first request to take it fails once
         // and is replaced by the path that exists for a crashed worker. There is
         // no third case.
+        // The password, before the geometry. A worker that could not open the
+        // document is sitting in `worker_child::unlock` answering everything
+        // with `locked`, so `Open` would come straight back --- and a worker that
+        // opened without needing one accepts this and carries on. One order for
+        // both, rather than a branch on what the parent guesses the file is.
+        if let Some(password) = password {
+            let (response, _) = self.watched(&mut worker, |worker| {
+                worker.call(&Request::Unlock {
+                    password: password.to_string(),
+                })
+            });
+            let response = response?;
+            if !response.ok {
+                return Err(refusal_of(response));
+            }
+        }
+
         let (response, killed) = self.watched(&mut worker, |worker| {
             worker.call(&Request::Open { lazy_geometry })
         });
@@ -1379,7 +1480,7 @@ impl Engine for Workers {
             }
         })?;
         if !response.ok {
-            return Err(response.error);
+            return Err(refusal_of(response));
         }
         let json = response.json.ok_or("worker opened without a payload")?;
         let opened: OpenReply = serde_json::from_value(json)
@@ -1391,6 +1492,7 @@ impl Engine for Workers {
         let id = docs.len() as u32;
         docs.push(Some(Held {
             doc,
+            password: password.map(str::to_string),
             senders: vec![(worker.pid(), worker.sender())],
             spawned: 1,
             idle: vec![Idle {
@@ -1690,6 +1792,27 @@ mod tests {
     /// byte of it. The workers are believed in rather than spawned, which is the
     /// only way to reach the close drain from a unit test --- a real one needs
     /// PDFium, a document and a sandboxed child.
+    /// A worker's refusal keeps its answerability on the way to the engine.
+    ///
+    /// Two representations of one distinction meet in `refusal_of`, and that is
+    /// exactly the shape `docs/TRAPS.md` records as drifting --- *two copies of a
+    /// distinction drift, and a mutation of one survives*. Dropping the flag
+    /// there loses nothing visible in the app process except the password
+    /// prompt: the reason still arrives, still reads correctly, and the reader
+    /// is simply told about a document they can no longer open.
+    #[test]
+    fn a_locked_reply_reaches_the_engine_as_a_locked_refusal() {
+        let locked = super::refusal_of(Response::locked("This document is locked."));
+        assert!(locked.locked);
+        assert_eq!(locked.reason, "This document is locked.");
+
+        // The control, and the direction that matters more: an ordinary failure
+        // must not become a password prompt in front of a broken file.
+        let broken = super::refusal_of(Response::err("This file is not a PDF."));
+        assert!(!broken.locked);
+        assert_eq!(broken.reason, "This file is not a PDF.");
+    }
+
     fn held(name: &str, spawned: usize) -> (std::path::PathBuf, Held) {
         let dir = std::env::temp_dir().join(format!("tpdf-workers-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1702,6 +1825,7 @@ mod tests {
             spawned,
             senders: Vec::new(),
             outlived: None,
+            password: None,
         };
         (dir, held)
     }
@@ -1783,6 +1907,7 @@ mod tests {
                 spawned: 0,
                 senders: Vec::new(),
                 outlived: Some("gone: the file was truncated".into()),
+                password: None,
             }));
             // A closed document beside it, for the control below.
             docs.push(None);

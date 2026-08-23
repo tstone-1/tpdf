@@ -317,3 +317,7 @@ path = "examples/print_probe.rs"
 [[example]]
 name = "rewrite-probe"
 path = "examples/rewrite_probe.rs"
+
+[[example]]
+name = "password-probe"
+path = "examples/password_probe.rs"

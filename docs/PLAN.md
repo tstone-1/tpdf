@@ -1471,6 +1471,92 @@ command --- the same gap `verify_before_commit`'s call site has, and the honest 
 the same one: the conversion cannot be wrong while nothing proves it is still wired. The
 two-launch check is what covers it, by hand.
 
+### Opening a locked document --- built 2026-08-23
+
+Until now an encrypted PDF behind a user password could be chosen from the file dialog
+and then not opened, by any route. The backend had diagnosed it correctly since
+`open_failure` was written --- *"This document needs a password, and tpdf cannot ask for
+one yet"* --- and that sentence was the whole of it: there was nowhere to type one. A
+class of document was reachable and unreadable, and the message said so.
+
+**The spike came first, because two questions decide the architecture and neither is
+answerable by reading.** Both were measured on `testdata/incr-encrypted-pw.pdf`,
+AES-256 behind the user password `swordfish`, loading the same bytes four times in one
+process:
+
+```
+[1 none     ] refused, FPDF_GetLastError = 4
+[2 swordfish] OPENED, 2 pages
+[3 wrong    ] refused, FPDF_GetLastError = 4
+[4 swordfish] OPENED, 2 pages
+```
+
+**A failed load poisons nothing**, so a wrong password costs a reply rather than a
+process: the worker asks and retries in place, and never has to be respawned. And
+**PDFium reports the same error for a document given no password and one given the
+wrong password**, so nothing downstream can tell a first ask from a retry. Only the loop
+that tried one knows, which is why the second sentence a reader sees is chosen in
+`worker_child::unlock` and not in `open_failure`.
+
+**The distinction is a field the whole way, never a recognisable sentence.**
+`progressive::Refusal` carries `{reason, locked}`, `Response` carries `locked` beside
+`abandoned`, and the Tauri command serialises both --- so `App.svelte` decides to prompt
+on a flag. A string match would have been simpler and would rot the first time the
+wording changed, which this increment changed twice.
+
+**The order of the conversation is one order for both cases.** A worker that could not
+open the document sits in `unlock` answering everything with `locked`; a worker that
+opened without needing one is in the ordinary serve loop and accepts an `Unlock` as a
+statement about a document it can already read. So the parent sends `Unlock` before
+`Open` whenever it holds a password, and never branches on what it guesses the file is.
+
+**The password is held for the document's lifetime, and that is the pool's requirement
+rather than a convenience.** Every worker maps the same bytes, so every worker meets the
+same encryption --- the second one `checkout` grows under contention, and every
+replacement for one that crashed. `Held::password` is what `spawn_into` replays. Without
+it a locked document renders the page a reader is looking at and refuses the next, which
+is what the probe's mutation produces: **8 tiles served, then locked**.
+
+**What it costs is in `docs/THREAT-MODEL.md` §T6.9**: a password sits in the app
+process's memory while the document is open. So does every decrypted page of it, and
+neither is defended against something that can read this process's memory.
+
+**Not done: saving one.** `save.rs` still refuses any document with an `/Encrypt` entry,
+which is now a narrower refusal than it reads. Spike 0.6 measured appended objects
+coming out encrypted with the original key, so an append *could* preserve the encryption
+--- but only for a document loaded with its password, and `save::append_ready` does not
+have it. That is the next increment and it is a genuine one, because the case it unblocks
+is not the one this increment opened: a document behind a real password could not be
+opened at all, while one behind an **empty** user password --- which is what most
+permission-restricted files carry, the RoHS certificate in *What a document says about
+itself* included --- has always opened, rendered and searched fine, and is refused only
+when a reader tries to put a highlight on it.
+
+**The frontend's half is testable because it was moved out of `App.svelte`.** The decision
+--- prompt on the flag, loop while a password is offered, rethrow otherwise --- is
+`unlock.ts`, and the component keeps the `invoke` and the dialog. That is the lesson of the
+`wiring` gate applied before it was needed: nothing imports `App.svelte`, so anything left
+in it is covered by the type-checker and by a person. `unlock.test.ts` has seven cases and
+three mutations; `passworddialog.test.ts` has ten and four.
+
+Two defects came out of writing them, and neither was reachable by reading. The dialog
+answered `isOpen` by reading `backdrop.style.display` back out of the DOM, which is a trap
+this file's index names --- right in the browser, wrong under test. And `instanceof
+HTMLElement`, copied from `propertiesdialog.ts`, *throws* where the constructor does not
+exist rather than answering no; `palette.ts` and `propertiesdialog.ts` still have that
+line, harmlessly, because no test reaches it there.
+
+**Not done: a check that runs everywhere.** `password-probe` needs
+`testdata/incr-encrypted-pw.pdf`, which `make_incremental_pdf.py` builds with qpdf, and
+`scripts/ci_fixtures.py` records that a hosted runner has none. The probe prints seven
+`[SKIP]`s there rather than passing silently, which is the right failure, but it means
+the end-to-end evidence exists on a developer machine and nowhere else. The unit tests
+that *do* run everywhere cover the distinction and its plumbing; none of them can see the
+worker loop, for the reason `docs/TRAPS.md` gives under *where the parse runs is not
+observable from a unit test*. pyHanko can write an encrypted PDF and is already pinned in
+`scripts/fixture-tools.txt`, so the way to close this is a generator that does not shell
+out --- not a second corpus.
+
 ---
 
 ## 6. Redaction

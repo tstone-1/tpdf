@@ -34,6 +34,43 @@ export interface PageSize {
   height_pt: number;
 }
 
+/**
+ * Why `open_document` refused, when it did.
+ *
+ * The one refusal a reader can answer carries a flag rather than a recognisable
+ * sentence, so `App.svelte` decides to prompt on `locked` and never on the
+ * wording. `progressive::Refusal` is the same shape on the Rust side, which is
+ * where both fields are written.
+ */
+export interface OpenRefusal {
+  /** What to show. Chosen in `progressive.rs`; never from the document. */
+  reason: string;
+  /**
+   * The document is encrypted and the password it was given --- which may have
+   * been none --- did not open it.
+   *
+   * It says nothing about *whether* one was tried: PDFium reports the same error
+   * either way, so only `reason` distinguishes a first ask from a retry.
+   */
+  locked: boolean;
+}
+
+/**
+ * Whether a thrown value is an `OpenRefusal` rather than an ordinary error.
+ *
+ * Tauri serialises a command's `Err` and rejects with it, so what arrives is a
+ * plain object and not an `Error` --- `instanceof` cannot be the test, and
+ * `String(e)` on one reads `[object Object]`.
+ */
+export function isOpenRefusal(value: unknown): value is OpenRefusal {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as OpenRefusal).reason === "string" &&
+    typeof (value as OpenRefusal).locked === "boolean"
+  );
+}
+
 /** Result of `open_document`. */
 export interface DocumentInfo {
   id: number;

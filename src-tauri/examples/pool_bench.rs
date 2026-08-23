@@ -215,7 +215,7 @@ fn retire_mode(document: &Path, tiles: usize, rounds: usize, idle: Duration) {
 
     let service =
         RenderService::start_tuned(library_dir(), Backend::Worker, retire_pool_size(), idle);
-    let doc = match wait(|reply| service.open(document.to_path_buf(), false, reply)) {
+    let doc = match wait(|reply| service.open(document.to_path_buf(), false, None, reply)) {
         Ok(doc) => doc,
         Err(e) => {
             eprintln!("[FAIL] {e}");
@@ -377,7 +377,7 @@ struct Lane {
 impl Lane {
     fn start(document: &Path, size: usize, tiles: usize) -> Result<Self, String> {
         let service = RenderService::start_tuned(library_dir(), Backend::Worker, size, NO_RETIRE);
-        let doc = wait(|reply| service.open(document.to_path_buf(), false, reply))?;
+        let doc = wait(|reply| service.open(document.to_path_buf(), false, None, reply))?;
         Ok(Self {
             size,
             tiles,
@@ -395,7 +395,7 @@ impl Lane {
     fn cold(&mut self, document: &Path) -> Result<f64, String> {
         let service =
             RenderService::start_tuned(library_dir(), Backend::Worker, self.size, NO_RETIRE);
-        let doc = wait(|reply| service.open(document.to_path_buf(), false, reply))?;
+        let doc = wait(|reply| service.open(document.to_path_buf(), false, None, reply))?;
         let mut rid = 1;
         screenful(&service, &doc, self.tiles, &mut rid)
     }
@@ -474,15 +474,15 @@ fn screenful(
 }
 
 /// Drives one of the service's callback-shaped calls to an answer.
-fn wait<T: Send + 'static>(
-    call: impl FnOnce(Box<dyn FnOnce(Result<T, String>) + Send>),
-) -> Result<T, String> {
+fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
+    call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
+) -> Result<T, E> {
     let (tx, rx) = channel();
     call(Box::new(move |result| {
         let _ = tx.send(result);
     }));
     rx.recv()
-        .unwrap_or_else(|_| Err("the render thread stopped".into()))
+        .unwrap_or_else(|_| Err(E::from("the render thread stopped".to_string())))
 }
 
 fn median(values: &[f64]) -> f64 {

@@ -172,7 +172,7 @@ fn run(args: &Args) -> Result<bool, String> {
         names: Vec::new(),
     };
 
-    let document = RawDocument::open(bindings, &args.file)?;
+    let document = RawDocument::open(bindings, &args.file, None)?;
     println!(
         "file: {} ({} pages), manifest: {}",
         args.file.display(),
@@ -192,7 +192,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // geometry" from "the document says this" by exactly that emptiness.
     match &args.untagged {
         Some(path) => {
-            let plain = RawDocument::open(bindings, path)?;
+            let plain = RawDocument::open(bindings, path, None)?;
             let page = plain.page(0)?;
             let structure = structure::read(&page)?;
             report.check(

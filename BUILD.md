@@ -135,6 +135,40 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/text-base14.pdf --mode clean
 
+# A locked document: can a reader actually open one?
+# Everything that decides the answer is on the other side of a process boundary
+# -- the load in worker_child::serve, the retry in worker_child::unlock, the
+# password on the worker's stdin, and the pool replaying it in
+# Workers::spawn_into -- so no unit test in the app process can reach it. This
+# drives a real RenderService in worker mode. It takes no arguments: the two
+# fixtures it needs are named in the file, because the properties are about
+# encryption rather than about content.
+#
+# Proved able to fail by four mutations, each reddening exactly the check it
+# belongs to. The first is the one worth reading, because its failure is the
+# defect a naive implementation ships:
+#
+#   spawn_into skips the unlock       -> "8 served, then: This document is
+#                                        locked" -- the first worker's tiles come
+#                                        back and the pool's second worker
+#                                        refuses. Every other check stayed green,
+#                                        including "a tile renders with ink".
+#   Response::locked never sets it    -> both "refused as locked" checks
+#   unlock does not reword a retry    -> "the second refusal is worded
+#                                        differently from the first"
+#   serve never enters the unlock loop-> 4 failed, 2 skipped
+#
+# WHAT IT NEEDS, AND WHERE IT DOES NOT RUN. testdata/incr-encrypted-pw.pdf is
+# built with qpdf, which scripts/ci_fixtures.py records a hosted runner does not
+# have. Without it this prints seven [SKIP]s naming the reason rather than
+# passing, which is the right failure -- but it means the end-to-end evidence
+# exists on a developer machine and nowhere else. The unit tests that run
+# everywhere cover the distinction and its plumbing and can see none of the
+# worker loop. docs/PLAN.md section 5 says what closing that would take.
+#
+#   macOS arm64, 2026-08-23   7/7, 0 skipped
+cargo run --release --manifest-path src-tauri/Cargo.toml --example password-probe
+
 # Signatures: does PDFium agree with us about the same signatures?
 # `docinfo.rs` walks /AcroForm /Fields with lopdf; PDFium implements that walk
 # in C++ and exports the result. Neither knows about the other, which is what
