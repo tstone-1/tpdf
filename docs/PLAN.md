@@ -6600,9 +6600,13 @@ deliberately not driven from the palette: cropping to content is two IPC replies
 deep and the probe framework's settle is a frame-loop wait, so their wiring is
 covered by `appcommands.test.ts`'s sweep over every registered command instead.
 
-**Not done:** a crop a reader drags, which is the gesture question above and
+**Not done:** ~~a crop a reader drags, which is the gesture question above and
 needed a drag mode --- `drag.ts` is that mode as of 2026-08-19, so this now needs
-only a second caller of it and the same `fileRectOn` the box uses; cropping
+only a second caller of it and the same `fileRectOn` the box uses~~ (done
+2026-08-23 --- and the estimate was right about the gesture and wrong about the
+rest: a mark's rectangle is *stored* in the space the viewer hands it over in,
+and a crop box is one further turn away, so it needed a new command through both
+backends. See *A crop the reader drags* below); cropping
 several pages at once, which is a selection question rather than a new mechanism; and `insert`, `split` and `merge`, unchanged --- the
 first two need a page the model creates, and `docmodel`'s note has the
 id-allocator property that would have to be proved first.
@@ -6899,8 +6903,9 @@ mattered was corrected, which is the finding.
 
 **Not done:** ink, which is the next consumer and needs the wire struct widened
 to a list of point lists; an ellipse, which is `/Circle` and the same rectangle
-with a different subtype; a crop a reader drags, which now needs only a second
-caller of the primitive; a tool that stays armed for several boxes; ~~and a
+with a different subtype; ~~a crop a reader drags, which now needs only a second
+caller of the primitive~~ (done 2026-08-23, and it needed a backend command too);
+a tool that stays armed for several boxes; ~~and a
 colour a reader can choose, still the UI question `MARK_COLORS` names~~ (done
 2026-08-20). The two existing
 drags in `viewer.ts` were **not** converted onto the primitive --- the scrollbar's
@@ -7075,8 +7080,8 @@ wrong by 168. The measured count is in `BUILD.md`.
 different subtype~~ (done 2026-08-20 --- and *"the same rectangle with a different
 subtype"* was wrong in the half that mattered: a content stream has no ellipse
 operator, so it is four Bézier arcs and a new `Paint`. See *An ellipse* below);
-a crop a reader drags, still only a second caller of the
-primitive; ~~and a colour a reader can choose, still the UI question
+~~a crop a reader drags, still only a second caller of the
+primitive~~ (done 2026-08-23 --- it needed a backend command as well, see below); ~~and a colour a reader can choose, still the UI question
 `MARK_COLORS` names~~ (done 2026-08-20). (*A tool that stays armed for several
 strokes* was on this list and was built the same day --- see below.) Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
 put a width per point, and a Bézier fit would make the saved path something other
@@ -8691,6 +8696,119 @@ job headers are byte-identical outside those steps --- same name, same matrix, s
 images --- and CI has just run exactly those steps green on both platforms. What a tag would
 re-run beyond that is the build, signing and notarization, which this change does not touch and
 which four rehearsal tags proved for `26.8.0`.
+
+#### A crop the reader drags --- done 2026-08-23
+
+Until this, a reader could crop a page to its **ink** or put the file's box back,
+and nothing else. That answers a scan and an article whose margins are wider than
+its column, and it answers none of the cases only the reader can decide: a figure
+out of a plate, one column of two, a scan with a hand in the corner. There is
+nothing wrong with what *Crop page to content* measures --- the reader simply
+wants less than all of it.
+
+`edit.cropToDrag` arms the tool, the next drag on a page is the crop, and Escape
+puts it away. It is one-shot like every drawing tool, and for a stronger reason
+than they have: a crop **replaces** whatever crop the page had, so a second drag
+would undo the first rather than add to it.
+
+**The plan's estimate was right about the gesture and wrong about the rest**, and
+the difference is worth stating because it is a fact about the model rather than
+about this increment. The note said this needed *"only a second caller of
+`drag.ts` and the same `fileRectOn` the box uses"*. Both halves are true: the
+gesture is `PointerDrag` with three callbacks, and the rectangle leaves the
+viewer through `fileRectOn` exactly as a box does. What it missed is where the
+rectangle **stops**. A mark's quads are *stored* in the file's display space and
+turned by `save.rs` at the moment they are written; a crop box **is** what the
+model holds, in the page's own unrotated space. So the turn has to be undone
+before the edit is made, and the frontend is deliberately never told a page's
+`/Rotate`.
+
+Hence `page_crop_box`, which is the inverse of `page_geometry` and travels the
+same road: a `Job`, an `Engine` method, a worker `Request`, both backends. The
+arithmetic is `crop_from_display`, the mirror of the `place_crop` extracted out
+of `geometry_of` so that there is something for it to be the inverse *of*.
+
+**The two directions carry separate rotation tables** --- `text::to_device` and
+`text::from_device` --- which is what makes a round trip through both a real
+comparison rather than a tautology, and is why `docs/TRAPS.md` records two such
+tables disagreeing at every turn but zero.
+
+**What that round trip structurally cannot see is a symmetric error**, and this
+was measured rather than assumed. Deleting the file-box offset from *both*
+functions leaves the round trip green; deleting it from *one* reddens both. So
+`a_crop_is_measured_from_the_page_and_not_from_the_origin` exists for the
+symmetric case and a clamp test for the third, since a composition also agrees
+with itself about a rectangle that never left the page.
+
+The first draft of that comment claimed the opposite --- that a one-sided deletion
+would leave the round trip green --- which is the plausible reading and is wrong.
+Three mutations settled it in the time it takes to state it.
+
+**Evidence.** Three unit tests over the pure pair, each proved to go red by a
+mutation aimed at it and green under the other two. Eight over the gesture in
+`viewercrop.test.ts`, one per test, each proved to redden the test named for it;
+they are in `scripts/mutate_frontend.py`. Three new checks in the window sweep
+drive `page_crop_box` against the real backend on every corpus --- the only place
+that can say the command is *registered*, and on `rotated.pdf` the only place the
+turn is not zero.
+
+**And two reading the scrim off the overlay**, which nothing else can: a crop's
+preview lives between a press and a release, reaches no model and writes no file,
+so the fake-DOM tests cannot see a pixel of it. They are one assertion in two
+readings rather than one plus thoroughness --- *the outside is covered* is
+satisfied by a blanket over the whole page, which is the likeliest way to get a
+scrim wrong and would hide the page the reader is aiming with, and what says it is
+a hole is that the inside stays clear. Both proved by mutation through
+`scripts/mutate_viewer.py`: no scrim reddens the first, a whole-page scrim reddens
+the second, one red each.
+
+**The anchor gate paid for itself again, five times.** Adding a third
+`PointerDrag` made five existing mutations ambiguous or stale --- two anchors now
+matched twice, three matched nothing --- and every one of them is a mutation that
+would have reported `SURVIVED` or been refused twenty minutes into a run. All five
+were re-aimed and re-run.
+
+**And the status line is part of the feature rather than chrome on top of it.**
+`ViewerStatus.armed` exists because a one-shot tool armed from the palette leaves
+a reader with a crosshair and no words, which is a complaint this repository has
+already answered once; the crop is exactly that tool, so the field was widened to
+`MarkKind | "crop"` rather than a second boolean beside it --- two elements coming
+and going next to each other is the toolbar-rearrangement trap, and only one of
+the two can ever be set. The window reads the status and the viewer tests read the
+accessors, so the copy between them is pinned by its own test in
+`viewer.test.ts`, proved red by removing the crop from that expression.
+
+**The scrim is the preview, and that is the one deliberate departure from every
+other gesture here.** A dashed outline says "a rectangle is being dragged" and
+says nothing about which side of it survives. A crop is the only gesture in the
+application that *removes* something the reader can see, so what is darkened is
+the part that goes, and what stays bright is exactly what the page becomes. Grey
+rather than the preview blue, because blue over the discarded region would read
+as "this is the selection" over precisely what is not.
+
+**And the README was wrong about this feature and about stamps at the same
+moment, with the gate written for exactly that green.** The *Not built yet* list
+named `edit.cropToRectangle` and `edit.addStamp`; what shipped is
+`edit.cropToDrag` and four `edit.stamp.*` commands. The `readme` gate refuses a
+bullet whose named command **is** registered, and neither name ever was, so there
+was nothing for it to contradict --- a bullet naming a command id is a claim about
+a string chosen later, written at the moment least able to predict it. Both
+bullets are corrected and the README now states what that check reaches.
+`docs/TRAPS.md` has the entry.
+
+**The invariant that would hold runs the other way, and it is the ranked next
+step for this**: every *registered* command must appear in the README's built
+prose or in an allowlist with a reason. That is the shape `viewer_sweep.py` uses
+for fixtures and `viewercheck` uses for commands, and a new command cannot escape
+it by being named something unexpected. It is not built here because classifying
+every command is its own increment, and doing it badly inside a crop increment
+would be a second list to drift.
+
+**Not done:** cropping several pages at once, which is a selection question
+rather than a new mechanism; and adjusting a crop by dragging its edge, which
+needs a hit-test on the crop's handles and a second drag mode --- re-dragging the
+whole rectangle is what a reader does today, and it is one gesture rather than
+two.
 
 ### Phase 3 --- Redaction
 

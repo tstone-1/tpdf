@@ -21,7 +21,7 @@
     menuForSurface,
     PAGE_MENU,
   } from "./lib/contextmenu";
-  import { contentBox } from "./lib/crop";
+  import { contentBox, cropBox } from "./lib/crop";
   import { Edits, type EditState } from "./lib/edits";
   import {
     DEFAULT_SWATCH,
@@ -159,7 +159,8 @@
    * that counts strokes --- and it is left out of the table rather than given an
    * unreachable entry, so the fallback is the honest one if that ever changes.
    */
-  function armedLabel(kind: MarkKind): string {
+  function armedLabel(kind: MarkKind | "crop"): string {
+    if (kind === "crop") return "Crop — drag out what to keep";
     return kind === "note"
       ? `${nameOf(kind)} — click to place`
       : `${nameOf(kind)} — click and drag`;
@@ -537,9 +538,17 @@
    * nothing is not what "crop to content" means, and silence would read as the
    * command being broken.
    */
-  async function cropPage(to: "content" | "reset"): Promise<void> {
+  async function cropPage(to: "content" | "reset" | "drag"): Promise<void> {
     const at = viewer?.position.page;
     if (at === undefined || !edits) return;
+    if (to === "drag") {
+      // Arms and returns: the rest of this gesture happens when the reader
+      // lets go, in `cropTo`. Nothing is measured and no page is named here,
+      // because the page is whichever one they press on --- which need not be
+      // the one they are scrolled to.
+      viewer?.armCrop();
+      return;
+    }
     if (to === "reset") {
       await applyEdit((e) => e.crop(at, null));
       return;
@@ -552,6 +561,52 @@
       return;
     }
     await applyEdit((e) => e.crop(at, box));
+  }
+
+  /**
+   * Crops a page to the rectangle the reader dragged out on it.
+   *
+   * **Two round trips, and the first one is the whole reason this is not one
+   * line.** The viewer hands back a rectangle in the file's display space,
+   * because that is the space every rectangle in the frontend is in; a crop box
+   * is in the page's own unrotated space, and turning between them needs the
+   * page's `/Rotate`, which this side is deliberately never told. So the
+   * backend is asked, and only then is the edit made.
+   *
+   * **The page arrives as a model id and three different numbers name a page
+   * here**, which is the trap `docs/TRAPS.md` records as an id and a slot both
+   * being `number`. The mapping needs a page of the *file* (`source`), the model
+   * command takes a *slot*, and what the viewer hands over is an *id*. Each is
+   * read from the id rather than assumed equal to it.
+   *
+   * The slot is read **inside** the edit and not beside `source`, and that is
+   * the one non-obvious line here: the mapping above is a round trip, and a page
+   * can be moved or deleted while it is in flight, which changes every slot
+   * after it. A `source` cannot move --- it names the page of the file this page
+   * came from --- so reading that early is safe and reading the slot early is
+   * not.
+   *
+   * A failure is said out loud rather than swallowed. Every other gesture here
+   * either succeeds or leaves the tool armed, and this is the only one that can
+   * fail *after* the reader has finished dragging --- silence would read as a
+   * crop that did nothing.
+   */
+  async function cropTo(
+    page: number,
+    rect: [number, number, number, number],
+  ): Promise<void> {
+    if (!edits) return;
+    const source = edits.state.pages.find((p) => p.id === page)?.source;
+    if (source === undefined) return;
+    const box = await cropBox(edits.doc, source, rect).catch(() => null);
+    if (!box) {
+      say("That rectangle could not be turned into a crop.");
+      return;
+    }
+    await applyEdit((e) => {
+      const slot = e.state.pages.findIndex((one) => one.id === page);
+      return slot < 0 ? Promise.resolve(e.state) : e.crop(slot, box);
+    });
   }
 
   /**
@@ -2004,6 +2059,11 @@
         // the model's rule, and restating it here would be a third copy.
         onDrawn: (kind, page, shape, stamp) =>
           void drawn(kind, page, shape, stamp),
+        // The rectangle a reader dragged out to crop to. It arrives in the
+        // file's *display* space, like every other gesture's, and the crop the
+        // model holds is one turn further in --- so unlike the three callbacks
+        // around it this one cannot go straight to an edit. See `cropTo`.
+        onCropped: (page, rect) => void cropTo(page, rect),
         onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
         onErased: (mark, remove) => void applyEdit((e) => e.erase(mark, remove)),
         onStatus: (next) => {

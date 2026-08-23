@@ -501,6 +501,34 @@ describe("Viewer status", () => {
     viewer.destroy();
   });
 
+  it("names the armed crop, which is not a mark kind", async () => {
+    // **The status is a copy, and the copy is what the reader sees.** The tests
+    // around this file read the viewer's own accessors; the window reads
+    // `ViewerStatus`, and a `report` that filled `armed` from `drawKind` alone
+    // would leave a reader who armed the crop with a crosshair and no words ---
+    // which is the exact complaint the field was added for, arriving through the
+    // one tool that is not a `MarkKind`.
+    //
+    // Both directions, for the reason the test above gives: a version that
+    // reported the arming and not the cancel leaves the line on screen naming a
+    // tool that is no longer armed.
+    const viewer = build(dom, { onStatus: (s: ViewerStatus) => statuses.push(s) });
+    await quiesce(viewer, dom);
+    const before = statuses.length;
+
+    viewer.armCrop();
+    dom.runFrames();
+    expect(statuses.length).toBeGreaterThan(before);
+    expect(statuses[statuses.length - 1]?.armed).toBe("crop");
+
+    const armed = statuses.length;
+    viewer.cancelDraw();
+    dom.runFrames();
+    expect(statuses.length).toBeGreaterThan(armed);
+    expect(statuses[statuses.length - 1]?.armed).toBe(null);
+    viewer.destroy();
+  });
+
   it("names a drawing in one field, not two", async () => {
     // The pen arms like every other tool, and the window already has a line for
     // it that counts strokes. Reporting it here as well would put two lines on

@@ -71,10 +71,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   real annotation of its own kind rather than ink pretending to be one, so another reader
   gets a comment they can open and a shape they can select. What you have drawn can be
   dragged to somewhere else on its page afterwards.
-- **Crop a page to what is on it**, which trims the margins away so the text fills the
-  window. It measures where the ink actually is rather than reading the page's objects, so
-  it works on a scan --- where every object union is the whole sheet --- as well as on a
-  page of type. The crop is part of the document: undoable, carried when the page moves,
+- **Crop a page**, either to what is on it or to a rectangle you drag out. Cropping to
+  content measures where the ink actually is rather than reading the page's objects, so it
+  works on a scan --- where every object union is the whole sheet --- as well as on a page of
+  type. Dragging is for the cases a measurement cannot answer: a figure out of a plate, one
+  column of two, a scan with a hand in the corner. While you drag, what falls outside the
+  rectangle is darkened, so what stays bright is what the page becomes. The crop is part of the document: undoable, carried when the page moves,
   and written into a saved copy as a real `/CropBox`, so another reader opens the file
   cropped the way you left it.
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
@@ -103,13 +105,14 @@ exist if it were built, and a gate refuses any of them the application actually 
 It is here because the list went on naming drawing, shapes, text boxes and squiggly for
 weeks after all four shipped.
 
+The check is narrower than it sounds, and both halves of that are worth knowing. It catches
+a bullet whose command ships **under the name the bullet guessed**, and nothing else --- so
+stamps went on being listed here after shipping as `edit.stamp.approved` and three siblings,
+because the bullet had guessed `edit.addStamp`. When a bullet leaves this list, check that
+the id it named is the id that shipped.
+
 - The rest of the page operations: insert, split, merge
   <!-- not-built: edit.insertPages edit.splitDocument edit.mergeDocuments -->
-- Cropping by dragging a rectangle. Today the crop is measured for you or reset; a
-  rectangle you draw needs a drag that means something other than selecting text.
-  <!-- not-built: edit.cropToRectangle -->
-- Stamps, the one annotation kind with no way to make it here.
-  <!-- not-built: edit.addStamp -->
 - Editing a comment that came out of a file. Your own marks are yours to change; a note
   somebody else wrote is read-only, because the model knows nothing about it.
   <!-- not-built: edit.editForeignMark -->

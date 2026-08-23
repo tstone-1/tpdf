@@ -106,3 +106,33 @@ export async function pageGeometry(
 ): Promise<CropGeometry> {
   return await invoke<CropGeometry>("page_geometry", { doc, page, crop });
 }
+
+/**
+ * The crop box a rectangle the reader dragged out would produce.
+ *
+ * The inverse of {@link pageGeometry}, and it is asked for rather than computed
+ * for exactly the reason stated above: the rectangle is in the **file's display
+ * space**, a crop box is in the page's own unrotated space, and the turn between
+ * them is the page's `/Rotate`, which this side is never told.
+ *
+ * `rect` is `[left, top, right, bottom]` with y downwards from the file's
+ * displayed corner --- what `Viewer`'s `fileRectOn` produces, and the same space
+ * a mark's quads are sent in. The answer is in the coordinates
+ * {@link contentBox} reports and the model's crop edit accepts, so a crop a reader
+ * dragged and a crop measured from the ink are the same kind of thing.
+ *
+ * `page` is a position in the **baseline file**, like {@link contentBox}'s: this
+ * asks PDFium about the document on disk, which knows nothing about the model's
+ * slots or ids.
+ */
+export async function cropBox(
+  doc: number,
+  page: number,
+  rect: readonly [number, number, number, number],
+): Promise<[number, number, number, number]> {
+  return await invoke<[number, number, number, number]>("page_crop_box", {
+    doc,
+    page,
+    rect,
+  });
+}

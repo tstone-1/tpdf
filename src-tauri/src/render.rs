@@ -395,6 +395,12 @@ pub(crate) enum Job {
         crop: Option<[f32; 4]>,
         reply: Reply<CropGeometry>,
     },
+    CropBox {
+        doc: u32,
+        page: u32,
+        rect: [f32; 4],
+        reply: Reply<[f32; 4]>,
+    },
     Outline {
         doc: u32,
         reply: Reply<Outline>,
@@ -769,6 +775,26 @@ impl RenderService {
         }
     }
 
+    /// Maps a rectangle a reader dragged into a crop box, on a service thread.
+    ///
+    /// The inverse of [`Service::geometry`] and asked for once per gesture, not
+    /// once per frame: the preview a reader watches is drawn in the space they
+    /// are dragging in, and only the committed rectangle needs the page's turn.
+    pub fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4], reply: Reply<[f32; 4]>) {
+        if self
+            .tx
+            .send(Job::CropBox {
+                doc,
+                page,
+                rect,
+                reply,
+            })
+            .is_err()
+        {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     pub fn outline(&self, doc: u32, reply: Reply<Outline>) {
         if self.tx.send(Job::Outline { doc, reply }).is_err() {
             // Render thread is gone; nothing left to reply with.
@@ -949,6 +975,7 @@ pub(crate) trait Engine {
     fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String>;
     fn geometry(&self, doc: u32, page: u32, crop: Option<[f32; 4]>)
         -> Result<CropGeometry, String>;
+    fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
 
@@ -991,6 +1018,12 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             crop,
             reply,
         } => reply(engine.geometry(doc, page, crop)),
+        Job::CropBox {
+            doc,
+            page,
+            rect,
+            reply,
+        } => reply(engine.crop_box(doc, page, rect)),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Properties { doc, reply } => reply(engine.properties(doc)),
@@ -1024,6 +1057,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Search { reply, .. } => reply(Err(error.to_string())),
             Job::Content { reply, .. } => reply(Err(error.to_string())),
             Job::Geometry { reply, .. } => reply(Err(error.to_string())),
+            Job::CropBox { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
             Job::Comments { reply, .. } => reply(Err(error.to_string())),
             Job::Links { reply, .. } => reply(Err(error.to_string())),
@@ -1185,6 +1219,10 @@ impl Engine for InProcess {
         crop: Option<[f32; 4]>,
     ) -> Result<CropGeometry, String> {
         geometry_of(open_slot(&self.docs.borrow(), doc)?, page, crop)
+    }
+
+    fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String> {
+        crop_box_of(open_slot(&self.docs.borrow(), doc)?, page, rect)
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
@@ -1396,20 +1434,7 @@ pub fn geometry_of(
         });
     };
 
-    // Into the file box's own frame, then through the one implementation that
-    // knows the turn. A second rotation table here is the trap `docs/TRAPS.md`
-    // records as two tables disagreeing at every turn but zero.
-    let placed = crate::text::to_device(
-        turns,
-        file_width,
-        file_height,
-        [
-            f64::from(want[0] - file_box[0]),
-            f64::from(want[1] - file_box[1]),
-            f64::from(want[2] - file_box[0]),
-            f64::from(want[3] - file_box[1]),
-        ],
-    );
+    let placed = place_crop(turns, file_width, file_height, file_box, want);
     // The cropped page's *own* report of its size rather than the rectangle's
     // width and height, so that a disagreement between the two is something a
     // check can see instead of something this function defines away.
@@ -1420,6 +1445,102 @@ pub fn geometry_of(
         left: placed[0],
         top: placed[1],
     })
+}
+
+/// Where a crop box sits in the file's display space: `[left, top, right, bottom]`.
+///
+/// Split out of [`geometry_of`], which reads only the corner, so that
+/// [`crop_from_display`] has something to be the inverse *of*. The two carry
+/// separate rotation arms --- [`crate::text::to_device`] and
+/// [`crate::text::from_device`] --- so a round trip through both is a real
+/// comparison rather than a tautology, which is what
+/// `a_dragged_rectangle_maps_back_to_the_crop_that_produced_it` asserts.
+///
+/// `file_box` is the page's own `/CropBox` and is subtracted first: a crop box
+/// is in absolute page coordinates, and the display space starts at the file
+/// box's corner rather than at the origin.
+fn place_crop(
+    turns: u8,
+    file_width: f32,
+    file_height: f32,
+    file_box: [f32; 4],
+    want: [f32; 4],
+) -> [f32; 4] {
+    // Through the one implementation that knows the turn. A second rotation
+    // table here is the trap `docs/TRAPS.md` records as two tables disagreeing
+    // at every turn but zero.
+    crate::text::to_device(
+        turns,
+        file_width,
+        file_height,
+        [
+            f64::from(want[0] - file_box[0]),
+            f64::from(want[1] - file_box[1]),
+            f64::from(want[2] - file_box[0]),
+            f64::from(want[3] - file_box[1]),
+        ],
+    )
+}
+
+/// The crop box that would place a rectangle a reader dragged where they dragged it.
+///
+/// **The inverse of [`place_crop`], and it exists because a crop is the one
+/// thing a reader draws that is not stored in the space they drew it in.** A
+/// mark's `/QuadPoints` and a crop box are both in the page's own unrotated
+/// space, so both need this turn undone --- the difference is that a mark goes
+/// through the model as a *display* rectangle and is turned by `save.rs` at the
+/// moment it is written, whereas a crop box **is** what the model holds. So the
+/// turn has to be undone before the edit is made rather than when it is saved,
+/// and that is why this is asked for rather than computed in `crop.ts`: the
+/// frontend is never told a page's `/Rotate`.
+///
+/// `rect` is `[left, top, right, bottom]` in the **file's** display space, y
+/// downwards from the file's displayed corner --- which is the space every
+/// rectangle in the frontend is in, and what `Viewer.fileRectOn` produces.
+/// Returns `[left, bottom, right, top]` with y upwards, in the page's absolute
+/// coordinates, which is the space `page_content_box` answers in and `page_crop`
+/// accepts.
+///
+/// Clamped to the file's own box, which the drag's own clamp cannot do: the
+/// reader's rectangle is clamped to the *cropped* page they can see, and a crop
+/// already in force means that page is inside the file's. Composing two crops is
+/// legal and this keeps the result a subset rather than trusting the arithmetic
+/// to have stayed inside.
+pub fn crop_from_display(
+    turns: u8,
+    file_width: f32,
+    file_height: f32,
+    file_box: [f32; 4],
+    rect: [f32; 4],
+) -> [f32; 4] {
+    let back = crate::text::from_device(turns, file_width, file_height, rect);
+    let want = [
+        back[0] as f32 + file_box[0],
+        back[1] as f32 + file_box[1],
+        back[2] as f32 + file_box[0],
+        back[3] as f32 + file_box[1],
+    ];
+    [
+        want[0].max(file_box[0]).min(file_box[2]),
+        want[1].max(file_box[1]).min(file_box[3]),
+        want[2].max(file_box[0]).min(file_box[2]),
+        want[3].max(file_box[1]).min(file_box[3]),
+    ]
+}
+
+/// Reads the page a drag landed on, and maps the drag into a crop box.
+///
+/// The document half of [`crop_from_display`]: the turn and the file's own box
+/// are the page's, and everything else is pure.
+pub fn crop_box_of(document: &RawDocument, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String> {
+    let page = document.page(page)?;
+    Ok(crop_from_display(
+        page.quarter_turns(),
+        page.width_pt(),
+        page.height_pt(),
+        page.crop_pt(),
+        rect,
+    ))
 }
 
 /// Extracts one page's characters on the render thread.
@@ -1518,7 +1639,83 @@ pub(crate) fn run_properties(document: &RawDocument) -> Result<Properties, Strin
 
 #[cfg(test)]
 mod tests {
-    use super::Backend;
+    use super::{crop_from_display, place_crop, Backend};
+
+    /// The file's own box, deliberately not at the origin.
+    ///
+    /// A `/CropBox` starting at `(0, 0)` makes the subtraction in
+    /// [`place_crop`] a no-op, so every test using one would pass with that
+    /// term deleted --- which is the "property that holds by construction"
+    /// trap. A4 offset by 12 by 20 is the smallest thing that is not a no-op.
+    const FILE_BOX: [f32; 4] = [12.0, 20.0, 607.0, 862.0];
+    const FILE_W: f32 = 595.0;
+    const FILE_H: f32 = 842.0;
+
+    /// A drag maps back to the crop box that would place it there, at every turn.
+    ///
+    /// **The two directions carry separate rotation tables**, so this is a real
+    /// comparison and not a tautology: [`place_crop`] goes through
+    /// `text::to_device` and [`crop_from_display`] through `text::from_device`,
+    /// and `docs/TRAPS.md` records two such tables disagreeing at every turn but
+    /// zero. All four turns, because a wrong arm for one of them is exactly the
+    /// defect that shipped in the outline resolver and in the print rotation.
+    #[test]
+    fn a_dragged_rectangle_maps_back_to_the_crop_that_produced_it() {
+        let want = [80.0_f32, 140.0, 400.0, 700.0];
+        for turns in 0..4_u8 {
+            let (w, h) = if turns % 2 == 0 {
+                (FILE_W, FILE_H)
+            } else {
+                (FILE_H, FILE_W)
+            };
+            let placed = place_crop(turns, w, h, FILE_BOX, want);
+            let back = crop_from_display(turns, w, h, FILE_BOX, placed);
+            for (index, (got, expected)) in back.iter().zip(want.iter()).enumerate() {
+                assert!(
+                    (got - expected).abs() < 0.01,
+                    "turn {turns} corner {index}: {got} != {expected}",
+                );
+            }
+        }
+    }
+
+    /// A drag off the page edge crops to the edge rather than past it.
+    ///
+    /// The drag's own clamp bounds it to the **cropped** page the reader can
+    /// see, which on an already-cropped page is a strictly smaller rectangle
+    /// than the file's box --- so this bound is the only one that can say the
+    /// result is a subset of the paper. Asserted on both axes and in both
+    /// directions, because a clamp written with one `max` and one `min` passes
+    /// a test that only pushes one way.
+    #[test]
+    fn a_crop_dragged_off_the_paper_stops_at_the_paper() {
+        let past = crop_from_display(
+            0,
+            FILE_W,
+            FILE_H,
+            FILE_BOX,
+            [-500.0, -500.0, 4000.0, 4000.0],
+        );
+        assert_eq!(past, FILE_BOX);
+    }
+
+    /// The file box's corner is carried, so a crop is in absolute coordinates.
+    ///
+    /// Dragging the whole visible page must name the file's own box back, and on
+    /// a box that does not start at the origin that is only true if the offset
+    /// survives the trip.
+    ///
+    /// **This is what the round trip above structurally cannot see.** A round
+    /// trip is a composition, so it is blind to any error the two directions
+    /// make *symmetrically* --- measured, not assumed: deleting the file-box
+    /// term from both `place_crop` and [`crop_from_display`] leaves it green and
+    /// reddens only this. A one-sided deletion reddens both, which is the case
+    /// that misled the first draft of this comment.
+    #[test]
+    fn a_crop_is_measured_from_the_page_and_not_from_the_origin() {
+        let whole = crop_from_display(0, FILE_W, FILE_H, FILE_BOX, [0.0, 0.0, FILE_W, FILE_H]);
+        assert_eq!(whole, FILE_BOX);
+    }
 
     /// The platform list, spelled out a second time on purpose.
     ///

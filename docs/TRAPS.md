@@ -13524,3 +13524,124 @@ The generalisation worth carrying: **which annotations a renderer synthesises fo
 a rule**, and it differs per renderer. Do not infer it from the specification, from the
 annotation being "the kind a reader places", or from what a neighbouring subtype does. Render
 one and count the pixels.
+
+### A round trip is a composition, so it is blind to a symmetric error
+
+`place_crop` maps a crop box onto the screen and `crop_from_display` maps a dragged rectangle
+back to a crop box. They carry separate rotation tables --- `text::to_device` and
+`text::from_device` --- which is exactly why a round trip through both is worth writing: this
+repository already records two such tables disagreeing at every turn but zero, and a round trip
+catches that.
+
+What it cannot catch is the class of error the two directions make **symmetrically**. Measured,
+because the plausible reading is the wrong one:
+
+| mutation | round trip | the corner test |
+|---|---|---|
+| drop the file-box offset in `crop_from_display` only | **red** | red |
+| drop it in `place_crop` only (composes) | red | red |
+| drop it in **both** | **green** | **red** |
+| the wrong quarter turn | **red** | red |
+| half the clamp | green | green (the clamp test) |
+
+So the honest statement is narrow: a round trip pins that the two directions **agree**, and
+nothing about whether they agree on the right thing. The first draft of the comment beside
+these tests claimed the opposite --- that a one-sided deletion would leave the round trip green,
+because "the round trip only sees the composition". That reasoning is right about a *symmetric*
+edit and wrong about a one-sided one, and the two are easy to conflate when writing the comment
+rather than running the mutation.
+
+Two tests are what close it, and neither is a stronger round trip: one asserting a **known
+absolute** (dragging the whole visible page must name the file's own box back, on a `/CropBox`
+that deliberately does not start at the origin), and one asserting a **bound** the composition
+cannot reach, since a round trip also agrees with itself about a rectangle that never left the
+page.
+
+Generalises to every A/B pair in this repository: an encoder and its decoder, a writer and its
+reader, `to_device` and `from_device`, `intoCrop` and `outOfCrop`. Ask what the pair would still
+agree about if both halves were wrong the same way, and pin that separately.
+
+### A fixture whose origin is zero makes an offset term unfalsifiable
+
+The same increment, one line up. `place_crop` subtracts the page's own `/CropBox` corner before
+turning, and `crop_from_display` adds it back, because a crop box is in absolute page
+coordinates while the display space starts at the file box's corner.
+
+On a page whose `/CropBox` is `[0, 0, 595, 842]` --- which is most pages, and the first constant
+anyone reaches for --- that subtraction is a no-op. Every test written against such a fixture
+passes with both terms deleted, and the deletion is invisible in a diff that only touches
+arithmetic.
+
+The fixture here is `[12.0, 20.0, 607.0, 862.0]`: A4 offset by twelve and twenty, chosen for no
+reason except that it is not the origin. It costs nothing and it is the difference between three
+tests that pin an offset and three that are decoration.
+
+The general shape is *"a property that holds by construction cannot test the thing it
+resembles"*, arriving in the least conspicuous place there is: a constant at the top of a test
+module. When a function has an additive term, look at whether the fixture makes it zero --- and
+when it has a multiplicative one, whether the fixture makes it one.
+
+### Adding a third drag made five existing mutations aim at nothing, or at two things
+
+`viewer.ts` had two `PointerDrag`s and gained a crop's. Nothing about the existing two changed;
+one press handler grew an `||`, `armErase` grew a line, and the new drag's `move` and `end` are
+written the way the box's are, because they do the same thing.
+
+That was enough to break **five** mutation anchors in `scripts/mutate_frontend.py`, in both
+directions --- four of them before a line of the status was touched, and the fifth when it was:
+
+| anchor | after | why |
+|---|---|---|
+| `const id = quad ? this.pages.idOf(live.slot) : undefined;` | **2x** | the crop's `end` needs the identical line |
+| `const { x, y } = this.pageAndPoint(at);\nlive.to = { x, y };` | **2x** | the crop's `move` needs the identical pair |
+| `if (this.drawDrag.start(event)) {` | **0x** | the press now offers the crop drag first |
+| `this.drawKind = null;\nthis.inking = null;\nthis.erasing = true;` | **0x** | `armErase` now puts the crop away too |
+| `armed: this.drawnStrokes === null ? this.drawKind : null,` | **0x** | the crop reports through the same field |
+
+None of the five is a drifted intention: every mutation still describes a real defect and every
+test named is still the right test. What moved is only whether the harness can *find* the line,
+and the two failure modes are not the same --- a `0x` anchor is refused loudly twenty minutes
+into a run, and a `2x` anchor would be applied to both occurrences and could then be killed by
+the wrong test, or by none.
+
+`scripts/check_mutation_anchors.py` caught all five in 0.1 s. That gate exists because a killed
+harness leaves its edit in the tree, and this is its **other** value, which was not the reason it
+was written: a feature that duplicates a shape is the ordinary way an anchor becomes ambiguous,
+and nothing about the feature looks like it touched the mutations at all.
+
+The fix for a `2x` is a **wider** anchor rather than a different line: the box's `const id` is
+preceded by its own `boxQuad(...)` call, the crop's is not, so including the line above
+disambiguates without moving what the mutation does. Re-run each re-aimed mutation afterwards ---
+widening an anchor changes what gets replaced, and an anchor that compiles is not an anchor that
+still kills.
+
+### A gate over claimed absences only catches the name the claim guessed
+
+`scripts/gates.py`'s `readme` gate exists because tpdf's public *Not built yet* list named four
+features that had shipped. Each bullet carries an HTML comment naming the command that would
+exist if the feature did, and none of those may be registered. Four failure modes were proved
+by mutation before it was trusted, and it has been green ever since.
+
+It was green while the list said **"Stamps, the one annotation kind with no way to make it
+here"**, one commit after stamps shipped. The bullet named `edit.addStamp`. What shipped is
+`edit.stamp.approved`, `edit.stamp.confidential`, `edit.stamp.draft` and `edit.stamp.final` ---
+four commands, none of them the guessed name, so there was nothing for the gate to contradict.
+The same bullet-and-implementation mismatch was sitting in the crop line at the same moment:
+`edit.cropToRectangle` claimed absent, `edit.cropToDrag` built.
+
+The mechanism is the trap, not the oversight. **A bullet naming a command id is a claim about a
+string somebody has not chosen yet**, written at the moment the feature is deliberately *not*
+built --- which is the moment least likely to predict the name it eventually gets, and a feature
+that ships as a *family* of commands escapes a bullet naming one of anything.
+
+Two things follow. The gate is worth keeping: it is the only mechanical contradiction available
+for prose, and the four features it was written for would still be caught. And the claim it
+supports is narrower than its output reads --- `[OK] every claimed-absent command is absent` is
+a statement about a name, never about a capability.
+
+The generalisation is the one this repository keeps meeting from new directions: a check whose
+subject is a **string chosen later** cannot be a check on the thing the string was going to
+name. The stronger invariant, and the one to build if this happens a third time, runs the other
+way --- every *registered* command must appear in the README's built prose or in an allowlist
+with a reason, which is the shape `viewer_sweep.py` and `viewercheck`'s command classification
+already use, and which a new command cannot escape by being named something unexpected.

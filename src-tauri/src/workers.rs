@@ -1570,6 +1570,10 @@ impl Engine for Workers {
         self.ask(doc, &Request::Geometry { page, crop })
     }
 
+    fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String> {
+        self.ask(doc, &Request::CropBox { page, rect })
+    }
+
     fn outline(&self, doc: u32) -> Result<Outline, String> {
         self.ask(doc, &Request::Outline)
     }

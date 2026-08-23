@@ -300,8 +300,16 @@ export interface ViewerStatus {
    * `ink` never appears here. It arms like the rest and then reports through
    * {@link ViewerStatus.drawing} the moment it is armed, and two lines saying
    * the same thing in different words is worse than one.
+   *
+   * **`"crop"` is not a `MarkKind` and appears here anyway**, because the
+   * complaint above is about being *lost*, not about making a mark: a reader who
+   * armed the crop from the palette and then looked away has the same crosshair
+   * and the same absence of words. Widening this field rather than adding a
+   * second boolean keeps that one line of chrome one line --- two elements coming
+   * and going beside each other is the toolbar-rearrangement trap, and only one
+   * of the two can ever be set.
    */
-  armed: MarkKind | null;
+  armed: MarkKind | "crop" | null;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -465,6 +473,24 @@ export interface ViewerOptions {
    * the *history* changed, which is what a Back and Forward affordance reads.
    */
   onNavigate?: () => void;
+  /**
+   * The reader dragged out the part of a page they want to keep.
+   *
+   * `page` is the page's **id** and `rect` is in the file's display space,
+   * exactly as {@link onDrawn}'s pair is and for the same reason: the slot, the
+   * crop and the two rotations are the viewer's, and a caller undoing them would
+   * be a second copy of `fileRectOn`.
+   *
+   * **It is not a crop box**, and the difference is the whole of why this stops
+   * here. A crop box is in the page's own unrotated space, which is one further
+   * turn away and needs the page's `/Rotate` --- something this side is never
+   * told. The caller asks the backend for that turn. Handing back a display
+   * rectangle keeps this callback the same shape as every other gesture's.
+   *
+   * Optional for {@link onDrawn}'s reason: the window harness drives the drag
+   * and reads the preview without a model behind it.
+   */
+  onCropped?: (page: PageId, rect: [number, number, number, number]) => void;
 }
 
 /**
@@ -694,6 +720,20 @@ const PREVIEW_STROKE = "rgba(80, 140, 255, 0.95)";
  * choosing between.
  */
 const GHOST_FILL = "rgba(80, 140, 255, 0.2)";
+/**
+ * The wash over the part of a page a crop would throw away.
+ *
+ * **Grey and not the preview blue, because it means the opposite thing.** Every
+ * other preview in this file marks what the reader is *making*; this marks what
+ * they are about to lose, and the kept rectangle is the hole in it. A blue scrim
+ * would read as "this is the selection" over exactly the region that is not.
+ *
+ * Dark rather than light so that it works on a white page, which is nearly all
+ * of them, and at a third so the discarded content stays legible --- a reader
+ * adjusting a crop is looking at what falls outside it as much as at what falls
+ * in.
+ */
+const CROP_SCRIM = "rgba(0, 0, 0, 0.33)";
 /**
  * The outline a committed comment's bubble is drawn with.
  *
@@ -968,6 +1008,37 @@ export class Viewer {
      */
     points: Point[];
   } | null = null;
+
+  /**
+   * Whether the crop tool is armed: the next drag on a page crops it.
+   *
+   * A boolean and not a {@link MarkKind}, for {@link erasing}'s reason --- it
+   * makes no mark. Arming it puts any drawing tool away and vice versa, so at
+   * most one of the three is live and no gesture has to ask which meant it.
+   */
+  private cropping = false;
+
+  /**
+   * The rectangle being dragged for a crop, in the slot's laid-out space.
+   *
+   * Its own field rather than a mode inside {@link drawing}, because the two are
+   * committed by different callbacks and clamped against the same page for
+   * different reasons --- and because a preview painted from one field that
+   * sometimes means a mark and sometimes means a crop is the "one predicate
+   * answering two questions" trap wearing a rectangle.
+   */
+  private cropDrawing: { slot: number; from: Point; to: Point } | null = null;
+
+  /**
+   * The crop's drag, which owns its own listener pair.
+   *
+   * A third `PointerDrag` for the reason there are two: each one's `begin`
+   * refuses a press the others want. This one refuses unless the crop tool is
+   * armed, `drawDrag` refuses unless a drawing tool is, and `moveDrag` refuses
+   * unless the press landed on a mark the reader may move. One instance would
+   * have to ask which of the three it was at every callback.
+   */
+  private readonly cropDrag: PointerDrag;
   /**
    * The box's drag, which owns its own listener pair.
    *
@@ -1229,6 +1300,66 @@ export class Viewer {
       },
     });
 
+    // The crop's drag. Deliberately the plainest of the three: it has no
+    // sampling, no per-page refusal beyond the first press, and nothing to keep
+    // between drags --- a crop replaces whatever crop the page had, so there is
+    // no equivalent of ink's several strokes.
+    this.cropDrag = new PointerDrag(root, {
+      begin: (at: DragPoint) => {
+        if (!this.cropping) return false;
+        const { page, x, y } = this.pageAndPoint(at);
+        this.cropDrawing = { slot: page, from: { x, y }, to: { x, y } };
+        this.wake();
+        return true;
+      },
+      move: (at: DragPoint) => {
+        const live = this.cropDrawing;
+        if (!live) return;
+        // The page the drag *started* on, not the one under the pointer. A crop
+        // is a property of one page --- cropping two at once is a different
+        // command --- so a drag that wanders onto the next is clamped to the
+        // first by `boxQuad`, exactly as a box's is.
+        const { x, y } = this.pageAndPoint(at);
+        live.to = { x, y };
+        this.wake();
+      },
+      end: (_at: DragPoint, committed: boolean) => {
+        const live = this.cropDrawing;
+        this.cropDrawing = null;
+        this.wake();
+        if (!committed || !live) {
+          // Cancelled. The tool goes with it, because Escape means "stop" and
+          // `cancelDraw` has already cleared it --- this is the browser's own
+          // `pointercancel` arriving by the same door.
+          this.cropping = false;
+          this.showCursor();
+          return;
+        }
+        // `boxQuad` and not a crop-specific clamp: the two want exactly the
+        // same thing --- a proper rectangle, inside the page, big enough to
+        // have been dragged rather than clicked --- and a second copy would be
+        // a second bound to keep in step with `MIN_BOX`.
+        //
+        // A four-point crop is a legal crop and a useless one, but that is the
+        // reader's rectangle and it is undoable and plainly visible. What the
+        // bound is for is separating a click from a drag, which is the same
+        // separation a mark needs.
+        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));
+        const id = quad ? this.pages.idOf(live.slot) : undefined;
+        if (!quad || id === undefined) {
+          // A click rather than a drag, and the tool stays armed --- `boxQuad`'s
+          // own note says why. Spending it here would make a slipped click cost
+          // the reader the command with nothing on screen to say so.
+          return;
+        }
+        // Spent, and cleared *before* the callback for `onDrawn`'s reason: a
+        // caller that arms something again must not be undone by this line.
+        this.cropping = false;
+        this.showCursor();
+        this.opts.onCropped?.(id, this.fileRectOn(live.slot, quad));
+      },
+    });
+
     this.drawDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
         if (!this.drawKind && !this.erasing) return false;
@@ -1442,6 +1573,7 @@ export class Viewer {
     // have sent the box to is going away with it.
     this.moveDrag.dispose();
     this.drawDrag.dispose();
+    this.cropDrag.dispose();
     this.scroller.destroy();
     this.root.replaceChildren();
   }
@@ -1681,7 +1813,10 @@ export class Viewer {
       // Never while `drawing` is reporting. `drawnStrokes` answers `0` for an
       // armed pen as well as for one mid-drawing, so the two would otherwise
       // both name ink and the window would say it twice.
-      armed: this.drawnStrokes === null ? this.drawKind : null,
+      // The crop first, because the two cannot both be set --- `armCrop` and
+      // `armDraw` each clear the other --- so the order is a statement about
+      // which is checked, not about which wins.
+      armed: this.cropping ? "crop" : this.drawnStrokes === null ? this.drawKind : null,
       search: this.searchStatus(),
     };
     const summary = [
@@ -2452,7 +2587,9 @@ export class Viewer {
         this.drawing ||
         this.inking ||
         this.erasing ||
-        this.doomed
+        this.doomed ||
+        this.cropping ||
+        this.cropDrawing
       ) {
         this.cancelDraw();
       }
@@ -3408,9 +3545,10 @@ export class Viewer {
   armDraw(kind: MarkKind, stamp: StampName | null = null): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
-    // Two tools, one hand. Arming a pen puts the eraser away, so the states
-    // cannot both be set and no gesture has to ask which one meant it.
+    // Two tools, one hand. Arming a pen puts the eraser and the crop away, so
+    // no two of the three can be set and no gesture has to ask which meant it.
     this.erasing = false;
+    this.cropping = false;
     this.drawKind = kind;
     // Held beside the kind rather than in the caller, so that what a drag
     // commits comes from one place. A second copy in `App.svelte` would be a
@@ -3443,11 +3581,39 @@ export class Viewer {
    * of any kind would be a second, much more destructive command wearing the
    * same cursor --- *Remove mark* already exists and says what it does.
    */
+  /**
+   * Arms the crop tool: the next drag on a page keeps what is inside it.
+   *
+   * **One-shot, like every drawing tool and unlike the eraser.** A crop replaces
+   * whatever crop the page had, so a second drag would undo the first rather
+   * than add to it --- there is nothing to accumulate, and a reader who has
+   * cropped their page is not still cropping.
+   *
+   * It arms rather than acting, which is the whole difference from *Crop page to
+   * content*: that one measures the ink and needs no gesture, and this one is
+   * for the case only the reader can decide --- a figure out of a plate, one
+   * column of two, a scan with a hand in the corner.
+   *
+   * Arming closes an open note, for {@link armDraw}'s reason.
+   */
+  armCrop(): void {
+    if (this.markNote.openId !== null) this.closeMark();
+    if (this.popup.openId !== null) this.closeComment();
+    this.drawKind = null;
+    this.drawStamp = null;
+    this.inking = null;
+    this.erasing = false;
+    this.cropping = true;
+    this.showCursor();
+    this.wake();
+  }
+
   armErase(): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
     this.drawKind = null;
     this.inking = null;
+    this.cropping = false;
     this.erasing = true;
     this.showCursor();
     this.wake();
@@ -3518,6 +3684,12 @@ export class Viewer {
    */
   cancelDraw(): void {
     this.drawDrag.cancel();
+    // The crop goes with it. This method is "drop whatever tool is armed" ---
+    // which is what Escape means and what every caller wants --- so a third
+    // named method would only leave Escape asking which of three was live.
+    this.cropDrag.cancel();
+    this.cropping = false;
+    this.cropDrawing = null;
     this.drawKind = null;
     this.drawing = null;
     // Everything drawn goes with it. Escape means "abandon this" and it has
@@ -3635,6 +3807,23 @@ export class Viewer {
     return this.drawKind;
   }
 
+  /** Whether the crop tool is armed. For the status line and the harness. */
+  get cropArmed(): boolean {
+    return this.cropping;
+  }
+
+  /**
+   * The crop being dragged, in the page's laid-out space. For the harness.
+   *
+   * Separate from {@link drawPreview} because the two states are separate, and
+   * a single accessor answering from whichever is set would be a check unable
+   * to tell a crop from a box --- which is exactly the confusion this gesture
+   * could plausibly ship with.
+   */
+  get cropPreview(): { slot: number; from: Point; to: Point } | null {
+    return this.cropDrawing;
+  }
+
   /** The rectangle being dragged, in the page's laid-out space. For the harness. */
   get drawPreview(): { slot: number; from: Point; to: Point } | null {
     return this.drawing;
@@ -3663,11 +3852,12 @@ export class Viewer {
     // link. A stale position cannot survive a disarm, since a disarm is what
     // this branch runs on.
     if (this.drawKind === null) this.armedAt = null;
-    this.surfaceHost.style.cursor = this.drawKind
-      ? "crosshair"
-      : this.overLink
-        ? "pointer"
-        : "";
+    this.surfaceHost.style.cursor =
+      this.drawKind || this.cropping
+        ? "crosshair"
+        : this.overLink
+          ? "pointer"
+          : "";
   }
 
   /**
@@ -3952,7 +4142,7 @@ export class Viewer {
     // drawing a box around a highlighted paragraph must not have the press
     // swallowed by the highlight's note, and one drawing around a
     // cross-reference must not be sent to another page.
-    if (this.drawDrag.start(event)) {
+    if (this.cropDrag.start(event) || this.drawDrag.start(event)) {
       event.preventDefault();
       return;
     }
@@ -4673,6 +4863,7 @@ export class Viewer {
     // reader is looking at the ones they have made while deciding on the next.
     this.paintInkPreview(ctx, dpr);
     this.paintCommentGhost(ctx, dpr);
+    this.paintCropPreview(ctx, dpr);
 
     const live = this.drawing;
     if (!live || this.drawKind === "ink") return;
@@ -4702,6 +4893,66 @@ export class Viewer {
     // Put back, or every later stroke on this context is dashed --- the mark
     // outlines above are painted on the same canvas on the next frame.
     ctx.setLineDash([]);
+  }
+
+  /**
+   * What a crop would keep, and what it would throw away.
+   *
+   * **The scrim is the preview, and the rectangle is the hole in it.** A dashed
+   * outline alone --- which is what every other gesture here gets --- says "a
+   * rectangle is being dragged" and says nothing about which side of it
+   * survives. A crop is the one gesture in the application that *removes*
+   * something the reader can see, so the feedback has to be about the removal:
+   * the four bands outside the rectangle are darkened, and what stays bright is
+   * exactly what the page will become.
+   *
+   * Four `fillRect`s rather than one path with a hole, because the even-odd fill
+   * rule and a reversed sub-path are two more things to get right for a result
+   * a reader cannot tell apart. Clipped to the page and not to the viewport, so
+   * a reader who has scrolled the page's top out of view still sees the scrim
+   * end where the paper does.
+   */
+  private paintCropPreview(ctx: CanvasRenderingContext2D, dpr: number): void {
+    const live = this.cropDrawing;
+    if (!live) return;
+    const origin = this.scroller.pageOrigin(live.slot);
+    const size = this.laidSize(live.slot);
+    // The page's own rectangle on screen, which the scrim is bounded by.
+    const px0 = origin.left * dpr;
+    const py0 = (origin.top - this.scrollTop) * dpr;
+    const px1 = (origin.left + size.width * this.zoom) * dpr;
+    const py1 = (origin.top + size.height * this.zoom - this.scrollTop) * dpr;
+
+    // Clamped exactly as the committed rectangle will be, so the preview and the
+    // result cannot disagree about a drag that left the page --- which is one
+    // flick of the wrist at the edge and the commonest way to draw a crop.
+    const quad = boxQuad(live.from, live.to, size);
+    const kept = quad ?? { left: 0, top: 0, right: 0, bottom: 0 };
+    const kx0 = (origin.left + kept.left * this.zoom) * dpr;
+    const ky0 = (origin.top + kept.top * this.zoom - this.scrollTop) * dpr;
+    const kx1 = (origin.left + kept.right * this.zoom) * dpr;
+    const ky1 = (origin.top + kept.bottom * this.zoom - this.scrollTop) * dpr;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = CROP_SCRIM;
+    // Above and below the full width, then the two sides between them, so no
+    // band overlaps another: the scrim is translucent and a doubled band would
+    // draw a darker cross the reader would read as part of the gesture.
+    ctx.fillRect(px0, py0, px1 - px0, ky0 - py0);
+    ctx.fillRect(px0, ky1, px1 - px0, py1 - ky1);
+    ctx.fillRect(px0, ky0, kx0 - px0, ky1 - ky0);
+    ctx.fillRect(kx1, ky0, px1 - kx1, ky1 - ky0);
+
+    // The outline as well, in the same dashed blue every gesture in progress
+    // uses. It is what says the rectangle is still being dragged rather than
+    // already applied --- the scrim alone would look like a crop that had
+    // happened and left the rest of the paper showing.
+    ctx.strokeStyle = PREVIEW_STROKE;
+    ctx.lineWidth = Math.max(1, OUTLINE_WIDTH * this.zoom * dpr);
+    ctx.setLineDash([6 * dpr, 4 * dpr]);
+    ctx.strokeRect(kx0, ky0, kx1 - kx0, ky1 - ky0);
+    ctx.restore();
   }
 
   /**

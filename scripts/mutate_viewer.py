@@ -877,6 +877,31 @@ MUTATIONS = [
         "viewer",
     ),
     Mutation(
+        # Paint no scrim at all, leaving the dashed outline the box's drag
+        # already gets. A reader dragging a crop then sees a rectangle and no
+        # answer to "which side of it survives" --- which is the whole reason
+        # this preview is not the same as every other one here.
+        "viewer: preview a crop as an outline with no scrim",
+        "src/lib/viewer.ts",
+        "    ctx.fillStyle = CROP_SCRIM;",
+        "    ctx.fillStyle = \"rgba(0, 0, 0, 0)\";",
+        "a crop being dragged darkens the paper it would throw away",
+        runner="viewer",
+    ),
+    Mutation(
+        # Darken the whole page instead of the four bands around the rectangle,
+        # which is the likeliest way to get a scrim wrong and the one a
+        # single-band reading cannot see: "the outside is covered" is satisfied
+        # by a blanket, and a blanket hides the page the reader is aiming with.
+        # Aimed at the inside reading, which is what says the scrim is a hole.
+        "viewer: scrim the whole page rather than around the rectangle",
+        "src/lib/viewer.ts",
+        "    ctx.fillRect(px0, py0, px1 - px0, ky0 - py0);",
+        "    ctx.fillRect(px0, py0, px1 - px0, py1 - py0);",
+        "and leaves the part it would keep clear",
+        runner="viewer",
+    ),
+    Mutation(
         # Fall back to the page's DISPLAYED rectangle for a page with no
         # `/CropBox`, which is the defect this rule replaced: on a rotated page
         # that is a box in the wrong space, and writing it back made a 612x792
