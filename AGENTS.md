@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 451 entries
+The one thing this file does *not* carry in full is the trap list --- 453 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -336,6 +336,18 @@ is what `print_win.rs` does. Two consequences to state rather than discover: Win
 and `Windows.Data.Pdf` reports page sizes in **DIPs at 96 to the inch**, not PDF points, which is
 a trap with an entry because getting it wrong renders every page 1.33x too large and still looks
 fine.
+
+**A third asymmetry closed 2026-08-23, and it had been a missing capability rather than a
+defect: a Windows reader could not print a page range at all.** `PRINTDLGW`'s `nMinPage` and
+`nMaxPage` both came from `..Default::default()` as zero, and Win32 greys out the Pages radio
+and its edit controls whenever those are equal --- so the field was dead while a macOS reader
+typing "2 to 4" into `NSPrintPanel` got two to four. `print::sheets` now turns a range into
+sheet indices and `print_win::spool` prints those rather than `0..count`. The arithmetic is in
+the **portable** module deliberately, so the half that decides which page comes out is tested on
+every platform; nothing on macOS calls it, because AppKit applies its own range to the document
+it was handed. What no check here can reach is the dialog itself --- see the trap of that name,
+and `BUILD.md` beside the probe invocation. Copies are the same shape and are deliberately left
+alone: `nCopies` goes in as 1 and is never read back.
 
 Three things came free with it, and the third is the one worth noticing:
 
@@ -1173,8 +1185,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 451 of them and the full text
-was 93% of this file --- an instruction budget spent on the 450 traps that are not
+titles. Only the titles are here, because there are 453 of them and the full text
+was 93% of this file --- an instruction budget spent on the 452 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1649,6 +1661,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A guard that answers by refusing the whole run turns two blocked mutations into 178 (the diagnosis was exactly right and the outcome exactly wrong; a dated measurement in `BUILD.md` had quietly expired)
 - An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
 - A `[SKIP]` whose stated reason is true can be the check you most need (the reason was true, the conclusion inverted, and the skip is what made it findable)
+- A capability absent through a struct default has no defect to find (`nMinPage == nMaxPage` greyed out the Windows print panel's Pages field; no wrong output, no log line, and the harness that drives the whole print path cannot reach a dialog --- and the flag two lines above states the rule the fix has to close)
 
 ### Fixtures
 - The test fixtures are generated, not committed
@@ -1679,6 +1692,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
 - The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated) (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
 - A refusal a reader could answer, reported on a channel with no answer in it (a correct diagnosis is what made it invisible; grep for a message naming a capability tpdf lacks)
+- A *Not done* note can describe a route with no reader in it (the parameter's half was true and the reader's half never happened; it held the print subsystem's ranked gap for a week and aimed two sessions at the wrong place --- ask whether a reader can get there, which for a command is one grep over the callers)
 
 ## Repository facts
 

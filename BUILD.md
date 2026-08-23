@@ -1881,7 +1881,14 @@ API, so rasterising is what every Windows PDF viewer does; the output is **raste
 where macOS is vector.
 
 `present` opens a modal dialog, so that last step is the one thing no automatic check can
-reach. Everything before it can be, because **"Microsoft Print to PDF" is a real driver with a
+reach --- and since 2026-08-23 there is something behind it worth stating rather than leaving
+implied. The panel's **Pages** field was disabled until then (`nMinPage == nMaxPage`, both zero
+by default) and now offers a range that `print::sheets` and `spool` honour. The arithmetic is
+tested on every platform and the probe proves the spooler sends the named sheets; **whether the
+field is enabled, and whether `PD_PAGENUMS` and `nFromPage`/`nToPage` come back holding what the
+reader typed, is untested by anything here and cannot be.** The first person to print a range on
+Windows is the instrument for that half. `nCopies` is a known second gap of the same shape: it
+goes in as 1 and is never read back. Everything before it can be, because **"Microsoft Print to PDF" is a real driver with a
 real spooler**, and naming an output file in `DOCINFOW.lpszOutput` stops it raising a save
 dialog:
 
@@ -1891,7 +1898,7 @@ cargo run --release --example print-probe -- testdata/rotated.pdf
 cargo run --release --example print-probe -- testdata/vector-multi.pdf "Microsoft Print to PDF"
 ```
 
-Eight checks, and three of them are the ones worth understanding:
+Ten checks, and four of them are the ones worth understanding:
 
 - **Ink, not the page count.** A wrong `BITMAPINFO`, a DC in the wrong mapping mode and a bad
   `StretchDIBits` rectangle all produce the right number of perfectly blank sheets. Proved
@@ -1911,6 +1918,13 @@ Eight checks, and three of them are the ones worth understanding:
   mapped, none named pdfium, and `Windows.Data.Pdf.dll` printed beside it as what *is* mapped.
   Printing parses in the app process on both platforms; what the boundary buys is that the
   parser doing it is not ours.
+- **A page range spools the sheet it names, not the first one.** Added 2026-08-23 with the range
+  itself. A count of one sheet is equally satisfied by the *first* page, which is exactly what a
+  loop ignoring its range produces, so the second check compares the printed ink's extent
+  against the prediction for the sheet that was asked for. It asks for the **last** sheet for
+  the same reason. On a fixture whose first and last sheets measure alike it prints a `[SKIP]`
+  saying so, rather than passing on a comparison that cannot fail; `rotated.pdf` is a fixture
+  where they differ.
 
 Reference run, `testdata/rotated.pdf`, pages 1--2 with a quarter turn:
 

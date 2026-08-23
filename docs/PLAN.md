@@ -5399,12 +5399,24 @@ the entry, including the two mutations that survived on the way: routing through
 writer dropped the view rotation with every test still green, and the test written for *that*
 survived a second mutation because its fixture had no page carrying an edit turn.
 
-**Not done:** an explicit page range still carries no marks and no crops. `Pages::Only` says
-in its own documentation that a range says nothing about edits, and that was a smaller claim
-when nothing else did either. A reader who types "2-4" into the print panel of a marked-up
-document gets those pages without their marks. Closing it means composing a range with a plan
-rather than choosing between them, which is a decision about what the panel means and not only
-a change to the writer.
+~~**Not done:** an explicit page range still carries no marks and no crops.~~ **The half about
+the parameter is true and the half about the reader was never true, corrected 2026-08-23.**
+`Pages::Only` does say a range carries no edits, and `print_document`'s `pages` argument is
+passed by exactly one caller in the tree: `viewercheck.ts`. `App.svelte` sends `pages: null`
+on every print, because tpdf has no page-range field of its own --- `appcommands.ts` says so at
+the command, deliberately. So no reader can reach the code this note was about.
+
+What a reader types goes into the *system* panel, and the system panel filters the job we
+already handed over --- which is `save::print_bytes`'s output, marks and crops included. So
+"2-4 of a marked-up document" has always come out marked up on macOS. **On Windows it could
+not be typed at all**, which is the defect this note hid by looking like the same subject; see
+*A page range, on the platform that could not take one* below.
+
+The note is left struck rather than deleted because of what it cost: it sat in the ranked list
+for a week as the print gap, describing a route with no reader in it, while the real gap was
+one platform's dialog. A *Not done* is a claim about the product and is worth checking against
+the callers the way any other claim is --- `grep -rn "print_document" src/` answers this one in
+one call.
 
 **Printing carries the edits now, and did not before.** That was live from the day page
 rotation landed: a reader who turned page 3 and pressed print got page 3 as it is on disk.
@@ -5472,6 +5484,65 @@ What none of it covers is `App.svelte`, which carries the answer from one to the
 function, `applyPageOrder`, and the four lines around it. The harness runs *instead of* the
 shell --- the same gap every shell action has, and the same one `opencheck.ts` states for the
 file dialog.
+
+#### A page range, on the platform that could not take one --- done 2026-08-23
+
+A reader on macOS could print pages 2 to 4. A reader on Windows could print everything or
+nothing, and the field they would have typed it into was greyed out.
+
+**The cause is a default nobody set.** `PRINTDLGW`'s `nMinPage` and `nMaxPage` arrived from
+`..Default::default()` as zero and zero, and Win32 disables the Pages radio button and both of
+its edit controls whenever those two are equal. Nothing was ignored and nothing was wrong ---
+the capability was simply never offered, through a struct field rather than through a decision,
+and the diff that would show it is the one that does not exist.
+
+**Nothing here could have caught it, and that is the part worth keeping.** `print_probe.rs`
+drives the entire Windows print path to a real spooler --- parse, rasterise, `StartPage`,
+`EndPage`, and a readback of what the driver wrote --- and it reaches the dialog at no point,
+because a dialog needs a person. Every check about printing was about the *job*, and this was
+about the panel. A capability that is absent produces no failures, no wrong output and no log
+line; the only instrument that reports it is a reader trying to use it.
+
+##### The arithmetic is portable, the call site is not
+
+`print::sheets` turns a range into the sheet indices to send, and it lives in the portable
+module on purpose: it is the half that decides which page comes out, so it compiles and is
+tested on macOS, Windows and CI alike. `print_win::spool` prints the indices it is handed
+rather than `0..count`. That split is what makes any of this provable from a machine that
+cannot run it --- three tests and three mutations, none of which needs a printer.
+
+It refuses rather than repairs, which is `print::build`'s existing rule restated: "3 to 99" on
+a four-sheet job is not silently "3 to 4". A clamped range is a plausible answer to a question
+the reader did not ask, and the only place it can be noticed is the paper.
+
+**`sheets` has no macOS caller and that is not dead code.** `NSPrintPanel` applies its own
+range to the document it was handed, so the range never reaches our code there. Written down
+beside the function, because the next reader to sweep for unused code on a Mac will find it.
+
+##### What is proved, and what is not
+
+Proved without paper: the arithmetic (three tests, three mutations, each reddening the test
+named for it), and that `spool` sends the sheets it is given and no others ---
+`print_probe --- a page range spools only the sheets it names`, with a second check that the
+sheet is the one that was asked for rather than the first, since a loop ignoring its range
+prints from the beginning. That check **skips with its reason** on a fixture whose first and
+last sheets measure alike, because a comparison that cannot fail is worse than a missing one.
+
+Not proved, and not glossed: **the dialog itself.** Whether the Pages field is now enabled,
+what `PD_PAGENUMS` comes back as, and whether `nFromPage`/`nToPage` hold what the reader typed
+are all statements about `PrintDlgW`, and no automated check in this repository can reach a
+modal system dialog. What stands behind them is Microsoft's documented behaviour for equal
+bounds and a type-check on the Windows tree. The first person to print a range on Windows is
+the instrument. `BUILD.md` says so beside the invocation rather than leaving it implied.
+
+**Copies are the same shape and are left alone deliberately.** `nCopies` is set to 1 going in
+and the reader's answer is never read back. Whether three copies come out therefore depends on
+the driver: `PD_RETURNDC` hands back a DC built from the dialog's own `DEVMODE`, which carries
+the reader's choice, and many drivers act on it --- so the outcome is unknown rather than known
+to be one, and saying "you get one copy" would be a claim nobody here has measured. That is a second
+unverifiable Windows behaviour, and guessing at it in the same increment would put two
+unmeasured claims where there is now one. Recorded here so it is a known gap rather than a
+discovery.
 
 #### Moving a page --- done 2026-08-17
 
@@ -7954,9 +8025,9 @@ the panel, and the backend; what rests on the type system alone is that `App.sve
 optional. That was a deliberate choice after `onDrawn` shipped inert through an optional
 callback, and it is weaker than a check.
 
-**Not done:** asking a reader for a password, which the increment beside this one made
+~~**Not done:** asking a reader for a password, which the increment beside this one made
 visible --- an encrypted document now says it needs one, and there is still nothing to type it
-into. Also not done: words for a mark over a picture, where the honest answer is that there are
+into.~~ (Done 2026-08-23 --- *Opening a locked document*, §5.) Also not done: words for a mark over a picture, where the honest answer is that there are
 none and the row keeps its fallback; and a leading character PDFium placed nowhere is dropped
 from `readingOrder` altogether, measured while writing a fixture for this, which is a defect in
 the copy path and the accessibility tree rather than in this panel.
@@ -8020,13 +8091,18 @@ five gives the right level, handler, subfilter, field name and coverage, cross-c
 `lopdf` and reads it with `lopdf`, which is the writer-and-its-own-reader shape; these five are
 the ones whose passing says the reading is right rather than self-consistent.
 
-**Not done, and each for its own reason.** There is still no way to type a password, so an
-encrypted document reports that it needs one and stops --- and that is worth less than it
-sounds: of the 40 PDFs in `~/Downloads`, 3 carry `/Encrypt` and qpdf reports an **empty user
-password** on all three, so they are owner-restricted rather than reader-locked and every one
-of them opens without a prompt. A prompt would fire on none of them. XMP metadata is not read,
-only `/Info`. And no `/FileAttachment` annotation is counted as an attachment --- those appear
-in the comments panel, where they belong.
+**Not done, and each for its own reason.** ~~There is still no way to type a password, so an
+encrypted document reports that it needs one and stops~~ (done 2026-08-23) --- and the
+measurement beside that line is worth keeping, because it is what made the feature look small:
+of the 40 PDFs in `~/Downloads`, 3 carry `/Encrypt` and qpdf reports an **empty user password**
+on all three, so they are owner-restricted rather than reader-locked and every one of them
+opens without a prompt. A prompt would fire on none of them. That was right about the prompt
+and it is why the *saving* half mattered more than the asking half: those three are exactly the
+documents that were being reserialised in the clear. XMP metadata is not read, only `/Info` ---
+narrowed rather than closed on 2026-08-21: `xmp.rs` reads the packet for a conformance claim
+and nothing else, so the general metadata this line means is still unread. And no `/FileAttachment`
+annotation is counted as an attachment --- those appear in the comments panel, where they
+belong.
 
 **The certificate was on that list and came off it on 2026-08-21** --- see *Who signed it*
 below. The line read "the *certificate* is not parsed ... a decision about scope rather than

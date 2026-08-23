@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Added: Windows can print a range of pages
+
+The print panel's **Pages** field was greyed out on Windows, so a print was the
+whole document or nothing. It works now: type "2 to 4" and you get pages 2 to 4,
+with your highlights, comments and crops on them, the same as on a Mac.
+
+It was disabled rather than ignored --- two numbers tpdf never filled in, which
+Windows reads as "this document has no range worth typing", so nothing ever went
+wrong and nothing was ever reported. Asking for a range this document does not
+have is refused rather than quietly trimmed to fit.
+
+Whether asking for several copies works is left to the printer driver on
+Windows: tpdf does not produce the extra copies itself.
+
 ### Added: a document behind a password can be opened
 
 Until now an encrypted PDF could be chosen from the file dialog and then not

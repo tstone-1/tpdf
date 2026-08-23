@@ -46,7 +46,8 @@ use windows::Win32::Graphics::Gdi::{
     LOGPIXELSY, SRCCOPY, VERTRES,
 };
 use windows::Win32::UI::Controls::Dialogs::{
-    CommDlgExtendedError, PrintDlgW, PD_ALLPAGES, PD_NOSELECTION, PD_RETURNDC, PRINTDLGW,
+    CommDlgExtendedError, PrintDlgW, PD_ALLPAGES, PD_NOSELECTION, PD_PAGENUMS, PD_RETURNDC,
+    PRINTDLGW,
 };
 
 /// The resolution pages are rasterised at, in dots per inch.
@@ -660,11 +661,23 @@ fn paper_dpi(page: &PdfPage, sheet: (i32, i32), dc_dpi: (i32, i32), device_dpi: 
 /// and no user. That is what `examples/print_probe.rs` does, and it is the only way any
 /// of this is verifiable without paper.
 ///
+/// `sheets` names which of the job's pages to send, zero-based and in the order
+/// they should print --- `crate::print::sheets` builds it from whatever range the
+/// panel came back with. It is a list rather than a pair because the caller has
+/// already validated it: a bad range is refused before a document is opened on
+/// the spooler, rather than half-printed and then abandoned.
+///
 /// # Errors
 ///
-/// The OS parser refusing the job, a page failing to render, or GDI refusing a
-/// page or the document.
-pub fn spool(dc: HDC, bytes: &[u8], title: &str, output: Option<&str>) -> Result<u32, String> {
+/// The OS parser refusing the job, a sheet outside it, a page failing to render,
+/// or GDI refusing a page or the document.
+pub fn spool(
+    dc: HDC,
+    bytes: &[u8],
+    title: &str,
+    output: Option<&str>,
+    sheets: &[u32],
+) -> Result<u32, String> {
     use windows::Win32::Storage::Xps::{EndDoc, EndPage, StartDocW, StartPage, DOCINFOW};
 
     let document = parse(bytes).ok_or("the OS parser could not read the print job")?;
@@ -708,7 +721,17 @@ pub fn spool(dc: HDC, bytes: &[u8], title: &str, output: Option<&str>) -> Result
     #[allow(clippy::cast_precision_loss)]
     let device_dpi = PRINT_DPI.min(dpi_x.min(dpi_y).max(1) as f32);
 
-    for index in 0..count {
+    for &index in sheets {
+        // `print::sheets` has already validated this against a count --- but a
+        // *different* count, from `present`'s own parse of the same bytes a
+        // moment earlier. Two parses are two chances to disagree, and the cost of
+        // asking again is one comparison per sheet against a job that is about to
+        // be rasterised.
+        if index >= count {
+            return Err(format!(
+                "sheet {index} is not in this job, which has {count}"
+            ));
+        }
         let page = document
             .GetPage(index)
             .map_err(|e| format!("page {index}: {e}"))?;
@@ -738,7 +761,10 @@ pub fn spool(dc: HDC, bytes: &[u8], title: &str, output: Option<&str>) -> Result
             std::io::Error::last_os_error()
         ));
     }
-    Ok(count)
+    // What was spooled, not what the job holds: a reader who asked for two sheets
+    // of forty should see two here, and the caller compares this against the
+    // request rather than against the document.
+    Ok(u32::try_from(sheets.len()).unwrap_or(u32::MAX))
 }
 
 /// Opens the system print dialog for these bytes and prints what it returns.
@@ -749,10 +775,47 @@ pub fn spool(dc: HDC, bytes: &[u8], title: &str, output: Option<&str>) -> Result
 /// make that distinction at all (`runOperation` answers one boolean), so this is
 /// the one respect in which the Windows path reports more than the macOS one.
 ///
+/// **The Pages field is offered, and until 2026-08-23 it was not.** `nMinPage`
+/// and `nMaxPage` both defaulted to zero, and Win32 disables the Pages radio and
+/// its two edit controls whenever those are equal --- so a Windows reader could
+/// print the whole document or nothing, while a macOS reader typing "2 to 4" into
+/// `NSPrintPanel` got two to four. That is a capability one platform had and the
+/// other did not, and the parity is worth more than the ten lines it costs.
+///
+/// It is also why the range is honoured rather than the field simply enabled: the
+/// comment on `PD_NOSELECTION` below states the rule --- offering a control and
+/// then ignoring it is worse than not offering it --- and enabling this one
+/// without reading `PD_PAGENUMS` back would break exactly that rule on the
+/// noisier control.
+///
 /// # Errors
 ///
-/// The dialog failing for a reason other than Cancel, or the job failing to spool.
+/// The dialog failing for a reason other than Cancel, a range naming sheets the
+/// job does not have, or the job failing to spool.
 pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, String> {
+    // Parsed here only to bound the dialog, and it is a second parse of bytes
+    // `spool` parses again below. Worth stating rather than hiding: the count has
+    // to be known *before* the panel opens, and `spool` has to own its own
+    // document because `examples/print_probe.rs` calls it with no panel at all.
+    // The job is already in memory and the parse is the OS reader's, so this buys
+    // the range field for one extra read of a document we are about to print.
+    let count = parse(bytes)
+        .and_then(|document| document.PageCount().ok())
+        .unwrap_or(0);
+    // `WORD` fields, so a job longer than 65,535 sheets can only offer a range
+    // over its first 65,535. Nothing else clamps, and this one does because the
+    // alternative is not offering the field at all on a document where a reader
+    // most wants it.
+    //
+    // **A count of zero has to give equal bounds, not `1` and `0`.** That is the
+    // parser having refused the job, and `nMinPage > nMaxPage` is not a struct
+    // Win32 accepts --- the dialog would fail with a `CDERR`, which reads as a
+    // broken print system rather than as the unreadable document `spool` is about
+    // to report accurately.
+    let (first, last) = match u16::try_from(count).unwrap_or(u16::MAX) {
+        0 => (0, 0),
+        last => (1, last),
+    };
     let mut dialog = PRINTDLGW {
         lStructSize: u32::try_from(std::mem::size_of::<PRINTDLGW>())
             .map_err(|_| "PRINTDLGW does not fit a u32")?,
@@ -763,6 +826,13 @@ pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, S
         // radio button and then ignoring it would be worse than not offering it.
         Flags: PD_RETURNDC | PD_ALLPAGES | PD_NOSELECTION,
         nCopies: 1,
+        // Equal bounds disable the field, which is the right answer for a
+        // one-page job and for a document the OS parser could not count --- there
+        // is no range to type over one sheet, and none to validate against zero.
+        nMinPage: first,
+        nMaxPage: last,
+        nFromPage: first,
+        nToPage: last,
         ..Default::default()
     };
 
@@ -780,8 +850,29 @@ pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, S
         return Err(format!("the print dialog failed: CDERR {:#06x}", why.0));
     }
 
+    // What the reader typed, or nothing if they left the field alone --- the
+    // dialog sets `PD_PAGENUMS` only when the Pages radio is the one selected, so
+    // an untouched panel and a disabled field are the same answer here and both
+    // mean every sheet.
+    let range = if dialog.Flags.0 & PD_PAGENUMS.0 == 0 {
+        None
+    } else {
+        Some((u32::from(dialog.nFromPage), u32::from(dialog.nToPage)))
+    };
+
     let dc = HDC(dialog.hDC.0);
-    let result = spool(dc, bytes, title, None);
+    // The DC is owned from here, so the refusal has to be carried rather than
+    // returned: `PD_RETURNDC` hands over a device context the caller must free on
+    // every path, and an early `?` here would leak one for every mistyped range.
+    let result = crate::print::sheets(range, count).and_then(|sheets| {
+        // Only reachable with no range at all, since a validated range names at
+        // least one sheet --- so this is a job with nothing in it, and a message
+        // about a range would be about something the reader never typed.
+        if sheets.is_empty() {
+            return Err("this print job has no pages in it".into());
+        }
+        spool(dc, bytes, title, None, &sheets)
+    });
     // SAFETY: the DC `PD_RETURNDC` handed over; the caller owns and must free it,
     // on every path including the failing one.
     let _ = unsafe { DeleteDC(dc) };

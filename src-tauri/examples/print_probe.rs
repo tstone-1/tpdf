@@ -206,8 +206,14 @@ mod imp {
         let _ = std::fs::remove_file(&out);
 
         let dc = open_printer(printer)?;
-        let spooled =
-            print_win::spool(dc, &bytes, "tpdf print probe", Some(&out.to_string_lossy()));
+        let every: Vec<u32> = (0..u32::try_from(expected).unwrap_or(0)).collect();
+        let spooled = print_win::spool(
+            dc,
+            &bytes,
+            "tpdf print probe",
+            Some(&out.to_string_lossy()),
+            &every,
+        );
         // SAFETY: the DC `open_printer` created, released once, on both paths.
         let _ = unsafe { DeleteDC(dc) };
         let spooled = spooled.map_err(|e| format!("spooling: {e}"))?;
@@ -304,7 +310,113 @@ mod imp {
             );
         }
 
+        range(&bytes, printer, expected, &sent, report)?;
+
         boundary(report);
+
+        let _ = std::fs::remove_file(&out);
+        Ok(())
+    }
+
+    /// The panel's page range, driven through the spooler without the panel.
+    ///
+    /// **This exists because the Pages field was disabled on Windows and nobody
+    /// could see it.** `PRINTDLGW` disables the Pages radio whenever `nMinPage`
+    /// equals `nMaxPage`, both defaulted to zero, and no check anywhere reached
+    /// the dialog --- so the platform where a reader could not print a page range
+    /// was also the platform where nothing said so.
+    ///
+    /// What is verifiable without a person is the half that decides what reaches
+    /// paper: `print::sheets` turns a range into indices and `spool` prints those
+    /// and no others. The dialog itself is not driven here and cannot be --- see
+    /// the note in `BUILD.md` about what that leaves untested.
+    ///
+    /// **The last sheet, not the first**, because a loop that ignores its range
+    /// prints from the beginning: asking for the last one is the request whose
+    /// wrong answer is a *different* page rather than the same one.
+    fn range(
+        bytes: &[u8],
+        printer: &str,
+        expected: usize,
+        sent: &[Page],
+        report: &mut Report,
+    ) -> Result<(), String> {
+        const COUNT: &str = "a page range spools only the sheets it names";
+        const WHICH: &str = "a page range spools the sheet it named, not the first one";
+        if expected < 2 {
+            report.skip(COUNT, "a one-sheet job has no range to take a subset of");
+            report.skip(WHICH, "a one-sheet job has no range to take a subset of");
+            return Ok(());
+        }
+        let last = u32::try_from(expected).unwrap_or(1);
+        let sheets = print::sheets(Some((last, last)), last)
+            .map_err(|e| format!("resolving the range: {e}"))?;
+
+        let out =
+            std::env::temp_dir().join(format!("tpdf-print-probe-range-{}.pdf", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let dc = open_printer(printer)?;
+        let spooled = print_win::spool(
+            dc,
+            bytes,
+            "tpdf print probe (range)",
+            Some(&out.to_string_lossy()),
+            &sheets,
+        );
+        // SAFETY: the DC `open_printer` created, released once, on both paths.
+        let _ = unsafe { DeleteDC(dc) };
+        let spooled = spooled.map_err(|e| format!("spooling the range: {e}"))?;
+
+        let printed = wait_for_file(&out, std::time::Duration::from_secs(30))?;
+        let after =
+            print_win::read(&printed).ok_or("the OS parser could not read the ranged output")?;
+        report.check(
+            COUNT,
+            spooled == 1 && after.pages.len() == 1,
+            &format!(
+                "asked for sheet {last} of {expected}, spooled {spooled}, printed {}",
+                after.pages.len()
+            ),
+        );
+
+        // Which sheet it was. A count of one is equally satisfied by the *first*
+        // page, which is what a loop ignoring its range would produce, so the
+        // reading has to be one only this sheet could give --- and that needs the
+        // two candidates to be measurably unalike. Where they are not, this says
+        // so rather than passing on a comparison that cannot fail.
+        let (first, wanted) = (&sent[0], &sent[expected - 1]);
+        let apart = (first.width_span - wanted.width_span)
+            .abs()
+            .max((first.height_span - wanted.height_span).abs());
+        if after.pages.len() != 1 {
+            report.skip(WHICH, "the ranged job did not come out as one page");
+        } else if apart < 0.05 {
+            report.skip(
+                WHICH,
+                "the first and last sheets of this fixture measure alike, so no reading tells them apart",
+            );
+        } else {
+            let got = printed_pages(&printed, 1)?;
+            let ink = got
+                .first()
+                .ok_or("the ranged output had no page to measure")?;
+            let (w, h) = predict(wanted, ink);
+            let off = ((ink.width_span - w).abs() / w.max(0.01))
+                .max((ink.height_span - h).abs() / h.max(0.01));
+            report.check(
+                WHICH,
+                off < 0.25,
+                &format!(
+                    "printed {:.2}x{:.2}, sheet {last} predicts {w:.2}x{h:.2} (off by {:.0}%), \
+                     sheet 1 measures {:.2}x{:.2}",
+                    ink.width_span,
+                    ink.height_span,
+                    off * 100.0,
+                    first.width_span,
+                    first.height_span,
+                ),
+            );
+        }
 
         let _ = std::fs::remove_file(&out);
         Ok(())
