@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 461 entries
+The one thing this file does *not* carry in full is the trap list --- 465 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1185,8 +1185,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 461 of them and the full text
-was 93% of this file --- an instruction budget spent on the 456 traps that are not
+titles. Only the titles are here, because there are 465 of them and the full text
+was 93% of this file --- an instruction budget spent on the 460 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1433,6 +1433,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A reply parsed as the wrong shape reads as absence, and absence is the reassuring branch
 - A canvas round trip cannot read back what a renderer produced
 - A dependency that refuses your test input makes your own guard look redundant
+- Two constants in different units, and the comment comparing them was false at every zoom a reader uses (the eraser's nib is 4x the press ring at 50% and half it at 400%; nothing could have gone red, and the tell was readable the whole time --- a `_PT` name compared with a value the caller divides by a scale)
 - PDFKit synthesises an appearance for an annotation that has none (so a "does a foreign reader draw it" check cannot test whether the appearance was written — and the claim about Acrobat is still unchecked)
 - A defect that switches off a check's precondition is not caught by that check
 - An "already have it" cache needs an in-flight set, not just the cache
@@ -1694,12 +1695,15 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
+- A mitigation that moved half a path reads exactly like one that moved the path (the append's preparation moved into the worker and its verification did not, so the risk register read as closed while the commonest save still parsed untrusted bytes in the coordinator --- and off the blocking pool; ask what ELSE on the path does the same thing, which no grep for the moved name answers)
 - A checklist step nothing can perform, and a comment promising a mechanism that does not exist (both said the version was reachable in-app; nothing in the application reported one at all)
 - The plan said the words had to be extracted, and the model had never let them be lost (a *Not done* line names the outcome and guesses the method; second time in two increments, both wrong the same way, and one signature settled it)
 - A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
 - The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated) (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
 - A gate over claimed absences only catches the name the claim guessed (green while the README said stamps could not be made, one commit after they shipped as four differently-named commands; the invariant that would hold runs the other way)
 - A refusal a reader could answer, reported on a channel with no answer in it (a correct diagnosis is what made it invisible; grep for a message naming a capability tpdf lacks)
+- An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing (twelve lines arguing against the feature being built, attached to nothing; a scan is two lines of Python and found 26, and it over-reports on purpose --- a section header is the same shape)
+- A comment defending a name can become an argument for the opposite name, with no word of it changing (every clause stayed true and the conclusion inverted; a premise becoming TRUE is the direction that flips it, and there is no disagreement for a reader to stop at)
 - A *Not done* note can describe a route with no reader in it (the parameter's half was true and the reader's half never happened; it held the print subsystem's ranked gap for a week and aimed two sessions at the wrong place --- ask whether a reader can get there, which for a command is one grep over the callers)
 
 ## Repository facts

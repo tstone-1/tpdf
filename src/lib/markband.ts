@@ -195,17 +195,6 @@ export function isText(kind: MarkKind): boolean {
 }
 
 /**
- * Whether a kind is drawn from strokes rather than from its rectangle.
- *
- * `Paint::Path` in `save.rs`. **The first kind whose quad is not its shape**:
- * every other mark is its rectangle, a band inside it, or its edge, and this one
- * is a path that merely happens to fit in one. So an overlay that painted from
- * {@link markBand} would draw a filled box where a reader drew a line --- which
- * is the same class of defect as the underline that looked like a highlight,
- * and the reason that one is worth remembering is that the *file* was right
- * throughout.
- */
-/**
  * Whether a kind is a stamp: a border round its quad and a word across it.
  *
  * **Its own predicate rather than `isOutline` plus a note**, because a stamp
@@ -234,6 +223,23 @@ export const STAMP_CAP = 0.718;
  */
 export const STAMP_INSET = 4;
 
+/**
+ * Whether a kind is drawn from strokes rather than from its rectangle.
+ *
+ * `Paint::Path` in `save.rs`. **The first kind whose quad is not its shape**:
+ * every other mark is its rectangle, a band inside it, or its edge, and this one
+ * is a path that merely happens to fit in one. So an overlay that painted from
+ * {@link markBand} would draw a filled box where a reader drew a line --- which
+ * is the same class of defect as the underline that looked like a highlight,
+ * and the reason that one is worth remembering is that the *file* was right
+ * throughout.
+ *
+ * It is also what the eraser branches on: a drawing loses the strokes the nib
+ * crossed and everything else is taken whole, so *what has parts* is decided
+ * here once rather than in the sweep. This comment had been **orphaned** above
+ * {@link isStamp}'s own since the stamp landed, so `isPath` --- the predicate
+ * two subsystems ask --- carried no documentation at all and nothing said so.
+ */
 export function isPath(kind: MarkKind): boolean {
   return kind === "ink";
 }
@@ -331,11 +337,58 @@ export const OUTLINE_WIDTH = 1.5;
  * the same-sized nib under the cursor.
  *
  * Six rather than two: a stroke is 2.5 pt of line and the pointer is aimed by
- * hand, so the nib has to forgive a near miss. It is deliberately smaller than
- * the ring a press uses to *find* a mark, because taking the wrong stroke is a
- * loss and opening the wrong note is not.
+ * hand, so the nib has to forgive a near miss.
+ *
+ * ⚠ **This said it is "deliberately smaller than the ring a press uses to find
+ * a mark", and that is false at every zoom below 200%.** The two are measured
+ * in different units, so the comparison moves with the zoom and no single
+ * sentence about it can be right. `HIT_SLACK_PT` is 3 **points** and this is 6
+ * **view pixels**, which the sweep divides by the zoom --- so in the page's own
+ * points the nib is 12 pt at 50%, 6 pt at 100%, 4 pt at 150%, and only at 200%
+ * does it become the 3 pt the press ring always is. Measured rather than
+ * reasoned about, and a reader is below 200% almost all the time.
+ *
+ * So the eraser is *more* forgiving than a press, in the direction the old
+ * sentence said it must not be, and the argument it gave --- taking the wrong
+ * mark is a loss and opening the wrong note is not --- still stands. Recorded
+ * rather than changed: whether the nib should be clamped to `HIT_SLACK_PT` in
+ * page points is a question about how the tool feels when a reader is zoomed
+ * out, and an eraser that is hard to hit is the complaint that gets reported.
+ * `docs/PLAN.md` has it as a ranked question.
  */
 export const ERASER_RADIUS = 6;
+
+/**
+ * The sentence the status line shows while the eraser is armed.
+ *
+ * **Here rather than in `App.svelte`, and that is the point of it.** Every
+ * other phrase the status line builds lives in the window's own script, where
+ * no unit test imports it and the window harness --- which builds a `Viewer` of
+ * its own and never renders the application's header --- cannot reach it
+ * either. So the words a reader actually reads had no check of any kind, which
+ * is the shape this repository records as *the window reads the status and the
+ * tests read the viewer*. It sits beside {@link ERASER_RADIUS} because this
+ * file already owns what the nib is; what it says is the same subject.
+ *
+ * Both counts, because a sweep can take three strokes out of a drawing and a
+ * highlight beside it, and "3 strokes" would be a lie about the highlight. A
+ * zero half is left out rather than printed, so the common case --- one kind of
+ * thing --- reads as one clause.
+ */
+export function sweepLabel(taken: { strokes: number; marks: number }): string {
+  const parts: string[] = [];
+  if (taken.strokes > 0) {
+    parts.push(`${taken.strokes} stroke${taken.strokes === 1 ? "" : "s"}`);
+  }
+  if (taken.marks > 0) {
+    parts.push(`${taken.marks} mark${taken.marks === 1 ? "" : "s"}`);
+  }
+  // "a mark", not "a drawing": the nib takes every kind now, and a reader told
+  // to drag across a drawing would not try it on the highlight they want gone.
+  return parts.length === 0
+    ? "Erasing — drag across a mark"
+    : `Erasing: ${parts.join(", ")}`;
+}
 
 /**
  * Whether `at` is within `radius` of the polyline `points`.
@@ -344,7 +397,15 @@ export const ERASER_RADIUS = 6;
  * difference is the whole of it: a fast hand leaves points far apart, so a
  * nearest-point test would let the eraser pass straight through the middle of a
  * long stroke without touching it. Points are in whatever space the caller is
- * working in and `radius` has to match; the viewer hands both in view pixels.
+ * working in and `radius` has to match.
+ *
+ * ⚠ **This said the viewer hands both "in view pixels", and it does not.** It
+ * hands them in the slot's **laid-out points** --- `viewRectOn` applies the crop
+ * and the turns and no zoom at all --- and converts only the radius, with
+ * `ERASER_RADIUS / this.zoom`. That distinction is what made the false
+ * comparison in {@link ERASER_RADIUS}'s own comment easy to write, so it is
+ * corrected here in the same breath: the *constant* is view pixels, the
+ * *comparison* is points.
  *
  * A stroke of one point cannot be drawn --- the model refuses it --- but this
  * still answers for one, as a plain point distance, rather than returning false
@@ -405,6 +466,65 @@ export function strokeSwept(
     if (nearest <= within) return true;
   }
   return false;
+}
+
+/**
+ * Whether the nib travelling from `from` to `to` touches the rectangle `quad`.
+ *
+ * The eraser's rule for every mark that is **not** a drawing --- a highlight, a
+ * box, an ellipse, a text box, a stamp, a note --- where {@link strokeSwept} is
+ * the rule for the one that is. The rectangle, the points and `radius` are in
+ * whatever space the caller works in --- the viewer's is the slot's laid-out
+ * points, with the nib converted into them; see {@link strokeTouches}, which had
+ * that written down the other way round for months.
+ *
+ * **The whole rectangle counts, not the mark's own ink**, and that is the
+ * decision rather than an approximation. A box's ink is its border and an
+ * ellipse's is a curve inside its quad, so a nib passing through the empty
+ * middle of either touches nothing a reader can see --- and taking the mark
+ * anyway is still right, because this is the same rectangle a press already
+ * uses to open that mark's note. One answer to "where is this mark" beats two
+ * that agree today. The alternative is a per-kind geometry here, which would be
+ * a second copy of what {@link markBand} decides for the painter, and a copy of
+ * a distinction is what this file's own header watches for.
+ *
+ * The honest cost: a reader who drags the eraser across the hollow middle of a
+ * large box loses the box.
+ *
+ * `to` is deliberately not tested for containment, and it is not an omission. A
+ * segment lying wholly inside the rectangle has `from` inside it; one that is
+ * partly inside crosses the boundary, which the polyline below answers. So a
+ * second containment test could never be the only thing that fired, and a term
+ * no input can reach is a term no mutation can kill.
+ */
+export function quadSwept(
+  quad: Quad,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  radius: number,
+): boolean {
+  if (
+    from.x >= quad.left &&
+    from.x <= quad.right &&
+    from.y >= quad.top &&
+    from.y <= quad.bottom
+  ) {
+    return true;
+  }
+  // Closed: the last point repeats the first, so the left edge is a segment
+  // like the other three rather than the gap between the ends of an open line.
+  return strokeSwept(
+    [
+      { x: quad.left, y: quad.top },
+      { x: quad.right, y: quad.top },
+      { x: quad.right, y: quad.bottom },
+      { x: quad.left, y: quad.bottom },
+      { x: quad.left, y: quad.top },
+    ],
+    from,
+    to,
+    radius,
+  );
 }
 
 /**

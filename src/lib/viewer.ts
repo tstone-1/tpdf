@@ -64,6 +64,7 @@ import {
   isWash,
   markBand,
   OUTLINE_WIDTH,
+  quadSwept,
   strokeSwept,
 } from "./markband";
 import { PointerDrag, type DragPoint } from "./drag";
@@ -273,18 +274,23 @@ export interface ViewerStatus {
    */
   drawing: number | null;
   /**
-   * Strokes this sweep of the eraser has taken, or `null` when it is not armed.
+   * What this sweep of the eraser has taken, or `null` when it is not armed.
    *
    * {@link drawing}'s twin and for its reason: the eraser is the second tool
    * here that stays armed between gestures, so a reader can be in a state where
-   * the next press rubs out rather than selects. Zero is armed-and-nothing-swept
-   * and is not `null`.
+   * the next press rubs out rather than selects. Both counts at zero means
+   * armed and nothing swept, which is not the same as `null`.
    *
-   * It counts *across* the marks a sweep crossed, because what the reader is
-   * watching is strokes disappearing and they do not care which drawing each
-   * one belonged to.
+   * `strokes` counts *across* the drawings a sweep crossed, because what the
+   * reader is watching is strokes disappearing and they do not care which
+   * drawing each one belonged to. `marks` counts every other kind, which has no
+   * parts and so goes whole.
+   *
+   * **One field holding two numbers rather than two nullable fields**, so that
+   * "armed" is stated once. Two fields would have to be `null` together, and a
+   * pair that must agree is a pair that can disagree.
    */
-  erasing: number | null;
+  erasing: { strokes: number; marks: number } | null;
   /**
    * The one-shot tool waiting for a gesture, or `null` when none is.
    *
@@ -466,6 +472,20 @@ export interface ViewerOptions {
    * almost always one.
    */
   onErased?: (mark: number, remove: number[]) => void;
+  /**
+   * One mark the same sweep took whole: a highlight, a box, a note, a stamp.
+   *
+   * Separate from {@link onErased} because it is a different command --- that
+   * one drops parts of a drawing and this one takes a mark off its page --- and
+   * because a caller given `(mark, [])` would have to know that an empty list
+   * means "all of it". One call per mark, as above.
+   *
+   * Every kind but `ink` arrives here, since nothing else is made of parts. A
+   * drawing the reader rubbed every stroke out of still comes through
+   * {@link onErased}: what happens to an empty drawing is the backend's
+   * decision, and `edits.rs` makes it.
+   */
+  onUnmarked?: (mark: number) => void;
   /**
    * Called after a jump that Back can undo, so a caller can re-enable a button.
    *
@@ -975,7 +995,7 @@ export class Viewer {
   private erasing = false;
 
   /**
-   * Which strokes the sweep in progress has touched, by mark id.
+   * What the sweep in progress has touched: strokes by mark id, and whole marks.
    *
    * **Accumulated across the whole drag and committed on release**, exactly as
    * {@link inking} accumulates strokes and commits on Enter. A reader sweeping
@@ -985,10 +1005,19 @@ export class Viewer {
    *
    * The doomed strokes stop being painted the moment they are added, which is
    * the whole of the preview --- there is no separate ghost to keep in step.
+   *
+   * **Two sets rather than one, because they are two commands.** A drawing
+   * loses strokes and survives, which is `Erase`; every other kind has no part
+   * to lose, so the nib takes the mark, which is `Unannotate`. Folding them
+   * into one map --- an empty stroke set standing for "all of it" --- would put
+   * that distinction in a caller's head instead of in the type, and the caller
+   * that reads it wrong sends the wrong command.
    */
   private doomed: {
     slot: number;
     marks: Map<number, Set<number>>;
+    /** Marks the nib crossed that are taken whole, by id. */
+    whole: Set<number>;
     /** Where the nib was at the last report, so the sweep tests its travel. */
     last: Point;
   } | null = null;
@@ -1370,7 +1399,12 @@ export class Viewer {
           // belongs to one page, so a sweep that wanders onto the next one
           // erases nothing there rather than something the reader could not see
           // themselves aiming at.
-          this.doomed = { slot: page, marks: new Map(), last: { x, y } };
+          this.doomed = {
+            slot: page,
+            marks: new Map(),
+            whole: new Set(),
+            last: { x, y },
+          };
           this.sweep(x, y);
           this.wake();
           return true;
@@ -1441,6 +1475,11 @@ export class Viewer {
             // readable because of it.
             this.opts.onErased?.(mark, [...strokes].sort((a, b) => a - b));
           }
+          // One call per mark, matching the loop above: a sweep that crossed a
+          // highlight and a stamp did two things to the document and the reader
+          // undoes them one at a time, which is what the eraser has always done
+          // to two separate drawings.
+          for (const mark of swept.whole) this.opts.onUnmarked?.(mark);
           return;
         }
         const live = this.drawing;
@@ -1809,7 +1848,7 @@ export class Viewer {
       failed: this.scroller.stats.failed,
       selected: this.selectedCount(),
       drawing: this.drawnStrokes,
-      erasing: this.sweptStrokes,
+      erasing: this.swept,
       // Never while `drawing` is reporting. `drawnStrokes` answers `0` for an
       // armed pen as well as for one mid-drawing, so the two would otherwise
       // both name ink and the window would say it twice.
@@ -1838,7 +1877,12 @@ export class Viewer {
       // line that exists to make a mode visible could be a frame late, or never
       // arrive. Found while adding `armed`, which would have inherited it.
       status.drawing,
-      status.erasing,
+      // Both halves, because either can move on its own: a sweep across a
+      // drawing and a highlight changes one number per mark it crosses, and a
+      // field left out of this string is a field the window is told about only
+      // when something else happens to move.
+      status.erasing?.strokes ?? null,
+      status.erasing?.marks ?? null,
       status.armed,
       status.search.query,
       status.search.options.matchCase,
@@ -3560,28 +3604,6 @@ export class Viewer {
   }
 
   /**
-   * Arms the eraser.
-   *
-   * **It stays armed, and there is no finishing key.** Ink needed Enter because
-   * its strokes pile into one mark and something has to say the drawing is
-   * done; a sweep is complete when the reader lifts the pointer, so each one
-   * commits on its own and the next one can start immediately. Escape puts it
-   * away, which is the same key that abandons a drawing and means the same
-   * thing.
-   *
-   * **It takes whole strokes, not parts of them.** Sweeping across the middle
-   * of a line removes that line, rather than splitting it in two and leaving a
-   * gap --- which is what a pen-and-paper eraser does and is not what this is.
-   * Splitting would mean rewriting `/InkList` into more strokes than the reader
-   * drew and re-deriving the appearance around a hole; it is a real feature and
-   * it is not this one.
-   *
-   * Only drawings are erasable. A sweep over a highlight does nothing, because
-   * a highlight has no strokes to take and making the eraser remove whole marks
-   * of any kind would be a second, much more destructive command wearing the
-   * same cursor --- *Remove mark* already exists and says what it does.
-   */
-  /**
    * Arms the crop tool: the next drag on a page keeps what is inside it.
    *
    * **One-shot, like every drawing tool and unlike the eraser.** A crop replaces
@@ -3608,6 +3630,44 @@ export class Viewer {
     this.wake();
   }
 
+  /**
+   * Arms the eraser: the next drag takes what its nib crosses.
+   *
+   * **It stays armed, and there is no finishing key.** Ink needed Enter because
+   * its strokes pile into one mark and something has to say the drawing is
+   * done; a sweep is complete when the reader lifts the pointer, so each one
+   * commits on its own and the next one can start immediately. Escape puts it
+   * away, which is the same key that abandons a drawing and means the same
+   * thing.
+   *
+   * **From a drawing it takes whole strokes, not parts of them.** Sweeping
+   * across the middle of a line removes that line, rather than splitting it in
+   * two and leaving a gap --- which is what a pen-and-paper eraser does and is
+   * not what this is. Splitting would mean rewriting `/InkList` into more
+   * strokes than the reader drew and re-deriving the appearance around a hole;
+   * it is a real feature and it is not this one.
+   *
+   * ⚠ **And it takes every other kind whole, which this comment used to argue
+   * against.** It read: *"Only drawings are erasable. A sweep over a highlight
+   * does nothing, because a highlight has no strokes to take and making the
+   * eraser remove whole marks of any kind would be a second, much more
+   * destructive command wearing the same cursor --- Remove mark already exists
+   * and says what it does."* Every clause of that is still true except the
+   * conclusion. *Remove mark* does exist and is kept: it takes the mark whose
+   * note is **open**, which is the mark a reader has already named, and it is
+   * chosen from a menu with the pointer somewhere else entirely. What it cannot
+   * be is *aimed* --- and reaching a highlight through it means opening a form
+   * first, on a target as small as a 24-point icon. The nib is the aimed route,
+   * and "much more destructive" is answered by the sweep being one press of
+   * undo away and by the preview showing what is about to go while the pointer
+   * is still down.
+   *
+   * That paragraph had also been **orphaned** since the crop tool landed: a
+   * second doc comment was inserted between it and this method, so it
+   * documented nothing and TypeScript said nothing about it. See the trap.
+   *
+   * Arming closes an open note, for {@link armDraw}'s reason.
+   */
   armErase(): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
@@ -3620,12 +3680,24 @@ export class Viewer {
   }
 
   /**
-   * Adds every drawing's stroke within the nib of `(x, y)` to the sweep.
+   * Adds everything within the nib of `(x, y)` to the sweep.
    *
-   * Reads the strokes through {@link viewStrokesOf}, so the comparison happens
-   * in the space the reader is pointing at rather than the page's own --- which
-   * is what lets {@link ERASER_RADIUS} be a fixed number of screen pixels at
-   * every zoom.
+   * A drawing loses the strokes the nib touched and keeps the rest; every other
+   * kind is taken whole, because it has no parts. Which of the two a mark gets
+   * is {@link isPath}, the same predicate the painter asks --- so what the
+   * eraser treats as strokes is by construction what the reader sees drawn as
+   * strokes.
+   *
+   * Reads both geometries through {@link viewStrokesOf} and {@link viewQuadsOf},
+   * so the comparison happens in the space the reader is pointing at rather than
+   * the page's own --- which is what lets {@link ERASER_RADIUS} be a fixed number
+   * of screen pixels at every zoom.
+   *
+   * **It can only reach the reader's own marks.** `this.marks` is the edit
+   * model's, and a comment annotation the file arrived with is not in it, so a
+   * sweep across somebody else's sticky note does nothing to the document. That
+   * is a property of what this loop is over rather than a check, and it is the
+   * behaviour to keep: the eraser is a tool for taking back your own marks.
    */
   private sweep(x: number, y: number): void {
     const swept = this.doomed;
@@ -3637,12 +3709,20 @@ export class Viewer {
     const from = swept.last;
     const to = { x, y };
     swept.last = to;
+    const nib = ERASER_RADIUS / this.zoom;
     for (const mark of this.marks) {
-      if (!isPath(mark.kind)) continue;
+      if (!isPath(mark.kind)) {
+        const placed = this.viewQuadsOf(mark);
+        if (!placed || placed.slot !== swept.slot) continue;
+        if (placed.quads.some((quad) => quadSwept(quad, from, to, nib))) {
+          swept.whole.add(mark.id);
+        }
+        continue;
+      }
       const inked = this.viewStrokesOf(mark);
       if (!inked || inked.slot !== swept.slot) continue;
       for (const [index, stroke] of inked.strokes.entries()) {
-        if (!strokeSwept(stroke, from, to, ERASER_RADIUS / this.zoom)) continue;
+        if (!strokeSwept(stroke, from, to, nib)) continue;
         let taken = swept.marks.get(mark.id);
         if (!taken) {
           taken = new Set();
@@ -3659,20 +3739,21 @@ export class Viewer {
   }
 
   /**
-   * How many strokes the sweep in progress has taken, or `null` when the eraser
-   * is not armed.
+   * What the sweep in progress has taken, or `null` when the eraser is not
+   * armed.
    *
    * `ViewerStatus.erasing` is this, for the reason {@link drawnStrokes} gives:
    * a second expression computing the same thing is a copy that a mutation can
    * break in one place and not the other.
    *
-   * Zero is armed-and-nothing-swept, which is a mode the window says out loud.
+   * Two zeroes is armed-and-nothing-swept, which is a mode the window says out
+   * loud.
    */
-  get sweptStrokes(): number | null {
+  get swept(): { strokes: number; marks: number } | null {
     if (!this.erasing) return null;
-    let count = 0;
-    for (const strokes of this.doomed?.marks.values() ?? []) count += strokes.size;
-    return count;
+    let strokes = 0;
+    for (const taken of this.doomed?.marks.values() ?? []) strokes += taken.size;
+    return { strokes, marks: this.doomed?.whole.size ?? 0 };
   }
 
   /**
@@ -4660,6 +4741,11 @@ export class Viewer {
     for (const mark of this.marks) {
       const placed = this.viewQuadsOf(mark);
       if (!placed || !visible.has(placed.slot)) continue;
+      // **The preview is the absence**, which is what the stroke loop below
+      // says for a drawing coming apart. A mark the sweep has taken whole is
+      // simply not drawn, so the reader watches it go under the nib and there
+      // is no ghost copy to keep in step with what will be sent.
+      if (this.doomed?.whole.has(mark.id)) continue;
 
       // The kind decides the ink and the blend, exactly as `is_wash` decides
       // both for the saved file. Set per mark rather than once for the loop:

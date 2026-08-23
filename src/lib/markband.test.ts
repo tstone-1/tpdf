@@ -14,8 +14,10 @@ import {
   isWave,
   isWash,
   markBand,
+  quadSwept,
   strokeSwept,
   strokeTouches,
+  sweepLabel,
   type Quad,
 } from "./markband";
 
@@ -441,5 +443,110 @@ describe("what the eraser's nib touches", () => {
     const off = { x: 200, y: 120 };
     expect(strokeTouches(BENT, off, 10)).toBe(false);
     expect(strokeTouches(BENT, off, 25)).toBe(true);
+  });
+});
+
+describe("what the eraser's nib touches that is not a drawing", () => {
+  /** A mark's rectangle, 200 by 100, well away from the origin. */
+  const RECT: Quad = { left: 100, top: 200, right: 300, bottom: 300 };
+
+  /** A press: a sweep of no length, which is what `begin` produces. */
+  function on(x: number, y: number): boolean {
+    return quadSwept(RECT, { x, y }, { x, y }, ERASER_RADIUS);
+  }
+
+  it("takes one the nib is pressed inside", () => {
+    expect(on(200, 250)).toBe(true);
+  });
+
+  it("leaves one the nib is pressed clear of", () => {
+    // The control. Without it a predicate answering `true` for everything would
+    // satisfy every other assertion here.
+    expect(on(200, 500)).toBe(false);
+  });
+
+  it("counts the edge itself, and the nib's width around it", () => {
+    // Inside, on the line, and just outside it: the last is what says the
+    // radius is read at all, and it is measured in the caller's own units.
+    expect(on(100, 250)).toBe(true);
+    expect(on(100 - ERASER_RADIUS + 1, 250)).toBe(true);
+    expect(on(100 - ERASER_RADIUS - 1, 250)).toBe(false);
+  });
+
+  it("does not reach the corner diagonally further than the nib", () => {
+    // A point off the corner at (100, 200) by the radius in *both* directions
+    // is further away than the radius, because distance is not the larger of
+    // the two offsets. A rule written as two independent inequalities -- the
+    // obvious way to inflate a rectangle -- would take this one.
+    const off = ERASER_RADIUS - 1;
+    expect(on(100 - off, 200 - off)).toBe(false);
+    expect(Math.hypot(off, off)).toBeGreaterThan(ERASER_RADIUS);
+  });
+
+  it("takes one the nib crosses without stopping inside it", () => {
+    // Right through and out the other side, with neither end contained. This
+    // is the case the containment test cannot answer and the boundary can.
+    expect(
+      quadSwept(RECT, { x: 0, y: 250 }, { x: 600, y: 250 }, ERASER_RADIUS),
+    ).toBe(true);
+  });
+
+  it("takes one the nib travels into", () => {
+    // `from` outside and `to` inside, which is why `to` needs no containment
+    // test of its own: the segment crossed an edge to get there.
+    expect(
+      quadSwept(RECT, { x: 0, y: 250 }, { x: 200, y: 250 }, ERASER_RADIUS),
+    ).toBe(true);
+  });
+
+  it("leaves one a long sweep passes clear of", () => {
+    // The travel's own control: a segment as long as the one above, missing.
+    expect(
+      quadSwept(RECT, { x: 0, y: 500 }, { x: 600, y: 500 }, ERASER_RADIUS),
+    ).toBe(false);
+  });
+
+  it("answers for a rectangle of no size rather than refusing it", () => {
+    // A geometry helper wrong on a degenerate case is one somebody will call
+    // from somewhere else. Nothing in the application sends one -- a mark's
+    // quad has area -- so this is about the helper, not about the eraser.
+    const point: Quad = { left: 100, top: 200, right: 100, bottom: 200 };
+    expect(quadSwept(point, { x: 102, y: 200 }, { x: 102, y: 200 }, ERASER_RADIUS)).toBe(
+      true,
+    );
+    expect(quadSwept(point, { x: 130, y: 200 }, { x: 130, y: 200 }, ERASER_RADIUS)).toBe(
+      false,
+    );
+  });
+});
+
+describe("what the status line says while the eraser is armed", () => {
+  it("names the gesture when nothing has been taken", () => {
+    // "a mark", not "a drawing": the nib takes every kind, and a reader told to
+    // drag across a drawing would not try it on the highlight they want gone.
+    expect(sweepLabel({ strokes: 0, marks: 0 })).toBe("Erasing — drag across a mark");
+  });
+
+  it("counts one of each thing in the singular", () => {
+    expect(sweepLabel({ strokes: 1, marks: 0 })).toBe("Erasing: 1 stroke");
+    expect(sweepLabel({ strokes: 0, marks: 1 })).toBe("Erasing: 1 mark");
+  });
+
+  it("counts several in the plural", () => {
+    expect(sweepLabel({ strokes: 4, marks: 0 })).toBe("Erasing: 4 strokes");
+    expect(sweepLabel({ strokes: 0, marks: 3 })).toBe("Erasing: 3 marks");
+  });
+
+  it("says both when a sweep took both, and neither when it took neither", () => {
+    // The reason there are two numbers: "3 strokes" would be a lie about the
+    // highlight that went with them.
+    expect(sweepLabel({ strokes: 3, marks: 2 })).toBe("Erasing: 3 strokes, 2 marks");
+  });
+
+  it("leaves out the half that is zero", () => {
+    // Not "1 stroke, 0 marks". The common case is one kind of thing, and a
+    // clause reporting nothing is a clause a reader has to read past.
+    expect(sweepLabel({ strokes: 1, marks: 0 })).not.toContain("mark");
+    expect(sweepLabel({ strokes: 0, marks: 1 })).not.toContain("stroke");
   });
 });

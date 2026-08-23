@@ -7407,9 +7407,10 @@ went red on *"every registered command is classified"* with
 `unclassified [edit.erase]` --- the check written for exactly that, firing on a
 command that was not meant to be left out.
 
-**Not done:** splitting a stroke where the nib crosses it; an eraser for marks
-that are not drawings, which is `Unannotate` and already has a command; and a
-nib whose size the reader can choose.
+**Not done:** splitting a stroke where the nib crosses it; ~~an eraser for marks
+that are not drawings, which is `Unannotate` and already has a command~~ (done
+2026-08-23 --- see *An eraser that takes any mark* below); and a nib whose size
+the reader can choose.
 
 
 #### A colour a reader can choose --- done 2026-08-20
@@ -8809,6 +8810,194 @@ rather than a new mechanism; and adjusting a crop by dragging its edge, which
 needs a hit-test on the crop's handles and a second drag mode --- re-dragging the
 whole rectangle is what a reader does today, and it is one gesture rather than
 two.
+
+#### An eraser that takes any mark --- done 2026-08-23
+
+The eraser has existed since ink did, and it took **strokes out of drawings and
+nothing else**. Everything else on the page --- a highlight, a box, an ellipse, a
+text box, a stamp, a comment the reader placed --- could be taken off by exactly
+one route: press it, wait for its note box, choose *Remove mark*. That route
+works and is still there, but it asks a reader to open a form in order to delete
+something, and it demands a press accurate enough to land on a 24-point icon.
+
+So the gap was never a missing command. `Command::Unannotate` has been in
+`docmodel.rs` since marks existed, `annot_remove` is registered, `edits.unmark`
+calls it and the marks panel's own Remove button already uses it. What was
+missing was a **gesture** that reaches it.
+
+##### One tool, two commands, and the split is by what a mark is made of
+
+A drawing has parts, so the nib takes the parts it crossed and the drawing
+survives: that is `Erase`, and it is what the eraser already did. Nothing else
+has parts. A highlight is a wash over words; half a highlight is not a smaller
+highlight, it is a different one over different words. So for every other kind
+the nib takes the mark, which is `Unannotate`.
+
+Two callbacks rather than one, and that is the decision worth recording. The
+tempting shape is `onErased(mark, [])`, with an empty stroke list standing for
+*all of it* --- one callback, no new wiring. It is wrong because the two are
+different commands with different undo entries, and a caller that has to know
+what an empty list means is a caller that can get it wrong. `onUnmarked` says
+which command it is in its name.
+
+##### The nib measures against the whole rectangle, and that is a choice
+
+`quadSwept` asks whether the nib's travel comes within `ERASER_RADIUS` of
+the mark's rectangle, counting inside as touching. It does **not** ask whether
+the nib touched the mark's own ink.
+
+The alternative was tried on paper and refused. A box's ink is its border, an
+ellipse's is a curve inside its quad, a squiggle's is a wave along the bottom of
+its band, and a text box's is the reader's glyphs --- so an ink-accurate eraser
+needs a second copy of every geometry rule `markband.ts` already states for the
+painter, and a copy of a distinction is what this repository watches for. It
+would also be worse to use: an empty box would only erase along a 1.5-point
+border.
+
+The rectangle is also **the same rectangle a press already uses** to open that
+mark's note, through the same `viewQuadsOf`. So "where is this mark" has one
+answer in the application rather than two that agree today.
+
+The honest cost, stated in the code: a reader who sweeps across the hollow middle
+of a large box loses the box.
+
+##### What the geometry reuses, and the one term deliberately not written
+
+`quadSwept` is built on `strokeSwept`, by treating the rectangle as a closed
+four-segment polyline. That inherits the segment-crossing test the ink eraser
+needed --- a nib that goes right through a mark and out the other side touches no
+corner and no edge endpoint --- for nothing.
+
+Containment is tested on `from` alone. A segment lying wholly inside the
+rectangle has `from` inside it; one that is partly inside crossed an edge, which
+the polyline answers. So a containment test on `to` could never be the only
+thing that fired, which makes it a term no input can reach and no mutation can
+kill. Both directions have a test anyway --- a sweep out of a rectangle and a
+sweep into one --- and a control proved they take different branches: deleting
+the containment test reddens three, deleting the polyline reddens six, and the
+sets do not overlap.
+
+##### The status line got a second number, and its words moved out of the window
+
+`ViewerStatus.erasing` was `number | null` --- strokes taken, or not armed. A
+sweep that takes three strokes and a highlight cannot be reported by one number
+without lying about one of them, so it is now
+`{ strokes: number; marks: number } | null`. **One field holding two numbers
+rather than two nullable fields**: two would have to be `null` together, and a
+pair that must agree is a pair that can disagree.
+
+The sentence itself moved to `markband.ts` as `sweepLabel`, and that is not
+tidying. Every phrase the status line builds lived in `App.svelte`, where no unit
+test imports it and the window harness --- which builds a `Viewer` of its own and
+never renders the application's header --- cannot reach it either. So the words a
+reader actually reads had no check of any kind. That is the shape this repository
+records as *the window reads the status and the tests read the viewer*, and the
+repair is the same one: put the expression where something can call it.
+
+##### What a title flip looks like when the comment argued the other way
+
+The command was *Erase drawing...*, and `appcommands.ts` carried an argument for
+that name: *a bare "Erase" beside "Remove mark" would read as a second, blunter
+way to delete anything*. Correct while the nib took strokes. It now **is** the
+blunter way to delete anything, so the premise expired and the title is *Erase
+marks...* --- plural, against *Remove mark* singular, which is the difference
+between a tool you aim and a command that acts on the one mark you have named.
+The old argument is kept in the comment rather than deleted, because a reader who
+sees the new name should be able to find out why the old one went.
+
+##### Evidence
+
+- **Ten new mutations of the frontend**, each caught by the test named for it:
+  the kind branch, the containment test, the polyline, its closing point, the
+  nib's width, the geometry test itself, the commit, the live count, and both
+  halves of the status sentence. One existing mutation was re-aimed and re-run
+  --- the summary-string one, whose anchor the second count moved --- and one was
+  rewritten, since *let the eraser take marks that are not drawings* had become
+  the name of the feature rather than of a defect.
+- **Two mutations of the window harness, both caught**: painting a mark the
+  sweep took, and painting **no** mark while a sweep is live. The second is what
+  says the wash beside it is a control rather than a formality --- an overlay
+  that cleared the page would satisfy the first perfectly.
+- **Twenty-two unit tests**: thirteen over `quadSwept` and `sweepLabel` in
+  `markband.test.ts`, and nine gestures in `viewerdraw.test.ts`, including a
+  fixture carrying a drawing and a highlight so that one sweep has to split
+  between the two callbacks.
+- **Two window checks on the real overlay**: a wash the nib crossed stops being
+  painted, and the wash beside it does not.
+
+##### A comment that was false, found by reading it against a second constant
+
+`ERASER_RADIUS`'s own doc comment said the nib is *"deliberately smaller than
+the ring a press uses to find a mark, because taking the wrong stroke is a loss
+and opening the wrong note is not"*. It is not, and the reason is that the two
+constants are in **different units**: `HIT_SLACK_PT` is 3 **points** and
+`ERASER_RADIUS` is 6 **view pixels**, which the sweep divides by the zoom. In
+the page's own points the nib is therefore 12 pt at 50%, 6 pt at 100%, 4 pt at
+150%, and 3 pt --- equal at last --- only at 200%. Measured, not reasoned about.
+
+So the eraser has always been *more* forgiving than a press at any zoom a reader
+normally uses, which is the direction the sentence said it must not be. That
+mattered less while a sweep cost one stroke of a drawing; it now costs a whole
+highlight, so the argument the comment made is stronger than when it was
+written and the code has never obeyed it.
+
+**The same file was wrong about the units twice more.** `strokeTouches` and
+`strokeSwept` each said *"the viewer hands both in view pixels"*, and it hands
+them in the slot's **laid-out points** --- `viewRectOn` applies the crop and both
+turns and no zoom at all --- converting only the radius. Three comments in one
+file agreeing on a wrong unit is the state in which a sentence comparing 6 with
+3 reads as obviously true. All three are corrected.
+
+**The comment is corrected and the constant is not**, because they are different
+kinds of thing: the sentence was wrong and a wrong sentence gets fixed, while
+what the nib should be is a question about how the tool feels when a reader is
+zoomed out. Clamping the page-space nib to `HIT_SLACK_PT` would make it obey the
+argument exactly, at the cost of an eraser that gets harder to hit the further
+out you are --- and an eraser you cannot hit is the complaint that actually gets
+reported, against a sweep that is one press of undo away. **Ranked as a question
+rather than taken**, and worth deciding before the nib becomes adjustable, since
+a reader-chosen size would have to pick one of the two units.
+
+**Not done:** a nib whose size the reader can choose, which is the same open
+question the ink eraser left; an undo that puts back a whole sweep rather than
+one mark per press, which is the same granularity the ink eraser has always had
+and would need a journal command that groups; and reaching a comment the file
+arrived with, which is deliberate --- the model has no command that names one,
+which is the same reason editing one is still on the *Not built yet* list.
+
+#### Ranked: the append's read-back parses in the coordinator, on the async runtime
+
+Found by step 6 of the release checklist while cutting `26.8.8`, by reading
+`docs/THREAT-MODEL.md`'s residual risk 17 against the code it describes.
+
+The append's **preparation** moved into the worker on 2026-08-22, which is what
+that entry records. Its **verification** did not: `save::append_in_place`
+re-reads the whole file it has written and parses it with `lopdf` in the app
+process, because the check that the cross-reference chained needs a parser and
+the answer is a page count. The previous revision of that file is the document
+the reader opened --- attacker bytes, verbatim --- so every append parses
+untrusted input in the coordinator, which is the case risk 17 reads as having
+been closed.
+
+Two things to do, and they are separable:
+
+1. **Put it under `spawn_blocking`**, which every other coordinator-side parse
+   in `lib.rs` already is. The `match` producing `landed` runs on the async
+   runtime, so a document engineered to make the read-back spin stalls the
+   runtime rather than a blocking pool. This is the cheap half and the one with
+   a clear precedent; the obstacle is ownership, since `append_in_place` takes
+   `&Appended` and a `&Path` out of state the enclosing function borrows.
+2. **Move the read-back into the worker**, which is the version that closes the
+   entry rather than narrowing it. It is the same shape the preparation took ---
+   the answer is a page count and a verdict, which fits in a reply --- but the
+   worker would have to be handed the *written* file, and it holds a mapping of
+   the file as it was. That is the output-channel problem risk 17 names for the
+   rewriting save, arriving one path early.
+
+Not done on the day it was found, deliberately: rethreading the save path with
+no check that can observe the difference is the riskier of the two actions
+immediately before a tag. The document says what is true now, which is the
+standard that entry sets for itself.
 
 ### Phase 3 --- Redaction
 

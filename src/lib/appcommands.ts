@@ -235,9 +235,15 @@ export interface AppActions {
    * Arms the eraser.
    *
    * {@link draw}'s counterpart, and the third command here that arms rather
-   * than acts. It takes whole strokes out of freehand drawings; a sweep over a
-   * highlight does nothing, and removing a whole mark of any kind is
-   * {@link removeMark}, which says so in its name.
+   * than acts. It takes strokes out of a drawing and takes every other kind
+   * whole, because nothing else has parts to lose.
+   *
+   * **Not the same command as {@link removeMark}, and the difference is how a
+   * mark is named rather than what happens to it.** That one takes the mark
+   * whose note is open --- the one the reader has already pointed at and named
+   * --- and is chosen from a menu with the pointer somewhere else entirely.
+   * This one is aimed: it takes what the nib crosses, which is the only way to
+   * reach a highlight without opening its box first.
    */
   erase(): void;
   /** Takes the mark whose note is open off the page it is on. */
@@ -665,13 +671,24 @@ export function registerAppCommands(
       // Beside the pen, because it is the other tool that stays armed and a
       // reader who has just drawn something is the reader who wants it.
       //
-      // "Erase drawing", not "Erase": it takes whole strokes out of freehand
-      // drawings and nothing else, and a bare "Erase" beside "Remove mark"
-      // would read as a second, blunter way to delete anything. The ellipsis
-      // matches the two tools above it and says the same thing they do --- the
-      // command arms something rather than acting now.
+      // **"Erase marks", not "Erase drawing", since 2026-08-23**, and the
+      // comment here used to argue the other way: *a bare "Erase" beside
+      // "Remove mark" would read as a second, blunter way to delete anything*.
+      // That was right while the nib took strokes out of drawings and nothing
+      // else. It now takes any mark it crosses, so it *is* the blunter way to
+      // delete anything --- and a title still promising drawings would send a
+      // reader looking for another command to take a highlight off.
+      //
+      // The plural is what separates it from "Remove mark", which is singular
+      // and takes the one mark a reader has named in its note box. This one is
+      // aimed with the hand and takes what it touches. "Marks" rather than
+      // "annotations" for `nameOf`'s reason: it is the word the panel, the note
+      // box and the menu already use for the reader's own.
+      //
+      // The ellipsis matches the two tools above it and says the same thing
+      // they do --- the command arms something rather than acting now.
       id: "edit.erase",
-      title: "Erase drawing...",
+      title: "Erase marks...",
       enabled: withDocument,
       run: () => actions.erase(),
     },

@@ -7,11 +7,12 @@ SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for 
 **Status: Phase 0 closed, Phase 1 in progress, Phase 2 begun. First release: `26.8.0`.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
-Windows. **It edits**: pages can be turned, moved, deleted, cropped and extracted; text can
-be highlighted, underlined, struck out or squiggled; and you can draw on a page, put a box,
-an ellipse, a text box or a comment on it, move what you put there, and save --- over the
-open file or to a copy. What is *not* built is the list further down, and redaction and
-in-place text editing are the two that matter.
+Windows, including documents behind a password. **It edits**: pages can be turned, moved,
+deleted, cropped and extracted; text can be highlighted, underlined, struck out or
+squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
+comment on it, move what you put there, erase any of it, and save --- over the open file or
+to a copy. What is *not* built is the list further down, and redaction and in-place text
+editing are the two that matter.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
 macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
 SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the
@@ -29,6 +30,9 @@ project conventions.
 - Text selection and copy, find-in-document, an outline sidebar, a page-thumbnail strip,
   and a text layer for screen readers.
 - Session restore: the document, page, zoom and rotation you left on.
+- **A document behind a password opens**: tpdf asks for one and retries, and holds it for
+  as long as the document is open, because every worker that renders it meets the same
+  encryption.
 - **What a document says about itself**: its title and producer, whether it is encrypted
   and what that permits, what conformance it claims, and who signed it --- the signer's
   certificate, its issuer and its validity, read out of the signature itself. Reading only:
@@ -67,10 +71,17 @@ measured the Windows render constants come out 1.5–1.8x worse.
   it is. Each mark takes a note, and **Next mark** / **Previous mark** walk them from the
   keyboard: the pointer is not the only way to reach one.
 - **Draw on a page** --- freehand ink, a box, an ellipse, a text box, or a comment placed
-  where you press --- with an eraser for the ones you change your mind about. Each is a
-  real annotation of its own kind rather than ink pretending to be one, so another reader
-  gets a comment they can open and a shape they can select. What you have drawn can be
-  dragged to somewhere else on its page afterwards.
+  where you press. Each is a real annotation of its own kind rather than ink pretending to
+  be one, so another reader gets a comment they can open and a shape they can select. What
+  you have drawn can be dragged to somewhere else on its page afterwards.
+- **Stamp a document** APPROVED, CONFIDENTIAL, DRAFT or FINAL, dragged out like a box. The
+  word is set to fill the rectangle you dragged, and it is written as a real `/Stamp`
+  annotation carrying the standard name as well as the picture --- so another reader gets a
+  stamp rather than a drawing that looks like one.
+- **Erase what you marked** by dragging across it. The nib takes strokes out of a drawing
+  and leaves the rest of it; every other kind has no parts to lose, so it goes whole ---
+  which is the only way to take a highlight off without opening its note first. It reaches
+  your own marks and nothing else: a comment the file arrived with is never touched.
 - **Crop a page**, either to what is on it or to a rectangle you drag out. Cropping to
   content measures where the ink actually is rather than reading the page's objects, so it
   works on a scan --- where every object union is the whole sheet --- as well as on a page of
@@ -84,8 +95,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   file is untouched. It refuses a reversed range rather than quietly correcting it.
 - **Save**, over the open file or to a copy. A save is refused outright if the file changed
   on disk since you opened it --- length, modification time and a digest of every byte,
-  taken at open and checked again before anything is written. An encrypted source is
-  refused rather than silently saved without its encryption. Deleting a page drops the
+  taken at open and checked again before anything is written. Deleting a page drops the
   document's bookmarks, because their destinations name pages that are no longer in the
   file --- repairing them one by one is its own piece of work. Moving a page keeps them,
   because a bookmark names a page rather than a position.
@@ -97,6 +107,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   The append has no such instant and does not claim one: it writes the body, waits for it
   to reach the disk, then writes the trailer that makes it the current revision, and cuts
   the file back to what it was if anything goes wrong.
+
+  **That split is what an encrypted document can and cannot have.** Marks are appended, and
+  each appended object is encrypted with the key the document was opened under, so the file
+  stays locked and the same password still opens it. A rewrite is refused outright rather
+  than written out in the clear --- so on an encrypted document you can add marks and save,
+  and a deletion, a move, a turn or a crop is declined and says so.
 
 ## Not built yet
 

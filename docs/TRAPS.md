@@ -13645,3 +13645,169 @@ name. The stronger invariant, and the one to build if this happens a third time,
 way --- every *registered* command must appear in the README's built prose or in an allowlist
 with a reason, which is the shape `viewer_sweep.py` and `viewercheck`'s command classification
 already use, and which a new command cannot escape by being named something unexpected.
+
+### Two constants in different units, and the comment comparing them was false at every zoom a reader uses
+
+`ERASER_RADIUS` in `markband.ts` carried an argument for its own value: the nib
+is *"deliberately smaller than the ring a press uses to find a mark, because
+taking the wrong stroke is a loss and opening the wrong note is not"*. A clear
+reason, naming the other constant, and wrong.
+
+The two are not in the same space. `HIT_SLACK_PT` is **3 points** --- its own
+comment says points on purpose, so the slack is the same physical size at every
+zoom. `ERASER_RADIUS` is **6 view pixels**, and the sweep converts it with
+`ERASER_RADIUS / this.zoom` before comparing. So the relationship the sentence
+asserts is not a relationship between two numbers at all; it is a function of
+the zoom, and it changes sign inside the range a reader uses:
+
+| zoom | nib, in page points | press ring | which is wider |
+|------|--------------------|------------|----------------|
+| 50%  | 12.00 | 3 | nib, by 4x |
+| 100% | 6.00  | 3 | nib, by 2x |
+| 150% | 4.00  | 3 | nib |
+| 200% | 3.00  | 3 | equal |
+| 400% | 1.50  | 3 | press ring |
+
+Measured by printing both at five zooms rather than by arithmetic on paper,
+which is the only reason the 200% crossover is a number here instead of "about
+double".
+
+**The general shape: a comment comparing two constants is a claim, and it is
+checkable exactly when they share a unit.** These did not, and nothing in the
+tree could have gone red --- there is no assertion relating them, and there
+cannot usefully be one, because whichever zoom you pinned it at would be an
+arbitrary choice dressed as an invariant. The tell is available by reading
+alone: **two constants whose names end in different units** (`_PT` against a
+value the caller divides by a scale) being compared in prose.
+
+It had been false since the eraser was written and cost nothing while a sweep
+took one stroke of a drawing. It was found while extending the same nib to take
+**whole marks**, which is when the argument the comment makes became worth
+checking --- so the second lesson is that a stale justification surfaces when the
+stakes it reasons about change, and that is the moment to re-read it rather than
+inherit it.
+
+The comment is corrected and the constant is not: the sentence was wrong, and
+what the nib *should* be is a question about how the tool feels. See
+`docs/PLAN.md`.
+
+**And the same file was wrong about the units twice more, which is why the false
+comparison was easy to write.** `strokeTouches` and `strokeSwept` both said
+*"the viewer hands both in view pixels"*. It does not: `viewRectOn` applies the
+crop and the two turns and no zoom at all, so every point handed to those
+helpers is in the slot's **laid-out points**, and the only thing converted is
+the radius. So the constant is view pixels, the comparison is points, and three
+comments in one file said otherwise --- which is exactly the state in which
+somebody writes a sentence comparing 6 with 3 and it reads as obviously true.
+Found by re-reading them while writing `quadSwept`'s own units line, not by
+anything going red, because a wrong unit in prose has nothing to go red.
+
+### A comment defending a name can become an argument for the opposite name, with no word of it changing
+
+`appcommands.ts` explained why the eraser was called *Erase drawing...*: a bare
+*"Erase" beside "Remove mark" would read as a second, blunter way to delete
+anything*. Every clause of that stayed true. The command became exactly the
+thing the sentence warned the name would falsely suggest --- the nib now takes
+any mark it crosses --- so the observation survived intact and the conclusion it
+supported inverted.
+
+That is why it is worth an entry rather than filing under "update the comments".
+A justification that has gone stale by being *contradicted* is easy to spot: the
+code says one thing and the comment says another, and a reader stops at the
+disagreement. This one had no disagreement to find. The comment described the
+new design accurately, in a sentence arguing against it, and the only way to
+notice is to ask what the argument concludes rather than whether its statements
+hold.
+
+**The habit: when a change makes a comment's premise true, re-read its
+conclusion.** A premise becoming true is not the reassuring direction --- for a
+comment shaped *"X would be misleading, so we do not call it X"*, X becoming the
+truth is precisely the event that flips it.
+
+The old argument is kept in the file beside the new name rather than deleted, so
+that a reader meeting *Erase marks...* can find out what the previous name was
+for. A justification with a date on it is worth more than one with only a
+verdict.
+
+### An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing
+
+`armErase`'s doc comment ran to twelve lines and documented nothing. The crop
+tool had been added between it and the method, so the file held two `/** */`
+blocks in a row --- the eraser's, then the crop's --- and only the second one
+binds. TypeScript accepts that silently: two doc comments before one declaration
+is legal, tooling takes the last, and the first becomes prose sitting in the
+middle of a class.
+
+It is invisible in three ways at once. The **diff** that caused it shows an
+insertion of a whole coherent block, which is exactly what an intentional
+insertion looks like. The **file** reads correctly top to bottom, because a
+detached comment and a section header are the same characters. And nothing
+**mechanical** can see it: there is no lint for it, no type error, and no test
+can assert on a comment.
+
+What made it expensive here is what the orphan said. It read *"Only drawings are
+erasable ... making the eraser remove whole marks of any kind would be a second,
+much more destructive command wearing the same cursor"* --- a live design
+argument against the feature being built, attached to nothing, in the file where
+somebody would go looking for exactly that reasoning.
+
+**A scan finds them, and the tree had 26** (48 before excluding the module
+headers, which are the same shape and legitimate). Two lines of Python: a line
+that is exactly `*/`, whose next non-blank line starts `/**`, occurring after
+the file's first real code.
+
+```
+*/ followed by /**   ->   the first block documents nothing
+```
+
+The scan **over-reports on purpose and that is the hard part**: a block comment
+introducing a *group* of following constants is the same shape and is right ---
+`commands.ts`'s weights, `viewer.ts`'s colour constants. Separating the two needs
+a reader, or a heuristic on whether the orphan's first line reads as a
+declaration ("Whether a kind is...", "Runs one edit..."). So this is a scan to
+run and read, not a gate to add without designing it --- which is why the two
+found in the files this increment touched are fixed and the other 24 are
+reported rather than swept.
+
+The habit is cheaper than the scan: **when inserting a declaration above an
+existing one, look at what is directly above the insertion point.** If it is a
+`*/`, the comment belongs to the thing you are pushing down.
+
+### A mitigation that moved half a path reads exactly like one that moved the path
+
+`docs/THREAT-MODEL.md`'s residual risk 17 said the coordinator parses attacker
+bytes on three writers, then recorded a narrowing: *"a save that only adds marks
+is prepared in the worker now (`Request::Append`), so what is left is the
+rewriting save and the two copy paths"*. True, precise, dated, and it left the
+append parsing in the coordinator.
+
+The **preparation** moved. The **verification** did not. `append_in_place`
+re-reads the whole file it has just written and parses it with `lopdf` to check
+the cross-reference chained and the page count survived --- and the previous
+revision of that file is the document the reader opened, so it is a
+coordinator-side parse of untrusted input on the commonest save there is. The
+entry's own sentence names the mechanism that moved, and a reader takes it as
+naming the *path* that moved, because that is what a risk register is about.
+
+Worse in the detail than in the summary: the three writers the entry does list
+run under `spawn_blocking`, which the entry says. This one does not --- the
+`match` that calls it is on the async runtime --- so the one parse the entry had
+stopped covering is also the one with the weaker containment.
+
+**Why nothing could catch it.** A `Request::Append` variant exists and works; a
+grep for it finds the worker doing the preparation and confirms the sentence. The
+tests over the save path all assert on *outcomes* --- the bytes written, the roll
+back, the page count --- and none can see which process did the parsing. There is
+no assertion anywhere that could go red, which is what makes the release
+checklist's *re-read the threat model against the code* a step and not a
+courtesy: it is the only instrument aimed at this.
+
+**The question to ask of any narrowing.** Not "did the thing named move", which
+is what a grep answers, but **"what else on this path does the same thing, and
+did that move too?"** A path that parses usually parses more than once ---
+prepare and verify, write and read back, request and reply --- and a change lands
+on one of them. Enumerate the calls, not the feature.
+
+Found in step 6 of the checklist while cutting `26.8.8`, three days after the
+narrowing was written, by the session that had just written a different half of
+the same document.
