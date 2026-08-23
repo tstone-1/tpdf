@@ -35,13 +35,21 @@ lives inside an object stream, or a signed document at all.
                 would make "signed means forbidden" look proven when what is
                 actually true is that it depends on what the edit touches.
   encrypted-pw  AES-256 behind a real user password, so opening it requires one.
-                hostile-encrypted.pdf has an *empty* user password and therefore
-                opens with no prompt, which exercises the opposite branch.
+  encrypted-open
+                AES-256 with an *empty* user password: it opens with no prompt
+                in every reader and is still encrypted, which is what a
+                permission-restricted document looks like in practice. The two
+                take opposite branches in every guard that asks about
+                encryption, and a guard tested only against the first looks
+                right while letting the second through.
 
 The signed fixtures need `pyhanko`, which is a *test oracle*, not a dependency
 of tpdf -- it both writes the signatures and is the only implementation here
 that can validate them. Run under `uv run --with pyhanko`. Without it the three
-signed fixtures are skipped and the rest are still written.
+signed fixtures are skipped and the rest are still written. The two encrypted
+fixtures need it too, as of 2026-08-23: they were written with qpdf, which a
+hosted runner does not have, so nothing that needed an encrypted document could
+be checked anywhere but on a developer machine.
 
 Everything here is gitignored. Usage:
     uv run --with pyhanko --with pyhanko-certvalidator \\
@@ -194,6 +202,36 @@ def build_xrefstream(outdir: str) -> "str | None":
         check=True,
     )
     return target
+
+
+def encrypt_with(source: bytes, out_path: str, user: str, owner: str) -> bool:
+    """Writes `source` to `out_path` encrypted with AES-256.
+
+    `user` may be empty, which is a real and distinct case rather than a
+    degenerate one: such a document opens with no prompt in every reader while
+    remaining encrypted, so a save that reserialises it silently strips
+    protection the reader never knew was there. Returns False when pyhanko is
+    not installed.
+
+    Re-serialised through a fresh writer rather than appended to as an
+    incremental revision --- an encrypted update section over a plaintext base
+    revision is a different document from an encrypted one, and would not test
+    what this fixture is for.
+    """
+    try:
+        import io
+
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        from pyhanko.pdf_utils.writer import copy_into_new_writer
+    except ImportError:
+        return False
+
+    writer = copy_into_new_writer(PdfFileReader(io.BytesIO(source)))
+    # See the caller for why the MAC is off.
+    writer.encrypt(owner, user, pdf_mac=False)
+    with open(out_path, "wb") as handle:
+        writer.write(handle)
+    return True
 
 
 def sign(source: bytes, out_path: str, certify: "int | None") -> bool:
@@ -705,46 +743,52 @@ def main(argv: "list[str] | None" = None) -> int:
         }
         print(f"[OK] incr-xrefstream.pdf ({os.path.getsize(xref_path) / 1e6:.1f} MB)")
 
-    # qpdf is the only external program this script needs, and it is needed for
-    # exactly one fixture. It used to be called with `check=True` and nothing
-    # else, so a machine without it died here with a FileNotFoundError naming a
-    # program rather than a fixture -- and died BEFORE the signed fixtures below,
-    # which need only pyhanko. A hosted runner is such a machine, which is why
-    # none of the signature work could be tested there. Skipping keeps the rest.
-    plain_path = os.path.join(args.outdir, "incr-encrypted-pw.pdf")
-    base_plain = build_plain(2, "encrypted")
-    unencrypted = plain_path + ".plain"
-    with open(unencrypted, "wb") as handle:
-        handle.write(base_plain)
-    try:
-        subprocess.run(
-            [
-                "qpdf",
-                "--encrypt",
-                "--user-password=swordfish",
-                "--owner-password=swordfish",
-                "--bits=256",
-                "--",
-                unencrypted,
-                plain_path,
-            ],
-            check=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError) as why:
-        # The half-written input goes either way: leaving it turns a skipped
-        # fixture into a stray file that looks like a fixture.
-        os.remove(unencrypted)
-        print(f"[SKIP] incr-encrypted-pw.pdf: qpdf did not run ({why})")
-    else:
-        os.remove(unencrypted)
-        manifest["incr-encrypted-pw.pdf"] = {
-            "role": "AES-256 behind a real user password",
+    # **Written with pyhanko, not qpdf, since 2026-08-23, and the reason is
+    # where the evidence lives rather than which tool is nicer.** qpdf is not on
+    # a hosted runner and never will be, so every check that needed an encrypted
+    # document -- the save guards, the password path, `password-probe` -- could
+    # only run on a developer machine. pyhanko is already installed for the
+    # signed fixtures below, so these two cost nothing new and CI can see them.
+    #
+    # `pdf_mac=False` on purpose: pyhanko defaults to writing a PDF 2.0 message
+    # authentication code, which is newer than what the two readers under test
+    # implement. The fixture is here to exercise AES-256, not to find out how
+    # `lopdf` reacts to a structure qpdf has never produced.
+    #
+    # **Two of them, because one cannot discriminate.** An empty user password
+    # and a real one take opposite branches everywhere it matters: the first
+    # opens with no prompt in every reader and is what a permission-restricted
+    # document looks like in practice, and the second is the one that needs a
+    # reader to type something. A guard tested only against the second looks
+    # right and lets the first through -- which is exactly what happened to
+    # `save.rs` for four weeks.
+    for name, user, owner, role in (
+        (
+            "incr-encrypted-open.pdf",
+            "",
+            "spike04-owner",
+            "AES-256 with an empty user password: opens unprompted, still encrypted",
+        ),
+        (
+            "incr-encrypted-pw.pdf",
+            "swordfish",
+            "swordfish",
+            "AES-256 behind a real user password",
+        ),
+    ):
+        out_path = os.path.join(args.outdir, name)
+        written = encrypt_with(build_plain(2, "encrypted"), out_path, user, owner)
+        if not written:
+            print(f"[SKIP] {name}: pyhanko is not installed")
+            continue
+        manifest[name] = {
+            "role": role,
             "pages": 2,
-            "bytes": os.path.getsize(plain_path),
+            "bytes": os.path.getsize(out_path),
             "xref": "table",
-            "password": "swordfish",
+            "password": user,
         }
-        print(f"[OK] incr-encrypted-pw.pdf ({os.path.getsize(plain_path)} bytes)")
+        print(f"[OK] {name} ({os.path.getsize(out_path)} bytes)")
 
     inline = build_plain(2, "signed")
     indirect = build_plain(2, "signed", indirect_annots=True)

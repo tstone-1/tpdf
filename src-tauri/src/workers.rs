@@ -1594,6 +1594,16 @@ impl Engine for Workers {
         self.ask(doc, &Request::Append { plan: plan.clone() })
     }
 
+    /// Answered from this process's own record, without asking a worker.
+    ///
+    /// The pool is where a password lives for the document's lifetime --- see
+    /// [`Held::password`] --- so there is nothing to ask a child for, and asking
+    /// would be worse than pointless: it would put the value back on a pipe it
+    /// has already crossed once.
+    fn password(&self, doc: u32) -> Result<Option<String>, String> {
+        Ok(open_slot_mut(&mut self.lock(), doc)?.password.clone())
+    }
+
     /// Drops the document, which kills every process holding it.
     ///
     /// **It waits for the pool to come home first**, and that wait is what keeps

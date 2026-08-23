@@ -132,8 +132,18 @@ pub struct Encryption {
     pub method: String,
     /// The standard security handler's revision, `/R`.
     pub revision: i64,
-    /// Whether an empty user password opened it, which is what decides whether
-    /// the `/Info` fields above could be read at all.
+    /// Whether the reader got in without typing anything.
+    ///
+    /// True for a document encrypted against *editing* rather than reading ---
+    /// the empty user password opens it, no prompt appears, and it is the
+    /// commonest encrypted PDF there is. False when a password was supplied, and
+    /// false when none opened it, which `Limits::locked` is the field for.
+    ///
+    /// **Nothing renders this**, and that is worth saying rather than leaving to
+    /// be discovered: `properties.ts` declares it and the panel shows the method
+    /// and the permissions. It was also unreachable in its `true` state until
+    /// 2026-08-23 --- see `encryption_from_state` --- so a consumer added before
+    /// then would have shown the wrong thing.
     pub opened_without_password: bool,
     /// What it permits, in a fixed order.
     pub permissions: Vec<Permission>,
@@ -382,12 +392,21 @@ pub struct Properties {
 /// failure is reported rather than answered with an empty readout, for the
 /// reason [`crate::annots::scan`] gives: "this document states nothing" and
 /// "this document could not be read" are different things to tell a reader.
-pub fn scan(bytes: &[u8], page_count: u32) -> Result<Properties, String> {
+///
+/// **`password` is the reader's, when the document needed one, and it decides
+/// whether this reads anything at all.** `lopdf` tries the empty password by
+/// itself, so a permission-restricted document needs nothing here --- but one
+/// behind a real password parses to a `Document` with **no objects in it**,
+/// which loads cleanly and reports zero pages. Without the key that is
+/// indistinguishable from a document that simply has none of what is being
+/// looked for. See [`crate::progressive::RawDocument::password`].
+pub fn scan(bytes: &[u8], page_count: u32, password: Option<&str>) -> Result<Properties, String> {
     let started = std::time::Instant::now();
-    let mut document = Document::load_mem_with_options(
+    let document = Document::load_mem_with_options(
         bytes,
         LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
             ..Default::default()
         },
     )
@@ -398,21 +417,33 @@ pub fn scan(bytes: &[u8], page_count: u32) -> Result<Properties, String> {
     // Read the encryption before decrypting, because `lopdf::decrypt` clears the
     // trailer entry it reports on --- so asking afterwards answers "none" for a
     // document that is plainly encrypted.
-    let encryption = read_encryption(&document);
+    //
+    // **Two routes, and which one answers says which document this is.** The
+    // trailer is still there only for a document the load could *not*
+    // authenticate; for every one it could --- including every empty-password
+    // document, unprompted and encrypted --- the record `lopdf` kept is the only
+    // thing left. See `encryption_from_state`.
+    let encryption = read_encryption(&document).or_else(|| encryption_from_state(&document));
 
-    // The strings are ciphertext until this succeeds. An empty user password is
-    // the common case for a document locked against editing rather than reading,
-    // and it is the only password anything here has.
-    let readable = if encryption.is_some() {
-        let opened = document.decrypt("").is_ok();
-        limits.locked = !opened;
-        opened
-    } else {
-        true
-    };
+    // **Already decrypted, or still locked --- there is no third case, and the
+    // `decrypt("")` that used to stand here was the second half of the same
+    // mistake.** `lopdf` authenticates during the load, trying the empty
+    // password and then whatever the reader supplied, and it clears
+    // `is_encrypted` when it succeeds. So a document that reaches here still
+    // reporting `is_encrypted` is one no password opened, and calling `decrypt`
+    // on it can only fail; one that does not is already in the clear, and
+    // calling `decrypt` on it returns `NotEncrypted` --- which the old code read
+    // as "locked".
+    let readable = !document.is_encrypted();
+    limits.locked = !readable;
 
     let encryption = encryption.map(|mut e| {
-        e.opened_without_password = readable;
+        // What the reader is told is whether *they* had to type anything, which
+        // is the question the panel is answering. A permission-restricted
+        // document opened on the empty password answers yes here and always
+        // did; what changed is that such a document now reports its encryption
+        // at all.
+        e.opened_without_password = readable && password.is_none();
         e
     });
 
@@ -523,11 +554,57 @@ fn revisions_in(bytes: &[u8]) -> usize {
     bytes.windows(5).filter(|w| *w == b"%%EOF").count()
 }
 
+/// Reads what `lopdf` recorded when it decrypted the document.
+///
+/// **The other half of [`read_encryption`], and between them they cover every
+/// encrypted document rather than only the locked ones.** The trailer route can
+/// only answer while `/Encrypt` is still there, and `lopdf` strips it --- along
+/// with the dictionary object --- the moment it authenticates. It tries the
+/// empty password by itself, so *every* permission-restricted document, the
+/// commonest encrypted PDF there is, arrived at that route with nothing left to
+/// read and was reported as not encrypted at all. Measured 2026-08-23 on
+/// `incr-encrypted-open.pdf`: AES-256, and the panel said nothing.
+///
+/// That also made [`Encryption::opened_without_password`] unreachable in its
+/// `true` state --- the only path producing a value was the one where
+/// authentication had *failed* --- which is a field documented as meaningful
+/// with no reachable value, and `docs/TRAPS.md` has that family.
+///
+/// What survives the load is `Document::encryption_state`, which holds the
+/// version, revision, key length, permission bits and crypt filters that the
+/// dictionary carried. So this reports the same facts from the record `lopdf`
+/// keeps rather than from the bytes it removed.
+fn encryption_from_state(document: &Document) -> Option<Encryption> {
+    let state = document.encryption_state.as_ref()?;
+    let method = state
+        .crypt_filters()
+        .get(state.default_stream_filter())
+        .map(|filter| String::from_utf8_lossy(filter.method()).into_owned())
+        .unwrap_or_default();
+    // `key_length` is in **bytes** where `/Length` is in bits, measured against
+    // the fixtures rather than read off the field's name.
+    let length = state.key_length().map_or(40, |bytes| (bytes * 8) as i64);
+
+    Some(Encryption {
+        method: named_method(state.version(), &method, length),
+        revision: state.revision(),
+        // As in `read_encryption`: the caller is the only place that knows.
+        opened_without_password: false,
+        // `bits()` is a `u64` with the same low bits the `/P` integer had, and
+        // `permissions` only tests bits --- so the sign `/P` carries, which is
+        // what sets bits 9 to 12 on a revision-2 document, is preserved by the
+        // positions rather than by the value.
+        permissions: permissions(state.revision(), state.permissions().bits() as i64),
+    })
+}
+
 /// Reads the trailer's encryption dictionary.
 ///
 /// **Must be called before [`Document::decrypt`]**, which removes the trailer
 /// entry and the object it points at --- so the same call afterwards reports an
-/// unencrypted document, which is the opposite of the truth.
+/// unencrypted document, which is the opposite of the truth. It is also too late
+/// for any document the *load* authenticated, which is what
+/// [`encryption_from_state`] is for.
 fn read_encryption(document: &Document) -> Option<Encryption> {
     let entry = document.trailer.get(b"Encrypt").ok()?;
     let dict = resolve(document, entry).as_dict().ok()?;
@@ -570,7 +647,16 @@ fn method_of(document: &Document, dict: &Dictionary, v: i64, length: i64) -> Str
         .map(|f| name_of(document, f, b"CFM"))
         .unwrap_or_default();
 
-    match (v, method.as_str()) {
+    named_method(v, &method, length)
+}
+
+/// The reader-facing name, from the three facts both routes can supply.
+///
+/// Shared rather than written twice, because the two routes read the same
+/// document through different windows and a reader must not see the method
+/// change depending on whether they typed a password.
+fn named_method(v: i64, method: &str, length: i64) -> String {
+    match (v, method) {
         (_, "AESV3") => "AES-256".to_string(),
         (_, "AESV2") => "AES-128".to_string(),
         (_, "None") => "none".to_string(),
@@ -1570,6 +1656,75 @@ mod tests {
     use super::*;
     use lopdf::dictionary;
 
+    /// An encrypted document says so, whether or not it asked for a password.
+    ///
+    /// **The empty-password row is the one with history.** Until 2026-08-23 the
+    /// only route to an `Encryption` value was the trailer's `/Encrypt`, and
+    /// `lopdf` strips that the moment it authenticates --- which it does with the
+    /// empty password, unprompted, for exactly the documents this row covers. So
+    /// a permission-restricted AES-256 file reported *no encryption at all*, and
+    /// the panel told a reader it was unprotected. `encryption_from_state` is the
+    /// second route and this is what it is for.
+    ///
+    /// Two fixtures because one cannot discriminate: `-open` is the case the
+    /// trailer route cannot see, `-pw` is the case it can, and a version that
+    /// dropped either route would still pass on the other one.
+    #[test]
+    fn an_encrypted_document_reports_its_encryption_either_way() {
+        let mut examined = 0;
+        for (name, password, opened_freely, locked) in [
+            ("incr-encrypted-open.pdf", None, true, false),
+            ("incr-encrypted-open.pdf", Some("swordfish"), false, false),
+            ("incr-encrypted-pw.pdf", None, false, true),
+            ("incr-encrypted-pw.pdf", Some("swordfish"), false, false),
+        ] {
+            let path = std::path::Path::new("../testdata").join(name);
+            let Ok(bytes) = std::fs::read(&path) else {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            };
+            examined += 1;
+            let properties = scan(&bytes, 2, password)
+                .unwrap_or_else(|why| panic!("{name} {password:?}: must parse: {why}"));
+            let stated = properties
+                .encryption
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} {password:?}: reports no encryption"));
+            assert_eq!(stated.method, "AES-256", "{name} {password:?}");
+            assert_eq!(stated.revision, 6, "{name} {password:?}");
+            assert_eq!(
+                stated.opened_without_password, opened_freely,
+                "{name} {password:?}"
+            );
+            assert_eq!(properties.limits.locked, locked, "{name} {password:?}");
+            // The permissions are read either way, which is the point of
+            // reporting the encryption at all --- a method with no restrictions
+            // beside it tells a reader nothing they can act on.
+            assert_eq!(stated.permissions.len(), 8, "{name} {password:?}");
+        }
+        assert!(
+            examined > 0,
+            "no encrypted fixture, so this checked nothing"
+        );
+    }
+
+    /// The control: a document with no encryption reports none.
+    ///
+    /// Without it, a version of [`encryption_from_state`] that answered `Some`
+    /// unconditionally would pass every assertion above --- and would put a
+    /// Security section on every document tpdf opens.
+    #[test]
+    fn a_document_with_no_encryption_reports_none() {
+        let path = std::path::Path::new("../testdata/comments.pdf");
+        let Ok(bytes) = std::fs::read(path) else {
+            println!("[SKIP] comments.pdf: fixture not generated");
+            return;
+        };
+        let properties = scan(&bytes, 4, None).expect("must parse");
+        assert!(properties.encryption.is_none());
+        assert!(!properties.limits.locked);
+    }
+
     /// Builds a one-page document, letting the caller add to its catalog.
     ///
     /// Synthetic rather than a fixture on disk, and the reason is what this
@@ -1653,7 +1808,7 @@ mod tests {
 
     /// Reads a synthetic document, which must parse.
     fn read(bytes: &[u8]) -> Properties {
-        scan(bytes, 1).expect("the fixture must parse")
+        scan(bytes, 1, None).expect("the fixture must parse")
     }
 
     // ------------------------------------------------- against another writer
@@ -1742,7 +1897,7 @@ mod tests {
                 continue;
             };
 
-            let properties = scan(&bytes, 1).expect("a signed fixture must parse");
+            let properties = scan(&bytes, 1, None).expect("a signed fixture must parse");
             assert_eq!(properties.signatures.len(), 1, "{name} has one signature");
             let signature = &properties.signatures[0];
 
@@ -1798,12 +1953,12 @@ mod tests {
         };
 
         // The control first: untouched, it covers the file.
-        let before = scan(&bytes, 1).expect("must parse");
+        let before = scan(&bytes, 1, None).expect("must parse");
         assert!(before.signatures[0].covers_whole_file);
 
         let mut tampered = bytes.clone();
         tampered.extend_from_slice(b"\n% and one more line\n");
-        let after = scan(&tampered, 1).expect("must still parse");
+        let after = scan(&tampered, 1, None).expect("must still parse");
         assert!(
             !after.signatures[0].covers_whole_file,
             "22 bytes now lie outside the signed range"
@@ -1828,7 +1983,7 @@ mod tests {
             return;
         };
 
-        let properties = scan(&bytes, 1).expect("the structure must still parse");
+        let properties = scan(&bytes, 1, None).expect("the structure must still parse");
         assert!(
             properties.limits.locked,
             "an empty user password does not open it"
@@ -2357,7 +2512,7 @@ mod tests {
             println!("[SKIP] incr-signed.pdf: not generated");
             return;
         };
-        let properties = scan(&bytes, 1).expect("a signed fixture must parse");
+        let properties = scan(&bytes, 1, None).expect("a signed fixture must parse");
         let signature = &properties.signatures[0];
 
         assert_eq!(signature.name, "", "the fixture types no /Name");
@@ -2469,7 +2624,7 @@ mod tests {
                 println!("[SKIP] {name}: not generated");
                 continue;
             };
-            let properties = scan(&bytes, 1).expect("a signed fixture must parse");
+            let properties = scan(&bytes, 1, None).expect("a signed fixture must parse");
             let certificate = properties.signatures[0]
                 .certificate
                 .as_ref()
@@ -2860,7 +3015,7 @@ mod tests {
             println!("[SKIP] incr-two-signers.pdf: not generated");
             return;
         };
-        let properties = scan(&bytes, 2).expect("a signed fixture must parse");
+        let properties = scan(&bytes, 2, None).expect("a signed fixture must parse");
         assert_eq!(properties.signatures.len(), 2, "two signature fields");
 
         let named: Vec<&str> = properties
@@ -2941,7 +3096,7 @@ mod tests {
             println!("[SKIP] signed-nested-field.pdf: not generated");
             return;
         };
-        let properties = scan(&bytes, 1).expect("the fixture must parse");
+        let properties = scan(&bytes, 1, None).expect("the fixture must parse");
 
         assert_eq!(
             properties.signatures.len(),
@@ -3014,7 +3169,7 @@ mod tests {
         document.trailer.set("Root", Object::Reference(catalog));
         let mut out = Vec::new();
         document.save_to(&mut out).expect("a writable document");
-        scan(&out, 0)
+        scan(&out, 0, None)
             .expect("the document must parse")
             .signatures
             .iter()
@@ -3111,7 +3266,7 @@ mod tests {
             document.trailer.set("Root", Object::Reference(catalog));
             let mut out = Vec::new();
             document.save_to(&mut out).expect("a writable document");
-            scan(&out, 0).expect("the document must parse")
+            scan(&out, 0, None).expect("the document must parse")
         };
 
         let shallow = scan_at(7);
@@ -3180,7 +3335,7 @@ mod tests {
             println!("[SKIP] incr-signed.pdf: not generated");
             return;
         };
-        let properties = scan(&bytes, 1).expect("the fixture must parse");
+        let properties = scan(&bytes, 1, None).expect("the fixture must parse");
         let certificate = properties.signatures[0]
             .certificate
             .as_ref()
@@ -3217,7 +3372,7 @@ mod tests {
             println!("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
-        let properties = scan(&bytes, 2).expect("the fixture must parse");
+        let properties = scan(&bytes, 2, None).expect("the fixture must parse");
         let signature = &properties.signatures[0];
         let timestamp = signature
             .timestamp
@@ -3250,7 +3405,7 @@ mod tests {
             println!("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
-        let signature = &scan(&bytes, 2).expect("must parse").signatures[0];
+        let signature = &scan(&bytes, 2, None).expect("must parse").signatures[0];
 
         assert!(!signature.when.is_empty(), "the signer's clock is reported");
         let attested = &signature.timestamp.as_ref().expect("a token").when;
@@ -3272,7 +3427,7 @@ mod tests {
             println!("[SKIP] incr-signed.pdf: not generated");
             return;
         };
-        let properties = scan(&bytes, 1).expect("must parse");
+        let properties = scan(&bytes, 1, None).expect("must parse");
 
         assert!(properties.signatures[0].timestamp.is_none());
         assert_eq!(
@@ -3673,7 +3828,7 @@ mod tests {
  </rdf:RDF>
 </x:xmpmeta>"#;
 
-        let plain = scan(&with_metadata(packet, false), 0).expect("must parse");
+        let plain = scan(&with_metadata(packet, false), 0, None).expect("must parse");
         let xmp = plain.xmp.as_ref().expect("the catalog names a packet");
         assert_eq!(xmp.conformance, vec!["PDF/A-3B"]);
         assert!(!xmp.unread);
@@ -3682,7 +3837,7 @@ mod tests {
         // readable by a tool that does not parse PDF, so uncompressed is the
         // common case -- which is exactly why the compressed one is the path
         // that would ship unexercised.
-        let squeezed = scan(&with_metadata(packet, true), 0).expect("must parse");
+        let squeezed = scan(&with_metadata(packet, true), 0, None).expect("must parse");
         assert_eq!(
             squeezed.xmp.as_ref().map(|x| x.conformance.clone()),
             Some(vec!["PDF/A-3B".to_string()]),
@@ -3693,7 +3848,7 @@ mod tests {
     /// No `/Metadata` is `None`, which is not the same as an unread packet.
     #[test]
     fn a_document_with_no_metadata_stream_reports_no_packet_at_all() {
-        let properties = scan(&with_no_metadata(), 0).expect("must parse");
+        let properties = scan(&with_no_metadata(), 0, None).expect("must parse");
         assert!(
             properties.xmp.is_none(),
             "a document that carries no packet is not a document whose packet \
@@ -3732,7 +3887,7 @@ mod tests {
             println!("[SKIP] hostile-metadata.pdf: not generated");
             return;
         };
-        let properties = scan(&bytes, 1).expect("the fixture must parse");
+        let properties = scan(&bytes, 1, None).expect("the fixture must parse");
         let xmp = properties.xmp.as_ref().expect("it carries a packet");
 
         assert!(xmp.conformance.is_empty(), "it claims no standard");
@@ -4020,7 +4175,7 @@ mod tests {
     fn a_ber_signature_names_the_same_signer_as_its_der_twin() {
         let read = |name: &str| -> Option<Properties> {
             let bytes = std::fs::read(std::path::Path::new("../testdata").join(name)).ok()?;
-            scan(&bytes, 1).ok()
+            scan(&bytes, 1, None).ok()
         };
         let (Some(der), Some(ber)) = (read("incr-signed.pdf"), read("incr-ber.pdf")) else {
             println!("[SKIP] incr-signed.pdf / incr-ber.pdf: not generated");

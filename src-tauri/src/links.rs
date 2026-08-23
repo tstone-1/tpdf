@@ -167,12 +167,21 @@ pub struct Links {
 /// failure is reported rather than answered with an empty list, for the reason
 /// [`crate::annots::scan`] gives: "no links" and "could not be read" are
 /// different things, and only one of them is reassuring.
-pub fn scan(bytes: &[u8], page_count: usize) -> Result<Links, String> {
+///
+/// **`password` is the reader's, when the document needed one, and it decides
+/// whether this reads anything at all.** `lopdf` tries the empty password by
+/// itself, so a permission-restricted document needs nothing here --- but one
+/// behind a real password parses to a `Document` with **no objects in it**,
+/// which loads cleanly and reports zero pages. Without the key that is
+/// indistinguishable from a document that simply has none of what is being
+/// looked for. See [`crate::progressive::RawDocument::password`].
+pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<Links, String> {
     let started = std::time::Instant::now();
     let document = Document::load_mem_with_options(
         bytes,
         LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
             ..Default::default()
         },
     )
@@ -898,7 +907,7 @@ mod tests {
     fn scan_of(document: &mut Document, pages: usize) -> Links {
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).expect("the fixture must save");
-        scan(&bytes, pages).expect("the fixture must parse")
+        scan(&bytes, pages, None).expect("the fixture must parse")
     }
 
     fn link(rect: Vec<Object>) -> Dictionary {
@@ -1597,8 +1606,8 @@ mod tests {
 
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).unwrap();
-        let links = scan(&bytes, 1).unwrap();
-        let comments = crate::annots::scan(&bytes, 1).unwrap();
+        let links = scan(&bytes, 1, None).unwrap();
+        let comments = crate::annots::scan(&bytes, 1, None).unwrap();
 
         assert_eq!(links.items.len(), 1);
         assert_eq!(comments.items.len(), 1);
@@ -1610,26 +1619,25 @@ mod tests {
 
     /// A document PDFium pages and `lopdf` cannot is reported, not answered "none".
     ///
-    /// **No fixture on disk produces this, and that is stated rather than left
-    /// to be discovered.** The scan was run across every `testdata/*.pdf` on
-    /// 2026-08-16 and `pages_missed` was 0 on all of them: the two parsers agree
-    /// about page count everywhere in this corpus. The one document where they
-    /// famously do not --- `incr-encrypted-pw.pdf`, where `lopdf` loads the file
-    /// and reports zero pages --- is a document **PDFium refuses to open at
-    /// all**, so it never reaches this scan and there is no disagreement to
-    /// observe. See the correction in `encoding.rs`.
+    /// **Reproduced synthetically here, and there is a real instance since
+    /// 2026-08-23.** The scan was run across every `testdata/*.pdf` on
+    /// 2026-08-16 and `pages_missed` was 0 on all of them, and the one document
+    /// where the parsers famously disagree --- `incr-encrypted-pw.pdf`, where
+    /// `lopdf` reports zero pages --- was one PDFium would not open at all, so it
+    /// never reached this scan. That stopped being true when tpdf learned to ask
+    /// for a password: PDFium opens it now, and a `lopdf` parse without the key
+    /// still reports zero. `examples/password_probe.rs` asserts `pages_missed`
+    /// is 0 once the key reaches this module, and its mutation drives it to 2.
     ///
-    /// So the shape is reproduced synthetically, which is what `encoding.rs`
-    /// does for the same distinction and for the same reason. A guard against
-    /// two independent parsers disagreeing does not need one of them to have
-    /// disagreed yet.
+    /// The synthetic case stays, because a guard against two independent parsers
+    /// disagreeing must not depend on a fixture that happens to make them.
     #[test]
     fn a_page_lopdf_cannot_account_for_is_reported() {
         let (mut document, _) = build(2, &[(0, vec![link(rect())])]);
         // Five, as PDFium would say for a document whose page tree it repaired.
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).expect("the fixture must save");
-        let links = scan(&bytes, 5).expect("the fixture must parse");
+        let links = scan(&bytes, 5, None).expect("the fixture must parse");
 
         assert_eq!(links.limits.pages_missed, 3, "5 claimed, 2 readable");
         assert!(
@@ -1665,7 +1673,7 @@ mod tests {
         let (mut document, _) = build(4, &[(0, vec![link(rect())])]);
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).expect("save");
-        let links = scan(&bytes, 2).expect("parse");
+        let links = scan(&bytes, 2, None).expect("parse");
         assert_eq!(links.limits.pages_missed, 0);
     }
 
@@ -1940,7 +1948,7 @@ mod tests {
             document.trailer.set("Root", catalog);
             let mut bytes = Vec::new();
             document.save_to(&mut bytes).expect("save");
-            scan(&bytes, 1).expect("parse").items[0].rect
+            scan(&bytes, 1, None).expect("parse").items[0].rect
         };
 
         // No crop box: the page is 595x842 from (0, 0), and 842 - 720 = 122.
@@ -1987,7 +1995,7 @@ mod tests {
 
         // Identical to the uncropped answer: the intersection is the media box.
         assert_eq!(
-            scan(&bytes, 1).expect("parse").items[0].rect,
+            scan(&bytes, 1, None).expect("parse").items[0].rect,
             [100.0, 122.0, 300.0, 152.0]
         );
     }

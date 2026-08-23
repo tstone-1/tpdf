@@ -420,6 +420,12 @@ pub(crate) enum Job {
         plan: crate::edits::Plan,
         reply: Reply<crate::save::Update>,
     },
+    /// What password this document was opened with, for a caller that has to
+    /// parse its bytes itself. See [`RenderService::password`].
+    Password {
+        doc: u32,
+        reply: Reply<Option<String>>,
+    },
     Close {
         doc: u32,
         reply: Reply<()>,
@@ -836,6 +842,27 @@ impl RenderService {
         }
     }
 
+    /// What password this document was opened with, if it needed one.
+    ///
+    /// **Asked for, rather than read out of the pool, because the pool is not
+    /// the only place it lives.** `Workers` holds one per open document so it
+    /// can unlock the workers it grows later, and reading it from there would be
+    /// a synchronous accessor like [`RenderService::pool_size`] --- and would
+    /// answer `None` for the in-process backend, where the document and its
+    /// password sit on the render thread. A job goes to whichever engine is
+    /// running and gets the same answer from both.
+    ///
+    /// The one caller is a save. An append to an encrypted document re-reads the
+    /// written file to check the cross-reference chained correctly, and `lopdf`
+    /// parses **no objects at all** without the key --- so that check would see
+    /// zero pages against the two it expects and roll a correct save back. The
+    /// value goes no further than that read: `docs/THREAT-MODEL.md` §T6.9.
+    pub fn password(&self, doc: u32, reply: Reply<Option<String>>) {
+        if self.tx.send(Job::Password { doc, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Withdraws a tile request by its `rid`.
     ///
     /// Safe to call at any point in the request's life, including after it has
@@ -929,6 +956,7 @@ pub(crate) trait Engine {
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn properties(&self, doc: u32) -> Result<Properties, String>;
     fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String>;
+    fn password(&self, doc: u32) -> Result<Option<String>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 }
 
@@ -969,6 +997,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Append { doc, plan, reply } => reply(engine.append(doc, &plan)),
+        Job::Password { doc, reply } => reply(engine.password(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
     }
 }
@@ -1001,6 +1030,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
             Job::Properties { reply, .. } => reply(Err(error.to_string())),
             Job::Append { reply, .. } => reply(Err(error.to_string())),
+            Job::Password { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
         }
     }
@@ -1175,6 +1205,12 @@ impl Engine for InProcess {
 
     fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
         run_append(open_slot(&self.docs.borrow(), doc)?, plan)
+    }
+
+    fn password(&self, doc: u32) -> Result<Option<String>, String> {
+        Ok(open_slot(&self.docs.borrow(), doc)?
+            .password()
+            .map(str::to_string))
     }
 
     /// Drops the document, which is what closes the Pdfium handle.

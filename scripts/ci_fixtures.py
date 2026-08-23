@@ -50,7 +50,7 @@ half a second. ("The three" until 2026-08-21, which had been wrong since
 
 `--signed` adds a fifth group, and it is the one that needs something installed:
 `make_incremental_pdf.py` and pyhanko, for the nine fixtures carrying a real
-signature. Without that flag nothing here needs anything but the standard
+signature and the two carrying real encryption. Without that flag nothing here needs anything but the standard
 library, which is what the paragraph above promises. `make_comments_pdf.py` imports `make_text_pdf.py` for its PDF writer and
 is still dependency-free: that module reaches for fonttools inside the function
 that embeds a font, which nothing here calls. `make_links_pdf.py` imports it
@@ -102,16 +102,21 @@ FIXTURES: list[tuple[str, list[str]]] = [
 #: both workflows from here, which is the rule the release job broke once by
 #: being written from CI's file rather than calling the same script.
 #:
-#: Every one comes from a single run of `make_incremental_pdf.py`, and two of its
-#: outputs are deliberately not asked for: `incr-scan-*.pdf` is hundreds of
-#: megabytes (`--scan-pages` with no values skips it) and `incr-encrypted-pw.pdf`
-#: needs qpdf, which a hosted runner has no more than it has pyhanko. The
-#: generator skips that one now instead of dying on it --- it used to raise
-#: `FileNotFoundError` before reaching a single signed fixture, which is why
-#: none of the signature work could be tested on a runner at all.
+#: Every one comes from a single run of `make_incremental_pdf.py`, and one of its
+#: outputs is deliberately not asked for: `incr-scan-*.pdf` is hundreds of
+#: megabytes (`--scan-pages` with no values skips it).
+#:
+#: **The two encrypted fixtures joined this list on 2026-08-23**, when they
+#: stopped being built with qpdf. A hosted runner has no qpdf, so until then
+#: nothing that needed an encrypted document could be checked anywhere but on a
+#: developer machine --- which covered the save path's encryption guard, and that
+#: guard was wrong for four weeks with every gate green. pyhanko writes them now,
+#: and pyhanko is what this group already installs.
 SIGNED: list[tuple[str, list[str]]] = [
     (f"testdata/{name}.pdf", ["testdata/make_incremental_pdf.py", "testdata", "--scan-pages"])
     for name in (
+        "incr-encrypted-open",
+        "incr-encrypted-pw",
         "incr-signed",
         "incr-certified-1",
         "incr-certified-2",

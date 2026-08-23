@@ -34,11 +34,57 @@ each of them meets the same encryption. Without that, a locked document would
 show the page you were looking at and refuse the next one. It is not written
 anywhere, and it goes when the document closes.
 
-**Saving one is still refused**, and that has not changed: a document with
-encryption on it is not written, because writing would silently remove the
-encryption. That refusal now covers a narrower case than it reads --- an append
-can preserve it, given the password --- and `docs/PLAN.md` §5 has what closing it
-involves.
+
+### Added: a mark can be saved onto an encrypted document
+
+A highlight, a note or a comment on an encrypted PDF is saved now, and the file
+stays encrypted --- it still needs the same password afterwards, and it still
+refuses to open without one. What is written is an update appended to the end of
+the file, so every byte that was there before is untouched.
+
+Deleting, moving, rotating or cropping a page of an encrypted document is still
+refused, and now says so. Those need the whole file rewritten, and rewriting one
+would drop the encryption.
+
+### Fixed: some encrypted documents were saved with their encryption removed
+
+A PDF encrypted against *editing* rather than reading --- the kind that opens with
+no prompt but restricts printing or copying, which is most of the encrypted files
+people actually meet --- was not recognised as encrypted when saving. Saving a
+copy of one, or saving over it, produced a file with the encryption and every
+restriction silently gone.
+
+The guard that was meant to stop this was in place and had a test. It asked the
+wrong question: the PDF library removes the encryption marker from a document as
+soon as it opens it, and it opens this kind without being asked, so by the time
+the guard looked there was nothing left to see. Documents that ask for a password
+were refused correctly throughout.
+
+### Fixed: the properties panel said those documents were not encrypted
+
+Same cause, one panel over. A document encrypted with an empty password showed no
+Security section at all, so a reader was told a restricted file carried no
+restrictions. It now shows the method, the revision and all eight permissions for
+every encrypted document, whether or not it asked for a password.
+
+### Fixed: printing part of an encrypted document produced an unencrypted copy
+
+Printing a page range of an encrypted PDF, or printing one turned, rebuilt the
+document without its encryption --- and that copy is what reaches the print
+panel, and what Print to PDF writes to disk. Printing the whole document was
+never affected: the file is handed over exactly as it is.
+
+Doing this correctly is not possible with the library that writes the job, so a
+page range of an encrypted document is refused now and says why. Print the whole
+document instead.
+
+### Fixed: comments, links and properties were empty on a password-protected document
+
+A document opened with a password rendered and searched correctly while its
+comments panel, its links and its properties readout came back empty --- the
+password reached the renderer and stopped there, and the parser that answers those
+questions was reading a document it could not decrypt. Empty is the reassuring
+answer, which is why nothing looked wrong.
 
 
 ### Fixed: ten tests over the save path had never run outside one machine

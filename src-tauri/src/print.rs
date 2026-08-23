@@ -229,6 +229,33 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
     )
     .map_err(|e| format!("could not parse {source:?}: {e}"))?;
 
+    // **An encrypted document is printed whole or not at all**, and the reason
+    // is that this branch reserialises: `lopdf`'s full writer emits every object
+    // in the clear and drops the `/Encrypt` dictionary with it, so a job built
+    // here is a decrypted copy of the reader's document. That reaches a printer,
+    // the platform's own PDF reader, and --- through Print to PDF, which is how
+    // most people make a copy --- a file on disk. Measured 2026-08-23 before the
+    // guard: a selection of one page from `incr-encrypted-open.pdf` produced
+    // 1,278 bytes with the encryption gone and nothing said.
+    //
+    // `is_passthrough` was doing this job and only for the whole document: it
+    // hands the file over byte for byte, which is correct and stays correct.
+    // What it never covered is a selection or a turn, and the comment on it says
+    // "a rewrite that changes nothing is the risk" --- the risk is also a rewrite
+    // that changes something.
+    //
+    // No password is needed to decide this, which is why none is taken.
+    // `was_encrypted` answers for a document `lopdf` opened (an empty user
+    // password, the commonest case) and `is_encrypted` for one it could not, and
+    // both are refused: even with the key, this writer cannot put the encryption
+    // back. An append could, and a page selection is not appendable.
+    if doc.was_encrypted() || doc.is_encrypted() {
+        return Err(format!(
+            "{source:?} is encrypted, and printing a selection of it would produce an \
+             unencrypted copy. Print the whole document instead."
+        ));
+    }
+
     let table = doc.get_pages();
     let present: Vec<u32> = table.keys().copied().collect();
     let wanted = resolve(&job.pages, &present)?;
@@ -333,6 +360,102 @@ fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<PagePlan>, String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// An encrypted document is printed whole or refused, never reserialised.
+    ///
+    /// **A selection of one page produced 1,278 bytes with the encryption gone**
+    /// before this guard, measured 2026-08-23 --- the same silent decryption
+    /// `save.rs` refuses, on a path whose output reaches Print to PDF and
+    /// therefore a file the reader keeps. `is_passthrough` covered the whole
+    /// document and nothing else.
+    ///
+    /// **The whole-document arm is the control, and it is the half that must
+    /// keep working.** Without it a guard that refused every encrypted document
+    /// would pass every assertion here while removing the only way to print one.
+    #[test]
+    fn an_encrypted_document_is_printed_whole_or_refused() {
+        let mut examined = 0;
+        for name in ["incr-encrypted-open.pdf", "incr-encrypted-pw.pdf"] {
+            let path = std::path::Path::new("../testdata").join(name);
+            if !path.exists() {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            }
+            examined += 1;
+
+            let whole = build(
+                &path,
+                &Job {
+                    pages: Pages::All,
+                    turns: 0,
+                },
+            )
+            .unwrap_or_else(|why| panic!("{name}: the whole document must print: {why}"));
+            assert_eq!(
+                whole,
+                std::fs::read(&path).expect("read the fixture"),
+                "{name}: handed over byte for byte, so the encryption is intact"
+            );
+
+            let why = build(
+                &path,
+                &Job {
+                    pages: Pages::Only(vec![PagePlan {
+                        number: 1,
+                        turns: 0,
+                    }]),
+                    turns: 0,
+                },
+            )
+            .expect_err("a selection must be refused");
+            assert!(
+                why.contains("encrypted"),
+                "{name}: the message names the reason: {why}"
+            );
+
+            // A turn is the other way into the rewrite, and it is not covered by
+            // the page list: `is_passthrough` asks about both.
+            let why = build(
+                &path,
+                &Job {
+                    pages: Pages::All,
+                    turns: 1,
+                },
+            )
+            .expect_err("a turn must be refused");
+            assert!(why.contains("encrypted"), "{name}: {why}");
+        }
+        assert!(
+            examined > 0,
+            "no encrypted fixture, so this checked nothing"
+        );
+    }
+
+    /// The control: an unencrypted document still prints a selection.
+    #[test]
+    fn an_unencrypted_document_still_prints_a_selection() {
+        let path = std::path::Path::new("../testdata/rotated.pdf");
+        if !path.exists() {
+            println!("[SKIP] rotated.pdf: fixture not generated");
+            return;
+        }
+        let built = build(
+            path,
+            &Job {
+                pages: Pages::Only(vec![PagePlan {
+                    number: 1,
+                    turns: 0,
+                }]),
+                turns: 0,
+            },
+        )
+        .expect("a selection of an unencrypted document must build");
+        assert!(!built.is_empty());
+        assert!(
+            built.len() < std::fs::read(path).expect("read").len(),
+            "and it is a subset rather than the whole file"
+        );
+    }
     use super::{build, route, select, Job, PagePlan, Pages, Route};
     use crate::pagetree::{drop_pages, effective_rotation};
 

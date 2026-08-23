@@ -1172,6 +1172,29 @@ wrong refusal --- and the strings themselves are chosen in `progressive.rs` and
 for text a stranger wrote. That is the T8 property, in the one place a new error channel
 was added.
 
+**Two more places hold it as of 2026-08-23, and both are inside a boundary that already had
+it.** `RawDocument::password` is the worker's own copy, kept because every question PDFium
+cannot answer --- comments, links, properties, the character mapping, the update section a
+save appends --- is a second parse of the same bytes with `lopdf`, and `lopdf` needs the same
+key. That is the sandboxed process, holding a key to bytes it is already holding. And
+`save_document` asks the service for it through `Job::Password`, once, for the arm that
+appends: the read-back that checks the written cross-reference has to parse the file, and
+without the key it would count zero pages and roll a correct save back. The value is a local
+in that function and goes when it returns.
+
+**Neither adds a hop the password had not already made.** It reaches the worker over stdin
+on `Unlock` and is kept in the app process on `Held::password`; these two are reads of those
+two, in the same processes. What they do change is the number of copies, which is the
+paragraph above's point about zeroing on drop: there are now more of them, and none is
+zeroed.
+
+**What is deliberately *not* done: the frontend does not keep it.** `unlock.ts` holds the
+typed password in a local for the duration of the retry loop and drops it, and nothing in
+`App.svelte` stores it. Every later use --- pool growth, crash replacement, a save --- is
+served from Rust. The webview is the least trusted place in the application (residual risk
+7), so a password parked in component state for a document's lifetime would be the one hop
+worth avoiding, and it is avoided.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —

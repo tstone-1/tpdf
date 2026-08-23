@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 446 entries
+The one thing this file does *not* carry in full is the trap list --- 451 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -516,8 +516,38 @@ worker after the first --- pool growth and crash replacement alike --- maps the 
 meets the same encryption; without it a locked document renders the page a reader is looking
 at and refuses the next. `docs/THREAT-MODEL.md` §T6.9 states what holding it costs.
 
-Saving one is still refused. That refusal is narrower than it reads and `docs/PLAN.md` §5
-says what closing it involves.
+**Since 2026-08-23 a reader can also save a mark onto one, and that is the only save an
+encrypted document can have.** `lopdf`'s full serialiser writes every object in the clear and
+drops the `/Encrypt` dictionary with it, so a rewrite is refused and always will be through
+that writer; an append never touches the previous revision, and
+`IncrementalDocument::save_to` encrypts each appended object with the key the load recorded.
+So the plan decides: marks are appended and go through, anything else is a rewrite and is
+refused with a message saying so. `examples/password_probe.rs` runs it end to end --- 986
+bytes appended to a 2,346-byte AES-256 document, reopened afterwards with the same password
+and refused without it.
+
+The password reaches `save::append_update` because the worker holds it, and reaches
+`save::append_in_place` because the app process does. That second hop is not optional: the
+append re-reads the file it wrote to check the cross-reference chained, and `lopdf` parses no
+objects at all without the key, so the check would count zero pages against the two it
+expects and roll a correct save back.
+
+**Two defects came out of building it, and both had been shipping.** The rewrite's guard
+asked `trailer.has(b"Encrypt")`, which `lopdf` removes the instant it authenticates --- and it
+tries the empty password unprompted --- so every permission-restricted document, the
+commonest encrypted PDF there is, went straight past the guard and was written out
+decrypted. And the properties panel reported *no encryption* for exactly those documents,
+for the same reason one module over. Both are in the trap index; the fixture that would have
+caught the first is one its own doc comment argued was unnecessary.
+
+**Every one of those `lopdf` parses takes the reader's password too, since 2026-08-23.** It
+is one field on `RawDocument` and five call sites, and it is not a nicety: without the key
+`lopdf` parses **no objects at all** and returns a `Document` that loads cleanly and reports
+zero pages, so a document behind a real password would open, render and search while its
+comments, links, properties and character mapping all came back empty --- and empty is the
+reassuring answer. `links.rs` and `annots.rs` already carried a `pages_missed` count for
+exactly that, which is what `password-probe` asserts against; the comments check exists
+because taking the password away from `annots::scan` reddened nothing without it.
 
 **Comments, links and a document's own properties are read through `lopdf`, not through
 PDFium, and that is a measurement rather than a preference.** `FPDFPage_GetAnnot` and friends work --- checked on a fixture before
@@ -1143,8 +1173,8 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 446 of them and the full text
-was 93% of this file --- an instruction budget spent on the 445 traps that are not
+titles. Only the titles are here, because there are 451 of them and the full text
+was 93% of this file --- an instruction budget spent on the 450 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
 which is how a count in prose fails, and why the authority is
@@ -1302,6 +1332,9 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - Padding a rectangle to make one refusal legal disables the check that refusal was doing (the trigger was a fix, not a feature, and no assertion moved)
 - A byte grep cannot see inside an object stream, and it returns enough hits to look like it worked (five keys answered zero and all five were present; encryption was the innocent explanation everyone reached for)
 - `lopdf::decrypt` removes the entry that says the document is encrypted (so asking afterwards reports a plainly locked document as unencrypted, permissions and all)
+- The guard that could not fire, because the library removes the evidence first (four weeks of refusing encrypted documents while the commonest one was reserialised in the clear; the fixture's own comment argued the missing test was redundant, and every clause of it was backwards)
+- A field with no reachable `true`, guarded by a comment about the wrong call (the ordering it protected was correct and had stopped mattering; nothing renders the field, so the wrong value had no screen to be wrong on)
+- The same silent decryption, on the path whose output a reader keeps (`print::build` had no guard at all, and `is_passthrough`'s comment is why it looked covered; found by grepping for the predicate the first fix had just taught, which is the cheapest moment to look)
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1557,6 +1590,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A documented cost measured warm is the wrong number for the run you are about to make (0.47 s, ~8 s, 2 min 58 s and longer are all the same command; the correction written first was wrong in both halves, and its long figure had a second copy of itself contending for the build lock)
 - A mutation block below the `__main__` guard is counted by the gate and run by nothing (251 anchors green, 241 registered, ten new mutations silently absent; the gate imports and a run executes, and undoing the control with `git checkout` discarded them a second time)
 - Narrowing a run made a shape the output parser had assumed away (with one file in the run nothing passed, and `Tests 2 failed (2)` read as a run that never finished)
+- A capability nobody could use is invisible to every check, including the mutation harness (four sibling readers, the identical one-line change, and only three had an observable; a mutation that reddens nothing indicts the harness)
 
 ### Windows and portability
 - The gates had never run on the platform where they fail
@@ -1636,6 +1670,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A guard written inline with an FFI call is reachable by nothing (the fix is a seam, not a harness)
 - A request still in flight is not re-issued, so a mid-flight invalidation looks broken
 - A fixture no script writes gated ten guards, and the tests that skipped passed (the guards were correct; six SURVIVED mutations were one missing file, and the fix is not to obtain it)
+- A test helper that reads through a parser that could not read (the same defect the increment was fixing, arriving in the harness first: a wrong baseline, then an index panic, and every message named the number rather than the blindness)
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

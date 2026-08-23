@@ -1521,16 +1521,18 @@ is what the probe's mutation produces: **8 tiles served, then locked**.
 process's memory while the document is open. So does every decrypted page of it, and
 neither is defended against something that can read this process's memory.
 
-**Not done: saving one.** `save.rs` still refuses any document with an `/Encrypt` entry,
-which is now a narrower refusal than it reads. Spike 0.6 measured appended objects
-coming out encrypted with the original key, so an append *could* preserve the encryption
---- but only for a document loaded with its password, and `save::append_ready` does not
-have it. That is the next increment and it is a genuine one, because the case it unblocks
-is not the one this increment opened: a document behind a real password could not be
-opened at all, while one behind an **empty** user password --- which is what most
+**Done 2026-08-23, and the note above was wrong about where the password was needed.** It
+said `save::append_ready`; that function asks only questions about a *path* and never
+parses, so it needs nothing. The parse is `save::append_update`, which runs in the worker
+that already holds the document --- so the password was already in the right process and the
+whole build half was one argument.
+
+What the note did get right is that this is a genuine increment rather than a follow-on: the
+case it unblocks is not the case the password prompt opened. A document behind a real
+password could not be opened at all; one behind an **empty** user password --- what most
 permission-restricted files carry, the RoHS certificate in *What a document says about
-itself* included --- has always opened, rendered and searched fine, and is refused only
-when a reader tries to put a highlight on it.
+itself* included --- has always opened, rendered and searched fine, and was refused only when
+a reader tried to put a highlight on it.
 
 **The frontend's half is testable because it was moved out of `App.svelte`.** The decision
 --- prompt on the flag, loop while a password is offered, rethrow otherwise --- is
@@ -1546,16 +1548,81 @@ HTMLElement`, copied from `propertiesdialog.ts`, *throws* where the constructor 
 exist rather than answering no; `palette.ts` and `propertiesdialog.ts` still have that
 line, harmlessly, because no test reaches it there.
 
-**Not done: a check that runs everywhere.** `password-probe` needs
-`testdata/incr-encrypted-pw.pdf`, which `make_incremental_pdf.py` builds with qpdf, and
-`scripts/ci_fixtures.py` records that a hosted runner has none. The probe prints seven
-`[SKIP]`s there rather than passing silently, which is the right failure, but it means
-the end-to-end evidence exists on a developer machine and nowhere else. The unit tests
-that *do* run everywhere cover the distinction and its plumbing; none of them can see the
-worker loop, for the reason `docs/TRAPS.md` gives under *where the parse runs is not
-observable from a unit test*. pyHanko can write an encrypted PDF and is already pinned in
-`scripts/fixture-tools.txt`, so the way to close this is a generator that does not shell
-out --- not a second corpus.
+**Done 2026-08-23, the same way the note recommended.** `make_incremental_pdf.py` writes
+both encrypted fixtures with pyhanko now and shells out to nothing, they are in
+`scripts/ci_fixtures.py`'s `--signed` group, and both workflows already install pyhanko for
+the signed fixtures. `password-probe` runs for real on a hosted runner instead of printing
+twelve `[SKIP]`s.
+
+It cost more than tidiness. The save path's encryption guard was wrong for four weeks with
+every gate green, and the fixture that catches it is the one no runner could build --- see
+the trap *The guard that could not fire, because the library removes the evidence first*.
+**A check that only ever runs on one machine is a check with one reader**, and a defect it
+would catch waits for that reader to look.
+
+### Saving an encrypted document --- built 2026-08-23
+
+**The mode decides, and there is only one that can work.** `lopdf`'s full serialiser writes
+every object in the clear and drops the `/Encrypt` dictionary, so a rewrite of an encrypted
+document is refused --- through this writer it always will be, and QPDF is the candidate in
+the stack table for the day that matters. An append never rewrites the previous revision:
+`IncrementalDocument::save_to` encrypts each appended object with the state the load
+recorded and puts `/Encrypt` back in the appended trailer. So `save::mode_for` already
+routes this correctly, and a plan that only adds marks goes through while anything else
+--- a deletion, a move, a turn, a crop --- is refused with a message that says why.
+
+Measured end to end by `examples/password_probe.rs`, through the production path: **986
+bytes appended to a 2,346-byte AES-256 document**, reopened afterwards with `swordfish` and
+refused with nothing.
+
+**The password takes two hops, and only the first is obvious.** `save::append_update` runs
+in the worker, which holds the document and now holds the password on `RawDocument` --- so
+the build half needed one argument. `save::append_in_place` runs in the app process, and it
+re-reads the file it wrote to check the cross-reference chained correctly; `lopdf` parses no
+objects at all without the key, so that check would count zero pages against the two it
+expects and roll a correct save back. `RenderService::password` is how the coordinator asks,
+and it is a job like every other rather than a synchronous reach into the pool, because the
+in-process backend keeps its documents somewhere the pool cannot see.
+
+**Two defects were found on the way and both had been shipping.**
+
+The rewrite's guard was `doc.trailer.has(b"Encrypt")`. `lopdf` removes that entry the
+instant it authenticates, and it tries the empty user password by itself, unprompted --- so
+every permission-restricted document, the commonest encrypted PDF there is, went past the
+guard and was reserialised in the clear. Measured with `qpdf --is-encrypted`: exit 0 for the
+source, exit 2 for what `write_copy` wrote. The predicate is `was_encrypted()` now, with
+`is_encrypted()` beside it for the document nothing unlocked.
+
+The properties panel reported **no encryption at all** for those same documents, one module
+over and for the same reason: `read_encryption` reads the trailer, and by the time it looks
+the entry is gone. `encryption_from_state` reads the version, revision, key length,
+permissions and crypt filters out of `Document::encryption_state`, which survives.
+`Encryption::opened_without_password` had no reachable `true` until then --- the only route
+to a value at all was the one where authentication had *failed*.
+
+**The `lopdf` readers take the password too**, which is the same field reaching four more
+call sites: comments, links, properties and the character mapping are each a second parse of
+the same bytes. Without the key each answers something a reader cannot tell from the truth,
+and `password-probe` checks each against what PDFium says about the same document rather
+than against zero. The comments check exists because taking the password away from
+`annots::scan` reddened nothing without it --- the fixture carries no comments, so counting
+them cannot tell *none* from *could not look*.
+
+**And the same defect was in the print path, found by grepping for the predicate the fix
+had just taught.** `print::build` had no encryption guard on the branch that reserialises:
+a one-page selection of `incr-encrypted-open.pdf` built 1,278 bytes with the encryption
+gone, and a locked document refused with *"page 1 is not in this document, which has 0"*.
+`Job::is_passthrough` was doing the job for the whole document --- which is handed over byte
+for byte and is correct --- and its own comment says the risk is "a rewrite that changes
+nothing", which is where the reasoning stopped. It refuses now, rather than taking a
+password, because even with the key `lopdf`'s writer cannot put the encryption back. An
+encrypted document prints whole or not at all.
+
+**Not done: an encrypted document still cannot be rewritten**, so a reader who deletes a
+page from one is refused. That is a `lopdf` limitation rather than a missing argument, and
+closing it means the hardened structural rewrite the stack table already names QPDF for.
+The refusal names the reason, which is the difference between this and the state before
+today.
 
 ---
 
