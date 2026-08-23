@@ -709,7 +709,7 @@ fn strip_appearances(file: &Path) -> Result<(), String> {
 fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
     let (out, quads) = mark_and_save(args, document)?;
     let bytes = std::fs::read(&out).map_err(|e| format!("could not read {out:?}: {e}"))?;
-    let found = annots::scan(&bytes, document.page_count() as usize)?;
+    let found = annots::scan(&bytes, document.page_count() as usize, None)?;
 
     let mut ok = true;
     println!(
@@ -1162,7 +1162,7 @@ fn preview_pdfkit(args: &Args, document: &RawDocument, out: &Path) -> Result<boo
     // Our own reader over the same bytes, for the two checks that are
     // differentials rather than assertions against what was asked for.
     let bytes = std::fs::read(out).map_err(|e| format!("cannot re-read {}: {e}", out.display()))?;
-    let ours = annots::scan(&bytes, document.page_count() as usize)?;
+    let ours = annots::scan(&bytes, document.page_count() as usize, None)?;
     let mine: Vec<&annots::Comment> = ours
         .items
         .iter()

@@ -954,6 +954,28 @@ async fn save_document(
         }
     };
 
+    // **Before the close, because after it there is no document to ask.** An
+    // append to an encrypted document re-reads the file it wrote to check the
+    // cross-reference chained correctly, and `lopdf` parses no objects at all
+    // without the key --- so that check would count zero pages against the two
+    // it expects and roll a correct save back. Asked only for the arm that
+    // needs it, and dropped when this function returns:
+    // `docs/THREAT-MODEL.md` §T6.9.
+    //
+    // A failure to answer is not a refusal. The document is about to be closed
+    // either way and a plain document has no password to lose, so `None` is the
+    // right answer for both "it has none" and "the service could not say" ---
+    // and if the second is wrong, the append's own read-back refuses and rolls
+    // back rather than writing something unchecked.
+    let password = match &prepared {
+        Prepared::Append(_) => {
+            let (reply, rx) = reply_channel();
+            service.password(doc, reply);
+            await_reply("save_document", rx).await.unwrap_or(None)
+        }
+        Prepared::Rewrite(_) => None,
+    };
+
     // Past this line every failure is an `after_close`: the reader's document is
     // being taken apart, and the honest thing to report is that they have to
     // open the file again rather than a message that reads like a refusal.
@@ -1001,7 +1023,9 @@ async fn save_document(
         // timestamp --- and the code agreed with it. It is the wrong way round,
         // `fingerprint.rs` says so in its own header, and `docs/TRAPS.md` has
         // had *Equal length is not no change* since before either was written.
-        Prepared::Append(appended) => save::append_in_place(appended, Path::new(&source)),
+        Prepared::Append(appended) => {
+            save::append_in_place(appended, Path::new(&source), password.as_deref())
+        }
     };
     landed.map_err(|why| {
         SaveFailure::after_close(match closed {

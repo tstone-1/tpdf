@@ -786,14 +786,62 @@ MUTATIONS = [
         "each_page_takes_its_own_edit_and_the_view_rotation_on_top",
     ),
     Mutation(
-        # Save an encrypted document anyway. `lopdf` drops the encryption
-        # silently, so the result opens with every restriction gone and nothing
-        # anywhere says so.
-        "save: let an encrypted document through",
+        # Rewrite a document `lopdf` decrypted on the way in. This is the guard
+        # that was wrong for four weeks: it asked the trailer, and `lopdf`
+        # removes `/Encrypt` the moment it authenticates -- which it does with
+        # the empty password, unprompted. So every permission-restricted
+        # document was reserialised in the clear.
+        #
+        # Aimed at the fixture test rather than the synthetic one on purpose:
+        # the synthetic document's encryption is fake, authentication fails on
+        # it, and it therefore takes the `is_encrypted` arm below. Two arms, two
+        # mutations, because one fixture cannot reach both.
+        "save: rewrite a document that was decrypted on the way in",
         "src/save.rs",
-        "    if doc.trailer.has(b\"Encrypt\") {",
+        "    if doc.was_encrypted() {",
         "    if false {",
+        "a_really_encrypted_document_is_refused_even_when_it_opens_unprompted",
+    ),
+    Mutation(
+        # The other arm: a document nothing could unlock. `lopdf` parses no
+        # objects for it, so a rewrite would write out an empty document.
+        "save: rewrite a document nothing unlocked",
+        "src/save.rs",
+        "    if doc.is_encrypted() {\n        return Err(\n            \"This document is encrypted and tpdf could not unlock it, so it cannot be \\\n             rewritten. Open it with its password first.\"",
+        "    if false {\n        return Err(\n            \"This document is encrypted and tpdf could not unlock it, so it cannot be \\\n             rewritten. Open it with its password first.\"",
         "an_encrypted_document_is_refused_rather_than_quietly_decrypted",
+    ),
+    Mutation(
+        # Append to a document nothing unlocked. `lopdf` refuses this itself in
+        # `check_incremental_save_supported`, so what this proves is that the
+        # refusal a reader sees is ours and names a password rather than an
+        # upstream issue number.
+        "save: append to a document nothing unlocked",
+        "src/save.rs",
+        "    if prev.is_encrypted() {",
+        "    if false {",
+        "an_append_to_a_document_nobody_unlocked_is_refused",
+    ),
+    Mutation(
+        # Build the update section without the reader's key. `lopdf` then parses
+        # no objects, and the page walk below sees an empty document -- so the
+        # refusal is about the baseline rather than about the password.
+        "save: build an append without the password",
+        "src/save.rs",
+        "            max_decompressed_size: Some(MAX_DECODE),\n            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"this document could not be parsed: {e}\"))?;",
+        "            max_decompressed_size: Some(MAX_DECODE),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"this document could not be parsed: {e}\"))?;",
+        "an_encrypted_document_can_be_appended_to_and_stays_encrypted",
+    ),
+    Mutation(
+        # Read the written file back without the key. It parses -- `lopdf`
+        # returns `Ok` for a document it could not authenticate -- and reports
+        # zero pages, so a correct save is rolled back and the reader is told
+        # the file lost every page.
+        "save: verify an append without the password",
+        "src/save.rs",
+        "            max_decompressed_size: Some(MAX_DECODE),\n            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    ) {\n        Ok(after) if after.get_pages().len() == appended.pages => {}",
+        "            max_decompressed_size: Some(MAX_DECODE),\n            ..Default::default()\n        },\n    ) {\n        Ok(after) if after.get_pages().len() == appended.pages => {}",
+        "an_encrypted_document_can_be_appended_to_and_stays_encrypted",
     ),
     Mutation(
         # Accept a plan that does not describe the file on disk. The turns then
@@ -2840,6 +2888,30 @@ MUTATIONS += [
     ),
 ]
 
+# --- printing an encrypted document ---------------------------------------
+MUTATIONS += [
+    Mutation(
+        # Reserialise an encrypted document to print a selection of it. `lopdf`
+        # writes every object in the clear, so the job -- which reaches a
+        # printer, the platform's own PDF reader, and Print to PDF -- is a
+        # decrypted copy of the reader's document.
+        "print: build a selection from an encrypted document",
+        "src/print.rs",
+        "    if doc.was_encrypted() || doc.is_encrypted() {",
+        "    if false {",
+        "an_encrypted_document_is_printed_whole_or_refused",
+    ),
+    Mutation(
+        # Refuse every document. The control: without it, a guard that never let
+        # anything through would satisfy every refusal the test above asserts.
+        "print: refuse every document as encrypted",
+        "src/print.rs",
+        "    if doc.was_encrypted() || doc.is_encrypted() {",
+        "    if true {",
+        "an_unencrypted_document_still_prints_a_selection",
+    ),
+]
+
 # --- what a document says about itself ------------------------------------
 MUTATIONS += [
     Mutation(
@@ -2849,9 +2921,30 @@ MUTATIONS += [
         # a document that plainly is, and every permission goes with it.
         "docinfo: ask about the encryption after decrypting rather than before",
         "src/docinfo.rs",
-        "    let encryption = read_encryption(&document);",
+        "    let encryption = read_encryption(&document).or_else(|| encryption_from_state(&document));",
         "    let encryption: Option<Encryption> = None;",
         "a_document_that_needs_a_password_says_so_rather_than_reporting_nothing",
+    ),
+    Mutation(
+        # Drop the second route and keep the first. The trailer answers only for
+        # a document nothing unlocked, so this reports every unprompted
+        # permission-restricted file -- the commonest encrypted PDF there is --
+        # as carrying no encryption at all.
+        "docinfo: read the encryption only from the trailer",
+        "src/docinfo.rs",
+        "    let encryption = read_encryption(&document).or_else(|| encryption_from_state(&document));",
+        "    let encryption = read_encryption(&document);",
+        "an_encrypted_document_reports_its_encryption_either_way",
+    ),
+    Mutation(
+        # Report every document as encrypted. The control for the mutation
+        # above: without it, a route that answered `Some` unconditionally would
+        # satisfy every assertion the encrypted fixtures make.
+        "docinfo: report an unencrypted document as encrypted",
+        "src/docinfo.rs",
+        "    let state = document.encryption_state.as_ref()?;",
+        "    let Some(state) = document.encryption_state.as_ref() else {\n        return Some(Encryption::default());\n    };",
+        "a_document_with_no_encryption_reports_none",
     ),
     Mutation(
         # Report a locked document's structure tree as absent. "No" and "could

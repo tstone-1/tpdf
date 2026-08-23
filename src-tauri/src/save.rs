@@ -524,10 +524,14 @@ impl Appended {
 /// The plan is empty or is not append-shaped; `source` changed since it was
 /// opened, or cannot be read, parsed or measured; it is encrypted; its page
 /// count is not the plan's baseline; or a mark maps to nothing.
-pub fn append_bytes(source: &Path, plan: &Plan) -> Result<Appended, Refusal> {
+pub fn append_bytes(
+    source: &Path,
+    plan: &Plan,
+    password: Option<&str>,
+) -> Result<Appended, Refusal> {
     let ready = append_ready(source, plan)?;
     let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
-    appended(ready, append_update(original, plan)?)
+    appended(ready, append_update(original, plan, password)?)
 }
 
 /// What the caller established about the file before anything parsed it.
@@ -660,12 +664,25 @@ pub struct Update {
 /// holding the window and the reader's filesystem authority.
 /// `docs/THREAT-MODEL.md` §T6 and residual risk 17 carry what that changes.
 ///
+/// **`password` is the reader's, when the document needed one.** It is a key to
+/// bytes this process already holds rather than a new authority --- the same
+/// argument [`crate::progressive::RawDocument::open_bytes`] makes for handing it
+/// to PDFium --- and it is what makes an append the *only* save an encrypted
+/// document can have: `lopdf` re-encrypts every appended object with the
+/// original key and restores the trailer's `/Encrypt`, where its full serialiser
+/// writes plaintext and drops the dictionary. Measured by spike 0.6, and by
+/// `examples/password_probe.rs` through the production path.
+///
 /// # Errors
 ///
 /// The plan is not append-shaped; the bytes cannot be parsed; the document is
-/// encrypted; its page count is not the plan's baseline; or a mark maps to
-/// nothing.
-pub fn append_update(original: Vec<u8>, plan: &Plan) -> Result<Update, Refusal> {
+/// encrypted and no password opened it; its page count is not the plan's
+/// baseline; or a mark maps to nothing.
+pub fn append_update(
+    original: Vec<u8>,
+    plan: &Plan,
+    password: Option<&str>,
+) -> Result<Update, Refusal> {
     if !plan.only_adds_marks() {
         // Not a reader-facing refusal: nothing offers this mode, `mode_for`
         // chooses it, and a caller reaching here with the wrong plan has a
@@ -680,21 +697,32 @@ pub fn append_update(original: Vec<u8>, plan: &Plan) -> Result<Update, Refusal> 
         &original,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
             ..Default::default()
         },
     )
     .map_err(|e| format!("this document could not be parsed: {e}"))?;
 
-    // The rewrite's refusal, for a different reason that lands in the same place.
-    // A rewrite refuses because `lopdf` would silently drop the encryption; an
-    // append would *preserve* it --- spike 0.6 measured the appended objects
-    // coming out encrypted with the original key --- but only when the document
-    // was loaded with its password, and there is still no way for a reader to
-    // type one. See `docs/PLAN.md` §5.
-    if prev.trailer.has(b"Encrypt") {
+    // **Where the two save paths part company, and the only place in this file
+    // they do.** The rewrite refuses an encrypted document outright because
+    // `lopdf`'s full serialiser writes every object in the clear and drops the
+    // `/Encrypt` dictionary with it. An append does the opposite: the previous
+    // revision's bytes are never rewritten, and `IncrementalDocument::save_to`
+    // encrypts each appended object with the state the load recorded and puts
+    // `/Encrypt` back in the appended trailer. So `was_encrypted` --- there was
+    // encryption and the load holds its key --- goes *through* here and is
+    // refused by `planned_bytes`.
+    //
+    // What is refused is a document still locked, which is what `is_encrypted`
+    // reports: no password opened it, so `lopdf` parsed no objects at all and
+    // the page walk below would see an empty document. `lopdf` refuses this
+    // itself in `check_incremental_save_supported`, which is a second reader of
+    // the same fact and not a reason to skip the first --- its message names an
+    // issue number.
+    if prev.is_encrypted() {
         return Err(
-            "This document is encrypted, and saving would silently remove that. \
-             tpdf will not write it."
+            "This document is encrypted and tpdf could not unlock it, so it cannot be \
+             saved. Open it with its password first."
                 .into(),
         );
     }
@@ -926,7 +954,11 @@ pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), Refusa
 /// The file changed length since the update was built; the write, the flush or
 /// the truncation fails; or the appended file cannot be parsed or has the wrong
 /// number of pages.
-pub fn append_in_place(appended: &Appended, source: &Path) -> Result<(), String> {
+pub fn append_in_place(
+    appended: &Appended,
+    source: &Path,
+    password: Option<&str>,
+) -> Result<(), String> {
     // **Opened once, and everything below goes through this handle.** The check,
     // the writes, the read-back and the roll-back are all about *this* file, not
     // about whatever the pathname resolves to at the moment each of them runs.
@@ -949,7 +981,7 @@ pub fn append_in_place(appended: &Appended, source: &Path) -> Result<(), String>
         .write(true)
         .open(source)
         .map_err(|e| format!("could not open {source:?} to save it: {e}"))?;
-    append_through(&mut file, appended, source)
+    append_through(&mut file, appended, source, password)
 }
 
 /// [`append_in_place`] with the handle supplied.
@@ -966,6 +998,7 @@ fn append_through(
     file: &mut std::fs::File,
     appended: &Appended,
     source: &Path,
+    password: Option<&str>,
 ) -> Result<(), String> {
     // Which file this is, taken before a byte is written and compared after the
     // last one. See `FileId`, and the failure it reports at the end.
@@ -1040,10 +1073,17 @@ fn append_through(
             ))
         }
     };
+    // **The password again, and forgetting it here would roll every encrypted
+    // save back.** `lopdf` parses no objects at all for a document it cannot
+    // authenticate, so the read-back would report 0 pages against the 2 it
+    // expects, decide the cross-reference was mis-chained, and truncate a file
+    // that is in fact correct. The failure would be a refusal rather than a
+    // corruption, which is the safe direction and still wrong.
     match Document::load_mem_with_options(
         &bytes,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
             ..Default::default()
         },
     ) {
@@ -1211,10 +1251,46 @@ fn planned_bytes(
     // Before anything is written, and before the page walk: a refusal that
     // arrives after a temporary file exists has to clean up, and a refusal that
     // arrives after a rename has nothing to clean up at all.
-    if doc.trailer.has(b"Encrypt") {
+    //
+    // **Two questions, because `lopdf` answers them with two different fields
+    // and the one this used to ask is false for every document it most needed
+    // to catch.** The guard was `doc.trailer.has(b"Encrypt")`, and `lopdf`
+    // *removes* that entry the instant it authenticates --- trying the empty
+    // password first, unprompted. So an AES-256 document with an empty user
+    // password, which is what a permission-restricted file is and what opens
+    // without a prompt in every reader, arrived here with the trailer entry
+    // already gone and was reserialised in the clear. Measured 2026-08-23 on
+    // `incr-encrypted-open.pdf`: `qpdf --is-encrypted` says yes for the source
+    // and no for what this function wrote.
+    //
+    // `was_encrypted` is "there was encryption and we hold the key for it",
+    // which is the case the rewrite must refuse: `lopdf`'s full serialiser
+    // writes plaintext and drops the dictionary. `is_encrypted` is "there is
+    // encryption and we do not", where the document is empty as well as locked.
+    // Both refuse here; only the first is appendable, which `append_update`
+    // says.
+    if doc.was_encrypted() {
+        // **Says nothing about "a copy", because three callers reach this
+        // line**: `write_copy`, `stage_in_place` and `print_bytes`. Naming one
+        // of them told a reader who pressed Save that a copy had been refused,
+        // and that was invisible while the guard only fired for documents
+        // nothing could open --- which nobody was saving in place either.
+        //
+        // The second sentence is what a reader can act on: an append preserves
+        // the encryption and a rewrite cannot, so the difference between what
+        // is refused and what works is the difference between changing the
+        // pages and adding to them.
         return Err(
-            "This document is encrypted, and saving a copy would silently remove that. \
-             tpdf will not write it."
+            "This document is encrypted, and rewriting it would silently remove that. \
+             A comment or a highlight can still be saved onto it, because that is added \
+             to the end of the file rather than rewritten."
+                .into(),
+        );
+    }
+    if doc.is_encrypted() {
+        return Err(
+            "This document is encrypted and tpdf could not unlock it, so it cannot be \
+             rewritten. Open it with its password first."
                 .into(),
         );
     }
@@ -3913,6 +3989,53 @@ mod tests {
         assert!(partials_beside(&out).is_empty(), "not even a temporary");
     }
 
+    /// A *genuinely* encrypted document is refused too, and it is the case the
+    /// synthetic fixture cannot reach.
+    ///
+    /// **The fixture below claimed this test was redundant and it was wrong.**
+    /// Its doc comment said "a genuinely encrypted fixture would test the same
+    /// branch", and the branch is chosen by a predicate that is *false* for a
+    /// real one: `lopdf` removes `/Encrypt` from the trailer the moment it
+    /// authenticates, and it tries the empty password first. So every document
+    /// with an empty user password --- which opens unprompted in every reader
+    /// and is what a permission-restricted file is --- arrived here with the
+    /// trailer entry already gone, sailed past the guard, and was reserialised
+    /// with its encryption silently dropped. Exactly the failure the guard was
+    /// written to prevent, in the fixture's own words.
+    ///
+    /// The synthetic fixture keeps `/Encrypt` only *because* the encryption is
+    /// fake: authentication fails on it, so `lopdf` leaves the trailer alone.
+    /// Two fixtures where the right rule and the wrong rule agree is one
+    /// fixture; `docs/TRAPS.md` has that under its own title.
+    #[test]
+    fn a_really_encrypted_document_is_refused_even_when_it_opens_unprompted() {
+        let scratch = Scratch::new("really-encrypted");
+        let out = scratch.join("out.pdf");
+        let mut examined = 0;
+        for name in ["incr-encrypted-open.pdf", "incr-encrypted-pw.pdf"] {
+            let Some(path) = fixture(name) else {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            };
+            examined += 1;
+            let why = write_copy(&path, &plan_of(&[0, 0]), &out)
+                .expect_err("an encrypted document must be refused");
+            assert!(
+                why.message.contains("encrypted"),
+                "{name}: the message names the reason: {why}"
+            );
+            assert!(!out.exists(), "{name}: a refusal writes nothing");
+            assert!(
+                partials_beside(&out).is_empty(),
+                "{name}: not even a temporary"
+            );
+        }
+        assert!(
+            examined > 0,
+            "both encrypted fixtures are absent, so this checked nothing"
+        );
+    }
+
     /// A one-page document carrying an `/Encrypt` entry in its trailer.
     ///
     /// The encryption is not real --- nothing here encrypts any stream --- and it
@@ -4761,10 +4884,39 @@ mod tests {
     /// --- which a plain text document does not, so the array-bearing branch of
     /// `mark_sites` is now exercised as well.
     fn appendable(scratch: &Scratch, name: &str) -> Option<(PathBuf, Plan)> {
+        appendable_with(scratch, name, None)
+    }
+
+    /// [`appendable`] for a document that needs a password to be counted.
+    ///
+    /// **The helper's own version of the defect this increment fixes**, which is
+    /// worth saying rather than quietly parameterising: `page_count` loads with
+    /// no password, and `lopdf` parses *no objects* for a document it cannot
+    /// authenticate --- so a locked fixture came back as 0 pages and the plan
+    /// built from it was refused for having the wrong baseline. The refusal was
+    /// correct and named the wrong thing, which is what a count taken through a
+    /// reader that could not read is always going to do.
+    fn appendable_with(
+        scratch: &Scratch,
+        name: &str,
+        password: Option<&str>,
+    ) -> Option<(PathBuf, Plan)> {
         let source = fixture(name)?;
         let at = scratch.join(name);
         std::fs::copy(&source, &at).expect("copy the fixture");
-        let count = page_count(&at);
+        let count = match password {
+            None => page_count(&at),
+            Some(password) => Document::load_with_options(
+                &at,
+                lopdf::LoadOptions {
+                    password: Some(password.to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("load with the password")
+            .get_pages()
+            .len(),
+        };
         let mut plan = plan_opened_as(&vec![0u8; count], &at);
         plan.marks = vec![PlannedMark {
             kind: MarkKind::Highlight,
@@ -4913,8 +5065,8 @@ mod tests {
         };
         let before = std::fs::read(&at).expect("read before");
 
-        let appended = append_bytes(&at, &plan).expect("build the update");
-        append_in_place(&appended, &at).expect("append");
+        let appended = append_bytes(&at, &plan, None).expect("build the update");
+        append_in_place(&appended, &at, None).expect("append");
 
         let after = std::fs::read(&at).expect("read after");
         assert!(after.len() > before.len(), "something was written");
@@ -4934,6 +5086,126 @@ mod tests {
         // kilobytes is far above the measured 700-odd bytes and far below the
         // 1.4 MB this fixture would cost to rewrite.
         assert!(appended.len() < 10_000, "{} bytes", appended.len());
+    }
+
+    /// An encrypted document can take a mark, and comes back still encrypted.
+    ///
+    /// **The one save an encrypted document can have.** `lopdf`'s full
+    /// serialiser writes every object in the clear and drops the `/Encrypt`
+    /// dictionary with it, which is why [`planned_bytes`] refuses; an append
+    /// never rewrites the previous revision, and `IncrementalDocument::save_to`
+    /// encrypts each appended object with the state the load recorded and puts
+    /// `/Encrypt` back in the appended trailer.
+    ///
+    /// **Both fixtures, because one cannot discriminate.** The empty-user-password
+    /// document reaches every branch here without a password at all --- `lopdf`
+    /// tries the empty one itself --- so a version of this that threaded the
+    /// password nowhere would pass on it. The one behind `swordfish` is what
+    /// makes each `Some(...)` below load-bearing: without it the parse reads no
+    /// objects, and the read-back in [`append_through`] counts zero pages against
+    /// the two it expects and rolls the save back.
+    ///
+    /// What is *not* asserted here is that the ciphertext is real, because this
+    /// module's own writer and reader are the same library --- `docs/TRAPS.md`
+    /// has that under *a writer and its own reader agree about a document that is
+    /// wrong*. `examples/incremental_save.rs --mode encrypted` puts the result to
+    /// `qpdf --is-encrypted` and greps the update section for a plaintext needle,
+    /// and `examples/password_probe.rs` drives the production worker.
+    #[test]
+    fn an_encrypted_document_can_be_appended_to_and_stays_encrypted() {
+        let scratch = Scratch::new("append-encrypted");
+        let mut examined = 0;
+        for (name, password) in [
+            ("incr-encrypted-open.pdf", ""),
+            ("incr-encrypted-pw.pdf", "swordfish"),
+        ] {
+            let Some((at, plan)) = appendable_with(&scratch, name, Some(password)) else {
+                println!("[SKIP] {name}: fixture not generated");
+                continue;
+            };
+            examined += 1;
+            let before = std::fs::read(&at).expect("read before");
+
+            let appended = append_bytes(&at, &plan, Some(password))
+                .unwrap_or_else(|why| panic!("{name}: build the update: {why}"));
+            append_in_place(&appended, &at, Some(password))
+                .unwrap_or_else(|why| panic!("{name}: append: {why}"));
+
+            let after = std::fs::read(&at).expect("read after");
+            assert_eq!(
+                &after[..before.len()],
+                &before[..],
+                "{name}: the previous revision is byte for byte where it was"
+            );
+
+            // The claim that matters, and it is about the *file* rather than
+            // about what we believe we wrote: reopened from disk, it still
+            // needs the same key, and it still has its pages.
+            let reopened = Document::load_mem_with_options(
+                &after,
+                lopdf::LoadOptions {
+                    password: Some(password.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|why| panic!("{name}: the saved file must reopen: {why}"));
+            assert!(
+                reopened.was_encrypted(),
+                "{name}: the saved file is still encrypted"
+            );
+            assert_eq!(
+                reopened.get_pages().len(),
+                plan.baseline as usize,
+                "{name}: no page was added or lost"
+            );
+            assert!(
+                listed_on_page_of(&at, 0, Some(password))
+                    .iter()
+                    .any(|kind| kind == "Highlight"),
+                "{name}: the first page lists the mark"
+            );
+        }
+        assert!(
+            examined > 0,
+            "both encrypted fixtures are absent, so this checked nothing"
+        );
+    }
+
+    /// A locked document nobody unlocked is refused, and says what would help.
+    ///
+    /// The other side of the test above, and the one that keeps its `Some(...)`
+    /// honest: without this, an append that ignored the password entirely would
+    /// still be refused here for the right reason and pass, because `lopdf`
+    /// leaves `/Encrypt` in the trailer for a document it could not authenticate.
+    #[test]
+    fn an_append_to_a_document_nobody_unlocked_is_refused() {
+        let scratch = Scratch::new("append-locked");
+        let Some((at, plan)) =
+            appendable_with(&scratch, "incr-encrypted-pw.pdf", Some("swordfish"))
+        else {
+            println!("[SKIP] incr-encrypted-pw.pdf: fixture not generated");
+            return;
+        };
+        let before = std::fs::read(&at).expect("read before");
+
+        let why = append_bytes(&at, &plan, None).expect_err("must refuse");
+        assert!(
+            why.message.contains("password"),
+            "the message names what would help: {why}"
+        );
+        assert_eq!(
+            std::fs::read(&at).expect("read after"),
+            before,
+            "a refusal writes nothing"
+        );
+
+        // And the wrong password is refused by the parser before any of this,
+        // which is a different message and a different mechanism.
+        let why = append_bytes(&at, &plan, Some("hunter2")).expect_err("must refuse");
+        assert!(
+            why.message.contains("could not be parsed"),
+            "a wrong password is the parser's refusal: {why}"
+        );
     }
 
     #[test]
@@ -4956,8 +5228,8 @@ mod tests {
         };
         let pages = page_count(&at);
 
-        let appended = append_bytes(&at, &plan).expect("build the update");
-        append_in_place(&appended, &at).expect("append");
+        let appended = append_bytes(&at, &plan, None).expect("build the update");
+        append_in_place(&appended, &at, None).expect("append");
 
         assert_eq!(page_count(&at), pages, "no page was added or lost");
         // Zero-based, which is `listed_on_page`'s own index into
@@ -4984,7 +5256,7 @@ mod tests {
             println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
-        let appended = append_bytes(&at, &plan).expect("build the update");
+        let appended = append_bytes(&at, &plan, None).expect("build the update");
 
         // Something else writes to the file in between.
         {
@@ -4998,7 +5270,7 @@ mod tests {
         }
         let meddled = std::fs::read(&at).expect("read");
 
-        let refused = append_in_place(&appended, &at).expect_err("refused");
+        let refused = append_in_place(&appended, &at, None).expect_err("refused");
         // Derived from the fixture rather than transcribed, so a reworded
         // message keeps this honest and a message naming the wrong length
         // cannot pass: `docs/TRAPS.md`, *A test pinned a random value out of a
@@ -5066,7 +5338,7 @@ mod tests {
         };
         let original = std::fs::read(&at).expect("read");
         let ready = append_ready(&at, &plan).expect("check the file");
-        let update = append_update(original, &plan).expect("build the update");
+        let update = append_update(original, &plan, None).expect("build the update");
 
         // The control: the two halves as they really are agree, so the refusal
         // below is about the mismatch and not about the pair being unusable.
@@ -5159,7 +5431,7 @@ mod tests {
             println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
-        let appended = append_bytes(&at, &plan).expect("build the update");
+        let appended = append_bytes(&at, &plan, None).expect("build the update");
         let was = std::fs::read(&at).expect("read");
 
         // A different document of the same length and the same page count,
@@ -5192,7 +5464,7 @@ mod tests {
             .expect("stamp");
         drop(stamped);
 
-        let refused = append_in_place(&appended, &at).expect_err("must refuse");
+        let refused = append_in_place(&appended, &at, None).expect_err("must refuse");
         assert!(
             refused.contains("nothing was written"),
             "and must say so: {refused}"
@@ -5225,7 +5497,7 @@ mod tests {
             println!("[SKIP] comments.pdf: fixture not generated");
             return;
         };
-        let appended = append_bytes(&at, &plan).expect("build the update");
+        let appended = append_bytes(&at, &plan, None).expect("build the update");
         let was = std::fs::metadata(&at).expect("measure").len();
 
         let mut file = std::fs::OpenOptions::new()
@@ -5247,7 +5519,7 @@ mod tests {
         let intruder = b"this is not a PDF at all\n".repeat(64);
         std::fs::write(&at, &intruder).expect("put a different file there");
 
-        let refused = append_through(&mut file, &appended, &at).expect_err("must report");
+        let refused = append_through(&mut file, &appended, &at, None).expect_err("must report");
         drop(file);
         assert!(
             refused.contains("renamed or removed it"),
@@ -5289,12 +5561,12 @@ mod tests {
             return;
         };
         let before = std::fs::read(&at).expect("read before");
-        let mut appended = append_bytes(&at, &plan).expect("build the update");
+        let mut appended = append_bytes(&at, &plan, None).expect("build the update");
         // A trailer that names an offset into nothing. It parses as far as
         // `startxref` and then points at a cross-reference that is not there.
         appended.update = b"\nstartxref\n999999999\n%%EOF\n".to_vec();
 
-        let refused = append_in_place(&appended, &at).expect_err("the re-read refuses");
+        let refused = append_in_place(&appended, &at, None).expect_err("the re-read refuses");
         assert!(refused.contains("put back"), "{refused}");
         assert_eq!(
             std::fs::read(&at).expect("read after"),
@@ -5323,7 +5595,7 @@ mod tests {
             return;
         };
         let before = std::fs::read(&at).expect("read before");
-        let mut appended = append_bytes(&at, &plan).expect("build the update");
+        let mut appended = append_bytes(&at, &plan, None).expect("build the update");
 
         // A second revision over the same file, which replaces the catalog's
         // /Pages with a tree that has no kids.
@@ -5359,7 +5631,7 @@ mod tests {
             .expect("build the bad update");
         appended.update = sink.tail;
 
-        let refused = append_in_place(&appended, &at).expect_err("the count refuses");
+        let refused = append_in_place(&appended, &at, None).expect_err("the count refuses");
         assert!(refused.contains("page(s) and should have"), "{refused}");
         assert!(refused.contains("put back"), "{refused}");
         assert_eq!(
@@ -5383,7 +5655,7 @@ mod tests {
         let before = std::fs::read(&at).expect("read before");
         plan.pages[0].turns = 1;
 
-        let refused = append_bytes(&at, &plan).expect_err("refused");
+        let refused = append_bytes(&at, &plan, None).expect_err("refused");
         assert!(
             refused.message.contains("full rewrite"),
             "{}",
@@ -5417,7 +5689,7 @@ mod tests {
         }
         let meddled = std::fs::read(&at).expect("read");
 
-        let refused = append_bytes(&at, &plan).expect_err("refused");
+        let refused = append_bytes(&at, &plan, None).expect_err("refused");
         assert!(
             refused.changed,
             "it is a changed-file refusal: {}",
@@ -5451,8 +5723,8 @@ mod tests {
                 continue;
             };
 
-            let appended = append_bytes(&at, &plan).expect("build the update");
-            append_in_place(&appended, &at).expect("append");
+            let appended = append_bytes(&at, &plan, None).expect("build the update");
+            append_in_place(&appended, &at, None).expect("append");
 
             let after = os_pdf::read(&std::fs::read(&at).expect("read after"))
                 .expect("the OS parser reads the appended document");
@@ -5628,9 +5900,9 @@ mod tests {
                     Some(crate::fingerprint::Fingerprint::of(&fresh).expect("fingerprint"));
 
                 let clock = std::time::Instant::now();
-                let update = append_bytes(&fresh, &this).expect("build the update");
+                let update = append_bytes(&fresh, &this, None).expect("build the update");
                 let added = update.len();
-                append_in_place(&update, &fresh).expect("append");
+                append_in_place(&update, &fresh, None).expect("append");
                 appends.push((clock.elapsed().as_secs_f64() * 1000.0, added));
 
                 let clock = std::time::Instant::now();
@@ -5681,7 +5953,24 @@ mod tests {
     /// reported by every reader as absent, so counting objects answers a
     /// question nobody is asking.
     fn listed_on_page(path: &Path, page: usize) -> Vec<String> {
-        let doc = Document::load(path).expect("reopen");
+        listed_on_page_of(path, page, None)
+    }
+
+    /// [`listed_on_page`] for a document that needs a password to be read.
+    ///
+    /// Same reason as [`appendable_with`]: without the key `lopdf` parses no
+    /// objects, so `ordered_pages` is empty and the index below panics --- which
+    /// reads as a save that lost every page rather than as a reader that could
+    /// not look.
+    fn listed_on_page_of(path: &Path, page: usize, password: Option<&str>) -> Vec<String> {
+        let doc = Document::load_with_options(
+            path,
+            lopdf::LoadOptions {
+                password: password.map(str::to_string),
+                ..Default::default()
+            },
+        )
+        .expect("reopen");
         let id = ordered_pages(&doc)[page];
         let entry = doc
             .get_object(id)

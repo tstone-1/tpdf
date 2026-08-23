@@ -144,7 +144,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 # fixtures it needs are named in the file, because the properties are about
 # encryption rather than about content.
 #
-# Proved able to fail by four mutations, each reddening exactly the check it
+# Proved able to fail by ten mutations, each reddening exactly the check it
 # belongs to. The first is the one worth reading, because its failure is the
 # defect a naive implementation ships:
 #
@@ -158,15 +158,32 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 #                                        differently from the first"
 #   serve never enters the unlock loop-> 4 failed, 2 skipped
 #
-# WHAT IT NEEDS, AND WHERE IT DOES NOT RUN. testdata/incr-encrypted-pw.pdf is
-# built with qpdf, which scripts/ci_fixtures.py records a hosted runner does not
-# have. Without it this prints seven [SKIP]s naming the reason rather than
-# passing, which is the right failure -- but it means the end-to-end evidence
-# exists on a developer machine and nowhere else. The unit tests that run
-# everywhere cover the distinction and its plumbing and can see none of the
-# worker loop. docs/PLAN.md section 5 says what closing that would take.
+# And six more for the password's onward hops, added 2026-08-23. Each is a
+# one-line edit, restored afterwards, with the file digest checked before and
+# after so a mutation that did not land cannot read as a survivor:
 #
-#   macOS arm64, 2026-08-23   7/7, 0 skipped
+#   RawDocument::password -> None      -> 4 red: properties (locked=true), links
+#                                        (2 pages unaccounted for), mapping (2
+#                                        truncated), and the save refused
+#   docinfo::scan drops it             -> the properties check, alone
+#   links::scan drops it               -> the links check, alone
+#   encoding::scan drops it            -> the mapping check, alone
+#   annots::scan drops it              -> the comments check, alone -- and it
+#                                        reddened NOTHING until that check was
+#                                        written, because the fixture has no
+#                                        comments and a count of them cannot tell
+#                                        "none" from "could not look"
+#   Workers::password -> None          -> the save: "the service holds None"
+#
+# WHAT IT NEEDS. testdata/incr-encrypted-pw.pdf, which pyhanko writes -- it was
+# built with qpdf until 2026-08-23, and qpdf is not on a hosted runner, so this
+# whole probe printed [SKIP]s there. It is in scripts/ci_fixtures.py's --signed
+# group now and both workflows already install pyhanko. Without the fixture this
+# still prints twelve [SKIP]s naming the reason rather than passing.
+#
+#   macOS arm64, 2026-08-23   12/12, 0 skipped
+#                             the save check reports: 986 bytes appended to 2346,
+#                             still AES-256, 2 pages
 cargo run --release --manifest-path src-tauri/Cargo.toml --example password-probe
 
 # Signatures: does PDFium agree with us about the same signatures?
@@ -558,10 +575,13 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example crop-probe --
 # Both whole-document scans now report `pages_missed` -- pages PDFium has that
 # `lopdf` could not account for. Worth knowing before reading a zero: swept over
 # every fixture on 2026-08-16 it is 0 everywhere, so the two parsers agree about
-# page count on every document PDFium will open, and the guard is defensive
-# rather than demonstrated. `incr-encrypted-pw.pdf` is the file usually cited as
-# the counter-example and it is not one: PDFium refuses to open it, so nothing
-# downstream ever sees it. To re-run the sweep:
+# page count on every document PDFium will open. `incr-encrypted-pw.pdf` was the
+# usual counter-example and was not one then, because PDFium would not open it
+# at all -- and it IS one now, since tpdf can ask for a password. Without the key
+# `lopdf` reads no objects and reports 0 pages for a document PDFium paginates as
+# 2, which is why every one of these readers takes the password. password-probe
+# asserts it is 0 once the key arrives and its mutation drives it to 2. To re-run
+# the sweep:
 #   for f in testdata/*.pdf; do
 #     printf '%s: ' "$(basename "$f")"
 #     cargo run -q --manifest-path src-tauri/Cargo.toml --example links-probe -- \
@@ -660,7 +680,8 @@ uv run --with fonttools testdata/make_text_pdf.py testdata
 python3 testdata/make_hostile_pdf.py testdata
 python3 testdata/make_vector_pdf.py testdata/vector-heavy.pdf
 python3 testdata/make_vector_pdf.py testdata/vector-multi.pdf 200000 12
-uv run --with pyhanko --with cryptography testdata/make_incremental_pdf.py testdata
+uv run --with pyhanko --with pyhanko-certvalidator --with cryptography \
+  testdata/make_incremental_pdf.py testdata
 python3 testdata/make_outline_pdf.py testdata
 python3 testdata/make_rotated_pdf.py testdata
 python3 testdata/make_columns_pdf.py testdata
@@ -704,12 +725,21 @@ the entry.
 
 **Its signed fixtures did not exist on a hosted runner until 2026-08-21**, so CI tested none
 of the signature reader. Both workflows now install pyhanko and call
-`scripts/ci_fixtures.py --signed`, which builds the nine of them. Two things had to change for
+`scripts/ci_fixtures.py --signed`, which builds the nine of them --- eleven since the two
+encrypted fixtures joined the group on 2026-08-23. Two things had to change for
 that to be possible, and the first is why it had never worked: `make_incremental_pdf.py` called
 **qpdf** with `check=True` and nothing else, so a machine without qpdf died there with a
 `FileNotFoundError` naming a program rather than a fixture --- and died *before* every signed
-fixture, none of which needs qpdf at all. It skips that one fixture now. The second is
-`--scan-pages` with no values, which is the existing switch for not writing 550 MB.
+fixture, none of which needs qpdf at all. It skipped that one fixture from then on. The
+second is `--scan-pages` with no values, which is the existing switch for not writing 550 MB.
+
+**It calls qpdf for nothing at all since 2026-08-23**, and the skipped fixture is a runner
+fixture now. `encrypt_with` writes both encrypted documents with pyhanko --- one behind
+`swordfish`, one on an empty user password --- so `incr-encrypted-open.pdf` and
+`incr-encrypted-pw.pdf` are in the `--signed` group and CI builds them. That is what makes
+`password-probe` run on a runner instead of printing twelve `[SKIP]`s, and it is not a
+tidiness fix: the save path's encryption guard had been wrong for four weeks with every gate
+green, and the fixture that catches it was the one no runner could build.
 
 Proved both ways before the step was written: with the fixtures moved aside and pyhanko absent,
 `ci_fixtures.py --signed` exits **1** with `exited 0 but testdata/incr-signed.pdf does not

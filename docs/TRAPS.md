@@ -13195,3 +13195,139 @@ hangs; here the code is fine and the **test double** supplies the non-terminatin
 Nothing about the assertion, the loop or the mutation looks wrong, and reading any of them
 would not find it --- running the mutation is what found it, which is the whole argument
 for running them rather than reasoning about them.
+
+### The guard that could not fire, because the library removes the evidence first
+
+`save.rs` refused to write an encrypted document. The refusal was correct, the reason was
+right, it had a test, and the test passed --- and for four weeks it did not fire for the
+commonest encrypted PDF there is.
+
+The guard was `doc.trailer.has(b"Encrypt")`. `lopdf` **removes** that entry, and the object
+it names, the moment it authenticates the document; and it tries the empty user password by
+itself, unprompted, before it looks at anything the caller supplied. So a permission-restricted
+AES-256 file --- the kind that opens with no prompt in every reader, and the kind a reader is
+therefore most likely to try to annotate --- arrived at the guard with nothing left to see,
+sailed past it, and was reserialised in the clear.
+
+Measured rather than argued, in one command: `qpdf --is-encrypted` exits 0 for
+`incr-encrypted-open.pdf` and 2 for what `write_copy` wrote from it.
+
+**The fixture's own doc comment predicted this and got it exactly backwards.** It read: *"The
+encryption is not real --- nothing here encrypts any stream --- and it does not need to be: the
+guard is about the presence of the dictionary, which is what `lopdf` drops. A genuinely
+encrypted fixture would test the same branch and would additionally not load."* Every clause
+is wrong in the same direction. A genuine fixture takes a **different** branch; the synthetic
+one keeps `/Encrypt` precisely *because* its encryption is fake, so authentication fails and
+`lopdf` leaves the trailer alone; and it loads perfectly well. It is the family entry *a
+fixture where the right rule and the wrong rule agree cannot tell them apart*, with the
+argument for the agreeing fixture written down as a justification for not building the other
+one.
+
+The predicate that works is `was_encrypted()`, which reads `encryption_state` and survives the
+load, with `is_encrypted()` beside it for the document nothing could unlock. Two questions
+because there are two states and they want different answers: the first is appendable and the
+second is not.
+
+**The general shape: when a guard asks a library about the input, ask what the library did to
+the input on the way in.** A parse is not a passthrough. `lopdf` also drops `/Encrypt` for a
+document you *did* supply a password for, which is the same trap one step further along --- and
+it is why `docinfo.rs` could report an AES-256 document as carrying no encryption at all while
+its own comment warned about the ordering of the `decrypt` call two lines below.
+
+### A field with no reachable `true`, guarded by a comment about the wrong call
+
+`docinfo::Encryption::opened_without_password` is documented as *"whether an empty user
+password opened it"*. It was never `true`. Not once, for any document.
+
+The only route to an `Encryption` value at all was `read_encryption`, which reads the
+trailer's `/Encrypt` --- and reaching that route required `lopdf` to have **failed** to
+authenticate, since a successful load strips the entry. A document that failed to
+authenticate is by definition one an empty password did not open. So the field was `false`
+by construction on every path, while `read_encryption`'s doc comment and a registered
+mutation both stood guard over a *different* call, `Document::decrypt`, whose ordering was
+genuinely correct and had stopped mattering.
+
+Two things hid it. The trailer route is the obvious one and reads correctly in isolation ---
+nothing about it says "this only runs for locked documents". And **nothing renders the
+field**: `properties.ts` declares it, the panel shows the method and the permissions, so
+there was no screen on which the wrong value could be seen. A dead field cannot be seen to
+be wrong, which is the argument for deleting one rather than for leaving it.
+
+The fix is a second route, `encryption_from_state`, reading the version, revision, key
+length, permission bits and crypt filters out of `Document::encryption_state`, which
+survives the load. It fixes the unreachable value and a user-visible defect at the same
+time: before it, every permission-restricted document reported **no encryption at all**, so
+the properties panel told a reader an AES-256 file was unprotected.
+
+The `decrypt("")` call underneath went with it, and that half is worth stating separately.
+`lopdf` authenticates during the load; a document still reporting `is_encrypted` afterwards
+is one no password opened, so `decrypt` on it can only fail, and on the other branch it
+returns `NotEncrypted` --- which the code read as "locked". **A call that can only return
+one of two errors is not a decision.**
+
+### A test helper that reads through a parser that could not read
+
+Writing the encrypted-append test, two helpers failed before the code under test did, and
+both failed the same way: `page_count` and `listed_on_page` load with `Document::load(path)`
+and no password.
+
+`lopdf` parses **no objects** for a document it cannot authenticate, so the first reported
+0 pages --- and the plan built from it was then refused by the real code with *"the document
+on disk has 2 page(s) and the edits were made against 0"*, which is a correct refusal naming
+entirely the wrong thing. The second panicked with `index out of bounds: the len is 0 but
+the index is 0`, which reads as a save that lost every page.
+
+Neither is a defect in the helper as it was written; each is a helper whose reader is
+narrower than the fixtures it is now pointed at. What makes it worth an entry is that this
+is **the same defect the increment was fixing**, arriving in the test harness first and
+wearing a different symptom each time. A count taken through a reader that could not read is
+not a small count, it is not a count at all --- and every downstream message describes the
+number rather than the blindness.
+
+### A capability nobody could use is invisible to every check, including the mutation harness
+
+Adding a password to four `lopdf` readers was one line each. Proving it did something
+needed six mutations through `password-probe`, and five of them reddened exactly the check
+named for them. The sixth --- taking the password away from `annots::scan` --- reddened
+**nothing**, because the probe had no comments check.
+
+The reason it had none is the reason the check is hard: the fixture carries no comments, so
+a count of them cannot tell *none* from *could not look*, which is the trap this repository
+already has under *an empty answer from a whole-document scan cannot say whether it looked*.
+The observable that works is the module's own `Limits::pages_missed` --- pages PDFium
+paginated and `lopdf` could not account for --- which goes from 0 to 2 the moment the key is
+withheld.
+
+**The finding is the shape, not the missing check.** Four sibling readers got the identical
+one-line change; three had an observable and one did not, and nothing in the type system,
+the test suite or the gate list distinguishes them. Running a mutation per call site is what
+separated them, and a mutation that reddens nothing is a statement about the *harness*
+rather than a survivor to argue with.
+
+### The same silent decryption, on the path whose output a reader keeps
+
+The save path's encryption guard was found wrong and fixed. Sweeping for the same predicate
+found `print::build` with **no guard at all** on the branch that reserialises, and the
+comment on `Job::is_passthrough` explains why it looked covered: *"a rewrite that changes
+nothing is the risk `lopdf` dropping encryption is about, so the caller says which it means"*.
+That reasoning is right about the whole-document case, which is handed over byte for byte,
+and silent about every other case. **The risk is also a rewrite that changes something.**
+
+Measured before the fix: a one-page selection of `incr-encrypted-open.pdf` built **1,278
+bytes** with the encryption gone, no message. A locked document refused with *"page 1 is not
+in this document, which has 0"* --- correct arithmetic on a document nothing could read.
+
+The reason this is worse than it sounds is where the bytes go. A print job is not only sent
+to a printer: it is handed to the platform's own PDF reader for the panel, and **Print to PDF
+is how most people make a copy of a document**. So the output is a file the reader keeps, and
+it is decrypted, and nothing said so.
+
+The fix refuses, rather than threading the password, and that is not laziness: even *with*
+the key, `lopdf`'s full serialiser cannot put the encryption back. An append could, and a
+page selection is not appendable. So the honest answer is that an encrypted document prints
+whole or not at all, and the message says which.
+
+**The general lesson is about sweeping.** One wrong predicate was found by building a test;
+the second was found by grepping for what the first one should have said. A defect class with
+one instance almost never has one instance, and the cheapest moment to look for the rest is
+while the right predicate is still in your head.

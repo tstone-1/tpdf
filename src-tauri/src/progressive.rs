@@ -182,6 +182,23 @@ pub struct RawDocument {
     original_crops: RefCell<HashMap<u32, [f32; 4]>>,
     /// Where to find the bytes again, for questions PDFium cannot answer.
     source: Source,
+    /// The password this document was opened with, if it needed one.
+    ///
+    /// **Held because `lopdf` needs it too, and it is the same key to the same
+    /// bytes.** Every question PDFium cannot answer --- comments, links,
+    /// properties, the character mapping, and the update section a save appends
+    /// --- is a second parse of `source`, and a parse without the password reads
+    /// *no objects at all*: `lopdf` returns a `Document` that loads cleanly and
+    /// reports zero pages. So a locked document would open, render and search
+    /// while its comments, links and properties came back empty, and the save
+    /// path would refuse it.
+    ///
+    /// What this costs is one more copy of the password in a process that
+    /// already has it: `Workers::open` holds it for the document's lifetime so
+    /// that a pool growing under contention can unlock its new workers, which
+    /// `docs/THREAT-MODEL.md` §T6.9 states. This is the worker's own copy, in
+    /// the process that is sandboxed.
+    password: Option<String>,
     /// Per-page character-mapping verdicts, computed at most once.
     ///
     /// Lazy, and **not for the reason first written here**. The original comment
@@ -439,6 +456,7 @@ impl RawDocument {
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             original_crops: RefCell::new(HashMap::new()),
             source: Source::Path(path.to_path_buf()),
+            password: password.map(str::to_string),
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
             links: OnceCell::new(),
@@ -457,8 +475,9 @@ impl RawDocument {
     /// `password` is the reader's, when they have supplied one. It is a key to
     /// bytes this process already holds rather than a new authority: a worker
     /// that cannot read them is a worker that renders nothing, so nothing here
-    /// widens what a compromised one could reach. It is taken by reference and
-    /// never stored on the document.
+    /// widens what a compromised one could reach. It **is** stored on the
+    /// document, and [`RawDocument::password`] says why --- `lopdf` needs the
+    /// same key for every question PDFium cannot answer.
     ///
     /// **A failed load poisons nothing**, which is what makes retrying in place
     /// legal rather than merely plausible. Measured on
@@ -494,6 +513,7 @@ impl RawDocument {
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             original_crops: RefCell::new(HashMap::new()),
             source: Source::Bytes(bytes),
+            password: password.map(str::to_string),
             mapping: OnceCell::new(),
             comments: OnceCell::new(),
             links: OnceCell::new(),
@@ -551,7 +571,7 @@ impl RawDocument {
             let Some(bytes) = self.source_bytes() else {
                 return unknown();
             };
-            encoding::scan(&bytes, count).unwrap_or_else(|_| unknown())
+            encoding::scan(&bytes, count, self.password()).unwrap_or_else(|_| unknown())
         })
     }
 
@@ -567,7 +587,7 @@ impl RawDocument {
                 let bytes = self
                     .source_bytes()
                     .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                annots::scan(&bytes, self.page_count() as usize)
+                annots::scan(&bytes, self.page_count() as usize, self.password())
             })
             .clone()
     }
@@ -598,7 +618,8 @@ impl RawDocument {
         // than a choice made here --- see the note beside it, including what
         // `worker-probe` measured when this was moved from there to here and
         // nothing changed.
-        crate::save::append_update(bytes.into_owned(), plan).map_err(|why| why.message)
+        crate::save::append_update(bytes.into_owned(), plan, self.password())
+            .map_err(|why| why.message)
     }
 
     /// Every link in the document, read at most once.
@@ -612,7 +633,7 @@ impl RawDocument {
                 let bytes = self
                     .source_bytes()
                     .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                links::scan(&bytes, self.page_count() as usize)
+                links::scan(&bytes, self.page_count() as usize, self.password())
             })
             .clone()
     }
@@ -628,9 +649,17 @@ impl RawDocument {
                 let bytes = self
                     .source_bytes()
                     .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                docinfo::scan(&bytes, self.page_count())
+                docinfo::scan(&bytes, self.page_count(), self.password())
             })
             .clone()
+    }
+
+    /// The password this document was opened with, for a parser that needs it.
+    ///
+    /// Every caller is a `lopdf` parse of the same bytes PDFium already holds
+    /// open, in the same process. See the field.
+    pub fn password(&self) -> Option<&str> {
+        self.password.as_deref()
     }
 
     /// The document's bytes, however it was opened.

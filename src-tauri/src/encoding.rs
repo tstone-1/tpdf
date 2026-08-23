@@ -160,36 +160,52 @@ impl PageMapping {
 /// itself. Every page `lopdf` could not account for is therefore returned
 /// `truncated` --- known to be unknown --- and `certain()` is false for it.
 ///
-/// **The example this used to give was half wrong, and the correction is worth
-/// more than the example** (measured 2026-08-16). It read: *"the two parsers
-/// disagree more often than one would like, and the disagreement is always in
-/// the dangerous direction: `lopdf` reports zero pages for
-/// `testdata/incr-encrypted-pw.pdf`, which PDFium opens and paginates
-/// normally."* The first half is true --- `lopdf` loads that file and reports
-/// **0** pages. The second is not: **PDFium refuses to open it at all**
-/// (`RawDocument::open` fails, and `links-probe` exits 2 on it), because it is
-/// AES-256 behind a real user password. So the two parsers never both see that
-/// document, and it demonstrates no disagreement.
+/// **The guard has a demonstrated instance again as of 2026-08-23, and the two
+/// corrections in a row are the interesting part.** It first read: *"`lopdf`
+/// reports zero pages for `testdata/incr-encrypted-pw.pdf`, which PDFium opens
+/// and paginates normally"*. That was half wrong on 2026-08-16 --- PDFium
+/// refused to open it at all, so the two parsers never both saw it --- and the
+/// note was rewritten to say the guard was defensive rather than demonstrated.
 ///
-/// Swept across every `testdata/*.pdf` the same day: **the two parsers agree
-/// about page count on every fixture PDFium will open.** `hostile-encrypted.pdf`
-/// --- AES-256 with an *empty* user password, which opens with no prompt --- is
-/// read by `lopdf` as 1 page, exactly as PDFium paginates it.
+/// Then tpdf learned to ask for a password, and PDFium opens that document now.
+/// So the original example became true, having been false in between: a reader
+/// types `swordfish`, PDFium paginates two pages, and a `lopdf` parse *without*
+/// the key reads **no objects at all** and reports zero. Which is why `password`
+/// is a parameter here.
+///
+/// The lesson the two corrections share is worth more than either: a note
+/// asserting what another component *cannot* do is a claim with a date on it,
+/// and a feature is what expires it. Nothing went red when this became false ---
+/// prose has no gate.
 ///
 /// The design is unchanged and still right: two independent parsers with no
 /// guarantee of agreeing is reason enough to take the count from the one whose
-/// pagination the reader is actually looking at. What changed is that the guard
-/// is **defensive rather than demonstrated**, and saying so is the difference
-/// between a bound with a known instance and one without.
+/// pagination the reader is actually looking at. Swept across every
+/// `testdata/*.pdf` on 2026-08-16, they agreed about page count on every fixture
+/// PDFium would open, and `examples/password_probe.rs` now asserts the same for
+/// the locked one once it is unlocked.
 ///
 /// # Errors
 ///
 /// The bytes not parsing as a PDF, or a stream exceeding [`MAX_DECODE`].
-pub fn scan(bytes: &[u8], page_count: usize) -> Result<Vec<PageMapping>, String> {
+///
+/// **`password` is the reader's, when the document needed one, and it decides
+/// whether this reads anything at all.** `lopdf` tries the empty password by
+/// itself, so a permission-restricted document needs nothing here --- but one
+/// behind a real password parses to a `Document` with **no objects in it**,
+/// which loads cleanly and reports zero pages. Without the key that is
+/// indistinguishable from a document that simply has none of what is being
+/// looked for. See [`crate::progressive::RawDocument::password`].
+pub fn scan(
+    bytes: &[u8],
+    page_count: usize,
+    password: Option<&str>,
+) -> Result<Vec<PageMapping>, String> {
     let document = Document::load_mem_with_options(
         bytes,
         LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
             ..Default::default()
         },
     )
@@ -426,7 +442,7 @@ mod tests {
 
     fn scan_one(font: Dictionary) -> PageMapping {
         let bytes = document_with_font(font);
-        let pages = scan(&bytes, 1).expect("the fixture must parse");
+        let pages = scan(&bytes, 1, None).expect("the fixture must parse");
         assert_eq!(pages.len(), 1, "the fixture is one page");
         pages[0]
     }
@@ -540,14 +556,16 @@ mod tests {
     /// the right way round: a short answer must not read as a clean one whether
     /// or not a document on disk currently produces one.
     ///
-    /// It used to cite `incr-encrypted-pw.pdf` as "the real instance", and that
-    /// was half wrong --- `lopdf` does report zero pages for it, and PDFium
-    /// **refuses to open it**, so the two never both see it. See the correction
-    /// on [`scan`].
+    /// It used to cite `incr-encrypted-pw.pdf` as "the real instance"; that was
+    /// wrong on 2026-08-16, because PDFium would not open it at all, and is
+    /// right again now that tpdf can ask for a password --- but only for a scan
+    /// given no key. See the note on [`scan`], and
+    /// `examples/password_probe.rs`, which measures the real instance through
+    /// the worker.
     #[test]
     fn a_page_lopdf_cannot_account_for_is_unknown() {
         let bytes = document_with_font(composite("Identity-H", "Identity", false));
-        let pages = scan(&bytes, 4).expect("the fixture must parse");
+        let pages = scan(&bytes, 4, None).expect("the fixture must parse");
         assert_eq!(pages.len(), 4, "the answer is always page_count long");
         assert!(
             pages[0].unreadable(),
@@ -564,6 +582,6 @@ mod tests {
     #[test]
     fn more_pages_in_the_file_than_asked_for_are_dropped() {
         let bytes = document_with_font(composite("Identity-H", "Identity", false));
-        assert_eq!(scan(&bytes, 0).expect("parses").len(), 0);
+        assert_eq!(scan(&bytes, 0, None).expect("parses").len(), 0);
     }
 }

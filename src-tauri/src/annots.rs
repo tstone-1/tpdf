@@ -283,11 +283,18 @@ pub struct Limits {
     pub cycles: usize,
     /// Pages PDFium has that `lopdf` could not account for.
     ///
-    /// See [`crate::links::Limits::pages_missed`] for the case: a document
-    /// encrypted with an empty user password opens with no prompt and renders
-    /// normally, while `lopdf` may report zero pages --- so every loop here runs
-    /// zero times and a reader is told the document has no comments when what
-    /// happened is that nothing could look.
+    /// See [`crate::links::Limits::pages_missed`] for the case, and note the
+    /// example this used to give was the wrong one: an *empty* user password is
+    /// no obstacle to `lopdf`, which tries it unprompted. The document that
+    /// produces this is one behind a **real** password, parsed without it ---
+    /// `lopdf` then reads no objects at all, every loop here runs zero times,
+    /// and a reader is told the document has no comments when what happened is
+    /// that nothing could look.
+    ///
+    /// It is also the only observable that catches it: this fixture carries no
+    /// comments, so counting them cannot tell "none" from "could not look".
+    /// `examples/password_probe.rs` checks exactly this field, because a check
+    /// on the count reddened nothing when the password was taken away.
     pub pages_missed: usize,
 }
 
@@ -321,12 +328,21 @@ pub struct Comments {
 /// failure is reported rather than answered with an empty list: "this document
 /// has no comments" and "this document could not be read" are different things
 /// to tell a reader, and the second one is not reassuring.
-pub fn scan(bytes: &[u8], page_count: usize) -> Result<Comments, String> {
+///
+/// **`password` is the reader's, when the document needed one, and it decides
+/// whether this reads anything at all.** `lopdf` tries the empty password by
+/// itself, so a permission-restricted document needs nothing here --- but one
+/// behind a real password parses to a `Document` with **no objects in it**,
+/// which loads cleanly and reports zero pages. Without the key that is
+/// indistinguishable from a document that simply has none of what is being
+/// looked for. See [`crate::progressive::RawDocument::password`].
+pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<Comments, String> {
     let started = std::time::Instant::now();
     let document = Document::load_mem_with_options(
         bytes,
         LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
             ..Default::default()
         },
     )
@@ -1091,7 +1107,7 @@ mod tests {
     /// Scans a synthetic document holding exactly these annotations.
     fn scan_annots(annots: Vec<Dictionary>) -> Comments {
         let bytes = document_with(annots, Dictionary::new());
-        scan(&bytes, 1).expect("the fixture must parse")
+        scan(&bytes, 1, None).expect("the fixture must parse")
     }
 
     /// A page PDFium has and `lopdf` cannot read is reported, not answered "none".
@@ -1104,7 +1120,7 @@ mod tests {
     #[test]
     fn a_page_lopdf_cannot_account_for_is_reported() {
         let bytes = document_with(vec![note("visible")], Dictionary::new());
-        let comments = scan(&bytes, 4).expect("the fixture must parse");
+        let comments = scan(&bytes, 4, None).expect("the fixture must parse");
         assert_eq!(comments.limits.pages_missed, 3, "4 claimed, 1 readable");
         assert!(comments.limits.any());
         // The comment it could read is still returned: a notice, not a refusal.
@@ -1136,7 +1152,7 @@ mod tests {
         let plain = document_with(vec![note.clone()], Dictionary::new());
         // The default page here is 595x842, so 842 - 720 = 122.
         assert_eq!(
-            scan(&plain, 1).expect("parse").items[0].rect,
+            scan(&plain, 1, None).expect("parse").items[0].rect,
             [100.0, 122.0, 300.0, 152.0]
         );
 
@@ -1149,7 +1165,7 @@ mod tests {
         // Inset by (50, 50) and 692 tall: 50 left of where it was, 742 - 720 = 22
         // from the top.
         assert_eq!(
-            scan(&cropped, 1).expect("parse").items[0].rect,
+            scan(&cropped, 1, None).expect("parse").items[0].rect,
             [50.0, 22.0, 250.0, 52.0]
         );
     }
@@ -1181,7 +1197,7 @@ mod tests {
             },
         );
         assert_eq!(
-            scan(&document, 1).expect("parse").items[0].rect,
+            scan(&document, 1, None).expect("parse").items[0].rect,
             [100.0, 122.0, 300.0, 152.0]
         );
     }
@@ -1320,7 +1336,7 @@ mod tests {
             vec![first, second]
         });
 
-        let comments = scan(&bytes, 1).expect("parse");
+        let comments = scan(&bytes, 1, None).expect("parse");
         assert_eq!(comments.items.len(), 2);
         assert_eq!(comments.items[0].reply_to, None);
         assert_eq!(comments.items[1].reply_to, Some(0));
@@ -1346,7 +1362,7 @@ mod tests {
             vec![first, second]
         });
 
-        let comments = scan(&bytes, 1).expect("parse");
+        let comments = scan(&bytes, 1, None).expect("parse");
         assert_eq!(comments.items.len(), 2, "both notes are still listed");
         assert!(
             comments.items.iter().all(|item| item.reply_to.is_none()),
@@ -1373,7 +1389,7 @@ mod tests {
             vec![only]
         });
 
-        let comments = scan(&bytes, 1).expect("parse");
+        let comments = scan(&bytes, 1, None).expect("parse");
         assert_eq!(comments.items.len(), 1);
         assert_eq!(comments.items[0].reply_to, None);
         assert!(comments.limits.cycles > 0);
@@ -1390,7 +1406,7 @@ mod tests {
             vec![one]
         });
 
-        let comments = scan(&bytes, 1).expect("parse");
+        let comments = scan(&bytes, 1, None).expect("parse");
         assert_eq!(comments.items.len(), 1);
         assert_eq!(comments.items[0].reply_to, None);
         assert_eq!(comments.limits.cycles, 0, "a link to nothing is not a loop");
@@ -1604,7 +1620,7 @@ mod tests {
             }],
             dictionary! { "Rotate" => 90 },
         );
-        let comments = scan(&bytes, 1).expect("parse");
+        let comments = scan(&bytes, 1, None).expect("parse");
         let rect = comments.items[0].rect;
         assert!(
             rect[1] < 100.0,
@@ -1816,7 +1832,7 @@ mod tests {
             }],
             dictionary! { "Rotate" => 90 },
         );
-        let comments = scan(&bytes, 1).expect("parse");
+        let comments = scan(&bytes, 1, None).expect("parse");
         let item = &comments.items[0];
         assert_eq!(
             item.quads.as_slice(),
